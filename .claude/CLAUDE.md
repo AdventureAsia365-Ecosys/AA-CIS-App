@@ -1,4 +1,17 @@
 # AA-CIS-App — Claude Code Context
+
+## ⚠️ RESTRUCTURE 15/09/2026 — ĐỌC TRƯỚC
+- **Workspace gom lại:** repo này giờ nằm ở `~/projects/AA-Ecosys/apps/AA-CIS-App` (KHÔNG còn
+  `~/projects/aa-cis/AA-CIS-App`). Multi-repo: mỗi repo giữ `.git` riêng, deploy độc lập.
+- **Org GitHub đổi tên:** `AdventureAsia365-CIS` → **`AdventureAsia365-Ecosys`** (redirect tự động
+  còn hoạt động). Tên repo GIỮ NGUYÊN (`AA-CIS-App`). Remote origin đã trỏ org mới.
+- **Hệ sinh thái 3 repo** dưới cùng org: `AA-CIS-App` (repo này), `AA-TripPlanner-Web` (B2C trip
+  planner, dùng chung RDS acc2 — schema `tripplanner.*` + `shared.destinations`), `AA-CIS-Infra`.
+  Sắp có `AA-Booking` (AAA). Sơ đồ tổng: `~/projects/AA-Ecosys/docs/ecosystem-architecture.md`.
+- **CI/CD:** action `aws-actions/configure-aws-credentials` đã nâng `@v4`→`@v6` (Node 24) trong
+  `deploy-dev.yml` + `eval-regression.yml`. OIDC role/tên tài nguyên KHÔNG đổi (độc lập tên org).
+- Nội dung LIVE STATE bên dưới (nghiệp vụ) vẫn giữ nguyên, chưa re-verify lại sau restructure.
+
 # Updated: 25/08/2026 (AA-458, PR #219+#220 merged + deployed + real HTTP-verified) | main d45d130
 # latest migration: 117 (shared.tenant_integrations, AA-457 — per-tenant WordPress credential
 # pointer; AA-458 itself needed none, only read/wrote the existing publish_log/content_piece
