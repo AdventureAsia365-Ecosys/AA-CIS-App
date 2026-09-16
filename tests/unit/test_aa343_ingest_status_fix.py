@@ -87,7 +87,7 @@ async def _run_process_file(records, tour_repo_insert_batch_result, source_inser
 
 @pytest.mark.asyncio
 async def test_t1_success_leaves_status_ingesting_and_writes_ingest_details():
-    records = [{"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam"}]
+    records = [{"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"}]
     conn_main, result, exc = await _run_process_file(
         records, tour_repo_insert_batch_result=(["tour-id-1"], []))
 
@@ -140,9 +140,9 @@ async def test_t2_mid_flow_failure_marks_ingest_failed_not_stuck_ingesting():
 async def test_t3_dropped_rows_recorded_in_ingest_details_not_tours_failed():
     records = [
         {"src_name": "Good Tour", "provider": "Horizon Voyages", "country": "Vietnam",
-         "tour_id_external": "tour-001"},
+         "tour_id_external": "tour-001", "src_itineraries": "Day 1 — Arrival"},
         {"src_name": "Bad Tour", "provider": "Horizon Voyages", "country": "Vietnam",
-         "tour_id_external": "tour-002"},
+         "tour_id_external": "tour-002", "src_itineraries": "Day 1 — Arrival"},
     ]
     insert_batch_result = (
         ["tour-id-1"],

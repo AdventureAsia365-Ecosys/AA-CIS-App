@@ -77,8 +77,8 @@ async def _run_process_file(records, tour_repo_insert_batch_result):
 @pytest.mark.asyncio
 async def test_two_identical_rows_in_file_only_first_inserted_second_dropped():
     records = [
-        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam"},
-        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam"},
+        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
+        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
     ]
     conn_main, mock_tour_repo, result = await _run_process_file(
         records, tour_repo_insert_batch_result=(["tour-id-1"], []))
@@ -116,8 +116,8 @@ async def test_case_and_whitespace_variant_still_deduped_in_file():
     """normalize_group_key() lower()s + strip()s both sides — a case/whitespace variant of the
     same tour within one file must still be caught as an in-file duplicate."""
     records = [
-        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam"},
-        {"src_name": "  ha long bay cruise  ", "provider": "HORIZON VOYAGES", "country": "Vietnam"},
+        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
+        {"src_name": "  ha long bay cruise  ", "provider": "HORIZON VOYAGES", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
     ]
     conn_main, mock_tour_repo, result = await _run_process_file(
         records, tour_repo_insert_batch_result=(["tour-id-1"], []))
@@ -132,8 +132,8 @@ async def test_distinct_rows_in_file_both_still_insert_unaffected():
     """Regression guard: distinct (src_name, provider) rows in the same file are unaffected by
     the new in-file dedup — both still reach new_records/insert_batch as before."""
     records = [
-        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam"},
-        {"src_name": "Sapa Trekking", "provider": "Horizon Voyages", "country": "Vietnam"},
+        {"src_name": "Ha Long Bay Cruise", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
+        {"src_name": "Sapa Trekking", "provider": "Horizon Voyages", "country": "Vietnam", "src_itineraries": "Day 1 — Arrival"},
     ]
     conn_main, mock_tour_repo, result = await _run_process_file(
         records, tour_repo_insert_batch_result=(["tour-id-1", "tour-id-2"], []))
