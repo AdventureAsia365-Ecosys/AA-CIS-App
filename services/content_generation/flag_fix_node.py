@@ -95,52 +95,88 @@ Fix ONLY the specified fields. Keep all other fields exactly as-is.
 Preserve all product facts. Return strict JSON only."""
 
 
+# AA-608 (H3 finding): SEO meta length was the single biggest reason ~94% of failed
+# tours landed in the review queue — the meta simply would not fall inside the 140-155
+# band after one repair attempt, and the code then escalated it to manual_check (a hard
+# block). A length miss is a format problem, not a truth problem, so the fix is to (a) try
+# harder to land it in band (a bounded retry loop, mirroring Ms.Thu's aa_batch_rewrite_v6
+# `repair_seo_fields` which retries up to a max), and (b) NOT escalate to manual_check when
+# it still misses — keep the best candidate and let it flag, never hard-block on length.
+_META_REREPAIR_MAX_ATTEMPTS = 3
+
+
 def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None) -> str:
-    """AA-205 C-full: one bounded re-repair for seo_meta still out of band. Single LLM call,
-    no loop. Returns in-band candidate if produced, else the incoming post (graceful)."""
-    from .seo_meta_utils import meta_in_band as _in_band, SEO_META_MIN as _MIN, SEO_META_MAX as _MAX
-    cur = (post or "").strip()
-    try:
-        prompt = (
-            "Rewrite this SEO meta description to be " + str(_MIN) + "-" + str(_MAX)
-            + " characters and a COMPLETE sentence ending in a period.\n\n"
-            + "Current (" + str(len(cur)) + " chars): " + json.dumps(cur) + "\n"
-            + "Tour: " + str(content.get("name")) + " - " + str(tour.get("country", "")) + "\n\n"
-            + "Rules:\n- MUST be " + str(_MIN) + "-" + str(_MAX) + " characters "
-            + "(current is " + ("too short" if len(cur) < _MIN else "out of band") + ").\n"
-            + "- MUST end with a period and read as one complete sentence "
-            + "(no trailing preposition/conjunction).\n"
-            + "- Do NOT pad with filler.\n"
-            + (("- Avoid these words entirely: " + ", ".join(sorted(forbidden)) + ".\n")
-               if forbidden else "")
-            + (("- Weave in this real search-intent clue naturally (do not quote verbatim): "
-               + json.dumps(intent_clue) + "\n") if intent_clue else "")
-            + "- Return JSON: {\"seo_meta\": \"...\"}"
-        )
-        resp = LLMClient().generate(LLMRequest(
-            system_prompt=FIX_SYSTEM, user_prompt=prompt, model_tier=model_tier, stage="s1_flag_fix",
-        ))
-        raw = resp.content.strip()
-        fence = chr(96) * 3
-        if raw[:3] == fence:
-            raw = raw.split(fence)[1]
-            if raw[:4] == "json":
-                raw = raw[4:]
-            raw = raw.strip()
-        candidate = (json.loads(raw).get("seo_meta") or "").strip()
-        landed = _in_band(candidate, forbidden)
-        logger.info("meta_rerepair_done", before_len=len(cur), after_len=len(candidate))
-        record_call_sync(
-            stage="s1_flag_fix", role="writer", model=resp.model_used,
-            tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
-            quality_signal={"meta_landed_in_band": landed, "candidate_len": len(candidate)},
-            stop_reason=getattr(resp, "stop_reason", None),
-        )
-        return candidate if landed else post
-    except Exception as e:
-        logger.warning("meta_rerepair_failed_graceful", error=str(e))
-        return post
+    """AA-205 / AA-608: bounded RETRY loop that rewrites seo_meta until it lands in
+    [SEO_META_MIN, SEO_META_MAX] as a complete sentence, or the attempt budget is spent.
+
+    Each attempt feeds back the previous candidate's exact length and whether it was too
+    short / too long, so the model converges instead of guessing blind. After every attempt
+    the raw candidate is run through best_meta_candidate (salvage a complete-sentence prefix
+    in band) before the band check, so a slightly-over candidate is recovered rather than
+    thrown away. Returns the first in-band result; if none lands, returns the best salvaged
+    candidate seen (never worse than the incoming `post`). Never raises — LLM/parse errors
+    fall through to the best candidate so far (graceful, same contract as before)."""
+    from .seo_meta_utils import meta_in_band as _in_band, best_meta_candidate as _best, \
+        SEO_META_MIN as _MIN, SEO_META_MAX as _MAX
+    best = (post or "").strip()
+    cur = best
+    for attempt in range(1, _META_REREPAIR_MAX_ATTEMPTS + 1):
+        try:
+            too = "too short" if len(cur) < _MIN else ("too long" if len(cur) > _MAX else "out of band")
+            prompt = (
+                "Rewrite this SEO meta description to be " + str(_MIN) + "-" + str(_MAX)
+                + " characters and a COMPLETE sentence ending in a period.\n\n"
+                + "Current (" + str(len(cur)) + " chars, " + too + "): " + json.dumps(cur) + "\n"
+                + "Tour: " + str(content.get("name")) + " - " + str(tour.get("country", "")) + "\n\n"
+                + "Rules:\n- MUST be " + str(_MIN) + "-" + str(_MAX) + " characters "
+                + "(current is " + too + " — "
+                + ("add one concrete, source-true detail" if len(cur) < _MIN else "trim, do not truncate mid-word")
+                + ").\n"
+                + "- MUST end with a period and read as one complete sentence "
+                + "(no trailing preposition/conjunction).\n"
+                + "- Do NOT pad with filler; every word must be true to the tour.\n"
+                + (("- Avoid these words entirely: " + ", ".join(sorted(forbidden)) + ".\n")
+                   if forbidden else "")
+                + (("- Weave in this real search-intent clue naturally (do not quote verbatim): "
+                   + json.dumps(intent_clue) + "\n") if intent_clue else "")
+                + "- Return JSON: {\"seo_meta\": \"...\"}"
+            )
+            resp = LLMClient().generate(LLMRequest(
+                system_prompt=FIX_SYSTEM, user_prompt=prompt, model_tier=model_tier, stage="s1_flag_fix",
+            ))
+            raw = resp.content.strip()
+            fence = chr(96) * 3
+            if raw[:3] == fence:
+                raw = raw.split(fence)[1]
+                if raw[:4] == "json":
+                    raw = raw[4:]
+                raw = raw.strip()
+            candidate = (json.loads(raw).get("seo_meta") or "").strip()
+            # Salvage a complete-sentence prefix in band before judging (recovers a slight over).
+            guarded = _best(candidate, best, forbidden=forbidden)
+            landed = _in_band(guarded, forbidden)
+            record_call_sync(
+                stage="s1_flag_fix", role="writer", model=resp.model_used,
+                tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+                cost_usd=resp.cost_usd, tenant_id=None,
+                quality_signal={"meta_landed_in_band": landed, "candidate_len": len(guarded),
+                                "attempt": attempt},
+                stop_reason=getattr(resp, "stop_reason", None),
+            )
+            if landed:
+                logger.info("meta_rerepair_landed", attempt=attempt,
+                            before_len=len(best), after_len=len(guarded))
+                return guarded
+            # Keep the better of the two as the carry-forward candidate for the next attempt.
+            if candidate:
+                cur = candidate
+            best = guarded or best
+        except Exception as e:
+            logger.warning("meta_rerepair_attempt_failed_graceful", attempt=attempt, error=str(e))
+            break
+    logger.info("meta_rerepair_exhausted", attempts=_META_REREPAIR_MAX_ATTEMPTS,
+                final_len=len(best))
+    return best
 
 
 def _repair_still_compressed_days(state: dict, itinerary_text: str):
@@ -347,7 +383,6 @@ Keep all other fields unchanged."""
         # LLM repair can overshoot under SEO_META_MIN (e.g. 132). AA-215 revalidate re-runs
         # validate and fires META_TOO_SHORT but that is only -0.5 sub-score, so the under-band
         # meta still clears the 7.0 gate and reaches gold. Enforce the band here at the source.
-        _meta_floor_failed = False
         if "seo_meta" in fix_keys:
             _pre_meta = current_content.get("seo_meta", "") or ""
             _post_meta = new_generated.get("seo_meta", "") or ""
@@ -369,11 +404,16 @@ Keep all other fields unchanged."""
                     _post_meta, tour, new_generated, state.get("model_tier"),
                     intent_clue=_clue, forbidden=_meta_forbidden,
                 )
-            # AA-226: if STILL out of band after clue-guided re-repair, do NOT accept an
-            # under/over-floor meta into gold — flag for HITL via manual_check.
+            # AA-608 (H3 finding): if STILL out of band after the bounded re-repair loop,
+            # keep the best candidate but DO NOT escalate to manual_check. A meta length
+            # miss is a format problem, not a product-truth problem — hard-blocking on it
+            # was sending ~94% of failed tours to the review queue for a fixable cosmetic
+            # issue. validate/revalidate still fires META_TOO_SHORT / SEO_META_TOO_LONG as a
+            # -0.5 sub-score (surfaced to the reviewer, never silently gold), which does not
+            # by itself drop the 7.0 gate. Only genuine product-truth (manual_check from the
+            # brand audit) hard-blocks now.
             if not meta_in_band(_guarded, _meta_forbidden):
-                _meta_floor_failed = True
-                logger.warning("meta_floor_unrecoverable",
+                logger.warning("meta_band_unrecoverable_flagging_not_blocking",
                                final_len=len(_guarded), tour=current_content.get("name"))
             new_generated["seo_meta"] = _guarded
 
@@ -391,9 +431,7 @@ Keep all other fields unchanged."""
             "cost_usd":        state.get("cost_usd", 0) + resp.cost_usd + extra_cost,
             "fix_pass_applied": True,
             "fix_pass_fields":  sorted(applied_fields),
-            # AA-226: meta unrecoverable below floor -> force HITL; revalidate keeps this
-            # as manual_check (passed=False) so the export gate blocks it from gold.
-            **({"brand_audit_status": "manual_check"} if _meta_floor_failed else {}),
+            # AA-608: meta length no longer escalates to manual_check (see band guard above).
         }
 
     except Exception as e:

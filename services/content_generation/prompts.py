@@ -125,6 +125,53 @@ _SUBTITLE_INSTRUCTIONS = {
 }
 
 
+# AA-608 (H3 finding): 81% of rewritten tours tripped ITINERARY_MEAL_TIME_INVENTED
+# (breakfast/lunch/dinner or clock-times in the output itinerary = PRODUCT_TRUTH_RISK).
+# The prompt already told the model "never invent meals unless in the source" — but the
+# SOURCE itineraries are full of routine meal codes (B / L / D, "Meals: Breakfast, Dinner",
+# "(B,L,D)"), so from the model's point of view meals ARE in the source and it faithfully
+# carries them across. The fix (mirroring Ms.Thu's aa_batch_rewrite_v6 strip_itinerary_meal_metadata)
+# is to strip these routine meal-logistics tokens from the source BEFORE it reaches the prompt,
+# so the model never sees a meal code to reproduce. Substantive food prose (a named dining
+# experience, a cooking class) is left untouched — only bare codes and "Meals:" logistics lines go.
+_MEAL_CODES = r"B|L|D|BB|HB|FB"
+# A parenthetical meal code at the end of a line: "... arrive at the ryokan. (B, D)"
+_TRAILING_MEAL_CODE_RE = re.compile(
+    r"\s*\(\s*(?:" + _MEAL_CODES + r")(?:\s*[,/&]\s*(?:" + _MEAL_CODES + r")){0,2}\s*\)\s*$",
+    re.IGNORECASE,
+)
+# A whole line that is just a meal-inclusion label: "Meals: Breakfast, Lunch" / "Meals included: B, L, D"
+_MEAL_LABEL_LINE_RE = re.compile(
+    r"^\s*meals?(?:\s+included)?\s*[:\-]\s*.*$",
+    re.IGNORECASE,
+)
+
+
+def strip_itinerary_meal_metadata(itinerary: str) -> str:
+    """Remove routine itinerary meal-logistics tokens (B/L/D codes, 'Meals:' lines) while
+    keeping meaningful food descriptions. AA-608: fed through before build_rewrite_prompt so
+    the writer never sees a bare meal code to reproduce, which is what was producing the
+    PRODUCT_TRUTH_RISK meal/time flags on 81% of tours.
+
+    Conservative by design (same principle as segment matching in aa-social-media — a rule
+    that over-reaches deletes real content): only drops (1) a whole line that is nothing but a
+    'Meals[: included]' logistics label, and (2) a trailing parenthetical meal code at the end
+    of a line. Prose that merely mentions a meal in a substantive way ('dinner is a multi-course
+    kaiseki at the ryokan') is left entirely intact."""
+    if not itinerary or not isinstance(itinerary, str):
+        return itinerary
+    out_lines = []
+    for line in itinerary.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if _MEAL_LABEL_LINE_RE.match(line):
+            continue  # drop the whole logistics line
+        line = _TRAILING_MEAL_CODE_RE.sub("", line)
+        out_lines.append(line)
+    cleaned = "\n".join(out_lines)
+    # collapse the blank lines a dropped label may have left behind
+    cleaned = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
                          subtitle_focus: str = "standard") -> str:
     few_shot_text = ""
@@ -139,6 +186,11 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     paa          = seo.get("people_also_ask", [])
 
     itineraries_raw = tour.get('itineraries') or tour.get('itinerary') or ""
+    # AA-608: strip routine meal-logistics codes (B/L/D, "Meals:" lines) from the source
+    # BEFORE it goes into the prompt, so the writer never sees a meal token to carry across
+    # (root cause of the 81% ITINERARY_MEAL_TIME_INVENTED rate). Per-day word counts below
+    # are still computed from the ORIGINAL raw so day proportions aren't skewed by the strip.
+    itineraries_for_prompt = strip_itinerary_meal_metadata(itineraries_raw)
     # AA-314: tour['highlights'] is a list (parsed by the caller) — join it the same
     # way seo_keywords/paa below turn a list into readable prompt text, instead of
     # interpolating the list's Python repr straight into the prompt.
@@ -165,7 +217,7 @@ TOUR DATA:
 - Summary: {tour.get('summary')}
 - Description: {tour.get('description')}
 - Highlights: {highlights_text}
-- Itineraries: {itineraries_raw}
+- Itineraries: {itineraries_for_prompt}
 - Inclusions: {tour.get('inclusions')}
 - Exclusions: {tour.get('exclusions')}
 
