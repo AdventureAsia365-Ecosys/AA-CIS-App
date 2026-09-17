@@ -1193,6 +1193,20 @@ async def ingest_s3(
                         "reason": "missing_fields", "missing_fields": missing,
                         "message": f"Missing fields: {', '.join(missing)}",
                     })
+                elif not (r.get("src_itineraries") or "").strip():
+                    # AA-604: a row with no itinerary body cannot be rewritten by S1
+                    # (S1 get_all_tours + acp_contract.v_trip_registry require a non-empty
+                    # itinerary). Surface it here at preview time instead of silently
+                    # committing it as "ingested" and having it vanish between S0 and S1.
+                    # Covers POI/attraction rows (museums, rentals, single activities) and
+                    # source files that simply lack itinerary content.
+                    blocked_tours.append({
+                        "src_name": src_name, "country": r.get("country"),
+                        "reason": "empty_itinerary",
+                        "message": "No itinerary content — this looks like a point of interest "
+                                   "or activity, not a multi-day tour. It cannot be rewritten and "
+                                   "will be skipped on Commit.",
+                    })
                 else:
                     seen_keys.add((nname, nprov))
                     ready_tours.append({
@@ -1617,6 +1631,13 @@ async def get_tours_ready(request: Request, x_admin_secret: str = Header(None)):
             LEFT JOIN silver_aa_internal.raw_sources rs ON rs.id = t.source_id
             WHERE t.pipeline_status = 'ingested'
               AND (t.source_status IS NULL OR t.source_status::text != 'trashed')
+              -- AA-604: apply the SAME itinerary floor as S1 get_all_tours (and
+              -- acp_contract.v_trip_registry / AA-345) so "Tours Ready for Rewrite"
+              -- matches the S1 count. A row with no itinerary body cannot be rewritten,
+              -- so it must not be counted as "ready" here (was: S0=793 vs S1=763).
+              AND t.deleted_at IS NULL
+              AND t.src_itineraries IS NOT NULL
+              AND TRIM(BOTH FROM t.src_itineraries) <> ''
             ORDER BY t.ingest_at DESC
         """)
     return {

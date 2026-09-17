@@ -61,7 +61,7 @@ interface TourPreview {
 interface BlockedTour {
   src_name: string;
   country: string | null;
-  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file"; // AA-490
+  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file" | "empty_itinerary"; // AA-490, AA-604
   missing_fields?: string[];
   message: string;
 }
@@ -1439,10 +1439,14 @@ function TourContentTab() {
                                     preview before this fix. */}
                                 <Badge color={
                                   t.reason === "duplicate_tour"    ? "blue"  :
+                                  t.reason === "empty_itinerary"   ? "red"   :
                                   t.reason === "duplicate_in_file" ? "amber" : "amber"
                                 }>
                                   {t.reason === "duplicate_tour"    ? "Duplicate" :
                                    t.reason === "duplicate_in_file" ? "Duplicate in File" :
+                                   /* AA-604: no itinerary body → cannot be rewritten (POI/activity
+                                      or source file lacking itinerary content) */
+                                   t.reason === "empty_itinerary"   ? "No Itinerary" :
                                                                        "Missing Fields"}
                                 </Badge>
                               </td>

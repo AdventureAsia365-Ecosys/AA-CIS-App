@@ -188,6 +188,20 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                 })
                 continue
 
+            # AA-604: skip rows with no itinerary body — they cannot be rewritten by S1
+            # (S1 get_all_tours + acp_contract.v_trip_registry require a non-empty
+            # itinerary), so committing them as 'ingested' only made S0 over-count vs S1
+            # (793 vs 763). Mirrors the dry_run preview's empty_itinerary block so preview
+            # and commit report the identical outcome. Covers POI/attraction rows and
+            # source files lacking itinerary content. Recorded in ingest_details, not a
+            # hard failure.
+            if not (r.get("src_itineraries") or "").strip():
+                in_file_drops.append({
+                    "identifier": r.get("src_name") or "unknown",
+                    "reason": "empty_itinerary",
+                })
+                continue
+
             existing = await conn.fetchrow("""
                 SELECT tour_id, source_group_id
                 FROM silver_aa_internal.raw_tours

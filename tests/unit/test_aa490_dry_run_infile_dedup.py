@@ -70,9 +70,9 @@ class TestAA490DryRunInFileDedup:
     async def test_dry_run_flags_second_in_file_duplicate_as_blocked(self, monkeypatch):
         records = [
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
         result = await self._run(monkeypatch, records)
 
@@ -84,9 +84,9 @@ class TestAA490DryRunInFileDedup:
     async def test_dry_run_in_file_dedup_is_case_and_whitespace_insensitive(self, monkeypatch):
         records = [
             {"src_name": " Halong Bay Cruise ", "provider": "Horizon Voyages",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
             {"src_name": "halong bay cruise", "provider": "HORIZON VOYAGES",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
         result = await self._run(monkeypatch, records)
 
@@ -96,9 +96,9 @@ class TestAA490DryRunInFileDedup:
     async def test_dry_run_different_provider_not_flagged_as_duplicate(self, monkeypatch):
         records = [
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
             {"src_name": "Halong Bay Cruise", "provider": "Indochina Junks",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
         result = await self._run(monkeypatch, records)
 
@@ -108,7 +108,7 @@ class TestAA490DryRunInFileDedup:
     async def test_dry_run_db_duplicate_still_takes_correct_branch(self, monkeypatch):
         records = [
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
-             "country": "Vietnam", "duration": "3 days", "price_raw": "500"},
+             "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
         dup_rows = [{"n": "halong bay cruise"}]
         result = await self._run(monkeypatch, records, duplicate_names_rows=dup_rows)
