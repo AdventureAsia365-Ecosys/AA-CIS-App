@@ -43,7 +43,7 @@ def _marketplace_row(**over):
         "version_created_at": None,
         "published_tour_id": uuid.UUID(PUBLISHED_A), "tour_id": uuid.UUID(TOUR_A),
         "name": "Ha Long Bay Cruise", "country": "Vietnam", "duration": "3 days",
-        "price_raw": "US$450", "atom_count": 12, "high_atom_count": 5, "starred_atom_count": 3,
+        "price_raw": "US$450", "atom_count": 12, "high_atom_count": 5,
     }
     base.update(over)
     return base
@@ -143,7 +143,7 @@ class TestGetMarketplaceResponseShape:
         (ADR-2026-038 §0.3), not something to hide from the tenant."""
         conn = AsyncMock()
         conn.fetchrow.return_value = {"posts_per_week": 3}
-        conn.fetch.return_value = [_marketplace_row(atom_count=0, high_atom_count=0, starred_atom_count=0)]
+        conn.fetch.return_value = [_marketplace_row(atom_count=0, high_atom_count=0)]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
