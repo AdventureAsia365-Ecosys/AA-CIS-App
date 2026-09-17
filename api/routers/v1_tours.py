@@ -460,8 +460,16 @@ async def trigger_rewrite(
     brand_rules = {}
     try:
         async with pool.acquire() as _conn2:
+            # AA-612a: T2 (tenant rewrite) shares build_graph with admin S1, whose judge
+            # brand-fit gate (judge_node.has_brand_signals) keys off core_idea /
+            # customer_mindset / voice_examples. This SELECT used to omit those brand-diff
+            # columns, so brand_rules never carried them → the graph state's brand_* fields were
+            # always empty → judge_skipped(no_brand_profile) even for a tenant WITH a real brand
+            # (the exact case that SHOULD be judged on brand-fit). Fetch the same brand-diff
+            # columns admin_pipeline._BRAND_RULE_COLS does so a real tenant brand is judged.
             _br = await _conn2.fetchrow("""
-                SELECT system_prompt, style_guide, forbidden_words
+                SELECT system_prompt, style_guide, forbidden_words,
+                       core_idea, customer_segment, customer_mindset, voice_examples, good_examples
                 FROM shared.tenant_brand_rules
                 WHERE tenant_id = $1::uuid AND is_active = true
                 ORDER BY version DESC LIMIT 1
@@ -483,11 +491,24 @@ async def trigger_rewrite(
             _fw_raw = _br["forbidden_words"]
             if isinstance(_fw_raw, str):
                 _fw_raw = _json2.loads(_fw_raw) if _fw_raw else []
+            # AA-612a: voice_examples has the same asyncpg no-jsonb-codec gotcha as
+            # forbidden_words above — it arrives as a JSON-encoded string, so parse it before
+            # list() (mirrors admin_pipeline._execute_run_tour's own handling).
+            _voice_raw = _br["voice_examples"]
+            if isinstance(_voice_raw, str):
+                _voice_raw = _json2.loads(_voice_raw) if _voice_raw else []
             brand_rules = {
                 "system_prompt":    _br["system_prompt"] or "",
                 "style_guide":      _br["style_guide"] or "",
                 "forbidden_words":  list(_fw_raw or []),
                 "rewrite_language": body.rewrite_language,
+                # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
+                # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
+                "core_idea":        _br["core_idea"] or "",
+                "customer_segment": _br["customer_segment"] or "",
+                "customer_mindset": _br["customer_mindset"] or "",
+                "voice_examples":   list(_voice_raw or []),
+                "good_examples":    _br["good_examples"] or "",
             }
     except Exception:
         brand_rules = {"rewrite_language": body.rewrite_language}
