@@ -62,7 +62,6 @@ class AtomRecord(BaseModel):
     text: str
     activity_type: Optional[str] = None  # AA-379 — decompose enum (trek|bike|food|culture|stay|transit|other)
     distinctiveness: Distinctiveness = "LOW"
-    starred: bool = False
     deleted: bool = False
     weight: float = 1.0
     cooldown_until: dict[str, Any] = Field(default_factory=dict)
