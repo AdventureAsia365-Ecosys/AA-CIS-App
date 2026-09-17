@@ -1,7 +1,11 @@
-"""AA-226: meta unrecoverable below floor must NOT reach gold — flag manual_check (HITL).
-Integration over flag_fix_node with LLMClient patched. The node calls LLMClient().generate()
-twice when meta stays under-band: once for the main field fix, once for the clue-guided
-re-repair (_rerepair_meta). side_effect feeds both calls in order.
+"""AA-226 (original) / AA-608 (revised): seo_meta length behaviour in flag_fix_node.
+
+AA-608 (H3 finding) changed the policy: a meta that cannot be pulled into the 140-155 band is
+a FORMAT miss, not a product-truth miss, so it must NOT hard-block via manual_check any more —
+it is kept as the best candidate and left to flag (the validate/revalidate -0.5 sub-score still
+surfaces it to the reviewer). Only genuine product-truth findings from the brand audit block.
+_rerepair_meta is now a bounded retry loop (up to _META_REREPAIR_MAX_ATTEMPTS) rather than a
+single call, so tests feed enough responses for the loop and assert on the no-block policy.
 """
 import json
 from types import SimpleNamespace
@@ -39,9 +43,10 @@ def _patch_llm(responses):
     inst.generate.side_effect = responses
     return patch.object(ff, "LLMClient", return_value=inst)
 
+
 def test_rerepair_recovers_in_band_no_hitl():
-    """Main fix returns under-floor (132); clue re-repair returns in-band (148) -> accepted,
-    no manual_check."""
+    """Main fix returns under-floor (132); the re-repair loop's first attempt returns in-band
+    (148) -> accepted, no manual_check."""
     main = _resp({"seo_meta": _meta(132)})
     rerepair = _resp({"seo_meta": _meta(148)})
     with _patch_llm([main, rerepair]):
@@ -50,17 +55,21 @@ def test_rerepair_recovers_in_band_no_hitl():
     assert out.get("brand_audit_status") != "manual_check"
     assert out["fix_pass_applied"] is True
 
-def test_rerepair_still_under_floor_forces_hitl():
-    """Both main fix and re-repair stay at 132 -> not accepted into gold -> manual_check."""
-    main = _resp({"seo_meta": _meta(132)})
-    rerepair = _resp({"seo_meta": _meta(132)})
-    with _patch_llm([main, rerepair]):
+
+def test_rerepair_still_out_of_band_flags_not_blocks():
+    """AA-608: main fix + every re-repair attempt stay under-floor (132) -> the meta is kept as
+    best-effort and the node does NOT escalate to manual_check (format miss must not hard-block).
+    Feed enough responses for the whole bounded loop plus the main field fix."""
+    responses = [_resp({"seo_meta": _meta(132)})
+                 for _ in range(ff._META_REREPAIR_MAX_ATTEMPTS + 1)]
+    with _patch_llm(responses):
         out = ff.flag_fix_node(_state())
-    assert out["brand_audit_status"] == "manual_check"
+    assert out.get("brand_audit_status") != "manual_check"
     assert out["fix_pass_applied"] is True
 
+
 def test_in_band_first_pass_no_rerepair_no_hitl():
-    """Main fix already in band (148) -> only ONE LLM call, no manual_check."""
+    """Main fix already in band (148) -> only ONE LLM call (no re-repair loop), no manual_check."""
     main = _resp({"seo_meta": _meta(148)})
     inst = MagicMock()
     inst.generate.side_effect = [main]
@@ -70,10 +79,11 @@ def test_in_band_first_pass_no_rerepair_no_hitl():
     assert out.get("brand_audit_status") != "manual_check"
     assert inst.generate.call_count == 1
 
-def test_no_seo_context_still_flags_hitl():
-    """No PAA/related clue available + re-repair fails -> still manual_check (no crash)."""
-    main = _resp({"seo_meta": _meta(132)})
-    rerepair = _resp({"seo_meta": _meta(132)})
-    with _patch_llm([main, rerepair]):
+
+def test_no_seo_context_still_no_block():
+    """AA-608: no PAA/related clue available + re-repair fails -> still no manual_check, no crash."""
+    responses = [_resp({"seo_meta": _meta(132)})
+                 for _ in range(ff._META_REREPAIR_MAX_ATTEMPTS + 1)]
+    with _patch_llm(responses):
         out = ff.flag_fix_node(_state(seo={}))
-    assert out["brand_audit_status"] == "manual_check"
+    assert out.get("brand_audit_status") != "manual_check"

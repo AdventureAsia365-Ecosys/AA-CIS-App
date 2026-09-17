@@ -47,6 +47,10 @@ def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: 
     calls it at most once per still-violating day and keeps the pre-fix day if the result is
     still out of clamp — see its own deterministic guard).
     """
+    # AA-608: strip routine meal-logistics codes from the source day too, so a length nudge
+    # cannot reintroduce a B/L/D token the main writer strip already removed.
+    from .prompts import strip_itinerary_meal_metadata
+    source_day_text = strip_itinerary_meal_metadata(source_day_text)
     user_prompt = f"""SOURCE (this day only, from the original tour itinerary):
 {source_day_text}
 
