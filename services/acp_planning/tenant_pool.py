@@ -71,7 +71,7 @@ _TENANT_TRIP_QUERY = """
 """
 
 _TENANT_ATOM_QUERY = """
-    SELECT atom_id, tour_id, text, activity_type, distinctiveness, starred,
+    SELECT atom_id, tour_id, text, activity_type, distinctiveness,
            deleted, weight, cooldown_until, usage_log
     FROM acp_contract.tour_atoms
     WHERE owner_scope = $1 AND NOT deleted AND NOT is_empty_marker

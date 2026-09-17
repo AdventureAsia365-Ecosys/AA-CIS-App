@@ -272,7 +272,7 @@ def compute_quarter_plan(
 
 
 _ATOM_ROW_QUERY = """
-    SELECT atom_id, tour_id, text, activity_type, distinctiveness, starred,
+    SELECT atom_id, tour_id, text, activity_type, distinctiveness,
            deleted, weight, cooldown_until, usage_log
     FROM acp_contract.tour_atoms
     WHERE owner_scope = $1 AND NOT deleted AND NOT is_empty_marker
@@ -293,7 +293,7 @@ def _row_to_atom(row) -> AtomRecord:
     return AtomRecord(
         atom_id=row["atom_id"], trip_id=row["tour_id"], text=row["text"],
         activity_type=row["activity_type"],
-        distinctiveness=row["distinctiveness"] or "LOW", starred=row["starred"],
+        distinctiveness=row["distinctiveness"] or "LOW",
         deleted=row["deleted"], weight=float(row["weight"]),
         cooldown_until=_parse_jsonb(row["cooldown_until"], {}),
         usage_log=_parse_jsonb(row["usage_log"], []),
