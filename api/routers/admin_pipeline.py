@@ -347,8 +347,19 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
     )
 
 
-async def _execute_run_tour(req: TourRunRequest, job_id: str | None = None) -> dict:
+async def _execute_run_tour(
+    req: TourRunRequest,
+    job_id: str | None = None,
+    *,
+    batch_text: str | None = None,       # AA-606: Bedrock Batch attempt-1 writer text (skip live writer)
+    batch_model_used: str | None = None,
+    batch_account: str | None = None,
+) -> dict:
     """Core tour rewrite — called by HTTP endpoint and background retry task.
+
+    AA-606: when batch_text is set, the writer's attempt-1 came from a Bedrock Batch job, so
+    _rewrite_tour seeds it (build_graph_from_generated) instead of calling the writer live. All
+    brand-resolve / SEO / persist / export / review-queue logic below is reused unchanged.
 
     AA-250 B2: job_id, when set (async job path only — _run_tour_job), builds an on_stage
     callback that persists each completed LangGraph node name to
@@ -511,6 +522,9 @@ async def _execute_run_tour(req: TourRunRequest, job_id: str | None = None) -> d
             subtitle_focus=req.subtitle_focus,
             seo_mode=effective_seo_mode,
             on_stage=on_stage,
+            batch_text=batch_text,               # AA-606
+            batch_model_used=batch_model_used,   # AA-606
+            batch_account=batch_account,         # AA-606
         )
 
         _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
@@ -1029,6 +1043,104 @@ async def run_tour_async(req: TourRunRequest, x_admin_secret: str = Header(None)
 @router.get("/jobs/{job_id}")
 async def get_run_tour_job(job_id: str, x_admin_secret: str = Header(None)):
     """AA-223: poll a run-tour job's lifecycle row."""
+    verify_admin_secret(x_admin_secret)
+    from .jobs_repo import get_job
+
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
+# ── AA-606: S1 rewrite via Bedrock Batch Inference ─────────────────────────────
+
+class S1BatchSubmitRequest(BaseModel):
+    """Submit an S1-rewrite Bedrock Batch job for a set of tours (writer attempt-1 only)."""
+    tour_ids: List[str]
+    batch_id: str                              # UUID → pipeline_runs accounting (like sync ingest)
+    account: str = "acc3"                      # satellite account owning Batch perms (AA-399)
+    seo_mode: str = "standard"
+    model_tier: Optional[str] = "haiku"
+    enforce_min: bool = True                   # reject sub-minimum batches (Bedrock rejects them)
+
+
+async def _s1_batch_ingest_task(job_id: str, submit: dict, batch_id: str, seo_mode: str,
+                                model_tier: Optional[str]) -> None:
+    """Background: poll the batch job to completion, then ingest each tour through the existing
+    persist path. Tracks lifecycle in shared.pipeline_jobs (reusing jobs_repo) so the admin UI
+    can poll GET /admin/s1-batch/{job_id}. Runs asyncio.to_thread for the blocking poll so it
+    never blocks the event loop."""
+    from .jobs_repo import mark_running, mark_succeeded, mark_failed
+    from services.content_generation.s1_batch import ingest_s1_batch
+
+    try:
+        await mark_running(job_id)
+        summary = await ingest_s1_batch(
+            job_arn=submit["job_arn"],
+            output_uri=submit["output_uri"],
+            account=submit["account"],
+            tour_ids=submit["tour_ids"],
+            batch_id=batch_id,
+            seo_mode=seo_mode,
+            model_tier=model_tier,
+            poll=True,
+        )
+        # No single result_version_id for a batch — record the run summary in error col (free text,
+        # reused; schema has no summary column). status=succeeded means the batch ingest finished.
+        await mark_succeeded(job_id, None, None)
+        logger.info("s1_batch_ingest_done", job_id=job_id,
+                    ingested=summary.get("ingested"), gate_fail_retry=summary.get("gate_fail_retry"),
+                    batch_write_failed=summary.get("batch_write_failed"))
+    except asyncio.CancelledError:
+        from .jobs_repo import mark_interrupted
+        await mark_interrupted(job_id, "cancelled (deploy/shutdown)")
+        raise
+    except Exception as e:
+        await mark_failed(job_id, repr(e)[:1000])
+        logger.error("s1_batch_ingest_failed", job_id=job_id, error=str(e))
+
+
+@router.post("/s1-batch/submit")
+async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, x_admin_secret: str = Header(None)):
+    """AA-606: materialize + submit an S1-rewrite Bedrock Batch job, then kick off a background
+    poll+ingest task. Returns 202 with job_id (poll GET /admin/s1-batch/{job_id}) and the batch ARN.
+
+    The writer attempt-1 runs on Bedrock Batch (Haiku); every tour is then validated/judged/gated/
+    persisted by the existing _execute_run_tour path (gate misses fall to the on-demand retry loop)."""
+    verify_admin_secret(x_admin_secret)
+    from fastapi.responses import JSONResponse
+    from .jobs_repo import create_job
+    from services.content_generation.s1_batch import submit_s1_batch
+    from shared.llm_client.bedrock_batch import BatchUnavailable
+
+    try:
+        submit = await submit_s1_batch(
+            req.tour_ids, account=req.account, enforce_min=req.enforce_min,
+        )
+    except BatchUnavailable as e:
+        raise HTTPException(status_code=400, detail=f"batch submit failed: {e}")
+
+    job_id = await create_job(
+        {"job_type": "s1_batch", "batch_id": req.batch_id, "job_arn": submit["job_arn"],
+         "record_count": submit["record_count"], "account": submit["account"]},
+        _MASTER_TENANT_ID,
+    )
+    task = asyncio.create_task(
+        _s1_batch_ingest_task(job_id, submit, req.batch_id, req.seo_mode, req.model_tier)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return JSONResponse(status_code=202, content={
+        "job_id": job_id, "status": "submitted", "job_arn": submit["job_arn"],
+        "record_count": submit["record_count"], "account": submit["account"],
+        "poll_url": f"/admin/s1-batch/{job_id}",
+    })
+
+
+@router.get("/s1-batch/{job_id}")
+async def get_s1_batch_job(job_id: str, x_admin_secret: str = Header(None)):
+    """AA-606: poll an S1 batch job's lifecycle row (queued→running→succeeded|failed|interrupted)."""
     verify_admin_secret(x_admin_secret)
     from .jobs_repo import get_job
 
