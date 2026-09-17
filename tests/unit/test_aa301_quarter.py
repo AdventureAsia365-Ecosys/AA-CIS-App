@@ -262,7 +262,7 @@ class TestParseJsonb:
         row = {
             "atom_id": "atom_x", "tour_id": trip_id, "text": "some atom text",
             "activity_type": "trek",
-            "distinctiveness": "HIGH", "starred": True, "deleted": False, "weight": 1.5,
+            "distinctiveness": "HIGH", "deleted": False, "weight": 1.5,
             "cooldown_until": '{"blog": "2026-08-01"}', "usage_log": '["a", "b"]',
         }
         atom = _row_to_atom(row)
@@ -276,7 +276,7 @@ class TestParseJsonb:
         row = {
             "atom_id": "atom_y", "tour_id": trip_id, "text": "atom text",
             "activity_type": None,
-            "distinctiveness": "LOW", "starred": False, "deleted": False, "weight": 1.0,
+            "distinctiveness": "LOW", "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }
         atom = _row_to_atom(row)  # must not raise pydantic_core.ValidationError
@@ -295,7 +295,7 @@ class TestFetchAtomsByTripDbWrapper:
         conn.fetch.return_value = [{
             "atom_id": "atom_z", "tour_id": trip_id, "text": "text",
             "activity_type": "food",
-            "distinctiveness": "MED", "starred": False, "deleted": False, "weight": 1.0,
+            "distinctiveness": "MED", "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }]
         ctx = AsyncMock()

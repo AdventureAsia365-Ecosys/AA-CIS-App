@@ -183,7 +183,7 @@ _LIST_FROM = """
 _LIST_SELECT_COLS = """
     SELECT ta.atom_id, ta.tour_id, rt.src_name AS tour_name, ta.text,
            ta.activity_type, ta.emotional_hook, ta.visual_potential,
-           ta.distinctiveness, ta.media, ta.starred, ta.deleted,
+           ta.distinctiveness, ta.media, ta.deleted,
            ta.created_at, ta.updated_at,
            (ta.updated_at = ta.created_at) AS unreviewed,
            tc.atom_count AS tour_atom_count,
@@ -421,7 +421,6 @@ async def atoms_summary(
 # ── PATCH /admin/atoms/{atom_id} — star / delete / light edit ──────────────
 
 class AtomPatchRequest(BaseModel):
-    starred: Optional[bool] = None
     deleted: Optional[bool] = None
     text: Optional[str] = None
 
@@ -433,19 +432,22 @@ async def patch_atom(
     request: Request,
     owner_scope: Optional[str] = Depends(_resolve_atom_owner_scope),
 ):
-    """Star / soft-delete / light text edit. `deleted=true` is the existing
+    """Soft-delete / light text edit. `deleted=true` is the existing
     tour_atoms.deleted column (soft delete) — already excluded from the N6
     allocator's eligible pool (services/acp_planning/allocator.py's
-    _eligible_atoms(): `if a.deleted ... continue`). `starred=true` is the
-    existing tour_atoms.starred column — already boosted 1.5x in the same
-    allocator. No new columns, no migration (AA-300 STEP 0 finding).
+    _eligible_atoms(): `if a.deleted ... continue`) and the segment_matching
+    filter (`WHERE NOT ta.deleted`).
+
+    AA-609: the `starred` curation flag was removed — it had no live effect
+    (its only reader sat behind compute_slot_grid(), which has no production
+    caller), so `deleted` is the only real curation lever left here.
 
     AA-431: same owner_scope guard as the bulk endpoint — a tenant's UPDATE
     is WHERE-scoped, so a guessed atom_id from outside their own scope 404s
     (not found) instead of being editable."""
     if body.text is not None and not body.text.strip():
         raise HTTPException(status_code=400, detail="text cannot be empty")
-    if body.starred is None and body.deleted is None and body.text is None:
+    if body.deleted is None and body.text is None:
         raise HTTPException(status_code=400, detail="no fields to update")
 
     sets = []
@@ -455,8 +457,6 @@ async def patch_atom(
         params.append(value)
         sets.append(f"{column} = ${len(params)}")
 
-    if body.starred is not None:
-        _set("starred", body.starred)
     if body.deleted is not None:
         _set("deleted", body.deleted)
     if body.text is not None:
@@ -473,7 +473,7 @@ async def patch_atom(
         UPDATE acp_contract.tour_atoms
         SET {", ".join(sets)}
         WHERE atom_id = ${atom_id_idx}{scope_clause} AND NOT is_empty_marker
-        RETURNING atom_id, tour_id, text, distinctiveness, starred, deleted,
+        RETURNING atom_id, tour_id, text, distinctiveness, deleted,
                   visual_potential, media, created_at, updated_at
     """
 
@@ -485,9 +485,9 @@ async def patch_atom(
         raise HTTPException(status_code=404, detail=f"Atom {atom_id} not found (or is an empty-marker row)")
 
     # AA-564 3.1 (decision 2, AA-563) — `deleted` is the only atom-curation flag that actually
-    # affects Segment eligibility (`WHERE NOT ta.deleted`, segment_matching.py); `starred` never
-    # does (confirmed AA-552/563), so bulk-star correctly stays untouched. Before this, curating
-    # an atom's `deleted` flag never recomputed Segment/Score/Route at all — a real staleness gap
+    # affects Segment eligibility (`WHERE NOT ta.deleted`, segment_matching.py). Before this,
+    # curating an atom's `deleted` flag never recomputed Segment/Score/Route at all — a real
+    # staleness gap
     # AA-563's investigation confirmed matches Nghiệp's own suspicion. Fire-and-forget, same
     # pattern as `_run_a3_atomize_background()` (own connection via the request's pool, best-effort
     # — a recompute failure must never surface as this PATCH having failed, the star/delete itself

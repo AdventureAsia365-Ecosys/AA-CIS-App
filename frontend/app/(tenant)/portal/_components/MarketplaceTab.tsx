@@ -32,7 +32,6 @@ interface MarketplaceTour {
   duration: string | null;
   atom_count: number;
   high_atom_count: number;
-  starred_atom_count: number;
   price_usd: number | null;
   price_available: boolean;
   runway_months: number | null;
@@ -113,7 +112,7 @@ export default function MarketplaceTab() {
 
                 <div style={{ display: "flex", gap: 20, flexShrink: 0, textAlign: "right" }}>
                   <Metric label="Atoms" value={t.atom_count} sub={`${t.high_atom_count} high · ${t.starred_atom_count} starred`} />
-                  <Metric label="Price"
+                  <Metric label="Atoms" value={t.atom_count} sub={`${t.high_atom_count} high`} />
                     value={t.price_available && t.price_usd != null ? `$${t.price_usd.toFixed(0)}` : "—"}
                     sub={t.price_available ? "estimated" : "on request"} />
                   <Metric label="Runway"

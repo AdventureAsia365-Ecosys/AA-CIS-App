@@ -10,11 +10,12 @@ AA-516 (03/09/2026): `allocate_month()`, `allocate_month_from_db()`, and
 refer to — were deleted. Slate (T7, AA-511) replaced the admin-triggered N4-N6 quarter-plan flow
 they backed; `services/acp_produce/slot_runner.py` (N7, live) already documented deliberately
 never calling this layer. `compute_slot_grid()` (the pure core every fix below actually lives
-in) is untouched — still the live, tested entry point `services/acp_angle_gate/service.py` (T8/
-T9) calls directly, alongside the still-live persistence layer (`create_weekly_produce_run()`/
-`persist_slot_grid()`/`fetch_due_slots()`/`mark_slot_status()`, all kept). The historical notes
-below describe bugs found IN `allocate_month()`'s calling convention at the time — kept for
-context (`_deterministic_slot_id()`/`make_slot()`'s own fixes still apply unchanged inside
+in) is kept, but AA-609 (17/09/2026) confirmed it has NO production caller — only unit tests
+(`test_aa377_aa378_run_slot_persist.py`, `test_aa449_channel_extension.py`) exercise it. The
+persistence layer (`create_weekly_produce_run()`/`persist_slot_grid()`/`fetch_due_slots()`/
+`mark_slot_status()`) is kept. The historical notes below describe bugs found IN
+`allocate_month()`'s calling convention at the time — kept for context
+(`_deterministic_slot_id()`/`make_slot()`'s own fixes still apply unchanged inside
 `compute_slot_grid()`), not because that function still exists.
 
 Fixes applied during the port (see docs/implementation-notes/AA-301.md):
@@ -125,7 +126,11 @@ def _eligible_atoms(atoms: list[AtomRecord], channel: str, used_this_month: set[
         cd = a.cooldown_until.get(channel)
         if cd and cd > today.isoformat():
             continue
-        w = a.weight * (1.5 if a.starred else 1.0) * {"HIGH": 1.5, "MED": 1.0, "LOW": 0.6}[a.distinctiveness]
+        # AA-609: the old `starred` 1.5x boost was removed — "star" was a curation flag with no
+        # live effect (the only reader was here, and compute_slot_grid() has no production caller;
+        # the repo now ranks by deterministic score, not a human star). Weight + distinctiveness
+        # only.
+        w = a.weight * {"HIGH": 1.5, "MED": 1.0, "LOW": 0.6}[a.distinctiveness]
         pool.append((w, a))
     return [a for _, a in sorted(pool, key=lambda x: -x[0])]
 
