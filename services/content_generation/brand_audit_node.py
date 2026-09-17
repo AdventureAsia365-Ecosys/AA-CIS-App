@@ -29,8 +29,23 @@ ELEPHANT_RIDING = re.compile(
 )
 NAME_ALL_CAPS_RE = re.compile(r'^[A-Z\s\d&\-]+$')
 NAME_SUPERLATIVES = ['the best of', 'ultimate', 'must-see', 'and fun', 'expenditures']
-# AA-195: fabricated meals / clock-times in itineraries = PRODUCT_TRUTH_RISK
-ITIN_MEAL_INVENTED = re.compile(r'\b(breakfast|lunch|dinner)\b', re.IGNORECASE)
+# AA-195 / AA-608: fabricated meal LOGISTICS or clock-times in itineraries = PRODUCT_TRUTH_RISK.
+# AA-608 finding (H2 verify): the old rule r'\b(breakfast|lunch|dinner)\b' fired on ANY mention
+# of a meal word, so ordinary editorial prose ("after breakfast, cycle to the next village")
+# tripped it on ~26/30 tours — a false positive, not a product-truth risk. The AA-195 intent was
+# to catch a FABRICATED meal-inclusion CLAIM the source never made (a meal presented as logistics:
+# "Meals: Breakfast, Dinner", "(B, L, D)", "breakfast included/provided/served"), not a narrative
+# reference to the time of day. Narrate freely; only a logistics-style meal claim is flagged.
+ITIN_MEAL_INVENTED = re.compile(
+    r'(?:'
+    r'\bmeals?\s*(?:included|provided)?\s*[:\-]'                 # "Meals:" / "Meal included -"
+    r'|\((?:\s*[BLD](?:\s*[,/&]\s*[BLD]){0,2}\s*)\)'             # "(B, L, D)" meal codes
+    r'|\b(?:breakfast|lunch|dinner)\s+(?:is\s+)?(?:included|provided|served|arranged)\b'
+    r')',
+    re.IGNORECASE,
+)
+# A specific clock time ("7:00 AM departure", "8am") is still a fabricated logistic when the
+# source gave none — kept as-is (AA-195). Narrative "morning/afternoon/evening" is fine (not matched).
 ITIN_CLOCK_TIME = re.compile(r'\b\d{1,2}(:\d{2})?\s?(am|pm)\b', re.IGNORECASE)
 # AA-196: generic day titles that name no place/activity = ITINERARY_DAY_TITLE_GENERIC
 ITIN_DAY_TITLE_GENERIC = re.compile(

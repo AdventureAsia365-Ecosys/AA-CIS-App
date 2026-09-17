@@ -6,6 +6,7 @@ import asyncio
 import json
 import structlog
 import asyncpg
+from json_repair import repair_json
 
 from shared.secrets import get_database_url
 
@@ -365,7 +366,22 @@ Keep all other fields unchanged."""
             if raw.startswith("json"):
                 raw = raw[4:]
             raw = raw.strip()
-        fixed_fields = json.loads(raw)
+        # AA-608: json-repair salvage on malformed fix-pass output, same as generate_node (AA-217).
+        # A single malformed character used to throw JSONDecodeError, drop into the outer except,
+        # and return fix_pass_applied=False — the whole repair silently lost (observed on flagged
+        # tours that never got their seo_meta shortened, so they stayed flagged out-of-band). Try
+        # a clean parse first, then repair_json, so a nearly-valid object is still applied.
+        try:
+            fixed_fields = json.loads(raw)
+        except json.JSONDecodeError:
+            salvaged = repair_json(raw, return_objects=True)
+            if isinstance(salvaged, dict) and salvaged:
+                fixed_fields = salvaged
+                logger.info("flag_fix_json_repair_salvaged", raw_len=len(raw),
+                            keys=sorted(fixed_fields.keys()))
+            else:
+                logger.warning("flag_fix_json_unrecoverable", raw_len=len(raw))
+                raise
         record_call_sync(
             stage="s1_flag_fix", role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),

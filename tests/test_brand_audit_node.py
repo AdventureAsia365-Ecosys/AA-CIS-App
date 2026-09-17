@@ -80,6 +80,37 @@ def test_pre_audit_clean_content_returns_no_codes():
     assert codes == []
 
 
+# ── AA-608: meal-time flag must catch fabricated LOGISTICS, not narrative prose ──
+
+def test_meal_narrative_prose_not_flagged():
+    """AA-608: ordinary editorial prose mentioning a meal time of day is NOT a product-truth
+    risk and must not fire ITINERARY_MEAL_TIME_INVENTED (the old rule false-positived here)."""
+    generated = {
+        "name": "Nakasendo Way", "subtitle": "A refined valley traverse",
+        "seo_meta": "A private walk along the historic Nakasendo post road through cedar forest.",
+        "highlights": ["Walk the preserved Magome-Tsumago trail"],
+        "itineraries": ("Day 1 -- Arrive in Magome. After breakfast, set out along the old post "
+                        "road; pause for lunch at a mountain teahouse before reaching Tsumago by "
+                        "dinner. The evening is free to wander the lantern-lit street."),
+    }
+    codes = pre_audit_checks(generated)
+    assert "ITINERARY_MEAL_TIME_INVENTED" not in codes
+
+
+def test_meal_logistics_claim_flagged():
+    """AA-608: a meal presented as a fabricated logistics claim (code / 'included') still fires."""
+    for itin in (
+        "Day 1 -- Arrive. Overnight at ryokan. Meals: Breakfast, Dinner",
+        "Day 2 -- Cross the pass and descend to the valley. (B, L, D)",
+        "Day 3 -- Transfer to the coast; breakfast included at the hotel.",
+        "Day 4 -- 7:00 AM departure for the summit trailhead.",
+    ):
+        generated = {"name": "Test", "subtitle": "A journey", "seo_meta": "A tour.",
+                     "highlights": ["x"], "itineraries": itin}
+        codes = pre_audit_checks(generated)
+        assert "ITINERARY_MEAL_TIME_INVENTED" in codes, f"should flag: {itin!r}"
+
+
 # ── Schema validation ─────────────────────────────────────────────────────────
 
 def test_brand_audit_schema_validates_correct_json():
