@@ -67,11 +67,11 @@ def test_invoke_judge_never_the_writer_model_id():
 
 
 def test_gate_framework_context_isolation_no_generation_prompt_in_judge_payload():
-    """L3: judge must never see the writer's generation system/user prompt.
-    Verified here by reading the EXACT payload sent to Nova and asserting the
-    writer's real system prompt text is absent from it."""
-    from services.content_generation.s1_from_atom import _GROUNDING_SYSTEM_PROMPT
-
+    """L3: judge must never see a writer's generation system/user prompt.
+    Verified here by reading the EXACT payload sent to Nova and asserting a
+    distinctive writer-prompt phrase is absent from it. (AA-611 removed the
+    s1-from-atom writer module, so this checks the unique marker phrase directly
+    rather than importing the deleted module's prompt constant.)"""
     fake_client = MagicMock()
     good_items = {"items": [{"criterion": c, "score": "1", "evidence": "quote"}
                              for c in ["covers the topic comprehensively via subsections",
@@ -85,10 +85,8 @@ def test_gate_framework_context_isolation_no_generation_prompt_in_judge_payload(
     sent_system = sent_body["system"][0]["text"]
     sent_user = sent_body["messages"][0]["content"][0]["text"]
 
-    # The writer's actual production system prompt must not leak into the judge call.
-    assert _GROUNDING_SYSTEM_PROMPT not in sent_system
-    assert _GROUNDING_SYSTEM_PROMPT not in sent_user
-    assert "CLOSED WORLD RULE" not in sent_system  # a distinctive phrase unique to the writer prompt
+    # A distinctive writer-prompt phrase must not leak into the judge call.
+    assert "CLOSED WORLD RULE" not in sent_system  # a distinctive phrase unique to a writer prompt
     assert "CLOSED WORLD RULE" not in sent_user
 
 
@@ -322,15 +320,15 @@ def test_gate_brand_seo_audit_drops_failure_codes_outside_fixed_vocabulary():
 
 
 def test_gate_brand_seo_audit_context_isolation():
-    from services.content_generation.s1_from_atom import _GROUNDING_SYSTEM_PROMPT
-
+    # AA-611: the s1-from-atom writer module was removed; assert a distinctive writer-prompt
+    # phrase never leaks into the judge payload instead of importing the deleted constant.
     fake_client = MagicMock()
     fake_client.invoke_model.return_value = _bedrock_response(json.dumps({"status": "pass", "failure_codes": []}))
     with patch("services.acp_produce.judge_client.boto3.client", return_value=fake_client):
         gate_brand_seo_audit("piece text", "brand rubric text")
 
     sent_body = json.loads(fake_client.invoke_model.call_args.kwargs["body"])
-    assert _GROUNDING_SYSTEM_PROMPT not in json.dumps(sent_body)
+    assert "CLOSED WORLD RULE" not in json.dumps(sent_body)
 
 
 def test_gate_brand_seo_audit_includes_notes_alongside_failure_codes():

@@ -61,31 +61,8 @@ def test_detect_regression_s1_old_missing_scores_not_flagged():
     assert _detect_regression("s1_old", current, baseline) is False
 
 
-# ── _detect_regression: s1_from_atom (gate pass rate) ────────────────────────
-
-def test_detect_regression_s1_from_atom_no_baseline_is_never_a_regression():
-    current = {"gate_pass_count": 2}
-    assert _detect_regression("s1_from_atom", current, None) is False
-
-
-def test_detect_regression_s1_from_atom_same_pass_count_not_flagged():
-    current = {"gate_pass_count": 4}
-    baseline = {"gate_pass_count": 4}
-    assert _detect_regression("s1_from_atom", current, baseline) is False
-
-
-def test_detect_regression_s1_from_atom_fewer_passes_flagged():
-    """A tour that used to clear the grounding gate now failing it is a hard correctness
-    regression, not noise — any drop counts, unlike s1_old's numeric threshold."""
-    current = {"gate_pass_count": 3}
-    baseline = {"gate_pass_count": 4}
-    assert _detect_regression("s1_from_atom", current, baseline) is True
-
-
-def test_detect_regression_s1_from_atom_more_passes_not_flagged():
-    current = {"gate_pass_count": 4}
-    baseline = {"gate_pass_count": 3}
-    assert _detect_regression("s1_from_atom", current, baseline) is False
+# (AA-611: the s1_from_atom eval pipeline + its _detect_regression gate-pass-rate branch were
+# removed with the dead writer module — only the s1_old numeric-threshold branch remains.)
 
 
 # ── _download_golden_tours: real openpyxl parsing, no mocked DataFrame ──────
