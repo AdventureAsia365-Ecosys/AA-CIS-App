@@ -71,7 +71,7 @@ function StageLeaf({ b }: { b: Branch }) {
           call carries no visual noise. */}
       {b.truncated_count > 0 && (
         <Badge color="amber">
-          {b.truncated_count} bị cắt (max_tokens)
+          {b.truncated_count} truncated (max_tokens)
         </Badge>
       )}
       <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
@@ -153,7 +153,7 @@ export default function LlmUsagePage() {
     fetch(`/api/admin/llm-usage/tree?days=${d}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => { setBranches(data.branches); setError(""); })
-      .catch(() => setError("Không tải được dữ liệu usage"))
+      .catch(() => setError("Failed to load usage data"))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(days); }, [days, load]);
@@ -187,19 +187,19 @@ export default function LlmUsagePage() {
               LLM Usage
             </h1>
             <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>
-              Cost + chất lượng mỗi lượt gọi LLM thật, theo Tenant → Model → Stage
+              Cost + quality of every real LLM call, by Tenant → Model → Stage
             </div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             {DAY_OPTIONS.map(d => (
               <Btn key={d} size="sm" variant={days === d ? "primary" : "secondary"} onClick={() => setDays(d)}>
-                {d} ngày
+                {d} days
               </Btn>
             ))}
           </div>
         </div>
 
-        {loading && <LoadingScreen msg="Đang tải usage…" />}
+        {loading && <LoadingScreen msg="Loading usage…" />}
 
         {!loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
@@ -211,7 +211,7 @@ export default function LlmUsagePage() {
         {!loading && !error && branches && branches.length === 0 && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.muted, fontSize: 13 }}>
-              Chưa có dữ liệu — sẽ xuất hiện sau khi có lượt gọi LLM thật trong {days} ngày qua.
+              No data yet — this will appear once there are real LLM calls in the last {days} days.
             </div>
           </Card>
         )}
@@ -219,17 +219,17 @@ export default function LlmUsagePage() {
         {!loading && !error && branches && branches.length > 0 && (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 20 }}>
-              <StatCard label="Tổng chi phí" value={fmtUsd(totalCost)} sub={`${days} ngày qua`} />
-              <StatCard label="Tổng lượt gọi" value={String(totalCalls)} />
+              <StatCard label="Total cost" value={fmtUsd(totalCost)} sub={`last ${days} days`} />
+              <StatCard label="Total calls" value={String(totalCalls)} />
               <StatCard label="Tenant" value={String(byTenant.size)} />
-              <StatCard label="Tỷ lệ pass (gate/judge)"
+              <StatCard label="Pass rate (gate/judge)"
                         value={eligible > 0 ? `${Math.round((ok / eligible) * 100)}%` : "—"}
-                        sub={eligible > 0 ? `${ok}/${eligible} lượt có tín hiệu pass/fail` : "chưa có stage nào đo được"} />
+                        sub={eligible > 0 ? `${ok}/${eligible} calls with a pass/fail signal` : "no stage measured yet"} />
               {/* AA-493 — stop_reason="max_tokens" tách được khỏi lượt hoàn tất bình thường,
                   lần đầu tiên đo được thật (trước đây field này bị vứt đi im lặng). */}
-              <StatCard label="Bị cắt (max_tokens)"
+              <StatCard label="Truncated (max_tokens)"
                         value={String(truncated)}
-                        sub={totalCalls > 0 ? `${Math.round((truncated / totalCalls) * 100)}% tổng lượt gọi` : undefined} />
+                        sub={totalCalls > 0 ? `${Math.round((truncated / totalCalls) * 100)}% of total calls` : undefined} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {[...byTenant.entries()].map(([label, bs]) => (

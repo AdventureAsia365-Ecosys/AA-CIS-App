@@ -430,7 +430,7 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setError(d.detail ?? "Lưu thất bại");
+        setError(d.detail ?? "Save failed");
         setModelId(row.model_id);
         setAccountRoute(row.account_route ?? "");
         return;
@@ -440,7 +440,7 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 3000);
     } catch {
-      setError("Lỗi mạng — không đổi model");
+      setError("Network error — model not changed");
       setModelId(row.model_id);
       setAccountRoute(row.account_route ?? "");
     } finally {
@@ -471,7 +471,7 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
       >
         {row.options.map(o => (
           <option key={o.model_id} value={o.model_id} disabled={!o.available}>
-            {o.label}{!o.available ? " — chưa dùng được" : ""}
+            {o.label}{!o.available ? " — not available" : ""}
           </option>
         ))}
       </select>
@@ -501,14 +501,14 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
       )}
 
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-        {savedFlash && <span style={{ fontSize: 11.5, color: A.green, fontWeight: 600 }}>Đã lưu ✓</span>}
+        {savedFlash && <span style={{ fontSize: 11.5, color: A.green, fontWeight: 600 }}>Saved ✓</span>}
         {error && <span style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
         <span style={{ fontSize: 10.5, color: A.muted2 }}>
           {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"} · {row.updated_by}
         </span>
         <Btn variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
           {saving ? <Spinner size={12} /> : <Save size={12} />}
-          {saving ? "Đang lưu…" : "Lưu"}
+          {saving ? "Saving…" : "Save"}
         </Btn>
       </div>
 
@@ -519,11 +519,11 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
         }}>
           <Card style={{ maxWidth: 440, width: "90%" }}>
             <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, marginBottom: 8 }}>
-              Đổi model cho <span style={{ fontFamily: mono }}>{row.stage}</span>?
+              Change model for <span style={{ fontFamily: mono }}>{row.stage}</span>?
             </div>
             <p style={{ fontSize: 12.5, color: A.muted, marginBottom: 12 }}>
-              Đổi model ảnh hưởng TOÀN HỆ THỐNG (mọi lượt gọi LLM ở stage này, không chỉ của bạn) —
-              có hiệu lực ngay lần gọi tiếp theo, không cần deploy lại.
+              Changing the model affects the ENTIRE SYSTEM (every LLM call at this stage, not just
+              yours) — it takes effect on the next call, no redeploy needed.
             </p>
             <div style={{
               background: A.line2, borderRadius: 8, padding: "10px 12px",
@@ -534,8 +534,8 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
               {modelLabel(modelId)}{accountRoute ? ` (${acctLabel(accountRoute)})` : ""}
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="secondary" size="sm" onClick={() => setConfirming(false)}>Huỷ</Btn>
-              <Btn variant="primary" size="sm" onClick={confirmSave}>Xác nhận đổi</Btn>
+              <Btn variant="secondary" size="sm" onClick={() => setConfirming(false)}>Cancel</Btn>
+              <Btn variant="primary" size="sm" onClick={confirmSave}>Confirm change</Btn>
             </div>
           </Card>
         </div>
@@ -554,7 +554,7 @@ function ModelsTab() {
     fetch("/api/admin/llm-config")
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(d => { setRows(d.stages); setError(""); })
-      .catch(() => setError("Không tải được cấu hình model"))
+      .catch(() => setError("Failed to load model configuration"))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -563,7 +563,7 @@ function ModelsTab() {
     setRows(prev => prev ? prev.map(r => r.stage === updated.stage ? { ...r, ...updated } : r) : prev);
   }
 
-  if (loading) return <LoadingScreen msg="Đang tải cấu hình model…" />;
+  if (loading) return <LoadingScreen msg="Loading model configuration…" />;
   if (error || !rows) {
     return (
       <Card style={{ textAlign: "center", padding: 40 }}>
@@ -577,8 +577,9 @@ function ModelsTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-        Chỉ admin (aa_internal) đổi được model ở đây — tenant không có quyền. Model bị chặn (vd.
-        GPT-5.6) vẫn hiện trong danh sách kèm lý do, không ẩn hoàn toàn, để biết roadmap.
+        Only admins (aa_internal) can change models here — tenants have no access. Blocked models
+        (e.g. GPT-5.6) still appear in the list with a reason rather than being hidden entirely, so
+        you can see the roadmap.
       </p>
       {STAGE_GROUPS.map(group => (
         <Card key={group.key}>
