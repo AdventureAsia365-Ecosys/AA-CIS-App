@@ -1,28 +1,26 @@
 """
 services/eval/regression.py — AA-289 Part B: on-demand prompt-regression eval gate.
 
-Runs the REAL pipelines (v1_pipeline._rewrite_tour for S1-old,
-content_generation.s1_from_atom.generate_s1_from_atom for S1-from-atom) against a fixed
-tour set, tags the result with prompt_version, and compares against the most recent PRIOR
-shared.prompt_eval_runs row for that pipeline with a DIFFERENT prompt_version (its baseline).
-Writes its own result row either way — the first-ever run for a pipeline has nothing to
-compare against yet and just establishes a baseline (not a failure).
+Runs the REAL S1-old pipeline (v1_pipeline._rewrite_tour) against a fixed tour set, tags the
+result with prompt_version, and compares against the most recent PRIOR shared.prompt_eval_runs
+row for that pipeline with a DIFFERENT prompt_version (its baseline). Writes its own result row
+either way — the first-ever run for a pipeline has nothing to compare against yet and just
+establishes a baseline (not a failure).
+
+(AA-611: the parallel S1-from-atom pipeline was removed — that writer was dead code with no
+real callers, so its eval branch and fixture tour set are gone with it.)
 
 ON-DEMAND ONLY (AA-289 explicit constraint): this module has no scheduler of its own. It is
 invoked either directly (python -m services.eval.regression) via ECS exec, or by
 .github/workflows/eval-regression.yml, which is workflow_dispatch-only — no `schedule:`
-trigger. Real LLM cost every run (Bedrock Haiku/GPT-4.1 for S1-old, Palmyra for
-S1-from-atom) — do not wire this into any push/PR trigger without AA-287 Budgets alarms
-in place first (Done as of this PR, but "done" != "wire this to run automatically" per the
-issue's own explicit warning).
+trigger. Real LLM cost every run (Bedrock Haiku/GPT-4.1 for S1-old) — do not wire this into
+any push/PR trigger without AA-287 Budgets alarms in place first (Done as of this PR, but
+"done" != "wire this to run automatically" per the issue's own explicit warning).
 
 Fixture sourcing (AA-289 STEP 0 findings):
 - S1-old: CIS_Golden_Tours_20_v1.xlsx, uploaded to
   s3://aa-cis-bronze-005097885195/fixtures/ (the repo's data/ dir is gitignored — the file
   is not committed, so a GitHub-Actions-triggered run has no local copy to read).
-- S1-from-atom: the golden-tours fixture has no atom_id data at all, so it cannot exercise
-  this pipeline. Uses the 4 real curated tours already verified in AA-306 instead
-  (services/content_generation/s1_from_atom.py's own STEP 0/verify tours).
 """
 import argparse
 import asyncio
@@ -48,9 +46,6 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
 # ordinary run-to-run noise of an LLM call.
 S1_OLD_REGRESSION_THRESHOLD = 1.0
 
-# S1-from-atom has no judge/quality_score (STEP 0 finding) — regression there is defined as a
-# hard correctness signal instead of a soft numeric drift on a 4-tour sample: any tour that
-# used to pass the grounding gate now failing it, or the gate pass rate dropping at all.
 # AA-353: >=9 days is AA-339's own "dài-dày" (long-dense) threshold, quoted directly from that
 # issue's Lane A description ("Tour dài (>9-10 ngày, chi tiết)"). AA-339 also used a human
 # categorical medium/thin split on a dedicated 30-tour set that is not in this repo and can't be
@@ -63,13 +58,6 @@ ITINERARY_LONG_TOUR_DAY_THRESHOLD = 9
 ITINERARY_BASELINE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "baselines", "itinerary_compression_baseline.json",
 )
-
-S1_FROM_ATOM_TOUR_IDS = [
-    "c410a272-cac2-486d-9911-a5a73f5365d2",   # Classic Exploration, 21 atoms
-    "cc2eca43-5422-4783-8a60-53cf0aef3003",   # Classic Exploration, 18 atoms
-    "a3afaed4-4492-45d7-9a41-ff60314d4439",   # A sea of coral, Prayers of Uminchu fishermen, 6 atoms
-    "296abe67-80e6-43c8-81af-2088b111d31f",   # Yaksa Trek BEST DEAL, 2 atoms (thin-trip edge case)
-]
 
 
 def _download_golden_tours() -> list[dict]:
@@ -211,71 +199,6 @@ async def run_s1_old_eval() -> dict:
     }
 
 
-async def run_s1_from_atom_eval(pool) -> dict:
-    from services.content_generation.s1_from_atom import GroundingError, generate_s1_from_atom
-
-    per_tour = []
-    words_per_citation_values = []
-    prompt_versions = set()
-    total_cost_input_tokens = 0
-    total_output_tokens = 0
-
-    for i, tour_id in enumerate(S1_FROM_ATOM_TOUR_IDS):
-        if i > 0:
-            # AA-306 STEP 0 (live-verified finding, not a guess): acc2 Palmyra throttles on
-            # back-to-back sequential InvokeModel calls with no gap — botocore's built-in
-            # retry alone was not enough in that verify run either. No published RPM/TPM
-            # number exists for this model; this delay is empirically what worked there.
-            await asyncio.sleep(25)
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT src_name, country FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
-                tour_id,
-            )
-        tour = {"name": row["src_name"], "country": row["country"]} if row else {"name": "", "country": ""}
-        try:
-            result = await generate_s1_from_atom(tour_id, tour, pool, model_tier="palmyra")
-            per_tour.append({
-                "tour_id": tour_id, "name": tour["name"], "status": "passed",
-                "words_per_citation": result["gate"]["words_per_citation"],
-                "prompt_version": result["prompt_version"],
-            })
-            words_per_citation_values.append(result["gate"]["words_per_citation"])
-            prompt_versions.add(result["prompt_version"])
-            total_cost_input_tokens += result["input_tokens"]
-            total_output_tokens += result["output_tokens"]
-        except GroundingError as e:
-            per_tour.append({
-                "tour_id": tour_id, "name": tour["name"], "status": "gate_failed",
-                "error": str(e), "prompt_version": e.prompt_version,
-            })
-            if e.prompt_version:
-                prompt_versions.add(e.prompt_version)
-        logger.info("eval_s1_from_atom_tour_done", tour_id=tour_id, status=per_tour[-1]["status"])
-
-    if len(prompt_versions) > 1:
-        logger.warning("eval_s1_from_atom_prompt_version_mismatch", versions=list(prompt_versions))
-
-    pass_count = sum(1 for t in per_tour if t["status"] == "passed")
-    avg_wpc = (
-        round(sum(words_per_citation_values) / len(words_per_citation_values), 2)
-        if words_per_citation_values else None
-    )
-    return {
-        "pipeline": "s1_from_atom",
-        "prompt_version": next(iter(prompt_versions), None) or "",
-        "tour_count": len(S1_FROM_ATOM_TOUR_IDS),
-        "avg_words_per_citation": avg_wpc,
-        "gate_pass_count": pass_count,
-        "gate_fail_count": len(S1_FROM_ATOM_TOUR_IDS) - pass_count,
-        # No real $-rate for Palmyra confirmed yet (AA-289 STEP 0 didn't chase Bedrock's
-        # Writer-model pricing page) — token counts only, not fabricated into a cost_usd number.
-        "cost_usd": None,
-        "details": {"per_tour": per_tour, "input_tokens": total_cost_input_tokens,
-                     "output_tokens": total_output_tokens},
-    }
-
-
 async def _get_baseline(conn, pipeline: str, current_prompt_version: str):
     """Returns a plain dict (not an asyncpg.Record) so avg_quality_score can be normalized to a
     Python float right here, at the read point — Postgres NUMERIC comes back as decimal.Decimal,
@@ -306,14 +229,10 @@ async def _get_baseline(conn, pipeline: str, current_prompt_version: str):
 def _detect_regression(pipeline: str, current: dict, baseline) -> bool:
     if baseline is None:
         return False  # first-ever run for this pipeline — nothing to regress against
-    if pipeline == "s1_old":
-        if current["avg_quality_score"] is None or baseline["avg_quality_score"] is None:
-            return False
-        return (baseline["avg_quality_score"] - current["avg_quality_score"]) > S1_OLD_REGRESSION_THRESHOLD
-    # s1_from_atom: any drop in gate pass rate vs baseline's pass rate on the same fixed 4-tour set
-    if baseline["gate_pass_count"] is None:
+    # s1_old: an absolute-point drop in avg_quality_score beyond the threshold is a regression.
+    if current["avg_quality_score"] is None or baseline["avg_quality_score"] is None:
         return False
-    return current["gate_pass_count"] < baseline["gate_pass_count"]
+    return (baseline["avg_quality_score"] - current["avg_quality_score"]) > S1_OLD_REGRESSION_THRESHOLD
 
 
 async def _write_eval_run(conn, result: dict, baseline, regression: bool, triggered_by: str) -> None:
@@ -340,8 +259,6 @@ async def run_eval(pipeline: str, triggered_by: str = "manual",
     try:
         if pipeline == "s1_old":
             result = await run_s1_old_eval()
-        elif pipeline == "s1_from_atom":
-            result = await run_s1_from_atom_eval(pool)
         else:
             raise ValueError(f"Unknown pipeline: {pipeline!r}")
 
@@ -370,7 +287,7 @@ async def run_eval(pipeline: str, triggered_by: str = "manual",
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="AA-289 on-demand prompt regression eval gate")
-    parser.add_argument("--pipeline", choices=["s1_old", "s1_from_atom", "both"], required=True)
+    parser.add_argument("--pipeline", choices=["s1_old"], default="s1_old")
     parser.add_argument("--triggered-by", default="manual")
     parser.add_argument(
         "--capture-itinerary-baseline", action="store_true",
@@ -381,16 +298,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    pipelines = ["s1_old", "s1_from_atom"] if args.pipeline == "both" else [args.pipeline]
-    any_regression = False
-    for p in pipelines:
-        result = asyncio.run(run_eval(
-            p, triggered_by=args.triggered_by,
-            capture_itinerary_baseline=args.capture_itinerary_baseline,
-        ))
-        print(json.dumps(result, indent=2, default=str))
-        any_regression = any_regression or result["regression_detected"]
-        any_regression = any_regression or result.get("itinerary_regression_detected", False)
+    result = asyncio.run(run_eval(
+        args.pipeline, triggered_by=args.triggered_by,
+        capture_itinerary_baseline=args.capture_itinerary_baseline,
+    ))
+    print(json.dumps(result, indent=2, default=str))
+    any_regression = result["regression_detected"]
+    any_regression = any_regression or result.get("itinerary_regression_detected", False)
 
     return 1 if any_regression else 0
 

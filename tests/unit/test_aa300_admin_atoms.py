@@ -85,7 +85,7 @@ def _atom_row(**over):
         "text": "Crossing the bamboo bridge at Ta Van village", "activity_type": "trek",
         "emotional_hook": None, "visual_potential": 2, "distinctiveness": "LOW",
         "media": '{"has_photo": false, "has_video": false, "media_refs": []}',
-        "starred": False, "deleted": False,
+        "deleted": False,
         "created_at": "2026-07-01T00:00:00", "updated_at": "2026-07-01T00:00:00",
         "unreviewed": True, "tour_atom_count": 4,
     }
@@ -383,21 +383,6 @@ class TestListAtoms:
 
 class TestPatchAtom:
     @pytest.mark.asyncio
-    async def test_star_atom(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _atom_row(starred=True)
-        pool = _make_pool(conn)
-        request = _make_request(pool)
-
-        body = admin_atoms.AtomPatchRequest(starred=True)
-        result = await admin_atoms.patch_atom(
-            "atom_abc1234567", body, request, owner_scope=None)
-        assert result["starred"] is True
-        query, *params = conn.fetchrow.call_args[0]
-        assert "starred = $1" in query
-        assert "updated_at = now()" in query
-
-    @pytest.mark.asyncio
     async def test_soft_delete_atom(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = _atom_row(deleted=True)
@@ -450,7 +435,7 @@ class TestPatchAtom:
         conn.fetchrow.return_value = None
         pool = _make_pool(conn)
         request = _make_request(pool)
-        body = admin_atoms.AtomPatchRequest(starred=True)
+        body = admin_atoms.AtomPatchRequest(text="edited")
         with pytest.raises(HTTPException) as exc:
             await admin_atoms.patch_atom("atom_nonexistent", body, request, owner_scope=None)
         assert exc.value.status_code == 404
@@ -461,7 +446,7 @@ class TestPatchAtom:
         conn.fetchrow.return_value = _atom_row()
         pool = _make_pool(conn)
         request = _make_request(pool)
-        body = admin_atoms.AtomPatchRequest(starred=True)
+        body = admin_atoms.AtomPatchRequest(text="edited")
         await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
         query = conn.fetchrow.call_args[0][0]
         assert "NOT is_empty_marker" in query
@@ -473,11 +458,11 @@ class TestPatchAtom:
     @pytest.mark.asyncio
     async def test_tenant_owner_scope_adds_where_clause(self):
         conn = AsyncMock()
-        conn.fetchrow.return_value = _atom_row(starred=True)
+        conn.fetchrow.return_value = _atom_row(text="edited")
         pool = _make_pool(conn)
         request = _make_request(pool)
         tenant_id = str(uuid.uuid4())
-        body = admin_atoms.AtomPatchRequest(starred=True)
+        body = admin_atoms.AtomPatchRequest(text="edited")
 
         await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=tenant_id)
         query, *params = conn.fetchrow.call_args[0]
@@ -492,7 +477,7 @@ class TestPatchAtom:
         conn.fetchrow.return_value = None  # WHERE atom_id=... AND owner_scope=... matches 0 rows
         pool = _make_pool(conn)
         request = _make_request(pool)
-        body = admin_atoms.AtomPatchRequest(starred=True)
+        body = admin_atoms.AtomPatchRequest(text="edited")
 
         with pytest.raises(HTTPException) as exc:
             await admin_atoms.patch_atom(
@@ -650,8 +635,8 @@ class TestAtomsSummary:
 
 class TestDeleteTriggersRecompute:
     """AA-564 3.1 (decision 2, AA-563) — curating `deleted` fires Segment/Score/Route recompute
-    for that atom's tour; `starred`-only never does (confirmed AA-552/563: starred doesn't affect
-    Segment eligibility)."""
+    for that atom's tour; a `text`-only edit never does (only `deleted` affects Segment
+    eligibility, `WHERE NOT ta.deleted`). AA-609 removed the old `starred` flag entirely."""
 
     @pytest.mark.asyncio
     async def test_deleted_true_fires_recompute_for_that_tour(self):
@@ -689,14 +674,14 @@ class TestDeleteTriggersRecompute:
         m_recompute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_starred_only_does_not_fire_recompute(self):
+    async def test_text_only_edit_does_not_fire_recompute(self):
         conn = AsyncMock()
-        conn.fetchrow.return_value = _atom_row(starred=True)
+        conn.fetchrow.return_value = _atom_row(text="edited")
         pool = _make_pool(conn)
         request = _make_request(pool)
 
         with patch("services.export.handler.recompute_segment_score_route", AsyncMock()) as m_recompute:
-            body = admin_atoms.AtomPatchRequest(starred=True)
+            body = admin_atoms.AtomPatchRequest(text="edited")
             await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
             await asyncio.sleep(0)
 

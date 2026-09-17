@@ -46,7 +46,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Star, Trash2, ChevronDown, ChevronRight, Layers, Milestone,
+  Trash2, ChevronDown, ChevronRight, Layers, Milestone,
 } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
@@ -132,7 +132,6 @@ interface Atom {
   text: string;
   activity_type: string | null;
   distinctiveness: "HIGH" | "MED" | "LOW";
-  starred: boolean;
   deleted: boolean;
   unreviewed: boolean;
   segment_id: string | null;
@@ -174,9 +173,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
   // AA-554 B.6 — Tours sidebar "Load more" window (client-side; `summary.by_tour` already
   // arrives whole from GET /admin/atoms/summary, no backend pagination to wire).
   const [toursShown, setToursShown] = useState(TOURS_PAGE_SIZE);
-  // AA-554 D.9 — bulk-star selection, cleared whenever the atom list itself reloads.
-  const [selectedAtomIds, setSelectedAtomIds] = useState<Set<string>>(new Set());
-  const [bulkStarring, setBulkStarring] = useState(false);
   // AA-564 3.2 — manual atomize backfill (decision 1, AA-563: atomize has exactly ONE automatic
   // trigger, a fresh publish — any tour that entered Master Content another way, or before that
   // trigger existed, never gets atomized on its own).
@@ -243,16 +239,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
       .finally(() => { setAtomsLoading(false); setLoadingMore(false); });
   }, [distinctiveness, unreviewedOnly, selectedTour, lifecycleFilter]);
 
-  useEffect(() => { loadAtoms(0, false); setSelectedAtomIds(new Set()); }, [loadAtoms]);
-
-  async function toggleStar(atom: Atom) {
-    const next = !atom.starred;
-    setAtoms(prev => prev.map(a => (a.atom_id === atom.atom_id ? { ...a, starred: next } : a)));
-    await fetch(`/api/admin/atoms/${atom.atom_id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ starred: next }),
-    });
-  }
+  useEffect(() => { loadAtoms(0, false); }, [loadAtoms]);
 
   async function deleteAtom(atom: Atom) {
     if (!confirm("Remove this atom from the curated pool? It will no longer be used for any tenant's content going forward.")) return;
@@ -262,28 +249,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
       body: JSON.stringify({ deleted: true }),
     });
     onSummaryChange();
-  }
-
-  function toggleSelect(atomId: string) {
-    setSelectedAtomIds(prev => {
-      const next = new Set(prev);
-      next.has(atomId) ? next.delete(atomId) : next.add(atomId);
-      return next;
-    });
-  }
-
-  // AA-554 D.9 — bulk-star: confirmed safe via AA-552 mục 2e (star is a single boolean UPDATE,
-  // triggers no downstream recompute) — fired in parallel, same PATCH each single-star click uses.
-  async function starSelected() {
-    setBulkStarring(true);
-    const ids = Array.from(selectedAtomIds);
-    setAtoms(prev => prev.map(a => (selectedAtomIds.has(a.atom_id) ? { ...a, starred: true } : a)));
-    await Promise.all(ids.map(id => fetch(`/api/admin/atoms/${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ starred: true }),
-    })));
-    setSelectedAtomIds(new Set());
-    setBulkStarring(false);
   }
 
   const breakdown = summary?.distinctiveness_breakdown ?? { HIGH: 0, MED: 0, LOW: 0 };
@@ -426,12 +391,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                   <input type="checkbox" checked={unreviewedOnly} onChange={e => setUnreviewedOnly(e.target.checked)} />
                   Unreviewed only
                 </label>
-                {/* AA-554 D.9 — bulk-star, visible once at least 1 atom is checked. */}
-                {selectedAtomIds.size > 0 && (
-                  <Btn variant="secondary" size="sm" disabled={bulkStarring} onClick={starSelected}>
-                    <Star size={12} /> {bulkStarring ? "Starring…" : `Star selected (${selectedAtomIds.size})`}
-                  </Btn>
-                )}
               </div>
               {/* AA-554 C.8 — schema supports phasing_out/retired but every tour currently loaded
                   is "active" — this note is computed from the real, currently-loaded Tours list
@@ -450,8 +409,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {groupBySegment(atoms).map(row =>
                     row.kind === "atom" ? (
-                      <AtomCard key={row.atom.atom_id} atom={row.atom} showTour={!selectedTour} onStar={toggleStar} onDelete={deleteAtom}
-                        selected={selectedAtomIds.has(row.atom.atom_id)} onToggleSelect={toggleSelect} />
+                      <AtomCard key={row.atom.atom_id} atom={row.atom} showTour={!selectedTour} onDelete={deleteAtom} />
                     ) : (
                       <SegmentGroup key={row.segmentId} place={row.place} action={row.action} atoms={row.atoms}
                         score={row.score} routeHubName={row.routeHubName} showTour={!selectedTour}
@@ -461,8 +419,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                           next.has(row.segmentId) ? next.delete(row.segmentId) : next.add(row.segmentId);
                           return next;
                         })}
-                        onStar={toggleStar} onDelete={deleteAtom}
-                        selectedIds={selectedAtomIds} onToggleSelect={toggleSelect} />
+                        onDelete={deleteAtom} />
                     )
                   )}
                 </div>
@@ -515,16 +472,12 @@ function groupBySegment(atoms: Atom[]): AtomRow[] {
   return rows;
 }
 
-function AtomCard({ atom, showTour, onStar, onDelete, selected, onToggleSelect }: {
-  atom: Atom; showTour: boolean; onStar: (a: Atom) => void; onDelete: (a: Atom) => void;
-  selected: boolean; onToggleSelect: (atomId: string) => void;
+function AtomCard({ atom, showTour, onDelete }: {
+  atom: Atom; showTour: boolean; onDelete: (a: Atom) => void;
 }) {
   return (
-    <Card style={{ padding: "14px 18px", ...(selected ? { border: `1px solid ${A.gold}` } : {}) }}>
+    <Card style={{ padding: "14px 18px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-        {/* AA-554 D.9 — bulk-select checkbox. */}
-        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(atom.atom_id)}
-          style={{ marginTop: 3, flexShrink: 0, cursor: "pointer" }} title="Select for bulk star" />
         <div style={{ flex: 1, minWidth: 0 }}>
           {showTour && <div style={{ fontSize: 11, color: A.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>}
           <div style={{ fontSize: 13.5, color: A.body, lineHeight: 1.5 }}>{atom.text}</div>
@@ -545,10 +498,6 @@ function AtomCard({ atom, showTour, onStar, onDelete, selected, onToggleSelect }
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button onClick={() => onStar(atom)} title={atom.starred ? "Unstar" : "Star"}
-            style={{ background: atom.starred ? A.goldTint : "none", border: `1px solid ${atom.starred ? A.gold : A.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: atom.starred ? A.gold : A.muted2, display: "flex" }}>
-            <Star size={14} fill={atom.starred ? A.gold : "none"} />
-          </button>
           <button onClick={() => onDelete(atom)} title="Remove"
             style={{ background: "none", border: `1px solid ${A.line}`, borderRadius: 6, padding: 6, cursor: "pointer", color: A.red, display: "flex" }}>
             <Trash2 size={14} />
@@ -559,10 +508,9 @@ function AtomCard({ atom, showTour, onStar, onDelete, selected, onToggleSelect }
   );
 }
 
-function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, collapsed, onToggle, onStar, onDelete, selectedIds, onToggleSelect }: {
+function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, collapsed, onToggle, onDelete }: {
   place: string; action: string; atoms: Atom[]; score: number | null; routeHubName: string | null;
-  showTour: boolean; collapsed: boolean; onToggle: () => void; onStar: (a: Atom) => void; onDelete: (a: Atom) => void;
-  selectedIds: Set<string>; onToggleSelect: (atomId: string) => void;
+  showTour: boolean; collapsed: boolean; onToggle: () => void; onDelete: (a: Atom) => void;
 }) {
   return (
     <div style={{ border: `1px solid ${A.line}`, borderRadius: 10, overflow: "hidden" }}>
@@ -587,8 +535,7 @@ function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, col
       </button>
       {!collapsed && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8, background: A.card }}>
-          {atoms.map(atom => <AtomCard key={atom.atom_id} atom={atom} showTour={showTour} onStar={onStar} onDelete={onDelete}
-            selected={selectedIds.has(atom.atom_id)} onToggleSelect={onToggleSelect} />)}
+          {atoms.map(atom => <AtomCard key={atom.atom_id} atom={atom} showTour={showTour} onDelete={onDelete} />)}
         </div>
       )}
     </div>

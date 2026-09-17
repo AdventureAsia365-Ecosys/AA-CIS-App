@@ -84,39 +84,8 @@ def test_generate_node_prompt_log_still_carries_prompt_len_for_backward_compat()
     assert isinstance(built.get("prompt_len"), int) and built["prompt_len"] > 0
 
 
-# ── 2. s1_from_atom.py gets the same log point (previously had none) ──────────────────────────
-
-def test_generate_s1_from_atom_logs_full_prompt_text():
-    import asyncio
-    from services.content_generation import s1_from_atom
-
-    atoms = [{"atom_id": "atom_abc123", "text": "The bamboo bridge crosses the valley."}]
-
-    fake_draft = {
-        "text": json.dumps({
-            "description": "A trek across the valley [R:atom_abc123].",
-            "highlights": [],
-        }),
-        "model_used": "satellite-sonnet-4-6", "provider": "bedrock-satellite",
-        "input_tokens": 80, "output_tokens": 40,
-    }
-
-    async def _run():
-        with patch.object(s1_from_atom, "fetch_curated_atoms", AsyncMock(return_value=atoms)), \
-             patch.object(s1_from_atom, "generate_draft", MagicMock(return_value=fake_draft)), \
-             capture_logs() as logs:
-            try:
-                await s1_from_atom.generate_s1_from_atom("tour_1", {"name": "Halong Bay"}, pool=MagicMock())
-            except Exception:
-                pass  # gate/parse outcome isn't this test's concern
-            return logs
-
-    logs = asyncio.run(_run())
-    built = next(e for e in logs if e.get("event") == "llm_prompt_built")
-    assert "system_prompt_text" in built and built["system_prompt_text"]
-    assert "user_prompt_text" in built
-    assert "atom_abc123" in built["user_prompt_text"]  # real atom content, not just length
-    assert built.get("prompt_version")
+# ── 2. (AA-611: the s1_from_atom.py prompt-log test was removed with the dead writer module;
+#        graph.py's generate_node log point above is the remaining coverage of this contract.) ──
 
 
 # ── 3. get_tour_history() real bug: bare gc.prompt_version column never existed ────────────────

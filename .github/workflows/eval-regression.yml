@@ -1,9 +1,10 @@
 name: Prompt Regression Eval (on-demand)
 # AA-289 Part B — deliberately workflow_dispatch ONLY. No `schedule:` trigger, no push/PR
-# trigger. Every run costs real LLM money (Bedrock Haiku/GPT-4.1 for S1-old, Palmyra for
-# S1-from-atom) — see services/eval/regression.py's module docstring. Do not add a schedule
-# here without an explicit, separate decision (the issue's own warning: this waited on
-# AA-287 Budgets alarms existing first, not on them existing AND this running automatically).
+# trigger. Every run costs real LLM money (Bedrock Haiku/GPT-4.1 for S1-old) — see
+# services/eval/regression.py's module docstring. Do not add a schedule here without an
+# explicit, separate decision (the issue's own warning: this waited on AA-287 Budgets alarms
+# existing first, not on them existing AND this running automatically).
+# AA-611: the S1-from-atom pipeline was removed (dead code), so only s1_old remains here.
 #
 # Runs INSIDE the live dev ECS task (VPC-private RDS — AA-289 STEP 0 confirmed
 # PubliclyAccessible=False, so a GitHub-hosted runner cannot reach it directly). GitHub
@@ -16,8 +17,8 @@ on:
         description: "Which pipeline to eval"
         required: true
         type: choice
-        options: [s1_old, s1_from_atom, both]
-        default: both
+        options: [s1_old]
+        default: s1_old
       capture_itinerary_baseline:
         description: "AA-353: write this run's worst-day-ratio numbers as the new committed baseline instead of comparing against it (intentional re-baseline only, not routine runs)"
         required: false
