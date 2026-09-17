@@ -88,12 +88,22 @@ async def _rewrite_tour(
     subtitle_focus: str = "standard",
     seo_mode: str = "dataforseo",
     on_stage=None,  # AA-250 B2: optional async callback(node_name: str), fired after each node completes
+    batch_text: Optional[str] = None,  # AA-606: pre-generated writer text (Bedrock Batch attempt-1)
+    batch_model_used: Optional[str] = None,  # AA-606: model label to record for the batch write
+    batch_account: Optional[str] = None,  # AA-606: satellite account the batch ran on (acc1/acc3)
 ) -> dict:
-    """Rewrite single tour using LangGraph."""
-    logger.info("rewriting_tour", idx=idx, total=total, name=tour.get("name", ""))
+    """Rewrite single tour using LangGraph.
+
+    AA-606: when batch_text is set, entry is build_graph_from_generated() — it seeds the pre-written
+    Bedrock Batch attempt-1 output instead of calling the writer live. A gate failure still falls
+    into the on-demand retry loop (generate_node attempt-2/3), so behaviour past the gate is identical.
+    """
+    logger.info("rewriting_tour", idx=idx, total=total, name=tour.get("name", ""),
+                via_batch=batch_text is not None)
 
     try:
-        graph = build_graph()
+        from services.content_generation.graph import build_graph_from_generated
+        graph = build_graph_from_generated() if batch_text is not None else build_graph()
         # P3-S3: Merge brand_rules into initial_state
         _br = brand_rules or {}
         initial_state = {
@@ -130,6 +140,11 @@ async def _rewrite_tour(
             "fix_pass_applied":   False,
             "fix_pass_fields":    [],
         }
+        # AA-606: seed Bedrock Batch attempt-1 output for build_graph_from_generated's seed node.
+        if batch_text is not None:
+            initial_state["batch_text"] = batch_text
+            initial_state["model_used"] = batch_model_used or "satellite-haiku-4-5"
+            initial_state["satellite_account"] = batch_account
 
         # AA-250 B2: stream node-by-node (instead of graph.invoke()) so on_stage can report
         # live progress to shared.pipeline_jobs.current_stage. stream_mode="updates" emits

@@ -1,4 +1,3 @@
-import hashlib
 import json
 import re
 import structlog
@@ -9,7 +8,10 @@ from langgraph.graph import StateGraph, END
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
-from .prompts import SYSTEM_PROMPT, build_rewrite_prompt, parse_source_day_word_counts
+from .prompts import parse_source_day_word_counts
+from .batch_prompt import (
+    build_brand_diff_block, build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
+)
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .judge_node import judge_node
@@ -194,6 +196,10 @@ class ContentState(TypedDict):
     # set by generate_node's _process_itineraries. Must be declared here or LangGraph strips it
     # from node_output before _rewrite_tour ever sees it (same gotcha as judge_score, AA-209).
     itinerary_day_ratios:   list
+    # AA-606: raw writer text from Bedrock Batch attempt-1, consumed by seed_generated_node
+    # (build_graph_from_generated). Declared here so LangGraph doesn't strip it before the seed
+    # node reads it. Absent/None on the normal synchronous build_graph() path.
+    batch_text:             Optional[str]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -250,90 +256,31 @@ _CODE_FIELD_MAP = {
 }
 
 def _build_brand_diff_block(state: ContentState) -> str:
-    """AA-202: build the brand-differentiation system block from brand_* state fields.
-
-    Pure string assembly (no I/O) so it can be unit-tested without LLM/DB. Returns "" when
-    none of the differentiating signals are present (old/default brands) → backward-compatible.
-    """
-    core_idea    = state.get("brand_core_idea", "") or ""
-    cust_segment = state.get("brand_customer_segment", "") or ""
-    cust_mindset = state.get("brand_customer_mindset", "") or ""
-    voice_ex     = [v for v in (state.get("brand_voice_examples") or []) if v]
-    good_ex      = state.get("brand_good_examples", "") or ""
-
-    if not (core_idea or cust_mindset or voice_ex):
-        return ""
-
-    diff_block = "\n\nBRAND DIFFERENTIATION PROFILE (this client's distinct angle — the rewrite MUST reflect it):"
-    if core_idea:
-        diff_block += f"\n- Core idea: {core_idea}"
-    if cust_segment:
-        diff_block += f"\n- Who this is for: {cust_segment}"
-    if cust_mindset:
-        diff_block += f"\n- What this traveller wants: {cust_mindset}"
-    if voice_ex:
-        diff_block += f"\n- Voice (tone words): {', '.join(voice_ex)}"
-    if good_ex:
-        diff_block += f"\n- Example of this brand's voice on a single moment: {good_ex}"
-    diff_block += (
-        "\n\nCONTRAST REQUIREMENT: The summary, highlights, itineraries (including each day-title), "
-        "and the overall framing MUST be written from THIS brand's specific angle and mindset above. "
-        "Do NOT produce generic copy that would fit any travel brand. If the same tour were rewritten "
-        "for a different brand, the wording, emphasis, and framing must be clearly distinct — not a "
-        "synonym swap. Lead with what makes THIS brand's take different."
-    )
-    # AA-206: negative contrast — show the generic register that MUST be avoided so the model has a
-    # concrete anti-pattern, not just an abstract instruction.
-    diff_block += (
-        "\n\nGENERIC PHRASING TO AVOID (these read identically for any brand — do NOT write like this): "
-        "'connects the country's primary cultural regions', 'moves through layered geography', "
-        "'a journey through diverse landscapes', 'experience the best of' — they describe a route, not "
-        "THIS brand's mission. Instead, lead every field with THIS brand's specific mission angle and "
-        "let it shape what you foreground; do not merely synonym-swap a generic description."
-    )
-    return diff_block
+    """AA-202: brand-differentiation system block. AA-606: moved to batch_prompt.build_brand_diff_block
+    (single source of truth) so the Bedrock Batch manifest and the synchronous generate_node produce
+    byte-identical system prompts. Thin re-export kept so existing importers/tests still resolve here."""
+    return build_brand_diff_block(state)
 
 def generate_node(state: ContentState) -> ContentState:
     """Node 1: Generate content via LLMClient."""
     client = LLMClient()
-    prompt = build_rewrite_prompt(
-        state["tour"],
-        state["seo"],
-        state.get("few_shots", []),
-        subtitle_focus=state.get("subtitle_focus", "standard"),
-    )
 
-    # Inject feedback nếu đang retry
+    # AA-606: attempt-1 (system, user) prompt is materialized by the SAME builder the Bedrock Batch
+    # manifest uses (services/content_generation/batch_prompt), so batch and sync writes never drift.
+    system = build_s1_system_prompt(state)
+    prompt = build_s1_user_prompt(state)
+
+    # Inject feedback nếu đang retry — batch attempt-1 never has feedback, so this stays sync-only.
     if state.get("feedback"):
         prompt += f"\n\nPREVIOUS ATTEMPT FEEDBACK:\n{state['feedback']}\nPlease fix these issues."
 
-    # P3-S3: Build system prompt = master-catalog base (SYSTEM_PROMPT) + tenant append
-    brand_sp   = state.get("brand_system_prompt", "") or ""
-    style_guide = state.get("brand_style_guide", "") or ""
-    language   = state.get("rewrite_language", "en-US") or "en-US"
-
-    system = SYSTEM_PROMPT
-    if language == "en-GB":
-        system += (
-            "\n\nLANGUAGE: Use British English spelling and conventions "
-            "(e.g. 'colour', 'travelling', 'organised')."
-        )
-    else:
-        system += "\n\nLANGUAGE: Use American English spelling and conventions."
-    if brand_sp:
-        system += f"\n\nCLIENT BRAND CONTEXT (append only — do not override the base rules above):\n{brand_sp}"
-    # AA-202: inject brand differentiation profile + contrast rule (no-op for old/default brands)
-    system += _build_brand_diff_block(state)
-    if style_guide:
-        prompt += f"\n\nSTYLE GUIDE FOR THIS CLIENT:\n{style_guide}"
-    fw = [w for w in (state.get("brand_forbidden_words") or []) if w]
-    if fw:
-        system += "\n\nFORBIDDEN WORDS (never use): " + ", ".join(fw)
+    brand_sp = state.get("brand_system_prompt", "") or ""
 
     # AA-289: hash the exact system-prompt string sent to the LLM this call — the same string
     # _call_bedrock's use_cache=True path marks with cache_control, so a prompt_version change
     # here is also a cache-key change (a genuinely different prompt SHOULD miss the old cache).
-    prompt_version = hashlib.sha256(system.encode("utf-8")).hexdigest()[:8]
+    # AA-606: via prompt_version_of (batch_prompt) so sync + batch compute the version identically.
+    prompt_version = prompt_version_of(system)
 
     is_branded = bool(brand_sp)
     prompt_len = len(system)
@@ -377,49 +324,31 @@ def generate_node(state: ContentState) -> ContentState:
                 raw = raw[4:]
             raw = raw.strip()
         # AA-217: deterministic json-repair salvage on malformed output (no LLM re-ask).
-        try:
-            generated = json.loads(raw)
-        except json.JSONDecodeError as e:
-            salvaged = repair_json(raw, return_objects=True)
-            if isinstance(salvaged, dict) and salvaged.get("name"):
-                generated = salvaged
-                logger.info("json_repair_salvaged",
-                            tour_id=state.get("tour_id"),
-                            model_used=resp.model_used,
-                            retry_count=state.get("retry_count"),
-                            raw_len=len(raw))
-            else:
-                logger.warning("json_parse_failed",
-                               error=str(e),
-                               raw_len=len(raw),
-                               char_offset=e.pos,
-                               model_used=resp.model_used if resp else None,
-                               fallback_used=resp.fallback_used if resp else None,
-                               retry_count=state.get("retry_count"))
-                record_call_sync(
-                    stage="s1_generate", role="writer", model=resp.model_used,
-                    tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-                    cost_usd=resp.cost_usd, tenant_id=None,
-                    quality_signal={"json_parsed": False, "fallback_used": resp.fallback_used},
-                    stop_reason=getattr(resp, "stop_reason", None),
-                )
-                return {**state, "generated": {}, "is_branded": is_branded,
-                        "cost_usd": state.get("cost_usd", 0) + resp.cost_usd,
-                        "prompt_version": prompt_version,
-                        "cache_read_tokens": state.get("cache_read_tokens", 0) + resp.cache_read_tokens,
-                        "cache_write_tokens": state.get("cache_write_tokens", 0) + resp.cache_write_tokens,
-                        "error": f"JSON parse error: {e}"}
+        # AA-606: shared parse helper (parse_generated_json) so the batch seed path decodes identically.
+        generated = parse_generated_json(raw)
+        if not generated:
+            logger.warning("json_parse_failed",
+                           raw_len=len(raw),
+                           model_used=resp.model_used if resp else None,
+                           fallback_used=resp.fallback_used if resp else None,
+                           retry_count=state.get("retry_count"))
+            record_call_sync(
+                stage="s1_generate", role="writer", model=resp.model_used,
+                tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+                cost_usd=resp.cost_usd, tenant_id=None,
+                quality_signal={"json_parsed": False, "fallback_used": resp.fallback_used},
+                stop_reason=getattr(resp, "stop_reason", None),
+            )
+            return {**state, "generated": {}, "is_branded": is_branded,
+                    "cost_usd": state.get("cost_usd", 0) + resp.cost_usd,
+                    "prompt_version": prompt_version,
+                    "cache_read_tokens": state.get("cache_read_tokens", 0) + resp.cache_read_tokens,
+                    "cache_write_tokens": state.get("cache_write_tokens", 0) + resp.cache_write_tokens,
+                    "error": "JSON parse error"}
         logger.info("content_generated", retry=state.get("retry_count", 0),
                     model=resp.model_used, cost=resp.cost_usd)
         # AA-225: persist keywords thực sự inject vào prompt (khớp prompts.py:61 + validate_node normalize)
-        _seo_used = state.get("seo", {})
-        _kws_raw = _seo_used.get("top_keywords", []) or _seo_used.get("keywords", {}).get("top_keywords", [])
-        _kws_norm = [
-            (kw["keyword"] if isinstance(kw, dict) else str(kw))
-            for kw in _kws_raw[:5] if kw
-        ]
-        if isinstance(generated, dict):
-            generated["seo_keywords_used"] = _kws_norm
+        _apply_seo_keywords_used(generated, state)
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client)
@@ -493,6 +422,73 @@ def _keyword_intent_matched(kw_texts: list[str], field_text: str) -> bool:
         if len(overlap) / len(kw_tokens) >= _DFS_INTENT_OVERLAP_THRESHOLD:
             return True
     return False
+
+
+def parse_generated_json(raw: str) -> Optional[dict]:
+    """AA-606: parse a writer LLM's raw text into the ``generated`` dict, with the SAME markdown-
+    fence strip + AA-217 json-repair salvage generate_node uses inline. Returns None when even the
+    salvage can't produce a dict with a ``name`` (the sync path's own "parse failed" condition).
+
+    Factored out so the Bedrock Batch ingest path (seed_generated_node) decodes batch output byte-
+    identically to the synchronous generate_node — no second, drifting JSON parser."""
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        salvaged = repair_json(raw, return_objects=True)
+        if isinstance(salvaged, dict) and salvaged.get("name"):
+            return salvaged
+        return None
+
+
+def _apply_seo_keywords_used(generated: dict, state: ContentState) -> None:
+    """AA-225: record the keywords actually injected into the prompt onto the generated dict —
+    shared by generate_node and the batch seed node so both persist the same seo_keywords_used."""
+    _seo_used = state.get("seo", {})
+    _kws_raw = _seo_used.get("top_keywords", []) or _seo_used.get("keywords", {}).get("top_keywords", [])
+    _kws_norm = [
+        (kw["keyword"] if isinstance(kw, dict) else str(kw))
+        for kw in _kws_raw[:5] if kw
+    ]
+    if isinstance(generated, dict):
+        generated["seo_keywords_used"] = _kws_norm
+
+
+def seed_generated_node(state: ContentState) -> ContentState:
+    """AA-606: entry node for build_graph_from_generated — nạp text writer đã sinh SẴN bởi Bedrock
+    Batch (attempt-1) vào ``generated``, chạy đúng hậu xử lý generate_node làm (seo_keywords_used +
+    _process_itineraries), rồi để graph chạy tiếp validate → judge → gate như thường.
+
+    state phải chứa ``batch_text`` (raw model text cho tour này). Parse fail → generated={} + error
+    (giống nhánh json_parse_failed của generate_node) → gate sẽ route xuống retry (generate on-demand)
+    hoặc hitl, không crash. model_used/satellite_account lấy từ batch metadata state đã set sẵn."""
+    raw = state.get("batch_text", "") or ""
+    generated = parse_generated_json(raw)
+    if not generated:
+        logger.warning("s1_batch_seed_parse_failed", tour_id=state.get("tour_id"), raw_len=len(raw))
+        return {**state, "generated": {}, "error": "batch JSON parse error"}
+
+    _apply_seo_keywords_used(generated, state)
+    # Reuse the exact itinerary clamp/nudge + serialize the sync path runs. LLMClient() is only used
+    # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
+    _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient())
+    logger.info("s1_batch_seeded", tour_id=state.get("tour_id"),
+                model=state.get("model_used", "batch-haiku"))
+    return {
+        **state,
+        "generated": generated,
+        "is_branded": bool(state.get("brand_system_prompt")),
+        "error": "",
+        "cost_usd": state.get("cost_usd", 0) + _itin_result["extra_cost_usd"],
+        "cache_read_tokens": state.get("cache_read_tokens", 0) + _itin_result["extra_cache_read_tokens"],
+        "cache_write_tokens": state.get("cache_write_tokens", 0) + _itin_result["extra_cache_write_tokens"],
+        "itinerary_day_ratios": _itin_result["day_ratios"],
+    }
 
 
 def validate_node(state: ContentState) -> ContentState:
@@ -871,6 +867,40 @@ def build_graph() -> StateGraph:
     graph.add_edge("generate", "validate")
     # AA-206: GPT-4.1 judge sits between validate and the retry decision so should_retry routes on
     # the judge-adjusted quality_score (Bedrock fixes against judge feedback via the retry loop).
+    graph.add_edge("validate", "llm_judge")
+    graph.add_conditional_edges("llm_judge", should_retry, {
+        "done":  "brand_audit",
+        "retry": "increment_retry",
+        "hitl":  END,
+    })
+    graph.add_edge("brand_audit", "flag_fix")
+    graph.add_edge("flag_fix", "revalidate")
+    graph.add_edge("revalidate", END)
+    graph.add_edge("increment_retry", "generate")
+
+    return graph.compile()
+
+
+def build_graph_from_generated() -> StateGraph:
+    """AA-606: same S1 graph, but entry is seed_generated (nạp Bedrock Batch attempt-1 output)
+    instead of a live generate call. Everything downstream is byte-identical to build_graph():
+    validate → judge → gate → brand_audit → flag_fix → revalidate, and the retry loop still routes
+    a gate failure back through the ON-DEMAND generate_node (attempt-2/3) — so a tour the batch
+    write couldn't get past the gate is repaired exactly as the synchronous path would, no batch
+    round-2. initial_state must carry ``batch_text`` (the raw writer text for this tour)."""
+    graph = StateGraph(ContentState)
+
+    graph.add_node("seed_generated", seed_generated_node)
+    graph.add_node("generate", generate_node)  # only reached via the retry loop (attempt-2/3)
+    graph.add_node("validate", validate_node)
+    graph.add_node("llm_judge", judge_node)
+    graph.add_node("increment_retry", increment_retry)
+    graph.add_node("brand_audit", brand_audit_node)
+    graph.add_node("flag_fix", flag_fix_node)
+    graph.add_node("revalidate", revalidate_node)
+
+    graph.set_entry_point("seed_generated")
+    graph.add_edge("seed_generated", "validate")
     graph.add_edge("validate", "llm_judge")
     graph.add_conditional_edges("llm_judge", should_retry, {
         "done":  "brand_audit",
