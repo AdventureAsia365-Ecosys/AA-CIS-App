@@ -357,7 +357,7 @@ export default function ExternalSpendPage() {
                         <CartesianGrid strokeDasharray="3 3" stroke={A.line2} vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: A.muted }} stroke={A.line} />
                         <YAxis tick={{ fontSize: 11, fill: A.muted }} stroke={A.line} tickFormatter={(v) => `$${v}`} />
-                        <Tooltip {...CHART_TOOLTIP} formatter={(v: number) => fmtUsd(v)} />
+                        <Tooltip {...CHART_TOOLTIP} formatter={(v) => fmtUsd(Number(v) || 0)} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Area type="monotone" dataKey="llm" name="LLM" stackId="1" stroke={A.gold} fill={`${A.gold}55`} />
                         <Area type="monotone" dataKey="dfs" name="DataForSEO" stackId="1" stroke={A.green} fill={`${A.green}55`} />
