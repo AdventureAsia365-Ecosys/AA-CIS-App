@@ -170,7 +170,10 @@ async def get_llm_usage_tree(request: Request, days: int = Query(30, ge=1, le=36
     return {"days": days, "branches": branches}
 
 
-@router.get("/llm-usage/calls", summary="AA-505 — flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down")
+@router.get(
+    "/llm-usage/calls",
+    summary="AA-505 flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down",
+)
 async def get_llm_usage_calls(
     request: Request,
     content_piece_id: Optional[str] = None,
