@@ -65,13 +65,23 @@ interface StageConfig {
 }
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
-const ACCOUNTS = ["acc3", "acc1", "acc2", "unknown"] as const;
+const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "unknown"] as const;
 const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
-  acc3:    { label: "acc3 · 786888028788", short: "acc3", color: A.red },
-  acc1:    { label: "acc1 · 867490540162", short: "acc1", color: A.gold },
-  acc2:    { label: "acc2 · 005097885195", short: "acc2", color: A.green },
-  unknown: { label: "OpenAI / legacy",      short: "OpenAI", color: A.muted },
+  acc3:    { label: "acc3 · 786888028788 (Bedrock)", short: "acc3",   color: A.red },
+  acc1:    { label: "acc1 · 867490540162 (Bedrock)", short: "acc1",   color: A.gold },
+  acc2:    { label: "acc2 · 005097885195 (Bedrock)", short: "acc2",   color: A.green },
+  openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
+  unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
 };
+
+// The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
+// AA-617 added the column; both COALESCE to "unknown" in the backend. To keep OpenAI distinct from
+// truly-unknown legacy rows, we key the account dimension off `provider` when account is unknown:
+// provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry acc1/2/3.
+function acctKey(b: { account: string; provider: string }): string {
+  if (b.account === "unknown") return b.provider === "openai" ? "openai" : "unknown";
+  return b.account;
+}
 
 function fmtUsd(n: number): string {
   return n < 0.01 && n > 0 ? `$${n.toFixed(6)}` : `$${n.toFixed(4)}`;
@@ -136,7 +146,8 @@ function buildTenantRows(branches: Branch[]): TenantRow[] {
     r.tokens += b.tokens_in_total + b.tokens_out_total;
     r.fallback += b.fallback_count; r.truncated += b.truncated_count;
     r.okCount += b.ok_count; r.okElig += b.ok_eligible_count;
-    r.byAccount[b.account] = (r.byAccount[b.account] ?? 0) + b.total_cost_usd;
+    const ak = acctKey(b);
+    r.byAccount[ak] = (r.byAccount[ak] ?? 0) + b.total_cost_usd;
     r.models.add(b.model);
   }
   return [...m.values()].sort((a, b) => b.cost - a.cost);
@@ -144,7 +155,7 @@ function buildTenantRows(branches: Branch[]): TenantRow[] {
 
 function TenantSpendTable({ branches }: { branches: Branch[] }) {
   const rows = useMemo(() => buildTenantRows(branches), [branches]);
-  const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => b.account === a)), [branches]);
+  const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => acctKey(b) === a)), [branches]);
   if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -195,7 +206,7 @@ function StageLeaf({ b }: { b: Branch }) {
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0 8px 60px", borderBottom: `1px solid ${A.line2}` }}>
       <span style={{ fontFamily: mono, fontSize: 12, color: A.ink, minWidth: 150 }}>{b.stage}</span>
       <Badge color={ROLE_COLOR[b.role] ?? "gray"}>{b.role}</Badge>
-      <AcctDot account={b.account} />
+      <AcctDot account={acctKey(b)} />
       <span style={{ fontSize: 12, color: A.muted2, minWidth: 110 }}>{b.tenant_label}</span>
       <span style={{ fontSize: 12, color: A.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
       <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono }}>{fmtUsd(b.total_cost_usd)}</span>
@@ -250,7 +261,7 @@ function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
   const sub = useMemo(() => {
     const m = new Map<string, Branch[]>();
     for (const b of branches) {
-      const k = groupBy === "account" ? b.model : b.account;
+      const k = groupBy === "account" ? b.model : acctKey(b);
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(b);
     }
@@ -361,11 +372,11 @@ export default function ExternalSpendPage() {
     for (const b of allDfs) m.set(tenantKey(b), b.tenant_label);
     return [...m.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allBranches, allDfs]);
-  const acctOptions = useMemo(() => ACCOUNTS.filter(a => allBranches.some(b => b.account === a)), [allBranches]);
+  const acctOptions = useMemo(() => ACCOUNTS.filter(a => allBranches.some(b => acctKey(b) === a)), [allBranches]);
 
   // filtered views
   const llm = useMemo(() => allBranches.filter(b =>
-    (!tenantFilter || tenantKey(b) === tenantFilter) && (!acctFilter || b.account === acctFilter)
+    (!tenantFilter || tenantKey(b) === tenantFilter) && (!acctFilter || acctKey(b) === acctFilter)
   ), [allBranches, tenantFilter, acctFilter]);
   const dfsRows = useMemo(() => allDfs.filter(b =>
     !tenantFilter || tenantKey(b) === tenantFilter
@@ -389,7 +400,7 @@ export default function ExternalSpendPage() {
   // Overview breakdowns
   const spendByAccount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const b of llm) m.set(b.account, (m.get(b.account) ?? 0) + b.total_cost_usd);
+    for (const b of llm) { const ak = acctKey(b); m.set(ak, (m.get(ak) ?? 0) + b.total_cost_usd); }
     const rows = [...m.entries()].map(([key, cost]) => ({ key, label: ACCOUNT_META[key]?.label ?? key, cost }));
     if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
@@ -410,7 +421,7 @@ export default function ExternalSpendPage() {
   const llmTree = useMemo(() => {
     const m = new Map<string, Branch[]>();
     for (const b of llm) {
-      const k = groupBy === "account" ? b.account : tenantKey(b);
+      const k = groupBy === "account" ? acctKey(b) : tenantKey(b);
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(b);
     }
