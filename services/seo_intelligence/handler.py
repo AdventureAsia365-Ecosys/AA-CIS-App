@@ -11,6 +11,7 @@ from .dataforseo_client import (
 )
 from .seed_builder import resolve_buyer_market
 from shared.secrets import get_database_url
+from shared.dfs_client.call_log import record_dfs_call
 from shared.services.tenant_config_service import TenantConfigService
 from shared.repository.seo_context_repository import SeoContextRepository
 from shared.cache.redis_cache import RedisCache
@@ -85,6 +86,13 @@ async def process_seo(
         # a 2nd same-country tour got cache_hit and silently never got a row).
         logger.info("cache_hit", destination=effective_seed, seo_mode=seo_mode)
         seo_data = cached
+        # AA-618 — record the cache hit (no DFS call, cost 0) so the admin DFS rollup has a real
+        # per-call cache-hit rate, not just the Redis-global one. Fire-and-forget.
+        await record_dfs_call(
+            endpoint="fetch_all", cache_hit=True, cost_usd=0.0,
+            tenant_id=tenant_id, tour_id=tour_id, keyword=effective_seed,
+            location_code=location_code, meta={"seo_mode": seo_mode},
+        )
     else:
         # "custom_keywords" — use existing seo_context from DB, skip DataForSEO API call
         if seo_mode == "custom_keywords":
@@ -123,7 +131,9 @@ async def process_seo(
 
         # "dataforseo" (default) — live keyword fetch
         logger.info("cache_miss", destination=effective_seed, seo_mode=seo_mode, location=location_name)
-        client = DataForSEOClient()
+        # AA-618 — pass attribution so each live DFS HTTP call inside fetch_all logs a dfs_call_log
+        # row with tenant_id/tour_id + real cost.
+        client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id)
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
         )

@@ -1,4 +1,5 @@
 from shared.secrets import get_dataforseo_creds
+from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
 import httpx
 import structlog
 
@@ -13,11 +14,28 @@ DEFAULT_LANGUAGE_CODE = "en"
 
 
 class DataForSEOClient:
-    def __init__(self, login: str = None, password: str = None):
+    def __init__(self, login: str = None, password: str = None,
+                 tenant_id: str = None, tour_id: str = None):
         if not login or not password:
             login, password = get_dataforseo_creds()
         self.login    = login
         self.password = password
+        # AA-618 — optional attribution context for shared.dfs_call_log. Set by the caller that
+        # has it in scope (process_seo has tenant_id+tour_id; segment_research/research have
+        # neither meaningfully — platform-wide). Every live HTTP method below logs one row with
+        # the real DFS `cost` from the response; cache hits are logged by the caller instead.
+        self.tenant_id = tenant_id
+        self.tour_id   = tour_id
+
+    def _log_live(self, endpoint: str, response: dict, keyword: str = None,
+                  location_code: int = None, keyword_count: int = None) -> None:
+        """AA-618 — record one live DFS call (fetched_live=True) with the real cost from the
+        response. Fire-and-forget; never raises into the fetch path."""
+        record_dfs_call_sync(
+            endpoint=endpoint, fetched_live=True, cost_usd=extract_cost(response),
+            tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
+            location_code=location_code, keyword_count=keyword_count,
+        )
 
     def _auth(self) -> tuple[str, str]:
         return (self.login, self.password)
@@ -43,6 +61,7 @@ class DataForSEOClient:
             )
             resp.raise_for_status()
             data = resp.json()
+        self._log_live("search_volume", data, keyword=seed, location_code=location_code, keyword_count=1)
         logger.info("dfs_keywords_fetched", seed=seed, location=location_name)
         return self._parse_keywords(data)
 
@@ -89,6 +108,8 @@ class DataForSEOClient:
             logger.warning("dfs_volumes_bulk_failed", count=len(keywords), error=str(e))
             return {kw: None for kw in keywords}
 
+        self._log_live("search_volume_bulk", data, location_code=location_code,
+                       keyword_count=len(keywords[:1000]))
         out: dict[str, int | None] = {kw: None for kw in keywords}
         try:
             results = data["tasks"][0]["result"] or []
@@ -119,7 +140,9 @@ class DataForSEOClient:
                 json=payload,
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+        self._log_live("serp_advanced", data, keyword=seed, location_code=location_code, keyword_count=1)
+        return data
 
     async def fetch_people_also_ask(
         self,
@@ -164,6 +187,7 @@ class DataForSEOClient:
         except Exception as e:
             logger.warning("dfs_ideas_failed", error=str(e))
             return []
+        self._log_live("keywords_for_keywords", data, keyword=seed, location_code=location_code, keyword_count=1)
         return self._parse_keyword_ideas(data)
 
     async def fetch_all(

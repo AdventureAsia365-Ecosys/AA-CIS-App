@@ -207,3 +207,53 @@ async def get_llm_usage_calls(
         d["created_at"] = d["created_at"].isoformat() if d["created_at"] else None
         calls.append(d)
     return {"calls": calls, "total": len(calls)}
+
+
+# ── AA-618 — DataForSEO usage/cost rollup (shared.dfs_call_log) ─────────────────────────────────
+
+_DFS_TREE_SQL = """
+    SELECT
+        endpoint,
+        COALESCE(tenant_id::text, 'platform') AS tenant_label,
+        COUNT(*)                                    AS call_count,
+        COUNT(*) FILTER (WHERE fetched_live)        AS live_count,
+        COUNT(*) FILTER (WHERE cache_hit)           AS cache_hit_count,
+        COALESCE(SUM(cost_usd), 0)::float           AS total_cost_usd,
+        COALESCE(SUM(keyword_count), 0)             AS keywords_total,
+        MAX(created_at)                             AS last_call_at
+    FROM shared.dfs_call_log
+    WHERE created_at >= now() - ($1 || ' days')::interval
+    GROUP BY endpoint, tenant_id
+    ORDER BY total_cost_usd DESC NULLS LAST, endpoint
+"""
+
+_DFS_SUMMARY_SQL = """
+    SELECT
+        COUNT(*)                              AS total_calls,
+        COUNT(*) FILTER (WHERE fetched_live)  AS live_calls,
+        COUNT(*) FILTER (WHERE cache_hit)     AS cache_hits,
+        COALESCE(SUM(cost_usd), 0)::float     AS total_cost_usd
+    FROM shared.dfs_call_log
+    WHERE created_at >= now() - ($1 || ' days')::interval
+"""
+
+
+@router.get("/dfs-usage", summary="AA-618 — DataForSEO cost/cache-hit rollup by endpoint+tenant")
+async def get_dfs_usage(request: Request, days: int = Query(30, ge=1, le=365)):
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_DFS_TREE_SQL, str(days))
+        summary = await conn.fetchrow(_DFS_SUMMARY_SQL, str(days))
+    branches = []
+    for r in rows:
+        d = dict(r)
+        d["last_call_at"] = d["last_call_at"].isoformat() if d["last_call_at"] else None
+        # real per-DFS-call cache-hit rate (distinct from the Redis-global one on the dashboard)
+        total = d["call_count"] or 0
+        d["cache_hit_rate"] = (d["cache_hit_count"] / total) if total else None
+        branches.append(d)
+    s = dict(summary) if summary else {}
+    total = s.get("total_calls") or 0
+    s["cache_hit_rate"] = (s.get("cache_hits", 0) / total) if total else None
+    logger.info("admin_dfs_usage_queried", days=days, branch_count=len(branches))
+    return {"days": days, "summary": s, "branches": branches}
