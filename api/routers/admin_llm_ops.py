@@ -110,6 +110,11 @@ _TREE_SQL = """
         COUNT(*) FILTER (WHERE l.fallback_used) AS fallback_count,
         COUNT(*) AS call_count,
         COALESCE(SUM(l.cost_usd), 0)::float AS total_cost_usd,
+        -- AA-622: token totals so the External Spend UI can show cost/1K-token per model
+        -- (the standard unit for "is this model expensive per unit of work"). Only /calls had
+        -- per-call tokens before; the tree never rolled them up.
+        COALESCE(SUM(l.tokens_in), 0)  AS tokens_in_total,
+        COALESCE(SUM(l.tokens_out), 0) AS tokens_out_total,
         -- "ok" = any of the boolean-shaped success keys this task's 16 stages actually log
         -- (see docs/implementation-notes/AA-518.md's per-stage quality_signal table) — a
         -- generic OR across all of them since different stages name their own signal
@@ -257,3 +262,85 @@ async def get_dfs_usage(request: Request, days: int = Query(30, ge=1, le=365)):
     s["cache_hit_rate"] = (s.get("cache_hits", 0) / total) if total else None
     logger.info("admin_dfs_usage_queried", days=days, branch_count=len(branches))
     return {"days": days, "summary": s, "branches": branches}
+
+
+# ── AA-622 — DFS spend by DataForSEO location_code -> country name ──────────────────────────────
+# dfs_call_log stores location_code (INTEGER, DFS's buyer-market code) not a country string, so
+# the External Spend UI maps the codes we actually target here. Unknown/NULL codes fall through to
+# a "—" label rather than dropping the row (a real spend row must always be counted somewhere).
+# Source: DataForSEO location list — only the markets AA/tenants target are listed; extend as new
+# markets are added (a code with no entry shows as its raw number, still counted).
+_DFS_LOCATION_NAMES: dict[int, str] = {
+    2840: "United States", 2826: "United Kingdom", 2036: "Australia", 2124: "Canada",
+    2356: "India", 2276: "Germany", 2250: "France", 2392: "Japan", 2410: "South Korea",
+    2702: "Singapore", 2458: "Malaysia", 2764: "Thailand", 2704: "Vietnam", 2360: "Indonesia",
+    2554: "New Zealand", 2380: "Italy", 2724: "Spain", 2528: "Netherlands", 2756: "Switzerland",
+    2784: "United Arab Emirates",
+}
+
+_DFS_COUNTRY_SQL = """
+    SELECT
+        location_code,
+        COUNT(*)                                    AS call_count,
+        COUNT(*) FILTER (WHERE fetched_live)        AS live_count,
+        COUNT(*) FILTER (WHERE cache_hit)           AS cache_hit_count,
+        COALESCE(SUM(cost_usd), 0)::float           AS total_cost_usd,
+        COALESCE(SUM(keyword_count), 0)             AS keywords_total
+    FROM shared.dfs_call_log
+    WHERE created_at >= now() - ($1 || ' days')::interval
+    GROUP BY location_code
+    ORDER BY total_cost_usd DESC NULLS LAST
+"""
+
+
+@router.get("/dfs-usage/by-country", summary="AA-622 — DataForSEO spend grouped by target market (location_code)")
+async def get_dfs_usage_by_country(request: Request, days: int = Query(30, ge=1, le=365)):
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_DFS_COUNTRY_SQL, str(days))
+    out = []
+    for r in rows:
+        d = dict(r)
+        code = d.get("location_code")
+        d["country"] = _DFS_LOCATION_NAMES.get(code) or (str(code) if code is not None else "—")
+        total = d["call_count"] or 0
+        d["cache_hit_rate"] = (d["cache_hit_count"] / total) if total else None
+        out.append(d)
+    logger.info("admin_dfs_by_country_queried", days=days, row_count=len(out))
+    return {"days": days, "countries": out}
+
+
+# ── AA-622 — daily spend time-series (LLM + DFS) for the External Spend trend chart ─────────────
+# The tree/dfs-usage endpoints GROUP BY dimension, not day, so they can't drive a trend line.
+# One row per (day, source) where source is 'llm' or 'dfs' — the FE pivots this into a stacked
+# area chart. gap-fill of zero-days is done client-side (simpler than a generate_series join here).
+_DAILY_SPEND_SQL = """
+    SELECT day::date AS day, source, cost_usd, call_count FROM (
+        SELECT date_trunc('day', created_at) AS day, 'llm' AS source,
+               COALESCE(SUM(cost_usd), 0)::float AS cost_usd, COUNT(*) AS call_count
+          FROM shared.llm_call_log
+         WHERE created_at >= now() - ($1 || ' days')::interval
+         GROUP BY 1
+        UNION ALL
+        SELECT date_trunc('day', created_at) AS day, 'dfs' AS source,
+               COALESCE(SUM(cost_usd), 0)::float AS cost_usd, COUNT(*) AS call_count
+          FROM shared.dfs_call_log
+         WHERE created_at >= now() - ($1 || ' days')::interval
+         GROUP BY 1
+    ) u
+    ORDER BY day, source
+"""
+
+
+@router.get("/spend/daily", summary="AA-622 — daily LLM + DFS spend time-series for the trend chart")
+async def get_spend_daily(request: Request, days: int = Query(30, ge=1, le=365)):
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_DAILY_SPEND_SQL, str(days))
+    points = []
+    for r in rows:
+        d = dict(r)
+        d["day"] = d["day"].isoformat() if d["day"] else None
+        points.append(d)
+    logger.info("admin_spend_daily_queried", days=days, point_count=len(points))
+    return {"days": days, "points": points}
