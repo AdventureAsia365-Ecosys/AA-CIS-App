@@ -30,6 +30,12 @@ from services.acp_shared.atom_extraction import (
     content_hash_atom_id, day_fingerprint, derive_atom_text, normalise,
 )
 from services.acp_shared.competitor_index import CompetitorIndex
+from shared.llm_client.role_config import SAFE_DEFAULTS
+
+# AA-619 — the day-fingerprint is now keyed on the live t5_atomize config model (was the removed
+# `tenant_pipeline._T5_MODEL_TIER` constant). With no DB in the unit env, get_stage_config()
+# falls back to SAFE_DEFAULTS, so the fingerprint the code computes uses this model.
+_T5_FP_MODEL = SAFE_DEFAULTS["t5_atomize"].model_id
 
 TENANT_ID = "33333333-3333-3333-3333-333333333333"
 TOUR_ID = "44444444-4444-4444-4444-444444444444"
@@ -146,10 +152,10 @@ async def test_rerun_unchanged_skips_every_day_zero_llm_calls():
     invoke_claude() calls, atom_count=0, status='skipped'."""
     fp1 = day_fingerprint("Arrival in Hanoi",
                            "Walk through the Old Quarter and try street food.",
-                           tenant_pipeline._T5_MODEL_TIER)
+                           _T5_FP_MODEL)
     fp2 = day_fingerprint("Halong Bay Cruise",
                            "Board a traditional junk boat and kayak through limestone caves.",
-                           tenant_pipeline._T5_MODEL_TIER)
+                           _T5_FP_MODEL)
     conn = _fake_conn(existing_fingerprints=[
         {"day_number": 1, "fingerprint_hash": fp1},
         {"day_number": 2, "fingerprint_hash": fp2},
@@ -182,7 +188,7 @@ async def test_one_day_changed_only_that_day_reatomizes_other_kept():
     fingerprint re-write, no invoke_claude() call for it."""
     fp2_current = day_fingerprint("Halong Bay Cruise",
                                    "Board a traditional junk boat and kayak through limestone caves.",
-                                   tenant_pipeline._T5_MODEL_TIER)
+                                   _T5_FP_MODEL)
     conn = _fake_conn(existing_fingerprints=[
         {"day_number": 1, "fingerprint_hash": "stale-hash-from-a-prior-different-day-1-wording"},
         {"day_number": 2, "fingerprint_hash": fp2_current},
