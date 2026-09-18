@@ -4,7 +4,7 @@
 // AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { ChevronRight, ChevronDown, Cpu, Search, Wallet, TrendingUp, Building2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
