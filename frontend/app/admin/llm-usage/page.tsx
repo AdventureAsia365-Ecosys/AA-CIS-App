@@ -4,7 +4,7 @@
 // AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { ChevronRight, ChevronDown, Cpu, Search, Wallet, TrendingUp, Building2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
@@ -63,6 +63,12 @@ interface DailyPoint { day: string; source: "llm" | "dfs"; cost_usd: number; cal
 interface StageConfig {
   stage: string; role: string; provider: string; model_id: string; account_route: string | null;
 }
+interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/calls
+  id: string; tenant_id: string | null; stage: string; role: string; model: string;
+  account: string | null; provider: string | null; fallback_used: boolean;
+  tokens_in: number | null; tokens_out: number | null; cost_usd: number;
+  stop_reason: string | null; created_at: string | null;
+}
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
 const ACCOUNTS = ["acc3", "acc1", "acc2", "unknown"] as const;
@@ -115,7 +121,7 @@ function AcctDot({ account }: { account: string }) {
 // ── Spend-by-tenant table (LLM) — the primary per-tenant view Nghiệp asked for ──────────────
 
 interface TenantRow {
-  key: string; label: string;
+  key: string; label: string; tenantId: string | null;
   cost: number; calls: number; tokens: number;
   fallback: number; truncated: number; okCount: number; okElig: number;
   byAccount: Record<string, number>;  // account -> cost
@@ -128,7 +134,7 @@ function buildTenantRows(branches: Branch[]): TenantRow[] {
     const k = tenantKey(b);
     let r = m.get(k);
     if (!r) {
-      r = { key: k, label: b.tenant_label, cost: 0, calls: 0, tokens: 0, fallback: 0,
+      r = { key: k, label: b.tenant_label, tenantId: b.tenant_id, cost: 0, calls: 0, tokens: 0, fallback: 0,
             truncated: 0, okCount: 0, okElig: 0, byAccount: {}, models: new Set() };
       m.set(k, r);
     }
@@ -142,7 +148,10 @@ function buildTenantRows(branches: Branch[]): TenantRow[] {
   return [...m.values()].sort((a, b) => b.cost - a.cost);
 }
 
-function TenantSpendTable({ branches }: { branches: Branch[] }) {
+function TenantSpendTable({ branches, onFallbackClick }: {
+  branches: Branch[];
+  onFallbackClick: (tenantId: string | null, label: string) => void;
+}) {
   const rows = useMemo(() => buildTenantRows(branches), [branches]);
   const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => b.account === a)), [branches]);
   if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
@@ -172,8 +181,15 @@ function TenantSpendTable({ branches }: { branches: Branch[] }) {
               {r.tokens > 0 ? fmtUsd((r.cost / r.tokens) * 1000) : "—"}
             </td>
             <td style={{ ...TD, textAlign: "right" }}>{r.okElig > 0 ? pct(r.okCount / r.okElig) : "—"}</td>
-            <td style={{ ...TD, textAlign: "right", color: r.fallback > 0 ? A.amber : A.muted2 }}>
-              {r.calls > 0 ? pct(r.fallback / r.calls) : "—"}
+            <td style={{ ...TD, textAlign: "right" }}>
+              {r.fallback > 0 ? (
+                <button onClick={() => onFallbackClick(r.tenantId, r.label)} style={{
+                  background: "none", border: "none", cursor: "pointer", color: A.amber,
+                  fontFamily: sans, fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0,
+                }} title="View the calls that fell back">
+                  {pct(r.fallback / r.calls)}
+                </button>
+              ) : <span style={{ color: A.muted2 }}>{r.calls > 0 ? "0%" : "—"}</span>}
             </td>
             {accountsPresent.map(a => (
               <td key={a} style={{ ...TD, textAlign: "right", fontFamily: mono, color: r.byAccount[a] ? A.ink3 : A.muted2 }}>
@@ -311,6 +327,74 @@ function Bar({ rows, total, colorOf }: {
   );
 }
 
+// ── Fallback drill-down modal (AA-622) ───────────────────────────────────────
+// Opened from a fallback% figure; fetches the actual calls that fell back
+// (fallback_used=true) for the current tenant/day filter so admin can see which
+// stage/model/account rotated and when — the "why is fallback high" answer.
+
+function FallbackModal({ tenantId, tenantLabel, days, onClose }: {
+  tenantId: string | null; tenantLabel: string | null; days: number; onClose: () => void;
+}) {
+  const [calls, setCalls] = useState<CallRow[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    const qs = new URLSearchParams({ fallback_used: "true", days: String(days), limit: "200" });
+    if (tenantId) qs.set("tenant_id", tenantId);
+    fetch(`/api/admin/llm-usage/calls?${qs.toString()}`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => setCalls(d.calls))
+      .catch(() => setErr("Failed to load fallback calls"));
+  }, [tenantId, days]);
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: A.card, borderRadius: 12, width: "min(920px, 100%)", maxHeight: "80vh",
+        overflow: "auto", boxShadow: "0 12px 40px rgba(0,0,0,0.2)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: `1px solid ${A.line}`, position: "sticky", top: 0, background: A.card }}>
+          <div>
+            <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>Fallback calls</div>
+            <div style={{ fontSize: 11.5, color: A.muted2 }}>
+              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · last {days} days · calls that rotated acc3→acc1 or up to GPT
+            </div>
+          </div>
+          <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>Close</Btn>
+        </div>
+        <div style={{ padding: "0 4px" }}>
+          {err && <div style={{ color: A.red, fontSize: 13, padding: 24 }}>{err}</div>}
+          {!err && calls == null && <LoadingScreen msg="Loading fallback calls…" />}
+          {!err && calls != null && calls.length === 0 && (
+            <div style={{ color: A.muted, fontSize: 13, padding: 32, textAlign: "center" }}>No fallback calls in range — every call ran on its primary account.</div>
+          )}
+          {!err && calls != null && calls.length > 0 && (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr>
+                <th style={TH}>When</th><th style={TH}>Stage</th><th style={TH}>Model</th>
+                <th style={TH}>Account</th><th style={{ ...TH, textAlign: "right" }}>Cost</th><th style={TH}>Stop</th>
+              </tr></thead>
+              <tbody>
+                {calls.map(c => (
+                  <tr key={c.id}>
+                    <td style={{ ...TD, fontSize: 12, color: A.muted }}>{c.created_at ? new Date(c.created_at).toLocaleString() : "—"}</td>
+                    <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.stage}</td>
+                    <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.model}</td>
+                    <td style={{ ...TD }}><AcctDot account={c.account ?? "unknown"} /></td>
+                    <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd(c.cost_usd)}</td>
+                    <td style={{ ...TD, fontSize: 12, color: A.muted2 }}>{c.stop_reason ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════ PAGE ═══════════════════════════════════════════════
 
 export default function ExternalSpendPage() {
@@ -327,6 +411,8 @@ export default function ExternalSpendPage() {
   const [tenantFilter, setTenantFilter] = useState<string | null>(null);
   const [acctFilter, setAcctFilter] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<"account" | "tenant">("tenant");
+  // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
+  const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
   const load = useCallback((d: number) => {
     setLoading(true);
@@ -576,13 +662,18 @@ export default function ExternalSpendPage() {
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.gold} />
                   <StatCard label="Calls" value={fmtInt(llmCalls)} sub={`${fmtInt(llmTokens)} tokens`} />
                   <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
-                  <StatCard label="Fallback" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} acc3→acc1/GPT`} accent={A.amber} />
+                  <div onClick={() => llmFallback > 0 && setFbModal({ tenantId: tenantFilter, label: tenantLabelOf(tenantFilter) })}
+                       style={{ cursor: llmFallback > 0 ? "pointer" : "default" }} title={llmFallback > 0 ? "View fallback calls" : undefined}>
+                    <StatCard label="Fallback ▸" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} acc3→acc1/GPT`} accent={A.amber} />
+                  </div>
                   <StatCard label="Truncated" value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={`${fmtInt(llmTruncated)} max_tokens`} accent={A.red} />
                 </div>
 
                 <Card style={{ marginBottom: 18, padding: 0, overflow: "hidden" }}>
                   <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant{acctFilter ? ` · ${ACCOUNT_META[acctFilter]?.short}` : ""}</SLabel></div>
-                  <div style={{ padding: "0 18px 16px" }}><TenantSpendTable branches={llm} /></div>
+                  <div style={{ padding: "0 18px 16px" }}>
+                    <TenantSpendTable branches={llm} onFallbackClick={(tid, label) => setFbModal({ tenantId: tid, label })} />
+                  </div>
                 </Card>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
@@ -730,6 +821,10 @@ export default function ExternalSpendPage() {
               </>
             )}
           </>
+        )}
+
+        {fbModal && (
+          <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} days={days} onClose={() => setFbModal(null)} />
         )}
       </main>
     </div>

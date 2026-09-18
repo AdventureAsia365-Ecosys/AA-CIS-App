@@ -170,28 +170,42 @@ async def get_llm_usage_tree(request: Request, days: int = Query(30, ge=1, le=36
     return {"days": days, "branches": branches}
 
 
-@router.get("/llm-usage/calls", summary="AA-505 — flat recent-calls list, filterable; reused by AA-501/A4")
+@router.get(
+    "/llm-usage/calls",
+    summary="AA-505 flat recent-calls list, filterable; reused by AA-501/A4 + AA-622 fallback drill-down",
+)
 async def get_llm_usage_calls(
     request: Request,
     content_piece_id: Optional[str] = None,
     angle_gate_request_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     stage: Optional[str] = None,
+    account: Optional[str] = None,
+    fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back acc3->acc1/GPT
+    days: Optional[int] = Query(None, ge=1, le=365),
     limit: int = Query(50, ge=1, le=500),
 ):
     pool = request.app.state.pool
-    # (column, sql_type, value) — stage/role columns are text, the 3 attribution columns are uuid.
+    # (column, sql_type, value) — stage/role/account columns are text, attribution columns are uuid.
     filters = [
         ("content_piece_id", "uuid", content_piece_id),
         ("angle_gate_request_id", "uuid", angle_gate_request_id),
         ("tenant_id", "uuid", tenant_id),
         ("stage", "text", stage),
+        ("account", "text", account),
     ]
     clauses, params = [], []
     for column, sql_type, value in filters:
         if value:
             params.append(value)
             clauses.append(f"{column} = ${len(params)}::{sql_type}")
+    # AA-622: fallback_used is a real boolean — filter on it explicitly (None = no filter, not "false")
+    if fallback_used is not None:
+        params.append(fallback_used)
+        clauses.append(f"fallback_used = ${len(params)}::bool")
+    if days is not None:
+        params.append(str(days))
+        clauses.append(f"created_at >= now() - (${len(params)} || ' days')::interval")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
     sql = f"""
