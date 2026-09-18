@@ -67,11 +67,11 @@ logger = structlog.get_logger()
 
 TENANT_QA_MAX_REPAIRS = 2  # AA-425 — separate from acp_produce.models.REPAIR_TOTAL_MAX (N7, =3)
 
-# AA-508 — model tier run_t5_atomize() calls invoke_claude() with, for both the per-day path and
-# the legacy whole-tour fallback. Named so day_fingerprint()'s "model" input and the actual call
-# can never drift apart (a fingerprint computed against one tier while the call uses another would
-# silently under- or over-invalidate the cache).
-_T5_MODEL_TIER = "sonnet"
+# AA-508/AA-619 — the day-fingerprint's "model" input is now read from the live t5_atomize stage
+# config (_t5_cfg.model_id) at the top of _atomize_per_day(), NOT a hardcoded constant here. That
+# keeps the fingerprint's model and the actual invoke_claude() model always identical within a run
+# (the old `_T5_MODEL_TIER = "sonnet"` constant could drift from the DB config — e.g. after AA-619
+# switched the config to haiku — leaving stale-model atoms un-invalidated). Constant removed.
 
 # AA-526 — run_t5_atomize()'s own `tenant_id` param doubles as BOTH the free-text owner_scope
 # value (any string is valid, tour_atoms.owner_scope has no type/FK constraint) AND the value
@@ -464,6 +464,13 @@ async def _atomize_per_day(
     that did answer" guarantee (atoms.py). A day whose LLM call or JSON parse fails simply keeps
     no fingerprint row for itself, so the next call re-asks exactly that day and only that day.
     """
+    # AA-619 — resolve the stage config ONCE, up front, so the day-fingerprint is keyed to the
+    # SAME model the call below actually uses (read from DB config, not a hardcoded constant).
+    # This is what makes a model change (e.g. Sonnet->Haiku, AA-619) correctly invalidate every
+    # day's fingerprint so they re-atomize with the new model, instead of silently keeping the
+    # old model's atoms. (Was `_T5_MODEL_TIER` — a module constant that drifted from the config.)
+    _t5_cfg = await get_stage_config("t5_atomize")
+
     async with pool.acquire() as conn:
         existing = await conn.fetch(
             """SELECT day_number, fingerprint_hash FROM acp_contract.atomize_day_fingerprint
@@ -475,7 +482,7 @@ async def _atomize_per_day(
     to_ask = []
     for day_num in sorted(days):
         day = days[day_num]
-        fp = _day_fingerprint(day["title"], day["body"], _T5_MODEL_TIER)
+        fp = _day_fingerprint(day["title"], day["body"], _t5_cfg.model_id)
         if existing_fp.get(day_num) != fp:
             to_ask.append((day_num, day, fp))
 
@@ -499,9 +506,9 @@ async def _atomize_per_day(
     else:
         competitor_idx = CompetitorIndex()
 
-    # AA-518 — same "t5_atomize" stage config + explicit account="acc3" fix as the legacy path
-    # above (resolved once, reused across every day — cache-hit cost, not a per-day DB round trip).
-    _t5_cfg = await get_stage_config("t5_atomize")
+    # AA-619 — _t5_cfg already resolved at the top of this function (used to key the fingerprint
+    # above); reused here for the actual call + cost so the fingerprint model and the call model
+    # can never drift within a single run.
     inserted = 0
     days_read = 0
     days_failed = []
