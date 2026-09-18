@@ -50,7 +50,8 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "t8_angle_gen":       StageConfig("t8_angle_gen", "writer", "claude", "sonnet", "acc3"),
     "t9_write":           StageConfig("t9_write", "writer", "claude", "sonnet", "acc3"),
     "t10_judge":          StageConfig("t10_judge", "judge", "openai", "gpt-4.1", None),
-    "t5_atomize":         StageConfig("t5_atomize", "writer", "claude", "haiku", "acc3"),  # AA-619: Sonnet->Haiku (A/B proved equal atom quality, ~4x cheaper)
+    # AA-619: Sonnet->Haiku — A/B proved equal atom quality, ~4x cheaper (see migration 155).
+    "t5_atomize":         StageConfig("t5_atomize", "writer", "claude", "haiku", "acc3"),
     "n7_draft":           StageConfig("n7_draft", "writer", "claude", "sonnet", "acc3"),
     "n7_adapt":           StageConfig("n7_adapt", "writer", "claude", "sonnet", "acc3"),
     "n7_faq":             StageConfig("n7_faq", "writer", "claude", "sonnet", "acc3"),
