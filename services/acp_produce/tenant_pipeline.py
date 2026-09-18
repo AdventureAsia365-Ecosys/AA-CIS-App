@@ -147,6 +147,7 @@ async def run_t3_qa_gate(
     brand_rules: dict,
     max_repairs: int = TENANT_QA_MAX_REPAIRS,
     seo_data: dict = None,
+    tenant_id: str = None,  # AA-620: thread through so a T3 repair-round logs t2_generate + tenant
 ) -> dict:
     """Self-repair loop, max `max_repairs` regenerate attempts (default 2). Attempt 0
     checks `initial_result` (T2's already-computed output — no extra LLM call for the
@@ -189,6 +190,8 @@ async def run_t3_qa_gate(
         result = await _rewrite_tour(
             tour_dict, idx=0, total=1, brand_rules=brand_rules, is_tenant_rewrite=True,
             seo=seo_data,
+            tenant_id=tenant_id,             # AA-620: same tenant as attempt 0
+            generate_stage="t2_generate",    # AA-620: T2 repair-round stays on the tenant stage
         )
 
 
