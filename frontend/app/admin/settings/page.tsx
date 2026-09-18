@@ -387,8 +387,12 @@ interface StageConfigRow {
 // Human label + display grouping — a pure presentation layer over the 16 stage rows the API
 // returns; the API itself is the source of truth for which stages/values actually exist.
 const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = [
-  { key: "s1", label: "S1 rewrite pipeline (shared by A1 admin & T2 tenant — same code path)",
+  // AA-620: s1_generate = the A1 admin writer only now; the tenant (T2) writer is its own
+  // t2_generate stage (own group below), so admin can tune/price them independently. flag_fix /
+  // itinerary_nudge are still shared by both A1 and T2 (Haiku is fine for both, not split).
+  { key: "s1", label: "S1 rewrite — A1 admin writer + shared repair/judge",
     stages: ["s1_generate", "s1_judge", "s1_brand_audit", "s1_flag_fix", "s1_itinerary_nudge", "s1_atom_writer"] },
+  { key: "t2", label: "T2 tenant rewrite writer (own model — AA-620)", stages: ["t2_generate"] },
   { key: "t5", label: "T5 — Atomize", stages: ["t5_atomize"] },
   { key: "t8", label: "T8 — Angle generation", stages: ["t8_angle_gen"] },
   { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
@@ -399,6 +403,7 @@ const STAGE_LABELS: Record<string, string> = {
   s1_generate: "Content generate", s1_judge: "Brand-fit judge",
   s1_brand_audit: "Brand audit", s1_flag_fix: "Flag-fix repair",
   s1_itinerary_nudge: "Itinerary day nudge", s1_atom_writer: "Atom-based writer",
+  t2_generate: "Tenant content generate",
   t5_atomize: "Atomize tour", t8_angle_gen: "Angle generation",
   t9_write: "Content write", t10_judge: "Quality judge (F8+F9)",
   n7_draft: "Draft (E2)", n7_adapt: "Channel adapt (E3)", n7_faq: "FAQ answer (E4)",
