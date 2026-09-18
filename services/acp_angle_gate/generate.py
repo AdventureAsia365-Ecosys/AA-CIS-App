@@ -140,6 +140,8 @@ async def generate_angles(
             angle_gate_request_id=str(request_id) if request_id else None,
             quality_signal=quality_signal,
             stop_reason=getattr(resp, "stop_reason", None),
+            account=getattr(resp, "satellite_account", None),
+            fallback_used=getattr(resp, "fallback_used", None),
         )
     else:
         await record_call(
@@ -150,6 +152,8 @@ async def generate_angles(
             angle_gate_request_id=str(request_id) if request_id else None,
             quality_signal=quality_signal,
             stop_reason=getattr(resp, "stop_reason", None),
+            account=getattr(resp, "satellite_account", None),
+            fallback_used=getattr(resp, "fallback_used", None),
         )
     return angles, recommended_index, reason, resp.cost_usd
 

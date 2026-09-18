@@ -245,6 +245,7 @@ def _invoke_channel_with_retry(
             tenant_id=None,
             quality_signal={"channel": channel, "required_markers_present": markers_ok},
             stop_reason=result.stop_reason,
+            account=cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
         if not markers_ok:
             last_err = AdaptChannelFailed(

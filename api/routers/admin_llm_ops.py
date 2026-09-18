@@ -102,6 +102,12 @@ _TREE_SQL = """
     SELECT
         l.tenant_id::text AS tenant_id, COALESCE(t.slug, 'aa_internal') AS tenant_label,
         l.model, l.stage, l.role,
+        -- AA-617: account (acc1/acc2/acc3, NULL for OpenAI/legacy) + provider so the tree can
+        -- split acc3 vs acc1 satellite spend, which l.model alone can't (model no longer carries
+        -- the "satellite-" prefix). COALESCE keeps legacy NULL rows grouped under a visible label.
+        COALESCE(l.account, 'unknown') AS account,
+        COALESCE(l.provider, 'unknown') AS provider,
+        COUNT(*) FILTER (WHERE l.fallback_used) AS fallback_count,
         COUNT(*) AS call_count,
         COALESCE(SUM(l.cost_usd), 0)::float AS total_cost_usd,
         -- "ok" = any of the boolean-shaped success keys this task's 16 stages actually log
@@ -137,8 +143,8 @@ _TREE_SQL = """
     FROM shared.llm_call_log l
     LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id
     WHERE l.created_at >= now() - ($1 || ' days')::interval
-    GROUP BY l.tenant_id, t.slug, l.model, l.stage, l.role
-    ORDER BY tenant_label, l.model, l.stage
+    GROUP BY l.tenant_id, t.slug, l.model, l.stage, l.role, l.account, l.provider
+    ORDER BY tenant_label, l.account, l.model, l.stage
 """
 
 
@@ -184,7 +190,8 @@ async def get_llm_usage_calls(
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
     sql = f"""
-        SELECT id::text, tenant_id::text, stage, role, model, tokens_in, tokens_out,
+        SELECT id::text, tenant_id::text, stage, role, model, account, provider, fallback_used,
+               tokens_in, tokens_out,
                cost_usd::float, quality_signal, content_piece_id::text, angle_gate_request_id::text,
                stop_reason, created_at
         FROM shared.llm_call_log

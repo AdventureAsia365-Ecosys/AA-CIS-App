@@ -439,6 +439,7 @@ async def _atomize_whole_tour_legacy(
         tenant_id=_llm_log_tenant_id(tenant_id),
         quality_signal={"atoms_extracted": inserted, "is_empty_marker": inserted == 0},
         stop_reason=llm_result.stop_reason,
+        account=_t5_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
     )
     return {"status": "success", "atom_count": inserted}
 
@@ -608,6 +609,7 @@ async def _atomize_per_day(
             quality_signal={"atoms_extracted": len(new_atom_ids), "day_number": day_num,
                              "is_empty_marker": not atoms},
             stop_reason=llm_result.stop_reason,
+            account=_t5_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
 
     result = {
