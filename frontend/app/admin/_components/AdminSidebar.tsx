@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Activity, Gauge, Puzzle } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Activity, Wallet, Puzzle } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 
 interface Notif {
@@ -219,9 +219,11 @@ export default function AdminSidebar() {
                 either) and Content Trace's new Force-unpublish button. The a4-oversight route +
                 its middleware.ts entry are deleted in this same commit. */}
             {/* AA-505 — real per-call LLM cost/quality, Tenant->Model->Stage. Admin-only, same
-                tier Cross-Tenant Oversight used to be (middleware.ts). */}
+                tier Cross-Tenant Oversight used to be (middleware.ts).
+                AA-622 — expanded into the "External Spend" page (LLM + DataForSEO cost, 3 tabs);
+                route kept as /admin/llm-usage, label + icon updated to match. */}
             <NavItem active={active("/admin/llm-usage")} accent={A.red}
-              icon={<Gauge size={15} />} label="LLM Usage"
+              icon={<Wallet size={15} />} label="External Spend"
               onClick={() => router.push("/admin/llm-usage")} />
             {/* AA-553 — "Atom Curation" moved out of this group, down into "AA Internal Content"
                 (right under Master Content) — it's Master Content pool data (Atom/Segment/Score/
