@@ -320,6 +320,7 @@ def generate_draft(
             tenant_id=None,  # N7's own writer functions don't have tenant_id in scope (module-level)
             quality_signal={"sections_parsed": len(parsed), "sections_requested": len(batch)},
             stop_reason=result.stop_reason,
+            account=_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
         if len(parsed) != len(batch):
             raise DraftGenerationFailed(

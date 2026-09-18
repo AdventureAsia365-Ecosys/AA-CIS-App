@@ -168,6 +168,8 @@ def judge_node(state: dict) -> dict:
                 "passed": new_score >= _MIN_QUALITY,
             },
             stop_reason=getattr(resp, "stop_reason", None),
+            account=getattr(resp, "satellite_account", None),
+            fallback_used=getattr(resp, "fallback_used", None),
         )
         return {
             **state,

@@ -477,6 +477,7 @@ def repair_piece(body_tagged: str, violations: list[str], *, invariants: Optiona
             tenant_id=None,
             quality_signal={"leaked_reasoning_rejected": leaked, "violations_targeted": len(violations)},
             stop_reason=result.stop_reason,
+            account=cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
         if leaked:
             logger.warning("e5_repair_leaked_reasoning_rejected", violations=violations,

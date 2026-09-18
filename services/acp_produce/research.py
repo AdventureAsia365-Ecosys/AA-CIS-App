@@ -212,6 +212,7 @@ def build_gap_statement(top_pages: list[dict], atoms: list[dict], keyword: str) 
             quality_signal={"produced_statement": statement is not None,
                              "statement_len_chars": len(statement) if statement else 0},
             stop_reason=result.stop_reason,
+            account=cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
         return statement
     except BedrockUnavailable as e:

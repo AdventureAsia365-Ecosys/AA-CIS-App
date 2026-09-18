@@ -132,6 +132,7 @@ def answer_faq(
             tenant_id=None,
             quality_signal={"items_parsed": len(parsed), "items_requested": len(batch)},
             stop_reason=result.stop_reason,
+            account=_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
         )
         if len(parsed) != len(batch):
             raise FAQAnswerFailed(
