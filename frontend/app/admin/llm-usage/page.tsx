@@ -1,12 +1,10 @@
 "use client";
-// app/admin/llm-usage/page.tsx — AA-622 External Spend: LLM (account→model→stage→tenant) + DFS +
-// Overview. Extends the AA-505/AA-617 LLM tree with account/fallback/tokens and the AA-618 DFS log.
-// Path kept as /admin/llm-usage (middleware allowlist already admin-only — no new route).
+// app/admin/llm-usage/page.tsx — AA-622 External Spend: real LLM + DataForSEO cost, viewable by
+// TENANT and by ACCOUNT (both are first-class filter/group dimensions), model, stage. Extends the
+// AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import {
-  ChevronRight, ChevronDown, Cpu, Search, Wallet, TrendingUp,
-} from "lucide-react";
+import { ChevronRight, ChevronDown, Cpu, Search, Wallet, TrendingUp, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
@@ -24,13 +22,13 @@ interface Branch {
   model: string;
   stage: string;
   role: string;
-  account: string;            // AA-617: acc1/acc2/acc3/unknown
-  provider: string;           // AA-617: claude/openai/unknown
-  fallback_count: number;     // AA-617
+  account: string;
+  provider: string;
+  fallback_count: number;
   call_count: number;
   total_cost_usd: number;
-  tokens_in_total: number;    // AA-622
-  tokens_out_total: number;   // AA-622
+  tokens_in_total: number;
+  tokens_out_total: number;
   ok_count: number;
   ok_eligible_count: number;
   ok_rate: number | null;
@@ -42,6 +40,7 @@ interface Branch {
 
 interface DfsBranch {
   endpoint: string;
+  tenant_id: string | null;
   tenant_label: string;
   call_count: number;
   live_count: number;
@@ -66,11 +65,12 @@ interface StageConfig {
 }
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
-const ACCOUNT_META: Record<string, { label: string; color: string }> = {
-  acc3:    { label: "acc3 · 786888028788", color: A.red },
-  acc1:    { label: "acc1 · 867490540162", color: A.gold },
-  acc2:    { label: "acc2 · 005097885195", color: A.green },
-  unknown: { label: "OpenAI / legacy",      color: A.muted },
+const ACCOUNTS = ["acc3", "acc1", "acc2", "unknown"] as const;
+const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
+  acc3:    { label: "acc3 · 786888028788", short: "acc3", color: A.red },
+  acc1:    { label: "acc1 · 867490540162", short: "acc1", color: A.gold },
+  acc2:    { label: "acc2 · 005097885195", short: "acc2", color: A.green },
+  unknown: { label: "OpenAI / legacy",      short: "OpenAI", color: A.muted },
 };
 
 function fmtUsd(n: number): string {
@@ -79,10 +79,13 @@ function fmtUsd(n: number): string {
 function fmtUsd2(n: number): string { return `$${n.toFixed(2)}`; }
 function fmtInt(n: number): string { return n.toLocaleString("en-US"); }
 function pct(n: number | null): string { return n == null ? "—" : `${Math.round(n * 100)}%`; }
+function tenantKey(b: { tenant_id: string | null; tenant_label: string }): string {
+  return b.tenant_id ?? b.tenant_label;  // platform/aa_internal rows have null id -> use label
+}
 
 const DAY_OPTIONS = [7, 30, 90];
 
-// ── Shared quality cell (unchanged from AA-505) ──────────────────────────────
+// ── Shared quality cell ──────────────────────────────────────────────────────
 
 function QualityCell({ b }: { b: Branch }) {
   if (b.ok_eligible_count > 0) {
@@ -99,7 +102,92 @@ function QualityCell({ b }: { b: Branch }) {
   return <span style={{ color: A.muted2 }}>—</span>;
 }
 
-// ═══════════════════════ LLM TAB — Account → Model → Stage → Tenant ═════════════════════════
+function AcctDot({ account }: { account: string }) {
+  const m = ACCOUNT_META[account] ?? { short: account, color: A.muted };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: A.muted }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} />
+      {m.short}
+    </span>
+  );
+}
+
+// ── Spend-by-tenant table (LLM) — the primary per-tenant view Nghiệp asked for ──────────────
+
+interface TenantRow {
+  key: string; label: string;
+  cost: number; calls: number; tokens: number;
+  fallback: number; truncated: number; okCount: number; okElig: number;
+  byAccount: Record<string, number>;  // account -> cost
+  models: Set<string>;
+}
+
+function buildTenantRows(branches: Branch[]): TenantRow[] {
+  const m = new Map<string, TenantRow>();
+  for (const b of branches) {
+    const k = tenantKey(b);
+    let r = m.get(k);
+    if (!r) {
+      r = { key: k, label: b.tenant_label, cost: 0, calls: 0, tokens: 0, fallback: 0,
+            truncated: 0, okCount: 0, okElig: 0, byAccount: {}, models: new Set() };
+      m.set(k, r);
+    }
+    r.cost += b.total_cost_usd; r.calls += b.call_count;
+    r.tokens += b.tokens_in_total + b.tokens_out_total;
+    r.fallback += b.fallback_count; r.truncated += b.truncated_count;
+    r.okCount += b.ok_count; r.okElig += b.ok_eligible_count;
+    r.byAccount[b.account] = (r.byAccount[b.account] ?? 0) + b.total_cost_usd;
+    r.models.add(b.model);
+  }
+  return [...m.values()].sort((a, b) => b.cost - a.cost);
+}
+
+function TenantSpendTable({ branches }: { branches: Branch[] }) {
+  const rows = useMemo(() => buildTenantRows(branches), [branches]);
+  const accountsPresent = useMemo(() => ACCOUNTS.filter(a => branches.some(b => b.account === a)), [branches]);
+  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13, padding: "8px 0" }}>No LLM calls in range.</div>;
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <thead><tr>
+        <th style={TH}>Tenant</th>
+        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
+        <th style={{ ...TH, textAlign: "right" }}>Calls</th>
+        <th style={{ ...TH, textAlign: "right" }}>Tokens</th>
+        <th style={{ ...TH, textAlign: "right" }}>$/1K tok</th>
+        <th style={{ ...TH, textAlign: "right" }}>Pass</th>
+        <th style={{ ...TH, textAlign: "right" }}>Fallback</th>
+        {accountsPresent.map(a => <th key={a} style={{ ...TH, textAlign: "right" }}>{ACCOUNT_META[a].short}</th>)}
+      </tr></thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.key}>
+            <td style={{ ...TD }}>
+              <span style={{ fontWeight: 600, color: A.ink2 }}>{r.label}</span>
+              <span style={{ color: A.muted2, fontSize: 11, marginLeft: 6 }}>{r.models.size} model(s)</span>
+            </td>
+            <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(r.cost)}</td>
+            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.calls)}</td>
+            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.tokens)}</td>
+            <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>
+              {r.tokens > 0 ? fmtUsd((r.cost / r.tokens) * 1000) : "—"}
+            </td>
+            <td style={{ ...TD, textAlign: "right" }}>{r.okElig > 0 ? pct(r.okCount / r.okElig) : "—"}</td>
+            <td style={{ ...TD, textAlign: "right", color: r.fallback > 0 ? A.amber : A.muted2 }}>
+              {r.calls > 0 ? pct(r.fallback / r.calls) : "—"}
+            </td>
+            {accountsPresent.map(a => (
+              <td key={a} style={{ ...TD, textAlign: "right", fontFamily: mono, color: r.byAccount[a] ? A.ink3 : A.muted2 }}>
+                {r.byAccount[a] ? fmtUsd(r.byAccount[a]) : "—"}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ── LLM tree — leaf + generic collapsible group (works for either grouping order) ────────────
 
 function StageLeaf({ b }: { b: Branch }) {
   const fbPct = b.call_count > 0 ? b.fallback_count / b.call_count : 0;
@@ -107,12 +195,13 @@ function StageLeaf({ b }: { b: Branch }) {
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0 8px 60px", borderBottom: `1px solid ${A.line2}` }}>
       <span style={{ fontFamily: mono, fontSize: 12, color: A.ink, minWidth: 150 }}>{b.stage}</span>
       <Badge color={ROLE_COLOR[b.role] ?? "gray"}>{b.role}</Badge>
-      <span style={{ fontSize: 12, color: A.muted2, minWidth: 120 }}>{b.tenant_label}</span>
-      <span style={{ fontSize: 12, color: A.muted, minWidth: 64 }}>{fmtInt(b.call_count)} calls</span>
+      <AcctDot account={b.account} />
+      <span style={{ fontSize: 12, color: A.muted2, minWidth: 110 }}>{b.tenant_label}</span>
+      <span style={{ fontSize: 12, color: A.muted, minWidth: 60 }}>{fmtInt(b.call_count)}</span>
       <span style={{ fontSize: 12, color: A.ink2, minWidth: 84, fontFamily: mono }}>{fmtUsd(b.total_cost_usd)}</span>
-      <span style={{ fontSize: 12, minWidth: 130 }}><QualityCell b={b} /></span>
-      {b.fallback_count > 0 && <Badge color="amber">{Math.round(fbPct * 100)}% fallback</Badge>}
-      {b.truncated_count > 0 && <Badge color="red">{b.truncated_count} truncated</Badge>}
+      <span style={{ fontSize: 12, minWidth: 120 }}><QualityCell b={b} /></span>
+      {b.fallback_count > 0 && <Badge color="amber">{Math.round(fbPct * 100)}% fb</Badge>}
+      {b.truncated_count > 0 && <Badge color="red">{b.truncated_count} trunc</Badge>}
       <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
         {b.last_call_at ? new Date(b.last_call_at).toLocaleString() : "—"}
       </span>
@@ -120,41 +209,53 @@ function StageLeaf({ b }: { b: Branch }) {
   );
 }
 
-function ModelBranch({ model, branches, configModel }: { model: string; branches: Branch[]; configModel?: string }) {
+// mid-level node (model within account, or account within tenant, etc.)
+function SubNode({ label, sublabel, branches, indent, dotColor }: {
+  label: string; sublabel?: string; branches: Branch[]; indent: number; dotColor?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const totalCost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
-  const totalCalls = branches.reduce((s, b) => s + b.call_count, 0);
-  const tokTotal = branches.reduce((s, b) => s + b.tokens_in_total + b.tokens_out_total, 0);
-  const costPerK = tokTotal > 0 ? (totalCost / tokTotal) * 1000 : 0;
+  const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
+  const calls = branches.reduce((s, b) => s + b.call_count, 0);
+  const tok = branches.reduce((s, b) => s + b.tokens_in_total + b.tokens_out_total, 0);
+  const perK = tok > 0 ? (cost / tok) * 1000 : 0;
   return (
     <div>
       <button onClick={() => setOpen(o => !o)} style={{
         display: "flex", alignItems: "center", gap: 8, width: "100%",
-        padding: "8px 0 8px 38px", background: "none", border: "none", cursor: "pointer",
+        padding: `8px 0 8px ${indent}px`, background: "none", border: "none", cursor: "pointer",
         borderBottom: `1px solid ${A.line2}`, textAlign: "left",
       }}>
         {open ? <ChevronDown size={14} color={A.muted} /> : <ChevronRight size={14} color={A.muted} />}
-        <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600 }}>{model}</span>
-        {configModel && <Badge color={configModel === model ? "green" : "gray"}>config: {configModel}</Badge>}
-        <span style={{ fontSize: 11.5, color: A.muted2 }}>{fmtInt(totalCalls)} calls</span>
-        {tokTotal > 0 && <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono }}>{fmtUsd(costPerK)}/1K tok</span>}
-        <span style={{ fontSize: 11.5, color: A.ink3, marginLeft: "auto", fontFamily: mono }}>{fmtUsd(totalCost)}</span>
+        {dotColor && <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
+        <span style={{ fontFamily: mono, fontSize: 12.5, color: A.ink2, fontWeight: 600 }}>{label}</span>
+        {sublabel && <span style={{ fontSize: 11, color: A.muted2 }}>{sublabel}</span>}
+        <span style={{ fontSize: 11.5, color: A.muted2 }}>{fmtInt(calls)} calls</span>
+        {tok > 0 && <span style={{ fontSize: 11, color: A.muted2, fontFamily: mono }}>{fmtUsd(perK)}/1K</span>}
+        <span style={{ fontSize: 11.5, color: A.ink3, marginLeft: "auto", fontFamily: mono }}>{fmtUsd(cost)}</span>
       </button>
-      {open && branches.map((b, i) => <StageLeaf key={`${b.stage}-${b.tenant_label}-${i}`} b={b} />)}
+      {open && branches.map((b, i) => <StageLeaf key={`${b.stage}-${b.tenant_label}-${b.account}-${i}`} b={b} />)}
     </div>
   );
 }
 
-function AccountGroup({ account, branches }: { account: string; branches: Branch[] }) {
+// top-level card group (account, or tenant, depending on the toggle)
+function TopGroup({ label, sublabel, dotColor, branches, groupBy }: {
+  label: string; sublabel: string; dotColor: string; branches: Branch[];
+  groupBy: "account" | "tenant";
+}) {
   const [open, setOpen] = useState(true);
-  const meta = ACCOUNT_META[account] ?? { label: account, color: A.muted };
-  const byModel = useMemo(() => {
+  const cost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
+  const calls = branches.reduce((s, b) => s + b.call_count, 0);
+  // second-level key: if grouped by account -> break down by model; if by tenant -> by account
+  const sub = useMemo(() => {
     const m = new Map<string, Branch[]>();
-    for (const b of branches) { if (!m.has(b.model)) m.set(b.model, []); m.get(b.model)!.push(b); }
+    for (const b of branches) {
+      const k = groupBy === "account" ? b.model : b.account;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(b);
+    }
     return m;
-  }, [branches]);
-  const totalCost = branches.reduce((s, b) => s + b.total_cost_usd, 0);
-  const totalCalls = branches.reduce((s, b) => s + b.call_count, 0);
+  }, [branches, groupBy]);
   return (
     <Card style={{ padding: 0, overflow: "hidden" }}>
       <button onClick={() => setOpen(o => !o)} style={{
@@ -162,15 +263,21 @@ function AccountGroup({ account, branches }: { account: string; branches: Branch
         padding: "14px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
       }}>
         {open ? <ChevronDown size={15} color={A.ink} /> : <ChevronRight size={15} color={A.ink} />}
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: meta.color, flexShrink: 0 }} />
-        <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500 }}>{meta.label}</span>
-        <span style={{ fontSize: 12, color: A.muted2 }}>{fmtInt(totalCalls)} calls · {byModel.size} model(s)</span>
-        <span style={{ fontSize: 13, color: A.ink2, marginLeft: "auto", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(totalCost)}</span>
+        {dotColor && <span style={{ width: 9, height: 9, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />}
+        <span style={{ fontFamily: serif, fontSize: 14.5, color: A.ink, fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 12, color: A.muted2 }}>{sublabel} · {fmtInt(calls)} calls · {sub.size} {groupBy === "account" ? "model" : "account"}(s)</span>
+        <span style={{ fontSize: 13, color: A.ink2, marginLeft: "auto", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(cost)}</span>
       </button>
       {open && (
         <div style={{ padding: "0 18px 10px" }}>
-          {[...byModel.entries()].map(([model, bs]) => (
-            <ModelBranch key={model} model={model} branches={bs} configModel={undefined} />
+          {[...sub.entries()].map(([k, bs]) => (
+            <SubNode
+              key={k}
+              label={groupBy === "account" ? k : (ACCOUNT_META[k]?.short ?? k)}
+              dotColor={groupBy === "tenant" ? ACCOUNT_META[k]?.color : undefined}
+              branches={bs}
+              indent={38}
+            />
           ))}
         </div>
       )}
@@ -178,22 +285,24 @@ function AccountGroup({ account, branches }: { account: string; branches: Branch
   );
 }
 
-// ═══════════════════════ OVERVIEW helpers ═══════════════════════════════════
+// ── Overview: horizontal bar ─────────────────────────────────────────────────
 
-function AccountBar({ rows, total }: { rows: { key: string; cost: number }[]; total: number }) {
+function Bar({ rows, total, colorOf }: {
+  rows: { key: string; label: string; cost: number }[]; total: number; colorOf: (k: string) => string;
+}) {
+  if (rows.length === 0) return <div style={{ color: A.muted2, fontSize: 13 }}>No spend yet.</div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {rows.map(r => {
-        const meta = ACCOUNT_META[r.key] ?? { label: r.key, color: A.muted };
         const w = total > 0 ? (r.cost / total) * 100 : 0;
         return (
           <div key={r.key}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-              <span style={{ color: A.ink2 }}>{meta.label}</span>
+              <span style={{ color: A.ink2 }}>{r.label}</span>
               <span style={{ fontFamily: mono, color: A.ink3 }}>{fmtUsd(r.cost)} <span style={{ color: A.muted2 }}>({Math.round(w)}%)</span></span>
             </div>
             <div style={{ height: 8, background: A.line2, borderRadius: 999, overflow: "hidden" }}>
-              <div style={{ width: `${w}%`, height: "100%", background: meta.color, borderRadius: 999 }} />
+              <div style={{ width: `${w}%`, height: "100%", background: colorOf(r.key), borderRadius: 999 }} />
             </div>
           </div>
         );
@@ -214,6 +323,10 @@ export default function ExternalSpendPage() {
   const [configs, setConfigs] = useState<StageConfig[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // filters (apply to LLM + DFS)
+  const [tenantFilter, setTenantFilter] = useState<string | null>(null);
+  const [acctFilter, setAcctFilter] = useState<string | null>(null);
+  const [groupBy, setGroupBy] = useState<"account" | "tenant">("tenant");
 
   const load = useCallback((d: number) => {
     setLoading(true);
@@ -235,67 +348,96 @@ export default function ExternalSpendPage() {
       .catch(() => setError("Failed to load spend data"))
       .finally(() => setLoading(false));
   }, []);
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + range-change fetch; load() sets loading state, same pattern as every other admin page
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + range-change fetch, same pattern as every admin page
   useEffect(() => { load(days); }, [days, load]);
 
-  // ── LLM aggregates ──
-  const llm = useMemo(() => branches ?? [], [branches]);
+  const allBranches = useMemo(() => branches ?? [], [branches]);
+  const allDfs = useMemo(() => dfs?.branches ?? [], [dfs]);
+
+  // tenant options built from BOTH sources so a DFS-only tenant still appears
+  const tenantOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of allBranches) m.set(tenantKey(b), b.tenant_label);
+    for (const b of allDfs) m.set(tenantKey(b), b.tenant_label);
+    return [...m.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allBranches, allDfs]);
+  const acctOptions = useMemo(() => ACCOUNTS.filter(a => allBranches.some(b => b.account === a)), [allBranches]);
+
+  // filtered views
+  const llm = useMemo(() => allBranches.filter(b =>
+    (!tenantFilter || tenantKey(b) === tenantFilter) && (!acctFilter || b.account === acctFilter)
+  ), [allBranches, tenantFilter, acctFilter]);
+  const dfsRows = useMemo(() => allDfs.filter(b =>
+    !tenantFilter || tenantKey(b) === tenantFilter
+  ), [allDfs, tenantFilter]);
+
+  // aggregates (respect filters)
   const llmCost = llm.reduce((s, b) => s + b.total_cost_usd, 0);
   const llmCalls = llm.reduce((s, b) => s + b.call_count, 0);
   const llmTokens = llm.reduce((s, b) => s + b.tokens_in_total + b.tokens_out_total, 0);
   const llmFallback = llm.reduce((s, b) => s + b.fallback_count, 0);
   const llmTruncated = llm.reduce((s, b) => s + b.truncated_count, 0);
-  const okEligible = llm.reduce((s, b) => s + b.ok_eligible_count, 0);
+  const okElig = llm.reduce((s, b) => s + b.ok_eligible_count, 0);
   const okCount = llm.reduce((s, b) => s + b.ok_count, 0);
-
-  const dfsCost = dfs?.summary?.total_cost_usd ?? 0;
+  const dfsCost = dfsRows.reduce((s, b) => s + b.total_cost_usd, 0);
+  const dfsCalls = dfsRows.reduce((s, b) => s + b.call_count, 0);
+  const dfsLive = dfsRows.reduce((s, b) => s + b.live_count, 0);
+  const dfsCacheHits = dfsRows.reduce((s, b) => s + b.cache_hit_count, 0);
+  const dfsCacheRate = dfsCalls > 0 ? dfsCacheHits / dfsCalls : null;
   const totalSpend = llmCost + dfsCost;
 
-  // ── spend by account (Overview) ──
-  const byAccount = useMemo(() => {
+  // Overview breakdowns
+  const spendByAccount = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of llm) m.set(b.account, (m.get(b.account) ?? 0) + b.total_cost_usd);
-    const rows = [...m.entries()].map(([key, cost]) => ({ key, cost })).sort((a, b) => b.cost - a.cost);
-    if (dfsCost > 0) rows.push({ key: "dfs", cost: dfsCost });
-    return rows;
+    const rows = [...m.entries()].map(([key, cost]) => ({ key, label: ACCOUNT_META[key]?.label ?? key, cost }));
+    if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
+    return rows.sort((a, b) => b.cost - a.cost);
   }, [llm, dfsCost]);
-
-  // ── stage cost ranking (Overview) — the lever the whole epic is about ──
+  const spendByTenant = useMemo(() => {
+    const m = new Map<string, { label: string; cost: number }>();
+    for (const b of llm) { const k = tenantKey(b); const c = m.get(k) ?? { label: b.tenant_label, cost: 0 }; c.cost += b.total_cost_usd; m.set(k, c); }
+    for (const b of dfsRows) { const k = tenantKey(b); const c = m.get(k) ?? { label: b.tenant_label, cost: 0 }; c.cost += b.total_cost_usd; m.set(k, c); }
+    return [...m.entries()].map(([key, v]) => ({ key, label: v.label, cost: v.cost })).sort((a, b) => b.cost - a.cost);
+  }, [llm, dfsRows]);
   const stageRanking = useMemo(() => {
     const m = new Map<string, { cost: number; calls: number }>();
-    for (const b of llm) {
-      const cur = m.get(b.stage) ?? { cost: 0, calls: 0 };
-      cur.cost += b.total_cost_usd; cur.calls += b.call_count;
-      m.set(b.stage, cur);
-    }
+    for (const b of llm) { const c = m.get(b.stage) ?? { cost: 0, calls: 0 }; c.cost += b.total_cost_usd; c.calls += b.call_count; m.set(b.stage, c); }
     return [...m.entries()].map(([stage, v]) => ({ stage, ...v })).sort((a, b) => b.cost - a.cost).slice(0, 10);
   }, [llm]);
 
-  // ── LLM grouped by account (LLM tab) ──
-  const [acctFilter, setAcctFilter] = useState<string | null>(null);
-  const byAccountTree = useMemo(() => {
+  // LLM tree grouped by the toggle
+  const llmTree = useMemo(() => {
     const m = new Map<string, Branch[]>();
     for (const b of llm) {
-      if (acctFilter && b.account !== acctFilter) continue;
-      if (!m.has(b.account)) m.set(b.account, []);
-      m.get(b.account)!.push(b);
+      const k = groupBy === "account" ? b.account : tenantKey(b);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(b);
     }
-    return m;
-  }, [llm, acctFilter]);
+    // sort groups by cost desc
+    return [...m.entries()].sort((a, b) =>
+      b[1].reduce((s, x) => s + x.total_cost_usd, 0) - a[1].reduce((s, x) => s + x.total_cost_usd, 0));
+  }, [llm, groupBy]);
 
-  // ── daily trend pivot (Overview) ──
   const trend = useMemo(() => {
     const m = new Map<string, { day: string; llm: number; dfs: number }>();
-    for (const p of daily ?? []) {
-      const row = m.get(p.day) ?? { day: p.day, llm: 0, dfs: 0 };
-      row[p.source] = p.cost_usd;
-      m.set(p.day, row);
-    }
-    return [...m.values()].sort((a, b) => a.day.localeCompare(b.day))
-      .map(r => ({ ...r, label: r.day.slice(5) }));  // MM-DD
+    for (const p of daily ?? []) { const row = m.get(p.day) ?? { day: p.day, llm: 0, dfs: 0 }; row[p.source] = p.cost_usd; m.set(p.day, row); }
+    return [...m.values()].sort((a, b) => a.day.localeCompare(b.day)).map(r => ({ ...r, label: r.day.slice(5) }));
   }, [daily]);
 
-  const acctOptions = useMemo(() => [...new Set(llm.map(b => b.account))], [llm]);
+  // DFS per-tenant + per-endpoint tables
+  const dfsByTenant = useMemo(() => {
+    const m = new Map<string, { label: string; cost: number; calls: number; live: number; cache: number; kw: number }>();
+    for (const b of dfsRows) {
+      const k = tenantKey(b); const r = m.get(k) ?? { label: b.tenant_label, cost: 0, calls: 0, live: 0, cache: 0, kw: 0 };
+      r.cost += b.total_cost_usd; r.calls += b.call_count; r.live += b.live_count; r.cache += b.cache_hit_count; r.kw += b.keywords_total;
+      m.set(k, r);
+    }
+    return [...m.values()].sort((a, b) => b.cost - a.cost);
+  }, [dfsRows]);
+
+  const tenantLabelOf = (k: string | null) => k == null ? null : (tenantOptions.find(t => t.key === k)?.label ?? k);
+  const filterActive = tenantFilter || acctFilter;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
@@ -306,12 +448,8 @@ export default function ExternalSpendPage() {
             <Wallet size={18} />
           </div>
           <div>
-            <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>
-              External Spend
-            </h1>
-            <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>
-              Real LLM + DataForSEO cost, by account · model · stage · tenant
-            </div>
+            <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>External Spend</h1>
+            <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>Real LLM + DataForSEO cost — by tenant, account, model, stage</div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             {DAY_OPTIONS.map(d => (
@@ -319,6 +457,31 @@ export default function ExternalSpendPage() {
             ))}
           </div>
         </div>
+
+        {/* Filters — tenant + account, apply to all tabs */}
+        <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <Building2 size={14} color={A.muted} />
+              <span style={{ fontSize: 12, color: A.muted, marginRight: 4 }}>Tenant</span>
+              <select value={tenantFilter ?? ""} onChange={e => setTenantFilter(e.target.value || null)}
+                style={{ fontSize: 12.5, padding: "5px 8px", borderRadius: 7, border: `1px solid ${A.line}`, background: A.card, color: A.ink2, fontFamily: sans, cursor: "pointer" }}>
+                <option value="">All tenants</option>
+                {tenantOptions.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: A.muted, marginRight: 2 }}>Account</span>
+              <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>All</Btn>
+              {acctOptions.map(a => (
+                <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>{ACCOUNT_META[a].short}</Btn>
+              ))}
+            </div>
+            {filterActive && (
+              <Btn size="sm" variant="ghost" onClick={() => { setTenantFilter(null); setAcctFilter(null); }}>Clear</Btn>
+            )}
+          </div>
+        </Card>
 
         <div style={{ marginBottom: 20 }}>
           <TabBar
@@ -341,10 +504,10 @@ export default function ExternalSpendPage() {
             {tab === "overview" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
-                  <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`last ${days} days · LLM + DFS`} icon={<Wallet size={16} />} />
-                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls`} accent={A.gold} icon={<Cpu size={16} />} />
-                  <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfs?.summary?.total_calls ?? 0)} calls · ${pct(dfs?.summary?.cache_hit_rate ?? null)} cache hit`} accent={A.green} icon={<Search size={16} />} />
-                  <StatCard label="LLM tokens" value={fmtInt(llmTokens)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.red} icon={<TrendingUp size={16} />} />
+                  <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`last ${days} days · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
+                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
+                  <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfsCalls)} calls · ${pct(dfsCacheRate)} cache`} accent={A.green} icon={<Search size={16} />} />
+                  <StatCard label="Tenants active" value={fmtInt(spendByTenant.length)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.red} icon={<Building2 size={16} />} />
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
@@ -364,39 +527,43 @@ export default function ExternalSpendPage() {
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
+                  <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>Note: trend is platform-wide (not filtered).</div>
                 </Card>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
                   <Card>
-                    <SLabel>Spend by account</SLabel>
-                    {byAccount.length === 0
-                      ? <div style={{ color: A.muted2, fontSize: 13 }}>No spend yet.</div>
-                      : <AccountBar rows={byAccount} total={totalSpend} />}
+                    <SLabel>Spend by tenant</SLabel>
+                    <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.red} />
                   </Card>
                   <Card>
-                    <SLabel>Top stages by cost</SLabel>
-                    {stageRanking.length === 0 ? (
-                      <div style={{ color: A.muted2, fontSize: 13 }}>No LLM calls yet.</div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {stageRanking.map(s => (
-                          <div key={s.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-                            <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{s.stage}</span>
-                            <span style={{ color: A.muted2 }}>{fmtInt(s.calls)} calls</span>
-                            <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd(s.cost)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <SLabel>Spend by account</SLabel>
+                    <Bar rows={spendByAccount} total={totalSpend} colorOf={(k) => k === "dfs" ? A.green : (ACCOUNT_META[k]?.color ?? A.muted)} />
                   </Card>
                 </div>
+
+                <Card style={{ marginBottom: 20 }}>
+                  <SLabel>Top stages by cost</SLabel>
+                  {stageRanking.length === 0 ? (
+                    <div style={{ color: A.muted2, fontSize: 13 }}>No LLM calls yet.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {stageRanking.map(s => (
+                        <div key={s.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                          <span style={{ fontFamily: mono, color: A.ink2, minWidth: 160 }}>{s.stage}</span>
+                          <span style={{ color: A.muted2 }}>{fmtInt(s.calls)} calls</span>
+                          <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd(s.cost)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
 
                 <Card dark>
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
-                    Figures are computed from per-call token/response cost logged in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code>.
-                    They are NOT the AWS invoice — Bedrock runs on satellite accounts (acc3 = <b>786888028788</b>, acc1 = 867490540162, acc2 = 005097885195);
-                    DataForSEO is a 3rd-party API and never appears in AWS Cost Explorer. Cross-check against Cost Explorer by hand until a CE integration is built (tracked separately).
+                    Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
+                    Bedrock runs on satellite accounts (acc3 = <b>786888028788</b>, acc1 = 867490540162, acc2 = 005097885195); DataForSEO is 3rd-party (never in Cost Explorer).
+                    Cross-check against Cost Explorer by hand until a CE integration is built (tracked separately).
                   </div>
                 </Card>
               </>
@@ -406,35 +573,36 @@ export default function ExternalSpendPage() {
             {tab === "llm" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 18 }}>
-                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`last ${days} days`} accent={A.gold} />
-                  <StatCard label="Calls" value={fmtInt(llmCalls)} />
-                  <StatCard label="Pass rate" value={okEligible > 0 ? pct(okCount / okEligible) : "—"}
-                            sub={okEligible > 0 ? `${okCount}/${okEligible} measured` : "no signal yet"} />
-                  <StatCard label="Fallback" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"}
-                            sub={`${fmtInt(llmFallback)} calls acc3→acc1/GPT`} accent={A.amber} />
-                  <StatCard label="Truncated" value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"}
-                            sub={`${fmtInt(llmTruncated)} at max_tokens`} accent={A.red} />
+                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.gold} />
+                  <StatCard label="Calls" value={fmtInt(llmCalls)} sub={`${fmtInt(llmTokens)} tokens`} />
+                  <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
+                  <StatCard label="Fallback" value={llmCalls > 0 ? pct(llmFallback / llmCalls) : "—"} sub={`${fmtInt(llmFallback)} acc3→acc1/GPT`} accent={A.amber} />
+                  <StatCard label="Truncated" value={llmCalls > 0 ? pct(llmTruncated / llmCalls) : "—"} sub={`${fmtInt(llmTruncated)} max_tokens`} accent={A.red} />
                 </div>
 
-                <div style={{ display: "flex", gap: 6, marginBottom: 14, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: A.muted }}>Account:</span>
-                  <Btn size="sm" variant={acctFilter === null ? "primary" : "secondary"} onClick={() => setAcctFilter(null)}>All</Btn>
-                  {acctOptions.map(a => (
-                    <Btn key={a} size="sm" variant={acctFilter === a ? "primary" : "secondary"} onClick={() => setAcctFilter(a)}>
-                      {ACCOUNT_META[a]?.label.split(" · ")[0] ?? a}
-                    </Btn>
-                  ))}
+                <Card style={{ marginBottom: 18, padding: 0, overflow: "hidden" }}>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant{acctFilter ? ` · ${ACCOUNT_META[acctFilter]?.short}` : ""}</SLabel></div>
+                  <div style={{ padding: "0 18px 16px" }}><TenantSpendTable branches={llm} /></div>
+                </Card>
+
+                <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: A.muted }}>Group by</span>
+                  <Btn size="sm" variant={groupBy === "tenant" ? "primary" : "secondary"} onClick={() => setGroupBy("tenant")}>Tenant → Account → Model</Btn>
+                  <Btn size="sm" variant={groupBy === "account" ? "primary" : "secondary"} onClick={() => setGroupBy("account")}>Account → Model → Stage</Btn>
                 </div>
 
-                {byAccountTree.size === 0 ? (
-                  <Card style={{ textAlign: "center", padding: 40 }}>
-                    <div style={{ color: A.muted, fontSize: 13 }}>No LLM calls in the last {days} days.</div>
-                  </Card>
+                {llmTree.length === 0 ? (
+                  <Card style={{ textAlign: "center", padding: 40 }}><div style={{ color: A.muted, fontSize: 13 }}>No LLM calls match the filter.</div></Card>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {[...byAccountTree.entries()].map(([acct, bs]) => (
-                      <AccountGroup key={acct} account={acct} branches={bs} />
-                    ))}
+                    {llmTree.map(([k, bs]) => {
+                      const isAcct = groupBy === "account";
+                      const meta = isAcct ? ACCOUNT_META[k] : null;
+                      const label = isAcct ? (meta?.label ?? k) : (bs[0]?.tenant_label ?? k);
+                      const dot = isAcct ? (meta?.color ?? A.muted) : A.red;
+                      const sublabel = isAcct ? "account" : "tenant";
+                      return <TopGroup key={k} label={label} sublabel={sublabel} dotColor={dot} branches={bs} groupBy={groupBy} />;
+                    })}
                   </div>
                 )}
 
@@ -445,9 +613,7 @@ export default function ExternalSpendPage() {
                       <div key={c.stage} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 0", borderBottom: `1px solid ${A.line2}` }}>
                         <span style={{ fontFamily: mono, color: A.ink2, minWidth: 150 }}>{c.stage}</span>
                         <Badge color={ROLE_COLOR[c.role] ?? "gray"}>{c.role}</Badge>
-                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>
-                          {c.model_id}{c.account_route ? ` · ${c.account_route}` : ""}
-                        </span>
+                        <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{c.model_id}{c.account_route ? ` · ${c.account_route}` : ""}</span>
                       </div>
                     ))}
                   </div>
@@ -459,17 +625,51 @@ export default function ExternalSpendPage() {
             {tab === "dfs" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 18 }}>
-                  <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={`last ${days} days`} accent={A.green} />
-                  <StatCard label="Total calls" value={fmtInt(dfs?.summary?.total_calls ?? 0)} />
-                  <StatCard label="Live calls" value={fmtInt(dfs?.summary?.live_calls ?? 0)} sub="real DFS HTTP" accent={A.amber} />
-                  <StatCard label="Cache hits" value={fmtInt(dfs?.summary?.cache_hits ?? 0)} accent={A.gold} />
-                  <StatCard label="Cache hit rate" value={pct(dfs?.summary?.cache_hit_rate ?? null)} sub="DFS-attributable (not Redis-global)" />
+                  <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.green} />
+                  <StatCard label="Total calls" value={fmtInt(dfsCalls)} />
+                  <StatCard label="Live calls" value={fmtInt(dfsLive)} sub="real DFS HTTP" accent={A.amber} />
+                  <StatCard label="Cache hits" value={fmtInt(dfsCacheHits)} accent={A.gold} />
+                  <StatCard label="Cache hit rate" value={pct(dfsCacheRate)} sub="DFS-attributable" />
                 </div>
 
                 <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+                  <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by tenant</SLabel></div>
+                  {dfsByTenant.length === 0 ? (
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
+                  ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead><tr>
+                        <th style={TH}>Tenant</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Cost</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Calls</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Live</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Cache</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Cache %</th>
+                        <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
+                        <th style={{ ...TH, textAlign: "right" }}>$/keyword</th>
+                      </tr></thead>
+                      <tbody>
+                        {dfsByTenant.map((r, i) => (
+                          <tr key={i}>
+                            <td style={{ ...TD, fontWeight: 600, color: A.ink2 }}>{r.label}</td>
+                            <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontWeight: 600 }}>{fmtUsd(r.cost)}</td>
+                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.calls)}</td>
+                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.live)}</td>
+                            <td style={{ ...TD, textAlign: "right", color: A.muted }}>{fmtInt(r.cache)}</td>
+                            <td style={{ ...TD, textAlign: "right" }}>{pct(r.calls > 0 ? r.cache / r.calls : null)}</td>
+                            <td style={{ ...TD, textAlign: "right" }}>{fmtInt(r.kw)}</td>
+                            <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{r.kw > 0 ? fmtUsd(r.cost / r.kw) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </Card>
+
+                <Card style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
                   <div style={{ padding: "14px 18px" }}><SLabel style={{ marginBottom: 0 }}>Spend by endpoint × tenant</SLabel></div>
-                  {(dfs?.branches?.length ?? 0) === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls in the last {days} days.</div>
+                  {dfsRows.length === 0 ? (
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "0 18px 24px" }}>No DataForSEO calls match the filter.</div>
                   ) : (
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
@@ -479,10 +679,9 @@ export default function ExternalSpendPage() {
                         <th style={{ ...TH, textAlign: "right" }}>Cache</th>
                         <th style={{ ...TH, textAlign: "right" }}>Cache %</th>
                         <th style={{ ...TH, textAlign: "right" }}>Keywords</th>
-                        <th style={{ ...TH, textAlign: "right" }}>$/keyword</th>
                       </tr></thead>
                       <tbody>
-                        {dfs!.branches.map((b, i) => (
+                        {dfsRows.map((b, i) => (
                           <tr key={i}>
                             <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{b.endpoint}</td>
                             <td style={{ ...TD, color: A.muted }}>{b.tenant_label}</td>
@@ -491,9 +690,6 @@ export default function ExternalSpendPage() {
                             <td style={{ ...TD, textAlign: "right", color: A.muted }}>{fmtInt(b.cache_hit_count)}</td>
                             <td style={{ ...TD, textAlign: "right" }}>{pct(b.cache_hit_rate)}</td>
                             <td style={{ ...TD, textAlign: "right" }}>{fmtInt(b.keywords_total)}</td>
-                            <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>
-                              {b.keywords_total > 0 ? fmtUsd(b.total_cost_usd / b.keywords_total) : "—"}
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -529,6 +725,7 @@ export default function ExternalSpendPage() {
                       </tbody>
                     </table>
                   )}
+                  <div style={{ fontSize: 11, color: A.muted2, padding: "0 18px 14px" }}>Note: target market is platform-wide (not tenant-filtered — DFS keyword research is shared).</div>
                 </Card>
               </>
             )}
