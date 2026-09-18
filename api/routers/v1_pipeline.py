@@ -91,6 +91,8 @@ async def _rewrite_tour(
     batch_text: Optional[str] = None,  # AA-606: pre-generated writer text (Bedrock Batch attempt-1)
     batch_model_used: Optional[str] = None,  # AA-606: model label to record for the batch write
     batch_account: Optional[str] = None,  # AA-606: satellite account the batch ran on (acc1/acc3)
+    tenant_id: Optional[str] = None,  # AA-620: real tenant UUID -> logged in llm_call_log (T2)
+    generate_stage: str = "s1_generate",  # AA-620: "t2_generate" for tenant T2, "s1_generate" for A1
 ) -> dict:
     """Rewrite single tour using LangGraph.
 
@@ -111,6 +113,8 @@ async def _rewrite_tour(
             "seo": seo or {},
             "model_tier": model_tier,
             "is_tenant_rewrite": is_tenant_rewrite,
+            "tenant_id": tenant_id,           # AA-620: real tenant for T2 (None for A1) -> record_call
+            "generate_stage": generate_stage,  # AA-620: t2_generate (T2) vs s1_generate (A1)
             "few_shots": [],
             "generated": {},
             "quality_score": 0.0,

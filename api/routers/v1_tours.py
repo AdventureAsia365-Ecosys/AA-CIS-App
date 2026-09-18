@@ -564,6 +564,8 @@ async def trigger_rewrite(
                 brand_rules=brand_rules,
                 seo=seo_data,
                 is_tenant_rewrite=True,  # skips name-match check in validate_node
+                tenant_id=tenant_id,             # AA-620: log this tenant in llm_call_log
+                generate_stage="t2_generate",    # AA-620: tenant writer stage (admin-tunable)
             )
             if result.get("status") == "success" and result.get("generated"):
                 # AA-425 T3 — QA gate (grounding + structural), self-repair up to
@@ -575,6 +577,7 @@ async def trigger_rewrite(
                 qa = await run_t3_qa_gate(
                     tour_dict, source_texts, result, brand_rules,
                     seo_data=seo_data,  # AA-445-02 — repair-round rewrites also carry seo_data
+                    tenant_id=tenant_id,  # AA-620 — repair-round logs t2_generate + this tenant
                 )
                 result = qa["result"]  # possibly a later repair round's output
 

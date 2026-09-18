@@ -387,9 +387,11 @@ Keep all other fields unchanged."""
                 logger.warning("flag_fix_json_unrecoverable", raw_len=len(raw))
                 raise
         record_call_sync(
+            # AA-620: s1_flag_fix stays SHARED between A1 and T2 (not split — Haiku is fine for
+            # both, see AA-620). Only tenant_id is threaded so a T2 fix-pass logs its real tenant.
             stage="s1_flag_fix", role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd, tenant_id=state.get("tenant_id"),  # AA-620
             quality_signal={"fields_fixed": len(fix_keys), "fields_requested": sorted(fix_keys)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),

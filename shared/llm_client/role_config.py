@@ -42,6 +42,10 @@ class StageConfig:
 # stage has no row yet (e.g. a new call site shipped before its migration/seed caught up).
 SAFE_DEFAULTS: dict[str, StageConfig] = {
     "s1_generate":        StageConfig("s1_generate", "writer", "claude", "haiku", "acc3"),
+    # AA-620: dedicated tenant (T2) writer stage — seeded Haiku (identical to s1_generate today),
+    # kept separate so admin can move ONLY the T2 rewrite to Sonnet via Settings > LLM Models
+    # without touching the A1 admin batch write. See migration 156.
+    "t2_generate":        StageConfig("t2_generate", "writer", "claude", "haiku", "acc3"),
     "s1_judge":           StageConfig("s1_judge", "judge", "openai", "gpt-4.1", None),
     "s1_brand_audit":     StageConfig("s1_brand_audit", "judge", "openai", "gpt-4.1", None),
     "s1_flag_fix":        StageConfig("s1_flag_fix", "writer", "claude", "haiku", "acc3"),

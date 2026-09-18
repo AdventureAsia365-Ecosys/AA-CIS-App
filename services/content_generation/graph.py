@@ -202,6 +202,13 @@ class ContentState(TypedDict):
     # (build_graph_from_generated). Declared here so LangGraph doesn't strip it before the seed
     # node reads it. Absent/None on the normal synchronous build_graph() path.
     batch_text:             Optional[str]
+    # AA-620: real tenant UUID for a T2 rewrite so record_call logs the right tenant instead of
+    # NULL (A1 admin leaves this None — its writes stay tenant_id NULL by design).
+    tenant_id:              Optional[str]
+    # AA-620: which llm_role_config stage the WRITE node resolves — "t2_generate" for a tenant
+    # (T2) rewrite, "s1_generate" for A1 admin. Only the generate node reads it; s1_flag_fix /
+    # s1_itinerary_nudge stay shared (not split — see AA-620). None -> falls back to s1_generate.
+    generate_stage:         Optional[str]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -267,6 +274,13 @@ def generate_node(state: ContentState) -> ContentState:
     """Node 1: Generate content via LLMClient."""
     client = LLMClient()
 
+    # AA-620: the WRITE stage — "t2_generate" for a tenant (T2) rewrite so admin can tune/price
+    # the tenant writer independently, "s1_generate" for A1 admin. Set by the caller's
+    # initial_state; None (any older caller not threaded through) -> s1_generate, unchanged.
+    gen_stage = state.get("generate_stage") or "s1_generate"
+    # AA-620: real tenant for a T2 rewrite, None for A1 admin (its s1_generate writes stay NULL).
+    tenant_id = state.get("tenant_id")
+
     # AA-606: attempt-1 (system, user) prompt is materialized by the SAME builder the Bedrock Batch
     # manifest uses (services/content_generation/batch_prompt), so batch and sync writes never drift.
     system = build_s1_system_prompt(state)
@@ -312,7 +326,7 @@ def generate_node(state: ContentState) -> ContentState:
         # admin's "s1_generate" stage config instead. An explicit tier (including AA-237's
         # opt-in sonnet re-run) still overrides, unchanged.
         model_tier=state.get("model_tier"),
-        stage="s1_generate",
+        stage=gen_stage,  # AA-620: t2_generate for tenant, s1_generate for A1 admin
     )
 
     resp = None
@@ -335,9 +349,9 @@ def generate_node(state: ContentState) -> ContentState:
                            fallback_used=resp.fallback_used if resp else None,
                            retry_count=state.get("retry_count"))
             record_call_sync(
-                stage="s1_generate", role="writer", model=resp.model_used,
+                stage=gen_stage, role="writer", model=resp.model_used,  # AA-620
                 tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-                cost_usd=resp.cost_usd, tenant_id=None,
+                cost_usd=resp.cost_usd, tenant_id=tenant_id,  # AA-620: real tenant for T2, None for A1
                 quality_signal={"json_parsed": False, "fallback_used": resp.fallback_used},
                 stop_reason=getattr(resp, "stop_reason", None),
                 account=getattr(resp, "satellite_account", None),
@@ -356,15 +370,14 @@ def generate_node(state: ContentState) -> ContentState:
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client)
-        # AA-505 — tenant_id=None here always: ContentState never carries tenant_id (AA-434's own
-        # finding, still true — a T2 tenant rewrite and an A1 admin rewrite run the identical
-        # graph and are indistinguishable in llm_call_log today). Threading tenant_id through the
-        # whole LangGraph state is a real, natural follow-up but bigger than this task's scope —
-        # flagged in docs/implementation-notes/AA-518.md, not silently swept under this comment.
+        # AA-620 — resolves the AA-505/AA-434 gap this comment used to flag: ContentState now
+        # carries tenant_id + generate_stage, so a T2 tenant rewrite logs stage="t2_generate" with
+        # the real tenant_id, while an A1 admin rewrite logs stage="s1_generate" with tenant_id
+        # NULL (A1 leaves both unset) — the two are finally distinguishable in llm_call_log.
         record_call_sync(
-            stage="s1_generate", role="writer", model=resp.model_used,
+            stage=gen_stage, role="writer", model=resp.model_used,  # AA-620
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd, tenant_id=tenant_id,  # AA-620: real tenant for T2, None for A1
             quality_signal={"json_parsed": True, "fallback_used": resp.fallback_used},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
