@@ -219,6 +219,7 @@ async def get_llm_usage_calls(
 _DFS_TREE_SQL = """
     SELECT
         endpoint,
+        tenant_id::text                       AS tenant_id,
         COALESCE(tenant_id::text, 'platform') AS tenant_label,
         COUNT(*)                                    AS call_count,
         COUNT(*) FILTER (WHERE fetched_live)        AS live_count,
