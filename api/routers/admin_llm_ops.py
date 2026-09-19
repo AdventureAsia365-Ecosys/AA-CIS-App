@@ -15,6 +15,8 @@ admin_a4.py's own force_unpublish() precedent.
 """
 from __future__ import annotations
 
+import json
+import os
 from typing import Optional
 
 import structlog
@@ -22,7 +24,17 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
+from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.llm_client.role_config import list_stage_configs, set_stage_config
+
+# AA-627 — DFS low-balance alert threshold (USD). Env-driven to match the repo's config
+# convention (ADMIN_SECRET, DATAFORSEO_*, SECRET_* are all env). Default $10 per the issue.
+_DFS_BALANCE_ALERT_THRESHOLD_USD = float(os.environ.get("DFS_BALANCE_ALERT_THRESHOLD_USD", "10"))
+# Platform sentinel tenant (silver_aa_internal / master content) — the low-balance notification
+# is platform-wide, not tenant-scoped, so it is attributed to this sentinel (shared.notifications
+# requires a NOT NULL tenant_id). Same UUID used across ingestion/canary/s1_batch.
+_PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+_DFS_BALANCE_LOW_EVENT = "platform.dfs_balance.low"
 
 logger = structlog.get_logger()
 
@@ -359,3 +371,112 @@ async def get_spend_daily(request: Request, days: int = Query(30, ge=1, le=365))
         points.append(d)
     logger.info("admin_spend_daily_queried", days=days, point_count=len(points))
     return {"days": days, "points": points}
+
+
+# ── AA-627 — DataForSEO account balance: daily check + low-balance alert ────────────────────────
+# Two concerns, one pair of endpoints:
+#   POST /admin/dfs-balance/check — the once-a-day job. Reads the FREE DFS balance, stores a
+#       snapshot, and (if below threshold) raises a low-balance notification, throttled to at
+#       most one unread alert per 24h so a persistently-low balance does not spam the bell.
+#       Secret-gated because the EventBridge->Lambda scheduler supplies X-Admin-Secret (mirrors
+#       the s4_trigger Lambda's INTERNAL_API_KEY convention).
+#   GET  /admin/dfs-balance — the External Spend page reads the LATEST stored snapshot (never
+#       calls DFS live per request, per the issue). Returns balance + threshold + low flag.
+
+# One unread low-balance notification per 24h — a persistently-low balance keeps producing a
+# snapshot every day, but we only surface a fresh alert if there isn't already an unread one.
+_RECENT_LOW_ALERT_SQL = """
+    SELECT 1 FROM shared.notifications
+     WHERE event_type = $1
+       AND is_read = FALSE
+       AND created_at >= now() - interval '24 hours'
+     LIMIT 1
+"""
+_INSERT_LOW_ALERT_SQL = """
+    INSERT INTO shared.notifications
+        (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
+    VALUES ($1::uuid, 'system', $2, 'dfs_account', 'dataforseo', $3::jsonb, ARRAY['admin','content'])
+"""
+
+
+async def _maybe_alert_low_balance(conn, balance_usd: float, threshold: float) -> bool:
+    """Insert a low-balance notification unless one is already unread within 24h. Returns True
+    if a new alert was inserted. Best-effort: a notification failure must not fail the check
+    (the snapshot + returned low flag are the source of truth; the bell is a bonus channel)."""
+    try:
+        existing = await conn.fetchval(_RECENT_LOW_ALERT_SQL, _DFS_BALANCE_LOW_EVENT)
+        if existing:
+            return False
+        payload = json.dumps({
+            "message": f"DataForSEO balance ${balance_usd:.2f} is below the ${threshold:.2f} alert threshold. "
+                       f"Top up the account (thu@adventure.asia) to avoid SEO fetch failures (HTTP 402).",
+            "balance_usd": balance_usd,
+            "threshold_usd": threshold,
+        })
+        await conn.execute(_INSERT_LOW_ALERT_SQL, _PLATFORM_TENANT_ID, _DFS_BALANCE_LOW_EVENT, payload)
+        return True
+    except Exception as e:
+        logger.warning("dfs_balance_alert_insert_failed", error=str(e))
+        return False
+
+
+@router.post("/dfs-balance/check", summary="AA-627 — daily DataForSEO balance read + low-balance alert")
+async def check_dfs_balance(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.seo_intelligence.dataforseo_client import DataForSEOClient
+
+    threshold = _DFS_BALANCE_ALERT_THRESHOLD_USD
+    try:
+        money = await DataForSEOClient().fetch_balance()
+    except Exception as e:
+        logger.error("dfs_balance_check_fetch_failed", error=str(e))
+        raise HTTPException(status_code=502, detail=f"DataForSEO balance read failed: {e}")
+
+    balance = money.get("balance")
+    if balance is None:
+        raise HTTPException(status_code=502, detail="DataForSEO balance read returned no balance")
+    balance = float(balance)
+    currency = money.get("currency")
+    below = balance < threshold
+
+    pool = request.app.state.pool
+    snapshot = await record_balance_snapshot(
+        pool, balance_usd=balance, currency=currency,
+        below_threshold=below, threshold_usd=threshold, raw=money,
+    )
+    alerted = False
+    if below:
+        async with pool.acquire() as conn:
+            alerted = await _maybe_alert_low_balance(conn, balance, threshold)
+
+    logger.info("admin_dfs_balance_checked", balance=balance, threshold=threshold,
+                below=below, alerted=alerted)
+    return {
+        "balance_usd": balance,
+        "currency": currency,
+        "threshold_usd": threshold,
+        "below_threshold": below,
+        "alerted": alerted,
+        "fetched_at": snapshot.get("fetched_at"),
+    }
+
+
+@router.get("/dfs-balance", summary="AA-627 — latest stored DataForSEO balance (no live DFS call)")
+async def get_dfs_balance(request: Request):
+    pool = request.app.state.pool
+    latest = await read_latest_balance(pool)
+    threshold = _DFS_BALANCE_ALERT_THRESHOLD_USD
+    if not latest:
+        return {"balance_usd": None, "currency": None, "threshold_usd": threshold,
+                "below_threshold": False, "fetched_at": None, "has_data": False}
+    balance = latest.get("balance_usd")
+    # Recompute the low flag against the CURRENT threshold (may differ from when it was stored).
+    below = balance is not None and float(balance) < threshold
+    return {
+        "balance_usd": balance,
+        "currency": latest.get("currency"),
+        "threshold_usd": threshold,
+        "below_threshold": below,
+        "fetched_at": latest.get("fetched_at"),
+        "has_data": True,
+    }

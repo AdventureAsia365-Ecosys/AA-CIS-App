@@ -60,6 +60,10 @@ interface DfsCountry {
   cache_hit_rate: number | null; total_cost_usd: number; keywords_total: number;
 }
 interface DailyPoint { day: string; source: "llm" | "dfs"; cost_usd: number; call_count: number; }
+interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (not a live call)
+  balance_usd: number | null; currency: string | null; threshold_usd: number;
+  below_threshold: boolean; fetched_at: string | null; has_data: boolean;
+}
 interface StageConfig {
   stage: string; role: string; provider: string; model_id: string; account_route: string | null;
 }
@@ -416,6 +420,7 @@ export default function ExternalSpendPage() {
   const [countries, setCountries] = useState<DfsCountry[] | null>(null);
   const [daily, setDaily] = useState<DailyPoint[] | null>(null);
   const [configs, setConfigs] = useState<StageConfig[] | null>(null);
+  const [dfsBalance, setDfsBalance] = useState<DfsBalance | null>(null);  // AA-627
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   // filters (apply to LLM + DFS)
@@ -433,13 +438,17 @@ export default function ExternalSpendPage() {
       fetch(`/api/admin/dfs-usage/by-country?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`/api/admin/spend/daily?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`/api/admin/llm-config`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      // AA-627 — latest stored DFS balance (reads the daily snapshot, never a live DFS call).
+      // Tolerate failure (older deploys / empty table) so the whole page still loads.
+      fetch(`/api/admin/dfs-balance`).then(r => r.ok ? r.json() : null).catch(() => null),
     ])
-      .then(([tree, dfsData, byCountry, dailyData, cfg]) => {
+      .then(([tree, dfsData, byCountry, dailyData, cfg, balance]) => {
         setBranches(tree.branches);
         setDfs({ summary: dfsData.summary, branches: dfsData.branches });
         setCountries(byCountry.countries);
         setDaily(dailyData.points);
         setConfigs(cfg.stages);
+        setDfsBalance(balance ?? null);
         setError("");
       })
       .catch(() => setError("Failed to load spend data"))
@@ -587,6 +596,25 @@ export default function ExternalSpendPage() {
           />
         </div>
 
+        {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
+            reflects the latest stored value, not a live call. */}
+        {dfsBalance?.has_data && dfsBalance.below_threshold && (
+          <Card style={{ marginBottom: 16, padding: "12px 16px", background: "#fff1f0", border: `1px solid ${A.red}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.red, fontSize: 13.5, fontWeight: 600 }}>
+              <span style={{ fontSize: 16 }}>⚠</span>
+              <span>
+                DataForSEO balance is low: {fmtUsd2(dfsBalance.balance_usd ?? 0)}
+                {" "}(threshold {fmtUsd2(dfsBalance.threshold_usd)}). Top up the account to avoid SEO fetch failures (HTTP 402).
+                {dfsBalance.fetched_at && (
+                  <span style={{ fontWeight: 400, color: A.muted, marginLeft: 6 }}>
+                    · as of {new Date(dfsBalance.fetched_at).toLocaleString()}
+                  </span>
+                )}
+              </span>
+            </div>
+          </Card>
+        )}
+
         {loading && <LoadingScreen msg="Loading spend…" />}
         {!loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
@@ -726,7 +754,16 @@ export default function ExternalSpendPage() {
             {/* ═══════════ DFS ═══════════ */}
             {tab === "dfs" && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 18 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 14, marginBottom: 18 }}>
+                  {/* AA-627 — account balance (remaining), distinct from cost (spent). Latest daily snapshot. */}
+                  <StatCard
+                    label="Account balance"
+                    value={dfsBalance?.has_data ? fmtUsd2(dfsBalance.balance_usd ?? 0) : "—"}
+                    sub={dfsBalance?.has_data && dfsBalance.fetched_at
+                      ? `as of ${new Date(dfsBalance.fetched_at).toLocaleDateString()}`
+                      : "no reading yet"}
+                    accent={dfsBalance?.below_threshold ? A.red : A.green}
+                  />
                   <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.green} />
                   <StatCard label="Total calls" value={fmtInt(dfsCalls)} />
                   <StatCard label="Live calls" value={fmtInt(dfsLive)} sub="real DFS HTTP" accent={A.amber} />
