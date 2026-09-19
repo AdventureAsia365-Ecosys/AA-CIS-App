@@ -7,10 +7,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   CheckCircle, XCircle, RotateCcw, ChevronDown, ChevronUp, Filter,
-  Edit3, AlertTriangle, Save, ShieldCheck, Loader2, X,
+  Edit3, AlertTriangle, Save, ShieldCheck, Loader2, X, Ban,
 } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
-import { A, serif, mono, sans, Card, Btn, LoadingScreen } from "../_components/adminUi";
+import { A, serif, mono, sans, Card, Btn, LoadingScreen, Badge, TH, TD } from "../_components/adminUi";
 
 // ── Reviewer identity (temporary until AA-232 per-user auth) ───────────────────
 // Stored once in localStorage, sent as x-reviewer-id; BFF forwards it; backend
@@ -57,6 +57,46 @@ const FIELD_LABEL: Record<string, string> = {
 
 const SEO_META_MIN = 140;
 const SEO_META_MAX = 155;
+
+// AA-626 — classify a gate failure code by nature so the reviewer can tell, at a glance, a tour
+// that is "unfairly" held (high score, only style/brand nits) from one that is genuinely wrong.
+//   red   = product-truth / structural: a real correctness problem, blocks for a reason
+//   amber = brand / style / SEO surface: often fixable or nudge-able, does not mean the tour is wrong
+//   gray  = anything else / low-quality catch-all
+const PRODUCT_TRUTH_CODES = new Set([
+  "MISSING_FIELD", "ITINERARY_DAY_COUNT_MISMATCH", "ITINERARY_MEAL_TIME_INVENTED",
+  "ITINERARY_STILL_COMPRESSED", "FABRICATED", "NOVEL_NUMERIC_CLAIM",
+]);
+const BRAND_STYLE_CODES = new Set([
+  "FORBIDDEN_WORD", "META_TOO_SHORT", "SEO_META_TOO_LONG", "META_INCOMPLETE_SENTENCE",
+  "HIGHLIGHTS_TOO_GENERIC", "HIGHLIGHTS_OPTIONAL_LANGUAGE", "DFS_INTENT_UNDERUSED",
+]);
+
+type Severity = "red" | "amber" | "gray";
+
+function codeSeverity(code: string): Severity {
+  const c = (code || "").toUpperCase();
+  if (PRODUCT_TRUTH_CODES.has(c)) return "red";
+  if (BRAND_STYLE_CODES.has(c)) return "amber";
+  return "gray";
+}
+
+// The worst severity across a set of codes drives the row's overall reason color.
+function worstSeverity(codes: string[]): Severity {
+  let sev: Severity = "gray";
+  for (const c of codes) {
+    const s = codeSeverity(c);
+    if (s === "red") return "red";
+    if (s === "amber") sev = "amber";
+  }
+  return sev;
+}
+
+const SEV_STYLE: Record<Severity, { bg: string; color: string; border: string }> = {
+  red:   { bg: A.redSoft, color: A.red, border: "#FECACA" },
+  amber: { bg: A.amberSoft, color: "#92400E", border: "#FDE68A" },
+  gray:  { bg: "#F3F4F6", color: "#4B5563", border: "#E5E7EB" },
+};
 
 function asList(v: any): string[] {
   if (Array.isArray(v)) return v.map(String);
@@ -371,16 +411,45 @@ async function fetchRevalidateState(reviewId: string): Promise<boolean | null> {
   return row.revalidate_passed === true ? true : row.revalidate_passed === false ? false : null;
 }
 
-// ── Card ──────────────────────────────────────────────────────────────────────
-function ReviewCard({ item, onApprove, onReject, onRegenerate, onSaved, onRevalidated }: {
+// ── Reason chips (color-coded by failure nature) ──────────────────────────────
+function ReasonChips({ codes }: { codes: string[] }) {
+  if (!codes.length) {
+    return <span style={{ fontSize: 11, color: A.muted2 }}>—</span>;
+  }
+  const shown = codes.slice(0, 3);
+  const extra = codes.length - shown.length;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+      {shown.map((c, i) => {
+        const s = SEV_STYLE[codeSeverity(c)];
+        return (
+          <span key={i} title={c} style={{
+            fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20,
+            background: s.bg, color: s.color, border: `1px solid ${s.border}`,
+            whiteSpace: "nowrap" as const,
+          }}>{c}</span>
+        );
+      })}
+      {extra > 0 && <span style={{ fontSize: 10.5, color: A.muted }}>+{extra}</span>}
+    </div>
+  );
+}
+
+// ── Row (table) ───────────────────────────────────────────────────────────────
+// One table row per review_queue entry (= one failed version). Click to expand the full
+// editor (same ReviewEditor as before — edit / save / re-validate, plus content view).
+function ReviewRow({ item, expanded, onToggle, onApprove, onReject, onDismiss, onRegenerate, onSaved, onRevalidated, colSpan }: {
   item: any;
+  expanded: boolean;
+  onToggle: () => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onDismiss: (id: string) => void;
   onRegenerate: (item: any) => void;
   onSaved: (id: string, draft: Record<string, string>) => void;
   onRevalidated: (id: string, passed: boolean | null) => void;
+  colSpan: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const failCount = (item.raw.failures || []).length;
   const scoreColor = item.score >= 7 ? A.green : item.score >= 5 ? A.amber : A.red;
 
@@ -393,69 +462,78 @@ function ReviewCard({ item, onApprove, onReject, onRegenerate, onSaved, onRevali
   const approveHint = item.human_edited && item.revalidate_passed !== true
     ? "Re-validate after editing" : failCount > 0 ? "Resolve flagged fields" : "";
 
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
   return (
-    <Card style={{ padding: 0, overflow: "hidden" }}>
-      <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{
-          width: 44, height: 44, borderRadius: 10, flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: item.score >= 7 ? A.greenSoft : A.redSoft,
-          color: scoreColor, fontWeight: 700, fontSize: 14, fontFamily: mono,
-        }}>
-          {item.score.toFixed(1)}
-        </div>
-        {item.failure_summary && (
-          <div title={item.failure_summary} style={{
-            fontSize: 11, color: A.red, background: A.redSoft, border: "1px solid #FECACA",
-            borderRadius: 6, padding: "3px 9px", maxWidth: 220, flexShrink: 0,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>{item.failure_summary}</div>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, color: A.ink, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+    <>
+      <tr
+        onClick={onToggle}
+        style={{ cursor: "pointer", background: expanded ? A.goldTint : A.card }}
+      >
+        {/* expand chevron */}
+        <td style={{ ...TD, width: 34, paddingLeft: 16 }}>
+          {expanded ? <ChevronUp size={14} style={{ color: A.muted }} /> : <ChevronDown size={14} style={{ color: A.muted }} />}
+        </td>
+        {/* tour name + edited badge */}
+        <td style={{ ...TD, fontWeight: 600, color: A.ink, maxWidth: 280 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</span>
             {item.human_edited && (
               <span style={{ fontSize: 10, color: A.muted, border: `1px solid ${A.line}`, borderRadius: 4, padding: "1px 6px", display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
-                <Edit3 size={9} /> edited
+                <Edit3 size={9} /> Edited
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11.5, color: A.muted, marginTop: 2 }}>{item.country} · {item.date}</div>
-        </div>
-
-        {failCount > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxWidth: 300 }}>
-            {(item.raw.failures || []).slice(0, 3).map((f: any, i: number) => (
-              <span key={i} title={f.code} style={{ fontSize: 10.5, padding: "2px 9px", background: A.redSoft, color: A.red, border: "1px solid #FECACA", borderRadius: 20 }}>
-                {FIELD_LABEL[f.field] || f.field}
-              </span>
-            ))}
-            {failCount > 3 && <span style={{ fontSize: 10.5, color: A.muted }}>+{failCount - 3}</span>}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button onClick={() => onRegenerate(item)} title="Regenerate (overwrites this version)"
-            style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
-            <RotateCcw size={13} />
-          </button>
-          <Btn variant="danger" size="sm" onClick={() => onReject(item.id)}>
-            <XCircle size={12} /> Reject
-          </Btn>
-          <span title={approveHint} style={{ display: "inline-flex" }}>
-            <Btn variant={canApprove ? "primary" : "ghost"} size="sm" disabled={!canApprove}
-              onClick={() => onApprove(item.id)}>
-              <CheckCircle size={12} /> Approve
-            </Btn>
+        </td>
+        {/* country */}
+        <td style={{ ...TD, color: A.muted, whiteSpace: "nowrap" as const }}>{item.country}</td>
+        {/* version */}
+        <td style={TD}>
+          {item.version_num != null
+            ? <Badge color="blue">v{item.version_num}</Badge>
+            : <span style={{ color: A.muted2 }}>—</span>}
+        </td>
+        {/* written date */}
+        <td style={{ ...TD, color: A.muted, whiteSpace: "nowrap" as const, fontSize: 12 }}>{item.date || "—"}</td>
+        {/* score */}
+        <td style={TD}>
+          <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: scoreColor }}>
+            {item.score.toFixed(1)}
           </span>
-          <button onClick={() => setExpanded(!expanded)}
-            style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
-            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-          </button>
-        </div>
-      </div>
-      {expanded && <ReviewEditor item={item} onSaved={onSaved} onRevalidated={onRevalidated} />}
-    </Card>
+        </td>
+        {/* reasons (color-coded) */}
+        <td style={{ ...TD, maxWidth: 300 }}><ReasonChips codes={item.codes} /></td>
+        {/* actions */}
+        <td style={{ ...TD, whiteSpace: "nowrap" as const }} onClick={stop}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button onClick={() => onRegenerate(item)} title="Regenerate (re-runs the full pipeline, real cost)"
+              style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
+              <RotateCcw size={13} />
+            </button>
+            <button onClick={() => onDismiss(item.id)} title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
+              style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
+              <Ban size={13} />
+            </button>
+            <Btn variant="danger" size="sm" onClick={() => onReject(item.id)}>
+              <XCircle size={12} /> Reject
+            </Btn>
+            <span title={approveHint} style={{ display: "inline-flex" }}>
+              <Btn variant={canApprove ? "primary" : "ghost"} size="sm" disabled={!canApprove}
+                onClick={() => onApprove(item.id)}>
+                <CheckCircle size={12} /> Approve
+              </Btn>
+            </span>
+          </div>
+        </td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={colSpan} style={{ padding: 0, borderBottom: `1px solid ${A.line2}` }}>
+            <ReviewEditor item={item} onSaved={onSaved} onRevalidated={onRevalidated} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -626,6 +704,10 @@ function mapRow(r: any) {
     reviewed_by: r.reviewed_by || null,
     revalidate_passed: r.revalidate_passed === true ? true : r.revalidate_passed === false ? false : null,
     failure_summary: r.failure_summary || "",
+    version_num: typeof r.version_num === "number" ? r.version_num : null,
+    brand_audit_status: r.brand_audit_status || null,   // manual_check | flagged | null
+    // Distinct gate codes for this row, from the per-field failures[] (AA-240).
+    codes: [...new Set(((r.failures || []) as any[]).map(f => f?.code).filter(Boolean))] as string[],
   };
 }
 
@@ -639,6 +721,9 @@ export default function AdminReviewPage() {
   const [filterStatus, setFilterStatus] = useState("pending");
   const [total, setTotal] = useState(0);
   const [regenTarget, setRegenTarget] = useState<any>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<"date" | "score" | "country">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const reviewerInit = useRef(false);
 
   const load = useCallback(async () => {
@@ -681,6 +766,16 @@ export default function AdminReviewPage() {
     setItems(p => p.filter(i => i.id !== id));
     setTotal(t => Math.max(0, t - 1));
   }
+  async function onDismiss(id: string) {
+    const res = await fetch(`/api/admin/review-queue/${id}/dismiss`, { method: "POST", headers: authHeaders() });
+    if (!res.ok) { setError(`Dismiss failed (${res.status}).`); return; }
+    setItems(p => p.filter(i => i.id !== id));
+    setTotal(t => Math.max(0, t - 1));
+  }
+  function toggleSort(key: "date" | "score" | "country") {
+    if (sortKey === key) { setSortDir(d => (d === "asc" ? "desc" : "asc")); }
+    else { setSortKey(key); setSortDir(key === "score" ? "desc" : "asc"); }
+  }
 
   const countries = [...new Set(items.map(i => i.country))];
   const filtered = items.filter(item => {
@@ -689,7 +784,18 @@ export default function AdminReviewPage() {
       || (filterScore === "critical" && item.score < 5)
       || (filterScore === "low" && item.score >= 5 && item.score < 7);
     return mc && ms;
+  }).sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "score") return (a.score - b.score) * dir;
+    if (sortKey === "country") return String(a.country).localeCompare(String(b.country)) * dir;
+    // date: compare underlying created_at from raw (fall back to display date)
+    const ad = new Date(a.raw.created_at || 0).getTime();
+    const bd = new Date(b.raw.created_at || 0).getTime();
+    return (ad - bd) * dir;
   });
+
+  const REVIEW_COLS = 8;
+  const sortArrow = (key: string) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   const selectStyle: React.CSSProperties = {
     padding: "7px 14px", background: A.card, border: `1px solid ${A.line}`,
@@ -741,6 +847,25 @@ export default function AdminReviewPage() {
           </div>
         )}
 
+        {/* Legend: what the reason-chip colors mean */}
+        {!loading && filtered.length > 0 && (
+          <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12, fontSize: 11, color: A.muted }}>
+            <span style={{ fontWeight: 600 }}>Reason colors:</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: SEV_STYLE.red.bg, border: `1px solid ${SEV_STYLE.red.border}`, display: "inline-block" }} />
+              Product-truth / structural (real block)
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: SEV_STYLE.amber.bg, border: `1px solid ${SEV_STYLE.amber.border}`, display: "inline-block" }} />
+              Brand / style / SEO (often fixable)
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: SEV_STYLE.gray.bg, border: `1px solid ${SEV_STYLE.gray.border}`, display: "inline-block" }} />
+              Other
+            </span>
+          </div>
+        )}
+
         {loading ? <LoadingScreen msg="Loading review queue…" /> : filtered.length === 0 ? (
           <div style={{ textAlign: "center" as const, padding: "60px 0" }}>
             <CheckCircle size={40} style={{ margin: "0 auto 12px", color: A.green, display: "block" }} />
@@ -748,14 +873,33 @@ export default function AdminReviewPage() {
             <div style={{ fontSize: 13, color: A.muted, marginTop: 6 }}>Every tour has been reviewed.</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {filtered.map(item => (
-              <ReviewCard key={item.id} item={item}
-                onApprove={onApprove} onReject={onReject}
-                onRegenerate={setRegenTarget}
-                onSaved={onSaved} onRevalidated={onRevalidated} />
-            ))}
-          </div>
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: A.line2 }}>
+                  <th style={{ ...TH, width: 34, paddingLeft: 16 }}></th>
+                  <th style={TH}>Tour</th>
+                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("country")}>Country{sortArrow("country")}</th>
+                  <th style={TH}>Version</th>
+                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("date")}>Written{sortArrow("date")}</th>
+                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("score")}>Score{sortArrow("score")}</th>
+                  <th style={TH}>Reasons</th>
+                  <th style={TH}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(item => (
+                  <ReviewRow key={item.id} item={item}
+                    expanded={expandedId === item.id}
+                    onToggle={() => setExpandedId(prev => prev === item.id ? null : item.id)}
+                    onApprove={onApprove} onReject={onReject} onDismiss={onDismiss}
+                    onRegenerate={setRegenTarget}
+                    onSaved={onSaved} onRevalidated={onRevalidated}
+                    colSpan={REVIEW_COLS} />
+                ))}
+              </tbody>
+            </table>
+          </Card>
         )}
       </main>
 
