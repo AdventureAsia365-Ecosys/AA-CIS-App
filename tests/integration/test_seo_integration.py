@@ -126,10 +126,13 @@ class TestSEORedisCache:
 
     def test_cache_ttl_is_set(self, redis_client):
         cache_key = f"seo:{TENANT_ID}:cambodia:angkor-wat:en_US"
-        redis_client.setex(cache_key, 86400, json.dumps(SAMPLE_SEO))
+        # AA-625: SEO cache TTL is 7 days (604800s), raised from 24h — see
+        # services/seo_intelligence/handler.py::_SEO_CACHE_TTL_SECONDS.
+        ttl_seconds = 7 * 24 * 3600
+        redis_client.setex(cache_key, ttl_seconds, json.dumps(SAMPLE_SEO))
         ttl = redis_client.ttl(cache_key)
-        # TTL should be close to 24h (86400s) — allow 5s tolerance
-        assert 86390 <= ttl <= 86400
+        # TTL should be close to 7 days — allow 5s tolerance
+        assert ttl_seconds - 10 <= ttl <= ttl_seconds
 
     def test_cache_key_format(self, redis_client):
         """Cache key convention: seo:{tenant_id}:{country}:{activity}:{market}"""
