@@ -459,6 +459,12 @@ async def get_tenant_details(
                        pt.quality_score, pt.master_status::text AS master_status,
                        (SELECT gc.version_num FROM silver_aa_internal.generated_content gc
                         WHERE gc.tour_id = pt.tour_id ORDER BY gc.created_at DESC LIMIT 1) AS version_number,
+                       -- AA-626: how many of this tour's versions are still stuck pending in the
+                       -- review queue. Surfaced so the admin can jump over and dismiss the stale
+                       -- failed versions of a tour that already has an approved master version.
+                       (SELECT COUNT(*) FROM silver_aa_internal.review_queue rq
+                        WHERE rq.tour_id = pt.tour_id AND rq.review_status = 'pending')
+                        AS pending_review_count,
                        'published'::text AS status, pt.published_at AS created_at
                 FROM gold_aa_internal.published_tours pt
                 LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
@@ -563,6 +569,13 @@ async def get_tenant_details(
                 "status":         r["status"],
                 "master_status":  r["master_status"] if r["master_status"] else "active",
                 "created_at":     r["created_at"].isoformat(),
+                # AA-626: only the internal (published_tours) branch selects this; tenant branch
+                # has no such column, so default 0 rather than KeyError.
+                "pending_review_count": (
+                    int(r["pending_review_count"])
+                    if "pending_review_count" in r and r["pending_review_count"] is not None
+                    else 0
+                ),
             }
             for r in tours
         ],

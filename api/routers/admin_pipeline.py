@@ -2165,7 +2165,9 @@ async def admin_review_queue(
     tenant_id = "00000000-0000-0000-0000-000000000001"
     offset = (page - 1) * page_size
     if status == "all":
-        status_clause = "AND rq.review_status != 'superseded'"
+        # AA-626: hide 'dismissed' from the "all" view too, same as 'superseded' — both are
+        # closed-out-without-a-quality-verdict rows the reviewer intentionally cleared.
+        status_clause = "AND rq.review_status NOT IN ('superseded', 'dismissed')"
         status_params: list = []
     else:
         status_clause = "AND rq.review_status = $4"
@@ -2178,8 +2180,8 @@ async def admin_review_queue(
                    gc.aa_highlights, gc.aa_itineraries, gc.mobile_card_text,
                    gc.seo_title, gc.seo_meta, gc.seo_keywords_used, gc.og_tags,
                    gc.human_edited, gc.reviewed_by, gc.edited_at, gc.revalidate_passed,
-                   gc.requested_tier, gc.status,
-                   qs.failure_codes, qs.brand_audit_codes,
+                   gc.requested_tier, gc.status, gc.version_num,
+                   qs.failure_codes, qs.brand_audit_codes, qs.brand_audit_status,
                    rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id
             FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
@@ -2192,7 +2194,7 @@ async def admin_review_queue(
             LIMIT $2 OFFSET $3
         """, tenant_id, page_size, offset, *status_params)
         if status == "all":
-            total_where = "AND review_status != 'superseded'"
+            total_where = "AND review_status NOT IN ('superseded', 'dismissed')"
         else:
             total_where = "AND review_status = $2"
         total = await conn.fetchval(f"""
@@ -2224,6 +2226,8 @@ async def admin_review_queue(
             "score_overall":      float(r["score_overall"]) if r["score_overall"] is not None else None,
             "failure_summary":    r["failure_summary"],
             "created_at":         str(r["created_at"]) if r["created_at"] else None,
+            "version_num":        r["version_num"],                # AA-626: show which version failed
+            "brand_audit_status": r["brand_audit_status"],         # AA-626: manual_check | flagged | None
             # editable fields (match _ALLOWED_GC_FIELDS so Part C edit maps 1:1 to PATCH)
             **gc,
             # AA-234 Part A audit columns (migration 072)
@@ -2301,6 +2305,34 @@ async def admin_supersede_review(
     if result == "UPDATE 0":
         raise HTTPException(status_code=409, detail="review row not pending or not found")
     return {"status": "superseded", "review_id": review_id}
+
+
+@router.post("/review-queue/{review_id}/dismiss")
+async def admin_dismiss_review(
+    review_id: str,
+    request: Request,
+    x_admin_secret: str = Header(None),
+):
+    """AA-626: drop a stale failed version from the review queue WITHOUT editing content or
+    publishing. Used when a tour already has an approved version in the Master Content pool and
+    its older HITL version(s) are just noise the reviewer does not want to fix.
+
+    Distinct from 'rejected' (reviewer judged content bad → mark_tour_rejected) and 'superseded'
+    (auto-replaced by a newer regenerated version, AA-242). Same shape as admin_supersede_review:
+    a pure review_status flip, no touch to generated_content, no process_export. Option A
+    (AA-626): only hides THIS row — the _enqueue_review guard is scoped to 'pending', so a future
+    rerun that fails the same tour can still enqueue a fresh pending row (a real new signal)."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        result = await conn.execute("""
+            UPDATE silver_aa_internal.review_queue
+            SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW()
+            WHERE id = $1::uuid AND review_status = 'pending'
+        """, review_id)
+    if result == "UPDATE 0":
+        raise HTTPException(status_code=409, detail="review row not pending or not found")
+    return {"status": "dismissed", "review_id": review_id}
 
 
 # ── Tour version endpoints ────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ interface RewrittenTour {
   status: string;
   master_status: string;
   created_at: string;
+  pending_review_count?: number;   // AA-626: # of this tour's versions still stuck in review queue
 }
 
 interface Summary {
@@ -1271,9 +1272,27 @@ export default function MasterContentPage() {
                             </span>
                           </td>
                           <td style={TD}>
-                            {t.version_number != null
-                              ? <Badge color="blue">v{t.version_number}</Badge>
-                              : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              {t.version_number != null
+                                ? <Badge color="blue">v{t.version_number}</Badge>
+                                : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
+                              {/* AA-626: this tour still has failed version(s) sitting in the review
+                                  queue — link over so the admin can dismiss the stale ones. */}
+                              {(t.pending_review_count ?? 0) > 0 && (
+                                <a
+                                  href="/admin/review"
+                                  onClick={e => e.stopPropagation()}
+                                  title={`${t.pending_review_count} failed version(s) pending in Review Queue — click to review/dismiss`}
+                                  style={{
+                                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
+                                    background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
+                                    textDecoration: "none", whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  ⚠ {t.pending_review_count} failed
+                                </a>
+                              )}
+                            </div>
                           </td>
                           <td style={TD}>
                             {statusBadge(t.status)}
