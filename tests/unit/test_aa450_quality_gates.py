@@ -145,21 +145,67 @@ class TestGateFramework:
 
 
 class TestGateBrandVoice:
-    def test_pass_status(self):
+    """AA-613 — gate_brand_voice now returns a LIST of two results: F9_cta_fact (blocking,
+    product-truth) + F9_brand_style (non-blocking warn)."""
+
+    def _by_gate(self, results):
+        return {r["gate"]: r for r in results}
+
+    def test_pass_status_both_results_pass(self):
         data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                  "failure_codes": [], "flagged_phrases": [], "notes": ""}
         with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
-            result = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
-        assert result["passed"] is True
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        assert by_gate["F9_cta_fact"]["passed"] is True
+        assert by_gate["F9_brand_style"]["passed"] is True
 
-    def test_flagged_status_fails_with_reason(self):
+    def test_brand_style_failure_is_non_blocking_warn(self):
         data = {"status": "flagged", "brand_fit": "0", "cta_clear": "1", "human_read": "1",
                  "failure_codes": ["SUMMARY_OFF_BRAND"], "flagged_phrases": ["generic phrase"],
                  "notes": "reads generic"}
         with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
-            result = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
-        assert result["passed"] is False
-        assert "generic phrase" in result["violations"][0]
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        # brand-style code -> the non-blocking warn result fails; cta_fact (blocking) stays clean
+        assert by_gate["F9_brand_style"]["passed"] is False
+        assert by_gate["F9_brand_style"]["blocking"] is False
+        assert "generic phrase" in by_gate["F9_brand_style"]["violations"][0]
+        assert by_gate["F9_cta_fact"]["passed"] is True
+
+    def test_product_truth_failure_is_blocking(self):
+        data = {"status": "manual_check", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
+                 "failure_codes": ["FACT_CHECK_MANUAL_CHECK"], "flagged_phrases": [], "notes": ""}
+        with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        assert by_gate["F9_cta_fact"]["passed"] is False
+        assert by_gate["F9_cta_fact"]["blocking"] is True
+        assert by_gate["F9_brand_style"]["passed"] is True
+
+    def test_cta_not_reflected_is_blocking(self):
+        data = {"status": "flagged", "brand_fit": "1", "cta_clear": "0", "human_read": "1",
+                 "failure_codes": ["CTA_NOT_REFLECTED"], "flagged_phrases": [], "notes": ""}
+        with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        assert by_gate["F9_cta_fact"]["passed"] is False
+        assert by_gate["F9_brand_style"]["passed"] is True
+
+    def test_non_pass_with_no_recognized_code_fails_closed_blocking(self):
+        data = {"status": "manual_check", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
+                 "failure_codes": [], "flagged_phrases": [], "notes": "unsure about something"}
+        with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        assert by_gate["F9_cta_fact"]["passed"] is False  # fail-closed on the blocking side
+
+    def test_judge_unavailable_fails_closed_blocking(self):
+        with patch.object(qg, "invoke_judge", side_effect=RuntimeError("judge down")):
+            results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
+        by_gate = self._by_gate(results)
+        assert by_gate["F9_cta_fact"]["passed"] is False
+        assert by_gate["F9_brand_style"]["passed"] is True
 
     def test_required_cta_reaches_the_prompt(self):
         data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
@@ -199,7 +245,8 @@ class TestRunQualityGates:
         # AA-514: + promises_an_option (runs for every channel now, not just blog)
         # AA-484: + F10_cannibalization_cross_tenant (runs for every channel, no match here since
         # this call passes no cannibalization_match — always passes with 0 violations).
-        assert len(outcome["gate_ledger"]) == 8  # cta+grounding+banned+cannibalization+promises+length+f8+f9
+        # AA-613: F9 now yields TWO results (F9_cta_fact + F9_brand_style), so 9 not 8.
+        assert len(outcome["gate_ledger"]) == 9  # cta+grounding+banned+cannib+promises+length+f8+f9_cta_fact+f9_brand_style
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
@@ -260,12 +307,16 @@ class TestRunQualityGatesFlagNotBlock:
         assert outcome["first_failure"]["blocking"] is True
         assert outcome["flags"] == []
 
-    def test_every_gate_result_now_carries_blocking_true_by_default(self):
+    def test_blocking_flags_match_the_3_tier_severity_model(self):
+        # AA-613 — the non-blocking (warn/note) gates are: promises_an_option (note),
+        # F8_framework (warn), F9_brand_style (warn). Everything else (product-truth /
+        # structural / SEO) stays blocking.
+        _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style"}
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",
                 cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="facebook",
             )
         for g in outcome["gate_ledger"]:
-            expected = False if g["gate"] == "promises_an_option" else True
+            expected = g["gate"] not in _NON_BLOCKING
             assert g["blocking"] is expected, f"{g['gate']} blocking={g['blocking']}, expected {expected}"

@@ -581,6 +581,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
 
             if not first_failure["repairable"] or attempt >= MAX_ATTEMPTS:
+                # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
+                # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/
+                # SEO/structure. Brand-voice/framework failures are non-blocking warns (they never
+                # become first_failure — outcome["passed"] is True and this branch isn't reached),
+                # so a warn-only piece ships as 'approved'. `held` therefore now means precisely
+                # "unresolved product-truth after ≤2 retries" — the tenant still SEES this piece
+                # (My Content shows held content the same as approved, AA-613 #7), but it cannot be
+                # published until the tenant edits it or an admin clears it (v1_publish gate, #8).
                 status, held_reason = "held", _held_reason_from(first_failure)
                 break
 
@@ -874,6 +882,42 @@ async def _finalize_piece(
     return _row_to_dict(row)
 
 
+# AA-613 — the tenant-facing projection. The tenant experience is flat: they see the CONTENT and
+# nothing about gates/held/retries/technical status. This is the ONE shape every tenant-facing
+# read of a piece returns (fetch_piece / fetch_latest_piece_for_request / update_piece_content_text),
+# converging on the strict boundary fetch_review()/fetch_review_list() already drew (AA-501):
+#   - `ready_state`: "ready" once there's real content to use (approved OR held — a held piece
+#     is fully delivered to the tenant now, only its PUBLISH is gated, AA-613 #8), "in_progress"
+#     while T9 is still writing, "not_ready" for a hard failure (no content produced).
+#   - `content_text`: only for ready pieces (approved/held); None while processing/failed.
+#   - `flags`: tenant-safe non-blocking notes only (never gate_ledger/repair_log/held_reason).
+# Deliberately DOES NOT expose: raw `status`, `held_reason`, `gate_ledger`, `repair_log`,
+# `discarded_attempts`, `attempt_number` — all internal/admin-only (kept in the DB, read via the
+# admin monitor, never here).
+_TENANT_READY_STATE = {"approved": "ready", "held": "ready", "processing": "in_progress"}
+
+
+def _tenant_safe_piece(row) -> dict:
+    d = _row_to_dict(row)
+    status = d.get("status")
+    ready_state = _TENANT_READY_STATE.get(status, "not_ready")
+    has_content = status in ("approved", "held")
+    return {
+        "piece_id": d["piece_id"],
+        "angle_gate_request_id": d["angle_gate_request_id"],
+        "channel": d.get("channel"),
+        "ready_state": ready_state,
+        "content_text": d["content_text"] if has_content else None,
+        "seo_title": d.get("seo_title"),
+        "meta_description": d.get("meta_description"),
+        "slug": d.get("slug"),
+        "route_hub_name": d.get("route_hub_name"),
+        "route_segment_count": d.get("route_segment_count"),
+        "flags": d.get("flags") or [],
+        "created_at": d["created_at"],
+    }
+
+
 def _row_to_dict(row) -> dict:
     gate_ledger = row["gate_ledger"]
     repair_log = row["repair_log"]
@@ -959,7 +1003,8 @@ async def fetch_latest_piece_for_request(tenant_id: UUID, request_id: UUID, pool
         option_row = await conn.fetchrow(_CHOSEN_OPTION_QUERY, request_id)
         option_id = option_row["option_id"] if option_row else None
         row = await conn.fetchrow(_LATEST_PIECE_FOR_OPTION_QUERY, request_id, tenant_id, option_id)
-    return _row_to_dict(row) if row else None
+    # AA-613 — tenant-safe projection (this feeds the tenant wizard's resume/poll).
+    return _tenant_safe_piece(row) if row else None
 
 
 _FETCH_PIECE_QUERY = """
@@ -992,7 +1037,9 @@ async def fetch_piece(tenant_id: UUID, piece_id: UUID, pool, request: Optional[R
             row = await conn.fetchrow(_FETCH_PIECE_QUERY, piece_id, tenant_id)
     if row is None:
         raise ContentWritingError(f"piece_id={piece_id} not found for this tenant")
-    return _row_to_dict(row)
+    # AA-613 — tenant-safe projection: content + ready_state + flags only, never held_reason/
+    # gate_ledger/repair_log/raw status. This is a tenant endpoint (GET/PATCH /v1/.../pieces/{id}).
+    return _tenant_safe_piece(row)
 
 
 _UPDATE_CONTENT_TEXT_QUERY = """
@@ -1025,7 +1072,8 @@ async def update_piece_content_text(
             action=TenantAuditAction.CONTENT_PIECE_EDITED, resource_type="content_piece",
             resource_id=str(piece_id), details={"content_length": len(content_text)},
         )
-    return _row_to_dict(row)
+    # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
+    return _tenant_safe_piece(row)
 
 
 # ── AA-501: tenant-facing pre-T11 review (deliberately narrower than fetch_piece() above) ──────

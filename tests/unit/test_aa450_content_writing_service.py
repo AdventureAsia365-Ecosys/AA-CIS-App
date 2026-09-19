@@ -755,12 +755,30 @@ class TestFetchRouteSegments:
 
 @pytest.mark.asyncio
 class TestFetchPiece:
-    async def test_returns_piece(self):
+    async def test_returns_tenant_safe_piece(self):
+        # AA-613 — fetch_piece is a tenant endpoint: returns content + ready_state, NOT the
+        # internal technical fields.
         conn = AsyncMock()
         conn.fetchrow.return_value = _finalized_row()
         pool = _make_pool(conn)
         result = await service.fetch_piece(TENANT_ID, uuid.uuid4(), pool)
-        assert result["status"] == "approved"
+        assert result["ready_state"] == "ready"  # approved -> ready
+        assert "content_text" in result
+        # leak-prevention: none of the internal/technical fields are exposed to the tenant
+        for leaked in ("status", "held_reason", "gate_ledger", "repair_log",
+                       "discarded_attempts", "attempt_number"):
+            assert leaked not in result, f"{leaked} leaked to tenant response"
+
+    async def test_held_piece_reads_as_ready_to_tenant(self):
+        # AA-613 — a held (product-truth-unresolved) piece is still delivered to the tenant:
+        # they see the content (ready_state=ready), only its publish is gated.
+        conn = AsyncMock()
+        conn.fetchrow.return_value = _finalized_row(status="held", held_reason="F1_grounding: ...")
+        pool = _make_pool(conn)
+        result = await service.fetch_piece(TENANT_ID, uuid.uuid4(), pool)
+        assert result["ready_state"] == "ready"
+        assert result["content_text"]  # content is shown
+        assert "held_reason" not in result
 
     async def test_not_found_raises(self):
         conn = AsyncMock()
@@ -857,7 +875,7 @@ class TestFetchLatestPieceForRequest:
         conn.fetchrow.side_effect = [{"option_id": OPTION_ID}, _finalized_row()]
         pool = _make_pool(conn)
         result = await service.fetch_latest_piece_for_request(TENANT_ID, REQUEST_ID, pool)
-        assert result["status"] == "approved"
+        assert result["ready_state"] == "ready"  # AA-613 tenant-safe shape
         # The second fetchrow (the piece lookup) must be scoped to the option just resolved.
         piece_query, *params = conn.fetchrow.call_args_list[1][0]
         assert params == [REQUEST_ID, TENANT_ID, OPTION_ID]
@@ -869,7 +887,7 @@ class TestFetchLatestPieceForRequest:
         conn.fetchrow.side_effect = [{"option_id": OPTION_ID}, _placeholder_row()]
         pool = _make_pool(conn)
         result = await service.fetch_latest_piece_for_request(TENANT_ID, REQUEST_ID, pool)
-        assert result["status"] == "processing"
+        assert result["ready_state"] == "in_progress"  # AA-613 tenant-safe shape
 
     async def test_no_chosen_option_still_queries_with_none(self):
         """Defensive — shouldn't happen via the real API (this is only called once status is

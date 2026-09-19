@@ -45,7 +45,8 @@ class TestWrite:
             result = await v1_content_writing.write(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
             await asyncio.sleep(0)  # let the scheduled background task actually run
 
-        assert result["status"] == "processing"
+        # AA-613 — tenant-safe 202 body: ready_state instead of raw status, no gate/held fields.
+        assert result["ready_state"] == "in_progress"
         assert result["piece_id"] == str(PIECE_ID)
         mock_bg.assert_called_once()
 
@@ -170,30 +171,22 @@ class TestGetPiece:
 
     @pytest.mark.asyncio
     async def test_success(self):
+        # AA-613 — fetch_piece returns the tenant-safe shape (ready_state, no raw status/gate).
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "approved"}),
+            new=AsyncMock(return_value={"ready_state": "ready", "content_text": "final"}),
         ):
             result = await v1_content_writing.get_piece(PIECE_ID, _make_request(), tenant={"sub": TENANT_ID})
-        assert result["status"] == "approved"
+        assert result["ready_state"] == "ready"
 
     @pytest.mark.asyncio
-    async def test_processing_status_returned_while_polling(self):
+    async def test_processing_state_returned_while_polling(self):
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "processing", "content_text": ""}),
+            new=AsyncMock(return_value={"ready_state": "in_progress", "content_text": None}),
         ):
             result = await v1_content_writing.get_piece(PIECE_ID, _make_request(), tenant={"sub": TENANT_ID})
-        assert result["status"] == "processing"
-
-    @pytest.mark.asyncio
-    async def test_failed_status_returned_after_background_error(self):
-        with patch.object(
-            v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "failed", "held_reason": "RuntimeError: boom"}),
-        ):
-            result = await v1_content_writing.get_piece(PIECE_ID, _make_request(), tenant={"sub": TENANT_ID})
-        assert result["status"] == "failed"
+        assert result["ready_state"] == "in_progress"
 
     @pytest.mark.asyncio
     async def test_not_found_404(self):
