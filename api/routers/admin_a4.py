@@ -793,3 +793,188 @@ async def get_platform_stats(
         top_gate_count=len(data["top_gate_failures"]),
     )
     return {"data": data}
+
+
+@router.get("/gate-telemetry")
+async def get_gate_telemetry(
+    request: Request,
+    date_from: Optional[str] = Query(None, description="ISO date, inclusive lower bound on created_at"),
+    date_to: Optional[str] = Query(None, description="ISO date, exclusive upper bound (+1 day applied)"),
+    top_n: int = Query(20, ge=1, le=100),
+    x_admin_secret: str = Header(None),
+):
+    """AA-615 — the ONE place admin sees the gate/severity/retry/publish signal the tenant never
+    does (the tenant experience is flat `ready_state` only, AA-613). Answers "which gate fails
+    most for which channel" and "which tenant keeps shipping warn/held content" so the team can
+    decide what prompt/gate/rubric to improve.
+
+    Every metric is a fresh server-side `GROUP BY` over the FULL `acp_shared.content_piece` table
+    (plus `publish_log` for publishes, `audit_log` for exports) — no row cap, no page window, same
+    approach as /platform-stats. gate_ledger/flags are unnested SERVER-SIDE via
+    `jsonb_array_elements` (not fetched into Python), so this app's asyncpg jsonb-codec gap
+    (`_parse_jsonb`) is irrelevant here.
+
+    Severity tiers (AA-613): a piece ships as `approved` even with non-blocking gate notes
+    (`flags`, "warn"); it only becomes `held` when a BLOCKING product-truth gate stays unresolved
+    after ≤2 retries — held content is still delivered to the tenant, only its publish is gated.
+    So per (tenant, channel):
+      - warn_count  = approved pieces carrying a non-empty `flags` array.
+      - held_count  = held pieces (blocked-after-retry, shipped but publish-gated).
+      - retry_count = pieces whose write took a 2nd internal attempt (attempt_number >= 2).
+    `processing`/`failed` rows are excluded from these three (no shipped content to grade).
+    """
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+
+    # Shared created_at window, applied to the content_piece-based aggregates. Bound params are
+    # appended per-query (asyncpg is positional) so each query gets exactly the params it uses.
+    cp_conds = ["cp.status IN ('approved', 'held', 'failed')"]
+    cp_params: list = []
+    if date_from:
+        cp_params.append(date_from)
+        cp_conds.append(f"cp.created_at >= ${len(cp_params)}::date")
+    if date_to:
+        cp_params.append(date_to)
+        cp_conds.append(f"cp.created_at < (${len(cp_params)}::date + interval '1 day')")
+    cp_where = " AND ".join(cp_conds)
+
+    async with pool.acquire() as conn:
+        # Per (tenant, channel): shipped/warn/held/retry counts. status='failed' counts toward
+        # `total` but never warn/held/retry (it produced no gradable content) — surfaced so admin
+        # sees system-error volume alongside the quality signal.
+        by_tc_rows = await conn.fetch(f"""
+            SELECT
+                cp.tenant_id::text AS tenant_id,
+                t.name AS tenant_name,
+                COALESCE(cp.channel, agr.channel) AS channel,
+                count(*) AS total,
+                count(*) FILTER (
+                    WHERE cp.status = 'approved'
+                      AND cp.flags IS NOT NULL
+                      AND jsonb_typeof(cp.flags) = 'array'
+                      AND jsonb_array_length(cp.flags) > 0
+                ) AS warn_count,
+                count(*) FILTER (WHERE cp.status = 'held') AS held_count,
+                count(*) FILTER (WHERE cp.status = 'failed') AS failed_count,
+                count(*) FILTER (
+                    WHERE cp.status IN ('approved', 'held') AND cp.attempt_number >= 2
+                ) AS retry_count
+            FROM acp_shared.content_piece cp
+            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+            LEFT JOIN shared.tenants t ON t.tenant_id = cp.tenant_id
+            WHERE {cp_where}
+            GROUP BY cp.tenant_id, t.name, COALESCE(cp.channel, agr.channel)
+            ORDER BY total DESC
+        """, *cp_params)
+
+        # Top failing gates per channel: unnest gate_ledger, keep failed entries, group by
+        # channel + gate. `blocking` (migration 139 / AA-528) distinguishes a product-truth
+        # block from a non-blocking warn — surfaced so admin can tell "gate X hard-fails on
+        # channel Y" from "gate X is just a warn".
+        top_gate_rows = await conn.fetch(f"""
+            SELECT
+                COALESCE(cp.channel, agr.channel) AS channel,
+                elem->>'gate' AS gate,
+                COALESCE((elem->>'blocking')::boolean, true) AS blocking,
+                count(*) AS fail_count
+            FROM acp_shared.content_piece cp
+            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+            CROSS JOIN LATERAL jsonb_array_elements(cp.gate_ledger) AS elem
+            WHERE {cp_where}
+              AND COALESCE((elem->>'passed')::boolean, false) = false
+            GROUP BY 1, 2, 3
+            ORDER BY fail_count DESC
+            LIMIT ${len(cp_params) + 1}
+        """, *cp_params, top_n)
+
+        # Publish count per tenant/channel — from publish_log (the source of truth for a real
+        # publish), not the audit feed. Its own window, on published_at.
+        pub_conds = ["pl.status = 'published'"]
+        pub_params: list = []
+        if date_from:
+            pub_params.append(date_from)
+            pub_conds.append(f"pl.published_at >= ${len(pub_params)}::date")
+        if date_to:
+            pub_params.append(date_to)
+            pub_conds.append(f"pl.published_at < (${len(pub_params)}::date + interval '1 day')")
+        pub_where = " AND ".join(pub_conds)
+        publish_rows = await conn.fetch(f"""
+            SELECT pl.tenant_id::text AS tenant_id, pl.channel, count(*) AS publish_count
+            FROM acp_shared.publish_log pl
+            WHERE {pub_where}
+            GROUP BY pl.tenant_id, pl.channel
+            ORDER BY publish_count DESC
+        """, *pub_params)
+
+        # Export count per tenant/channel — only the audit_log records this (there is no
+        # export_log table). action='content_piece.exported', channel lives in details JSONB
+        # (details->>'channel'). tenant_id on audit_log is VARCHAR(50), not uuid — compared as
+        # text. Its own window, on created_at.
+        exp_conds = ["al.action = 'content_piece.exported'"]
+        exp_params: list = []
+        if date_from:
+            exp_params.append(date_from)
+            exp_conds.append(f"al.created_at >= ${len(exp_params)}::date")
+        if date_to:
+            exp_params.append(date_to)
+            exp_conds.append(f"al.created_at < (${len(exp_params)}::date + interval '1 day')")
+        exp_where = " AND ".join(exp_conds)
+        export_rows = await conn.fetch(f"""
+            SELECT al.tenant_id, al.details->>'channel' AS channel, count(*) AS export_count
+            FROM acp_shared.audit_log al
+            WHERE {exp_where}
+            GROUP BY al.tenant_id, al.details->>'channel'
+            ORDER BY export_count DESC
+        """, *exp_params)
+
+    # Fold publish/export counts into the per-(tenant,channel) rows keyed by (tenant_id, channel),
+    # so the FE renders one row per tenant/channel with every metric. A publish/export with no
+    # matching content_piece row in the window (e.g. published today, written last week) still
+    # gets its own row rather than being dropped.
+    def _key(tid, ch):
+        return (tid or "", ch or "")
+
+    merged: dict[tuple, dict] = {}
+    for r in by_tc_rows:
+        merged[_key(r["tenant_id"], r["channel"])] = {
+            "tenant_id": r["tenant_id"], "tenant_name": r["tenant_name"], "channel": r["channel"],
+            "total": r["total"], "warn_count": r["warn_count"], "held_count": r["held_count"],
+            "failed_count": r["failed_count"], "retry_count": r["retry_count"],
+            "publish_count": 0, "export_count": 0,
+        }
+    for r in publish_rows:
+        row = merged.setdefault(_key(r["tenant_id"], r["channel"]), {
+            "tenant_id": r["tenant_id"], "tenant_name": None, "channel": r["channel"],
+            "total": 0, "warn_count": 0, "held_count": 0, "failed_count": 0, "retry_count": 0,
+            "publish_count": 0, "export_count": 0,
+        })
+        row["publish_count"] = r["publish_count"]
+    for r in export_rows:
+        row = merged.setdefault(_key(r["tenant_id"], r["channel"]), {
+            "tenant_id": r["tenant_id"], "tenant_name": None, "channel": r["channel"],
+            "total": 0, "warn_count": 0, "held_count": 0, "failed_count": 0, "retry_count": 0,
+            "publish_count": 0, "export_count": 0,
+        })
+        row["export_count"] = r["export_count"]
+
+    by_tenant_channel = sorted(
+        merged.values(),
+        key=lambda x: (x["total"], x["publish_count"], x["export_count"]),
+        reverse=True,
+    )
+
+    data = {
+        "by_tenant_channel": by_tenant_channel,
+        "top_gate_failures_by_channel": [
+            {"channel": r["channel"], "gate": r["gate"],
+             "blocking": r["blocking"], "fail_count": r["fail_count"]}
+            for r in top_gate_rows
+        ],
+    }
+    logger.info(
+        "a4_gate_telemetry_queried",
+        tenant_channel_rows=len(by_tenant_channel),
+        gate_rows=len(data["top_gate_failures_by_channel"]),
+        date_from=date_from, date_to=date_to,
+    )
+    return {"data": data}

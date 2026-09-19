@@ -75,6 +75,33 @@ interface PlatformStats {
   top_gate_failures: { gate: string; fail_count: number }[];
 }
 
+// AA-615 — GET /admin/a4/gate-telemetry: the admin-only gate/severity/retry/publish signal per
+// tenant/channel (the tenant never sees any of this — their view is flat ready_state, AA-613).
+interface GateTelemetryTenantChannel {
+  tenant_id: string;
+  tenant_name: string | null;
+  channel: string | null;
+  total: number;
+  warn_count: number;    // approved pieces carrying a non-blocking gate note (flags)
+  held_count: number;    // blocked-after-retry, shipped but publish-gated
+  failed_count: number;  // system error, no content produced
+  retry_count: number;   // took a 2nd internal write attempt
+  publish_count: number;
+  export_count: number;
+}
+
+interface GateTelemetryGateFailure {
+  channel: string | null;
+  gate: string;
+  blocking: boolean;
+  fail_count: number;
+}
+
+interface GateTelemetry {
+  by_tenant_channel: GateTelemetryTenantChannel[];
+  top_gate_failures_by_channel: GateTelemetryGateFailure[];
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(s: string | null): string {
@@ -131,6 +158,23 @@ function trustSortValue(r: TrustRampRow, key: TrustSortKey): string | number {
     case "suggestion": return r.eligible ? 1 + (RAMP_RANK[r.suggested_mode] ?? 0) : -1;
     case "created_at": return r.created_at ? new Date(r.created_at).getTime() : 0;
     case "delivered_at": return r.delivered_at ? new Date(r.delivered_at).getTime() : 0;
+  }
+}
+
+type TelemetrySortKey =
+  | "tenant" | "channel" | "total" | "warn" | "held" | "failed" | "retry" | "publish" | "export";
+
+function telemetrySortValue(r: GateTelemetryTenantChannel, key: TelemetrySortKey): string | number {
+  switch (key) {
+    case "tenant": return r.tenant_name ?? r.tenant_id ?? "";
+    case "channel": return r.channel ?? "";
+    case "total": return r.total;
+    case "warn": return r.warn_count;
+    case "held": return r.held_count;
+    case "failed": return r.failed_count;
+    case "retry": return r.retry_count;
+    case "publish": return r.publish_count;
+    case "export": return r.export_count;
   }
 }
 
@@ -426,6 +470,198 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── Gate Telemetry section — NEW (AA-615), per-tenant/channel gate/severity/retry/publish ───────
+
+function GateTelemetrySection() {
+  const [data, setData] = useState<GateTelemetry | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const { sort, toggle } = useToggleSort<TelemetrySortKey>();
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    const qs = params.toString();
+    fetchJson<{ data: GateTelemetry }>(`/api/admin/a4/gate-telemetry${qs ? `?${qs}` : ""}`)
+      .then(d => { setData(d.data); setError(null); })
+      .catch(e => setError(String(e.message || e)))
+      .finally(() => setLoading(false));
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Channel list for the filter pills — union of both aggregates so a channel that only has
+  // publishes/exports (no content_piece rows in the window) still appears.
+  const channels = useMemo(() => {
+    if (!data) return [];
+    const set = new Set<string>();
+    for (const r of data.by_tenant_channel) if (r.channel) set.add(r.channel);
+    for (const g of data.top_gate_failures_by_channel) if (g.channel) set.add(g.channel);
+    return Array.from(set).sort();
+  }, [data]);
+
+  const visibleRows = useMemo(() => {
+    const rows = data?.by_tenant_channel ?? [];
+    const filtered = channelFilter === "all" ? rows : rows.filter(r => r.channel === channelFilter);
+    return sortRows(filtered, sort, telemetrySortValue);
+  }, [data, channelFilter, sort]);
+
+  const visibleGates = useMemo(() => {
+    const gates = data?.top_gate_failures_by_channel ?? [];
+    return channelFilter === "all" ? gates : gates.filter(g => g.channel === channelFilter);
+  }, [data, channelFilter]);
+
+  const maxGateCount = useMemo(
+    () => Math.max(1, ...visibleGates.map(g => g.fail_count)),
+    [visibleGates],
+  );
+
+  const td: React.CSSProperties = {
+    padding: "8px 12px", borderBottom: `1px solid ${A.line}`, fontSize: 12.5, color: A.body,
+  };
+  const num: React.CSSProperties = { ...td, textAlign: "right", fontFamily: mono };
+
+  return (
+    <Card style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
+            Gate Telemetry — by Tenant / Channel
+          </h2>
+          <div style={{ fontSize: 12, color: A.muted, maxWidth: 720 }}>
+            The gate/severity/retry/publish signal the tenant never sees (their view is flat —
+            just &ldquo;ready&rdquo;). <strong>Warn</strong> = shipped with a non-blocking gate
+            note; <strong>Held</strong> = blocked after retry, delivered but publish-gated;{" "}
+            <strong>Retry</strong> = took a 2nd write attempt. Use this to spot &ldquo;gate X keeps
+            failing on channel Y&rdquo; or &ldquo;tenant Z keeps shipping warn content&rdquo; and
+            decide what prompt/gate/rubric to improve.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            aria-label="From date"
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+          />
+          <span style={{ fontSize: 12, color: A.muted2 }}>→</span>
+          <input
+            type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            aria-label="To date"
+            style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: mono, outline: "none" }}
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+              style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, background: "transparent", color: A.muted, fontSize: 11, cursor: "pointer" }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {channels.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+          <FilterPill label="All channels" active={channelFilter === "all"} onClick={() => setChannelFilter("all")} />
+          {channels.map(c => (
+            <FilterPill key={c} label={c} active={channelFilter === c} onClick={() => setChannelFilter(c)} />
+          ))}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>Loading…</div>
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : !data || data.by_tenant_channel.length === 0 ? (
+        <EmptyState title="No telemetry yet" body="No content pieces in this window." />
+      ) : (
+        <>
+          <div style={{ overflowX: "auto", marginBottom: 24 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: A.bg }}>
+                  <SortableTh label="Tenant" sortKey="tenant" sort={sort} onSort={toggle} />
+                  <SortableTh label="Channel" sortKey="channel" sort={sort} onSort={toggle} />
+                  <SortableTh label="Total" sortKey="total" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Warn" sortKey="warn" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Held" sortKey="held" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Failed" sortKey="failed" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Retry" sortKey="retry" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Publish" sortKey="publish" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                  <SortableTh label="Export" sortKey="export" sort={sort} onSort={toggle} style={{ textAlign: "right" }} />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map(r => (
+                  <tr key={`${r.tenant_id}:${r.channel ?? ""}`}>
+                    <td style={td}>
+                      <div style={{ fontWeight: 600 }}>{r.tenant_name || "—"}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2 }}>{r.tenant_id.slice(0, 8)}</div>
+                    </td>
+                    <td style={td}><Badge color="gray">{r.channel || "—"}</Badge></td>
+                    <td style={num}>{r.total}</td>
+                    <td style={{ ...num, color: r.warn_count > 0 ? A.amber : A.muted2 }}>{r.warn_count}</td>
+                    <td style={{ ...num, color: r.held_count > 0 ? A.red : A.muted2 }}>{r.held_count}</td>
+                    <td style={{ ...num, color: r.failed_count > 0 ? A.red : A.muted2 }}>{r.failed_count}</td>
+                    <td style={num}>{r.retry_count}</td>
+                    <td style={num}>{r.publish_count}</td>
+                    <td style={num}>{r.export_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <SectionLabel>Top gate failures{channelFilter !== "all" ? ` — ${channelFilter}` : " — by channel"}</SectionLabel>
+          {visibleGates.length === 0 ? (
+            <div style={{ fontSize: 12, color: A.muted2 }}>No gate failures on record for this window.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {visibleGates.map((g, i) => (
+                <div key={`${g.channel ?? ""}:${g.gate}:${i}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 90, flexShrink: 0, fontSize: 11, fontFamily: mono, color: A.muted2 }}>{g.channel || "—"}</div>
+                  <div style={{ width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: A.body, display: "flex", alignItems: "center", gap: 5 }}>
+                    {g.gate}
+                    {g.blocking
+                      ? <Badge color="red">block</Badge>
+                      : <Badge color="amber">warn</Badge>}
+                  </div>
+                  <div style={{ flex: 1, background: A.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%", borderRadius: 4, background: g.blocking ? A.red : A.amber,
+                      width: `${Math.max(4, (g.fail_count / maxGateCount) * 100)}%`,
+                    }} />
+                  </div>
+                  <div style={{ width: 32, textAlign: "right", fontSize: 12, fontFamily: mono, color: A.muted }}>{g.fail_count}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// AA-615 — small channel filter pill (self-contained; the tenant-portal ReviewList has its own).
+function FilterPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "5px 12px", borderRadius: 999, border: `1px solid ${active ? A.gold : A.line}`,
+      background: active ? A.card : "transparent", color: active ? A.ink : A.muted,
+      fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: sans,
+    }}>
+      {label}
+    </button>
+  );
+}
+
 // ── Trust Ramp section — moved verbatim from a4-oversight/page.tsx, sort added ───────────────────
 
 function TrustRampSection() {
@@ -611,6 +847,7 @@ export default function PlatformStatsPage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <ReviewLogSection />
               <PlatformStatsSection />
+              <GateTelemetrySection />
               <TrustRampSection />
             </div>
           </div>
