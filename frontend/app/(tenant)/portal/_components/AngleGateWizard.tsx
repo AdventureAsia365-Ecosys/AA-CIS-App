@@ -108,24 +108,22 @@ interface AngleGateRequest {
   subject_hub_name: string | null;
 }
 
-// AA-450 — mirrors services/acp_content_writing/service.py::_row_to_dict()'s response shape.
-// AA-466: status gains "processing" (the 202 placeholder, before the background task finishes)
-// and "failed" (a real system error in the background task — distinct from "held", which is a
-// complete business outcome with real content_text; see migration 118's header).
-interface GateLedgerEntry {
-  gate: string;
-  passed: boolean;
-  violations: string[];
-}
-
+// AA-450/AA-613/AA-614 — mirrors the tenant-safe piece shape every tenant-facing read now
+// returns (services/acp_content_writing/service.py::_tenant_safe_piece / the 202 write placeholder
+// / fetch_piece / fetch_latest_piece_for_request). The backend deliberately no longer exposes the
+// raw `status` / `held_reason` / `gate_ledger` to the tenant — those are internal/admin-only. The
+// FE only ever needs `ready_state`:
+//   - "in_progress": T9 is still writing (the 202 placeholder, or a resumed in-flight piece).
+//   - "ready": there's real content to use — approved OR held. A held piece is fully delivered
+//     to the tenant here (My Content shows it exactly like approved, AA-613 #7); only its PUBLISH
+//     is gated server-side (v1_publish 422, #8). The tenant never sees WHY it was held.
+//   - "not_ready": a hard failure produced no content (retry).
 interface ContentPiece {
   piece_id: string;
   angle_gate_request_id: string;
-  attempt_number: number;
-  content_text: string;
-  status: "processing" | "approved" | "held" | "failed";
-  held_reason: string | null;
-  gate_ledger: GateLedgerEntry[];
+  channel?: string | null;
+  content_text: string | null;
+  ready_state: "in_progress" | "ready" | "not_ready";
 }
 
 // AA-522 — 3 steps only now (Atom and Channel are gone with Luồng B).
@@ -348,14 +346,15 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
         const r = await fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`);
         if (!r.ok) return; // transient — next tick may succeed, backend is still working either way
         const fresh: ContentPiece = await r.json();
-        if (fresh.status !== "processing") {
+        if (fresh.ready_state !== "in_progress") {
           stopPolling();
           setPiece(fresh);
           setWriting(false);
-          // AA-569 — the ONLY place this fires: a write that started THIS session just reached
-          // a terminal outcome. "failed" (a system error, not a business outcome) keeps its own
-          // inline retry state below instead — nothing to "review in My Content" for that case.
-          if (fresh.status === "approved" || fresh.status === "held") setShowDonePopup(true);
+          // AA-569/AA-614 — the ONLY place this fires: a write that started THIS session just
+          // reached a terminal outcome. "ready" (approved OR held — both have real content to
+          // review) shows the done popup; "not_ready" (a hard failure) keeps its own inline retry
+          // state below instead — nothing to "review in My Content" for that case.
+          if (fresh.ready_state === "ready") setShowDonePopup(true);
         }
       } catch { /* transient network error — keep polling, don't surface as a failure */ }
     }, POLL_INTERVAL_MS);
@@ -416,7 +415,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       .then(({ piece: latest }: { piece: ContentPiece | null }) => {
         if (latest) {
           setPiece(latest);
-          if (latest.status === "processing") { setWriting(true); pollPiece(latest.piece_id); }
+          if (latest.ready_state === "in_progress") { setWriting(true); pollPiece(latest.piece_id); }
           return;
         }
         // No piece written yet under this angle. If a CTA is already known, write immediately
@@ -669,7 +668,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
             </div>
           )}
 
-          {piece && !writing && piece.status === "failed" && (
+          {piece && !writing && piece.ready_state === "not_ready" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: T.red }}>
                 <AlertTriangle size={13} /> Something went wrong while writing this content
@@ -688,7 +687,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
               now. WriteDonePopup (rendered at the bottom of this component) covers the "just
               finished this session" moment; this line stays visible afterward (popup dismissed,
               or a resumed already-finished request) so the card never looks empty/broken. */}
-          {piece && !writing && (piece.status === "approved" || piece.status === "held") && (
+          {piece && !writing && piece.ready_state === "ready" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: T.greenSoft, border: `1px solid ${T.green}`, borderRadius: 8, fontSize: 12.5, color: T.body }}>
               <CheckCircle2 size={14} color={T.green} />
               Content ready.{" "}

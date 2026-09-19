@@ -1078,10 +1078,18 @@ async def update_piece_content_text(
 
 # ── AA-501: tenant-facing pre-T11 review (deliberately narrower than fetch_piece() above) ──────
 
+# AA-614 — held → "ready" (was "not_ready"), converging fetch_review()/fetch_review_list() onto
+# the SAME held-is-ready rule _tenant_safe_piece() / fetch_piece() already use (AA-613 #7/#8): a
+# held piece is a real, complete, product-truth-unresolved outcome — the tenant SEES it in My
+# Content exactly like an approved piece (content_text is already returned for held below), only
+# its PUBLISH is gated (v1_publish 422). Before AA-614 these two tenant read paths disagreed —
+# fetch_piece said "ready", the list said "not_ready" — so the same held piece looked deliverable
+# on its detail page but broken in the list. "not_ready" now means precisely "no content to show"
+# (failed / processing produced none), never "content exists but is gated".
 _READY_STATE_MAP = {
     "approved": "ready",
     "processing": "in_progress",
-    "held": "not_ready",
+    "held": "ready",
     "failed": "not_ready",
 }
 
