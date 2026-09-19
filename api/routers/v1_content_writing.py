@@ -31,7 +31,10 @@ from pydantic import BaseModel
 from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate.service import RequestNotFoundError
 from services.acp_content_writing import service
-from services.acp_content_writing.export import render_content_text_to_html
+from services.acp_content_writing.export import (
+    render_content_text_to_document,
+    render_content_text_to_fragment,
+)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
 router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"])
@@ -123,12 +126,15 @@ async def update_piece(
 
 @router.get(
     "/pieces/{piece_id}/export",
-    summary="AA-569 — download a piece's content. format=text (every channel) or format=html "
-            "(Blog channel only — the only channel T9 writes real markdown for).",
+    summary="AA-569/AA-613 — download a piece's content. format=text (every channel) or "
+            "format=html (Blog only). For html, mode=document (full standalone HTML file, "
+            "default) or mode=fragment (bare <article> to embed in a CMS). Every export is "
+            "audit-logged (AA-613) so admin can count exports per tenant/channel.",
 )
 async def export_piece(
     piece_id: UUID, request: Request, tenant=Depends(get_tenant),
     format: str = Query("text", pattern="^(text|html)$"),
+    mode: str = Query("document", pattern="^(document|fragment)$"),
 ):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
@@ -139,17 +145,39 @@ async def export_piece(
     if piece["status"] not in ("approved", "held"):
         raise HTTPException(status_code=409, detail="Nothing to export yet")
 
+    channel = piece["channel"]
     if format == "html":
-        if piece["channel"] != "blog":
+        if channel != "blog":
             raise HTTPException(
                 status_code=400,
                 detail="HTML export is only available for the Blog channel — every other "
                        "channel's content isn't written as markdown.",
             )
-        html = render_content_text_to_html(piece["content_text"], title="Blog post")
-        return Response(content=html, media_type="text/html")
+        if mode == "fragment":
+            body = render_content_text_to_fragment(piece["content_text"])
+        else:
+            body = render_content_text_to_document(piece["content_text"], title="Blog post")
+    else:
+        body = piece["content_text"]
 
-    return Response(content=piece["content_text"], media_type="text/plain")
+    # AA-613 — audit every export so admin monitor can count exports per tenant/channel/time.
+    # Best-effort: an audit failure must not block the tenant's download (this is the one export
+    # path, and a lost audit row is far less bad than a failed export the tenant is waiting on).
+    try:
+        pool_ = request.app.state.pool
+        await write_audit_log(
+            pool_, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.CONTENT_EXPORTED, resource_type="content_piece",
+            resource_id=str(piece_id),
+            details={"channel": channel, "format": format,
+                     "mode": mode if format == "html" else None},
+        )
+    except Exception:
+        pass
+
+    if format == "html":
+        return Response(content=body, media_type="text/html")
+    return Response(content=body, media_type="text/plain")
 
 
 @router.get(

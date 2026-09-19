@@ -44,6 +44,8 @@ class TenantAuditAction:
     CONTENT_PIECE_FINISHED = "content_piece.finished"
     TOUR_REWRITE_TRIGGERED = "tour.rewrite_triggered"
     CONTENT_PIECE_EDITED = "content_piece.edited"  # AA-569 — tenant hand-edit on My Content
+    CONTENT_EXPORTED = "content_piece.exported"  # AA-613 — tenant downloaded/exported a piece
+    CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
 
 
 async def write_audit_log(

@@ -45,6 +45,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.core.aa544_tenant_pool import STAGE1_PUBLISH_PENDING_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
+from services.acp_content_writing.export import render_content_text_to_fragment
+from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish.base import SocialPost
 from services.acp_publish.facebook import FacebookAdapter
 from services.acp_s4_blog.cms.base import BlogContent
@@ -190,9 +192,13 @@ async def _call_adapter(channel: str, creds: dict, piece) -> tuple:
     itself). Unknown channels never reach here — publish() already 404s before calling this."""
     if channel == "blog":
         title = piece["angle_name"] or "Untitled"
+        # AA-613 — content_text is markdown (T9's blog prompt writes `## ` H2s, `**bold**`, FAQ
+        # pairs). Publishing it raw into content_html made WordPress show literal `##`/`**`.
+        # Render the markdown to a bare <article> fragment first (the CMS supplies the page
+        # chrome; the standalone-document mode is for tenant download, not publish).
         content = BlogContent(
-            title=title, content_html=piece["content_text"], slug="",
-            seo_title=title, seo_meta="", status="publish",
+            title=title, content_html=render_content_text_to_fragment(piece["content_text"]),
+            slug="", seo_title=title, seo_meta="", status="publish",
         )
         adapter = WordPressAdapter(
             wp_url=creds["wp_url"], username=creds["username"], app_password=creds["app_password"],
@@ -311,6 +317,21 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
 
     logger.info("channel_publish", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
                 success=success, external_id=external_id, error=error_msg)
+
+    # AA-613 — audit every publish attempt so admin monitor can count publishes per tenant/
+    # channel/time (publish_log already records the row; this is the tenant-activity feed's own
+    # semantic event, same as export's CONTENT_EXPORTED). Best-effort — a lost audit row must
+    # never turn a real successful publish into an error the tenant sees.
+    try:
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.CONTENT_PUBLISHED, resource_type="content_piece",
+            resource_id=str(piece_id),
+            details={"channel": channel, "success": success,
+                     "external_url": external_url, "publish_id": row["publish_id"]},
+        )
+    except Exception as exc:
+        logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))
 
     return {
         "publish_id": row["publish_id"],
