@@ -40,6 +40,37 @@ class DataForSEOClient:
     def _auth(self) -> tuple[str, str]:
         return (self.login, self.password)
 
+    async def fetch_balance(self) -> dict:
+        """AA-627 — read the DataForSEO account balance. This is the ONLY GET endpoint here
+        (every other method POSTs a task) and it is FREE (DFS returns cost:0). Response shape:
+        `{"tasks":[{"result":[{"money":{"balance": <float>, "total": <float>, "currency": ...}}]}]}`.
+
+        Returns the parsed `money` dict (balance/currency/...). Raises on HTTP/parse error — the
+        caller (the daily-check endpoint) decides how to handle a failed read; unlike the fetch
+        path we do NOT swallow here because a silent failure is exactly the blind spot AA-627 is
+        meant to remove. Logs one dfs_call_log row (cost 0) so External Spend still counts it."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"{DATAFORSEO_BASE}/appendix/user_data",
+                auth=self._auth(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        # cost:0 — free read; logged so the External Spend call counts stay complete.
+        self._log_live("appendix_user_data", data, keyword_count=0)
+        money = self._parse_money(data)
+        logger.info("dfs_balance_fetched", balance=money.get("balance"))
+        return money
+
+    def _parse_money(self, data: dict) -> dict:
+        """Pull the money{} block out of a user_data response. Returns {} if the shape is
+        unexpected (caller treats an empty/absent balance as a failed read, not $0)."""
+        try:
+            money = data["tasks"][0]["result"][0]["money"]
+            return money if isinstance(money, dict) else {}
+        except (KeyError, IndexError, TypeError):
+            return {}
+
     async def fetch_keywords(
         self,
         seed: str,
