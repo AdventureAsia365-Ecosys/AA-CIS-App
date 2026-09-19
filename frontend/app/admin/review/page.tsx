@@ -722,8 +722,12 @@ export default function AdminReviewPage() {
   const [total, setTotal] = useState(0);
   const [regenTarget, setRegenTarget] = useState<any>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<"date" | "score" | "country">("date");
+  const [sortKey, setSortKey] = useState<"tour" | "country" | "version" | "date" | "score">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // AA-626 follow-up: deep-link from Master Content ("N failed" badge) → ?tour_id=<uuid>
+  // pre-filters the queue to that one tour so the reviewer lands on its failed versions.
+  const [tourFilter, setTourFilter] = useState<string | null>(null);
+  const [tourFilterName, setTourFilterName] = useState<string | null>(null);
   const reviewerInit = useRef(false);
 
   const load = useCallback(async () => {
@@ -740,7 +744,16 @@ export default function AdminReviewPage() {
   }, [filterStatus]);
 
   useEffect(() => {
-    if (!reviewerInit.current) { reviewerInit.current = true; getReviewerId(); }
+    if (!reviewerInit.current) {
+      reviewerInit.current = true;
+      getReviewerId();
+      // Read ?tour_id= deep-link once on mount (client component; avoids useSearchParams
+      // Suspense boundary). Filtering itself is client-side over the loaded rows.
+      if (typeof window !== "undefined") {
+        const tid = new URLSearchParams(window.location.search).get("tour_id");
+        if (tid) setTourFilter(tid);
+      }
+    }
     load();
   }, [load]);
 
@@ -753,6 +766,13 @@ export default function AdminReviewPage() {
   function onRevalidated(id: string, passed: boolean | null) {
     setItems(p => p.map(i => i.id === id ? { ...i, revalidate_passed: passed } : i));
   }
+
+  // Resolve the tour name for the deep-link filter banner once rows are loaded.
+  useEffect(() => {
+    if (!tourFilter) return;
+    const hit = items.find(i => String(i.raw.tour_id) === tourFilter);
+    if (hit) setTourFilterName(hit.name);
+  }, [tourFilter, items]);
 
   async function onApprove(id: string) {
     const res = await fetch(`/api/admin/review-queue/${id}/approve`, { method: "POST", headers: authHeaders() });
@@ -772,21 +792,25 @@ export default function AdminReviewPage() {
     setItems(p => p.filter(i => i.id !== id));
     setTotal(t => Math.max(0, t - 1));
   }
-  function toggleSort(key: "date" | "score" | "country") {
+  function toggleSort(key: "tour" | "country" | "version" | "date" | "score") {
     if (sortKey === key) { setSortDir(d => (d === "asc" ? "desc" : "asc")); }
-    else { setSortKey(key); setSortDir(key === "score" ? "desc" : "asc"); }
+    // score & version default to desc (highest first), text/date default to asc
+    else { setSortKey(key); setSortDir(key === "score" || key === "version" ? "desc" : "asc"); }
   }
 
   const countries = [...new Set(items.map(i => i.country))];
   const filtered = items.filter(item => {
+    const mt = !tourFilter || String(item.raw.tour_id) === tourFilter;
     const mc = filterCountry === "all" || item.country === filterCountry;
     const ms = filterScore === "all"
       || (filterScore === "critical" && item.score < 5)
       || (filterScore === "low" && item.score >= 5 && item.score < 7);
-    return mc && ms;
+    return mt && mc && ms;
   }).sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
     if (sortKey === "score") return (a.score - b.score) * dir;
+    if (sortKey === "version") return ((a.version_num ?? 0) - (b.version_num ?? 0)) * dir;
+    if (sortKey === "tour") return String(a.name).localeCompare(String(b.name)) * dir;
     if (sortKey === "country") return String(a.country).localeCompare(String(b.country)) * dir;
     // date: compare underlying created_at from raw (fall back to display date)
     const ad = new Date(a.raw.created_at || 0).getTime();
@@ -841,6 +865,30 @@ export default function AdminReviewPage() {
           <Btn variant="ghost" size="sm" onClick={load}><RotateCcw size={12} /> Refresh</Btn>
         </div>
 
+        {/* AA-626 follow-up: active deep-link filter from Master Content */}
+        {tourFilter && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, marginBottom: 16,
+            padding: "8px 14px", borderRadius: 8, background: A.goldTint,
+            border: `1px solid ${A.gold}`, fontSize: 12, color: A.ink,
+          }}>
+            <Filter size={13} style={{ color: A.gold }} />
+            <span>
+              Showing failed versions for <strong>{tourFilterName || "one selected tour"}</strong> only.
+            </span>
+            <button
+              onClick={() => { setTourFilter(null); setTourFilterName(null); }}
+              style={{
+                marginLeft: "auto", border: `1px solid ${A.line}`, borderRadius: 6,
+                background: A.card, cursor: "pointer", padding: "4px 10px", fontSize: 12, color: A.body,
+                display: "inline-flex", alignItems: "center", gap: 5,
+              }}
+            >
+              <X size={12} /> Clear filter
+            </button>
+          </div>
+        )}
+
         {error && (
           <div style={{ fontSize: 13, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: A.redSoft, color: A.red, border: "1px solid #FECACA" }}>
             {error}
@@ -873,18 +921,18 @@ export default function AdminReviewPage() {
             <div style={{ fontSize: 13, color: A.muted, marginTop: 6 }}>Every tour has been reviewed.</div>
           </div>
         ) : (
-          <Card style={{ padding: 0, overflow: "hidden" }}>
+          <Card style={{ padding: 0, overflow: "visible" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
+              <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
                 <tr style={{ background: A.line2 }}>
-                  <th style={{ ...TH, width: 34, paddingLeft: 16 }}></th>
-                  <th style={TH}>Tour</th>
-                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("country")}>Country{sortArrow("country")}</th>
-                  <th style={TH}>Version</th>
-                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("date")}>Written{sortArrow("date")}</th>
-                  <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("score")}>Score{sortArrow("score")}</th>
-                  <th style={TH}>Reasons</th>
-                  <th style={TH}>Actions</th>
+                  <th style={{ ...TH, width: 34, paddingLeft: 16, background: A.line2 }}></th>
+                  <th style={{ ...TH, cursor: "pointer", background: A.line2 }} onClick={() => toggleSort("tour")}>Tour{sortArrow("tour")}</th>
+                  <th style={{ ...TH, cursor: "pointer", background: A.line2 }} onClick={() => toggleSort("country")}>Country{sortArrow("country")}</th>
+                  <th style={{ ...TH, cursor: "pointer", background: A.line2 }} onClick={() => toggleSort("version")}>Version{sortArrow("version")}</th>
+                  <th style={{ ...TH, cursor: "pointer", background: A.line2 }} onClick={() => toggleSort("date")}>Written{sortArrow("date")}</th>
+                  <th style={{ ...TH, cursor: "pointer", background: A.line2 }} onClick={() => toggleSort("score")}>Score{sortArrow("score")}</th>
+                  <th style={{ ...TH, background: A.line2 }}>Reasons</th>
+                  <th style={{ ...TH, background: A.line2 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
