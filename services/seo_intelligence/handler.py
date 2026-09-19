@@ -29,6 +29,13 @@ logger = structlog.get_logger()
 _REDIS_HOST = os.environ.get("REDIS_HOST", "aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com")
 _seo_redis_client = _aioredis.from_url(f"redis://{_REDIS_HOST}:6379", encoding="utf-8", decode_responses=True)
 
+# AA-625: SEO cache TTL raised 24h -> 7 days. Search volume / SERP for travel keywords change on a
+# weekly/monthly cadence, not daily, so a 24h TTL forced a fresh (billable) DataForSEO fetch for the
+# same (seed, market) whenever a rerun spanned more than a day. 7 days keeps cache HITs across a
+# multi-day rerun while still refreshing often enough for demand to stay current. Single source of
+# truth for both the Redis TTL and the seo_context.expires_at trace column below.
+_SEO_CACHE_TTL_SECONDS = 7 * 24 * 3600  # 604800
+
 
 async def process_seo(
     tour_id: str,
@@ -117,7 +124,7 @@ async def process_seo(
                         }
                     }
                     try:
-                        await cache.set(redis_seed_key, existing, ttl_seconds=86400)
+                        await cache.set(redis_seed_key, existing, ttl_seconds=_SEO_CACHE_TTL_SECONDS)
                     except Exception as _cache_err:
                         logger.warning("seo_cache_set_failed", error=str(_cache_err))
                     # Row already belongs to THIS tour_id (queried by tour_id, not
@@ -138,7 +145,7 @@ async def process_seo(
             effective_seed, location_code, location_name, language_code, activity,
         )
         try:
-            await cache.set(redis_seed_key, seo_data, ttl_seconds=86400)
+            await cache.set(redis_seed_key, seo_data, ttl_seconds=_SEO_CACHE_TTL_SECONDS)
         except Exception as _cache_err:
             logger.warning("seo_cache_set_failed", error=str(_cache_err))
 
@@ -171,7 +178,7 @@ async def process_seo(
             # DB cache_key column: trace-only since migration 075 (row identity is
             # tour_id) — still populated so it's easy to see which seed produced a row.
             "cache_key":      redis_seed_key,
-            "expires_at":     datetime.utcnow() + timedelta(hours=24),
+            "expires_at":     datetime.utcnow() + timedelta(seconds=_SEO_CACHE_TTL_SECONDS),
         })
         logger.info("seo_inserted", id=seo_id)
     finally:
