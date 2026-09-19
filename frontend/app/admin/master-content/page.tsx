@@ -1278,9 +1278,9 @@ export default function MasterContentPage() {
                                 : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
                               {/* AA-626: this tour still has failed version(s) sitting in the review
                                   queue — link over so the admin can dismiss the stale ones. */}
-                              {(t.pending_review_count ?? 0) > 0 && (
+                              {(t.pending_review_count ?? 0) > 0 && t.tour_id && (
                                 <a
-                                  href="/admin/review"
+                                  href={`/admin/review?tour_id=${t.tour_id}`}
                                   onClick={e => e.stopPropagation()}
                                   title={`${t.pending_review_count} failed version(s) pending in Review Queue — click to review/dismiss`}
                                   style={{
