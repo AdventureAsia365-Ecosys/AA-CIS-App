@@ -964,9 +964,10 @@ class TestFetchReview:
         assert "repair_log" not in result
         assert "held_reason" not in result
 
-    async def test_held_piece_not_ready_but_content_still_shown(self):
-        """migration 115/118's own precedent: held keeps real writer output visible for review —
-        content_text is real here, just the ready_state hides WHY it's held."""
+    async def test_held_piece_reads_as_ready_content_shown(self):
+        """AA-614 — a held piece reads as ready_state='ready' here, same as fetch_piece()/My
+        Content: the tenant sees the full content, only its publish is gated (v1_publish 422).
+        Converges fetch_review() onto the held-is-ready rule fetch_piece() already used."""
         conn = AsyncMock()
         conn.fetchrow.side_effect = [
             _review_piece_row(status="held", content_text="drafted but held"), None,
@@ -977,7 +978,7 @@ class TestFetchReview:
              patch.object(service, "get_goal", return_value=GOAL):
             result = await service.fetch_review(TENANT_ID, REQUEST_ID, pool)
 
-        assert result["ready_state"] == "not_ready"
+        assert result["ready_state"] == "ready"
         assert result["content_text"] == "drafted but held"
 
     async def test_processing_piece_in_progress_no_content(self):
@@ -1112,7 +1113,9 @@ class TestFetchReviewList:
         result = await service.fetch_review_list(TENANT_ID, pool)
         assert result == []
 
-    async def test_held_row_content_shown_processing_row_content_hidden(self):
+    async def test_held_row_reads_as_ready_processing_row_content_hidden(self):
+        # AA-614 — held reads as ready_state='ready' in the list too (same rule as fetch_review()
+        # and fetch_piece()): content shown, publish gated. processing still hides its content.
         conn = AsyncMock()
         conn.fetch = AsyncMock(return_value=[
             _review_list_row(piece_id=uuid.uuid4(), status="held", content_text="drafted but held"),
@@ -1123,7 +1126,7 @@ class TestFetchReviewList:
             result = await service.fetch_review_list(TENANT_ID, pool)
 
         held, processing = result
-        assert held["ready_state"] == "not_ready" and held["content_text"] == "drafted but held"
+        assert held["ready_state"] == "ready" and held["content_text"] == "drafted but held"
         assert processing["ready_state"] == "in_progress" and processing["content_text"] is None
 
     async def test_trips_fetched_once_not_per_row_when_trip_ids_present(self):

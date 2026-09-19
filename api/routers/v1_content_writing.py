@@ -17,8 +17,8 @@ Endpoint shape:
   POST /v1/content-writing/requests/{angle_gate_request_id}/write — 202 Accepted immediately,
        body = the content_piece placeholder (status='processing'). Poll GET .../pieces/{piece_id}
        for the final result (status becomes approved/held/failed).
-  GET  /v1/content-writing/pieces/{piece_id} — read a piece back, at any status. UNCHANGED by
-       AA-466 — already returns every field a poller needs (status/content_text/held_reason).
+  GET  /v1/content-writing/pieces/{piece_id} — read a piece back, at any state. AA-613: returns
+       the tenant-safe shape (ready_state + content_text, no raw status/held_reason/gate_ledger).
 """
 from __future__ import annotations
 
@@ -149,7 +149,11 @@ async def export_piece(
         piece = await service.fetch_piece(tenant_id, piece_id, pool, request=request)
     except service.ContentWritingError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    if piece["status"] not in ("approved", "held"):
+    # AA-614 — fetch_piece() returns the tenant-safe shape (ready_state, no raw status). A piece
+    # is exportable exactly when it has real content to show, which ready_state="ready" means
+    # (approved OR held — held content is fully delivered, only its PUBLISH is gated, AA-613 #8).
+    # "in_progress"/"not_ready" have no content_text to export.
+    if piece.get("ready_state") != "ready":
         raise HTTPException(status_code=409, detail="Nothing to export yet")
 
     channel = piece["channel"]

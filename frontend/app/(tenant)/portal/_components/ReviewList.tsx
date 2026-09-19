@@ -128,15 +128,21 @@ export function ReviewList() {
   // correct upstream Content-Type; it does NOT forward Content-Disposition, so a plain <a href>
   // to the API would just open inline — building the Blob/download client-side sidesteps that
   // entirely and works regardless of what headers the proxy does or doesn't pass through).
-  async function exportPiece(item: ReviewItem, format: "text" | "html") {
-    const r = await fetch(`/api/tenant/v1/content-writing/pieces/${item.piece_id}/export?format=${format}`);
+  // AA-614 — `mode` only applies to blog html: "document" = a full standalone .html file (open in
+  // a browser as-is), "fragment" = a bare <article> to paste into a CMS/page builder. The backend
+  // (v1_content_writing.export_piece) validates mode and audit-logs it per tenant/channel so admin
+  // can see document-vs-fragment usage. text export ignores mode (every non-blog channel is text).
+  async function exportPiece(item: ReviewItem, format: "text" | "html", mode: "document" | "fragment" = "document") {
+    const qs = format === "html" ? `format=html&mode=${mode}` : "format=text";
+    const r = await fetch(`/api/tenant/v1/content-writing/pieces/${item.piece_id}/export?${qs}`);
     if (!r.ok) { showToast("Export failed — try again."); return; }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const safeTitle = (item.angle?.name || item.channel || "content").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "content";
+    const ext = format === "html" ? (mode === "fragment" ? "fragment.html" : "html") : "txt";
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${safeTitle}.${format === "html" ? "html" : "txt"}`;
+    a.download = `${safeTitle}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -215,7 +221,8 @@ export function ReviewList() {
                 onStartEdit={() => startEdit(item)}
                 onCancelEdit={cancelEdit}
                 onSaveEdit={() => saveEdit(item.piece_id)}
-                onExport={(format) => exportPiece(item, format)}
+                onExport={(format, mode) => exportPiece(item, format, mode)}
+                onCopyAttempt={() => showToast("Use Export to download this content.")}
               />
             ))}
           </div>
@@ -242,12 +249,12 @@ function FilterPill({ label, count, active, onClick }: {
 
 function ReviewCard({
   item, expanded, onToggle, highlighted, editing, draftText, onDraftChange, saving,
-  onStartEdit, onCancelEdit, onSaveEdit, onExport,
+  onStartEdit, onCancelEdit, onSaveEdit, onExport, onCopyAttempt,
 }: {
   item: ReviewItem; expanded: boolean; onToggle: () => void; highlighted: boolean;
   editing: boolean; draftText: string; onDraftChange: (v: string) => void; saving: boolean;
   onStartEdit: () => void; onCancelEdit: () => void; onSaveEdit: () => void;
-  onExport: (format: "text" | "html") => void;
+  onExport: (format: "text" | "html", mode?: "document" | "fragment") => void; onCopyAttempt: () => void;
 }) {
   const stateMeta = READY_STATE_META[item.ready_state];
   const title = item.angle?.name || "Untitled";
@@ -291,7 +298,7 @@ function ReviewCard({
 
       {expanded && (
         <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
-          <ContentBlock item={item} editing={editing} draftText={draftText} onDraftChange={onDraftChange} />
+          <ContentBlock item={item} editing={editing} draftText={draftText} onDraftChange={onDraftChange} onCopyAttempt={onCopyAttempt} />
           {editable && (
             <ActionRow
               channel={item.channel} editing={editing} saving={saving}
@@ -307,11 +314,13 @@ function ReviewCard({
 }
 
 // AA-569 — Edit/Save/Export controls. Only ever rendered when `editable` (item.content_text !==
-// null, i.e. status approved/held) — same boundary the PATCH/export backend endpoints enforce.
+// null, i.e. approved/held) — same boundary the PATCH/export backend endpoints enforce.
+// AA-614 — blog gets two HTML export shapes (full document vs CMS fragment); every other channel
+// is a single text export.
 function ActionRow({ channel, editing, saving, onEdit, onCancel, onSave, onExport }: {
   channel: string; editing: boolean; saving: boolean;
   onEdit: () => void; onCancel: () => void; onSave: () => void;
-  onExport: (format: "text" | "html") => void;
+  onExport: (format: "text" | "html", mode?: "document" | "fragment") => void;
 }) {
   if (editing) {
     return (
@@ -331,7 +340,8 @@ function ActionRow({ channel, editing, saving, onEdit, onCancel, onSave, onExpor
       {channel === "blog" ? (
         <>
           <Btn variant="secondary" size="sm" onClick={() => onExport("text")}><Download size={12} /> Export text</Btn>
-          <Btn variant="secondary" size="sm" onClick={() => onExport("html")}><Download size={12} /> Export HTML</Btn>
+          <Btn variant="secondary" size="sm" onClick={() => onExport("html", "document")}><Download size={12} /> Export HTML file</Btn>
+          <Btn variant="secondary" size="sm" onClick={() => onExport("html", "fragment")}><Download size={12} /> Export HTML for CMS</Btn>
         </>
       ) : (
         <Btn variant="secondary" size="sm" onClick={() => onExport("text")}><Download size={12} /> Export</Btn>
@@ -340,10 +350,14 @@ function ActionRow({ channel, editing, saving, onEdit, onCancel, onSave, onExpor
   );
 }
 
-function ContentBlock({ item, editing, draftText, onDraftChange }: {
+function ContentBlock({ item, editing, draftText, onDraftChange, onCopyAttempt }: {
   item: ReviewItem; editing: boolean; draftText: string; onDraftChange: (v: string) => void;
+  onCopyAttempt: () => void;
 }) {
   if (editing) {
+    // AA-614 — the edit textarea is deliberately NOT copy-locked: the tenant is authoring their
+    // own text here, and copy/paste within their own draft is normal editing. The copy-lock only
+    // guards the read-only display view below, whose whole point is "export, don't copy-paste".
     return (
       <textarea
         value={draftText}
@@ -378,11 +392,24 @@ function ContentBlock({ item, editing, draftText, onDraftChange }: {
       </div>
     );
   }
+  // AA-614 — copy-lock the read-only content view. The tenant must EXPORT (which is audit-logged
+  // per tenant/channel, AA-613) rather than select-drag-copy the text out, so admin can actually
+  // count how much content leaves the platform. This is a UX deterrent, not hard DRM — a
+  // determined user can still read the DOM — but it turns the easy path (highlight + Ctrl+C /
+  // right-click Copy) into the audited Export button. Guards: userSelect:none blocks the drag
+  // selection itself; onCopy/onCut/onContextMenu are belt-and-suspenders for keyboard copy and
+  // the context menu, each nudging the tenant toward Export.
   return (
-    <div style={{
-      padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
-      whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6, color: T.body, fontFamily: sans,
-    }}>
+    <div
+      onCopy={(e) => { e.preventDefault(); onCopyAttempt(); }}
+      onCut={(e) => { e.preventDefault(); onCopyAttempt(); }}
+      onContextMenu={(e) => { e.preventDefault(); onCopyAttempt(); }}
+      style={{
+        padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
+        whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6, color: T.body, fontFamily: sans,
+        userSelect: "none", WebkitUserSelect: "none", MozUserSelect: "none", msUserSelect: "none",
+      }}
+    >
       {item.content_text}
       {item.ready_state === "not_ready" && (
         <div style={{ marginTop: 10, fontSize: 11.5, color: T.muted, fontStyle: "italic" }}>

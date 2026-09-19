@@ -239,7 +239,7 @@ class TestExportPiece:
     async def test_text_export_any_channel(self):
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "approved", "channel": "linkedin", "content_text": "Hello"}),
+            new=AsyncMock(return_value={"ready_state": "ready", "channel": "linkedin", "content_text": "Hello"}),
         ):
             result = await v1_content_writing.export_piece(
                 PIECE_ID, _make_request(), tenant={"sub": TENANT_ID}, format="text",
@@ -251,7 +251,7 @@ class TestExportPiece:
     async def test_html_export_blog_channel(self):
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "approved", "channel": "blog", "content_text": "## Title\n\nBody"}),
+            new=AsyncMock(return_value={"ready_state": "ready", "channel": "blog", "content_text": "## Title\n\nBody"}),
         ):
             result = await v1_content_writing.export_piece(
                 PIECE_ID, _make_request(), tenant={"sub": TENANT_ID}, format="html",
@@ -263,7 +263,7 @@ class TestExportPiece:
     async def test_html_export_non_blog_channel_400(self):
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "approved", "channel": "instagram", "content_text": "x"}),
+            new=AsyncMock(return_value={"ready_state": "ready", "channel": "instagram", "content_text": "x"}),
         ):
             with pytest.raises(HTTPException) as exc:
                 await v1_content_writing.export_piece(
@@ -275,7 +275,7 @@ class TestExportPiece:
     async def test_not_yet_written_409(self):
         with patch.object(
             v1_content_writing.service, "fetch_piece",
-            new=AsyncMock(return_value={"status": "processing", "channel": "blog", "content_text": ""}),
+            new=AsyncMock(return_value={"ready_state": "in_progress", "channel": "blog", "content_text": ""}),
         ):
             with pytest.raises(HTTPException) as exc:
                 await v1_content_writing.export_piece(
