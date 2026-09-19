@@ -209,6 +209,15 @@ def _result(
     }
 
 
+def _downgrade_to_warn(result: GateResultLite) -> GateResultLite:
+    """AA-613 — flip a gate result to non-blocking (warn) at the orchestration layer without
+    touching the gate function itself. Used for F8_framework: the gate still computes its
+    verdict the same way, but a failure ships as a flag rather than holding/retrying the piece.
+    A non-blocking failed gate is never `first_failure` and is collected into `flags` (see
+    run_quality_gates)."""
+    return {**result, "blocking": False, "repairable": False}
+
+
 # ---------------------------------------------------------------- CTA gate (F6-DET-half)
 
 def gate_cta_present(cta: Optional[str]) -> GateResultLite:
@@ -558,11 +567,15 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
 
-def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> GateResultLite:
+def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
     judgment, since T9's CTA is a free-text tenant value, not N7's one fixed brand phrase — no
-    hardcoded-phrase false-positive carve-out ports as-is for this reason)."""
+    hardcoded-phrase false-positive carve-out ports as-is for this reason).
+
+    AA-613 — returns a LIST of two results from ONE judge call (Nghiệp's 3-tier severity split):
+    `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK) and `F9_brand_style` (non-blocking
+    warn: off-brand voice / generic AI wording). See the split logic below."""
     contract = json.dumps({
         "status": "pass|flagged|manual_check",
         **{f: "1|0" for f in _BRAND_VOICE_FIELDS},
@@ -590,22 +603,55 @@ def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> Gat
         data = parse_judge_json(raw["text"])
     except Exception as e:
         logger.warning("t10_f9_judge_unavailable", error=str(e))
-        return _result("F9_brand_voice", [f"judge unavailable: {e} — treated as fail"])
+        # Fail-closed on the BLOCKING (product-truth) side; brand-style passes (no signal to
+        # flag on). AA-613 — same two-result shape as the success path below.
+        return [
+            _result("F9_cta_fact", [f"judge unavailable: {e} — treated as fail"], blocking=True),
+            _result("F9_brand_style", [], repairable=False, blocking=False),
+        ]
 
     status = data.get("status", "manual_check")
     failure_codes = [c for c in (data.get("failure_codes") or []) if c in _BRAND_VOICE_FAILURE_CODES]
     notes = data.get("notes") or ""
-    passed = status == "pass"
-    violations: list[str] = []
-    if not passed:
-        reason = ", ".join(failure_codes) or notes or "(no reason given)"
-        phrases = [p for p in (data.get("flagged_phrases") or []) if isinstance(p, str) and p.strip()]
-        if phrases:
+    phrases = [p for p in (data.get("flagged_phrases") or []) if isinstance(p, str) and p.strip()]
+
+    # AA-613 — split the single F9 judge call into TWO gate results by failure class, so the
+    # T10 loop can treat them differently (Nghiệp's 3-tier severity model):
+    #   - F9_cta_fact  (BLOCKING / product-truth): CTA_NOT_REFLECTED, FACT_CHECK_MANUAL_CHECK.
+    #     A missing/unclear CTA or an unverified factual claim is a contract/truth failure — it
+    #     still triggers a retry and still gates publish.
+    #   - F9_brand_style (NON-BLOCKING / warn): SUMMARY_OFF_BRAND, GENERIC_AI_WORDING. Off-brand
+    #     voice or generic AI wording is a quality note, not a reason to withhold the piece from
+    #     the tenant (ships flagged, per ADR 0023 flag-not-block).
+    # A judge failure/unavailability is treated as a BLOCKING fail (fail-closed), same as before.
+    # One judge call, two results — the judge already returns per-code failure_codes.
+    _PRODUCT_TRUTH_CODES = {"CTA_NOT_REFLECTED", "FACT_CHECK_MANUAL_CHECK"}
+    _BRAND_STYLE_CODES = {"SUMMARY_OFF_BRAND", "GENERIC_AI_WORDING"}
+    judge_ok = status == "pass"
+
+    def _viol(codes: set[str]) -> list[str]:
+        hit = [c for c in failure_codes if c in codes]
+        if not hit:
+            return []
+        reason = ", ".join(hit)
+        if phrases and (codes & _BRAND_STYLE_CODES):
             reason += " — exact flagged phrase(s): " + "; ".join(f'"{p}"' for p in phrases)
-        violations = [f"audit {status}: {reason}"]
-    _log_t10_judge_call(raw, gate="F9_brand_voice", passed=passed,
+        return [f"audit {status}: {reason}"]
+
+    cta_fact_viol = _viol(_PRODUCT_TRUTH_CODES)
+    brand_style_viol = _viol(_BRAND_STYLE_CODES)
+    # A non-pass status with NO recognized code, or a bare manual_check with notes only, is
+    # ambiguous about which class it belongs to — treat it as product-truth (fail-closed on the
+    # blocking side) rather than silently downgrading it to a warn.
+    if not judge_ok and not cta_fact_viol and not brand_style_viol:
+        cta_fact_viol = [f"audit {status}: {', '.join(failure_codes) or notes or '(no reason given)'}"]
+
+    _log_t10_judge_call(raw, gate="F9_brand_voice", passed=judge_ok,
                          extra={"status": status, "failure_codes": failure_codes})
-    return _result("F9_brand_voice", violations)
+    return [
+        _result("F9_cta_fact", cta_fact_viol, blocking=True),
+        _result("F9_brand_style", brand_style_viol, repairable=False, blocking=False),
+    ]
 
 
 # ---------------------------------------------------------------- F5-adjusted (atom density, blog only)
@@ -809,10 +855,11 @@ def run_quality_gates(
             gate_structural_variance(content_text, route_segments),
             gate_faq_dedup(content_text),
         ]
-    gate_ledger += [
-        gate_framework(content_text, goal_key),
-        gate_brand_voice(content_text, cta or "", brand_rubric_text),
-    ]
+    # AA-613 — F8 framework/formula-fit is now a WARN (non-blocking): a piece that misses its
+    # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
+    # returns TWO results (blocking F9_cta_fact + non-blocking F9_brand_style), spread in here.
+    gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
+    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text)
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
     # considers a BLOCKING gate now; a failed non-blocking gate (currently only
     # promises_an_option) never holds/repairs a piece, but its result is still in gate_ledger AND

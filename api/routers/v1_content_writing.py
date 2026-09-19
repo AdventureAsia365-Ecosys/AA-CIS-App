@@ -89,7 +89,14 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
     )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
-    return piece
+    # AA-613 — tenant-safe 202 body: just enough for the FE to start polling GET .../pieces/{id}
+    # (which is itself tenant-safe now). No raw status/gate fields on the placeholder either.
+    return {
+        "piece_id": piece["piece_id"],
+        "angle_gate_request_id": piece["angle_gate_request_id"],
+        "channel": piece.get("channel"),
+        "ready_state": "in_progress",
+    }
 
 
 @router.get("/pieces/{piece_id}", summary="Read a previously written content piece")

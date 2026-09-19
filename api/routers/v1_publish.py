@@ -247,8 +247,20 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
             piece_id, tenant_id,
         )
 
-    if not piece or piece["status"] != "approved":
-        raise HTTPException(status_code=404, detail="Content piece not found or not approved")
+    if not piece:
+        raise HTTPException(status_code=404, detail="Content piece not found")
+    # AA-613 — publish gate under the 3-tier severity model: only 'approved' pieces publish.
+    # A warn-only piece (off-brand voice / framework miss) already finalized as 'approved', so it
+    # publishes fine. A 'held' piece = unresolved product-truth after ≤2 retries (grounding,
+    # banned, missing CTA, FACT_CHECK, cannibalization) — it is fully visible to the tenant in My
+    # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
+    # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
+    # piece and the reason is actionable — no existence leak (ownership already confirmed above).
+    if piece["status"] != "approved":
+        raise HTTPException(
+            status_code=422,
+            detail="This piece isn't ready to publish yet — edit it in My Content first.",
+        )
     channel = piece["channel"]
     if channel not in _SUPPORTED_CHANNELS:
         raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")

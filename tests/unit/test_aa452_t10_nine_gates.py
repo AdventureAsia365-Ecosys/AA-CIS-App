@@ -150,9 +150,10 @@ class TestRunQualityGatesChannelDispatch:
         # AA-514: promises_an_option now runs for every channel (origin's own channels=None).
         # AA-484: F10_cannibalization_cross_tenant runs for every channel too, right after F2 —
         # a `None` cannibalization_match (this test's default) always passes with 0 violations.
+        # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F8_framework", "F9_brand_voice",
+            "promises_an_option", "F4_extreme_length", "F8_framework", "F9_cta_fact", "F9_brand_style",
         ]
 
     def test_blog_channel_runs_all_12_gates(self):
@@ -170,11 +171,12 @@ class TestRunQualityGatesChannelDispatch:
         gates = [g["gate"] for g in outcome["gate_ledger"]]
         # AA-514: + promises_an_option (after F2) and F4_seo_surface (after F4, blog-only).
         # AA-484: + F10_cannibalization_cross_tenant, right after F2 (before promises_an_option).
+        # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F4_seo_surface",
             "F5_atom_density", "F3_structural_variance", "F7_faq_dedup",
-            "F8_framework", "F9_brand_voice",
+            "F8_framework", "F9_cta_fact", "F9_brand_style",
         ]
 
     def test_extreme_length_measured_on_stripped_text_not_tagged(self):

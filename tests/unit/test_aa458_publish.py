@@ -114,14 +114,17 @@ async def test_publish_404_when_piece_not_found():
 
 
 @pytest.mark.asyncio
-async def test_publish_404_when_piece_not_approved():
+async def test_publish_422_when_piece_held_product_truth_unresolved():
+    """AA-613 — a 'held' piece (unresolved product-truth after retries) is owned by the tenant
+    and visible in My Content, but not publishable until edited. 422 (actionable), not 404 —
+    ownership is already confirmed by the WHERE clause, so there's no existence leak to protect."""
     piece = {"piece_id": str(PIECE_ID), "content_text": "x", "status": "held",
               "channel": "blog", "angle_name": "A"}
     pool, _ = _sequential_pool(piece)
     req = _make_request(pool)
     with pytest.raises(HTTPException) as exc_info:
         await mod.publish(PIECE_ID, req, TENANT)
-    assert exc_info.value.status_code == 404
+    assert exc_info.value.status_code == 422
 
 
 @pytest.mark.asyncio
