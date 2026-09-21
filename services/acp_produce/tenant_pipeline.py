@@ -49,6 +49,7 @@ import structlog
 from services.acp_shared.atom_extraction import (
     SYSTEM_PROMPT as _SYSTEM_PROMPT,
     build_day_user_prompt as _build_day_user_prompt,
+    checkable_evidence as _checkable_evidence,
     build_user_prompt as _build_user_prompt,
     content_hash_atom_id as _content_hash_atom_id,
     day_fingerprint as _day_fingerprint,
@@ -542,6 +543,11 @@ async def _atomize_per_day(
                     place = atom.get("place") or ""
                     action = atom.get("action") or ""
                     text = _derive_atom_text(place, action)
+                    # AA-610 — evidence: the verbatim source-text span `said` (atom_ranking.py)
+                    # should measure, not `text`'s place—action join. checkable_evidence()
+                    # falls back to the whole day's body if the model's quote doesn't actually
+                    # check out against it, per its own docstring — never None here.
+                    evidence = _checkable_evidence(atom.get("evidence") or "", day["body"])
                     atom_id = _content_hash_atom_id(tenant_id, tour_id, day_num, place, action)
                     distinctiveness = score_distinctiveness(text, competitor_idx)
                     # ON CONFLICT never touches starred/weight — starred is a human curation
@@ -550,15 +556,16 @@ async def _atomize_per_day(
                     # every time a day's fingerprint happened to change.
                     await conn.execute("""
                         INSERT INTO acp_contract.tour_atoms
-                            (atom_id, tour_id, owner_scope, text, place, action, activity_type,
-                             emotional_hook, visual_potential, persona_fit, season_note, starred,
-                             deleted, weight, source_hash, itinerary_day, distinctiveness,
-                             created_at, updated_at)
-                        VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12,
-                                $13, $14, $15, $16, $17, now(), now())
+                            (atom_id, tour_id, owner_scope, text, place, action, evidence,
+                             activity_type, emotional_hook, visual_potential, persona_fit,
+                             season_note, starred, deleted, weight, source_hash, itinerary_day,
+                             distinctiveness, created_at, updated_at)
+                        VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12,
+                                $13, $14, $15, $16, $17, $18, now(), now())
                         ON CONFLICT (atom_id) DO UPDATE SET
                             text = excluded.text, place = excluded.place,
-                            action = excluded.action, activity_type = excluded.activity_type,
+                            action = excluded.action, evidence = excluded.evidence,
+                            activity_type = excluded.activity_type,
                             emotional_hook = excluded.emotional_hook,
                             visual_potential = excluded.visual_potential,
                             persona_fit = excluded.persona_fit,
@@ -567,7 +574,7 @@ async def _atomize_per_day(
                             distinctiveness = excluded.distinctiveness,
                             deleted = false, updated_at = now()
                     """, atom_id, tour_id, tenant_id, text, place or None, action or None,
-                        atom.get("activity_type"), atom.get("emotional_hook"),
+                        evidence, atom.get("activity_type"), atom.get("emotional_hook"),
                         atom.get("visual_potential", 1),
                         json.dumps(atom.get("persona_fit") or []), atom.get("season_note"),
                         False, False, 1.0, source_hash, day_num, distinctiveness)
