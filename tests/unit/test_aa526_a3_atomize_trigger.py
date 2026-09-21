@@ -183,6 +183,8 @@ class TestRunA3AtomizeBackground:
                  AsyncMock(return_value={"status": "success", "atom_count": 3}),
              ) as m_atomize, \
              patch("services.acp_contract.segment_matching.run_segment_matching", AsyncMock()), \
+             patch("services.acp_contract.atom_ranking.precompute_question_landings",
+                   AsyncMock(return_value={})), \
              patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock()), \
              patch("services.acp_contract.route_detection.run_route_detection", AsyncMock()):
             await export_handler._run_a3_atomize_background(
@@ -257,13 +259,17 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
             call_order.append(("segment_matching", tour_id))
             return {"segments_written": 1}
 
-        async def fake_atom_ranking(market, _pool):
+        async def fake_atom_ranking(market, _pool, _question_counts):
             call_order.append(("atom_ranking", market))
             return {"segments_ranked": 1}
 
         async def fake_route_detection(_pool):
             call_order.append(("route_detection",))
             return {"routes_written": 1}
+
+        # AA-610 (Sub 2 redesign) — precompute_question_landings() now runs once, before the
+        # per-market loop, not per-market inside run_atom_ranking() anymore.
+        fake_precompute = AsyncMock(return_value={})
 
         with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
@@ -272,6 +278,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
                  AsyncMock(return_value={"status": "success", "atom_count": 3}),
              ), \
              patch("services.acp_contract.segment_matching.run_segment_matching", fake_segment_matching), \
+             patch("services.acp_contract.atom_ranking.precompute_question_landings", fake_precompute), \
              patch("services.acp_contract.atom_ranking.run_atom_ranking", fake_atom_ranking), \
              patch("services.acp_contract.route_detection.run_route_detection", fake_route_detection):
             await export_handler._run_a3_atomize_background(

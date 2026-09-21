@@ -226,22 +226,40 @@ def _candidate_questions(
     return seen
 
 
+# AA-610 (Sub 2 redesign) — a hard cap on how many shortlist candidates one Segment's PAA
+# landing will actually pay an embedding-distance query for. The first live test found
+# _candidate_questions()'s keyword-level shortlist can be large for a Segment whose place/action
+# words are common (shared with many bought keywords' own PAA) — uncapped, that Segment alone
+# can dominate a whole ranking run's wall-clock time. Sorted by length (below) before capping:
+# a longer question shares more real words with the Segment's own claimable set, the same "more
+# specific wins" principle compute_demand()'s own fit-then-volume tie-break already uses,
+# so the candidates trimmed are disproportionately the short, generic, weakly-relevant ones.
+_MAX_QUESTION_CANDIDATES_PER_SEGMENT = 20
+
+
 async def land_questions_for_segment(
     conn, place: str, action: str, atom_ids: list[str], paa_rows: list[tuple[str, str, list[str]]],
 ) -> int:
     """AA-610 (Sub 2) — how many distinct PAA questions this Segment claims, now by
     embedding-match (`services/acp_contract/atom_matching.py`) instead of claim-by-name alone.
-    For each candidate question (`_candidate_questions()`'s keyword-level shortlist), embeds it
-    and finds the nearest of THIS Segment's own atoms (`atom_matching.land_question_on_atom()`,
-    restricted to `atom_ids` — a question landing on some OTHER Segment's atom does not count
-    here); records the match (`acp_contract.atom_matches`) and counts it. Falls back to the
-    original claim-by-name test per-question (`claim_by_name_fallback()`) whenever the embedding
-    path can't produce a landing (Bedrock failure, or this Segment's atoms were never embedded)
-    — every candidate question the shortlist found still gets a chance to count, never silently
-    dropped just because the model call failed."""
+    For each candidate question (`_candidate_questions()`'s keyword-level shortlist, capped at
+    `_MAX_QUESTION_CANDIDATES_PER_SEGMENT` — see that constant's own comment), embeds it (via
+    `atom_matching`'s question-embedding cache — a real Cohere Embed v4 call only the first time
+    any Segment/run ever asks about that exact question text) and finds the nearest of THIS
+    Segment's own atoms (`atom_matching.land_question_on_atom()`, restricted to `atom_ids` — a
+    question landing on some OTHER Segment's atom does not count here); records the match
+    (`acp_contract.atom_matches`) and counts it. Falls back to the original claim-by-name test
+    per-question (`claim_by_name_fallback()`) whenever the embedding path can't produce a
+    landing (Bedrock failure, or this Segment's atoms were never embedded) — every candidate
+    question the shortlist found still gets a chance to count, never silently dropped just
+    because the model call failed."""
     candidates = _candidate_questions(place, action, paa_rows)
     if not candidates or not atom_ids:
         return 0
+    if len(candidates) > _MAX_QUESTION_CANDIDATES_PER_SEGMENT:
+        candidates = set(
+            sorted(candidates, key=len, reverse=True)[:_MAX_QUESTION_CANDIDATES_PER_SEGMENT],
+        )
 
     atom_rows = await conn.fetch(
         "SELECT atom_id, place, action FROM acp_contract.tour_atoms WHERE atom_id = ANY($1::text[])",
@@ -272,6 +290,55 @@ async def land_questions_for_segment(
     return len(claimed)
 
 
+async def precompute_question_landings(pool) -> dict[str, int]:
+    """AA-610 (Sub 2 redesign) — lands PAA questions on every currently-ranked Segment's atoms
+    ONCE, platform-wide, independent of market. `questions` (the count `land_questions_for_segment()`
+    computes) does not vary by market — a PAA question landing on a Segment's atom has nothing
+    to do with which of the 6 finite buyer markets `run_atom_ranking()` happens to be scoring
+    right now. The first live test found this real, market-independent work getting redone once
+    per market (6x per atomize run) purely because it lived inside `run_atom_ranking()`'s own
+    per-market loop — this function is the fix: called once by `recompute_segment_score_route()`
+    (`services/export/handler.py`), its result (segment_id -> questions count) is then passed
+    into every `run_atom_ranking(market, pool, question_counts)` call so none of them re-lands a
+    single question.
+
+    Reads the SAME Segment/atom/PAA rows `run_atom_ranking()` itself reads (excluded Segments
+    are skipped here too — their questions count is never read, `run_atom_ranking()` always
+    writes 0 for an excluded row regardless)."""
+    async with pool.acquire() as conn:
+        segment_rows = await conn.fetch("""
+            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+                   array_agg(DISTINCT ta.atom_id) AS atom_ids
+            FROM acp_contract.atom_segment asg
+            JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+            JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            WHERE NOT ta.deleted AND NOT ta.is_empty_marker
+            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+        """)
+
+        demand_rows = await conn.fetch("""
+            SELECT keyword, market, people_also_ask
+            FROM acp_contract.search_demand WHERE search_volume IS NOT NULL
+        """)
+        paa_tuples: list[tuple[str, str, list[str]]] = []
+        for r in demand_rows:
+            paa = r["people_also_ask"]
+            if isinstance(paa, str):
+                paa = json.loads(paa) if paa else []
+            paa_tuples.append((r["keyword"], r["market"], paa or []))
+
+        counts: dict[str, int] = {}
+        for row in segment_rows:
+            place, action = row["canonical_place"], row["canonical_action"]
+            if classify_exclusion(place, action):
+                continue
+            atom_ids = [str(a) for a in row["atom_ids"]]
+            counts[row["segment_id"]] = await land_questions_for_segment(
+                conn, place, action, atom_ids, paa_tuples,
+            )
+    return counts
+
+
 def classify_exclusion(place: str, action: str) -> str | None:
     """'transit' | 'unnamed_place' | None — the 2 exclusion classes ranking is never applied to
     (ADR 0019/0020), checked in this order because a transit action ("arrive at the trailhead")
@@ -285,7 +352,7 @@ def classify_exclusion(place: str, action: str) -> str | None:
 
 # ── DB-facing wrapper (impure) ──────────────────────────────────────────────────────────────
 
-async def run_atom_ranking(market: str, pool) -> dict:
+async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -> dict:
     """Rebuild atom_ranking WHOLE for one market, platform-wide (DELETE+INSERT) — matches the
     AA-510 STEP0 finding that Ms. Thư's own `routes`/`atom_scores` are "derived, never
     accumulated"; no downstream table has an FK into this one yet expecting stability across
@@ -297,12 +364,20 @@ async def run_atom_ranking(market: str, pool) -> dict:
     A3, once per `services/seo_intelligence/seed_builder.py::DFS_LOCATION_MAP` market, right
     after `run_segment_matching()` (`services/export/handler.py`) — not per-tenant-rewrite
     anymore.
-    """
+
+    `question_counts` (AA-610 Sub 2 redesign) — a Segment's PAA-landing count, precomputed ONCE
+    for the whole platform by `precompute_question_landings()` and passed in here rather than
+    recomputed per market — `questions` does not vary by market (see that function's own
+    docstring), so the first live test's finding that this real embedding-matching work was
+    being redone 6x per atomize run (once per `DFS_LOCATION_MAP` entry) is closed by never
+    calling the landing logic from inside this per-market function at all anymore. A
+    segment_id absent from `question_counts` (should not happen for anything currently in
+    `atom_segment` — `precompute_question_landings()` reads the identical Segment set — but
+    defended anyway) counts as 0 questions, not a crash."""
     async with pool.acquire() as conn:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
                    array_agg(DISTINCT ta.tour_id) AS tour_ids,
-                   array_agg(DISTINCT ta.atom_id) AS atom_ids,
                    COALESCE(SUM(LENGTH(COALESCE(ta.evidence, ta.text, ''))), 0) AS said
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
@@ -312,18 +387,12 @@ async def run_atom_ranking(market: str, pool) -> dict:
         """)
 
         demand_rows = await conn.fetch("""
-            SELECT keyword, market, search_volume, people_also_ask
+            SELECT keyword, market, search_volume
             FROM acp_contract.search_demand WHERE search_volume IS NOT NULL
         """)
-
-        demand_tuples: list[tuple[str, str, int]] = []
-        paa_tuples: list[tuple[str, str, list[str]]] = []
-        for r in demand_rows:
-            demand_tuples.append((r["keyword"], r["market"], r["search_volume"]))
-            paa = r["people_also_ask"]
-            if isinstance(paa, str):
-                paa = json.loads(paa) if paa else []
-            paa_tuples.append((r["keyword"], r["market"], paa or []))
+        demand_tuples: list[tuple[str, str, int]] = [
+            (r["keyword"], r["market"], r["search_volume"]) for r in demand_rows
+        ]
 
         included: list[Candidate] = []
         excluded: list[ExcludedSegment] = []
@@ -334,16 +403,10 @@ async def run_atom_ranking(market: str, pool) -> dict:
             if reason:
                 excluded.append(ExcludedSegment(row["segment_id"], tour_ids, reason))
                 continue
-            atom_ids = [str(a) for a in row["atom_ids"]]
-            # AA-610 (Sub 2) — embedding-match landing, one Segment at a time (needs `conn` for
-            # the atom_embedding/atom_matches round-trips, so this loop can no longer be a pure
-            # function call — same "impure DB-facing wrapper" boundary this function's own
-            # docstring already draws around everything below `# DB-facing wrapper (impure)`).
-            questions = await land_questions_for_segment(conn, place, action, atom_ids, paa_tuples)
             included.append(Candidate(
                 segment_id=row["segment_id"], place=place, action=action, tour_ids=tour_ids,
                 recurrence=len(tour_ids),
-                questions=questions,
+                questions=question_counts.get(row["segment_id"], 0),
                 said=row["said"],
                 demand=compute_demand(place, action, demand_tuples),
             ))

@@ -57,11 +57,19 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     segment_result = await run_segment_matching(tour_id, pool)
     logger.info("segment_matching_done", tour_id=log_tour_id or tour_id, result=segment_result)
 
-    from services.acp_contract.atom_ranking import run_atom_ranking
+    from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
+    # AA-610 (Sub 2 redesign) — PAA landing does not vary by market (a question landing on a
+    # Segment's atom has nothing to do with which finite buyer market is being scored), but used
+    # to be recomputed inside run_atom_ranking() itself, once per market — 6x real embedding-
+    # matching work per atomize run for no reason. Computed exactly ONCE here, passed into every
+    # run_atom_ranking() call below (precompute_question_landings()'s own docstring has the full
+    # story — this is what a live re-atomize test found never completing within several minutes
+    # before this fix).
+    question_counts = await precompute_question_landings(pool)
     ranking_results = {}
     for market_code in DFS_LOCATION_MAP:
-        ranking_results[market_code] = await run_atom_ranking(market_code, pool)
+        ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
     logger.info("ranking_done", tour_id=log_tour_id or tour_id, result=ranking_results)
 
     from services.acp_contract.route_detection import run_route_detection
