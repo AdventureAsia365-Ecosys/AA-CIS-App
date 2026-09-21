@@ -303,7 +303,7 @@ async def get_tenant_usage(
 
         tours_published = await conn.fetchval("""
             SELECT COUNT(*) FROM gold_aa_internal.published_tours
-            WHERE tenant_id = $1
+            WHERE tenant_id = $1 AND master_status <> 'trashed'
         """, tenant_id)
 
     plan = str(tenant["plan_tier"])
@@ -427,7 +427,8 @@ async def get_tenant_details(
 
         if is_internal:
             total_rewrites = await conn.fetchval(
-                "SELECT COUNT(*) FROM gold_aa_internal.published_tours"
+                "SELECT COUNT(*) FROM gold_aa_internal.published_tours "
+                "WHERE master_status <> 'trashed'"
             )
         else:
             total_rewrites = await conn.fetchval("""
