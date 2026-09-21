@@ -39,14 +39,14 @@ at all when switched to name-matching).
    questions carried alongside each bought keyword in `search_demand.people_also_ask` — a
    Segment claims a keyword's PAA the same way it claims that keyword's volume. Consistent with
    the demand decision, not a second, different mechanism.
-2. **`said` is `SUM(LENGTH(tour_atoms.text))`** — the only per-atom text length signal that
-   exists. Real, disclosed limitation: AA-509's own Decision 1 changed `tour_atoms.text` from an
-   LLM-written 1-2 sentence narrative to a terse `f"{place} — {action}"` mechanical join, so this
-   axis currently carries little real variance (differs mostly by place/action NAME length, not
-   by how much an itinerary elaborates on a moment) — same class of "axis technically wired,
-   near-inert until its real signal exists" finding this repo's own AA-439-03 audit made about
-   `distinctiveness` before AA-445-02 shipped a real function for it. Not fixed here — out of
-   this build's scope, flagged for whoever next touches T5's `text` derivation.
+2. **`said` is `SUM(LENGTH(COALESCE(tour_atoms.evidence, tour_atoms.text)))`** — AA-610 fixed
+   what this docstring used to flag as a disclosed limitation. `evidence` (migration 160) is
+   the verbatim source-text span an atom was extracted from (services/acp_shared/
+   atom_extraction.py SYSTEM_PROMPT), not `text`'s terse `f"{place} — {action}"` join —
+   `said` now varies by how much an itinerary elaborates on a moment, the signal it was always
+   meant to carry. `text` remains the fallback for any atom read before migration 160 (NULL
+   `evidence` until its day is next re-atomized), so this axis never silently drops to 0 for
+   pre-AA-610 data — just keeps the weaker name-length signal it always had until then.
 3. **`_about_something_else()`/`elsewhere`-refusal (score.py's off-topic-PAA suspect-claim
    check) is NOT ported** — a secondary refinement layered on top of `_demand()`, not the
    rank-sum itself, and depends on a `trips`/country-word table shape this codebase doesn't
@@ -244,7 +244,7 @@ async def run_atom_ranking(market: str, pool) -> dict:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
                    array_agg(DISTINCT ta.tour_id) AS tour_ids,
-                   COALESCE(SUM(LENGTH(COALESCE(ta.text, ''))), 0) AS said
+                   COALESCE(SUM(LENGTH(COALESCE(ta.evidence, ta.text, ''))), 0) AS said
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id

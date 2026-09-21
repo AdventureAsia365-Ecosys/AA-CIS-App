@@ -133,10 +133,19 @@ async def test_first_atomize_reads_every_day_content_hash_ids():
     # ON CONFLICT UPSERT, not a plain INSERT
     assert all("ON CONFLICT (atom_id) DO UPDATE" in c.args[0] for c in insert_calls)
 
-    # itinerary_day bound correctly per day (17th positional param, index 16 — shifted by 2 vs.
-    # pre-AA-509 since place/action are now 2 extra bind params ahead of it)
-    itinerary_days = {c.args[16] for c in insert_calls}
+    # itinerary_day bound correctly per day (18th positional param, index 17 — shifted by 3 vs.
+    # pre-AA-509 since place/action/evidence are now 3 extra bind params ahead of it)
+    itinerary_days = {c.args[17] for c in insert_calls}
     assert itinerary_days == {1, 2}
+
+    # AA-610 — these mocks don't return an "evidence" field (real-world models sometimes won't
+    # either), so checkable_evidence() falls back to the whole day's body — never empty/None,
+    # never crashes. evidence is bind param $7 (args[7] — args[0] is the SQL string itself).
+    evidences = {c.args[7] for c in insert_calls}
+    assert evidences == {
+        "Walk through the Old Quarter and try street food.",
+        "Board a traditional junk boat and kayak through limestone caves.",
+    }
 
     # fingerprint rows written for both days
     fp_calls = [c for c in conn.execute.call_args_list
@@ -215,7 +224,7 @@ async def test_one_day_changed_only_that_day_reatomizes_other_kept():
     insert_calls = [c for c in conn.execute.call_args_list
                      if "INSERT INTO acp_contract.tour_atoms" in c.args[0]]
     assert len(insert_calls) == 1
-    assert insert_calls[0].args[16] == 1  # itinerary_day
+    assert insert_calls[0].args[17] == 1  # itinerary_day
     assert insert_calls[0].args[1] == content_hash_atom_id(
         TENANT_ID, TOUR_ID, 1, new_day1_place, new_day1_action)
 
@@ -252,7 +261,7 @@ async def test_llm_failure_on_one_day_keeps_other_days_committed():
     insert_calls = [c for c in conn.execute.call_args_list
                      if "INSERT INTO acp_contract.tour_atoms" in c.args[0]]
     assert len(insert_calls) == 1
-    assert insert_calls[0].args[16] == 2  # only Day 2 got written
+    assert insert_calls[0].args[17] == 2  # only Day 2 got written
 
     fp_calls = [c for c in conn.execute.call_args_list
                  if "INSERT INTO acp_contract.atomize_day_fingerprint" in c.args[0]]

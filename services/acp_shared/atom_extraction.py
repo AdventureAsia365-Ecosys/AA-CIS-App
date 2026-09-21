@@ -40,12 +40,22 @@ src/aa_social/stages/atoms.py):
   they are part of the record; `activity_type` below is what later separates transit/logistics
   from what gets ranked, not this extraction step.
 
+AA-610 — `evidence` (adapted from Ms. Thư's `Atom.evidence`, aa-social-media models.py/
+stages/atoms.py):
+- `evidence` is the exact span of THIS day's source text the place/action pair came from —
+  quoted character-for-character, never paraphrased, never summarised, never shortened by you.
+- Copy the sentence(s) verbatim from the input. Do not merely restate place+action in your own
+  words — that is not evidence, it is a second copy of the same two fields.
+- If one sentence covers several atoms, each of those atoms may quote the same (or an
+  overlapping) span — evidence is not required to be unique per atom.
+
 Respond with ONLY a JSON object matching this exact contract:
 {
   "atoms": [
     {
       "place": "the place, verbatim-derived",
       "action": "short verb phrase, verbatim-derived",
+      "evidence": "the exact source sentence(s) this pair came from, quoted verbatim",
       "activity_type": "trek|bike|food|culture|stay|transit|other",
       "emotional_hook": "string or null",
       "visual_potential": 1,
@@ -172,6 +182,31 @@ def derive_atom_text(place: str, action: str) -> str:
     if not place:
         return action
     return f"{place} — {action}"
+
+
+def checkable_evidence(evidence: str, day_body: str) -> str | None:
+    """AA-610 — port of Ms. Thư's `_checkable_evidence()` (aa-social-media stages/atoms.py):
+    `evidence` is only trustworthy as a `said` signal if it is genuinely a verbatim quote from
+    the day's own source text, not the model's paraphrase of place+action (which would just be
+    a second, redundant copy of those two fields with no new signal). Checked by normalised
+    substring containment (whitespace-insensitive — a multi-line quote's exact newlines/spacing
+    are not the point, its wording is) rather than exact `in`, since models routinely
+    reflow whitespace when quoting.
+
+    Returns the ORIGINAL (non-normalised) `evidence` string when it checks out — never the
+    normalised form, so `said`'s LENGTH() keeps measuring what was actually quoted, not a
+    lowercased/collapsed stand-in. Returns the whole `day_body` (the reference repo's own
+    fallback) when `evidence` fails the check — never None/empty, so a Segment whose Atom
+    quoted badly still gets *some* said signal for that day rather than 0, and never silently
+    swallows a day's text because one atom mis-quoted it.
+    """
+    if not evidence or not evidence.strip():
+        return day_body
+    haystack = re.sub(r"\s+", " ", (day_body or "")).strip().lower()
+    needle = re.sub(r"\s+", " ", evidence).strip().lower()
+    if needle and needle in haystack:
+        return evidence
+    return day_body
 
 
 def day_fingerprint(day_title: str, day_body: str, model: str) -> str:
