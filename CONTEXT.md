@@ -1,4 +1,63 @@
-# AA-CIS-App — Content Pipeline Domain
+# AA-CIS-App — Repo Context
+
+The core application of the Adventure Asia (AA) ecosystem: the **CIS (Content Intelligence
+System)** backend + admin/tenant frontends. It is where a tour becomes shared master content and
+where a marketplace tenant turns that content into channel-specific published content. This is the
+B2B/admin side of the ecosystem — distinct from AA-TripPlanner-Web (the B2C consumer trip
+planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this app runs on).
+
+> This file has two layers. The **Repo Context** below describes the whole repo — stack, layout,
+> deploy, boundaries. Everything from **"Content Pipeline Domain"** onward is the detailed domain
+> glossary for the Master Content → Tenant Content pipeline (AA-539/540) and is kept verbatim.
+
+## What it is (role in the AA ecosystem)
+
+- **Product surface**: two audiences in one app — **Admin** (AA staff running master content and
+  cross-tenant oversight, the A-series) and **Tenant** (marketplace tenants publishing their own
+  channel content, the T-series).
+- **Position**: the hub product. It **owns** the master content pool and the whole content
+  pipeline; TripPlanner reads the shared `shared.destinations` reference data but never drives
+  this pipeline. AA-CIS-Infra provisions the cloud resources this app runs on but contains no app
+  logic.
+- **Ownership split**: this repo owns its application code and its DB schemas/migrations
+  (`acp_*`, `*_aa_internal`, `acp_shared.*`, `acp_contract.*`). AWS resources (VPC/RDS/ECS/ALB/
+  API GW/Lambda/OIDC) are owned by **AA-CIS-Infra** — "App owns code, Infra owns resources."
+
+## Architecture at a glance
+
+- **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
+  running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
+  API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
+- **Frontend**: Next.js app with an **Admin** surface (`app/admin/*`, e.g. atom-curation) and a
+  **Tenant portal** (`app/portal/*`, the T0-T11 stages). Deployed on **Vercel** (check the Vercel
+  CI status on the PR for deploy success).
+- **AI/Bedrock**: LLM calls (rewrite, research, embeddings, gates) route through the ecosystem
+  Bedrock path (acc3 primary → acc1 fallback); the cross-account trust is provisioned in
+  AA-CIS-Infra.
+- **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
+  `acp_contract.*` and `acp_shared.*` (the pipeline tables — atoms, segments, ranking, routes,
+  hubs, subjects, pieces, facts), migrations under the repo's `migrations/`.
+
+## Deploy & CI
+
+- **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
+  service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
+  `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **Frontend (Vercel)**: preview per PR, production on merge.
+- **Definition of "done" for a backend issue** (program rule): merge + green CI is not enough.
+  Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
+  drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.
+
+## Boundaries — what this repo does NOT do
+
+- It does not provision AWS resources or OIDC roles (that is AA-CIS-Infra).
+- It does not run the B2C map trip planner (that is AA-TripPlanner-Web).
+- It does not own `shared.destinations` mutations from the planner side; within CIS it owns its
+  own `*_aa_internal` / `acp_*` schemas.
+
+---
+
+# Content Pipeline Domain
 
 The Master Content → Tenant Content pipeline: how one tour becomes the platform's shared master
 content (Admin, A-series), and how a tenant turns a picked tour into channel-specific published
