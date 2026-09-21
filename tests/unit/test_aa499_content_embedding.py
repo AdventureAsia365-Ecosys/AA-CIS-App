@@ -9,6 +9,8 @@ the only embedding-capable model either account lists. Response shape verified l
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from services.acp_shared import content_embedding as ce_mod
 from services.acp_shared.content_embedding import (
     EMBEDDING_DIMENSIONS, compute_embedding, embedding_to_pgvector_literal,
@@ -25,6 +27,19 @@ def _boto_client_returning(payload: dict):
     body.read.return_value = json.dumps(payload).encode()
     client.invoke_model.return_value = {"body": body}
     return client
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pacing_wait():
+    """AA-610 (Sub 2) — compute_embedding() now calls _pace_calls() (this account's real
+    Bedrock quota is 20 req/minute, see content_embedding.py's own comment on that constant),
+    which time.sleep()s for real outside a test. This file's tests exercise compute_embedding()
+    directly (only _client() is mocked), so without this fixture every test after the first in
+    a run would pay a real ~3.5s wait — not what this file is testing (that's covered by
+    test_aa610_embedding_rate_limit.py's own dedicated, mocked-time tests)."""
+    with patch.object(ce_mod, "time") as m_time:
+        m_time.monotonic.return_value = 0.0
+        yield m_time
 
 
 class TestComputeEmbedding:
