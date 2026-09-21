@@ -46,7 +46,11 @@ async def test_land_question_on_atom_no_candidates_falls_back_to_tokens():
 
 @pytest.mark.asyncio
 async def test_land_question_on_atom_embedding_failure_falls_back_to_tokens():
-    with patch("services.acp_contract.atom_matching.compute_embedding", return_value=None):
+    # AA-610 (Sub 2 redesign) — the question's own embedding now comes via
+    # _embed_question_cached() (a cache lookup, then compute_embedding() on a miss), not
+    # compute_embedding() directly — patch at that boundary.
+    with patch("services.acp_contract.atom_matching._embed_question_cached",
+               AsyncMock(return_value=None)):
         conn = AsyncMock()
         atom_id, distance, matched_by = await land_question_on_atom(
             conn, "any question", ["atom-1", "atom-2"],
@@ -59,7 +63,8 @@ async def test_land_question_on_atom_embedding_failure_falls_back_to_tokens():
 async def test_land_question_on_atom_real_vector_match():
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value={"atom_id": "atom-2", "distance": 0.13})
-    with patch("services.acp_contract.atom_matching.compute_embedding", return_value=[0.1] * 1536):
+    with patch("services.acp_contract.atom_matching._embed_question_cached",
+               AsyncMock(return_value=[0.1] * 1536)):
         atom_id, distance, matched_by = await land_question_on_atom(
             conn, "What is Gandan Monastery", ["atom-1", "atom-2"],
         )

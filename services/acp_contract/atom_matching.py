@@ -14,6 +14,13 @@ PAA questions arrive — "research pays the embedding cost once, score never pay
 (ADR-0018's own phrase, restated in atom_ranking.py's module docstring for `_demand()`/
 `_questions()`'s word-overlap adaptation this migration starts to close).
 
+**AA-610 redesign — question embeddings are cached by text hash** (`acp_contract.
+question_embedding`, migration 162): the first live test found the SAME question text getting
+re-embedded once per Segment that shortlists it (and once per market, before the market-loop was
+also closed) — the question's own embedding never changes, so `_embed_question_cached()` looks
+it up before ever calling `compute_embedding()`, at most one real Cohere Embed v4 call per
+distinct question text, ever.
+
 **Soft-fail, matching services/acp_shared/content_embedding.py's own contract**: if
 `compute_embedding()` returns None (any Bedrock failure), this module falls back to the existing
 claim-by-name test (`ranking_reference.claimable_words()`/`keyword_words()`) rather than raising
@@ -23,6 +30,8 @@ data, not silently indistinguishable from a real vector match.
 """
 from __future__ import annotations
 
+import hashlib
+
 import structlog
 
 from services.acp_contract.ranking_reference import claimable_words, keyword_words
@@ -31,6 +40,45 @@ from services.acp_shared.content_embedding import compute_embedding, embedding_t
 logger = structlog.get_logger()
 
 _VIEWS = ("place", "place_action")
+
+
+def _question_hash(question: str) -> str:
+    """Same normalise-then-hash shape this codebase already uses for atom_id/segment_id
+    (atom_extraction.normalise() + content_hash_atom_id()) — lowercase, collapsed whitespace,
+    so two questions differing only in case/spacing share one cache row and one embedding call."""
+    normalised = " ".join(question.lower().split())
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
+async def _embed_question_cached(conn, question: str) -> list[float] | None:
+    """Looks up `acp_contract.question_embedding` by this question's text hash before ever
+    calling `compute_embedding()` — a real Cohere Embed v4 call happens for a given question
+    text at most ONCE, ever, no matter how many Segments/markets/ranking runs shortlist it
+    afterward. Returns None (soft-fail, same contract as compute_embedding() itself) if this
+    question has never been embedded AND a fresh embedding call also fails."""
+    q_hash = _question_hash(question)
+    row = await conn.fetchrow(
+        "SELECT embedding FROM acp_contract.question_embedding WHERE question_hash = $1", q_hash,
+    )
+    if row is not None:
+        # asyncpg has no built-in vector codec (content_embedding.py's own comment) — pgvector
+        # returns its text literal '[0.1,0.2,...]' for a plain SELECT, parsed back to floats here
+        # the same way embedding_to_pgvector_literal() serialises the other direction.
+        return [float(x) for x in row["embedding"].strip("[]").split(",")]
+
+    vector = compute_embedding(question)
+    if vector is None:
+        return None
+    literal = embedding_to_pgvector_literal(vector)
+    await conn.execute(
+        """
+        INSERT INTO acp_contract.question_embedding (question_hash, question_text, embedding)
+        VALUES ($1, $2, $3::vector)
+        ON CONFLICT (question_hash) DO NOTHING
+        """,
+        q_hash, question, literal,
+    )
+    return vector
 
 
 def _view_text(place: str, action: str, view: str) -> str:
@@ -84,6 +132,10 @@ async def land_question_on_atom(
     platform's Segment pool) rather than a global nearest-neighbour search, since a question only
     means anything landing on an atom that's actually part of ranking right now.
 
+    `query`'s own embedding comes from `_embed_question_cached()` — a cache hit if this exact
+    question text has ever been embedded before (any Segment, any market, any prior run), a
+    real Cohere Embed v4 call only on the very first time.
+
     Returns (atom_id, distance, matched_by) — atom_id is None if `query` has no embedding
     (soft-fail) or no candidate has an embedding either (the caller then falls back to
     claim-by-name, same as `compute_questions()`'s pre-Sub-2 behaviour). matched_by is 'vector'
@@ -94,7 +146,7 @@ async def land_question_on_atom(
     if not candidate_atom_ids:
         return None, None, "tokens"
 
-    vector = compute_embedding(query)
+    vector = await _embed_question_cached(conn, query)
     if vector is not None:
         literal = embedding_to_pgvector_literal(vector)
         row = await conn.fetchrow(
