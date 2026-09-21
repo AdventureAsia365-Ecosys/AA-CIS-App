@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 
 import boto3
 import structlog
@@ -60,11 +62,49 @@ EMBEDDING_DIMENSIONS = 1536  # matches content_piece.content_embedding vector(15
 # _MAX_TOKENS comment uses.
 _MAX_INPUT_CHARS = 25000
 
+# AA-610 (Sub 2) — this account's REAL Bedrock quota for Cohere Embed v4 is 20 requests/minute
+# (confirmed live: `aws service-quotas list-service-quotas --service-code bedrock`, quota codes
+# L-EB8C1F30/L-7089DC7D, both = 20.0), not a theoretical ceiling this build assumed. AA-499's
+# original single-piece-per-write call site never hit this (one embed per approved T9 piece,
+# nowhere near 20/minute) — Sub 2's per-atom/per-question landing does, by design (a Segment
+# with several PAA candidates calls this once per candidate). A live re-atomize test hit
+# ThrottlingException on effectively every call once volume rose past a handful of atoms.
+#
+# Paced at the account's own ceiling (60s / 20 = 3s apart), not tuned to "whatever felt safe" —
+# 3.5s (not the bare 3.0s minimum) leaves a small margin for other callers (T9's own writes)
+# sharing the same account-wide quota concurrently. A module-level `threading.Lock` serialises
+# every caller through one pacing gate — `compute_embedding()` already runs on a
+# `asyncio.to_thread()` worker (this module's own docstring), so blocking with `time.sleep()`
+# here never blocks an event loop, only the one worker thread making the call.
+_MIN_SECONDS_BETWEEN_CALLS = 3.5
+_last_call_lock = threading.Lock()
+_last_call_at = 0.0
+
+
+def _pace_calls() -> None:
+    """Blocks the calling thread just long enough to keep this process's own Bedrock InvokeModel
+    calls at or under the account's real per-minute quota — see `_MIN_SECONDS_BETWEEN_CALLS`'s
+    own comment for the number this is paced to and why. Does not (and cannot) account for
+    OTHER processes/tasks sharing the same account-wide quota; it only stops a single process
+    from being the one dogpiling requests to have this quota well under it, which is what a
+    tight loop over many atoms/questions actually does."""
+    global _last_call_at
+    with _last_call_lock:
+        wait = _MIN_SECONDS_BETWEEN_CALLS - (time.monotonic() - _last_call_at)
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_at = time.monotonic()
+
 
 def _client():
+    # AA-610 (Sub 2) — max_attempts dropped 2 -> 1 (no retry): with _pace_calls() keeping this
+    # process at the account's own quota ceiling, a ThrottlingException means either another
+    # caller used this minute's budget or the ceiling was momentarily exceeded — retrying
+    # immediately just spends another call's worth of the SAME minute's quota for the same
+    # likely outcome, doubling how long a throttled call takes to soft-fail for no real gain.
     return boto3.client(
         "bedrock-runtime", region_name=BEDROCK_REGION,
-        config=Config(read_timeout=30, connect_timeout=10, retries={"max_attempts": 2, "mode": "standard"}),
+        config=Config(read_timeout=30, connect_timeout=10, retries={"max_attempts": 1, "mode": "standard"}),
     )
 
 
@@ -84,6 +124,7 @@ def compute_embedding(text: str) -> list[float] | None:
         "texts": [text[:_MAX_INPUT_CHARS]], "input_type": "search_document",
         "embedding_types": ["float"], "output_dimension": EMBEDDING_DIMENSIONS,
     })
+    _pace_calls()
     try:
         resp = _client().invoke_model(modelId=EMBEDDING_MODEL_ID, body=body)
         payload = json.loads(resp["body"].read())
