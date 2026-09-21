@@ -3491,6 +3491,7 @@ async def get_pipeline_metrics(
         published_count = await conn.fetchval("""
             SELECT COUNT(*) FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND master_status <> 'trashed'
         """)
 
         tenant_rewrite_count = await conn.fetchval(
@@ -3651,13 +3652,15 @@ async def get_seo_metrics(request: Request, x_admin_secret: str = Header(None)):
         """)
         total_tours = await conn.fetchval(
             "SELECT COUNT(*) FROM gold_aa_internal.published_tours "
-            "WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid"
+            "WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid "
+            "AND master_status <> 'trashed'"
         )
         seo_covered = await conn.fetchval("""
             SELECT COUNT(DISTINCT pt.tour_id)
             FROM gold_aa_internal.published_tours pt
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
             WHERE pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND pt.master_status <> 'trashed'
               AND EXISTS (
                   SELECT 1 FROM silver_aa_internal.seo_context sc WHERE sc.tour_id = rt.tour_id
               )
@@ -3732,6 +3735,7 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
             FROM gold_aa_internal.published_tours pt
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
             WHERE pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND pt.master_status <> 'trashed'
             GROUP BY rt.country ORDER BY total DESC
         """)
         stats = await conn.fetchrow("""
@@ -3742,6 +3746,7 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
                 COUNT(CASE WHEN published_at < NOW() - INTERVAL '180 days' THEN 1 END) AS stale_count
             FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND master_status <> 'trashed'
         """)
         score_dist = await conn.fetch("""
             SELECT
@@ -3754,6 +3759,7 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
                 COUNT(*) AS count
             FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND master_status <> 'trashed'
             GROUP BY range ORDER BY range DESC
         """)
 
