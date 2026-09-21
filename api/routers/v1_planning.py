@@ -24,12 +24,14 @@ markets/channels/capacity_posts_per_week are NEVER client-supplied for anything 
 `fetch_tenant_planning_config()` (services/acp_planning/tenant_config.py), the tenant's own
 configured values.
 
-Feedback loop (round 6, explicitly a NEW extension beyond aa-marketing-v2's own Module H — see
-`services/acp_shared/content_metrics.py`'s module docstring): manual metric entry -> confidence-
-gated `tour_atoms.weight` rollup -> feeds `compute_quarter_plan()`'s 5th scoring term
-(`engagement_adjustment`) automatically (no new plumbing) -> `suggest_trip_reallocation()`/
-`confirm_trip_reallocation()` surfaces an actionable, tenant-reviewed suggestion for the NEXT
-quarter — never auto-applied.
+AA-603 (21/09/2026) — the manual metric-entry + atom-weight rollup feedback loop
+(`POST /metrics`, `POST /metrics/rollup`, backed by the deleted `services/acp_shared/
+content_metrics.py`) was REMOVED: it read the dead N7/N8 `acp_deliver.pieces`/`acp_v2_slots`
+tables (never the live T-series `acp_shared.content_piece`), never ran against real data
+(0 rows, every `tour_atoms.weight` still 1.0), and its FE was already torn out at AA-519.
+`suggest_trip_reallocation()`/`confirm_trip_reallocation()` (the live quarterly-reallocation
+panel below) are KEPT — they no longer receive a feedback-adjusted weight, so
+`compute_quarter_plan()`'s scoring is now purely runway/richness/distinctiveness/DFS.
 """
 from __future__ import annotations
 
@@ -41,8 +43,6 @@ from pydantic import BaseModel
 from api.routers.v1_tours import get_tenant
 from services.acp_planning.tenant_config import TenantNotFoundError, fetch_tenant_planning_config
 from services.acp_planning.trip_reallocation import confirm_trip_reallocation, suggest_trip_reallocation
-from services.acp_shared.content_metrics import (PieceNotFoundError, PieceNotOwnedError,
-                                                 record_metric_snapshot, rollup_atom_weights)
 from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundError,
                                         cut_subject, fetch_slate, pick_subject, propose_slate)
 
@@ -113,42 +113,9 @@ async def _resolve_config(tenant_id: UUID, pool):
         raise HTTPException(status_code=404, detail="Unknown tenant")
 
 
-# ---------------------------------------------------------------- feedback loop (round 6)
+# ---------------------------------------------------------------- trip reallocation
 
-class MetricSnapshotRequest(BaseModel):
-    piece_id: str
-    reach: int | None = None
-    engagement: int | None = None
-    clicks: int | None = None
-
-
-@router.post("/metrics", summary="Manually report engagement for a published piece")
-async def post_metric_snapshot(
-    body: MetricSnapshotRequest, request: Request, tenant=Depends(get_tenant),
-):
-    tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
-    try:
-        snapshot_id = await record_metric_snapshot(
-            tenant_id, body.piece_id, body.reach, body.engagement, body.clicks,
-            entered_by=tenant["sub"], pool=pool,
-        )
-    except PieceNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No piece {body.piece_id!r}")
-    except PieceNotOwnedError:
-        raise HTTPException(status_code=404, detail=f"No piece {body.piece_id!r}")  # never leak existence
-    return {"snapshot_id": str(snapshot_id)}
-
-
-@router.post("/metrics/rollup", summary="Recompute atom weights from all currently-entered metrics")
-async def post_metrics_rollup(request: Request, tenant=Depends(get_tenant)):
-    tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
-    moved = await rollup_atom_weights(tenant_id, pool)
-    return {"atoms_adjusted": len(moved), "weights": moved}
-
-
-@router.get("/trip-reallocation/suggest", summary="Feedback-informed trip-reallocation suggestion for a quarter")
+@router.get("/trip-reallocation/suggest", summary="Trip-reallocation suggestion for a quarter")
 async def get_trip_reallocation_suggestion(
     request: Request, tenant=Depends(get_tenant),
     year: int = Query(...), quarter: int = Query(...),

@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Activity, Wallet, Puzzle } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Wallet, Puzzle } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 
 interface Notif {
@@ -209,9 +209,8 @@ export default function AdminSidebar() {
             <NavItem active={active("/admin/tenants")} accent={A.red}
               icon={<Users size={15} />} label="Tenants"
               onClick={() => router.push("/admin/tenants")} />
-            <NavItem active={active("/admin/run-health")} accent={A.red}
-              icon={<Activity size={15} />} label="Run Health"
-              onClick={() => router.push("/admin/run-health")} />
+            {/* AA-603 — "Run Health" NavItem removed with the deleted /admin/run-health page
+                (it read the dead N7/N8 acp_v2_runs/slots tables, always rendered empty). */}
             {/* AA-437 [A4]'s "Cross-Tenant Oversight" NavItem (Eye icon) is retired here (AA-560)
                 — real Playwright confirmed BOTH its replacements work in production first: "07 ·
                 Platform Stats" (Review Log + Trust Ramp, reachable via SocialContentSubNav inside
