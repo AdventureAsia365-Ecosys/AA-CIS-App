@@ -80,22 +80,6 @@ QUARTER_SCORE_WEIGHTS = {
     "engagement_adjustment": 0.15,
 }
 
-# AA-448 round 6 — feedback loop (services/acp_shared/content_metrics.py). Confidence gate
-# reused VERBATIM from aa-marketing-v2's aamc/config.py::CONFIDENCE_ATOM_MIN_POSTS — this part
-# IS the original design, not an extension (see implementation notes "round 6" for the
-# boundary: the gate threshold is ported, the per-post scoring formula and the trip-level
-# reallocation suggestion built on top of it are new).
-CONFIDENCE_ATOM_MIN_POSTS = 3
-
-# Magnitude cap on tour_atoms.weight after a rollup — same bounds aamc's own rollup_atoms() uses
-# (max(0.25, min(2.0, ...))). 1.0 stays the neutral/no-adjustment-yet value.
-ATOM_WEIGHT_MIN = 0.25
-ATOM_WEIGHT_MAX = 2.0
-
-# NEW (not in aamc — travel content here has no capture_rate/engaged_time field to reuse):
-# "typical" engagement rate an average post is assumed to get, used to CENTER the per-post score
-# before it shifts atom.weight up/down from 1.0. A post at exactly this rate leaves the atom's
-# weight unchanged; above it nudges weight up, below nudges down. Self-chosen, uncalibrated
-# against real data yet (same class of caveat as DFS_RELEVANCE_THRESHOLDS) — kept as a named
-# constant specifically so it's easy to tune later without touching the rollup formula's code.
-ENGAGEMENT_RATE_BASELINE = 0.05
+# AA-603 (21/09/2026) — the feedback-loop constants (CONFIDENCE_ATOM_MIN_POSTS, ATOM_WEIGHT_MIN,
+# ATOM_WEIGHT_MAX, ENGAGEMENT_RATE_BASELINE) were REMOVED with the deleted content_metrics.py /
+# trust_ramp.py that were their only consumers (dead N7/N8 feedback loop, never ran on real data).

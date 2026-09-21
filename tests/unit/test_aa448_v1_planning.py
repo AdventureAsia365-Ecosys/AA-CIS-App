@@ -41,28 +41,9 @@ class TestAuthReusesV1ToursDependency:
         assert v1_planning.get_tenant is get_tenant
 
 
-class TestMetricsEndpoints:
-    @pytest.mark.asyncio
-    async def test_post_metric_unowned_piece_404s(self):
-        with patch(
-            "api.routers.v1_planning.record_metric_snapshot",
-            new=AsyncMock(side_effect=v1_planning.PieceNotOwnedError("nope")),
-        ):
-            body = v1_planning.MetricSnapshotRequest(piece_id="piece_x", reach=100, engagement=10)
-            request = _make_request(MagicMock())
-            with pytest.raises(Exception) as exc_info:
-                await v1_planning.post_metric_snapshot(body, request, tenant={"sub": TENANT_ID})
-            assert getattr(exc_info.value, "status_code", None) == 404
-
-    @pytest.mark.asyncio
-    async def test_rollup_wires_through_to_service(self):
-        with patch(
-            "api.routers.v1_planning.rollup_atom_weights",
-            new=AsyncMock(return_value={"atom_1": 1.4}),
-        ):
-            request = _make_request(MagicMock())
-            result = await v1_planning.post_metrics_rollup(request, tenant={"sub": TENANT_ID})
-            assert result == {"atoms_adjusted": 1, "weights": {"atom_1": 1.4}}
+# AA-603 — TestMetricsEndpoints removed: the /metrics + /metrics/rollup feedback-loop endpoints
+# (and their content_metrics backing service) were deleted (dead N7/N8 loop, never ran on real
+# data). Trip-reallocation endpoints below are unaffected and kept.
 
 
 class TestTripReallocationEndpoints:

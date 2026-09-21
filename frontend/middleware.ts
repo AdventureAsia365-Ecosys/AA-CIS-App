@@ -80,7 +80,6 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin/master-content", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/review", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/brand", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/run-health", roles: ["admin", "reviewer", "content"] }, // #4
   { prefix: "/admin/s1-rewrite", roles: ["admin", "reviewer", "content"] }, // #4
   { prefix: "/admin/settings", roles: ["admin", "reviewer", "content"] },   // #4
   { prefix: "/upload", roles: ["admin", "reviewer", "content"] },

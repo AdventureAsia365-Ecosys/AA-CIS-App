@@ -57,6 +57,14 @@ over only the loaded page (`limit=200`), not the true platform-wide count). This
 `GROUP BY` over the FULL `content_piece.gate_ledger` column, no row cap. Also returns
 total-pieces/by-channel/by-status counts (AA-560's own item 3, "platform-level, no lineage
 detail" — Segment/Route lineage is explicitly out per AA-558's "not ready to display" finding).
+
+AA-603 (21/09/2026) — the trust-ramp use case (GET /trust-ramp, POST /trust-ramp/{id}/approve,
+POST /trust-ramp/{id}/skip) is REMOVED. It operated on `acp_deliver.packets.publish_mode`, the
+dead N7/N8 "packet ramp" model — the live T11 publish flow (v1_publish.py) publishes a piece
+straight from `content_piece.status='approved'` with no ramp/publish-mode concept at all (tenant
+self-service, ADR-2026-038 §0.2). The packets table was empty (0 rows) and no ramp transition was
+ever recorded (0 `publish_mode_transition` audit rows). This router now serves review-log,
+publish-log + force-unpublish, content-log, and platform-stats only.
 """
 from __future__ import annotations
 
@@ -68,9 +76,6 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from api.routers.admin import verify_admin_secret
-from services.acp_produce import trust_ramp
-from services.acp_produce.packets import PublishModeBlockedError
-from services.acp_produce.trust_ramp import BofuVetoBlockedError, confirm_ramp_transition
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/admin/a4", tags=["admin-a4"])
@@ -84,7 +89,6 @@ def _parse_jsonb(val, default):
         return default
     if isinstance(val, (list, dict)):
         return val
-    import json
     try:
         return json.loads(val)
     except (TypeError, ValueError):
@@ -150,188 +154,6 @@ async def get_review_log(
     ]
     logger.info("a4_review_log_queried", count=len(data), tenant_filter=tenant_id)
     return {"data": data, "total": len(data), "tenant_filter": tenant_id}
-
-
-@router.get("/trust-ramp")
-async def get_trust_ramp(request: Request, x_admin_secret: str = Header(None)):
-    """Every acp_deliver.packets row with its own publish_mode (ramp state) — no per-tenant
-    rollup (decision #3 above). Pure read; AA-464 adds a fresh, on-demand
-    engagement_ok/weeks_active/suggested_mode/eligible computation per row (still no writes —
-    approving/skipping a suggestion is the 2 new endpoints below, not this one).
-
-    Signals are computed once per DISTINCT tenant_id on the page (not once per packet row) to
-    avoid redundant repeat queries for tenants with multiple packets —
-    trust_ramp.compute_tenant_ramp_signals() is the single per-tenant source; the pure
-    trust_ramp.suggest_ramp_transition() is then applied per packet's own current publish_mode
-    (the single-packet path below, trust_ramp.compute_ramp_suggestion(), does the same 2 steps
-    for exactly one packet — this bulk endpoint doesn't call it, to avoid re-fetching each
-    tenant's signals once per packet row)."""
-    verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT
-                p.packet_id::text, p.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug,
-                p.year, p.month, p.week, p.status, p.publish_mode,
-                p.created_at, p.delivered_at
-            FROM acp_deliver.packets p
-            LEFT JOIN shared.tenants t ON t.tenant_id::text = p.tenant_id
-            ORDER BY p.tenant_id, p.year DESC, p.month DESC, p.week DESC
-        """)
-
-        signals_by_tenant: dict = {}
-        for tenant_id in {r["tenant_id"] for r in rows}:
-            signals_by_tenant[tenant_id] = await trust_ramp.compute_tenant_ramp_signals(conn, tenant_id)
-
-    data = []
-    for r in rows:
-        signals = signals_by_tenant.get(r["tenant_id"], {"engagement_ok": False, "weeks_active": 0})
-        suggested_mode = trust_ramp.suggest_ramp_transition(
-            r["publish_mode"], engagement_ok=signals["engagement_ok"],
-            weeks_active=signals["weeks_active"],
-        )
-        data.append({
-            "packet_id": r["packet_id"],
-            "tenant_id": r["tenant_id"],
-            "tenant_name": r["tenant_name"],
-            "tenant_slug": r["tenant_slug"],
-            "year": r["year"],
-            "month": r["month"],
-            "week": r["week"],
-            "status": r["status"],
-            "publish_mode": r["publish_mode"],
-            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "delivered_at": r["delivered_at"].isoformat() if r["delivered_at"] else None,
-            "engagement_ok": signals["engagement_ok"],
-            "weeks_active": signals["weeks_active"],
-            "suggested_mode": suggested_mode,
-            "eligible": suggested_mode != r["publish_mode"],
-        })
-    logger.info("a4_trust_ramp_queried", count=len(data),
-                eligible_count=sum(1 for d in data if d["eligible"]))
-    return {"data": data, "total": len(data)}
-
-
-def _resolve_admin_actor(x_admin_user_id: Optional[str]) -> str:
-    """Same tolerant UUID-parse-or-'unknown' convention force_unpublish() below already
-    established (AA-455) — a legacy ADMIN_SECRET-only session doesn't 500, it just records
-    "admin:unknown". Extracted here since AA-464 adds 2 more mutating endpoints needing the
-    exact same actor resolution."""
-    if not x_admin_user_id:
-        return "unknown"
-    try:
-        return str(UUID(x_admin_user_id))
-    except (ValueError, AttributeError):
-        return "unknown"
-
-
-@router.post("/trust-ramp/{packet_id}/approve")
-async def approve_ramp_suggestion(
-    packet_id: UUID,
-    request: Request,
-    x_admin_secret: str = Header(None),
-    x_admin_user_id: Optional[str] = Header(None),
-):
-    """AA-464: first real caller of trust_ramp.confirm_ramp_transition(). Re-computes the
-    suggestion fresh (never trusts a client-supplied mode — same "never stale" principle
-    services/acp_planning/trip_reallocation.py::confirm_trip_reallocation() already uses), 400s
-    if the packet is no longer eligible (suggestion may have changed since the page loaded, or
-    an admin double-clicks), and otherwise calls confirm_ramp_transition() UNCHANGED — that
-    function already writes the acp_shared.audit_log entry (blocked or not) and already enforces
-    the BOFU hard-block independently of this endpoint."""
-    verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    packet_id_str = str(packet_id)
-    admin_actor = _resolve_admin_actor(x_admin_user_id)
-
-    async with pool.acquire() as conn:
-        try:
-            suggestion = await trust_ramp.compute_ramp_suggestion(conn, packet_id_str)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-
-        if not suggestion["eligible"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Packet is not currently eligible for a ramp transition suggestion",
-            )
-
-        try:
-            await confirm_ramp_transition(
-                conn, packet_id=packet_id_str, tenant_id=suggestion["tenant_id"],
-                mode=suggestion["suggested_mode"], actor=f"admin:{admin_actor}",
-            )
-        except BofuVetoBlockedError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except PublishModeBlockedError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-
-    logger.info("a4_ramp_suggestion_approved", packet_id=packet_id_str,
-                from_mode=suggestion["current_mode"], to_mode=suggestion["suggested_mode"],
-                admin_actor=admin_actor)
-    return {
-        "packet_id": packet_id_str,
-        "tenant_id": suggestion["tenant_id"],
-        "from_mode": suggestion["current_mode"],
-        "to_mode": suggestion["suggested_mode"],
-        "status": "approved",
-    }
-
-
-@router.post("/trust-ramp/{packet_id}/skip")
-async def skip_ramp_suggestion(
-    packet_id: UUID,
-    request: Request,
-    x_admin_secret: str = Header(None),
-    x_admin_user_id: Optional[str] = Header(None),
-):
-    """AA-464: logs an explicit admin dismissal of a ramp-transition suggestion. Does NOT touch
-    acp_deliver.packets.publish_mode — this is the "Bỏ qua" (skip) half of the issue's #4 ask
-    ("ghi log mỗi lần gợi ý được đưa ra + admin duyệt/bỏ qua"), which had no existing mechanism
-    at all before this issue (only the approve/confirm path had a log, via
-    confirm_ramp_transition()). Reuses acp_shared.audit_log (migration 030) — same table every
-    other real gate/approval decision in this repo already writes to, no new logging shape."""
-    verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    packet_id_str = str(packet_id)
-    admin_actor = _resolve_admin_actor(x_admin_user_id)
-
-    async with pool.acquire() as conn:
-        try:
-            suggestion = await trust_ramp.compute_ramp_suggestion(conn, packet_id_str)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-
-        if not suggestion["eligible"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Packet is not currently eligible for a ramp transition suggestion",
-            )
-
-        await conn.execute(
-            """
-            INSERT INTO acp_shared.audit_log
-                (tenant_id, actor, action, resource_type, resource_id, details)
-            VALUES ($1, $2, 'ramp_suggestion_skipped', 'packet', $3, $4::jsonb)
-            """,
-            suggestion["tenant_id"], f"admin:{admin_actor}", packet_id_str,
-            json.dumps({
-                "from": suggestion["current_mode"], "to": suggestion["suggested_mode"],
-                "dismissed": True,
-            }),
-        )
-
-    logger.info("a4_ramp_suggestion_skipped", packet_id=packet_id_str,
-                from_mode=suggestion["current_mode"], to_mode=suggestion["suggested_mode"],
-                admin_actor=admin_actor)
-    return {
-        "packet_id": packet_id_str,
-        "tenant_id": suggestion["tenant_id"],
-        "from_mode": suggestion["current_mode"],
-        "to_mode": suggestion["suggested_mode"],
-        "status": "skipped",
-    }
 
 
 @router.get("/publish-log")
