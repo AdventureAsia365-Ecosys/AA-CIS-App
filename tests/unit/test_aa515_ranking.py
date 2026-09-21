@@ -3,9 +3,9 @@ rank-sum/demand/questions attribution. Pure-function tests only — no DB, no LL
 
 from services.acp_contract.atom_ranking import (
     Candidate,
+    _candidate_questions,
     classify_exclusion,
     compute_demand,
-    compute_questions,
     rank_segments,
 )
 from services.acp_contract.ranking_reference import is_transit, names_somewhere
@@ -134,12 +134,16 @@ def test_compute_demand_best_fit_then_volume_prefers_specific_over_generic():
     assert demand == {"US": 6600}  # fit=2 (matsumoto+castle) beats fit=1 (matsumoto) on volume
 
 
-def test_compute_questions_counts_distinct_claimed_paa():
+def test_candidate_questions_counts_distinct_claimed_paa():
+    # AA-610 (Sub 2) — renamed from compute_questions(): this is now just the keyword-level
+    # claim-by-name SHORTLIST (candidates for embedding-match to land on this Segment's atoms),
+    # not the final questions count — see land_questions_for_segment() for the real landing.
     rows = [
         ("nakasendo trail", "US", ["Is the Nakasendo trail hard?", "How long is it?"]),
         ("unrelated keyword", "US", ["Something about nothing"]),
     ]
-    assert compute_questions("Magome", "walk the Nakasendo trail", rows) == 2
+    result = _candidate_questions("Magome", "walk the Nakasendo trail", rows)
+    assert result == {"Is the Nakasendo trail hard?", "How long is it?"}
 
 
 # ── rank_segments (rank-sum, no weights, lowest total wins) ────────────────────────────────
