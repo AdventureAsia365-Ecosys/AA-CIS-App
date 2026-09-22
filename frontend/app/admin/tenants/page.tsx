@@ -47,6 +47,12 @@ interface Tenant {
 
 interface NewApiKey { tenant_id: string; tenant_name: string; api_key: string; }
 
+// AA-629 Tier 2 — GET /admin/unmapped-market-requests
+interface UnmappedMarketRequest {
+  country_code: string; tenant_count: number;
+  first_seen_at: string | null; last_requested_at: string | null; tenant_ids: string[];
+}
+
 const PLAN_OPTIONS = ["starter", "growth", "business"];
 const PLAN_BADGE: Record<string, "blue" | "purple" | "green" | "red" | "gold"> = {
   starter: "blue", growth: "purple", business: "green", internal: "gold",
@@ -884,6 +890,8 @@ export default function TenantsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newKey, setNewKey]         = useState<NewApiKey | null>(null);
   const [error, setError]           = useState("");
+  // AA-629 Tier 2 — best-effort, tolerate failure so the whole page still loads without it.
+  const [unmappedMarkets, setUnmappedMarkets] = useState<UnmappedMarketRequest[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -893,6 +901,10 @@ export default function TenantsPage() {
       const data = await res.json();
       setTenants(data.tenants ?? []);
     } catch { setError("Connection error"); } finally { setLoading(false); }
+    fetch("/api/admin/unmapped-market-requests")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setUnmappedMarkets(d?.requests ?? []))
+      .catch(() => setUnmappedMarkets([]));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -942,6 +954,23 @@ export default function TenantsPage() {
           {error && (
             <div style={{ marginBottom: 16, padding: "10px 14px", background: A.redSoft, border: `1px solid ${A.redBorder}`, borderRadius: 8, fontSize: 13, color: A.red, display: "flex", alignItems: "center", gap: 8 }}>
               <AlertCircle size={14} /> {error}
+            </div>
+          )}
+
+          {/* AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP. Data-driven
+              visibility for the Tier 3 decision (add the market? worth the DFS spend?) — no
+              action here, just the queue. */}
+          {unmappedMarkets.length > 0 && (
+            <div style={{ marginBottom: 16, padding: "10px 14px", background: A.amberSoft, border: `1px solid ${A.amber}`, borderRadius: 8, fontSize: 13, color: A.ink, display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <Globe size={14} style={{ marginTop: 1, flexShrink: 0, color: A.amber }} />
+              <span>
+                {unmappedMarkets.map((u, i) => (
+                  <span key={u.country_code}>
+                    {i > 0 && " · "}
+                    <strong>{u.tenant_count}</strong> tenant{u.tenant_count === 1 ? "" : "s"} waiting on market <strong>{u.country_code}</strong> (not yet supported for SEO research)
+                  </span>
+                ))}
+              </span>
             </div>
           )}
 

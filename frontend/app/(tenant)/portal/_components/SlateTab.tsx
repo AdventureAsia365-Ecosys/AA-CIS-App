@@ -91,6 +91,10 @@ interface ChannelSlate {
 interface SlateResponse {
   channels: Record<string, ChannelSlate>;
   posts_per_week: number;
+  // AA-629 — non-empty ONLY when this tenant declared real target_market.countries the platform
+  // doesn't support yet (a tenant who declared nothing at all never sees this — that case's US
+  // default is a legitimate product choice, not something to warn about).
+  unmatched_markets?: string[];
 }
 
 // Order: 5 weekly-rhythm tabs first, then the 3 on-demand ones — matches the build prompt's own
@@ -164,6 +168,25 @@ export default function SlateTab() {
           measured demand and questions to answer; attention-led Channels need enough of the
           journey actually described. Sorted strongest first. Pick one to start writing.
         </p>
+
+        {/* AA-629 — explicit notice instead of silently showing US-market ranking data for a
+            tenant whose declared markets aren't supported yet. */}
+        {data && data.unmatched_markets && data.unmatched_markets.length > 0 && (
+          <div style={{
+            marginBottom: 14, padding: "10px 12px", background: "#fff8e6",
+            border: `1px solid ${T.gold}`, borderRadius: 8,
+            fontSize: 12, color: T.ink, display: "flex", alignItems: "flex-start", gap: 8,
+          }}>
+            <span style={{ fontSize: 14, flexShrink: 0 }}>⚠</span>
+            <span>
+              Your configured market{data.unmatched_markets.length > 1 ? "s" : ""} (
+              <strong>{data.unmatched_markets.join(", ")}</strong>) {data.unmatched_markets.length > 1 ? "aren't" : "isn't"} supported
+              for SEO research yet — the ranking data below is not specific to{" "}
+              {data.unmatched_markets.length > 1 ? "those markets" : "that market"}. We&rsquo;ve
+              recorded your request; reach out if you need this prioritized.
+            </span>
+          </div>
+        )}
 
         <div className="aa511-slate-tabstrip" style={{
           display: "flex", gap: 4, alignItems: "center", overflowX: "auto", flexWrap: "nowrap",

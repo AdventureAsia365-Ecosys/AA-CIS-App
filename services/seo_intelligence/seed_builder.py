@@ -149,11 +149,44 @@ def build_seed(country_raw: str, activities, tour_name: str = "") -> str:
     return ""
 
 
+def unmatched_countries(target_market: dict) -> list[str]:
+    """AA-629 — countries the tenant actually declared that DFS_LOCATION_MAP does NOT know.
+
+    Pure, side-effect free (same convention as the rest of this module) — deliberately separate
+    from resolve_buyer_market()/resolve_buyer_markets() rather than changing either's return
+    shape, since 5+ real call sites destructure a bare 3-tuple today and would break on a shape
+    change (see resolve_buyer_markets()'s own docstring warning).
+
+    Distinguishes the ONE case the US default is actually meant for from the bug AA-629 found:
+    - `countries` empty/missing -> tenant declared nothing -> [] (US default is a reasonable
+      product decision here, not a bug; nothing to record).
+    - `countries` non-empty but NONE of them are in DFS_LOCATION_MAP -> tenant declared REAL
+      markets we don't support -> returns exactly those (deduped, order preserved) so the
+      caller can record a Tier-1 unmapped-market request instead of silently substituting US
+      data for a market the tenant never even listed.
+    - `countries` non-empty and AT LEAST ONE matches -> [] (resolve_buyer_market(s)() already
+      has a real market to use; a tenant listing e.g. ["DE", "ZZ"] is not "all unmatched").
+    """
+    tm = target_market or {}
+    countries = tm.get("countries") or []
+    if not countries:
+        return []
+    if any(c in DFS_LOCATION_MAP for c in countries):
+        return []
+    return list(dict.fromkeys(countries))
+
+
 def resolve_buyer_market(target_market: dict) -> tuple[int, str, str]:
     """(location_code, location_name, language_code) from tenant target_market.
 
     Picks the highest-priority (lowest MARKET_RANK) country present in target_market.countries.
     Empty/unknown -> US default. language passthrough (defaults 'en').
+
+    AA-629: this US fallback is intentionally left UNCHANGED here (5+ call sites rely on always
+    getting a usable 3-tuple back, some fire-and-forget/best-effort). A caller that needs to
+    distinguish "tenant declared nothing" from "tenant declared real markets we don't support"
+    (so it can record/surface that instead of silently treating them the same) should call
+    unmatched_countries() alongside this, not rely on this function's return value alone.
     """
     tm = target_market or {}
     countries = tm.get("countries") or []
@@ -183,6 +216,10 @@ def resolve_buyer_markets(target_market: dict) -> list[tuple[int, str, str]]:
     resolve_buyer_market() already uses), never an empty list — a caller fanning out per market
     should not need a separate empty-list branch for "no usable market" versus "one market,
     the default".
+
+    AA-629: same note as resolve_buyer_market() — this fallback is unchanged; call
+    unmatched_countries() alongside this when the caller needs to tell "declared nothing" apart
+    from "declared real markets we don't support".
     """
     tm = target_market or {}
     countries = tm.get("countries") or []

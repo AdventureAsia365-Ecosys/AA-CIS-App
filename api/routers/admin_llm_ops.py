@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
+from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.role_config import list_stage_configs, set_stage_config
 
 # AA-627 — DFS low-balance alert threshold (USD). Env-driven to match the repo's config
@@ -480,3 +481,18 @@ async def get_dfs_balance(request: Request):
         "fetched_at": latest.get("fetched_at"),
         "has_data": True,
     }
+
+
+@router.get(
+    "/unmapped-market-requests",
+    summary="AA-629 Tier 2 — tenants waiting on a market outside DFS_LOCATION_MAP, grouped by country",
+)
+async def get_unmapped_market_requests(request: Request):
+    """Read-only admin visibility (no admin-secret gate, same convention as GET /dfs-balance
+    above — sits behind the FE's own requireAdmin() BFF layer). Empty list is the healthy/
+    expected steady state (no tenant is currently waiting on an unsupported market). Tier 3
+    (actually adding a market to DFS_LOCATION_MAP) stays a manual admin/code change — this
+    endpoint only surfaces the queue, it does not act on it."""
+    pool = request.app.state.pool
+    requests = await list_unmapped_market_requests(pool)
+    return {"requests": requests, "total_countries_waiting": len(requests)}
