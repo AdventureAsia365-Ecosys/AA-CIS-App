@@ -276,6 +276,32 @@ async def _store_paa(conn, keyword: str, market: str, questions: list[str]) -> N
         logger.warning("questions_cache_invalidate_failed", keyword=keyword, error=str(exc))
 
 
+async def _store_serp_domains(conn, keyword: str, market: str, domains: list[str]) -> None:
+    """AA-631 (Debate `contested` standard) — persist this (keyword, market)'s ranked organic
+    domains, same table/key as `_store_paa()`. Mirrors `_store_paa()`'s own shape: no-op on
+    empty (nothing to store, matches `_store_paa()`'s early-return convention), plain UPDATE
+    keyed on (keyword, market) (relies on `_store_volume()` having already inserted the row —
+    identical assumption `_store_paa()` already makes, see its own docstring), and invalidates
+    (sets NULL) the `contested` cache (migration 165) for every Segment that would even be a
+    candidate for this keyword, same best-effort-never-break-the-harvest convention as AA-630's
+    `questions_count` invalidation."""
+    if not domains:
+        return
+    await conn.execute(
+        """
+        UPDATE acp_contract.search_demand
+        SET serp_domains = $3::jsonb
+        WHERE keyword = $1 AND market = $2
+        """,
+        keyword, market, json.dumps(domains),
+    )
+    try:
+        from services.acp_contract.atom_ranking import invalidate_contested_cache_for_keyword
+        await invalidate_contested_cache_for_keyword(conn, keyword)
+    except Exception as exc:
+        logger.warning("contested_cache_invalidate_failed", keyword=keyword, error=str(exc))
+
+
 async def _volumes_tool(
     keywords: list[str], market_codes: list[str],
     batchers: dict[str, _VolumeBatcher], pool,
@@ -313,19 +339,29 @@ async def _serp_tool(
     the way volume is (matches the reference repo's own SERP-vs-volume freshness split,
     `FRESH_FOR` governs the loop-level skip in `segment_research_log`, not a per-call cache
     here — a place researched this run always buys a fresh first page for its 2 chosen
-    keywords)."""
+    keywords).
+
+    AA-631 — the same SERP response also carries ranked organic domains (Debate's `contested`
+    standard's raw signal). Calls `client._serp_advanced()` directly (not the narrower
+    `fetch_people_also_ask()` wrapper this used before AA-631) so ONE HTTP call feeds both
+    `_store_paa()` and `_store_serp_domains()` — zero new DataForSEO cost, same "one SERP call
+    serves both" principle `_serp_advanced()`'s own docstring already established for PAA+
+    related-searches, now extended to a 3rd free rider."""
     seen: list[str] = []
     async with pool.acquire() as conn:
         for market in market_codes:
             location_code, language_code = location_by_market[market]
             try:
-                paa = await client.fetch_people_also_ask(keyword, location_code, language_code)
+                serp = await client._serp_advanced(keyword, location_code, language_code)
+                paa = client._parse_paa(serp)
+                domains = client._parse_organic_domains(serp)
             except Exception:
-                paa = []
+                paa, domains = [], []
             for q in paa:
                 if q not in seen:
                     seen.append(q)
             await _store_paa(conn, keyword, market, paa)
+            await _store_serp_domains(conn, keyword, market, domains)
     return seen
 
 

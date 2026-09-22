@@ -254,6 +254,120 @@ async def invalidate_questions_cache_for_keyword(conn, keyword: str) -> int:
     return len(stale_ids)
 
 
+async def invalidate_contested_cache_for_keyword(conn, keyword: str) -> int:
+    """AA-631 (Debate `contested` standard) — same write-side invalidation shape as
+    `invalidate_questions_cache_for_keyword()` (AA-630) above, for the `contested` cache
+    (migration 165) instead of `questions_count`. Called from `segment_research.py::_store_
+    serp_domains()` right after this keyword's `serp_domains` changes — every Segment that
+    would even be a candidate for this keyword (same claim-by-name test) has its cached
+    `contested` reset to NULL, picked up by the next tour-triggered recompute (never triggers
+    one itself, same "đánh dấu, không tự trigger job" reasoning AA-630 already established)."""
+    kw_words = keyword_words(keyword)
+    segment_rows = await conn.fetch("""
+        SELECT segment_id, canonical_place, canonical_action
+        FROM acp_contract.atom_segment
+        WHERE contested IS NOT NULL
+    """)
+    stale_ids = []
+    for row in segment_rows:
+        claimable = claimable_words(row["canonical_place"], row["canonical_action"])
+        shared = kw_words & claimable
+        if shared - PLACE_KINDS:
+            stale_ids.append(row["segment_id"])
+    if not stale_ids:
+        return 0
+    await conn.execute(
+        """
+        UPDATE acp_contract.atom_segment
+        SET contested = NULL
+        WHERE segment_id = ANY($1::text[])
+        """,
+        stale_ids,
+    )
+    return len(stale_ids)
+
+
+# AA-631 (Debate standard #1, "contested") — domains this build treats as "claims everything":
+# an aggregator/reference site (Wikipedia, TripAdvisor, Lonely Planet, etc) that ranks for
+# nearly EVERY travel keyword regardless of how specific the place/action is, not because it
+# wrote something distinctive about THIS keyword. A Segment whose claimed keyword's SERP is
+# dominated by these domains is one "every operator has already written this" — Ms. Thư's own
+# origin standard #1 (see AA-631 issue). This list is deliberately short and travel-specific
+# rather than a generic "top sites" list — the origin's own `everywhere_domains()` is computed
+# from the platform's OWN harvested SERP history (which domains appear across nearly every
+# keyword THIS platform has actually bought), not a hardcoded list; ported here as a starting
+# seed set (real domains observed dominating travel SERPs) that `everywhere_domains()` below
+# still recomputes from real platform data, not hardcoded scoring — see its own docstring.
+_KNOWN_AGGREGATOR_DOMAINS: frozenset[str] = frozenset({
+    "wikipedia.org", "en.wikipedia.org", "tripadvisor.com", "lonelyplanet.com",
+    "booking.com", "expedia.com", "getyourguide.com", "viator.com", "britannica.com",
+})
+
+
+def everywhere_domains(all_serp_domains: list[list[str]], *, threshold: float = 0.5) -> set[str]:
+    """AA-631 — platform-wide (per AA-545's own precedent for Segment/Route: computed over the
+    WHOLE harvested pool, not per-tenant) set of domains that appear in at least `threshold`
+    fraction of this platform's OWN harvested SERPs — Ms. Thư's origin `everywhere_domains()`,
+    ported as "recomputed from real data" rather than "hardcoded list" (see
+    `_KNOWN_AGGREGATOR_DOMAINS` above, which seeds `compute_contested()`'s fallback when a
+    platform has too little harvested SERP history yet for this frequency count to mean
+    anything — see `compute_contested()`).
+
+    `all_serp_domains` — one list per harvested (keyword, market) row's `serp_domains` (ranked,
+    may contain duplicates within one list — deduped to a set per-row here before counting, so
+    a domain ranking twice in ONE keyword's SERP does not inflate its cross-keyword frequency).
+    Empty input -> empty set (not `_KNOWN_AGGREGATOR_DOMAINS` — that fallback is
+    `compute_contested()`'s own decision to make when it has nothing else, not this function's).
+    """
+    if not all_serp_domains:
+        return set()
+    counts: dict[str, int] = {}
+    for domains in all_serp_domains:
+        for domain in set(domains):
+            counts[domain] = counts.get(domain, 0) + 1
+    total = len(all_serp_domains)
+    return {domain for domain, count in counts.items() if count / total >= threshold}
+
+
+def compute_contested(serp_domains: list[str], everywhere: set[str]) -> float:
+    """AA-631 — the `contested` score itself: fraction of a keyword's ranked organic results
+    that belong to an `everywhere`-set domain (platform-computed via `everywhere_domains()`, or
+    `_KNOWN_AGGREGATOR_DOMAINS` when the platform has too little harvested history for that
+    computation to mean anything yet — a cold-start fallback, not a permanent hardcode; the
+    live threshold decision itself, made against real measured data before this ships, is
+    tracked separately from this pure function).
+
+    Pure, deterministic, no LLM — per the issue's own scope boundary against AA-610's rank-sum
+    axes ("rank-sum, deterministic, KHÔNG LLM"). 0.0 for an empty `serp_domains` (never
+    harvested, or a SERP with zero organic results — not treated as "fully contested", the
+    opposite of what an empty signal should mean) rather than raising or returning 1.0.
+    """
+    if not serp_domains:
+        return 0.0
+    claimed = sum(1 for domain in serp_domains if domain in everywhere)
+    return claimed / len(serp_domains)
+
+
+# AA-631 — measured against 30 REAL keywords already in acp_contract.search_demand (live DFS
+# calls, cost ~$0.06, 22/09/2026) before this shipped, not invented. everywhere_domains()'s own
+# 0.5 default already reflects the same measurement (see its docstring); this is the SEPARATE
+# decision of where `contested` itself should cut a Segment.
+#
+# At everywhere_domains(threshold=0.5) (2 domains found: en.wikipedia.org, www.tripadvisor.com
+# — exactly the "claims everything" global sites the standard is meant to catch, NOT the
+# region-specific travel blogs that dominated at lower thresholds, e.g. discoverlaos.today,
+# migrationology.com, travelfish.org, which are real but Laos-cluster-specific, not globally
+# "everywhere"), the sample's contested scores were: min=0.00, median=0.12, mean=0.16,
+# max=0.33 (histogram: 17 keywords in [0.0,0.2), 13 in [0.2,0.4), ZERO at or above 0.4). A
+# 30-keyword, single-region (Laos) sample is not enough evidence to set a number that could
+# cut real Segments on a still-thin platform history — 0.5 is chosen deliberately ABOVE the
+# entire observed range (nothing in this sample would be cut), a conservative floor rather than
+# a number fit to this one sample. Revisit once contested has accumulated real history across
+# more markets/regions (same "revisit later" precedent CHANNEL_BARS/DFS_LOCATION_MAP's own
+# additions already follow in this codebase).
+CONTESTED_CUT_THRESHOLD = 0.5
+
+
 def _candidate_questions(
     place: str, action: str, paa_rows: list[tuple[str, str, list[str]]],
 ) -> set[str]:

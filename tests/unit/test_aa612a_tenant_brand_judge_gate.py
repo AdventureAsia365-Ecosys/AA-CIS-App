@@ -13,6 +13,7 @@ brand_rules into): a populated tenant brand runs the judge; a blank/default bran
 import pytest
 from unittest.mock import patch
 
+from services.content_generation import brand_fit as brand_fit_mod
 from services.content_generation import judge_node as judge_mod
 
 
@@ -35,7 +36,7 @@ def _state(**brand):
 
 def test_blank_default_brand_skips_judge():
     """Admin/default contract: no brand-diff signals -> judge skipped, no LLM call."""
-    with patch.object(judge_mod, "LLMClient") as MockClient:
+    with patch.object(brand_fit_mod, "LLMClient") as MockClient:
         out = judge_node_run(_state())
     MockClient.assert_not_called()
     # score untouched (gate returned state unchanged)
@@ -58,7 +59,7 @@ def test_tenant_voice_examples_runs_judge():
 def test_empty_voice_examples_list_does_not_trip_gate():
     """A list of only falsy entries is still 'no signal' — must skip (matches the gate's own
     [v for v in ... if v] filter)."""
-    with patch.object(judge_mod, "LLMClient") as MockClient:
+    with patch.object(brand_fit_mod, "LLMClient") as MockClient:
         judge_node_run(_state(brand_voice_examples=["", None]))
     MockClient.assert_not_called()
 
@@ -80,7 +81,7 @@ def _assert_judge_runs(state):
         "output_tokens": 0,
         "stop_reason": "stop",
     })()
-    with patch.object(judge_mod, "LLMClient") as MockClient, \
+    with patch.object(brand_fit_mod, "LLMClient") as MockClient, \
             patch.object(judge_mod, "record_call_sync"):
         MockClient.return_value.generate.return_value = fake_resp
         judge_node_run(state)

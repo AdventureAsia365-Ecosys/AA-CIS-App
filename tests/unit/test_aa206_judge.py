@@ -85,7 +85,7 @@ def test_judge_node_sets_quality_and_feedback_on_fail():
         "feedback": "Summary reads generic; lead with the executive-privacy angle.",
     })
     state = _branded_state()
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = _resp(judge_json)
         result = judge_node(state)
 
@@ -105,7 +105,7 @@ def test_judge_node_pass_keeps_high_score():
         "feedback": "",
     })
     state = _branded_state(quality_score=9.0, feedback="")
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = _resp(judge_json)
         result = judge_node(state)
 
@@ -116,7 +116,7 @@ def test_judge_node_pass_keeps_high_score():
 def test_judge_node_parse_failure_is_non_blocking():
     """Malformed judge output → no raise, validate's quality_score preserved unchanged."""
     state = _branded_state(quality_score=8.5)
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = _resp("not json at all {{{")
         result = judge_node(state)
 
@@ -131,7 +131,7 @@ def test_judge_node_skips_when_no_brand_profile():
         "quality_score": 7.5,
         "feedback": "",
     }
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         result = judge_node(state)
     MockClient.assert_not_called()
     assert result["quality_score"] == 7.5
