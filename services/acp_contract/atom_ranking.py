@@ -206,6 +206,54 @@ def compute_demand(
     return {market: volume for market, (_fit, volume) in best.items()}
 
 
+async def invalidate_questions_cache_for_keyword(conn, keyword: str) -> int:
+    """AA-630 — the write-side half of the `questions_count` cache (migration 163, AA-610 Sub
+    2) that never had one: this keyword's PAA just changed (`segment_research.py::_store_paa()`
+    UPDATEd `search_demand.people_also_ask`), so every Segment that would even be a CANDIDATE
+    for it (same claim-by-name test `_candidate_questions()` uses — a keyword-level word-overlap
+    against the Segment's own `canonical_place`/`canonical_action`) has its cached
+    `questions_count` reset to NULL.
+
+    Reuses `precompute_question_landings()`'s OWN existing NULL semantic (migration 163's own
+    comment: "NULL means never computed... precompute_question_landings() always computes those
+    regardless of the segment_ids scope it was given") — zero changes needed there. The next
+    tour-triggered recompute that scope-includes an invalidated Segment, or the next full
+    platform-wide pass (`segment_ids=None`), lands this keyword's fresh PAA for real instead of
+    silently reusing a count computed before this keyword's PAA changed.
+
+    Does NOT itself call `precompute_question_landings()` — that would re-run the (currently
+    6-hour-when-unscoped, AA-610 Sub 2's own finding) full ranking pass on every single DFS PAA
+    write, the same performance mistake AA-610 Sub 2 fixed. Marking stale and recomputing are
+    kept as separate steps on purpose (same "đánh dấu, không tự trigger job" convention
+    `services/acp_planning/models.py::needs_recompute()` already uses for N4/N5/N6 staleness).
+
+    Returns the number of Segments invalidated (0 is the common case — most keywords are not
+    claimed by any current Segment)."""
+    kw_words = keyword_words(keyword)
+    segment_rows = await conn.fetch("""
+        SELECT segment_id, canonical_place, canonical_action
+        FROM acp_contract.atom_segment
+        WHERE questions_count IS NOT NULL
+    """)
+    stale_ids = []
+    for row in segment_rows:
+        claimable = claimable_words(row["canonical_place"], row["canonical_action"])
+        shared = kw_words & claimable
+        if shared - PLACE_KINDS:
+            stale_ids.append(row["segment_id"])
+    if not stale_ids:
+        return 0
+    await conn.execute(
+        """
+        UPDATE acp_contract.atom_segment
+        SET questions_count = NULL
+        WHERE segment_id = ANY($1::text[])
+        """,
+        stale_ids,
+    )
+    return len(stale_ids)
+
+
 def _candidate_questions(
     place: str, action: str, paa_rows: list[tuple[str, str, list[str]]],
 ) -> set[str]:

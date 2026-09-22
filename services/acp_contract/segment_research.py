@@ -263,6 +263,17 @@ async def _store_paa(conn, keyword: str, market: str, questions: list[str]) -> N
         """,
         keyword, market, json.dumps(questions[:10]),
     )
+    # AA-630 — this keyword's PAA just changed; invalidate (set NULL) the questions_count
+    # cache (migration 163, AA-610 Sub 2) for every Segment that would even be a candidate for
+    # it, so the next recompute lands this fresh PAA instead of silently reusing a stale count.
+    # Best-effort: a failure here must never break the harvest itself (the fresh PAA is already
+    # written above; a missed invalidation just means that Segment's questions axis stays as
+    # stale as it already was, not a new problem this write introduces).
+    try:
+        from services.acp_contract.atom_ranking import invalidate_questions_cache_for_keyword
+        await invalidate_questions_cache_for_keyword(conn, keyword)
+    except Exception as exc:
+        logger.warning("questions_cache_invalidate_failed", keyword=keyword, error=str(exc))
 
 
 async def _volumes_tool(
