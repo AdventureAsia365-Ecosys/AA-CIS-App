@@ -59,12 +59,17 @@ slate_router = APIRouter(prefix="/v1", tags=["slate"])
 async def get_slate(request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
-    await propose_slate(tenant_id, pool)
+    propose_result = await propose_slate(tenant_id, pool)
     config = await _resolve_config(tenant_id, pool)
     channels = await fetch_slate(tenant_id, pool)
     return {
         "channels": channels,
         "posts_per_week": config.capacity_posts_per_week,
+        # AA-629 — non-empty ONLY when this tenant declared real target_market.countries that
+        # DFS_LOCATION_MAP doesn't support yet (never for a tenant who declared nothing at all).
+        # The FE shows this as an explicit "market not supported yet" notice instead of silently
+        # rendering ranking data computed for a market the tenant never asked for.
+        "unmatched_markets": propose_result.get("unmatched_markets", []),
     }
 
 

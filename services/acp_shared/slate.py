@@ -57,7 +57,11 @@ import json
 from dataclasses import dataclass
 from uuid import UUID
 
+import structlog
+
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+
+logger = structlog.get_logger()
 
 # One row per Channel: the Bar (STEP0 Q3, literal reference/channels.toml numbers), which grain
 # it reads (Blog is the one Channel scored at Route grain — AA-CIS's own extension, STEP0 Q2),
@@ -158,21 +162,42 @@ async def _tenant_tour_ids(tenant_id: UUID, conn) -> list:
     return [r["tour_id"] for r in rows]
 
 
-async def _tenant_market_codes(tenant_id: UUID, conn) -> list[str]:
+async def _tenant_market_codes(tenant_id: UUID, conn) -> tuple[list[str], list[str]]:
     """AA-545 Q3/segment-grain follow-up — every finite market this tenant targets, as the short
     codes `atom_ranking.market` stores (not DataForSEO location codes). Mirrors
     `resolve_buyer_markets()`'s own fallback (unknown/empty -> `["US"]`) so a tenant with no
-    usable `target_market` still gets a real, non-empty market list to read against."""
-    from services.seo_intelligence.seed_builder import LOCATION_CODE_TO_MARKET, resolve_buyer_markets
+    usable `target_market` still gets a real, non-empty market list to read against.
+
+    AA-629: returns `(market_codes, unmatched)` — `unmatched` is non-empty ONLY when the tenant
+    declared real `target_market.countries` that DFS_LOCATION_MAP doesn't know (never for a
+    tenant who declared nothing at all — that case's `["US"]` default is a legitimate product
+    choice, not a bug). Best-effort records a Tier-1 `unmapped_market_requests` row when this
+    happens — a write failure here must NEVER break the tenant's own Slate read, so it is caught
+    and logged, not raised."""
+    from services.seo_intelligence.seed_builder import (
+        LOCATION_CODE_TO_MARKET, resolve_buyer_markets, unmatched_countries,
+    )
     from shared.services.tenant_config_service import TenantConfigService
 
     cfg = await TenantConfigService(conn).get_seo_config(tenant_id)
-    return [
+    unmatched = unmatched_countries(cfg.target_market)
+    if unmatched:
+        from shared.dfs_client.unmapped_market import record_unmapped_market_request
+        for country_code in unmatched:
+            try:
+                await record_unmapped_market_request(conn, tenant_id, country_code)
+            except Exception as exc:
+                logger.warning(
+                    "unmapped_market_request_record_failed",
+                    tenant_id=str(tenant_id), country_code=country_code, error=str(exc),
+                )
+    codes = [
         LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in resolve_buyer_markets(cfg.target_market)
     ]
+    return codes, unmatched
 
 
-async def _fetch_segment_candidates(tenant_id: UUID, pool) -> list[Candidate]:
+async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -> list[Candidate]:
     """One Candidate per ranked, non-excluded Segment, scoped to tours this tenant picked.
 
     AA-545 — `atom_ranking` is now platform-wide per (market, tour, segment), not per tenant.
@@ -186,7 +211,6 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool) -> list[Candidate]:
         tour_ids = await _tenant_tour_ids(tenant_id, conn)
         if not tour_ids:
             return []
-        markets = await _tenant_market_codes(tenant_id, conn)
         rows = await conn.fetch("""
             SELECT ar.segment_id,
                    MIN(ar.total_rank)     AS total_rank,
@@ -211,7 +235,7 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool) -> list[Candidate]:
     ]
 
 
-async def _fetch_route_candidates(tenant_id: UUID, pool) -> list[Candidate]:
+async def _fetch_route_candidates(tenant_id: UUID, pool, markets: list[str]) -> list[Candidate]:
     """One Candidate per Route (Blog-only grain, AA-CIS's own extension — STEP0 Q2), scoped to
     tours this tenant picked.
 
@@ -234,7 +258,6 @@ async def _fetch_route_candidates(tenant_id: UUID, pool) -> list[Candidate]:
         tour_ids = await _tenant_tour_ids(tenant_id, conn)
         if not tour_ids:
             return []
-        markets = await _tenant_market_codes(tenant_id, conn)
         rows = await conn.fetch("""
             WITH per_market AS (
                 SELECT r.route_id, r.hub_name, r.hub_id, ar.market,
@@ -375,8 +398,10 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
     origin's `delete_missing()` behavior, since leaving a phantom `proposed` row around would make
     `GET /v1/slate`'s own eligible-count wrong.
     """
-    segments = await _fetch_segment_candidates(tenant_id, pool)
-    routes = await _fetch_route_candidates(tenant_id, pool)
+    async with pool.acquire() as _mkt_conn:
+        markets, unmatched_markets = await _tenant_market_codes(tenant_id, _mkt_conn)
+    segments = await _fetch_segment_candidates(tenant_id, pool, markets)
+    routes = await _fetch_route_candidates(tenant_id, pool, markets)
     hub_of = await _fetch_segment_hub_map(tenant_id, pool)
 
     async with pool.acquire() as conn:
@@ -435,7 +460,11 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
                       AND NOT (route_id = ANY($3::text[]))
                 """, tenant_id, channel, list(live_route_ids[channel]))
 
-    return {"segments_seen": len(segments), "routes_seen": len(routes)}
+    # AA-629 — non-empty only when the tenant declared real countries DFS_LOCATION_MAP doesn't know.
+    return {
+        "segments_seen": len(segments), "routes_seen": len(routes),
+        "unmatched_markets": unmatched_markets,
+    }
 
 
 async def fetch_slate(tenant_id: UUID, pool) -> dict:
