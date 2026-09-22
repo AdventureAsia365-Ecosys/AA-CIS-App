@@ -404,6 +404,21 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
     routes = await _fetch_route_candidates(tenant_id, pool, markets)
     hub_of = await _fetch_segment_hub_map(tenant_id, pool)
 
+    # AA-631 (Debate stage) — applied AFTER rank-sum (fetch above) but BEFORE _choose()'s own
+    # Bar/place-dedup/hub-cap, the earliest point data is per-tenant (tenant_id, brand profile
+    # known) but not yet narrowed by Bar. Segments and Routes are cut independently (each is
+    # its own candidate pool at this point, same as _choose() below treats them per-Channel).
+    async with pool.acquire() as _debate_conn:
+        from services.acp_shared.debate import apply_debate
+        try:
+            segments = await apply_debate(tenant_id, segments, _debate_conn)
+            routes = await apply_debate(tenant_id, routes, _debate_conn)
+        except Exception as exc:
+            # Advisory per the origin's own safety rule — Debate must never be able to make the
+            # Slate empty (or fail entirely) by erroring; a failure here means the rules-based
+            # (pre-Debate) list stands unchanged for this run.
+            logger.warning("debate_apply_failed", tenant_id=str(tenant_id), error=str(exc))
+
     async with pool.acquire() as conn:
         async with conn.transaction():
             live_segment_ids: dict[str, set[str]] = {}

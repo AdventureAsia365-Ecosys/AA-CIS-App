@@ -101,7 +101,7 @@ def test_judge_node_builds_reproducible_request():
         "quality_score": 9.0,
         "feedback": "",
     }
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         MockClient.return_value.generate.side_effect = _capture
         judge_node(state)
 

@@ -113,7 +113,7 @@ def test_judge_node_returns_judge_score():
         "quality_score": 9.0,
         "feedback": "",
     }
-    with patch("services.content_generation.judge_node.LLMClient") as MockClient:
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = LLMResponse(
             content=judge_json, model_used="gpt-4.1", provider="openai",
             input_tokens=10, output_tokens=5, cost_usd=0.001,

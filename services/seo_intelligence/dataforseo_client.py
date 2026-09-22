@@ -193,6 +193,23 @@ class DataForSEOClient:
         data = await self._serp_advanced(seed, location_code, language_code)
         return self._parse_related(data)
 
+    async def fetch_organic_domains(
+        self,
+        seed: str,
+        location_code: int = DEFAULT_LOCATION_CODE,
+        language_code: str = DEFAULT_LANGUAGE_CODE,
+    ) -> list[str]:
+        """AA-631 (Debate `contested` standard) — ranked organic-result domains, in SERP rank
+        order. Same `_serp_advanced()` call `fetch_people_also_ask()`/`fetch_related()` already
+        make for this exact (seed, location, language) — zero new DataForSEO cost when called
+        alongside either of those for the same keyword (the response is not cached/shared
+        across the 3 fetch_* methods here, so a caller wanting all 3 for one keyword without a
+        real 3x HTTP cost should call `_serp_advanced()` once itself and pass the result to
+        `_parse_organic_domains()`/`_parse_paa()` directly, the same pattern `fetch_all()`
+        already uses for PAA+related)."""
+        data = await self._serp_advanced(seed, location_code, language_code)
+        return self._parse_organic_domains(data)
+
     async def fetch_keyword_ideas(
         self,
         seed: str,
@@ -290,6 +307,26 @@ class DataForSEOClient:
         except (KeyError, IndexError, TypeError):
             pass
         return [q for q in questions if q][:10]
+
+    def _parse_organic_domains(self, data: dict) -> list[str]:
+        """AA-631 (Debate `contested`) — ranked `organic`-type items' `domain` field, same
+        `tasks[0].result[0].items` walk `_parse_paa()`/`_parse_related()` already do, just
+        filtering a DIFFERENT `type` value out of the same list DataForSEO already returns
+        (organic/people_also_ask/related_searches/etc all live side by side in one `items`
+        array — this codebase read 2 of those types before AA-631, this adds the 3rd). Domains
+        kept in rank order, not deduped (repeated domains at different ranks is itself part of
+        the `contested` signal, e.g. a site with 2 top-5 results is a stronger claim than 1)."""
+        domains = []
+        try:
+            items = data["tasks"][0]["result"][0]["items"]
+            for item in items:
+                if item.get("type") == "organic":
+                    domain = item.get("domain")
+                    if domain:
+                        domains.append(domain)
+        except (KeyError, IndexError, TypeError):
+            pass
+        return domains
 
     def _parse_keyword_ideas(self, data: dict) -> list[dict]:
         # keywords_for_keywords: tasks[0].result[] flat list of idea objects. Dedupe casefold, ≤25.

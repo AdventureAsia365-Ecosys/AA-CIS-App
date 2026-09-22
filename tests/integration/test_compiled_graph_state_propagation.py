@@ -109,19 +109,23 @@ def _generate_response(generated: dict, cost_usd=0.002):
 
 @pytest.fixture
 def patch_llm_client(monkeypatch):
-    """AA-281: generate_node (graph.py) and judge_node (judge_node.py) each do their own
+    """AA-281: generate_node (graph.py) and the brand-fit judge call (AA-631: extracted into
+    brand_fit.py, called by judge_node.py) each do their own
     `from shared.llm_client.client import LLMClient` at module-import time, then instantiate
     LLMClient() locally inside that module's namespace. Patching shared.llm_client.client.LLMClient
-    has NO effect on either node — verified experimentally: with only that patch applied,
-    LLMClient() still constructed the REAL client and the graph run failed on missing AWS/OpenAI
-    credentials instead of using the mock, which would have been a false-pass hiding the very
-    strip bug this test file exists to catch. Each consuming module bound its own local name at
-    import time, so both must be patched separately, by their consuming-module path:
-    services.content_generation.graph.LLMClient AND services.content_generation.judge_node.LLMClient.
+    has NO effect on either — verified experimentally (pre-AA-631, same finding applied to
+    judge_node.py directly): with only that patch applied, LLMClient() still constructed the
+    REAL client and the graph run failed on missing AWS/OpenAI credentials instead of using the
+    mock, which would have been a false-pass hiding the very strip bug this test file exists to
+    catch. Each consuming module bound its own local name at import time, so both must be
+    patched separately, by their consuming-module path: services.content_generation.graph.
+    LLMClient AND services.content_generation.brand_fit.LLMClient (AA-631 moved the judge's own
+    LLMClient usage out of judge_node.py into brand_fit.py — judge_node.py no longer imports it
+    at all, so patching judge_node.LLMClient would silently do nothing post-AA-631).
 
     request.model_tier distinguishes a generate_node call ("haiku"/"sonnet", whatever the test
-    passes to _rewrite_tour) from a judge_node call (always "gpt-4.1" per judge_node.py), so one
-    mock serves both call sites without either module knowing about the other.
+    passes to _rewrite_tour) from the brand-fit judge call (always "gpt-4.1" per brand_fit.py),
+    so one mock serves both call sites without either module knowing about the other.
     """
     def _install(haiku_responses, judge_response=None):
         queue = list(haiku_responses)
@@ -138,7 +142,7 @@ def patch_llm_client(monkeypatch):
         mock_client.generate.side_effect = _generate
         mock_client_cls = MagicMock(return_value=mock_client)
         monkeypatch.setattr("services.content_generation.graph.LLMClient", mock_client_cls)
-        monkeypatch.setattr("services.content_generation.judge_node.LLMClient", mock_client_cls)
+        monkeypatch.setattr("services.content_generation.brand_fit.LLMClient", mock_client_cls)
         return mock_client
 
     return _install
