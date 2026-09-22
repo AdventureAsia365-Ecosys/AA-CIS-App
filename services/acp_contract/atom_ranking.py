@@ -290,30 +290,48 @@ async def land_questions_for_segment(
     return len(claimed)
 
 
-async def precompute_question_landings(pool) -> dict[str, int]:
-    """AA-610 (Sub 2 redesign) — lands PAA questions on every currently-ranked Segment's atoms
-    ONCE, platform-wide, independent of market. `questions` (the count `land_questions_for_segment()`
-    computes) does not vary by market — a PAA question landing on a Segment's atom has nothing
-    to do with which of the 6 finite buyer markets `run_atom_ranking()` happens to be scoring
-    right now. The first live test found this real, market-independent work getting redone once
-    per market (6x per atomize run) purely because it lived inside `run_atom_ranking()`'s own
-    per-market loop — this function is the fix: called once by `recompute_segment_score_route()`
-    (`services/export/handler.py`), its result (segment_id -> questions count) is then passed
-    into every `run_atom_ranking(market, pool, question_counts)` call so none of them re-lands a
-    single question.
+async def precompute_question_landings(
+    pool, segment_ids: set[str] | None = None,
+) -> dict[str, int]:
+    """AA-610 (Sub 2 redesign, then Sub 2 scope fix) — lands PAA questions on every
+    currently-ranked Segment's atoms, independent of market (`questions` does not vary by
+    market — a PAA question landing on a Segment's atom has nothing to do with which of the 6
+    finite buyer markets `run_atom_ranking()` happens to be scoring right now). Its result
+    (segment_id -> questions count) is passed into every `run_atom_ranking(market, pool,
+    question_counts)` call so none of them re-lands a single question — and, because
+    `run_atom_ranking()` rebuilds `atom_ranking` for the WHOLE platform every call, this
+    function's returned dict must always have an entry for EVERY currently-ranked Segment, not
+    just the ones actually recomputed this call (see `segment_ids` below).
 
-    Reads the SAME Segment/atom/PAA rows `run_atom_ranking()` itself reads (excluded Segments
-    are skipped here too — their questions count is never read, `run_atom_ranking()` always
-    writes 0 for an excluded row regardless)."""
+    `segment_ids` (AA-610 Sub 2 scope fix) — a live re-test of the redesign above (still
+    platform-wide on every call) found a single tour-triggered recompute
+    (`recompute_segment_score_route()`, one PATCH or one atomize run) taking OVER 6 HOURS
+    without completing, because it re-landed PAA questions for every OTHER platform Segment too
+    — real, correct work, just none of it caused by the tour that triggered this call. Passing
+    the segment_ids of ONLY that tour's own Segments here (`recompute_segment_score_route()`
+    now does) recomputes `land_questions_for_segment()` for just those, and reads
+    `atom_segment.questions_count` (migration 163) back for every OTHER Segment instead of
+    recomputing it — a Segment whose own tours did not change gets the same count it already
+    had, not silently zeroed (that would be a correctness regression, not just a performance
+    one: `run_atom_ranking()` writes 0 for the `questions` axis of a Segment absent from the
+    returned dict).
+
+    `segment_ids=None` (the default) keeps the ORIGINAL platform-wide behavior — every Segment
+    recomputed, no cache read — for any caller that genuinely needs a from-scratch pass (a
+    backfill, or a future scheduled full re-check of `questions_count` staleness).
+
+    A Segment with `questions_count IS NULL` (never computed — brand new) is ALWAYS recomputed
+    this call regardless of `segment_ids`, never served a cache value that does not exist yet."""
     async with pool.acquire() as conn:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   array_agg(DISTINCT ta.atom_id) AS atom_ids
+                   asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
             WHERE NOT ta.deleted AND NOT ta.is_empty_marker
-            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action,
+                     asg.questions_count
         """)
 
         demand_rows = await conn.fetch("""
@@ -328,13 +346,30 @@ async def precompute_question_landings(pool) -> dict[str, int]:
             paa_tuples.append((r["keyword"], r["market"], paa or []))
 
         counts: dict[str, int] = {}
+        recomputed_ids: list[str] = []
         for row in segment_rows:
             place, action = row["canonical_place"], row["canonical_action"]
             if classify_exclusion(place, action):
                 continue
+            segment_id = row["segment_id"]
+            cached = row["questions_count"]
+            in_scope = segment_ids is None or segment_id in segment_ids or cached is None
+            if not in_scope:
+                counts[segment_id] = cached
+                continue
             atom_ids = [str(a) for a in row["atom_ids"]]
-            counts[row["segment_id"]] = await land_questions_for_segment(
-                conn, place, action, atom_ids, paa_tuples,
+            count = await land_questions_for_segment(conn, place, action, atom_ids, paa_tuples)
+            counts[segment_id] = count
+            recomputed_ids.append(segment_id)
+
+        if recomputed_ids:
+            await conn.executemany(
+                """
+                UPDATE acp_contract.atom_segment
+                SET questions_count = $2, questions_computed_at = now()
+                WHERE segment_id = $1
+                """,
+                [(segment_id, counts[segment_id]) for segment_id in recomputed_ids],
             )
     return counts
 
