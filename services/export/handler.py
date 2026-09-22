@@ -59,14 +59,29 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
     from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
-    # AA-610 (Sub 2 redesign) — PAA landing does not vary by market (a question landing on a
-    # Segment's atom has nothing to do with which finite buyer market is being scored), but used
-    # to be recomputed inside run_atom_ranking() itself, once per market — 6x real embedding-
-    # matching work per atomize run for no reason. Computed exactly ONCE here, passed into every
-    # run_atom_ranking() call below (precompute_question_landings()'s own docstring has the full
-    # story — this is what a live re-atomize test found never completing within several minutes
-    # before this fix).
-    question_counts = await precompute_question_landings(pool)
+    # AA-610 (Sub 2 redesign, then Sub 2 scope fix) — PAA landing does not vary by market (a
+    # question landing on a Segment's atom has nothing to do with which finite buyer market is
+    # being scored), but used to be recomputed inside run_atom_ranking() itself, once per market
+    # — 6x real embedding-matching work per atomize run for no reason. Computed exactly ONCE
+    # here (the redesign fix), passed into every run_atom_ranking() call below.
+    #
+    # Scoped to just THIS tour's own Segments (the scope fix) — a live re-test of the redesign
+    # above found a single tour-triggered call still taking over 6 hours, because it was landing
+    # PAA questions for every OTHER platform Segment too, not just this tour's. Every other
+    # Segment's questions_count is read back from cache instead (precompute_question_landings()'s
+    # own docstring has the full story of both fixes).
+    async with pool.acquire() as conn:
+        this_tour_segment_rows = await conn.fetch(
+            """
+            SELECT DISTINCT asm.segment_id
+            FROM acp_contract.atom_segment_member asm
+            JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            WHERE ta.tour_id = $1::uuid AND NOT ta.deleted AND NOT ta.is_empty_marker
+            """,
+            tour_id,
+        )
+    this_tour_segment_ids = {r["segment_id"] for r in this_tour_segment_rows}
+    question_counts = await precompute_question_landings(pool, this_tour_segment_ids)
     ranking_results = {}
     for market_code in DFS_LOCATION_MAP:
         ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)

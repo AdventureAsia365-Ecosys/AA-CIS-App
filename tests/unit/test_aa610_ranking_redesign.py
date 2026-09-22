@@ -129,12 +129,14 @@ async def test_precompute_question_landings_runs_once_not_per_market():
     conn.fetch = AsyncMock(side_effect=[
         [  # segment_rows
             {"segment_id": "seg-1", "canonical_place": "Sukhbaatar Square",
-             "canonical_action": "visit", "atom_ids": ["atom-1"]},
+             "canonical_action": "visit", "questions_count": None, "atom_ids": ["atom-1"]},
             {"segment_id": "seg-2", "canonical_place": "arrive at the airport",
-             "canonical_action": "arrive", "atom_ids": ["atom-2"]},  # excluded: transit
+             "canonical_action": "arrive", "questions_count": None,
+             "atom_ids": ["atom-2"]},  # excluded: transit
         ],
         [],  # demand_rows (people_also_ask) — empty is fine, no candidates either way
     ])
+    conn.executemany = AsyncMock()
 
     with patch("services.acp_contract.atom_ranking.land_questions_for_segment",
                AsyncMock(return_value=3)) as m_land:
@@ -143,6 +145,7 @@ async def test_precompute_question_landings_runs_once_not_per_market():
     # Excluded Segment (seg-2, transit action) never gets landed at all.
     m_land.assert_awaited_once()
     assert counts == {"seg-1": 3}
+    conn.executemany.assert_awaited_once()  # cache write for the one recomputed Segment
 
 
 @pytest.mark.asyncio
@@ -155,12 +158,14 @@ async def test_precompute_question_landings_excludes_transit_and_unnamed_place()
     conn.fetch = AsyncMock(side_effect=[
         [
             {"segment_id": "seg-transit", "canonical_place": "Kyoto Station",
-             "canonical_action": "arrive at the station", "atom_ids": ["atom-1"]},
+             "canonical_action": "arrive at the station", "questions_count": None,
+             "atom_ids": ["atom-1"]},
             {"segment_id": "seg-unnamed", "canonical_place": "a nearby hot spring",
-             "canonical_action": "relax", "atom_ids": ["atom-2"]},
+             "canonical_action": "relax", "questions_count": None, "atom_ids": ["atom-2"]},
         ],
         [],
     ])
+    conn.executemany = AsyncMock()
 
     with patch("services.acp_contract.atom_ranking.land_questions_for_segment",
                AsyncMock(return_value=5)) as m_land:
@@ -168,3 +173,97 @@ async def test_precompute_question_landings_excludes_transit_and_unnamed_place()
 
     m_land.assert_not_awaited()  # both segments excluded — no landing work for either
     assert counts == {}
+    conn.executemany.assert_not_awaited()  # nothing recomputed, nothing to cache
+
+
+# ── segment_ids scope (AA-610 Sub 2 scope fix) ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_precompute_question_landings_out_of_scope_segment_reads_cache_not_relanded():
+    """A Segment outside segment_ids, with an already-cached questions_count, must be served
+    that cached value — land_questions_for_segment() must never be called for it. This is the
+    fix for the live re-test finding a single tour-triggered recompute re-landing PAA questions
+    for every OTHER platform Segment too."""
+    pool = MagicMock()
+    conn = AsyncMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    conn.fetch = AsyncMock(side_effect=[
+        [
+            {"segment_id": "seg-in-scope", "canonical_place": "Sukhbaatar Square",
+             "canonical_action": "visit", "questions_count": None, "atom_ids": ["atom-1"]},
+            {"segment_id": "seg-out-of-scope", "canonical_place": "Gandan Monastery",
+             "canonical_action": "visit", "questions_count": 7, "atom_ids": ["atom-2"]},
+        ],
+        [],
+    ])
+    conn.executemany = AsyncMock()
+
+    with patch("services.acp_contract.atom_ranking.land_questions_for_segment",
+               AsyncMock(return_value=3)) as m_land:
+        counts = await precompute_question_landings(pool, segment_ids={"seg-in-scope"})
+
+    m_land.assert_awaited_once()  # only the in-scope Segment gets relanded
+    assert counts == {"seg-in-scope": 3, "seg-out-of-scope": 7}  # out-of-scope served from cache
+    # Cache write only covers the recomputed Segment, never the one served from cache.
+    written_rows = conn.executemany.call_args.args[1]
+    written_ids = [segment_id for segment_id, _count in written_rows]
+    assert written_ids == ["seg-in-scope"]
+
+
+@pytest.mark.asyncio
+async def test_precompute_question_landings_never_caches_none_regardless_of_scope():
+    """A Segment with questions_count IS NULL (never computed — brand new) must always be
+    recomputed this call, even if segment_ids does not name it — it has no cache value to
+    serve, so serving one would be a crash (KeyError) or a silent wrong 0, not a real skip."""
+    pool = MagicMock()
+    conn = AsyncMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    conn.fetch = AsyncMock(side_effect=[
+        [
+            {"segment_id": "seg-brand-new", "canonical_place": "Erdene Zuu Monastery",
+             "canonical_action": "visit", "questions_count": None, "atom_ids": ["atom-3"]},
+        ],
+        [],
+    ])
+    conn.executemany = AsyncMock()
+
+    with patch("services.acp_contract.atom_ranking.land_questions_for_segment",
+               AsyncMock(return_value=1)) as m_land:
+        # segment_ids names some OTHER Segment entirely — seg-brand-new is not in it.
+        counts = await precompute_question_landings(pool, segment_ids={"some-other-segment"})
+
+    m_land.assert_awaited_once()  # recomputed anyway — never-computed always wins the scope check
+    assert counts == {"seg-brand-new": 1}
+
+
+@pytest.mark.asyncio
+async def test_precompute_question_landings_segment_ids_none_recomputes_everything():
+    """segment_ids=None (the default) keeps the ORIGINAL platform-wide behavior — every Segment
+    recomputed, even ones with an existing cache value."""
+    pool = MagicMock()
+    conn = AsyncMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    conn.fetch = AsyncMock(side_effect=[
+        [
+            {"segment_id": "seg-1", "canonical_place": "Sukhbaatar Square",
+             "canonical_action": "visit", "questions_count": 7, "atom_ids": ["atom-1"]},
+            {"segment_id": "seg-2", "canonical_place": "Gandan Monastery",
+             "canonical_action": "visit", "questions_count": 9, "atom_ids": ["atom-2"]},
+        ],
+        [],
+    ])
+    conn.executemany = AsyncMock()
+
+    with patch("services.acp_contract.atom_ranking.land_questions_for_segment",
+               AsyncMock(return_value=3)) as m_land:
+        counts = await precompute_question_landings(pool)
+
+    assert m_land.await_count == 2  # both recomputed — segment_ids=None ignores any cache value
+    assert counts == {"seg-1": 3, "seg-2": 3}
