@@ -120,6 +120,19 @@ def test_fetch_all_accounts_cost_raises_when_all_fail():
 
 # ── record_snapshot / read_latest_snapshot ──────────────────────────────────
 
+def test_to_date_converts_ce_date_strings():
+    """Regression for a live bug (AA-623): CE's ResultsByTime gives 'YYYY-MM-DD' strings for
+    period start/end, but asyncpg's date codec requires an actual date object -- passing the
+    string through raised asyncpg.exceptions.DataError at INSERT time in production. Caught
+    only because mocked tests below don't exercise asyncpg's real type checking."""
+    from datetime import date as date_cls
+
+    from shared.aws_client import cost_explorer as ce_mod
+
+    assert ce_mod._to_date("2026-09-16") == date_cls(2026, 9, 16)
+    assert ce_mod._to_date(date_cls(2026, 9, 16)) == date_cls(2026, 9, 16)
+
+
 @pytest.mark.asyncio
 async def test_record_snapshot_writes_all_rows_in_one_transaction():
     from shared.aws_client import cost_explorer as ce_mod
@@ -143,6 +156,12 @@ async def test_record_snapshot_writes_all_rows_in_one_transaction():
     written = await ce_mod.record_snapshot(pool, rows)
     assert written == 2
     assert fake_conn.execute.await_count == 2
+    # regression guard: period_start/end must be real date objects by the time they reach
+    # conn.execute, not the raw 'YYYY-MM-DD' strings CE returns (see test_to_date_* above).
+    from datetime import date as date_cls
+    first_call_args = fake_conn.execute.call_args_list[0].args
+    assert isinstance(first_call_args[3], date_cls)
+    assert isinstance(first_call_args[4], date_cls)
 
 
 @pytest.mark.asyncio
