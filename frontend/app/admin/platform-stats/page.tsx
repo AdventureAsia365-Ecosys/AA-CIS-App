@@ -4,10 +4,10 @@
 //
 // AA-558 Phần 3 confirmed 2/4 of the old page's sections were 100% duplicated with other pages:
 // Content Log (T9/T10) and Publish Log (T11)'s READ side both moved into Content Trace (06,
-// AA-568/572/575). This page keeps ONLY the two sections that were never duplicated anywhere —
-// Review Log (T3/T5 Escalations) and Trust Ramp, moved here verbatim (same endpoints, same field
-// shapes) — plus one genuinely new thing: a real backend aggregate for "gate/lỗi mắc phải nhiều
-// nhất toàn platform" (GET /admin/a4/platform-stats), replacing the old page's client-side
+// AA-568/572/575). This page keeps ONLY the section that was never duplicated anywhere —
+// Review Log (T3/T5 Escalations), moved here verbatim (same endpoints, same field shapes) —
+// plus one genuinely new thing: a real backend aggregate for "gate/lỗi mắc phải nhiều nhất toàn
+// platform" (GET /admin/a4/platform-stats), replacing the old page's client-side
 // "F1_GROUNDING × 4" tag rollup, which only ever counted whatever was in the currently-loaded
 // `limit=200` page of Content Log rows (AA-558 Phần 1 Q3's own finding) — this one has no cap.
 //
@@ -18,7 +18,13 @@
 //
 // Sub-nav (AA-575's SocialContentSubNav.tsx) + full per-column sort (AA-572→AA-575's pattern) are
 // both built in from the start here, per this issue's explicit "don't repeat that lesson"
-// requirement — see `ReviewSort`/`reviewSortValue` and `TrustSort`/`trustSortValue` below.
+// requirement — see `ReviewSort`/`reviewSortValue` below.
+//
+// AA-633 (23/09/2026) — Trust Ramp section removed. Its backend (`GET/POST /admin/a4/trust-ramp*`)
+// was deleted in AA-603 (S191, PR #413) — the feature operated on the dead N7/N8
+// `acp_deliver.packets.publish_mode` model; the live T11 publish flow (v1_publish.py) has no
+// ramp/publish-mode concept at all. This FE call site was missed at the time, causing a live
+// HTTP 404 on this page. Removed here rather than restored, per the same AA-603 assessment.
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
@@ -26,7 +32,7 @@ import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
-// ── Types — match GET /admin/a4/review-log, /admin/a4/trust-ramp, /admin/a4/platform-stats ─────
+// ── Types — match GET /admin/a4/review-log, /admin/a4/platform-stats ───────────────────────────
 
 interface EscalateDetailItem {
   check_id: string;
@@ -47,24 +53,6 @@ interface ReviewLogRow {
   escalate_detail: EscalateDetailItem[];
   review_status: string;
   created_at: string | null;
-}
-
-interface TrustRampRow {
-  packet_id: string;
-  tenant_id: string;
-  tenant_name: string | null;
-  tenant_slug: string | null;
-  year: number;
-  month: number;
-  week: number;
-  status: string;
-  publish_mode: string;
-  created_at: string | null;
-  delivered_at: string | null;
-  engagement_ok: boolean;
-  weeks_active: number;
-  suggested_mode: string;
-  eligible: boolean;
 }
 
 interface PlatformStats {
@@ -108,26 +96,9 @@ function fmtDate(s: string | null): string {
   return s ? new Date(s).toLocaleString() : "—";
 }
 
-const RAMP_LABEL: Record<string, string> = {
-  propose_only: "Propose Only",
-  approve_to_publish: "Approve to Publish",
-  veto_window_auto: "Veto Window Auto",
-};
-
-const RAMP_RANK: Record<string, number> = {
-  propose_only: 0, approve_to_publish: 1, veto_window_auto: 2,
-};
-
-function rampBadgeColor(mode: string): "gray" | "amber" | "green" {
-  if (mode === "veto_window_auto") return "green";
-  if (mode === "approve_to_publish") return "amber";
-  return "gray";
-}
-
 // ── Sort — same mechanism as Content Trace (06), AA-572/575 ─────────────────────
 
 type ReviewSortKey = "tenant" | "failure" | "checks" | "status" | "created_at";
-type TrustSortKey = "period" | "status" | "ramp_level" | "suggestion" | "created_at" | "delivered_at";
 type Sort<K extends string> = { key: K; dir: "asc" | "desc" };
 
 function useToggleSort<K extends string>() {
@@ -145,19 +116,6 @@ function reviewSortValue(r: ReviewLogRow, key: ReviewSortKey): string | number {
     case "checks": return (r.escalate_detail || []).length;
     case "status": return r.review_status ?? "";
     case "created_at": return r.created_at ? new Date(r.created_at).getTime() : 0;
-  }
-}
-
-function trustSortValue(r: TrustRampRow, key: TrustSortKey): string | number {
-  switch (key) {
-    case "period": return r.year * 10000 + r.month * 100 + r.week;
-    case "status": return r.status ?? "";
-    case "ramp_level": return RAMP_RANK[r.publish_mode] ?? -1;
-    // Not-eligible sorts below every eligible row regardless of direction's usual meaning —
-    // "no suggestion" isn't a rank 0/lowest fact, it's the absence of the thing being sorted.
-    case "suggestion": return r.eligible ? 1 + (RAMP_RANK[r.suggested_mode] ?? 0) : -1;
-    case "created_at": return r.created_at ? new Date(r.created_at).getTime() : 0;
-    case "delivered_at": return r.delivered_at ? new Date(r.delivered_at).getTime() : 0;
   }
 }
 
@@ -662,167 +620,6 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
   );
 }
 
-// ── Trust Ramp section — moved verbatim from a4-oversight/page.tsx, sort added ───────────────────
-
-function TrustRampSection() {
-  const [rows, setRows] = useState<TrustRampRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [actioningId, setActioningId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const { sort, toggle } = useToggleSort<TrustSortKey>();
-
-  const fetchData = useCallback(() => {
-    setLoading(true);
-    fetch("/api/admin/a4/trust-ramp")
-      .then(r => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
-      .then(d => { setRows(d.data || []); setError(null); })
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  const handleRampAction = useCallback(async (packetId: string, action: "approve" | "skip") => {
-    setActioningId(packetId);
-    setActionError(null);
-    try {
-      const res = await fetch(`/api/admin/a4/trust-ramp/${packetId}/${action}`, { method: "POST" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `HTTP ${res.status}`);
-      }
-      await fetchData();
-    } catch (e) {
-      setActionError(String(e));
-    } finally {
-      setActioningId(null);
-    }
-  }, [fetchData]);
-
-  // Group by tenant for readability — every packet still shown with its own level, never
-  // collapsed into one tenant-level number (Nghiep's decision #3, AA-437). Sort is applied WITHIN
-  // each tenant's own packet list, same shared sort state across all groups.
-  const byTenant = useMemo(() => {
-    const groups: Record<string, TrustRampRow[]> = {};
-    for (const row of rows) {
-      const key = row.tenant_id;
-      (groups[key] ||= []).push(row);
-    }
-    return Object.values(groups).map(g => sortRows(g, sort, trustSortValue));
-  }, [rows, sort]);
-
-  return (
-    <Card>
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-          Trust Ramp — Current State
-        </h2>
-        <div style={{ fontSize: 12, color: A.muted }}>
-          Publish mode per weekly packet. Eligible packets (steady engagement over 2+ active
-          weeks) show a suggested next level below with Approve/Skip. Approving is the only way a
-          ramp state actually changes — nothing here auto-transitions on its own.
-        </div>
-      </div>
-
-      {actionError && (
-        <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: "#fef2f2", color: A.red, fontSize: 12 }}>
-          {actionError}
-        </div>
-      )}
-
-      {loading ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>Loading…</div>
-      ) : error ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.red }}>{error}</div>
-      ) : rows.length === 0 ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted2 }}>No packets found.</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {byTenant.map(group => (
-            <div key={group[0].tenant_id}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: A.ink, marginBottom: 8 }}>
-                {group[0].tenant_name || group[0].tenant_id}
-                <span style={{ fontFamily: mono, fontSize: 10.5, color: A.muted2, marginLeft: 8, fontWeight: 400 }}>
-                  {group[0].tenant_slug} · {group.length} packet{group.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: A.bg }}>
-                      <SortableTh label="Period" sortKey="period" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                      <SortableTh label="Status" sortKey="status" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                      <SortableTh label="Ramp Level" sortKey="ramp_level" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                      <SortableTh label="Suggestion" sortKey="suggestion" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                      <SortableTh label="Created" sortKey="created_at" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                      <SortableTh label="Delivered" sortKey="delivered_at" sort={sort} onSort={toggle} style={{ padding: "6px 12px", fontSize: 10 }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.map(p => (
-                      <tr key={p.packet_id}>
-                        <td style={{ padding: "8px 12px", fontSize: 12, fontFamily: mono, borderBottom: `1px solid ${A.line}` }}>
-                          {p.year}-{String(p.month).padStart(2, "0")} W{p.week}
-                        </td>
-                        <td style={{ padding: "8px 12px", fontSize: 12, borderBottom: `1px solid ${A.line}` }}>
-                          <Badge color="gray">{p.status}</Badge>
-                        </td>
-                        <td style={{ padding: "8px 12px", fontSize: 12, borderBottom: `1px solid ${A.line}` }}>
-                          <Badge color={rampBadgeColor(p.publish_mode)}>{RAMP_LABEL[p.publish_mode] || p.publish_mode}</Badge>
-                        </td>
-                        <td style={{ padding: "8px 12px", fontSize: 12, borderBottom: `1px solid ${A.line}` }}>
-                          {p.eligible ? (
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                              <Badge color={rampBadgeColor(p.suggested_mode)}>
-                                → {RAMP_LABEL[p.suggested_mode] || p.suggested_mode}
-                              </Badge>
-                              <button
-                                onClick={() => handleRampAction(p.packet_id, "approve")}
-                                disabled={actioningId === p.packet_id}
-                                style={{
-                                  padding: "4px 8px", borderRadius: 6, border: `1px solid ${A.ink}`,
-                                  background: A.ink, color: "#fff", fontSize: 11, cursor: "pointer",
-                                  opacity: actioningId === p.packet_id ? 0.5 : 1,
-                                }}
-                              >
-                                {actioningId === p.packet_id ? "…" : "Approve"}
-                              </button>
-                              <button
-                                onClick={() => handleRampAction(p.packet_id, "skip")}
-                                disabled={actioningId === p.packet_id}
-                                style={{
-                                  padding: "4px 8px", borderRadius: 6, border: `1px solid ${A.line}`,
-                                  background: "transparent", color: A.muted, fontSize: 11, cursor: "pointer",
-                                  opacity: actioningId === p.packet_id ? 0.5 : 1,
-                                }}
-                              >
-                                Skip
-                              </button>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: 11, color: A.muted2 }}>—</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 12px", fontSize: 11, fontFamily: mono, color: A.muted, borderBottom: `1px solid ${A.line}` }}>
-                          {fmtDate(p.created_at)}
-                        </td>
-                        <td style={{ padding: "8px 12px", fontSize: 11, fontFamily: mono, color: A.muted, borderBottom: `1px solid ${A.line}` }}>
-                          {fmtDate(p.delivered_at)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlatformStatsPage() {
@@ -836,8 +633,8 @@ export default function PlatformStatsPage() {
           </h1>
           <div style={{ fontSize: 12, color: A.muted, marginTop: 4, maxWidth: 760 }}>
             Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step.
-            Review Log and Trust Ramp are read-only pattern review; the aggregate below is a real
-            platform-wide backend rollup, not a per-page-load client-side count.
+            Review Log is read-only pattern review; the aggregate below is a real platform-wide
+            backend rollup, not a per-page-load client-side count.
           </div>
         </div>
 
@@ -848,7 +645,6 @@ export default function PlatformStatsPage() {
               <ReviewLogSection />
               <PlatformStatsSection />
               <GateTelemetrySection />
-              <TrustRampSection />
             </div>
           </div>
         </div>
