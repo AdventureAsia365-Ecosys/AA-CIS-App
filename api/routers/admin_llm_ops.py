@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, timedelta
 from typing import Optional
 
 import structlog
@@ -24,6 +25,12 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
+from shared.aws_client.cost_explorer import (
+    CostExplorerUnavailable,
+    fetch_all_accounts_cost,
+    read_latest_snapshot,
+    record_snapshot,
+)
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.role_config import list_stage_configs, set_stage_config
@@ -481,6 +488,54 @@ async def get_dfs_balance(request: Request):
         "fetched_at": latest.get("fetched_at"),
         "has_data": True,
     }
+
+
+# ── AA-623 — AWS Cost Explorer actual spend: daily check + latest-snapshot read ────────────────
+# Same job-then-read split as the DFS balance pair above (AA-627), for the same reason: Cost
+# Explorer's own pricing API costs ~$0.01/request, so the External Spend page must never call it
+# live per page view.
+#   POST /admin/cost-explorer/check — the once-a-day job. Fetches acc1/acc2/acc3's own CE data
+#       (acc2 directly, acc1/acc3 via STS AssumeRole satellite roles -- see
+#       shared/aws_client/cost_explorer.py's module docstring for why there is no single
+#       consolidated call) and stores one row per (account, service, period). Secret-gated,
+#       same EventBridge->Lambda scheduler convention as /admin/dfs-balance/check.
+#   GET  /admin/cost-explorer — the External Spend page reads the LATEST stored batch (never
+#       calls CE live per request).
+
+_DEFAULT_COST_EXPLORER_LOOKBACK_DAYS = 7
+
+
+@router.post("/cost-explorer/check", summary="AA-623 — daily AWS Cost Explorer actual-spend read")
+async def check_cost_explorer(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+
+    end = date.today()
+    start = end - timedelta(days=_DEFAULT_COST_EXPLORER_LOOKBACK_DAYS)
+    try:
+        result = fetch_all_accounts_cost(start.isoformat(), end.isoformat())
+    except CostExplorerUnavailable as e:
+        logger.error("cost_explorer_check_fetch_failed", error=str(e))
+        raise HTTPException(status_code=502, detail=f"Cost Explorer read failed: {e}")
+
+    pool = request.app.state.pool
+    written = await record_snapshot(pool, result["rows"])
+
+    logger.info("admin_cost_explorer_checked", row_count=written, errors=result["errors"])
+    return {
+        "row_count": written,
+        "errors": result["errors"],
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+    }
+
+
+@router.get("/cost-explorer", summary="AA-623 — latest stored AWS Cost Explorer snapshot (no live CE call)")
+async def get_cost_explorer(request: Request):
+    pool = request.app.state.pool
+    latest = await read_latest_snapshot(pool)
+    if not latest:
+        return {"rows": [], "total_usd": None, "fetched_at": None, "has_data": False}
+    return {**latest, "has_data": True}
 
 
 @router.get(
