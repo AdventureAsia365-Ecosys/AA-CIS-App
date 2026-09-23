@@ -271,11 +271,11 @@ export default function AdminSidebar() {
           )}
         </NavGroup>
 
-        {/* AA-390: Legacy B2B pipeline (ACP v1) sidebar entry hidden — nobody
-            needs ACPv1 Pipeline access via the sidebar anymore (per Nghiep).
-            The routes/pages (admin/pipeline/s2, s3, s4-blog, s4-social) and
-            their backend (admin_acp_proxy.py, v1_acp.py, etc.) are untouched
-            and still reachable directly by URL if ever needed again. */}
+        {/* AA-390 hid this Legacy B2B pipeline (ACP v1) sidebar entry, keeping the pages
+            reachable by direct URL "if ever needed again" — but AA-477/AA-439 later deleted
+            their backend routers entirely without anyone checking that promise. AA-633
+            (23/09/2026) found the pages 404ing live and removed them (admin/pipeline/s1, s2,
+            s3, s4-blog, s4-social) — there is no longer anything at those URLs to reach. */}
       </div>
 
       {/* Settings — admin only */}
