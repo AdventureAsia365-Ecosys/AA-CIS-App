@@ -333,7 +333,10 @@ async def _fetch_segment_hub_map(tenant_id: UUID, pool) -> dict[str, str]:
     }
 
 
-def _choose(channel: str, candidates: list[Candidate], hub_of: dict[str, str]) -> list[tuple[Candidate, dict]]:
+def _choose(
+    channel: str, candidates: list[Candidate], hub_of: dict[str, str],
+    seen_places: set[str] | None = None,
+) -> list[tuple[Candidate, dict]]:
     """Port of the origin's `choose()` (aa-social-media `stages/slate.py`) — Gap B, 2026-09-02.
 
     **Iterated strongest-first**: ascending `score` (rank-sum convention, AA-515 — lowest
@@ -353,8 +356,16 @@ def _choose(channel: str, candidates: list[Candidate], hub_of: dict[str, str]) -
     family of one is not a family", the same rule `route_detection.py` already applies one layer
     up); Segment candidates use `hub_of` (`_fetch_segment_hub_map()`, Gap B's own new join).
 
-    Applied PER CHANNEL — a fresh `taken`/`seen_places` for every call, matching `_choose()`
-    being invoked once per Channel in `propose_slate()`'s own loop, never accumulated globally.
+    **`taken` (hub cap) stays fresh per Channel** — `most_per_hub` is a per-Channel Bar setting
+    (`CHANNEL_BARS[channel]["most_per_hub"]`), so capping hub count across Channels would apply
+    one Channel's number to every other Channel, which is not what the Bar means.
+
+    **`seen_places` can be shared across Channels** (AA-632, follow-up from AA-631's own
+    deferred standard #3 "not already on slate" across Channels) — pass in a `set` from the
+    caller's loop over `CHANNEL_BARS` to dedupe the same place across every Segment-grain
+    Channel for one tenant, not just within one Channel's own call. Passing `None` (the
+    default) keeps the original per-call behavior (a fresh, call-local set) for any caller that
+    still wants that — e.g. a unit test exercising one Channel in isolation.
 
     Returns `(candidate, cleared_bar_reason)` pairs, already Bar-checked — only what `choose()`
     would put on the Recommendation's own `subjects` list, i.e. exactly what should end up
@@ -363,7 +374,8 @@ def _choose(channel: str, candidates: list[Candidate], hub_of: dict[str, str]) -
     most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
     ordered = sorted(candidates, key=lambda c: (c.score, c.segment_id or c.route_id or ""))
     taken: dict[str, int] = {}
-    seen_places: set[str] = set()
+    if seen_places is None:
+        seen_places = set()
     chosen: list[tuple[Candidate, dict]] = []
     for candidate in ordered:
         cleared, reason = _clears_bar(channel, candidate)
@@ -423,6 +435,11 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         async with conn.transaction():
             live_segment_ids: dict[str, set[str]] = {}
             live_route_ids: dict[str, set[str]] = {}
+            # AA-632 — shared across every Channel in this loop (one propose_slate() call, one
+            # tenant), so "not already on slate" dedupes a place across Channels too, not just
+            # within one Channel's own _choose() call. Route candidates never set `place`
+            # (docstring above), so this only ever affects Segment-grain Channels in practice.
+            seen_places: set[str] = set()
             for channel in CHANNEL_BARS:
                 spec = CHANNEL_BARS[channel]
                 candidates = routes if spec["grain"] == "route" else segments
@@ -430,7 +447,7 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
                 live_route_ids[channel] = set()
                 # _choose() already applies the Bar (returns only what cleared it) AND `choose()`'s
                 # own place-de-dup/hub-cap (Gap B) -- only what survives both gets proposed.
-                for candidate, reason in _choose(channel, candidates, hub_of):
+                for candidate, reason in _choose(channel, candidates, hub_of, seen_places):
                     if candidate.segment_id:
                         live_segment_ids[channel].add(candidate.segment_id)
                         # The ON CONFLICT target must match idx_subject_unique_segment's own
