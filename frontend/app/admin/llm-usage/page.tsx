@@ -64,6 +64,13 @@ interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (
   balance_usd: number | null; currency: string | null; threshold_usd: number;
   below_threshold: boolean; fetched_at: string | null; has_data: boolean;
 }
+interface CostExplorerRow {  // AA-623 — one AWS Cost Explorer row (account/service/period)
+  account_id: string; service: string; period_start: string; period_end: string;
+  amount_usd: number; unit: string; fetched_at: string;
+}
+interface CostExplorerData {  // AA-623 — latest stored CE snapshot (never a live call on page load)
+  rows: CostExplorerRow[]; total_usd: number | null; fetched_at: string | null; has_data: boolean;
+}
 interface StageConfig {
   stage: string; role: string; provider: string; model_id: string; account_route: string | null;
 }
@@ -82,6 +89,11 @@ const ACCOUNT_META: Record<string, { label: string; short: string; color: string
   acc2:    { label: "acc2 · 005097885195 (Bedrock)", short: "acc2",   color: A.green },
   openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
   unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
+};
+// AA-623 — AWS account ID -> the same acc1/acc2/acc3 keys ACCOUNT_META uses, so Cost Explorer
+// rows (keyed by raw account_id) can be labeled identically to the estimated (token) breakdown.
+const CE_ACCOUNT_ID_TO_KEY: Record<string, string> = {
+  "786888028788": "acc3", "867490540162": "acc1", "005097885195": "acc2",
 };
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
@@ -421,6 +433,9 @@ export default function ExternalSpendPage() {
   const [daily, setDaily] = useState<DailyPoint[] | null>(null);
   const [configs, setConfigs] = useState<StageConfig[] | null>(null);
   const [dfsBalance, setDfsBalance] = useState<DfsBalance | null>(null);  // AA-627
+  const [costExplorer, setCostExplorer] = useState<CostExplorerData | null>(null);  // AA-623
+  const [ceChecking, setCeChecking] = useState(false);  // AA-623 — manual "Refresh from AWS" in flight
+  const [ceCheckMsg, setCeCheckMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   // filters (apply to LLM + DFS)
@@ -441,18 +456,44 @@ export default function ExternalSpendPage() {
       // AA-627 — latest stored DFS balance (reads the daily snapshot, never a live DFS call).
       // Tolerate failure (older deploys / empty table) so the whole page still loads.
       fetch(`/api/admin/dfs-balance`).then(r => r.ok ? r.json() : null).catch(() => null),
+      // AA-623 — latest stored AWS Cost Explorer snapshot (reads only, never a live CE call on
+      // page load — CE pricing costs ~$0.01/request). Same tolerate-failure pattern as dfs-balance.
+      fetch(`/api/admin/cost-explorer`).then(r => r.ok ? r.json() : null).catch(() => null),
     ])
-      .then(([tree, dfsData, byCountry, dailyData, cfg, balance]) => {
+      .then(([tree, dfsData, byCountry, dailyData, cfg, balance, ce]) => {
         setBranches(tree.branches);
         setDfs({ summary: dfsData.summary, branches: dfsData.branches });
         setCountries(byCountry.countries);
         setDaily(dailyData.points);
         setConfigs(cfg.stages);
         setDfsBalance(balance ?? null);
+        setCostExplorer(ce ?? null);
         setError("");
       })
       .catch(() => setError("Failed to load spend data"))
       .finally(() => setLoading(false));
+  }, []);
+
+  // AA-623 — manually trigger a fresh AWS Cost Explorer fetch (admin-secret gated on the BFF
+  // proxy), then reload the stored snapshot. Mirrors the loading-flag + inline-message pattern
+  // other admin pages use for POST actions (e.g. brand/page.tsx's activate button).
+  const runCostExplorerCheck = useCallback(() => {
+    setCeChecking(true);
+    setCeCheckMsg("");
+    fetch(`/api/admin/cost-explorer/check`, { method: "POST" })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then((result: { row_count: number; errors: Record<string, string> }) => {
+        const errCount = Object.keys(result.errors || {}).length;
+        setCeCheckMsg(
+          errCount > 0
+            ? `Fetched ${result.row_count} rows, ${errCount} account(s) failed (see logs).`
+            : `Fetched ${result.row_count} rows from AWS.`
+        );
+        return fetch(`/api/admin/cost-explorer`).then(r => r.ok ? r.json() : null).catch(() => null);
+      })
+      .then((ce) => setCostExplorer(ce ?? null))
+      .catch(() => setCeCheckMsg("Refresh failed — check server logs."))
+      .finally(() => setCeChecking(false));
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + range-change fetch, same pattern as every admin page
   useEffect(() => { load(days); }, [days, load]);
@@ -500,6 +541,20 @@ export default function ExternalSpendPage() {
     if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
   }, [llm, dfsCost]);
+  // AA-623 — AWS Cost Explorer rows keyed by account_id, mapped through the same ACCOUNT_META
+  // labels as the estimated (token) breakdown above, so the two can sit side by side.
+  const ceByAccount = useMemo(() => {
+    const rows = costExplorer?.rows ?? [];
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      const key = CE_ACCOUNT_ID_TO_KEY[r.account_id] ?? r.account_id;
+      m.set(key, (m.get(key) ?? 0) + r.amount_usd);
+    }
+    return [...m.entries()]
+      .map(([key, cost]) => ({ key, label: ACCOUNT_META[key]?.label ?? key, cost }))
+      .sort((a, b) => b.cost - a.cost);
+  }, [costExplorer]);
+  const ceTotal = costExplorer?.total_usd ?? null;
   const spendByTenant = useMemo(() => {
     const m = new Map<string, { label: string; cost: number }>();
     for (const b of llm) { const k = tenantKey(b); const c = m.get(k) ?? { label: b.tenant_label, cost: 0 }; c.cost += b.total_cost_usd; m.set(k, c); }
@@ -683,12 +738,69 @@ export default function ExternalSpendPage() {
                   )}
                 </Card>
 
+                {/* AA-623 — AWS actual (Cost Explorer) vs estimated (token) reconciliation. Reads
+                    the latest stored snapshot only (never a live CE call on page load — CE pricing
+                    itself costs ~$0.01/request); "Refresh from AWS" triggers a fresh fetch on demand. */}
+                <Card style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+                    <SLabel style={{ marginBottom: 0 }}>AWS actual (Cost Explorer) vs estimated (token)</SLabel>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {ceCheckMsg && <span style={{ fontSize: 11.5, color: A.muted2 }}>{ceCheckMsg}</span>}
+                      <Btn size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
+                        {ceChecking ? "Refreshing…" : "Refresh from AWS"}
+                      </Btn>
+                    </div>
+                  </div>
+
+                  {!costExplorer?.has_data ? (
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "16px 0", textAlign: "center" }}>
+                      No Cost Explorer data yet. Click &quot;Refresh from AWS&quot; to fetch the current billing period.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14, marginBottom: 14 }}>
+                        <StatCard
+                          label="AWS actual (Bedrock accounts)"
+                          value={ceTotal != null ? fmtUsd2(ceTotal) : "—"}
+                          sub={costExplorer.fetched_at ? `as of ${new Date(costExplorer.fetched_at).toLocaleString()}` : undefined}
+                          accent={A.gold}
+                        />
+                        <StatCard
+                          label="LLM estimated (token)"
+                          value={fmtUsd2(llmCost)}
+                          sub={`last ${days} days · from llm_call_log`}
+                          accent={A.ink3}
+                        />
+                      </div>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead><tr>
+                          <th style={TH}>Account</th>
+                          <th style={{ ...TH, textAlign: "right" }}>AWS actual</th>
+                        </tr></thead>
+                        <tbody>
+                          {ceByAccount.map(r => (
+                            <tr key={r.key}>
+                              <td style={TD}>{r.label}</td>
+                              <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.cost)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
+                        AWS actual covers whole accounts (all services, e.g. EC2/RDS/ECS/Bedrock) over the last 7 days by AWS billing
+                        period — it is not scoped to LLM calls alone, so it will not match the estimated figure exactly.
+                        DataForSEO is 3rd-party and never appears here.
+                      </div>
+                    </>
+                  )}
+                </Card>
+
                 <Card dark>
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
                     Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
                     Bedrock runs on satellite accounts (acc3 = <b>786888028788</b>, acc1 = 867490540162, acc2 = 005097885195); DataForSEO is 3rd-party (never in Cost Explorer).
-                    Cross-check against Cost Explorer by hand until a CE integration is built (tracked separately).
+                    See the &quot;AWS actual (Cost Explorer)&quot; panel above for reconciliation against the real AWS invoice.
                   </div>
                 </Card>
               </>
