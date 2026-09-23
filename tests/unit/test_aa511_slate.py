@@ -160,6 +160,43 @@ class TestChoosePlaceDedupAndHubCap:
         chosen = _choose("facebook", [a, b], hub_of={})
         assert {c.segment_id for c, _ in chosen} == {"seg_a", "seg_b"}
 
+    def test_seen_places_not_shared_by_default(self):
+        # AA-632 default (seen_places=None) — each _choose() call still gets its own fresh set,
+        # matching the pre-AA-632 behavior every existing test above already relies on. Two
+        # separate calls for the SAME place both succeed because neither call sees the other's
+        # `seen_places`.
+        a = self._seg("seg_a", "Itsukushima Shrine", score=1)
+        b = self._seg("seg_b", "Itsukushima Shrine", score=1)
+        chosen_facebook = _choose("facebook", [a], hub_of={})
+        chosen_instagram = _choose("instagram", [b], hub_of={})
+        assert [c.segment_id for c, _ in chosen_facebook] == ["seg_a"]
+        assert [c.segment_id for c, _ in chosen_instagram] == ["seg_b"]
+
+    def test_seen_places_shared_across_channels_when_passed_in(self):
+        # AA-632 — propose_slate() passes ONE seen_places set across its whole loop over
+        # CHANNEL_BARS, so "not already on slate" dedupes a place across Channels, not just
+        # within one Channel's own call. Simulates that loop directly: same place proposed to
+        # facebook first (wins), then instagram (loses, even though instagram's own candidate
+        # pool never saw facebook's winner).
+        seen_places: set[str] = set()
+        strong_on_facebook = self._seg("seg_fb", "Itsukushima Shrine", score=1)
+        weaker_on_instagram = self._seg("seg_ig", "Itsukushima Shrine", score=1)
+        chosen_facebook = _choose("facebook", [strong_on_facebook], hub_of={}, seen_places=seen_places)
+        chosen_instagram = _choose("instagram", [weaker_on_instagram], hub_of={}, seen_places=seen_places)
+        assert [c.segment_id for c, _ in chosen_facebook] == ["seg_fb"]
+        assert chosen_instagram == []
+
+    def test_seen_places_shared_does_not_affect_route_grain(self):
+        # Route candidates never set `place` (test_route_grain_has_no_place_dedup above) — a
+        # shared seen_places set must not accidentally cap route-grain Channels like blog just
+        # because a segment-grain Channel ran first in the same loop.
+        seen_places: set[str] = set()
+        seg = self._seg("seg_a", "Itsukushima Shrine", score=1)
+        _choose("facebook", [seg], hub_of={}, seen_places=seen_places)
+        route = self._route("r1", score=1, hub_id="hub_a")
+        chosen_blog = _choose("blog", [route], hub_of={}, seen_places=seen_places)
+        assert [c.route_id for c, _ in chosen_blog] == ["r1"]
+
     def test_bar_still_applies_before_dedup(self):
         fails_bar = self._seg("seg_fail", "Nijo Castle", score=1, said=10)  # under needs_said=150
         chosen = _choose("facebook", [fails_bar], hub_of={})
