@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date, datetime
 from typing import Any, Optional
 
 import asyncpg
@@ -202,6 +203,16 @@ def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
+def _to_date(value: Any) -> date:
+    """CE's ResultsByTime gives period start/end as 'YYYY-MM-DD' strings -- asyncpg's date
+    codec requires an actual date object (calls .toordinal() on it), it does not parse
+    strings itself. record_snapshot() rows may already carry a date (e.g. re-inserted from a
+    prior read) or a string (fresh from _fetch_one_account_cost) -- accept both."""
+    if isinstance(value, date):
+        return value
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
 async def record_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) -> int:
     """Insert one batch of Cost Explorer rows (same fetched_at for the whole batch, via
     now() default -- inserted in one transaction so a partial-write batch cannot happen).
@@ -214,7 +225,8 @@ async def record_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) -> int
             for row in rows:
                 await conn.execute(
                     _INSERT_SQL,
-                    row["account_id"], row["service"], row["period_start"], row["period_end"],
+                    row["account_id"], row["service"],
+                    _to_date(row["period_start"]), _to_date(row["period_end"]),
                     row["amount_usd"], row["unit"], json.dumps(row.get("raw")),
                 )
     logger.info("cost_explorer_snapshot_written", row_count=len(rows))
