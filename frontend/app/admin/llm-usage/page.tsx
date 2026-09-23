@@ -101,9 +101,9 @@ const CE_ACCOUNT_ID_TO_KEY: Record<string, string> = {
 // infra account (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock
 // line is only Cohere Embed / Palmyra.
 const CE_ACCOUNT_LABEL: Record<string, string> = {
-  acc3: "acc3 · 786888028788 (LLM satellite chính)",
-  acc1: "acc1 · 867490540162 (LLM satellite fallback)",
-  acc2: "acc2 · 005097885195 (hạ tầng chính)",
+  acc3: "acc3 · 786888028788 (LLM satellite, primary)",
+  acc1: "acc1 · 867490540162 (LLM satellite, fallback)",
+  acc2: "acc2 · 005097885195 (main infra)",
 };
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
