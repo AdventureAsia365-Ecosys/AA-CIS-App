@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -28,7 +28,7 @@ from api.routers.admin import verify_admin_secret
 from shared.aws_client.cost_explorer import (
     CostExplorerUnavailable,
     fetch_all_accounts_cost,
-    read_latest_snapshot,
+    read_cost_range,
     record_snapshot,
 )
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
@@ -116,6 +116,34 @@ async def patch_llm_config(
     return updated
 
 
+# ── AA-623 follow-up — one time window for every External Spend endpoint ───────────────────────
+# `days` = rolling preset (7/30/90). `start`/`end` (calendar dates, UTC, end INCLUSIVE) override it
+# so the page can pin an exact window, e.g. "from the day X shipped" -- and so LLM/DFS estimated
+# and Cost Explorer actual (daily, UTC-bucketed) cover the same days.
+_MAX_WINDOW_DAYS = 366
+
+
+def _resolve_window(days: int, start: Optional[date], end: Optional[date]) -> tuple[datetime, datetime]:
+    """-> (since, until), tz-aware UTC, half-open [since, until)."""
+    if start is None and end is None:
+        until = datetime.now(timezone.utc)
+        return until - timedelta(days=days), until
+    today = datetime.now(timezone.utc).date()
+    end = end or today
+    start = start or (end - timedelta(days=days - 1))
+    if start > end:
+        raise HTTPException(status_code=422, detail="start must be on or before end")
+    if (end - start).days + 1 > _MAX_WINDOW_DAYS:
+        raise HTTPException(status_code=422, detail=f"window longer than {_MAX_WINDOW_DAYS} days")
+    since = datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc)
+    until = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    return since, until
+
+
+def _window_meta(days: int, since: datetime, until: datetime) -> dict:
+    return {"days": days, "since": since.isoformat(), "until": until.isoformat()}
+
+
 # ── AA-505 — Tenant -> Model -> Stage cost/quality tree ────────────────────────────────────────
 
 _TREE_SQL = """
@@ -167,17 +195,21 @@ _TREE_SQL = """
         MAX(l.created_at) AS last_call_at
     FROM shared.llm_call_log l
     LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id
-    WHERE l.created_at >= now() - ($1 || ' days')::interval
+    WHERE l.created_at >= $1 AND l.created_at < $2
     GROUP BY l.tenant_id, t.slug, l.model, l.stage, l.role, l.account, l.provider
     ORDER BY tenant_label, l.account, l.model, l.stage
 """
 
 
 @router.get("/llm-usage/tree", summary="AA-505 — Tenant -> Model -> Stage cost/quality rollup")
-async def get_llm_usage_tree(request: Request, days: int = Query(30, ge=1, le=365)):
+async def get_llm_usage_tree(
+    request: Request, days: int = Query(30, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+):
+    since, until = _resolve_window(days, start, end)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_TREE_SQL, str(days))
+        rows = await conn.fetch(_TREE_SQL, since, until)
     branches = []
     for r in rows:
         d = dict(r)
@@ -186,8 +218,8 @@ async def get_llm_usage_tree(request: Request, days: int = Query(30, ge=1, le=36
         d["avg_output_len_chars"] = float(d["avg_output_len_chars"]) if d["avg_output_len_chars"] is not None else None
         d["ok_rate"] = (d["ok_count"] / d["ok_eligible_count"]) if d["ok_eligible_count"] else None
         branches.append(d)
-    logger.info("admin_llm_usage_tree_queried", days=days, branch_count=len(branches))
-    return {"days": days, "branches": branches}
+    logger.info("admin_llm_usage_tree_queried", days=days, since=since.isoformat(), branch_count=len(branches))
+    return {**_window_meta(days, since, until), "branches": branches}
 
 
 @router.get(
@@ -204,6 +236,8 @@ async def get_llm_usage_calls(
     fallback_used: Optional[bool] = None,   # AA-622: drill into which calls fell back acc3->acc1/GPT
     days: Optional[int] = Query(None, ge=1, le=365),
     limit: int = Query(50, ge=1, le=500),
+    start: Optional[date] = None,
+    end: Optional[date] = None,
 ):
     pool = request.app.state.pool
     # (column, sql_type, value) — stage/role/account columns are text, attribution columns are uuid.
@@ -223,7 +257,11 @@ async def get_llm_usage_calls(
     if fallback_used is not None:
         params.append(fallback_used)
         clauses.append(f"fallback_used = ${len(params)}::bool")
-    if days is not None:
+    if start is not None or end is not None:
+        since, until = _resolve_window(days or 30, start, end)
+        params.extend([since, until])
+        clauses.append(f"created_at >= ${len(params) - 1} AND created_at < ${len(params)}")
+    elif days is not None:
         params.append(str(days))
         clauses.append(f"created_at >= now() - (${len(params)} || ' days')::interval")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -262,7 +300,7 @@ _DFS_TREE_SQL = """
         COALESCE(SUM(keyword_count), 0)             AS keywords_total,
         MAX(created_at)                             AS last_call_at
     FROM shared.dfs_call_log
-    WHERE created_at >= now() - ($1 || ' days')::interval
+    WHERE created_at >= $1 AND created_at < $2
     GROUP BY endpoint, tenant_id
     ORDER BY total_cost_usd DESC NULLS LAST, endpoint
 """
@@ -274,16 +312,20 @@ _DFS_SUMMARY_SQL = """
         COUNT(*) FILTER (WHERE cache_hit)     AS cache_hits,
         COALESCE(SUM(cost_usd), 0)::float     AS total_cost_usd
     FROM shared.dfs_call_log
-    WHERE created_at >= now() - ($1 || ' days')::interval
+    WHERE created_at >= $1 AND created_at < $2
 """
 
 
 @router.get("/dfs-usage", summary="AA-618 — DataForSEO cost/cache-hit rollup by endpoint+tenant")
-async def get_dfs_usage(request: Request, days: int = Query(30, ge=1, le=365)):
+async def get_dfs_usage(
+    request: Request, days: int = Query(30, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+):
+    since, until = _resolve_window(days, start, end)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_DFS_TREE_SQL, str(days))
-        summary = await conn.fetchrow(_DFS_SUMMARY_SQL, str(days))
+        rows = await conn.fetch(_DFS_TREE_SQL, since, until)
+        summary = await conn.fetchrow(_DFS_SUMMARY_SQL, since, until)
     branches = []
     for r in rows:
         d = dict(r)
@@ -296,7 +338,7 @@ async def get_dfs_usage(request: Request, days: int = Query(30, ge=1, le=365)):
     total = s.get("total_calls") or 0
     s["cache_hit_rate"] = (s.get("cache_hits", 0) / total) if total else None
     logger.info("admin_dfs_usage_queried", days=days, branch_count=len(branches))
-    return {"days": days, "summary": s, "branches": branches}
+    return {**_window_meta(days, since, until), "summary": s, "branches": branches}
 
 
 # ── AA-622 — DFS spend by DataForSEO location_code -> country name ──────────────────────────────
@@ -322,17 +364,21 @@ _DFS_COUNTRY_SQL = """
         COALESCE(SUM(cost_usd), 0)::float           AS total_cost_usd,
         COALESCE(SUM(keyword_count), 0)             AS keywords_total
     FROM shared.dfs_call_log
-    WHERE created_at >= now() - ($1 || ' days')::interval
+    WHERE created_at >= $1 AND created_at < $2
     GROUP BY location_code
     ORDER BY total_cost_usd DESC NULLS LAST
 """
 
 
 @router.get("/dfs-usage/by-country", summary="AA-622 — DataForSEO spend grouped by target market (location_code)")
-async def get_dfs_usage_by_country(request: Request, days: int = Query(30, ge=1, le=365)):
+async def get_dfs_usage_by_country(
+    request: Request, days: int = Query(30, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+):
+    since, until = _resolve_window(days, start, end)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_DFS_COUNTRY_SQL, str(days))
+        rows = await conn.fetch(_DFS_COUNTRY_SQL, since, until)
     out = []
     for r in rows:
         d = dict(r)
@@ -342,7 +388,7 @@ async def get_dfs_usage_by_country(request: Request, days: int = Query(30, ge=1,
         d["cache_hit_rate"] = (d["cache_hit_count"] / total) if total else None
         out.append(d)
     logger.info("admin_dfs_by_country_queried", days=days, row_count=len(out))
-    return {"days": days, "countries": out}
+    return {**_window_meta(days, since, until), "countries": out}
 
 
 # ── AA-622 — daily spend time-series (LLM + DFS) for the External Spend trend chart ─────────────
@@ -354,13 +400,13 @@ _DAILY_SPEND_SQL = """
         SELECT date_trunc('day', created_at) AS day, 'llm' AS source,
                COALESCE(SUM(cost_usd), 0)::float AS cost_usd, COUNT(*) AS call_count
           FROM shared.llm_call_log
-         WHERE created_at >= now() - ($1 || ' days')::interval
+         WHERE created_at >= $1 AND created_at < $2
          GROUP BY 1
         UNION ALL
         SELECT date_trunc('day', created_at) AS day, 'dfs' AS source,
                COALESCE(SUM(cost_usd), 0)::float AS cost_usd, COUNT(*) AS call_count
           FROM shared.dfs_call_log
-         WHERE created_at >= now() - ($1 || ' days')::interval
+         WHERE created_at >= $1 AND created_at < $2
          GROUP BY 1
     ) u
     ORDER BY day, source
@@ -368,17 +414,21 @@ _DAILY_SPEND_SQL = """
 
 
 @router.get("/spend/daily", summary="AA-622 — daily LLM + DFS spend time-series for the trend chart")
-async def get_spend_daily(request: Request, days: int = Query(30, ge=1, le=365)):
+async def get_spend_daily(
+    request: Request, days: int = Query(30, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+):
+    since, until = _resolve_window(days, start, end)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_DAILY_SPEND_SQL, str(days))
+        rows = await conn.fetch(_DAILY_SPEND_SQL, since, until)
     points = []
     for r in rows:
         d = dict(r)
         d["day"] = d["day"].isoformat() if d["day"] else None
         points.append(d)
     logger.info("admin_spend_daily_queried", days=days, point_count=len(points))
-    return {"days": days, "points": points}
+    return {**_window_meta(days, since, until), "points": points}
 
 
 # ── AA-627 — DataForSEO account balance: daily check + low-balance alert ────────────────────────
@@ -494,25 +544,33 @@ async def get_dfs_balance(request: Request):
 # Same job-then-read split as the DFS balance pair above (AA-627), for the same reason: Cost
 # Explorer's own pricing API costs ~$0.01/request, so the External Spend page must never call it
 # live per page view.
-#   POST /admin/cost-explorer/check — the once-a-day job. Fetches acc1/acc2/acc3's own CE data
+#   POST /admin/cost-explorer/check — fetches acc1/acc2/acc3's own CE data for a window
 #       (acc2 directly, acc1/acc3 via STS AssumeRole satellite roles -- see
 #       shared/aws_client/cost_explorer.py's module docstring for why there is no single
-#       consolidated call) and stores one row per (account, service, period). Secret-gated,
-#       same EventBridge->Lambda scheduler convention as /admin/dfs-balance/check.
-#   GET  /admin/cost-explorer — the External Spend page reads the LATEST stored batch (never
-#       calls CE live per request).
+#       consolidated call) and stores one row per (account, service, day). Secret-gated.
+#       NOTE: no scheduler calls this yet (unlike /admin/dfs-balance/check) -- today it only runs
+#       from the page's "Refresh from AWS" button. 3 CE requests (~$0.03) per call.
+#   GET  /admin/cost-explorer — reads stored days in the same window as the rest of the page
+#       (never calls CE live per request), Bedrock vs infra split per account.
 
-_DEFAULT_COST_EXPLORER_LOOKBACK_DAYS = 7
+
+def _ce_days(since: datetime, until: datetime) -> tuple[date, date]:
+    """Window -> CE's day-granular, End-exclusive [start, end). A rolling window ending mid-day
+    (now) rounds out to include today's partial day."""
+    end_d = until.date() if until.time() == datetime.min.time() else until.date() + timedelta(days=1)
+    return since.date(), end_d
 
 
-@router.post("/cost-explorer/check", summary="AA-623 — daily AWS Cost Explorer actual-spend read")
-async def check_cost_explorer(request: Request, x_admin_secret: str = Header(None)):
+@router.post("/cost-explorer/check", summary="AA-623 — fetch AWS Cost Explorer actual spend for a window")
+async def check_cost_explorer(
+    request: Request, x_admin_secret: str = Header(None),
+    days: int = Query(7, ge=1, le=365), start: Optional[date] = None, end: Optional[date] = None,
+):
     verify_admin_secret(x_admin_secret)
 
-    end = date.today()
-    start = end - timedelta(days=_DEFAULT_COST_EXPLORER_LOOKBACK_DAYS)
+    start_d, end_d = _ce_days(*_resolve_window(days, start, end))
     try:
-        result = fetch_all_accounts_cost(start.isoformat(), end.isoformat())
+        result = fetch_all_accounts_cost(start_d.isoformat(), end_d.isoformat())
     except CostExplorerUnavailable as e:
         logger.error("cost_explorer_check_fetch_failed", error=str(e))
         raise HTTPException(status_code=502, detail=f"Cost Explorer read failed: {e}")
@@ -524,18 +582,24 @@ async def check_cost_explorer(request: Request, x_admin_secret: str = Header(Non
     return {
         "row_count": written,
         "errors": result["errors"],
-        "period_start": start.isoformat(),
-        "period_end": end.isoformat(),
+        "period_start": start_d.isoformat(),
+        "period_end_exclusive": end_d.isoformat(),
     }
 
 
-@router.get("/cost-explorer", summary="AA-623 — latest stored AWS Cost Explorer snapshot (no live CE call)")
-async def get_cost_explorer(request: Request):
+@router.get("/cost-explorer", summary="AA-623 — stored AWS Cost Explorer spend for a window (no live CE call)")
+async def get_cost_explorer(
+    request: Request, days: int = Query(7, ge=1, le=365),
+    start: Optional[date] = None, end: Optional[date] = None,
+):
+    start_d, end_d = _ce_days(*_resolve_window(days, start, end))
     pool = request.app.state.pool
-    latest = await read_latest_snapshot(pool)
-    if not latest:
-        return {"rows": [], "total_usd": None, "fetched_at": None, "has_data": False}
-    return {**latest, "has_data": True}
+    data = await read_cost_range(pool, start_d, end_d)
+    window = {"period_start": start_d.isoformat(), "period_end_exclusive": end_d.isoformat()}
+    if not data:
+        return {**window, "accounts": [], "services": [], "total_usd": None, "bedrock_usd": None,
+                "fetched_at": None, "has_data": False}
+    return {**window, **data, "has_data": True}
 
 
 @router.get(

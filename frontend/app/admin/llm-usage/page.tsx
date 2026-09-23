@@ -3,7 +3,7 @@
 // TENANT and by ACCOUNT (both are first-class filter/group dimensions), model, stage. Extends the
 // AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
 import { ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -64,12 +64,14 @@ interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (
   balance_usd: number | null; currency: string | null; threshold_usd: number;
   below_threshold: boolean; fetched_at: string | null; has_data: boolean;
 }
-interface CostExplorerRow {  // AA-623 — one AWS Cost Explorer row (account/service/period)
-  account_id: string; service: string; period_start: string; period_end: string;
-  amount_usd: number; unit: string; fetched_at: string;
+interface CostExplorerAccount {  // AA-623 — one account's stored CE spend in the window
+  account_id: string; total_usd: number; bedrock_usd: number; other_usd: number;
 }
-interface CostExplorerData {  // AA-623 — latest stored CE snapshot (never a live call on page load)
-  rows: CostExplorerRow[]; total_usd: number | null; fetched_at: string | null; has_data: boolean;
+interface CostExplorerService { account_id: string; service: string; amount_usd: number; is_bedrock: boolean; }
+interface CostExplorerData {  // AA-623 — stored CE days for the page window (never a live call on page load)
+  accounts: CostExplorerAccount[]; services: CostExplorerService[];
+  total_usd: number | null; bedrock_usd: number | null; fetched_at: string | null; has_data: boolean;
+  period_start: string; period_end_exclusive: string; covered_from?: string; covered_to?: string;
 }
 interface StageConfig {
   stage: string; role: string; provider: string; model_id: string; account_route: string | null;
@@ -91,9 +93,17 @@ const ACCOUNT_META: Record<string, { label: string; short: string; color: string
   unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
 };
 // AA-623 — AWS account ID -> the same acc1/acc2/acc3 keys ACCOUNT_META uses, so Cost Explorer
-// rows (keyed by raw account_id) can be labeled identically to the estimated (token) breakdown.
+// rows (keyed by raw account_id) line up with the estimated (token) breakdown.
 const CE_ACCOUNT_ID_TO_KEY: Record<string, string> = {
   "786888028788": "acc3", "867490540162": "acc1", "005097885195": "acc2",
+};
+// Cost Explorer covers WHOLE accounts, so these labels must not say "(Bedrock)": acc2 is the main
+// infra account (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock
+// line is only Cohere Embed / Palmyra.
+const CE_ACCOUNT_LABEL: Record<string, string> = {
+  acc3: "acc3 · 786888028788 (LLM satellite chính)",
+  acc1: "acc1 · 867490540162 (LLM satellite fallback)",
+  acc2: "acc2 · 005097885195 (hạ tầng chính)",
 };
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
@@ -116,6 +126,10 @@ function tenantKey(b: { tenant_id: string | null; tenant_label: string }): strin
 }
 
 const DAY_OPTIONS = [7, 30, 90];
+const DATE_INPUT: CSSProperties = {
+  fontSize: 12.5, padding: "4px 6px", borderRadius: 7, border: `1px solid ${A.line}`,
+  background: A.card, color: A.ink2, fontFamily: sans,
+};
 
 // ── Shared quality cell ──────────────────────────────────────────────────────
 
@@ -359,19 +373,21 @@ function Bar({ rows, total, colorOf }: {
 // (fallback_used=true) for the current tenant/day filter so admin can see which
 // stage/model/account rotated and when — the "why is fallback high" answer.
 
-function FallbackModal({ tenantId, tenantLabel, days, onClose }: {
-  tenantId: string | null; tenantLabel: string | null; days: number; onClose: () => void;
+function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: {
+  tenantId: string | null; tenantLabel: string | null; rangeQs: string; rangeLabel: string; onClose: () => void;
 }) {
   const [calls, setCalls] = useState<CallRow[] | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
-    const qs = new URLSearchParams({ fallback_used: "true", days: String(days), limit: "200" });
+    const qs = new URLSearchParams(rangeQs);
+    qs.set("fallback_used", "true");
+    qs.set("limit", "200");
     if (tenantId) qs.set("tenant_id", tenantId);
     fetch(`/api/admin/llm-usage/calls?${qs.toString()}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(d => setCalls(d.calls))
       .catch(() => setErr("Failed to load fallback calls"));
-  }, [tenantId, days]);
+  }, [tenantId, rangeQs]);
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 1000,
@@ -385,7 +401,7 @@ function FallbackModal({ tenantId, tenantLabel, days, onClose }: {
           <div>
             <div style={{ fontFamily: serif, fontSize: 16, color: A.ink, fontWeight: 500 }}>Fallback calls</div>
             <div style={{ fontSize: 11.5, color: A.muted2 }}>
-              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · last {days} days · calls that rotated acc3→acc1 or up to GPT
+              {tenantLabel ? `Tenant: ${tenantLabel}` : "All tenants"} · {rangeLabel} · calls that rotated acc3→acc1 or up to GPT
             </div>
           </div>
           <Btn size="sm" variant="ghost" onClick={onClose} style={{ marginLeft: "auto" }}>Close</Btn>
@@ -445,20 +461,35 @@ export default function ExternalSpendPage() {
   // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
   const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
-  const load = useCallback((d: number) => {
+  // One time window for the whole page (LLM, DFS, trend, fallback drill-down AND Cost Explorer):
+  // a rolling preset, or a custom from/to date range (UTC calendar days, "to" inclusive) — e.g.
+  // "from the day X shipped". Both sides of the AWS-actual vs estimated comparison use it.
+  const [custom, setCustom] = useState<{ start: string; end: string } | null>(null);
+  const [draftStart, setDraftStart] = useState("");
+  const [draftEnd, setDraftEnd] = useState("");
+  const rangeQs = custom ? `start=${custom.start}&end=${custom.end}` : `days=${days}`;
+  const rangeLabel = custom ? `${custom.start} → ${custom.end}` : `last ${days} days`;
+  const applyCustom = () => {
+    if (!draftStart) return;
+    const end = draftEnd || new Date().toISOString().slice(0, 10);
+    if (draftStart > end) return;
+    setCustom({ start: draftStart, end });
+  };
+
+  const load = useCallback((qs: string) => {
     setLoading(true);
     Promise.all([
-      fetch(`/api/admin/llm-usage/tree?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      fetch(`/api/admin/dfs-usage?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      fetch(`/api/admin/dfs-usage/by-country?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      fetch(`/api/admin/spend/daily?days=${d}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`/api/admin/llm-usage/tree?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`/api/admin/dfs-usage?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`/api/admin/dfs-usage/by-country?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      fetch(`/api/admin/spend/daily?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       fetch(`/api/admin/llm-config`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
       // AA-627 — latest stored DFS balance (reads the daily snapshot, never a live DFS call).
       // Tolerate failure (older deploys / empty table) so the whole page still loads.
       fetch(`/api/admin/dfs-balance`).then(r => r.ok ? r.json() : null).catch(() => null),
-      // AA-623 — latest stored AWS Cost Explorer snapshot (reads only, never a live CE call on
-      // page load — CE pricing costs ~$0.01/request). Same tolerate-failure pattern as dfs-balance.
-      fetch(`/api/admin/cost-explorer`).then(r => r.ok ? r.json() : null).catch(() => null),
+      // AA-623 — stored AWS Cost Explorer days for the same window (reads only, never a live CE
+      // call on page load — CE pricing costs ~$0.01/request). Same tolerate-failure pattern as dfs-balance.
+      fetch(`/api/admin/cost-explorer?${qs}`).then(r => r.ok ? r.json() : null).catch(() => null),
     ])
       .then(([tree, dfsData, byCountry, dailyData, cfg, balance, ce]) => {
         setBranches(tree.branches);
@@ -480,7 +511,7 @@ export default function ExternalSpendPage() {
   const runCostExplorerCheck = useCallback(() => {
     setCeChecking(true);
     setCeCheckMsg("");
-    fetch(`/api/admin/cost-explorer/check`, { method: "POST" })
+    fetch(`/api/admin/cost-explorer/check?${rangeQs}`, { method: "POST" })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then((result: { row_count: number; errors: Record<string, string> }) => {
         const errCount = Object.keys(result.errors || {}).length;
@@ -489,14 +520,14 @@ export default function ExternalSpendPage() {
             ? `Fetched ${result.row_count} rows, ${errCount} account(s) failed (see logs).`
             : `Fetched ${result.row_count} rows from AWS.`
         );
-        return fetch(`/api/admin/cost-explorer`).then(r => r.ok ? r.json() : null).catch(() => null);
+        return fetch(`/api/admin/cost-explorer?${rangeQs}`).then(r => r.ok ? r.json() : null).catch(() => null);
       })
       .then((ce) => setCostExplorer(ce ?? null))
       .catch(() => setCeCheckMsg("Refresh failed — check server logs."))
       .finally(() => setCeChecking(false));
-  }, []);
+  }, [rangeQs]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + range-change fetch, same pattern as every admin page
-  useEffect(() => { load(days); }, [days, load]);
+  useEffect(() => { load(rangeQs); }, [rangeQs, load]);
 
   const allBranches = useMemo(() => branches ?? [], [branches]);
   const allDfs = useMemo(() => dfs?.branches ?? [], [dfs]);
@@ -541,20 +572,33 @@ export default function ExternalSpendPage() {
     if (dfsCost > 0) rows.push({ key: "dfs", label: "DataForSEO (3rd-party)", cost: dfsCost });
     return rows.sort((a, b) => b.cost - a.cost);
   }, [llm, dfsCost]);
-  // AA-623 — AWS Cost Explorer rows keyed by account_id, mapped through the same ACCOUNT_META
-  // labels as the estimated (token) breakdown above, so the two can sit side by side.
+  // AA-623 — Cost Explorer per account, Bedrock vs infra, next to the token estimate for the same
+  // account. Only Bedrock-on-AWS estimate is comparable: OpenAI/legacy rows never hit an AWS bill.
   const ceByAccount = useMemo(() => {
-    const rows = costExplorer?.rows ?? [];
-    const m = new Map<string, number>();
-    for (const r of rows) {
-      const key = CE_ACCOUNT_ID_TO_KEY[r.account_id] ?? r.account_id;
-      m.set(key, (m.get(key) ?? 0) + r.amount_usd);
+    const estByAcct = new Map<string, number>();
+    for (const b of allBranches) {
+      const k = acctKey(b);
+      estByAcct.set(k, (estByAcct.get(k) ?? 0) + b.total_cost_usd);
     }
-    return [...m.entries()]
-      .map(([key, cost]) => ({ key, label: ACCOUNT_META[key]?.label ?? key, cost }))
-      .sort((a, b) => b.cost - a.cost);
+    return (costExplorer?.accounts ?? []).map(a => {
+      const key = CE_ACCOUNT_ID_TO_KEY[a.account_id] ?? a.account_id;
+      return { ...a, key, label: CE_ACCOUNT_LABEL[key] ?? a.account_id, estimated: estByAcct.get(key) ?? 0 };
+    });
+  }, [costExplorer, allBranches]);
+  const bedrockEstimated = ceByAccount.reduce((s, r) => s + r.estimated, 0);
+  const ceTopServices = useMemo(() => (costExplorer?.services ?? []).slice(0, 10), [costExplorer]);
+  // Stored CE days only cover windows someone clicked "Refresh from AWS" for — flag gaps.
+  const ceGap = useMemo(() => {
+    if (!costExplorer?.has_data || !costExplorer.covered_from || !costExplorer.covered_to) return null;
+    const lastWanted = new Date(new Date(costExplorer.period_end_exclusive).getTime() - 86400000).toISOString().slice(0, 10);
+    const missingStart = costExplorer.covered_from > costExplorer.period_start;
+    // CE finalizes a day ~24h late, so the day before the latest fetch is the most we can expect.
+    const dayBeforeFetch = costExplorer.fetched_at
+      ? new Date(new Date(costExplorer.fetched_at).getTime() - 86400000).toISOString().slice(0, 10)
+      : lastWanted;
+    const missingEnd = costExplorer.covered_to < (lastWanted < dayBeforeFetch ? lastWanted : dayBeforeFetch);
+    return missingStart || missingEnd ? `${costExplorer.covered_from} → ${costExplorer.covered_to}` : null;
   }, [costExplorer]);
-  const ceTotal = costExplorer?.total_usd ?? null;
   const spendByTenant = useMemo(() => {
     const m = new Map<string, { label: string; cost: number }>();
     for (const b of llm) { const k = tenantKey(b); const c = m.get(k) ?? { label: b.tenant_label, cost: 0 }; c.cost += b.total_cost_usd; m.set(k, c); }
@@ -612,10 +656,19 @@ export default function ExternalSpendPage() {
             <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>External Spend</h1>
             <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>Real LLM + DataForSEO cost — by tenant, account, model, stage</div>
           </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             {DAY_OPTIONS.map(d => (
-              <Btn key={d} size="sm" variant={days === d ? "primary" : "secondary"} onClick={() => setDays(d)}>{d} days</Btn>
+              <Btn key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
+                   onClick={() => { setCustom(null); setDays(d); }}>{d} days</Btn>
             ))}
+            <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
+            <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label="From (UTC)"
+                   style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
+            <span style={{ fontSize: 12, color: A.muted }}>→</span>
+            <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label="To (UTC, inclusive; empty = today)"
+                   style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
+            <Btn size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
+                 disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>Apply</Btn>
           </div>
         </div>
 
@@ -674,7 +727,7 @@ export default function ExternalSpendPage() {
         {!loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
-            <Btn variant="secondary" onClick={() => load(days)}>Retry</Btn>
+            <Btn variant="secondary" onClick={() => load(rangeQs)}>Retry</Btn>
           </Card>
         )}
 
@@ -684,7 +737,7 @@ export default function ExternalSpendPage() {
             {tab === "overview" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
-                  <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`last ${days} days · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
+                  <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`${rangeLabel} · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
                   <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfsCalls)} calls · ${pct(dfsCacheRate)} cache`} accent={A.green} icon={<Search size={16} />} />
                   <StatCard label="Tenants active" value={fmtInt(spendByTenant.length)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.red} icon={<Building2 size={16} />} />
@@ -693,7 +746,7 @@ export default function ExternalSpendPage() {
                 <Card style={{ marginBottom: 20 }}>
                   <SLabel>Daily spend trend (LLM + DFS)</SLabel>
                   {trend.length === 0 ? (
-                    <div style={{ color: A.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>No spend in the last {days} days.</div>
+                    <div style={{ color: A.muted2, fontSize: 13, padding: "30px 0", textAlign: "center" }}>No spend in {rangeLabel}.</div>
                   ) : (
                     <ResponsiveContainer width="100%" height={240}>
                       <AreaChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -754,42 +807,75 @@ export default function ExternalSpendPage() {
 
                   {!costExplorer?.has_data ? (
                     <div style={{ color: A.muted2, fontSize: 13, padding: "16px 0", textAlign: "center" }}>
-                      No Cost Explorer data yet. Click &quot;Refresh from AWS&quot; to fetch the current billing period.
+                      No stored Cost Explorer data for {rangeLabel}. Click &quot;Refresh from AWS&quot; to fetch this window.
                     </div>
                   ) : (
                     <>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14, marginBottom: 14 }}>
+                      {ceGap && (
+                        <div style={{ fontSize: 12, color: A.amber, marginBottom: 10 }}>
+                          ⚠ Stored AWS data only covers {ceGap} of this window — click &quot;Refresh from AWS&quot; to fill it.
+                        </div>
+                      )}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 14 }}>
                         <StatCard
-                          label="AWS actual (Bedrock accounts)"
-                          value={ceTotal != null ? fmtUsd2(ceTotal) : "—"}
-                          sub={costExplorer.fetched_at ? `as of ${new Date(costExplorer.fetched_at).toLocaleString()}` : undefined}
+                          label="Bedrock actual (AWS bill)"
+                          value={fmtUsd2(costExplorer.bedrock_usd ?? 0)}
+                          sub={costExplorer.fetched_at ? `CE · as of ${new Date(costExplorer.fetched_at).toLocaleString()}` : "CE"}
                           accent={A.gold}
                         />
                         <StatCard
-                          label="LLM estimated (token)"
-                          value={fmtUsd2(llmCost)}
-                          sub={`last ${days} days · from llm_call_log`}
+                          label="Bedrock estimated (token)"
+                          value={fmtUsd2(bedrockEstimated)}
+                          sub={`${rangeLabel} · llm_call_log acc1/2/3 only`}
                           accent={A.ink3}
                         />
+                        <StatCard
+                          label="AWS infra (non-Bedrock)"
+                          value={fmtUsd2((costExplorer.total_usd ?? 0) - (costExplorer.bedrock_usd ?? 0))}
+                          sub={`total AWS ${fmtUsd2(costExplorer.total_usd ?? 0)} · ECS/RDS/ELB/…`}
+                          accent={A.muted}
+                        />
                       </div>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead><tr>
-                          <th style={TH}>Account</th>
-                          <th style={{ ...TH, textAlign: "right" }}>AWS actual</th>
-                        </tr></thead>
-                        <tbody>
-                          {ceByAccount.map(r => (
-                            <tr key={r.key}>
-                              <td style={TD}>{r.label}</td>
-                              <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.cost)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead><tr>
+                            <th style={TH}>Account</th>
+                            <th style={{ ...TH, textAlign: "right" }}>Bedrock actual</th>
+                            <th style={{ ...TH, textAlign: "right" }}>Bedrock estimated</th>
+                            <th style={{ ...TH, textAlign: "right" }}>Infra / other</th>
+                            <th style={{ ...TH, textAlign: "right" }}>Account total</th>
+                          </tr></thead>
+                          <tbody>
+                            {ceByAccount.map(r => (
+                              <tr key={r.key}>
+                                <td style={TD}>{r.label}</td>
+                                <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.bedrock_usd)}</td>
+                                <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{fmtUsd2(r.estimated)}</td>
+                                <td style={{ ...TD, textAlign: "right", fontFamily: mono, color: A.muted }}>{fmtUsd2(r.other_usd)}</td>
+                                <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd2(r.total_usd)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {ceTopServices.length > 0 && (
+                        <details style={{ marginTop: 10 }}>
+                          <summary style={{ fontSize: 12, color: A.muted, cursor: "pointer" }}>Top AWS services in this window</summary>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
+                            {ceTopServices.map(s => (
+                              <div key={`${s.account_id}-${s.service}`} style={{ display: "flex", gap: 8, fontSize: 12 }}>
+                                <span style={{ color: A.muted2, minWidth: 44 }}>{CE_ACCOUNT_ID_TO_KEY[s.account_id] ?? s.account_id}</span>
+                                <span style={{ color: s.is_bedrock ? A.gold : A.ink2 }}>{s.service}</span>
+                                <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                       <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
-                        AWS actual covers whole accounts (all services, e.g. EC2/RDS/ECS/Bedrock) over the last 7 days by AWS billing
-                        period — it is not scoped to LLM calls alone, so it will not match the estimated figure exactly.
-                        DataForSEO is 3rd-party and never appears here.
+                        Compare the Bedrock columns only: Cost Explorer bills whole accounts, and acc2 is the main infra account
+                        (native Claude is blocked there — its Bedrock line is Cohere Embed / Palmyra only). CE days are UTC and the
+                        latest ~24h is still being finalized. OpenAI and DataForSEO are not AWS and never appear here.
                       </div>
                     </>
                   )}
@@ -799,7 +885,7 @@ export default function ExternalSpendPage() {
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
                     Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Bedrock runs on satellite accounts (acc3 = <b>786888028788</b>, acc1 = 867490540162, acc2 = 005097885195); DataForSEO is 3rd-party (never in Cost Explorer).
+                    Claude on Bedrock runs on the satellite accounts (acc3 = <b>786888028788</b> primary, acc1 = 867490540162 fallback); acc2 = 005097885195 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
                     See the &quot;AWS actual (Cost Explorer)&quot; panel above for reconciliation against the real AWS invoice.
                   </div>
                 </Card>
@@ -810,7 +896,7 @@ export default function ExternalSpendPage() {
             {tab === "llm" && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 18 }}>
-                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.gold} />
+                  <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={filterActive ? "filtered" : rangeLabel} accent={A.gold} />
                   <StatCard label="Calls" value={fmtInt(llmCalls)} sub={`${fmtInt(llmTokens)} tokens`} />
                   <StatCard label="Pass rate" value={okElig > 0 ? pct(okCount / okElig) : "—"} sub={okElig > 0 ? `${okCount}/${okElig}` : "no signal"} />
                   <div onClick={() => llmFallback > 0 && setFbModal({ tenantId: tenantFilter, label: tenantLabelOf(tenantFilter) })}
@@ -876,7 +962,7 @@ export default function ExternalSpendPage() {
                       : "no reading yet"}
                     accent={dfsBalance?.below_threshold ? A.red : A.green}
                   />
-                  <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={filterActive ? "filtered" : `last ${days} days`} accent={A.green} />
+                  <StatCard label="DFS cost" value={fmtUsd2(dfsCost)} sub={filterActive ? "filtered" : rangeLabel} accent={A.green} />
                   <StatCard label="Total calls" value={fmtInt(dfsCalls)} />
                   <StatCard label="Live calls" value={fmtInt(dfsLive)} sub="real DFS HTTP" accent={A.amber} />
                   <StatCard label="Cache hits" value={fmtInt(dfsCacheHits)} accent={A.gold} />
@@ -984,7 +1070,7 @@ export default function ExternalSpendPage() {
         )}
 
         {fbModal && (
-          <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} days={days} onClose={() => setFbModal(null)} />
+          <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} rangeQs={rangeQs} rangeLabel={rangeLabel} onClose={() => setFbModal(null)} />
         )}
       </main>
     </div>

@@ -174,44 +174,147 @@ async def test_record_snapshot_empty_rows_is_noop():
     pool.acquire.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_read_latest_snapshot_none_when_empty():
+def test_fetch_one_account_cost_follows_next_page_token():
+    """DAILY x GroupBy SERVICE paginates on longer windows -- every page must be read, not just
+    the first (the original fetch silently dropped later days)."""
     from shared.aws_client import cost_explorer as ce_mod
 
+    def page(day, token=None):
+        resp = {"ResultsByTime": [{
+            "TimePeriod": {"Start": day, "End": day},
+            "Groups": [{"Keys": ["AWS WAF"], "Metrics": {"UnblendedCost": {"Amount": "0.31", "Unit": "USD"}}}],
+        }]}
+        if token:
+            resp["NextPageToken"] = token
+        return resp
+
+    fake_ce_client = MagicMock()
+    fake_ce_client.get_cost_and_usage.side_effect = [page("2026-09-01", "t1"), page("2026-09-02")]
+    with patch("shared.aws_client.cost_explorer.boto3.client", return_value=fake_ce_client):
+        rows = ce_mod._fetch_one_account_cost("acc2", "2026-09-01", "2026-09-03")
+
+    assert [r["period_start"] for r in rows] == ["2026-09-01", "2026-09-02"]
+    assert fake_ce_client.get_cost_and_usage.call_args_list[1].kwargs["NextPageToken"] == "t1"
+
+
+def test_is_bedrock_service_matches_ce_service_names():
+    """Real SERVICE names seen in acc1/acc2/acc3 Cost Explorer (Sept 2026 CSV exports)."""
+    from shared.aws_client.cost_explorer import is_bedrock_service
+
+    for s in ("Amazon Bedrock", "Claude Sonnet 4.6 (Amazon Bedrock Edition)",
+              "Claude Haiku 4.5 (Amazon Bedrock Edition)", "Cohere Embed 4 Model (Amazon Bedrock Edition)",
+              "Palmyra X5 (Amazon Bedrock Edition)"):
+        assert is_bedrock_service(s), s
+    for s in ("Amazon Elastic Container Service", "Amazon Relational Database Service",
+              "Amazon ElastiCache", "Amazon Elastic Load Balancing", "AWS WAF", "Tax"):
+        assert not is_bedrock_service(s), s
+
+
+def _pool_with_fetch(rows):
     fake_conn = AsyncMock()
-    fake_conn.fetchval = AsyncMock(return_value=None)
+    fake_conn.fetch = AsyncMock(return_value=rows)
     pool = MagicMock()
     pool.acquire.return_value.__aenter__ = AsyncMock(return_value=fake_conn)
     pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-
-    assert await ce_mod.read_latest_snapshot(pool) is None
+    return pool, fake_conn
 
 
 @pytest.mark.asyncio
-async def test_read_latest_snapshot_sums_total_usd():
+async def test_read_cost_range_none_when_empty():
+    from datetime import date as date_cls
+
     from shared.aws_client import cost_explorer as ce_mod
 
-    fetched_at = MagicMock(isoformat=lambda: "2026-09-23T00:00:00+00:00")
+    pool, _ = _pool_with_fetch([])
+    assert await ce_mod.read_cost_range(pool, date_cls(2026, 9, 16), date_cls(2026, 9, 23)) is None
+
+
+@pytest.mark.asyncio
+async def test_read_cost_range_splits_bedrock_vs_infra_per_account():
+    """The regression this follow-up exists for: acc2's whole-account total (ELB/ECS/RDS/...)
+    was shown as '(Bedrock)' spend. bedrock_usd must count only Bedrock SERVICE lines."""
+    from datetime import date as date_cls
+    from datetime import datetime as dt_cls
+    from datetime import timezone as tz
+
+    from shared.aws_client import cost_explorer as ce_mod
+
+    f1 = dt_cls(2026, 9, 23, 3, 0, tzinfo=tz.utc)
+    f2 = dt_cls(2026, 9, 23, 9, 0, tzinfo=tz.utc)
+    d16, d17 = date_cls(2026, 9, 16), date_cls(2026, 9, 17)
+
+    def row(acct, service, day, amount, fetched):
+        return {"account_id": acct, "service": service, "period_start": day,
+                "amount_usd": amount, "fetched_at": fetched}
+
     db_rows = [
-        {"account_id": "005097885195", "service": "ECS",
-         "period_start": MagicMock(isoformat=lambda: "2026-09-16"),
-         "period_end": MagicMock(isoformat=lambda: "2026-09-17"),
-         "amount_usd": 1.5, "unit": "USD", "fetched_at": fetched_at},
-        {"account_id": "867490540162", "service": "Bedrock",
-         "period_start": MagicMock(isoformat=lambda: "2026-09-16"),
-         "period_end": MagicMock(isoformat=lambda: "2026-09-17"),
-         "amount_usd": 2.5, "unit": "USD", "fetched_at": fetched_at},
+        row("005097885195", "Amazon Elastic Load Balancing", d16, 1.21, f1),
+        row("005097885195", "Amazon Relational Database Service", d17, 0.68, f2),
+        row("005097885195", "Cohere Embed 4 Model (Amazon Bedrock Edition)", d17, 0.01, f2),
+        row("786888028788", "Claude Sonnet 4.6 (Amazon Bedrock Edition)", d16, 3.0, f1),
     ]
-    fake_conn = AsyncMock()
-    fake_conn.fetchval = AsyncMock(return_value=fetched_at)
-    fake_conn.fetch = AsyncMock(return_value=db_rows)
-    pool = MagicMock()
-    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=fake_conn)
-    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    pool, conn = _pool_with_fetch(db_rows)
+    result = await ce_mod.read_cost_range(pool, d16, date_cls(2026, 9, 23))
 
-    result = await ce_mod.read_latest_snapshot(pool)
-    assert result["total_usd"] == 4.0
-    assert len(result["rows"]) == 2
+    conn.fetch.assert_awaited_once()
+    assert conn.fetch.call_args.args[1:] == (d16, date_cls(2026, 9, 23))  # real date objects, not strings
+    acc = {a["account_id"]: a for a in result["accounts"]}
+    assert acc["005097885195"]["total_usd"] == 1.9
+    assert acc["005097885195"]["bedrock_usd"] == 0.01
+    assert acc["005097885195"]["other_usd"] == 1.89
+    assert acc["786888028788"]["bedrock_usd"] == 3.0
+    assert result["total_usd"] == 4.9
+    assert result["bedrock_usd"] == 3.01
+    assert result["covered_from"] == "2026-09-16"
+    assert result["covered_to"] == "2026-09-17"
+    assert result["fetched_at"] == f2.isoformat()
+    assert result["services"][0]["service"] == "Claude Sonnet 4.6 (Amazon Bedrock Edition)"
+
+
+# ── _resolve_window (shared by every External Spend endpoint) ────────────────
+
+def test_resolve_window_rolling_days_when_no_dates():
+    from api.routers.admin_llm_ops import _resolve_window
+
+    since, until = _resolve_window(7, None, None)
+    assert round((until - since).total_seconds()) == 7 * 86400
+
+
+def test_resolve_window_explicit_dates_end_inclusive():
+    from datetime import date as date_cls
+
+    from api.routers.admin_llm_ops import _ce_days, _resolve_window
+
+    since, until = _resolve_window(30, date_cls(2026, 9, 16), date_cls(2026, 9, 22))
+    assert since.isoformat() == "2026-09-16T00:00:00+00:00"
+    assert until.isoformat() == "2026-09-23T00:00:00+00:00"
+    assert _ce_days(since, until) == (date_cls(2026, 9, 16), date_cls(2026, 9, 23))
+
+
+def test_resolve_window_start_only_runs_to_today():
+    from datetime import date as date_cls
+    from datetime import datetime as dt_cls
+    from datetime import timedelta
+    from datetime import timezone as tz
+
+    from api.routers.admin_llm_ops import _resolve_window
+
+    since, until = _resolve_window(30, date_cls(2026, 9, 1), None)
+    assert since.date() == date_cls(2026, 9, 1)
+    assert until.date() == dt_cls.now(tz.utc).date() + timedelta(days=1)
+
+
+def test_resolve_window_rejects_inverted_and_too_long():
+    from datetime import date as date_cls
+
+    from fastapi import HTTPException
+
+    from api.routers.admin_llm_ops import _resolve_window
+
+    with pytest.raises(HTTPException):
+        _resolve_window(7, date_cls(2026, 9, 22), date_cls(2026, 9, 16))
+    with pytest.raises(HTTPException):
+        _resolve_window(7, date_cls(2024, 1, 1), date_cls(2026, 9, 16))
 
 
 # ── endpoints (admin_llm_ops.py) ─────────────────────────────────────────────
@@ -237,14 +340,18 @@ async def test_check_cost_explorer_endpoint_verifies_secret_and_persists():
                               "period_start": "2026-09-16", "period_end": "2026-09-17",
                               "amount_usd": 1.0, "unit": "USD", "raw": {}}], "errors": {}}
 
+    from datetime import date as date_cls
+
     with patch.object(admin_llm_ops, "verify_admin_secret") as mock_verify, \
-         patch.object(admin_llm_ops, "fetch_all_accounts_cost", return_value=fake_result), \
+         patch.object(admin_llm_ops, "fetch_all_accounts_cost", return_value=fake_result) as mock_fetch, \
          patch.object(admin_llm_ops, "record_snapshot", AsyncMock(return_value=1)) as mock_record:
         result = await admin_llm_ops.check_cost_explorer(
             _make_request(_make_pool(AsyncMock())), x_admin_secret="s3cr3t",
+            days=7, start=date_cls(2026, 9, 1), end=date_cls(2026, 9, 22),
         )
 
     mock_verify.assert_called_once_with("s3cr3t")
+    mock_fetch.assert_called_once_with("2026-09-01", "2026-09-23")  # CE End is exclusive
     mock_record.assert_awaited_once()
     assert result["row_count"] == 1
     assert result["errors"] == {}
@@ -254,20 +361,28 @@ async def test_check_cost_explorer_endpoint_verifies_secret_and_persists():
 async def test_get_cost_explorer_endpoint_no_data():
     from api.routers import admin_llm_ops
 
-    with patch.object(admin_llm_ops, "read_latest_snapshot", AsyncMock(return_value=None)):
-        result = await admin_llm_ops.get_cost_explorer(_make_request(_make_pool(AsyncMock())))
+    with patch.object(admin_llm_ops, "read_cost_range", AsyncMock(return_value=None)):
+        result = await admin_llm_ops.get_cost_explorer(_make_request(_make_pool(AsyncMock())), days=7)
 
     assert result["has_data"] is False
-    assert result["rows"] == []
+    assert result["accounts"] == []
 
 
 @pytest.mark.asyncio
-async def test_get_cost_explorer_endpoint_with_data():
+async def test_get_cost_explorer_endpoint_with_data_uses_window():
+    from datetime import date as date_cls
+
     from api.routers import admin_llm_ops
 
-    fake_latest = {"rows": [{"account_id": "005097885195"}], "total_usd": 1.0, "fetched_at": "x"}
-    with patch.object(admin_llm_ops, "read_latest_snapshot", AsyncMock(return_value=fake_latest)):
-        result = await admin_llm_ops.get_cost_explorer(_make_request(_make_pool(AsyncMock())))
+    fake = {"accounts": [{"account_id": "005097885195"}], "services": [], "total_usd": 1.0,
+            "bedrock_usd": 0.0, "covered_from": "2026-09-16", "covered_to": "2026-09-22", "fetched_at": "x"}
+    with patch.object(admin_llm_ops, "read_cost_range", AsyncMock(return_value=fake)) as mock_read:
+        result = await admin_llm_ops.get_cost_explorer(
+            _make_request(_make_pool(AsyncMock())), days=7,
+            start=date_cls(2026, 9, 16), end=date_cls(2026, 9, 22),
+        )
 
+    assert mock_read.await_args.args[1:] == (date_cls(2026, 9, 16), date_cls(2026, 9, 23))
     assert result["has_data"] is True
-    assert result["total_usd"] == 1.0
+    assert result["bedrock_usd"] == 0.0
+    assert result["period_end_exclusive"] == "2026-09-23"

@@ -4,8 +4,9 @@ Two concerns in one module, mirroring shared/dfs_client/balance.py's split (AA-6
   - fetch_all_accounts_cost(): live AWS calls (ce:GetCostAndUsage), grouped by SERVICE, one call
     per AWS account. Costs ~$0.01/request per AWS's own CE pricing docs -- callers should cache,
     not call this on every page view.
-  - record_snapshot() / read_latest_snapshot(): DB persistence, same fetch-then-read split as
-    balance.py (POST /admin/cost-explorer/check writes, GET /admin/cost-explorer reads latest).
+  - record_snapshot() / read_cost_range(): DB persistence, same fetch-then-read split as
+    balance.py (POST /admin/cost-explorer/check writes, GET /admin/cost-explorer reads a date
+    range, Bedrock vs infra split per account).
 
 Cross-account AssumeRole reuses the exact pattern shared/llm_client/bedrock_satellite.py already
 verified in production (AA-296/AA-397): acc2's own ECS task role can call ce:GetCostAndUsage
@@ -111,19 +112,29 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
     dicts ready for record_snapshot(). Raises CostExplorerUnavailable on failure -- caller in
     fetch_all_accounts_cost() decides whether to skip this account or propagate."""
     account_id = {"acc1": ACC1_ACCOUNT_ID, "acc2": ACC2_ACCOUNT_ID, "acc3": ACC3_ACCOUNT_ID}[account]
+    # DAILY x GroupBy SERVICE paginates on longer ranges (NextPageToken) -- without the loop a
+    # 30/90-day fetch silently drops every day after the first page.
+    results_by_time: list[dict[str, Any]] = []
     try:
         client = _get_ce_client(account)
-        resp = client.get_cost_and_usage(
-            TimePeriod={"Start": start_date, "End": end_date},
-            Granularity="DAILY",
-            Metrics=["UnblendedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-        )
+        kwargs: dict[str, Any] = {
+            "TimePeriod": {"Start": start_date, "End": end_date},
+            "Granularity": "DAILY",
+            "Metrics": ["UnblendedCost"],
+            "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
+        }
+        while True:
+            resp = client.get_cost_and_usage(**kwargs)
+            results_by_time.extend(resp.get("ResultsByTime", []))
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+            kwargs["NextPageToken"] = token
     except ClientError as e:
         raise CostExplorerUnavailable(f"GetCostAndUsage failed for {account} ({account_id}): {e}") from e
 
     rows: list[dict[str, Any]] = []
-    for result_by_time in resp.get("ResultsByTime", []):
+    for result_by_time in results_by_time:
         period_start = result_by_time["TimePeriod"]["Start"]
         period_end = result_by_time["TimePeriod"]["End"]
         for group in result_by_time.get("Groups", []):
@@ -176,31 +187,24 @@ _INSERT_SQL = """
     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 """
 
-_LATEST_BATCH_FETCHED_AT_SQL = """
-    SELECT fetched_at FROM shared.cost_explorer_snapshot
-     ORDER BY fetched_at DESC
-     LIMIT 1
-"""
-
-_LATEST_BATCH_ROWS_SQL = """
-    SELECT account_id, service, period_start, period_end, amount_usd, unit, fetched_at
+# Snapshots accumulate (every check inserts a fresh batch), and overlapping checks cover the same
+# days -- the most recent fetch of a given (account, service, day) wins, since CE revises the
+# latest ~24-48h upward as usage finalizes.
+_RANGE_ROWS_SQL = """
+    SELECT DISTINCT ON (account_id, service, period_start)
+           account_id, service, period_start, amount_usd, fetched_at
       FROM shared.cost_explorer_snapshot
-     WHERE fetched_at = $1
-     ORDER BY account_id, service
+     WHERE period_start >= $1 AND period_start < $2
+     ORDER BY account_id, service, period_start, fetched_at DESC
 """
 
 
-def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
-    d = dict(row)
-    if d.get("amount_usd") is not None:
-        d["amount_usd"] = float(d["amount_usd"])
-    if d.get("period_start") is not None:
-        d["period_start"] = d["period_start"].isoformat()
-    if d.get("period_end") is not None:
-        d["period_end"] = d["period_end"].isoformat()
-    if d.get("fetched_at") is not None:
-        d["fetched_at"] = d["fetched_at"].isoformat()
-    return d
+def is_bedrock_service(service: str) -> bool:
+    """CE splits Bedrock spend across several SERVICE line items: 'Amazon Bedrock' plus one per
+    Marketplace model ('Claude Sonnet 4.6 (Amazon Bedrock Edition)', 'Cohere Embed 4 Model
+    (Amazon Bedrock Edition)', 'Palmyra X5 (Amazon Bedrock Edition)', ...) -- all contain
+    'Bedrock'. Everything else (ECS, RDS, ELB, ...) is infra, not LLM spend."""
+    return "bedrock" in service.lower()
 
 
 def _to_date(value: Any) -> date:
@@ -233,14 +237,43 @@ async def record_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) -> int
     return len(rows)
 
 
-async def read_latest_snapshot(pool: asyncpg.Pool) -> Optional[dict[str, Any]]:
-    """Return the most recent fetch batch (all rows sharing the latest fetched_at), or None if
-    no snapshot has been recorded yet."""
+async def read_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) -> Optional[dict[str, Any]]:
+    """Stored CE cost for days in [start, end_exclusive), newest fetch per (account, service, day),
+    split into Bedrock (LLM) vs other (infra) per account. None if no stored day falls in range.
+
+    `covered_from`/`covered_to` are the first/last day actually present -- when they don't span
+    the requested range, the caller should fetch that range from AWS first (a check only stores
+    the window it was asked for)."""
     async with pool.acquire() as conn:
-        latest_fetched_at = await conn.fetchval(_LATEST_BATCH_FETCHED_AT_SQL)
-        if latest_fetched_at is None:
-            return None
-        db_rows = await conn.fetch(_LATEST_BATCH_ROWS_SQL, latest_fetched_at)
-    rows = [_row_to_dict(r) for r in db_rows]
-    total_usd = round(sum(r["amount_usd"] for r in rows), 4)
-    return {"rows": rows, "total_usd": total_usd, "fetched_at": rows[0]["fetched_at"] if rows else None}
+        db_rows = await conn.fetch(_RANGE_ROWS_SQL, start, end_exclusive)
+    if not db_rows:
+        return None
+
+    accounts: dict[str, dict[str, Any]] = {}
+    services: dict[tuple[str, str], float] = {}
+    for r in db_rows:
+        amount = float(r["amount_usd"])
+        acc = accounts.setdefault(r["account_id"], {"account_id": r["account_id"], "total_usd": 0.0,
+                                                      "bedrock_usd": 0.0, "other_usd": 0.0})
+        acc["total_usd"] += amount
+        acc["bedrock_usd" if is_bedrock_service(r["service"]) else "other_usd"] += amount
+        key = (r["account_id"], r["service"])
+        services[key] = services.get(key, 0.0) + amount
+
+    for acc in accounts.values():
+        for k in ("total_usd", "bedrock_usd", "other_usd"):
+            acc[k] = round(acc[k], 4)
+    service_rows = sorted(
+        ({"account_id": a, "service": s, "amount_usd": round(v, 4), "is_bedrock": is_bedrock_service(s)}
+         for (a, s), v in services.items()),
+        key=lambda x: -x["amount_usd"],
+    )
+    return {
+        "accounts": sorted(accounts.values(), key=lambda x: -x["total_usd"]),
+        "services": service_rows,
+        "total_usd": round(sum(a["total_usd"] for a in accounts.values()), 4),
+        "bedrock_usd": round(sum(a["bedrock_usd"] for a in accounts.values()), 4),
+        "covered_from": min(r["period_start"] for r in db_rows).isoformat(),
+        "covered_to": max(r["period_start"] for r in db_rows).isoformat(),
+        "fetched_at": max(r["fetched_at"] for r in db_rows).isoformat(),
+    }
