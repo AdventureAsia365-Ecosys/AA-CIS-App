@@ -463,7 +463,7 @@ export default function DashboardPage() {
           <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Dashboard</span>
         </header>
 
-        <main style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
           <div style={{ marginBottom: 24 }}>
             <h1 style={{
               fontFamily: serif, fontSize: 24, fontWeight: 500,

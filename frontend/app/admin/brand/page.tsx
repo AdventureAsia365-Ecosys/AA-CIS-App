@@ -530,7 +530,7 @@ export default function AdminBrandPage() {
           <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Brand Identity</span>
         </header>
 
-        <main style={{ flex: 1, display: "flex", gap: 0, minHeight: 0 }}>
+        <main style={{ flex: 1, minWidth: 0, display: "flex", gap: 0, minHeight: 0 }}>
           {/* Left panel — brand list */}
           <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: "#fff", display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>

@@ -626,7 +626,7 @@ export default function PlatformStatsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
             07 · Platform Stats
