@@ -830,7 +830,7 @@ export default function AdminReviewPage() {
     <div style={{ display: "flex", height: "100vh", fontFamily: sans, background: A.bg }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
       <AdminSidebar />
-      <main style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
+      <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
           <div>
             <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>Review Queue</div>
@@ -922,6 +922,7 @@ export default function AdminReviewPage() {
           </div>
         ) : (
           <Card style={{ padding: 0, overflow: "visible" }}>
+            <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
                 <tr style={{ background: A.line2 }}>
@@ -947,6 +948,7 @@ export default function AdminReviewPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
         )}
       </main>

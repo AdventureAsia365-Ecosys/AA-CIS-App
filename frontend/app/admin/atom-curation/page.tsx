@@ -1299,7 +1299,7 @@ function AtomCurationDashboard() {
           scroll-container relationship, not a missing style. Only the inner section-nav below
           still uses `sticky`, now correctly scoped to its own immediate scroll container. Both
           verified by a real Playwright scroll test post-build (see implementation notes). */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div>

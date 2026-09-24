@@ -513,7 +513,7 @@ export default function S1RewritePage() {
     return (
       <div style={{ display: "flex", minHeight: "100vh", background: A.bg }}>
         <AdminSidebar />
-        <main style={{ flex: 1, padding: "32px 36px" }}>
+        <main style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
           <LoadingScreen msg="Loading tours…" />
         </main>
       </div>
@@ -614,7 +614,7 @@ export default function S1RewritePage() {
         </div>
 
         {/* ── Scrollable Content ──────────────────────────────────────────── */}
-        <main style={{ flex: 1, minHeight: 0, padding: "24px 36px 56px", overflowY: "auto" }}>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "24px 36px 56px", overflowY: "auto" }}>
 
           {/* Header */}
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
