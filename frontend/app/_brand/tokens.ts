@@ -47,4 +47,6 @@ export const BTN_PRIMARY_TEXT: { textTransform: "uppercase"; letterSpacing: stri
   textTransform: "uppercase", letterSpacing: "0.06em",
 };
 
-export const LOGO_SRC = "/brand/adventure-asia-logo.png";
+// Served from /assets, NOT /brand: middleware.ts matches "/brand/:path*" (the internal Brand
+// page) and would redirect tenants / logged-out visitors, breaking the image on the login pages.
+export const LOGO_SRC = "/assets/adventure-asia-logo.png";
