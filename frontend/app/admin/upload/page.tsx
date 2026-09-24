@@ -1330,7 +1330,7 @@ function TourContentTab() {
             ].map(c => (
               <Card key={c.label}>
                 <SLabel>{c.label}</SLabel>
-                <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500,
+                <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600,
                   color: c.color, letterSpacing: "-0.02em" }}>{c.value}</div>
               </Card>
             ))}

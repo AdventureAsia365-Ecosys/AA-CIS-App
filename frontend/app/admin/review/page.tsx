@@ -838,7 +838,7 @@ export default function AdminReviewPage() {
           </div>
           <div style={{ display: "flex", gap: 24 }}>
             <div style={{ textAlign: "center" as const }}>
-              <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.gold, letterSpacing: "-0.02em" }}>{total}</div>
+              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, color: A.gold, letterSpacing: "-0.02em" }}>{total}</div>
               <div style={{ fontSize: 11, color: A.muted }}>{filterStatus === "all" ? "Total" : filterStatus[0].toUpperCase() + filterStatus.slice(1)}</div>
             </div>
           </div>

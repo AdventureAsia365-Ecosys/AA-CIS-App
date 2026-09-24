@@ -345,11 +345,13 @@ function NavItem({ active, icon, label, accent, onClick, adminOnly = false }: {
         <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: accent, borderRadius: "0 2px 2px 0" }} />
       )}
       <span style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
+      {/* nowrap: Poppins is wider than the old IBM Plex Sans, and with the ADMIN tag labels like
+          "External Spend" wrapped onto two lines. */}
+      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       {adminOnly && (
         <span style={{
-          fontSize: 8.5, fontWeight: 600, letterSpacing: "0.12em", color: "#8A929D",
-          border: "1px solid #3A4453", borderRadius: 3, padding: "0 4px", lineHeight: "14px",
+          flexShrink: 0, fontSize: 8, fontWeight: 600, letterSpacing: "0.1em", color: "#8A929D",
+          border: "1px solid #3A4453", borderRadius: 3, padding: "0 3px", lineHeight: "13px",
         }}>ADMIN</span>
       )}
     </button>

@@ -984,7 +984,7 @@ export default function TenantsPage() {
             ].map(c => (
               <Card key={c.label}>
                 <SLabel>{c.label}</SLabel>
-                <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: c.color, letterSpacing: "-0.02em" }}>{c.value}</div>
+                <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 26, fontWeight: 600, color: c.color, letterSpacing: "-0.02em" }}>{c.value}</div>
               </Card>
             ))}
           </div>

@@ -46,7 +46,9 @@ export const sans  = FONT_SANS;
 // no shared constant, so a viewport-covering element (e.g. a `position: fixed` modal) had no way
 // to know how much space to leave for it without either a portal-free DOM approach or duplicating
 // the number. Single source of truth now — AdminSidebar imports this instead of hardcoding it.
-export const SIDEBAR_WIDTH = 220;
+// AA-605: 220 -> 236 — Poppins is wider than IBM Plex Sans; with the "ADMIN" nav tag, labels
+// like "External Spend" were truncated at 220.
+export const SIDEBAR_WIDTH = 236;
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 export function Card({ children, style = {}, dark = false }: {
@@ -87,7 +89,7 @@ export function StatCard({ label, value, sub, accent = A.accent, icon }: {
         )}
         <span style={{ fontSize: 12, color: A.muted }}>{label}</span>
       </div>
-      <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
+      <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600, color: A.ink, letterSpacing: "-0.02em" }}>
         {value}
       </div>
       {sub && <div style={{ fontSize: 11, color: A.muted2, marginTop: 4 }}>{sub}</div>}

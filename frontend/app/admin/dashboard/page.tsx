@@ -20,7 +20,7 @@ function MetricCard({ label, value, sub, src, color = A.ink }: {
   return (
     <Card>
       <SLabel>{label}</SLabel>
-      <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color, letterSpacing: "-0.02em" }}>
+      <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600, color, letterSpacing: "-0.02em" }}>
         {value}
       </div>
       {sub && <div style={{ fontSize: 11, color: A.muted2, marginTop: 4 }}>{sub}</div>}
