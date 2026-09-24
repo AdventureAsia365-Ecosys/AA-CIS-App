@@ -4,7 +4,7 @@
 // AA-505/AA-617 LLM tree (account/fallback/tokens) + AA-618 DFS log. Path kept /admin/llm-usage.
 
 import { useState, useEffect, useCallback, useMemo, type CSSProperties } from "react";
-import { ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
+import { AlertTriangle, ChevronRight, ChevronDown, Cpu, Search, Wallet, Building2 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
@@ -709,7 +709,7 @@ export default function ExternalSpendPage() {
         {dfsBalance?.has_data && dfsBalance.below_threshold && (
           <Card style={{ marginBottom: 16, padding: "12px 16px", background: A.redTint, border: `1px solid ${A.red}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.red, fontSize: 13.5, fontWeight: 600 }}>
-              <span style={{ fontSize: 16 }}>⚠</span>
+              <AlertTriangle size={16} style={{ flexShrink: 0 }} />
               <span>
                 DataForSEO balance is low: {fmtUsd2(dfsBalance.balance_usd ?? 0)}
                 {" "}(threshold {fmtUsd2(dfsBalance.threshold_usd)}). Top up the account to avoid SEO fetch failures (HTTP 402).
@@ -812,8 +812,8 @@ export default function ExternalSpendPage() {
                   ) : (
                     <>
                       {ceGap && (
-                        <div style={{ fontSize: 12, color: A.amber, marginBottom: 10 }}>
-                          ⚠ Stored AWS data only covers {ceGap} of this window — click &quot;Refresh from AWS&quot; to fill it.
+                        <div style={{ fontSize: 12, color: A.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                          <AlertTriangle size={13} style={{ flexShrink: 0 }} /> Stored AWS data only covers {ceGap} of this window — click &quot;Refresh from AWS&quot; to fill it.
                         </div>
                       )}
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 14 }}>

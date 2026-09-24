@@ -54,7 +54,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink } from "lucide-react";
+import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 
 const POLL_INTERVAL_MS = 3000;
@@ -514,7 +514,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       {!req && (
         <Card>
           <CardHead title="Pick a Subject to start" />
-          <EmptyState icon="🧭" title="Nothing to write yet"
+          <EmptyState icon={<Compass size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing to write yet"
             sub="Every new piece starts from a Subject you pick in Social Content now." // AA-576 (was "Write Content always starts from there now" — stale after that nav item was removed)
             action={<Btn variant="primary" onClick={() => router.push("/portal/t7-planning")}>Go to Social Content</Btn>} />
         </Card>

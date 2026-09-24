@@ -1,31 +1,34 @@
 // app/(internal)/_components/internalUi.tsx
 import { Loader2 } from "lucide-react";
+import { BRAND, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
 
+// AA-605: colours + fonts come from app/_brand/tokens.ts (same source as admin `A` and portal `T`);
+// key names stay as-is for the existing call sites.
 export const A = {
-  gold:      "#DB9628",
-  goldSoft:  "#F4E2C2",
-  goldTint:  "#FBF3E3",
-  ink:       "#1F2933",
-  ink2:      "#2A333E",
-  ink3:      "#3A4453",
-  body:      "#33363D",
-  muted:     "#6B7380",
-  muted2:    "#9099A6",
-  bg:        "#F8F6F2",
-  card:      "#FFFFFF",
-  line:      "#E9E4DB",
-  line2:     "#F0EBE0",
-  green:     "#22C55E",
-  greenSoft: "#E4F1E9",
-  red:       "#EF4444",
-  redSoft:   "#FEE2E2",
+  gold:      BRAND.accent,
+  goldSoft:  BRAND.accentSoft,
+  goldTint:  BRAND.accentTint,
+  ink:       BRAND.ink,
+  ink2:      BRAND.ink2,
+  ink3:      BRAND.ink3,
+  body:      BRAND.body,
+  muted:     BRAND.muted,
+  muted2:    BRAND.muted2,
+  bg:        BRAND.bg,
+  card:      BRAND.card,
+  line:      BRAND.line,
+  line2:     BRAND.line2,
+  green:     BRAND.success,
+  greenSoft: BRAND.successSoft,
+  red:       BRAND.danger,
+  redSoft:   BRAND.dangerSoft,
   amber:     "#F59E0B",
   amberSoft: "#FEF3C7",
 } as const;
 
-export const serif = "'Fraunces', Georgia, serif";
-export const mono  = "'JetBrains Mono', 'IBM Plex Mono', monospace";
-export const sans  = "'IBM Plex Sans', system-ui, sans-serif";
+export const serif = FONT_DISPLAY;
+export const mono  = FONT_MONO;
+export const sans  = FONT_SANS;
 
 export function Card({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -49,11 +52,11 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const base: Record<string, React.CSSProperties> = {
     primary:   { background: A.gold,    color: A.ink, border: `1px solid ${A.gold}` },
     secondary: { background: A.card,    color: A.ink,  border: `1px solid ${A.line}` },
-    danger:    { background: A.redSoft, color: A.red,  border: "1px solid #FECACA" },
+    danger:    { background: A.redSoft, color: A.red,  border: `1px solid ${BRAND.dangerBorder}` },
     ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
   };
   return (
-    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad, borderRadius: 8, fontSize: fz, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "opacity .15s", fontFamily: sans, ...base[variant], ...style }}>
+    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad, borderRadius: BTN_RADIUS, fontSize: fz, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "opacity .15s", fontFamily: sans, ...base[variant], ...style }}>
       {children}
     </button>
   );

@@ -1,4 +1,5 @@
 "use client";
+import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { T, sans } from "./ui";
 
 interface SeoCheck {
@@ -50,7 +51,7 @@ export function SeoHealthBar({ seoTitle, seoMeta, highlights, summary, rulesAppl
     rulesApplied.forEach(r => checks.push({ status: "warn", message: r.message }));
   }
 
-  const icon  = { pass: "🟢", warn: "🟡", fail: "🔴" } as const;
+  const icon  = { pass: CheckCircle2, warn: AlertTriangle, fail: XCircle } as const;
   const color = { pass: T.green, warn: T.amber, fail: T.red } as const;
   const allPass = checks.every(c => c.status === "pass");
 
@@ -61,13 +62,13 @@ export function SeoHealthBar({ seoTitle, seoMeta, highlights, summary, rulesAppl
           SEO Health
         </span>
         {allPass && (
-          <span style={{ fontSize: 11, color: T.green, fontWeight: 600 }}>✅ Content ready to use</span>
+          <span style={{ fontSize: 11, color: T.green, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><CheckCircle2 size={12} /> Content ready to use</span>
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {checks.map((check, i) => (
           <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: 12 }}>
-            <span style={{ flexShrink: 0 }}>{icon[check.status]}</span>
+            {(() => { const Icon = icon[check.status]; return <Icon size={13} color={color[check.status]} style={{ flexShrink: 0, marginTop: 2 }} />; })()}
             <span style={{ color: color[check.status], lineHeight: 1.5, fontFamily: sans }}>
               {check.message}
             </span>

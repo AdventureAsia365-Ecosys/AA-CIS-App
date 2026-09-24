@@ -1,7 +1,7 @@
 "use client";
 // app/(internal)/upload/page.tsx
 // All pipeline logic preserved — S3 presigned URL, step tracker, history
-// Design: Fraunces + IBM Plex Sans, light theme, gold accent
+// Design: brand tokens (app/_brand/tokens.ts) via internalUi
 
 import { useState, useCallback, useEffect } from "react";
 import {

@@ -185,7 +185,7 @@ function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | n
     <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
   );
   if (status === "manual_check") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FFEDD5", color: "#C2410C", fontSize: 11, fontWeight: 600 }}>👁 Manual</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FFEDD5", color: "#C2410C", fontSize: 11, fontWeight: 600 }}>Manual check</span>
   );
   return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
 }

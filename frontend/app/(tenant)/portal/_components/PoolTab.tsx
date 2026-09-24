@@ -4,7 +4,7 @@
 //      POST /api/tenant/v1/tours/pool/{id}/rewrite
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, ChevronRight, X, RotateCcw, Globe2 } from "lucide-react";
+import { Search, ChevronRight, X, RotateCcw, Globe2, MapPin, Clock, Wallet, PenLine } from "lucide-react";
 import {
   T, serif, mono, sans,
   Card, Badge, Btn, LoadingScreen, EmptyState,
@@ -167,7 +167,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
         {/* Tour list */}
         {loading ? <LoadingScreen message="Loading pool…" /> : tours.length === 0 ? (
-          <EmptyState icon="🌏" title="No tours found" sub="Try adjusting your search or filters" />
+          <EmptyState icon={<Globe2 size={32} strokeWidth={1.5} color={T.gold} />} title="No tours found" sub="Try adjusting your search or filters" />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {tours.map((t, i) => {
@@ -206,9 +206,9 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: T.ink, marginBottom: 4, lineHeight: 1.3 }}>{selected.aa_name}</div>
                   <div style={{ fontSize: 12, color: T.muted, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    {selected.country && <span>📍 {selected.country}</span>}
-                    {selected.duration && <span>⏱ {selected.duration}</span>}
-                    {selected.price_raw && <span>💰 {selected.price_raw}</span>}
+                    {selected.country && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><MapPin size={12} /> {selected.country}</span>}
+                    {selected.duration && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {selected.duration}</span>}
+                    {selected.price_raw && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Wallet size={12} /> {selected.price_raw}</span>}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -223,7 +223,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
                 </span>
               ) : selected.already_rewritten ? (
                 <span style={{ marginTop: 8, display: "inline-block", fontSize: 11, padding: "2px 8px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600 }}>
-                  ✍️ Writing…
+                  <PenLine size={11} style={{ verticalAlign: -1 }} /> Writing…
                 </span>
               ) : null}
             </div>
@@ -266,7 +266,7 @@ function TourRow({ tour, index, isActive, isChecked, inCatalogSet, onSelect, onC
             {inCatalogSet.has(tour.id) ? (
               <span style={{ fontSize: 10, padding: "1px 6px", background: T.greenSoft, color: T.green, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✓ In My Catalog Tours</span>
             ) : tour.already_rewritten ? (
-              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}>✍️ Writing…</span>
+              <span style={{ fontSize: 10, padding: "1px 6px", background: T.goldTint, color: T.amber, borderRadius: 20, fontWeight: 600, flexShrink: 0 }}><PenLine size={11} style={{ verticalAlign: -1 }} /> Writing…</span>
             ) : null}
           </div>
           {tour.aa_subtitle && (

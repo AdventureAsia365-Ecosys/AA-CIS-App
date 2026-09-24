@@ -15,6 +15,7 @@
 // third place to mutate the same state. Styled off AtomsTab.tsx (T6) — same ui.tsx tokens,
 // same small-tool sizing (a tenant reviewing a handful of tours, not a staff catalog browser).
 
+import { AlertTriangle, FolderOpen } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { T, serif, sans, mono, Card, Badge, LoadingScreen, EmptyState, statusVariant } from "./ui";
 
@@ -66,7 +67,7 @@ export default function MarketplaceTab() {
 
   if (error || !data) {
     return (
-      <EmptyState icon="⚠️" title="Couldn't load your marketplace"
+      <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load your marketplace"
         sub="Something went wrong reaching your tour and atom data. Try refreshing the page." />
     );
   }
@@ -91,7 +92,7 @@ export default function MarketplaceTab() {
       </div>
 
       {data.tours.length === 0 ? (
-        <EmptyState icon="🗂️" title="Nothing here yet"
+        <EmptyState icon={<FolderOpen size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
           sub="Once you write your first tour from Browse Tours, it'll show up here alongside its curated atoms." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

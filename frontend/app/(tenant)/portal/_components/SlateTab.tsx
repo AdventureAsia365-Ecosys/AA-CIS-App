@@ -55,7 +55,7 @@
 //     on a narrow screen.
 
 import { useCallback, useEffect, useState } from "react";
-import { Calendar, ChevronRight, Sparkles, X, Zap } from "lucide-react";
+import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
 import AngleGateWizard from "./AngleGateWizard";
 
@@ -227,7 +227,7 @@ export default function SlateTab() {
       {loading && <SkeletonPanel />}
 
       {error && !loading && (
-        <EmptyState icon="⚠️" title="Couldn't load Social Content" sub={error}
+        <EmptyState icon={<AlertTriangle size={32} strokeWidth={1.5} color={T.gold} />} title="Couldn't load Social Content" sub={error}
           action={<Btn variant="secondary" onClick={load}>Try again</Btn>} />
       )}
 
@@ -303,14 +303,14 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
 
       {channel.subjects.length === 0 ? (
         // Never had any Subject at all — the original "atomize a tour first" guidance.
-        <EmptyState icon="🗒️" title="Nothing here yet"
+        <EmptyState icon={<ClipboardList size={32} strokeWidth={1.5} color={T.gold} />} title="Nothing here yet"
           sub="No Segment or Route on this tenant has cleared this Channel's bar yet — atomize and rank a tour first." />
       ) : proposed.length === 0 ? (
         // FE audit #3 — DIFFERENT message: this Channel has decided history, just nothing NEW
         // to pick right now. Conflating this with the "never had any Subject" case above was the
         // reported gap — a tenant seeing a bare gap above "Already decided" with no explanation.
         <>
-          <EmptyState icon="✅" title="No new eligible Subjects right now"
+          <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new eligible Subjects right now"
             sub="Review the Subjects already decided below, or rewrite/atomize more tours for new proposals." />
           <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
         </>

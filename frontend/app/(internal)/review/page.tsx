@@ -1,7 +1,7 @@
 "use client";
 // app/(internal)/review/page.tsx
 // All HITL API logic preserved — /v1/pipeline/review-queue, approve, reject
-// Design: Fraunces + IBM Plex Sans, light theme
+// Design: brand tokens (app/_brand/tokens.ts) via internalUi
 
 import { useState, useEffect } from "react";
 import { CheckCircle, XCircle, RotateCcw, ChevronDown, ChevronUp, Filter, Edit3, Flag } from "lucide-react";

@@ -295,7 +295,7 @@ export default function BrandTab() {
             <Upload size={24} color={T.gold} style={{ margin: "0 auto 10px" }} />
             <div style={{ fontSize: 13.5, color: T.ink, fontWeight: 500 }}>
               {uploadStatus === "uploading" ? "Uploading…" :
-               uploadStatus === "done"      ? "✅ Uploaded — AI extracting rules" :
+               uploadStatus === "done"      ? "Uploaded — AI extracting rules" :
                uploadStatus === "error"     ? "⚠ Upload failed — try again" :
                "Drag PDF or DOCX brand guide here"}
             </div>
