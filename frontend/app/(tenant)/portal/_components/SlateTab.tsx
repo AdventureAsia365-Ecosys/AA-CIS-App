@@ -456,7 +456,7 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
           </div>
           {pickError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: "1px solid #F5C6C6",
+              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
               borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{pickError}</span>
@@ -476,7 +476,7 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
               onPicked() itself, same FE-audit-#2 "only a confirmed success refetches" rule). */}
           {cutError && (
             <div style={{
-              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: "1px solid #F5C6C6",
+              marginTop: 6, padding: "6px 8px", background: T.redSoft, border: `1px solid ${T.redBorder}`,
               borderRadius: 6, fontSize: 11, color: T.red, display: "flex", alignItems: "center", gap: 8,
             }}>
               <span>{cutError}</span>

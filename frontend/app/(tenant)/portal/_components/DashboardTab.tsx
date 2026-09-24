@@ -6,7 +6,7 @@
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
 import { useState, useEffect } from "react";
-import { ArrowRight, FileText, Code2, RotateCcw } from "lucide-react";
+import { ArrowRight, FileText, Code2, RotateCcw, Globe2, BookOpen, Sparkles } from "lucide-react";
 import {
   T, serif, mono, sans,
   Card, CardHead, Badge, ProgressBar, Spinner, LoadingScreen,
@@ -81,13 +81,13 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               Upgrade →
             </button>
           } />
-          {/* Active pill */}
-          <div style={{ position: "absolute", top: 22, left: 22 }}>
+          {/* Active pill — in normal flow under the title (was position:absolute on top of it) */}
+          <div style={{ marginTop: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", background: "rgba(219,150,40,0.15)", color: T.gold, borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>
               <span style={{ width: 5, height: 5, background: T.gold, borderRadius: "50%", display: "block" }} />Active
             </span>
           </div>
-          <div style={{ marginTop: 30 }}>
+          <div style={{ marginTop: 16 }}>
             <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, letterSpacing: "-0.02em", color: "#fff", lineHeight: 1 }}>
               {planLabel}
             </div>
@@ -126,7 +126,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               <RotateCcw size={20} />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
+              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
                 2 <span style={{ color: T.muted2, fontSize: 18 }}>/ 3</span>
               </div>
               <div style={{ color: T.muted, fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
@@ -151,7 +151,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
             <div>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>LLM Cost · {month}</div>
-              <div style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
+              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
                 ${Math.floor(llmCost)}<span style={{ fontSize: 18, color: T.muted2 }}>.{String(Math.round((llmCost % 1) * 10000)).padStart(4, "0")}</span>
               </div>
             </div>
@@ -211,9 +211,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
           {[
-            { icon: "🌏", title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
-            { icon: "📋", title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")
-            { icon: "✨", title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
+            { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
+            { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")
+            { icon: <Sparkles size={18} />, title: "Brand Identity", sub: "Configure your content voice & style",               href: "/portal/t0-brand" },
           ].map(a => (
             <ActionCard key={a.title} icon={a.icon} title={a.title} sub={a.sub} onClick={() => onNavigate(a.href)} />
           ))}
@@ -262,7 +262,7 @@ function SpendTile({ label, value, sub, warn = false }: {
 }
 
 function ActionCard({ icon, title, sub, onClick }: {
-  icon: string; title: string; sub: string; onClick: () => void;
+  icon: React.ReactNode; title: string; sub: string; onClick: () => void;
 }) {
   const [hov, setHov] = useState(false);
   return (
@@ -276,7 +276,7 @@ function ActionCard({ icon, title, sub, onClick }: {
         boxShadow: hov ? "0 4px 12px -6px rgba(219,150,40,0.35)" : "none",
         transition: "all .15s",
       }}>
-      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.ink, display: "grid", placeItems: "center", flexShrink: 0, fontSize: 18 }}>
+      <div style={{ width: 40, height: 40, borderRadius: 9, background: T.ink, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0 }}>
         {icon}
       </div>
       <div style={{ flex: 1 }}>

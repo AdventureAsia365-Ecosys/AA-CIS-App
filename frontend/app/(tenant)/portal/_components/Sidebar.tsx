@@ -9,6 +9,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, Globe2, BookOpen, Sparkles, Code2, Store, CalendarRange, Eye, Send, LogOut } from "lucide-react";
 import { T, serif, sans } from "./ui";
+import { LOGO_SRC } from "../../../_brand/tokens";
 
 interface Props {
   poolCount: number;
@@ -70,18 +71,16 @@ export default function Sidebar({
 
   return (
     <aside style={{
-      width: 220, flexShrink: 0, background: T.ink, color: "#C9CFD8",
+      width: 236, flexShrink: 0, background: T.ink, color: "#C9CFD8", // AA-605: 220 -> 236, same as admin (wider Poppins)
       padding: "22px 14px 24px", display: "flex", flexDirection: "column",
       gap: 28, position: "sticky", top: 0, height: "100vh", overflowY: "auto",
     }}>
       {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: 7, flexShrink: 0,
-          background: `linear-gradient(135deg,${T.gold} 0%,#B97A1B 100%)`,
-          display: "grid", placeItems: "center",
-          fontFamily: serif, fontWeight: 600, color: T.ink, fontSize: 17,
-        }}>A</div>
+        {/* AA-605 — real Adventure Asia mountain mark, replacing the gold gradient "A" tile. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={LOGO_SRC} alt="Adventure Asia" width={38} height={24}
+          style={{ width: 38, height: "auto", flexShrink: 0, display: "block" }} />
         <div>
           <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 500, color: "#F4F1EC", letterSpacing: "-0.01em", lineHeight: 1.15 }}>
             Adventure Asia
@@ -117,7 +116,7 @@ export default function Sidebar({
           <div style={{
             width: 30, height: 30, borderRadius: 6, background: "#3A4453",
             display: "grid", placeItems: "center",
-            color: "#F4E2C2", fontWeight: 600, fontSize: 11, flexShrink: 0,
+            color: T.goldSoft, fontWeight: 600, fontSize: 11, flexShrink: 0,
           }}>{initials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: "#F4F1EC", fontSize: 12, fontWeight: 600, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

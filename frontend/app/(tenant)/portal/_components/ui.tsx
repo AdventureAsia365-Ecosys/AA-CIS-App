@@ -1,22 +1,27 @@
 // app/(tenant)/portal/_components/ui.tsx
-// Design system: Fraunces serif + IBM Plex Sans + JetBrains Mono
+// Design system — Adventure Asia brand tokens shared with the admin UI (app/_brand/tokens.ts,
+// AA-605): Fahkwang display + Poppins UI + JetBrains Mono, gold accent, pill buttons.
 
 import { Loader2 } from "lucide-react";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../../_brand/tokens";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
+// Key names unchanged (hundreds of call sites); values come from BRAND. red = danger only
+// (AA-605: #B14A3B -> brand #C20101, same value as admin's A.red).
 export const T = {
-  gold: "#DB9628", goldSoft: "#F4E2C2", goldTint: "#FBF3E3",
-  ink: "#1F2933", ink2: "#2A333E", ink3: "#3A4453",
-  body: "#33363D", muted: "#6B7380", muted2: "#9099A6",
-  bg: "#F8F6F2", card: "#FFFFFF", line: "#E9E4DB", line2: "#F0EBE0",
-  green: "#2E7D5B", greenSoft: "#E4F1E9",
-  red: "#B14A3B", redSoft: "#FBE7E1",
+  gold: BRAND.accent, goldDeep: BRAND.accentDeep, goldSoft: BRAND.accentSoft, goldTint: BRAND.accentTint,
+  ink: BRAND.ink, ink2: BRAND.ink2, ink3: BRAND.ink3,
+  body: BRAND.body, muted: BRAND.muted, muted2: BRAND.muted2,
+  bg: BRAND.bg, card: BRAND.card, line: BRAND.line, line2: BRAND.line2,
+  green: BRAND.success, greenSoft: BRAND.successSoft,
+  red: BRAND.danger, redSoft: BRAND.dangerSoft, redBorder: BRAND.dangerBorder,
   amber: "#B5791F", amberSoft: "#FBEFD6",
 } as const;
 
-export const serif = "'Fraunces', Georgia, serif";
-export const mono  = "'JetBrains Mono', 'IBM Plex Mono', monospace";
-export const sans  = "'IBM Plex Sans', system-ui, sans-serif";
+// `serif` keeps its name; it is now the brand display face (titles only — numbers use `sans`).
+export const serif = FONT_DISPLAY;
+export const mono  = FONT_MONO;
+export const sans  = FONT_SANS;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 export function parseJSON(raw: unknown): unknown {
@@ -67,11 +72,11 @@ export function fmtDateTime(iso: string | null | undefined): string {
 export type BadgeVariant = "success" | "warning" | "error" | "info" | "gold" | "default";
 
 const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }> = {
-  success: { bg: "#E4F1E9", color: "#2E7D5B", dot: "#2E7D5B" },
-  warning: { bg: "#FBEFD6", color: "#B5791F", dot: "#DB9628" },
-  error:   { bg: "#FBE7E1", color: "#B14A3B", dot: "#B14A3B" },
+  success: { bg: T.greenSoft, color: T.green, dot: T.green },
+  warning: { bg: T.amberSoft, color: T.amber, dot: T.gold },
+  error:   { bg: T.redSoft, color: T.red, dot: T.red },
   info:    { bg: "#E8EEF4", color: "#3A4F66", dot: "#5C7895" },
-  gold:    { bg: "#FBF3E3", color: "#B5791F", dot: "#DB9628" },
+  gold:    { bg: T.goldTint, color: T.goldDeep, dot: T.gold },
   default: { bg: "#F0EBE0", color: "#6B7380", dot: "#9099A6" },
 };
 
@@ -198,13 +203,13 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad: Record<BtnSize, string> = { sm: "5px 12px", md: "8px 18px", lg: "11px 24px" };
   const fz:  Record<BtnSize, number> = { sm: 11, md: 13, lg: 14 };
   const base: Record<BtnVariant, React.CSSProperties> = {
-    primary:   { background: T.gold,    color: T.ink,  border: `1px solid ${T.gold}` },
+    primary:   { background: T.gold,    color: "#fff", border: `1px solid ${T.gold}`, ...BTN_PRIMARY_TEXT },
     secondary: { background: T.card,    color: T.ink3, border: `1px solid ${T.line}` },
     ghost:     { background: "transparent", color: T.muted, border: `1px solid ${T.line}` },
-    danger:    { background: T.redSoft, color: T.red,  border: "1px solid #F5C6C6" },
+    danger:    { background: T.redSoft, color: T.red,  border: `1px solid ${T.redBorder}` },
   };
   return (
-    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: 8, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...style }}>{children}</button>
+    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: BTN_RADIUS, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...style }}>{children}</button>
   );
 }
 

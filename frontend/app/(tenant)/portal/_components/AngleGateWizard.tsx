@@ -505,7 +505,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       )}
 
       {error && (
-        <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red }}>
+        <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red }}>
           {error}
         </div>
       )}
@@ -619,7 +619,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
           )}
 
           {reopenError && (
-            <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+            <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
               {reopenError}
             </div>
           )}
@@ -663,7 +663,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
           )}
 
           {writeError && !writing && (
-            <div style={{ padding: "9px 12px", background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
+            <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
               {writeError}
             </div>
           )}
