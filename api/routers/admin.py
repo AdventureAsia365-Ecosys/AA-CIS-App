@@ -209,25 +209,33 @@ async def list_tenants(
                 COALESCE(u.tours_quota_monthly, 0)     AS tours_quota_monthly,
                 COALESCE(u.api_calls_quota_monthly, 0) AS api_calls_quota_monthly,
                 COALESCE(u.price_usd_monthly, 0)       AS price_usd_monthly,
-                COUNT(rt.tour_id) FILTER (WHERE rt.source_status::text = 'active')     AS source_active,
-                COUNT(rt.tour_id) FILTER (WHERE rt.source_status::text = 'superseded') AS source_superseded,
-                COUNT(rt.tour_id) FILTER (WHERE rt.source_status::text = 'trashed')    AS source_trashed,
-                COUNT(pt.tour_id) FILTER (WHERE pt.master_status::text = 'active')     AS master_active,
-                COUNT(pt.tour_id) FILTER (WHERE pt.master_status::text = 'inactive')   AS master_inactive,
-                COUNT(pt.tour_id) FILTER (WHERE pt.master_status::text = 'trashed')    AS master_trashed
+                COALESCE(src.active, 0)     AS source_active,
+                COALESCE(src.superseded, 0) AS source_superseded,
+                COALESCE(src.trashed, 0)    AS source_trashed,
+                COALESCE(mst.active, 0)     AS master_active,
+                COALESCE(mst.inactive, 0)   AS master_inactive,
+                COALESCE(mst.trashed, 0)    AS master_trashed
             FROM shared.tenants t
             LEFT JOIN shared.v_tenant_monthly_usage u
                 ON u.tenant_id = t.tenant_id
-            LEFT JOIN silver_aa_internal.raw_tours rt
-                ON rt.tenant_id = t.tenant_id
-            LEFT JOIN gold_aa_internal.published_tours pt
-                ON pt.tenant_id = t.tenant_id
+            -- Count each table on its own: joining raw_tours AND published_tours onto the
+            -- same tenant row multiplied them (source x published), e.g. 91,718 "source"
+            -- tours for aa_internal instead of 121.
+            LEFT JOIN (
+                SELECT tenant_id,
+                       COUNT(*) FILTER (WHERE source_status::text = 'active')     AS active,
+                       COUNT(*) FILTER (WHERE source_status::text = 'superseded') AS superseded,
+                       COUNT(*) FILTER (WHERE source_status::text = 'trashed')    AS trashed
+                FROM silver_aa_internal.raw_tours GROUP BY tenant_id
+            ) src ON src.tenant_id = t.tenant_id
+            LEFT JOIN (
+                SELECT tenant_id,
+                       COUNT(*) FILTER (WHERE master_status::text = 'active')   AS active,
+                       COUNT(*) FILTER (WHERE master_status::text = 'inactive') AS inactive,
+                       COUNT(*) FILTER (WHERE master_status::text = 'trashed')  AS trashed
+                FROM gold_aa_internal.published_tours GROUP BY tenant_id
+            ) mst ON mst.tenant_id = t.tenant_id
             WHERE t.is_active = true
-            GROUP BY t.tenant_id, t.name, t.slug, t.plan_tier, t.posts_per_week, t.country,
-                     t.rate_limit_rpm, t.is_active, t.created_at,
-                     u.api_calls_used, u.quota_tours_pct, u.quota_calls_pct,
-                     u.tours_overage, u.overage_usd, u.llm_cost_usd,
-                     u.tours_quota_monthly, u.api_calls_quota_monthly, u.price_usd_monthly
             ORDER BY t.created_at
         """)
     return {

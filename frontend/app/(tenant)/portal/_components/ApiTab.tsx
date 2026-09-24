@@ -2,7 +2,7 @@
 // app/(tenant)/portal/_components/ApiTab.tsx
 
 import { useState } from "react";
-import { Eye, EyeOff, Copy, CheckCircle } from "lucide-react";
+import { Eye, EyeOff, Copy, CheckCircle, Bell } from "lucide-react";
 import { T, serif, mono, sans, Card } from "./ui";
 import { ApiPlayground } from "./ApiPlayground";
 
@@ -156,7 +156,7 @@ curl -X POST -H "Authorization: Bearer <JWT>" \\
           </p>
           <div style={{ padding: "20px 24px", background: T.bg, border: `1px solid ${T.line}`, borderRadius: 10 }}>
             <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-              🔔 <strong>Coming soon</strong> — webhook delivery is on the roadmap.<br />
+              <Bell size={12} color={T.gold} style={{ verticalAlign: -1 }} /> <strong>Coming soon</strong> — webhook delivery is on the roadmap.<br />
               Contact your Adventure Asia account manager to be notified when webhooks are enabled.
             </div>
           </div>

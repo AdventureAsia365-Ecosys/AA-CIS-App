@@ -6,7 +6,7 @@
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
 import { useState, useEffect } from "react";
-import { ArrowRight, FileText, Code2, RotateCcw, Globe2, BookOpen, Sparkles } from "lucide-react";
+import { ArrowRight, FileText, Code2, RotateCcw, Globe2, BookOpen, Sparkles, Clock } from "lucide-react";
 import {
   T, serif, mono, sans,
   Card, CardHead, Badge, ProgressBar, Spinner, LoadingScreen,
@@ -114,7 +114,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct > 30} />
           </div>
           <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${T.line}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
-            🕐 Resets in <strong style={{ color: T.ink }}>22 days</strong> · {month}
+            <Clock size={13} color={T.muted2} /> Resets in <strong style={{ color: T.ink }}>22 days</strong> · {month}
           </div>
         </Card>
 

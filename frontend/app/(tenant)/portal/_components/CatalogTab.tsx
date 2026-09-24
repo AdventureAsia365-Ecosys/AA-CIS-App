@@ -17,7 +17,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Save, X, Download } from "lucide-react";
+import { Save, X, Download, Package, PenLine } from "lucide-react";
 import {
   T, mono, sans,
   Btn, LoadingScreen, EmptyState,
@@ -163,7 +163,7 @@ export default function CatalogTab() {
           setList(fresh);
           if (justDone.length > 0) {
             const name = justDone[0].aa_name || 'Tour';
-            setLocalToast(`✅ "${name}" is ready. Click to review.`);
+            setLocalToast(`"${name}" is ready. Click to review.`);
             setTimeout(() => setLocalToast(null), 5000);
           }
           return;
@@ -499,7 +499,7 @@ export default function CatalogTab() {
 
     {loading ? <LoadingScreen message="Loading catalog…" /> :
      visibleList.length === 0 ? (
-       <EmptyState icon={<span style={{ fontSize: 28 }}>📦</span>} title="No rewrites yet" sub="Browse the pool and rewrite your first tour" />
+       <EmptyState icon={<Package size={32} strokeWidth={1.5} color={T.gold} />} title="No rewrites yet" sub="Browse the pool and rewrite your first tour" />
      ) : (
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -554,7 +554,7 @@ export default function CatalogTab() {
                   <td style={{ ...TDStyle, textAlign: "right" as const }}>
                     {writing ? (
                       <span style={{ fontSize: 12, color: T.amber, fontFamily: sans, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }}>✍️</span> Writing…
+                        <PenLine size={13} style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }} /> Writing…
                       </span>
                     ) : (
                       <button onClick={e => { e.stopPropagation(); setOpenTourId(v.published_tour_id ?? null); }}
@@ -612,7 +612,7 @@ export default function CatalogTab() {
 
           {isAiWriting(openGroup) ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 40 }}>
-              <span style={{ fontSize: 32, animation: "cis-pulse 1.4s ease-in-out infinite" }}>✍️</span>
+              <PenLine size={32} strokeWidth={1.5} color={T.gold} style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }} />
               <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, textAlign: "center" as const }}>
                 Writing your tour content…
               </div>

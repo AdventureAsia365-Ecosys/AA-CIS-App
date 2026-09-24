@@ -470,7 +470,7 @@ export default function S1RewritePage() {
             }));
             setTourStatuses(prev => ({ ...prev, [tourId]: "done" }));
             const tourName = toursRef.current.find(t => t.tour_id === tourId)?.src_name ?? "Tour";
-            setToast(`✅ "${tourName}" — rewrite complete.`);
+            setToast(`"${tourName}" — rewrite complete.`);
             setTimeout(() => setToast(null), 5000);
             resolveWaiter(tourId);
           } else if (job.status === "failed" || job.status === "interrupted") {
