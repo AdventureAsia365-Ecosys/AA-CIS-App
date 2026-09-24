@@ -1,36 +1,46 @@
 // app/(admin)/_components/adminUi.tsx
-// Design system for admin — red accent, same base tokens as portal
+// Design system for admin — Adventure Asia brand tokens (app/_brand/tokens.ts, AA-605).
 
 import { Loader2 } from "lucide-react";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
 
 export const A = {
-  // Accent
-  red:       "#EF4444",
-  redSoft:   "#FEE2E2",
-  redTint:   "#FFF1F1",
-  redBorder: "#FECACA",
+  // Accent — brand gold (AA-605: was red #EF4444, which also meant "error")
+  accent:       BRAND.accent,
+  accentDeep:   BRAND.accentDeep,
+  accentSoft:   BRAND.accentSoft,
+  accentTint:   BRAND.accentTint,
+  accentBorder: BRAND.accentBorder,
+  slate:        BRAND.slate,
+  // `red*` now means danger/error only (failed, blocked, delete, low score).
+  red:       BRAND.danger,
+  redSoft:   BRAND.dangerSoft,
+  redTint:   BRAND.dangerTint,
+  redBorder: BRAND.dangerBorder,
   // Base (shared with portal)
-  ink:       "#1F2933",
-  ink2:      "#2A333E",
-  ink3:      "#3A4453",
-  body:      "#33363D",
-  muted:     "#6B7380",
-  muted2:    "#9099A6",
-  bg:        "#F8F6F2",
-  card:      "#FFFFFF",
-  line:      "#E9E4DB",
-  line2:     "#F0EBE0",
-  green:     "#22C55E",
-  greenSoft: "#E4F1E9",
+  ink:       BRAND.ink,
+  ink2:      BRAND.ink2,
+  ink3:      BRAND.ink3,
+  body:      BRAND.body,
+  muted:     BRAND.muted,
+  muted2:    BRAND.muted2,
+  bg:        BRAND.bg,
+  card:      BRAND.card,
+  line:      BRAND.line,
+  line2:     BRAND.line2,
+  green:     BRAND.success,
+  greenSoft: BRAND.successSoft,
   amber:     "#F59E0B",
   amberSoft: "#FEF3C7",
-  gold:      "#DB9628",
-  goldTint:  "#FBF3E3",
+  gold:      BRAND.accent,
+  goldTint:  BRAND.accentTint,
 } as const;
 
-export const serif = "'Fraunces', Georgia, serif";
-export const mono  = "'JetBrains Mono', 'IBM Plex Mono', monospace";
-export const sans  = "'IBM Plex Sans', system-ui, sans-serif";
+// `serif` keeps its name (used for titles and big numbers everywhere) but is now the brand
+// display face, Fahkwang.
+export const serif = FONT_DISPLAY;
+export const mono  = FONT_MONO;
+export const sans  = FONT_SANS;
 
 // AA-412 follow-up (layout fixes round) — AdminSidebar's own width was a bare `220` literal with
 // no shared constant, so a viewport-covering element (e.g. a `position: fixed` modal) had no way
@@ -64,7 +74,7 @@ export function SLabel({ children, light = false, style }: { children: React.Rea
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
-export function StatCard({ label, value, sub, accent = A.red, icon }: {
+export function StatCard({ label, value, sub, accent = A.accent, icon }: {
   label: string; value: string; sub?: string; accent?: string; icon?: React.ReactNode;
 }) {
   return (
@@ -117,11 +127,11 @@ export function Badge({ children, color = "gray" }: {
   color?: "red" | "green" | "amber" | "gray" | "gold" | "blue" | "purple";
 }) {
   const s = {
-    red:    { bg: "#FEE2E2", c: "#991B1B" },
+    red:    { bg: A.redSoft, c: A.red },
     green:  { bg: "#D1FAE5", c: "#065F46" },
     amber:  { bg: "#FEF3C7", c: "#92400E" },
     gray:   { bg: "#F3F4F6", c: "#4B5563" },
-    gold:   { bg: "#FBF3E3", c: "#92400E" },
+    gold:   { bg: A.accentTint, c: A.accentDeep },
     blue:   { bg: "#DBEAFE", c: "#1E40AF" },
     purple: { bg: "#EDE9FE", c: "#5B21B6" },
   }[color];
@@ -140,7 +150,7 @@ export function Badge({ children, color = "gray" }: {
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 export function Spinner({ size = 16 }: { size?: number }) {
-  return <Loader2 size={size} style={{ animation: "spin 1s linear infinite", color: A.red }} />;
+  return <Loader2 size={size} style={{ animation: "spin 1s linear infinite", color: A.accent }} />;
 }
 
 export function LoadingScreen({ msg = "Loading..." }: { msg?: string }) {
@@ -160,7 +170,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
   const fz  = { sm: 11, md: 13, lg: 14 }[size];
   const base: Record<string, React.CSSProperties> = {
-    primary:   { background: A.red,     color: "#fff",  border: `1px solid ${A.red}` },
+    primary:   { background: A.accent,  color: "#fff",  border: `1px solid ${A.accent}`, ...BTN_PRIMARY_TEXT },
     secondary: { background: A.card,    color: A.ink3,  border: `1px solid ${A.line}` },
     danger:    { background: A.redSoft, color: A.red,   border: `1px solid ${A.redBorder}` },
     ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
@@ -168,7 +178,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   return (
     <button onClick={onClick} disabled={disabled} style={{
       display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-      padding: pad, borderRadius: 8, fontSize: fz, fontWeight: 600,
+      padding: pad, borderRadius: BTN_RADIUS, fontSize: fz, fontWeight: 600,
       cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
       transition: "opacity .15s", fontFamily: sans,
       ...base[variant], ...style,

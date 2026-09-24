@@ -141,7 +141,7 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
   return (
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      background: type === "success" ? "#15803D" : "#DC2626",
+      background: type === "success" ? A.green : A.red,
       color: "#fff", padding: "11px 18px", borderRadius: 8,
       fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
     }}>

@@ -83,7 +83,7 @@ function LifecycleBar({ lc }: { lc: Lifecycle }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 10, color: A.muted2, width: 42, flexShrink: 0 }}>Source</span>
         <div style={{ display: "flex", gap: 8 }}>
-          <StatPill n={lc.source_active}     label="active"     color="#22C55E" />
+          <StatPill n={lc.source_active}     label="active"     color={A.green} />
           <StatPill n={lc.source_superseded} label="superseded" color={A.gold} />
           <StatPill n={lc.source_trashed}    label="trashed"    color={A.red} />
         </div>
@@ -95,7 +95,7 @@ function LifecycleBar({ lc }: { lc: Lifecycle }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 10, color: A.muted2, width: 42, flexShrink: 0 }}>Master</span>
         <div style={{ display: "flex", gap: 8 }}>
-          <StatPill n={lc.master_active}   label="active"   color="#22C55E" />
+          <StatPill n={lc.master_active}   label="active"   color={A.green} />
           <StatPill n={lc.master_inactive} label="inactive" color={A.muted} />
           <StatPill n={lc.master_trashed}  label="trashed"  color={A.red} />
         </div>
@@ -162,9 +162,9 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             {PLAN_OPTIONS.map(p => (
               <button key={p} onClick={() => setPlan(p)} style={{
                 flex: 1, padding: "9px 0", borderRadius: 8, cursor: "pointer", fontFamily: sans,
-                border: `1px solid ${plan === p ? A.red : A.line}`,
-                background: plan === p ? A.redTint : A.bg,
-                color: plan === p ? A.red : A.muted,
+                border: `1px solid ${plan === p ? A.accent : A.line}`,
+                background: plan === p ? A.accentTint : A.bg,
+                color: plan === p ? A.accentDeep : A.muted,
                 fontSize: 13, fontWeight: plan === p ? 700 : 400,
               }}>{p}</button>
             ))}
@@ -206,8 +206,8 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
       <div style={{ background: A.card, border: "1px solid #86EFAC", borderRadius: 16, padding: 32, width: 460 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <CheckCircle size={20} color="#22C55E" />
-          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: "#22C55E" }}>Tenant Created</div>
+          <CheckCircle size={20} color={A.green} />
+          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>Tenant Created</div>
         </div>
         <p style={{ fontSize: 13, color: A.muted, marginBottom: 24 }}>
           <strong style={{ color: A.ink }}>{keyData.tenant_name}</strong> — share this API key once. It will <strong style={{ color: A.red }}>never be shown again</strong>.
@@ -218,7 +218,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
             <div style={{
               flex: 1, fontFamily: mono, fontSize: 12, padding: "10px 14px",
               background: A.bg, border: "1px solid #86EFAC", borderRadius: 8,
-              color: show ? "#22C55E" : A.muted, letterSpacing: show ? 0.3 : 3, wordBreak: "break-all",
+              color: show ? A.green : A.muted, letterSpacing: show ? 0.3 : 3, wordBreak: "break-all",
             }}>
               {show ? keyData.api_key : "•".repeat(32)}
             </div>
@@ -228,7 +228,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? "#D1FAE5" : "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, color: "#22C55E", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Copy size={13} />{copied ? "Copied!" : "Copy Key"}
           </button>
           <Btn variant="secondary" onClick={onClose} style={{ flex: 1 }}>Done</Btn>
@@ -271,16 +271,16 @@ interface TenantDetails {
 }
 
 const SCORE_COLOR = (s: number | null) =>
-  s == null ? A.muted2 : s >= 9 ? "#22C55E" : s >= 7 ? A.gold : A.red;
+  s == null ? A.muted2 : s >= 9 ? A.green : s >= 7 ? A.gold : A.red;
 
 const STATUS_STYLE: Record<string, { bg: string; col: string }> = {
-  approved:     { bg: "#DCFCE7", col: "#16A34A" },
+  approved:     { bg: A.greenSoft, col: "#16A34A" },
   ai_generated: { bg: "#EFF6FF", col: "#2563EB" },
-  rejected:     { bg: "#FEE2E2", col: "#DC2626" },
+  rejected:     { bg: A.redSoft, col: A.red },
   needs_review: { bg: "#FEF3C7", col: "#D97706" },
   pending:      { bg: "#FEF9C3", col: "#B45309" },
-  completed:    { bg: "#DCFCE7", col: "#16A34A" },
-  failed:       { bg: "#FEE2E2", col: "#DC2626" },
+  completed:    { bg: A.greenSoft, col: "#16A34A" },
+  failed:       { bg: A.redSoft, col: A.red },
   ingesting:    { bg: "#EFF6FF", col: "#2563EB" },
 };
 function StatusChip({ status }: { status: string }) {
@@ -349,7 +349,7 @@ function PipelineTabContent({ runs, pipelineNote }: { runs: PipelineRun[]; pipel
             <tr key={r.run_id}>
               <td style={{ ...TD, fontFamily: mono, fontSize: 11, color: A.muted }}>{fmtDT(r.started_at)}</td>
               <td style={{ ...TD, textAlign: "right" }}>{r.tours_processed}</td>
-              <td style={{ ...TD, textAlign: "right", color: "#22C55E" }}>{r.tours_passed}</td>
+              <td style={{ ...TD, textAlign: "right", color: A.green }}>{r.tours_passed}</td>
               <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontSize: 10, color: A.muted2 }}>
                 {r.llm_model ? r.llm_model.replace(/us\.anthropic\./, "").replace(/-v1:0$/, "") : "—"}
               </td>
@@ -364,7 +364,7 @@ function PipelineTabContent({ runs, pipelineNote }: { runs: PipelineRun[]; pipel
 }
 function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
   const pct      = usage.quota_total > 0 ? Math.min(100, Math.round((usage.quota_used / usage.quota_total) * 100)) : 0;
-  const barColor = pct > 90 ? A.red : pct > 70 ? A.amber : "#22C55E";
+  const barColor = pct > 90 ? A.red : pct > 70 ? A.amber : A.green;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div>
@@ -463,7 +463,7 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
           </div>
           <Btn variant="secondary" size="sm" onClick={() => setEditing(true)}>Edit</Btn>
         </div>
-        {saved && <span style={{ fontSize: 12, color: "#22C55E" }}>Saved</span>}
+        {saved && <span style={{ fontSize: 12, color: A.green }}>Saved</span>}
         {!hasAnyData ? (
           <div style={{ padding: "20px 0", textAlign: "center", fontSize: 12, color: A.muted }}>No brand rules configured — click Edit to set them up.</div>
         ) : (
@@ -735,8 +735,8 @@ function TenantDetail({ tenantId, planTier }: {
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: "7px 14px", fontSize: 12, fontWeight: tab === t.key ? 700 : 400,
-            color: tab === t.key ? A.red : A.muted,
-            border: "none", borderBottom: `2px solid ${tab === t.key ? A.red : "transparent"}`,
+            color: tab === t.key ? A.accentDeep : A.muted,
+            border: "none", borderBottom: `2px solid ${tab === t.key ? A.accent : "transparent"}`,
             background: "none", cursor: "pointer", fontFamily: sans,
           }}>{t.label}</button>
         ))}
@@ -829,7 +829,7 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
           <div style={{ fontSize: 13, fontWeight: 600, color: A.ink }}>
             {lc.source_active} active
           </div>
-          <div style={{ fontSize: 11, color: "#22C55E" }}>
+          <div style={{ fontSize: 11, color: A.green }}>
             {tenant.this_month.api_calls_used.toLocaleString()} calls
           </div>
         </td>
@@ -844,8 +844,8 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
           <button onClick={toggle} disabled={toggling} style={{
             padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer",
             fontSize: 11, fontWeight: 700,
-            background: isActive ? "#D1FAE5" : A.redSoft,
-            color: isActive ? "#22C55E" : A.red,
+            background: isActive ? A.greenSoft : A.redSoft,
+            color: isActive ? A.green : A.red,
           }}>
             {toggling ? "…" : isActive ? "Active" : "Inactive"}
           </button>
@@ -977,8 +977,8 @@ export default function TenantsPage() {
           {/* Summary cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
             {[
-              { label: "Total Tenants",    value: String(tenants.length),            color: A.red },
-              { label: "Active",           value: String(totalActive),               color: "#22C55E" },
+              { label: "Total Tenants",    value: String(tenants.length),            color: A.accent },
+              { label: "Active",           value: String(totalActive),               color: A.green },
               { label: "Source (active)",  value: totalSrcActive.toLocaleString(),   color: A.gold },
               { label: "Master (active)",  value: totalMstrActive.toLocaleString(),  color: A.ink },
             ].map(c => (

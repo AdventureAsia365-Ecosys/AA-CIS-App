@@ -29,12 +29,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           })();
         `}} />
 
-        {/* Fraunces + JetBrains Mono — CHỈ dùng bởi portal _components/ui.tsx
-            Admin/Internal không dùng các font này nên không bị ảnh hưởng */}
+        {/* AA-605 — Fahkwang (display) + Poppins (UI) are the Adventure Asia brand faces
+            (app/_brand/tokens.ts). Fraunces + IBM Plex Sans stay loaded while the tenant portal
+            and the (internal) routes still reference them; JetBrains Mono is shared. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Fahkwang:wght@500;600;700&family=Poppins:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>

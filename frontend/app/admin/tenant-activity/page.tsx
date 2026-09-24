@@ -347,7 +347,7 @@ export default function ContentTracePage() {
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
               {unpublishError && (
-                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: "#fef2f2", color: A.red, fontSize: 12 }}>
+                <div style={{ padding: "8px 12px", marginBottom: 12, borderRadius: 6, background: A.redTint, color: A.red, fontSize: 12 }}>
                   {unpublishError}
                 </div>
               )}

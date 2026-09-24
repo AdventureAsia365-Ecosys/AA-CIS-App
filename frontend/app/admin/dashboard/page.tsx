@@ -10,8 +10,8 @@ import {
 } from "../_components/adminUi";
 
 const STATUS_COLOR: Record<string, string> = {
-  healthy: "#22C55E", degraded: "#F59E0B", down: "#EF4444",
-  running: "#22C55E", interrupted: "#EF4444", idle: "#9099A6",
+  healthy: A.green, degraded: "#F59E0B", down: A.red,
+  running: A.green, interrupted: A.red, idle: "#9099A6",
 };
 
 function MetricCard({ label, value, sub, src, color = A.ink }: {
@@ -76,7 +76,7 @@ function OverviewTab({ data }: { data: any }) {
           label="Pass Rate"
           value={`${passRate}%`}
           src="↳ pipeline_runs · 7d window"
-          color="#22C55E"
+          color={A.green}
         />
         <MetricCard
           label="Content Versions"
@@ -120,9 +120,9 @@ function OverviewTab({ data }: { data: any }) {
               <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v?.slice(5) ?? v} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip {...CHART_TOOLTIP} />
-              <Bar dataKey="passed" name="Passed" fill="#22C55E" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="passed" name="Passed" fill={A.green} radius={[3, 3, 0, 0]} />
               <Bar dataKey="hitl"   name="HITL"   fill={A.gold}  radius={[3, 3, 0, 0]} />
-              <Bar dataKey="failed" name="Failed" fill="#EF4444" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="failed" name="Failed" fill={A.red} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -148,7 +148,7 @@ function OverviewTab({ data }: { data: any }) {
                   <td style={TD}>{r.date}</td>
                   <td style={{ ...TD, textAlign: "right" }}>{r.runs}</td>
                   <td style={{ ...TD, textAlign: "right" }}>{r.tours}</td>
-                  <td style={{ ...TD, textAlign: "right", color: "#22C55E", fontWeight: 600 }}>{r.passed}</td>
+                  <td style={{ ...TD, textAlign: "right", color: A.green, fontWeight: 600 }}>{r.passed}</td>
                   <td style={{ ...TD, textAlign: "right", color: r.failed > 0 ? A.red : A.muted }}>{r.failed}</td>
                   <td style={{ ...TD, textAlign: "right", fontFamily: mono, fontSize: 12 }}>
                     ${Number(r.cost ?? 0).toFixed(4)}
@@ -180,7 +180,7 @@ function OverviewTab({ data }: { data: any }) {
             <tbody>
               {models.map((m: any, idx: number) => {
                 const score = m.avg_score != null ? parseFloat(m.avg_score) : null;
-                const sc    = score == null ? A.muted2 : score >= 9.5 ? "#22C55E" : score >= 8.0 ? A.gold : A.red;
+                const sc    = score == null ? A.muted2 : score >= 9.5 ? A.green : score >= 8.0 ? A.gold : A.red;
                 return (
                   <tr key={m.model} style={{ background: idx % 2 === 1 ? A.bg : "transparent" }}>
                     <td style={TD}><code style={{ fontFamily: mono, fontSize: 12, color: A.gold }}>{m.model}</code></td>
@@ -263,7 +263,7 @@ function SeoTab() {
           label="Cache Hit Rate"
           value={data.cache?.hit_rate ?? "N/A"}
           sub={`${data.cache?.hits ?? 0} hits / ${data.cache?.misses ?? 0} misses`}
-          color="#22C55E"
+          color={A.green}
         />
         <MetricCard
           label="Countries"
@@ -357,7 +357,7 @@ function LibraryTab() {
         <MetricCard
           label="Avg Quality Score"
           value={data.avg_score != null ? Number(data.avg_score).toFixed(1) : "—"}
-          color="#22C55E"
+          color={A.green}
         />
         <MetricCard
           label="Published (30d)"
@@ -388,7 +388,7 @@ function LibraryTab() {
                   <td style={{ ...TD, textAlign: "right" }}>
                     <span style={{
                       fontWeight: 700,
-                      color: Number(r.avg_score) >= 9 ? "#22C55E" : Number(r.avg_score) >= 7 ? A.gold : A.red,
+                      color: Number(r.avg_score) >= 9 ? A.green : Number(r.avg_score) >= 7 ? A.gold : A.red,
                     }}>{Number(r.avg_score).toFixed(1)}</span>
                   </td>
                   <td style={{ ...TD, textAlign: "right", color: A.muted, fontSize: 12 }}>

@@ -87,9 +87,9 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
             <div key={step} style={{ display: "flex", alignItems: "center" }}>
               <div style={{
                 padding: "6px 14px", borderRadius: 20,
-                background: `${A.red}15`, color: A.red,
+                background: `${A.accent}15`, color: A.accentDeep,
                 fontSize: 12, fontWeight: 600, fontFamily: mono,
-                border: `1px solid ${A.red}30`,
+                border: `1px solid ${A.accent}30`,
               }}>
                 {step}
               </div>
@@ -142,7 +142,7 @@ function BrandRulesTab({ brand }: { brand: SettingsData["brand_rules"] }) {
           fontSize: 12, color: "#78350F", fontFamily: sans,
         }}>
           To update brand rules, upload a new Brand Brief DOCX on the{" "}
-          <a href="/admin/brand" style={{ color: A.red, fontWeight: 600 }}>Brand Identity</a> page.
+          <a href="/admin/brand" style={{ color: A.accentDeep, fontWeight: 600 }}>Brand Identity</a> page.
         </div>
       </Card>
 
@@ -160,7 +160,7 @@ function BrandRulesTab({ brand }: { brand: SettingsData["brand_rules"] }) {
                 onClick={() => setExpanded(v => !v)}
                 style={{
                   marginTop: 8, background: "none", border: "none",
-                  cursor: "pointer", color: A.red, fontSize: 12,
+                  cursor: "pointer", color: A.accentDeep, fontSize: 12,
                   fontWeight: 600, display: "flex", alignItems: "center", gap: 4,
                   padding: 0, fontFamily: sans,
                 }}
@@ -302,13 +302,13 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
             <span key={i} style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 999,
-              background: `${A.red}12`, color: A.red,
+              background: `${A.accent}12`, color: A.accentDeep,
               fontSize: 12, fontWeight: 500, fontFamily: mono,
             }}>
               {kw}
               <button onClick={() => removeKeyword(kw)} style={{
                 background: "none", border: "none", cursor: "pointer",
-                color: A.red, display: "flex", padding: 0,
+                color: A.accentDeep, display: "flex", padding: 0,
               }}>
                 <X size={11} />
               </button>
@@ -721,7 +721,7 @@ export default function SettingsPage() {
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
           <div style={{
             width: 36, height: 36, borderRadius: 9,
-            background: `${A.red}15`, color: A.red,
+            background: `${A.accent}15`, color: A.accent,
             display: "grid", placeItems: "center",
           }}>
             <Settings size={18} />
