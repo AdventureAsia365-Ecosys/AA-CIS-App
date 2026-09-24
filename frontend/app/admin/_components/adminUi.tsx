@@ -172,7 +172,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
   const fz  = { sm: 11, md: 13, lg: 14 }[size];
   const base: Record<string, React.CSSProperties> = {
-    primary:   { background: A.accent,  color: "#fff",  border: `1px solid ${A.accent}`, ...BTN_PRIMARY_TEXT },
+    primary:   { background: A.accent,  color: "#fff",  border: `1px solid ${A.accent}` },
     secondary: { background: A.card,    color: A.ink3,  border: `1px solid ${A.line}` },
     danger:    { background: A.redSoft, color: A.red,   border: `1px solid ${A.redBorder}` },
     ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
@@ -183,7 +183,9 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
       padding: pad, borderRadius: BTN_RADIUS, fontSize: fz, fontWeight: 600,
       cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
       transition: "opacity .15s", fontFamily: sans,
-      ...base[variant], ...style,
+      // AA-605: brand uppercase only on md/lg primaries; "sm" sits in dense table rows where the
+      // wider uppercase label overflowed (Review Queue actions column).
+      ...base[variant], ...(variant === "primary" && size !== "sm" ? BTN_PRIMARY_TEXT : {}), ...style,
     }}>{children}</button>
   );
 }

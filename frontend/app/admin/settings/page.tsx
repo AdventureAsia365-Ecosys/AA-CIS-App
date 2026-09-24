@@ -55,7 +55,7 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
       <Card>
         <SLabel>Brand Audit Threshold</SLabel>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ fontFamily: serif, fontSize: 36, fontWeight: 500, color: A.ink, letterSpacing: "-0.03em" }}>
+          <span style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: A.ink, letterSpacing: "-0.03em" }}>
             {gates.brand_audit_threshold.toFixed(1)}
           </span>
           <span style={{ fontSize: 14, color: A.muted }}>/&nbsp;10</span>

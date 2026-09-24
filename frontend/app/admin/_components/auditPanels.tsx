@@ -9,7 +9,7 @@
 // finding) and are now ONE merged table + row-accordion, built directly in
 // `tenant-activity/page.tsx` (its own types/component, no longer generic enough to share).
 import { useState } from "react";
-import { AlertTriangle, RotateCw } from "lucide-react";
+import { AlertTriangle, ClipboardList, RotateCw } from "lucide-react";
 import { A, sans, Card, Btn, TH, TD } from "./adminUi";
 
 export async function fetchJson<T>(url: string): Promise<T> {
@@ -22,7 +22,7 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <Card>
       <div style={{ textAlign: "center", padding: "40px 20px" }}>
-        <div style={{ fontSize: 32, marginBottom: 10 }}>🗒️</div>
+        <ClipboardList size={30} color={A.accent} style={{ marginBottom: 10 }} />
         <div style={{ fontSize: 15, fontWeight: 600, color: A.ink, marginBottom: 6 }}>{title}</div>
         <div style={{ fontSize: 13, color: A.muted }}>{body}</div>
       </div>
