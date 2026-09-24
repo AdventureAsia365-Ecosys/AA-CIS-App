@@ -203,13 +203,13 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad: Record<BtnSize, string> = { sm: "5px 12px", md: "8px 18px", lg: "11px 24px" };
   const fz:  Record<BtnSize, number> = { sm: 11, md: 13, lg: 14 };
   const base: Record<BtnVariant, React.CSSProperties> = {
-    primary:   { background: T.gold,    color: "#fff", border: `1px solid ${T.gold}`, ...BTN_PRIMARY_TEXT },
+    primary:   { background: T.gold,    color: "#fff", border: `1px solid ${T.gold}` },
     secondary: { background: T.card,    color: T.ink3, border: `1px solid ${T.line}` },
     ghost:     { background: "transparent", color: T.muted, border: `1px solid ${T.line}` },
     danger:    { background: T.redSoft, color: T.red,  border: `1px solid ${T.redBorder}` },
   };
   return (
-    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: BTN_RADIUS, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...style }}>{children}</button>
+    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: pad[size], borderRadius: BTN_RADIUS, fontSize: fz[size], fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, transition: "all 0.15s", fontFamily: sans, ...base[variant], ...(variant === "primary" && size !== "sm" ? BTN_PRIMARY_TEXT : {}), ...style }}>{children}</button>
   );
 }
 
