@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Wallet, Puzzle } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
+import { LOGO_SRC } from "../../_brand/tokens";
 
 interface Notif {
   id: number;
@@ -115,17 +116,16 @@ export default function AdminSidebar() {
       {/* Brand */}
       <div style={{ position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 7, flexShrink: 0,
-            background: isAdmin ? A.red : A.gold,
-            display: "grid", placeItems: "center",
-            fontFamily: serif, fontWeight: 700, color: "#fff", fontSize: 13,
-          }}>AA</div>
+          {/* AA-605 — real Adventure Asia mountain mark (gold on the dark sidebar), replacing the
+              red/gold "AA" tile. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={LOGO_SRC} alt="Adventure Asia" width={38} height={24}
+            style={{ width: 38, height: "auto", flexShrink: 0, display: "block" }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 500, color: "#F4F1EC", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               CIS Admin
             </div>
-            <div style={{ fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: isAdmin ? A.red : A.gold, fontWeight: 600, marginTop: 1 }}>
+            <div style={{ fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: A.accent, fontWeight: 600, marginTop: 1 }}>
               {isAdmin ? "Administrator" : "Content Team"}
             </div>
           </div>
@@ -174,7 +174,7 @@ export default function AdminSidebar() {
             ) : notifs.map(n => (
               <div key={n.id} style={{
                 padding: "8px 12px",
-                background: n.is_read ? "transparent" : "rgba(239,68,68,0.06)",
+                background: n.is_read ? "transparent" : "rgba(219,150,40,0.08)",
                 borderBottom: "1px solid rgba(255,255,255,0.04)",
               }}>
                 <div style={{ fontSize: 11, color: "#C9CFD8", fontWeight: n.is_read ? 400 : 600 }}>
@@ -203,10 +203,10 @@ export default function AdminSidebar() {
         {/* ACP v2 — N1 setup + N5 approval (admin-only, same as before) */}
         {isAdmin && (
           <NavGroup label="ACP v2 — Setup & Approval">
-            <NavItem active={active("/admin/dashboard")} accent={A.red}
+            <NavItem active={active("/admin/dashboard")} accent={A.accent} adminOnly
               icon={<LayoutDashboard size={15} />} label="Dashboard"
               onClick={() => router.push("/admin/dashboard")} />
-            <NavItem active={active("/admin/tenants")} accent={A.red}
+            <NavItem active={active("/admin/tenants")} accent={A.accent} adminOnly
               icon={<Users size={15} />} label="Tenants"
               onClick={() => router.push("/admin/tenants")} />
             {/* AA-603 — "Run Health" NavItem removed with the deleted /admin/run-health page
@@ -221,7 +221,7 @@ export default function AdminSidebar() {
                 tier Cross-Tenant Oversight used to be (middleware.ts).
                 AA-622 — expanded into the "External Spend" page (LLM + DataForSEO cost, 3 tabs);
                 route kept as /admin/llm-usage, label + icon updated to match. */}
-            <NavItem active={active("/admin/llm-usage")} accent={A.red}
+            <NavItem active={active("/admin/llm-usage")} accent={A.accent} adminOnly
               icon={<Wallet size={15} />} label="External Spend"
               onClick={() => router.push("/admin/llm-usage")} />
             {/* AA-553 — "Atom Curation" moved out of this group, down into "AA Internal Content"
@@ -257,7 +257,7 @@ export default function AdminSidebar() {
           {/* AA-553 — moved here from "ACP v2 — Setup & Approval" (was miscategorized: this is
               Master Content pool data — Atom/Segment/Score/Route/Hub/Slate — not platform config,
               so it belongs right under Master Content, not next to Tenants/Run Health). Kept
-              isAdmin-gated (accent={A.red}, unlike its A.gold neighbors in this group) because
+              isAdmin-gated (adminOnly tag, AA-605; was a red accent vs its gold neighbors) because
               this group itself is NOT role-gated (renders for reviewer/content too) but
               middleware.ts's PROTECTED_ROUTES still restricts /admin/atom-curation to
               roles: ["admin"] — left that restriction untouched (out of this issue's scope), so a
@@ -265,7 +265,7 @@ export default function AdminSidebar() {
               Content" (Nghiệp's decision from AA-553's name options), route
               (`/admin/atom-curation`) unchanged. */}
           {isAdmin && (
-            <NavItem active={active("/admin/atom-curation")} accent={A.red}
+            <NavItem active={active("/admin/atom-curation")} accent={A.accent} adminOnly
               icon={<Puzzle size={15} />} label="Social Content"
               onClick={() => router.push("/admin/atom-curation")} />
           )}
@@ -280,7 +280,7 @@ export default function AdminSidebar() {
 
       {/* Settings — admin only */}
       {isAdmin && (
-        <NavItem active={active("/admin/settings")} accent={A.red}
+        <NavItem active={active("/admin/settings")} accent={A.accent} adminOnly
           icon={<Settings size={15} />} label="Settings"
           onClick={() => router.push("/admin/settings")} />
       )}
@@ -293,7 +293,7 @@ export default function AdminSidebar() {
         }}>
           <div style={{
             width: 30, height: 30, borderRadius: 6,
-            background: isAdmin ? A.red : A.gold,
+            background: A.accent,
             display: "grid", placeItems: "center",
             color: "#fff", fontWeight: 700, fontSize: 12, flexShrink: 0,
           }}>
@@ -324,9 +324,12 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function NavItem({ active, icon, label, accent, onClick }: {
+function NavItem({ active, icon, label, accent, onClick, adminOnly = false }: {
   active: boolean; icon: React.ReactNode; label: string;
   accent: string; onClick: () => void;
+  // AA-605 — admin-only items used to be told apart by a red accent; now every item shares the
+  // brand gold and admin-only ones carry a small "ADMIN" tag instead.
+  adminOnly?: boolean;
 }) {
   return (
     <button onClick={onClick} style={{
@@ -342,7 +345,15 @@ function NavItem({ active, icon, label, accent, onClick }: {
         <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: accent, borderRadius: "0 2px 2px 0" }} />
       )}
       <span style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
+      {/* nowrap: Poppins is wider than the old IBM Plex Sans, and with the ADMIN tag labels like
+          "External Spend" wrapped onto two lines. */}
+      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {adminOnly && (
+        <span style={{
+          flexShrink: 0, fontSize: 8, fontWeight: 600, letterSpacing: "0.1em", color: "#8A929D",
+          border: "1px solid #3A4453", borderRadius: 3, padding: "0 3px", lineHeight: "13px",
+        }}>ADMIN</span>
+      )}
     </button>
   );
 }

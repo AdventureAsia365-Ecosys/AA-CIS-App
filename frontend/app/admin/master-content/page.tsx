@@ -161,7 +161,7 @@ function statusBadge(status: string) {
 
 function masterStatusBadge(ms: string) {
   if (ms === "trashed") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 700 }}>
       TRASHED
     </span>
   );
@@ -176,13 +176,13 @@ function masterStatusBadge(ms: string) {
 function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | null; fixPassApplied: boolean; codes?: string[] }) {
   if (!status) return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
   if (status === "pass") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#DCFCE7", color: "#15803D", fontSize: 11, fontWeight: 600 }}>✓ Pass</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>✓ Pass</span>
   );
   if (status === "flagged" && fixPassApplied) return (
     <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "#FEF9C3", color: "#B45309", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
   );
   if (status === "flagged") return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
   );
   if (status === "manual_check") return (
     <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FFEDD5", color: "#C2410C", fontSize: 11, fontWeight: 600 }}>👁 Manual</span>
@@ -1118,17 +1118,17 @@ export default function MasterContentPage() {
                 style={{
                   padding: "8px 18px",
                   fontSize: 12, fontWeight: masterStatusFilter === tab.value ? 700 : 500,
-                  border: "none", borderBottom: masterStatusFilter === tab.value ? `2px solid ${tab.value === "trashed" ? "#DC2626" : A.gold}` : "2px solid transparent",
+                  border: "none", borderBottom: masterStatusFilter === tab.value ? `2px solid ${tab.value === "trashed" ? A.red : A.gold}` : "2px solid transparent",
                   background: "none", cursor: "pointer",
                   color: masterStatusFilter === tab.value
-                    ? (tab.value === "trashed" ? "#DC2626" : A.gold)
+                    ? (tab.value === "trashed" ? A.red : A.gold)
                     : A.muted,
                   marginBottom: -1,
                 }}
               >
                 {tab.label}
                 {tab.value === "trashed" && tours.filter(t => t.master_status === "trashed").length > 0 && (
-                  <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 8, background: "#FEE2E2", color: "#DC2626", fontSize: 10, fontWeight: 700 }}>
+                  <span style={{ marginLeft: 6, padding: "1px 5px", borderRadius: 8, background: A.redSoft, color: A.red, fontSize: 10, fontWeight: 700 }}>
                     {tours.filter(t => t.master_status === "trashed").length}
                   </span>
                 )}
@@ -1252,7 +1252,7 @@ export default function MasterContentPage() {
                     return (
                       <React.Fragment key={t.version_id}>
                         <tr style={{
-                          background: t.master_status === "trashed" ? "#FFF5F5"
+                          background: t.master_status === "trashed" ? A.redTint
                             : isExpanded ? `${A.gold}14` : isSelected ? `${A.gold}10`
                             : absIdx % 2 === 0 ? "#fff" : A.bg,
                           borderBottom: isExpanded ? "none" : undefined,
@@ -1327,7 +1327,7 @@ export default function MasterContentPage() {
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
                                   disabled={toggling === t.tour_id}
                                   title="Set to active"
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: "#15803D", fontWeight: 600 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Active"}
                                 </button>
@@ -1337,7 +1337,7 @@ export default function MasterContentPage() {
                                   onClick={() => trashMaster(t.tour_id!, t.tour_name)}
                                   disabled={trashing === t.tour_id}
                                   title="Move to trash"
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid #FECACA`, borderRadius: 5, background: "#FFF5F5", cursor: "pointer", color: "#DC2626", display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <Trash2 size={11} />
                                   {trashing === t.tour_id ? "…" : "Trash"}
@@ -1348,7 +1348,7 @@ export default function MasterContentPage() {
                                   onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
                                   disabled={restoring === t.tour_id}
                                   title="Restore from trash (→ inactive)"
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid #BBF7D0`, borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: "#15803D", display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid #BBF7D0`, borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <RotateCcw size={11} />
                                   {restoring === t.tour_id ? "…" : "Restore"}

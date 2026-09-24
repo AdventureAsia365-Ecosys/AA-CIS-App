@@ -275,7 +275,7 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
   return (
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
-      background: type === "success" ? "#15803D" : "#DC2626",
+      background: type === "success" ? A.green : A.red,
       color: "#fff", padding: "12px 20px", borderRadius: 8,
       fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
       display: "flex", alignItems: "center", gap: 8,
@@ -390,7 +390,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={toggleShowTrashed}
-            style={{ fontSize: 11, fontWeight: 600, background: "none", border: `1px solid ${A.line}`, borderRadius: 5, padding: "3px 8px", cursor: "pointer", color: showTrashed ? "#DC2626" : A.muted }}>
+            style={{ fontSize: 11, fontWeight: 600, background: "none", border: `1px solid ${A.line}`, borderRadius: 5, padding: "3px 8px", cursor: "pointer", color: showTrashed ? A.red : A.muted }}>
             {showTrashed ? "Hide Trashed" : "Show Trashed"}
           </button>
           <button onClick={onRefresh} title="Refresh"
@@ -468,7 +468,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
                         onClick={() => trashTour(t.tour_id, t.src_name || "this tour")}
                         disabled={trashing === t.tour_id}
                         title="Trash this source tour"
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid #FECACA", borderRadius: 5, background: "#FFF5F5", cursor: "pointer", color: "#DC2626" }}
+                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red }}
                       >
                         <Trash2 size={11} />
                         {trashing === t.tour_id ? "…" : "Trash"}
@@ -489,10 +489,10 @@ function ToursReadySection({ tours, loading, onRefresh }: {
 
       {/* Trashed tours section */}
       {showTrashed && (
-        <div style={{ borderTop: `2px dashed #FECACA`, marginTop: 0 }}>
-          <div style={{ padding: "10px 20px", background: "#FFF5F5", display: "flex", alignItems: "center", gap: 8 }}>
-            <Trash2 size={13} style={{ color: "#DC2626" }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#DC2626" }}>
+        <div style={{ borderTop: `2px dashed ${A.redBorder}`, marginTop: 0 }}>
+          <div style={{ padding: "10px 20px", background: A.redTint, display: "flex", alignItems: "center", gap: 8 }}>
+            <Trash2 size={13} style={{ color: A.red }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: A.red }}>
               Trashed Source Tours {!trashedLoading && `(${trashedTours.length})`}
             </span>
           </div>
@@ -507,14 +507,14 @@ function ToursReadySection({ tours, loading, onRefresh }: {
               <thead>
                 <tr>
                   {["Tour Name", "Country", "Trashed At", ""].map(h => (
-                    <th key={h} style={{ ...TH, textAlign: "left", background: "#FFF5F5" }}>{h}</th>
+                    <th key={h} style={{ ...TH, textAlign: "left", background: A.redTint }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {trashedTours.map((t, i) => (
-                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? "#FFF5F5" : "#FFFCFC", opacity: 0.85 }}>
-                    <td style={{ ...TD, color: "#DC2626", fontWeight: 500 }}>{t.src_name || "—"}</td>
+                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "#FFFCFC", opacity: 0.85 }}>
+                    <td style={{ ...TD, color: A.red, fontWeight: 500 }}>{t.src_name || "—"}</td>
                     <td style={TD}>{t.country || "—"}</td>
                     <td style={{ ...TD, color: A.muted }}>
                       {t.deleted_at ? relativeTime(t.deleted_at) : "—"}
@@ -524,7 +524,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
                         onClick={() => restoreTour(t.tour_id, t.src_name || "this tour")}
                         disabled={restoring === t.tour_id}
                         title="Restore source tour"
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: "#15803D" }}
+                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green }}
                       >
                         <RotateCcw size={11} />
                         {restoring === t.tour_id ? "…" : "Restore"}
@@ -1330,7 +1330,7 @@ function TourContentTab() {
             ].map(c => (
               <Card key={c.label}>
                 <SLabel>{c.label}</SLabel>
-                <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500,
+                <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600,
                   color: c.color, letterSpacing: "-0.02em" }}>{c.value}</div>
               </Card>
             ))}
@@ -1548,7 +1548,7 @@ function TourContentTab() {
             {allDone && dupBatchIds.length === 0 && !allDoneFilesHaveNoNewTours && (
               <div style={{ marginTop: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8,
-                  color: "#15803D", fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+                  color: A.green, fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
                   <CheckCircle size={16} />
                   Done! Tours are ready for rewrite in S1.
                 </div>

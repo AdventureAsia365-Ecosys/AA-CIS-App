@@ -93,7 +93,7 @@ function worstSeverity(codes: string[]): Severity {
 }
 
 const SEV_STYLE: Record<Severity, { bg: string; color: string; border: string }> = {
-  red:   { bg: A.redSoft, color: A.red, border: "#FECACA" },
+  red:   { bg: A.redSoft, color: A.red, border: A.redBorder },
   amber: { bg: A.amberSoft, color: "#92400E", border: "#FDE68A" },
   gray:  { bg: "#F3F4F6", color: "#4B5563", border: "#E5E7EB" },
 };
@@ -171,7 +171,7 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
       }}>{FIELD_LABEL[field] || field}</span>
       {failed && fails!.map((f, i) => (
         <span key={i} title={f.code} style={{
-          fontSize: 10, color: A.red, background: A.redSoft, border: "1px solid #FECACA",
+          fontSize: 10, color: A.red, background: A.redSoft, border: `1px solid ${A.redBorder}`,
           borderRadius: 4, padding: "1px 6px",
         }}>{f.reason}</span>
       ))}
@@ -838,7 +838,7 @@ export default function AdminReviewPage() {
           </div>
           <div style={{ display: "flex", gap: 24 }}>
             <div style={{ textAlign: "center" as const }}>
-              <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.gold, letterSpacing: "-0.02em" }}>{total}</div>
+              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, color: A.gold, letterSpacing: "-0.02em" }}>{total}</div>
               <div style={{ fontSize: 11, color: A.muted }}>{filterStatus === "all" ? "Total" : filterStatus[0].toUpperCase() + filterStatus.slice(1)}</div>
             </div>
           </div>
@@ -890,7 +890,7 @@ export default function AdminReviewPage() {
         )}
 
         {error && (
-          <div style={{ fontSize: 13, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: A.redSoft, color: A.red, border: "1px solid #FECACA" }}>
+          <div style={{ fontSize: 13, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: A.redSoft, color: A.red, border: `1px solid ${A.redBorder}` }}>
             {error}
           </div>
         )}

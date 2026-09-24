@@ -86,7 +86,7 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
 const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "unknown"] as const;
 const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
-  acc3:    { label: "acc3 · 786888028788 (Bedrock)", short: "acc3",   color: A.red },
+  acc3:    { label: "acc3 · 786888028788 (Bedrock)", short: "acc3",   color: A.slate },
   acc1:    { label: "acc1 · 867490540162 (Bedrock)", short: "acc1",   color: A.gold },
   acc2:    { label: "acc2 · 005097885195 (Bedrock)", short: "acc2",   color: A.green },
   openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
@@ -649,7 +649,7 @@ export default function ExternalSpendPage() {
       <AdminSidebar />
       <main style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.red}15`, color: A.red, display: "grid", placeItems: "center" }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.accent}15`, color: A.accent, display: "grid", placeItems: "center" }}>
             <Wallet size={18} />
           </div>
           <div>
@@ -707,7 +707,7 @@ export default function ExternalSpendPage() {
         {/* AA-627 — low DFS balance banner (all tabs). The daily check writes the snapshot; this
             reflects the latest stored value, not a live call. */}
         {dfsBalance?.has_data && dfsBalance.below_threshold && (
-          <Card style={{ marginBottom: 16, padding: "12px 16px", background: "#fff1f0", border: `1px solid ${A.red}` }}>
+          <Card style={{ marginBottom: 16, padding: "12px 16px", background: A.redTint, border: `1px solid ${A.red}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: A.red, fontSize: 13.5, fontWeight: 600 }}>
               <span style={{ fontSize: 16 }}>⚠</span>
               <span>
@@ -740,7 +740,7 @@ export default function ExternalSpendPage() {
                   <StatCard label="Total external spend" value={fmtUsd2(totalSpend)} sub={`${rangeLabel} · LLM + DFS${filterActive ? " · filtered" : ""}`} icon={<Wallet size={16} />} />
                   <StatCard label="LLM cost" value={fmtUsd2(llmCost)} sub={`${fmtInt(llmCalls)} calls · ${fmtInt(llmTokens)} tok`} accent={A.gold} icon={<Cpu size={16} />} />
                   <StatCard label="DataForSEO cost" value={fmtUsd2(dfsCost)} sub={`${fmtInt(dfsCalls)} calls · ${pct(dfsCacheRate)} cache`} accent={A.green} icon={<Search size={16} />} />
-                  <StatCard label="Tenants active" value={fmtInt(spendByTenant.length)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.red} icon={<Building2 size={16} />} />
+                  <StatCard label="Tenants active" value={fmtInt(spendByTenant.length)} sub={`${fmtInt(llmFallback)} fallback · ${fmtInt(llmTruncated)} truncated`} accent={A.accent} icon={<Building2 size={16} />} />
                 </div>
 
                 <Card style={{ marginBottom: 20 }}>
@@ -766,7 +766,7 @@ export default function ExternalSpendPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
                   <Card>
                     <SLabel>Spend by tenant</SLabel>
-                    <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.red} />
+                    <Bar rows={spendByTenant} total={spendByTenant.reduce((s, r) => s + r.cost, 0)} colorOf={() => A.accent} />
                   </Card>
                   <Card>
                     <SLabel>Spend by account</SLabel>
@@ -927,7 +927,7 @@ export default function ExternalSpendPage() {
                       const isAcct = groupBy === "account";
                       const meta = isAcct ? ACCOUNT_META[k] : null;
                       const label = isAcct ? (meta?.label ?? k) : (bs[0]?.tenant_label ?? k);
-                      const dot = isAcct ? (meta?.color ?? A.muted) : A.red;
+                      const dot = isAcct ? (meta?.color ?? A.muted) : A.accent;
                       const sublabel = isAcct ? "account" : "tenant";
                       return <TopGroup key={k} label={label} sublabel={sublabel} dotColor={dot} branches={bs} groupBy={groupBy} />;
                     })}

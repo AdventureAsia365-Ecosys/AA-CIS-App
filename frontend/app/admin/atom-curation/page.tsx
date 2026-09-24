@@ -279,7 +279,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
             ].map(([label, value, accent]) => (
               <Card key={label as string} style={{ padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 6 }}>{label}</div>
-                <div style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: accent as string }}>{value}</div>
+                <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 24, fontWeight: 600, color: accent as string }}>{value}</div>
               </Card>
             ))}
           </div>
