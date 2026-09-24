@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { User, Lock } from "lucide-react";
 
 export default function LoginPage() {
@@ -69,12 +70,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)" }}>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:32 }}>
-          <div style={{ width:36, height:36, background:"var(--brand-gold)", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, color:"white" }}>AA</div>
+          {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width:52, height:"auto", display:"block" }} />
           <div>
-            <div style={{ fontWeight:700, color:"var(--text-primary)", fontSize:16 }}>CIS Internal</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>CIS Internal</div>
             <div style={{ fontSize:11, color:"var(--text-muted)" }}>Staff Login</div>
           </div>
         </div>
@@ -86,7 +89,7 @@ export default function LoginPage() {
             <input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
               placeholder="Username"
               onKeyDown={e => e.key === "Enter" && !loading && login()}
-              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "#ef4444" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
           </div>
         </div>
 
@@ -97,13 +100,13 @@ export default function LoginPage() {
             <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
               placeholder="••••••••"
               onKeyDown={e => e.key === "Enter" && !loading && login()}
-              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? "#ef4444" : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
+              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
           </div>
-          {error && <div style={{ fontSize:12, color:"#ef4444", marginTop:6 }}>{error}</div>}
+          {error && <div style={{ fontSize:12, color:BRAND.danger, marginTop:6 }}>{error}</div>}
         </div>
 
         <button onClick={login} disabled={loading}
-          style={{ width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:8, color:"white", fontSize:14, fontWeight:700, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
+          style={{ width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:BTN_RADIUS, color:"white", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
           {loading ? "Connecting..." : "Login"}
         </button>
 

@@ -17,9 +17,9 @@ export function ActivityLogTab({ activity }: {
     return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
   };
   const sc = (s: string) =>
-    s === "approved" ? { bg: "#E4F1E9", color: "#2E7D5B" } :
-    s === "rejected" ? { bg: "#FBE7E1", color: "#B14A3B" } :
-    { bg: "#FBEFD6", color: "#B5791F" };
+    s === "approved" ? { bg: T.greenSoft, color: T.green } :
+    s === "rejected" ? { bg: T.redSoft, color: T.red } :
+    { bg: T.amberSoft, color: T.amber };
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -114,7 +114,7 @@ export function BillingTab({ billing }: { billing: any }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(255,255,255,0.5)", marginBottom: 8 }}>Current Plan</div>
-            <div style={{ fontFamily: serif, fontSize: 32, fontWeight: 500, color: "#fff", letterSpacing: "-0.02em" }}>
+            <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 32, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>
               {plan.charAt(0).toUpperCase() + plan.slice(1)}
             </div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.65)", marginTop: 4 }}>${price.toLocaleString()} / month · billed monthly</div>
@@ -381,7 +381,7 @@ export function SettingsTab() {
                 });
               }
             }}
-            style={{ fontSize: 13, color: T.red, background: T.redSoft, border: "1px solid #F5C6C6", borderRadius: 8, padding: "9px 20px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>
+            style={{ fontSize: 13, color: T.red, background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, padding: "9px 20px", cursor: "pointer", fontFamily: sans, fontWeight: 600 }}>
             Sign Out of All Sessions
           </button>
         </div>

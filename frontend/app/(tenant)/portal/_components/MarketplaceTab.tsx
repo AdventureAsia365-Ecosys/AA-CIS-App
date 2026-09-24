@@ -132,7 +132,7 @@ function StatBlock({ label, value }: { label: string; value: number | string }) 
   return (
     <div style={{ minWidth: 100 }}>
       <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>{label}</div>
-      <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink }}>{value}</div>
+      <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, color: T.ink }}>{value}</div>
     </div>
   );
 }

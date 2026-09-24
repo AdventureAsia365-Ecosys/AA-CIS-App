@@ -428,7 +428,7 @@ function FlagBanner({ flags }: { flags: ReviewFlag[] }) {
   return (
     <div style={{
       padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.amber}`,
-      background: "#FBEFD6", fontSize: 12, lineHeight: 1.6, color: T.body,
+      background: T.amberSoft, fontSize: 12, lineHeight: 1.6, color: T.body,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, color: T.ink, marginBottom: 4 }}>
         <Flag size={12} color={T.amber} /> Flagged for your review — doesn&rsquo;t block publishing

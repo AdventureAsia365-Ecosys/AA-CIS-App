@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { useRouter } from "next/navigation";
 import { Key, Loader2 } from "lucide-react";
 
@@ -42,12 +43,14 @@ export default function TenantLoginPage() {
   };
 
   return (
-    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)" }}>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
-          <div style={{ width:36, height:36, background:"var(--brand-gold)", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, color:"white" }}>AA</div>
+          {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width:52, height:"auto", display:"block" }} />
           <div>
-            <div style={{ fontWeight:700, color:"var(--text-primary)", fontSize:16 }}>Partner Portal</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>Partner Portal</div>
             <div style={{ fontSize:11, color:"var(--text-muted)" }}>Adventure Asia B2B</div>
           </div>
         </div>
@@ -71,13 +74,13 @@ export default function TenantLoginPage() {
               style={{
                 width:"100%", padding:"10px 12px 10px 34px",
                 background:"var(--bg-primary)",
-                border:`1px solid ${error ? "#ef4444" : "var(--border)"}`,
+                border:`1px solid ${error ? BRAND.danger : "var(--border)"}`,
                 borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none",
                 opacity: loading ? 0.6 : 1,
               }}
             />
           </div>
-          {error && <div style={{ fontSize:12, color:"#ef4444", marginTop:6 }}>{error}</div>}
+          {error && <div style={{ fontSize:12, color:BRAND.danger, marginTop:6 }}>{error}</div>}
         </div>
 
         <button
@@ -86,8 +89,8 @@ export default function TenantLoginPage() {
           style={{
             width:"100%", padding:12,
             background: loading ? "var(--border)" : "var(--brand-gold)",
-            border:"none", borderRadius:8, color:"white",
-            fontSize:14, fontWeight:700, cursor: loading ? "not-allowed" : "pointer",
+            border:"none", borderRadius:BTN_RADIUS, color:"white", fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT,
+            fontSize:13, fontWeight:600, cursor: loading ? "not-allowed" : "pointer",
             display:"flex", alignItems:"center", justifyContent:"center", gap:8,
           }}
         >
