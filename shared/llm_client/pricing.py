@@ -23,23 +23,48 @@ BEDROCK_SONNET = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 BEDROCK_HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # $ per 1K tokens, {"in": ..., "out": ...}
+# AA-635 — Haiku was {"in": 0.00025, "out": 0.00125}, i.e. Claude *3* Haiku's $0.25/$1.25 per MTok.
+# The model actually invoked everywhere is Claude Haiku 4.5 ($1/$5 per MTok), so every Haiku call
+# was logged at 25% of what AWS bills. Sonnet 4.5 (acc2-native) and Sonnet 4.6 (satellite) share
+# $3/$15, so the one Sonnet entry prices both tiers correctly.
 COST_TABLE = {
     BEDROCK_SONNET: {"in": 0.003, "out": 0.015},
-    BEDROCK_HAIKU: {"in": 0.00025, "out": 0.00125},
+    BEDROCK_HAIKU: {"in": 0.001, "out": 0.005},
     "gpt-4.1": {"in": 0.002, "out": 0.008},
 }
 
+# AA-635 — Anthropic prompt-cache pricing, as multiples of the model's base input rate. Anthropic
+# usage reports cache tokens SEPARATELY from `input_tokens` (which excludes them), so a caller that
+# prices only input/output tokens misses every cache write (billed at 1.25x) and read (0.1x).
+# 1.25x is the 5-minute-TTL write rate — the only TTL prompt_cache.py sets.
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.1
+
 # Mechanism-B callers (invoke_claude) pass the short model key ("sonnet"/"haiku"), not the full
 # Bedrock model id — this maps that key to the same COST_TABLE entry Mechanism A uses, so both
-# mechanisms price identically instead of drifting.
-_SHORT_KEY_TO_MODEL_ID = {"sonnet": BEDROCK_SONNET, "haiku": BEDROCK_HAIKU}
+# mechanisms price identically instead of drifting. AA-635: also maps the `model_used` labels
+# bedrock_satellite.py returns ("haiku-4-5"/"sonnet-4-6", optionally "satellite-"-prefixed), which
+# some log call sites pass straight through — those used to miss the table and fall back to Sonnet.
+_SHORT_KEY_TO_MODEL_ID = {
+    "sonnet": BEDROCK_SONNET, "haiku": BEDROCK_HAIKU,
+    "sonnet-4-6": BEDROCK_SONNET, "haiku-4-5": BEDROCK_HAIKU,
+    "satellite-sonnet-4-6": BEDROCK_SONNET, "satellite-haiku-4-5": BEDROCK_HAIKU,
+}
 
 
-def calc_cost(model: str, in_tok: int, out_tok: int) -> float:
-    """`model` accepts either a full Bedrock model id, a short key ("sonnet"/"haiku"), or
-    "gpt-4.1". Unknown model falls back to Sonnet-tier rates (matches client.py's own prior
-    `_calc_cost` fallback exactly) rather than raising — pricing must never be the reason an LLM
-    call fails."""
+def calc_cost(model: str, in_tok: int, out_tok: int,
+              cache_read: int = 0, cache_write: int = 0) -> float:
+    """`model` accepts either a full Bedrock model id, a short key ("sonnet"/"haiku"), a
+    bedrock_satellite `model_used` label, or "gpt-4.1". Unknown model falls back to Sonnet-tier
+    rates (matches client.py's own prior `_calc_cost` fallback exactly) rather than raising —
+    pricing must never be the reason an LLM call fails.
+
+    `cache_read`/`cache_write` (AA-635) are Anthropic's `cache_read_input_tokens` /
+    `cache_creation_input_tokens`, priced off the model's input rate. Default 0 keeps every
+    existing caller's result unchanged."""
     resolved = _SHORT_KEY_TO_MODEL_ID.get(model, model)
     rates = COST_TABLE.get(resolved, {"in": 0.003, "out": 0.015})
-    return round((in_tok * rates["in"] + out_tok * rates["out"]) / 1000, 6)
+    cache_cost = rates["in"] * (
+        (cache_write or 0) * CACHE_WRITE_MULTIPLIER + (cache_read or 0) * CACHE_READ_MULTIPLIER
+    )
+    return round((in_tok * rates["in"] + out_tok * rates["out"] + cache_cost) / 1000, 6)

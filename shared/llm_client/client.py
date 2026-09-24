@@ -208,7 +208,7 @@ class LLMClient:
                 # confirmed against the real streaming schema while building this fix (STEP0).
                 stop_reason = chunk.get("delta", {}).get("stop_reason", stop_reason)
         content = "".join(content_parts)
-        cost    = self._calc_cost(model, in_tok, out_tok)
+        cost    = self._calc_cost(model, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)
 
         logger.info("llm_success", provider="bedrock", model=model,
                     in_tokens=in_tok, out_tokens=out_tok,
@@ -256,7 +256,7 @@ class LLMClient:
         # _call_bedrock()'s (acc2-native T1) own extraction above exactly.
         cache_read  = result.usage.get("cache_read_input_tokens", 0) or 0
         cache_write = result.usage.get("cache_creation_input_tokens", 0) or 0
-        cost = self._calc_cost(model, in_tok, out_tok)
+        cost = self._calc_cost(model, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)
 
         logger.info("llm_success", provider="bedrock-satellite", model=result.model_used,
                     in_tokens=in_tok, out_tokens=out_tok,
@@ -313,6 +313,8 @@ class LLMClient:
             stop_reason=finish_reason,
         )
 
-    def _calc_cost(self, model: str, in_tok: int, out_tok: int) -> float:
-        rates = COST_TABLE.get(model, {"in": 0.003, "out": 0.015})
-        return round((in_tok * rates["in"] + out_tok * rates["out"]) / 1000, 6)
+    def _calc_cost(self, model: str, in_tok: int, out_tok: int,
+                   cache_read: int = 0, cache_write: int = 0) -> float:
+        # AA-635 — delegates to pricing.calc_cost() (was a second copy of the same formula) so
+        # cache-token pricing and any future rate fix land in one place for both mechanisms.
+        return calc_cost(model, in_tok, out_tok, cache_read=cache_read, cache_write=cache_write)

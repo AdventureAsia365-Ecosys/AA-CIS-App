@@ -51,6 +51,7 @@ from services.seo_intelligence.seed_builder import (
     resolve_buyer_market,
     resolve_buyer_markets,
 )
+from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -414,6 +415,22 @@ async def _research_place(
             try:
                 turn = _parse_step(resp.content)
             except ResearchLoopError:
+                turn = None
+            # AA-635 — this loop used to be the one LLMClient caller that never wrote
+            # shared.llm_call_log, so its Bedrock spend showed on the AWS bill but not on the
+            # External Spend page. quality_signal = which tool the turn chose (None = unparseable).
+            # role="writer": the turn generates the keyword phrasing; llm_call_log.role has a
+            # CHECK (writer/judge/validate, migration 137) so a new role name would be rejected.
+            await record_call_with_pool(
+                pool, stage="a3_search_demand", role="writer", model=resp.model_used,
+                tokens_in=resp.input_tokens, tokens_out=resp.output_tokens, cost_usd=resp.cost_usd,
+                quality_signal={"step": step_num, "tool": turn.tool if turn else None,
+                                "parsed": turn is not None},
+                stop_reason=getattr(resp, "stop_reason", None),
+                account=getattr(resp, "satellite_account", None),
+                fallback_used=getattr(resp, "fallback_used", None),
+            )
+            if turn is None:
                 logger.warning("segment_research_bad_step", place=place, raw=resp.content[:200])
                 break
 
