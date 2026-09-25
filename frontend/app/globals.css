@@ -22,7 +22,7 @@
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-inter), sans-serif;
+  font-family: 'Poppins', system-ui, -apple-system, sans-serif; /* AA-605 brand body font */
 }
 
 /* Scrollbar */

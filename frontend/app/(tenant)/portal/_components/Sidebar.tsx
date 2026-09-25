@@ -20,6 +20,8 @@ interface Props {
   // no longer owns navigation itself (Link does), so the search-clear side effect is
   // surfaced as a plain onClick alongside the Link instead.
   onNavClick?: () => void;
+  // AA-605: on narrow screens the layout renders the sidebar as an off-canvas drawer.
+  drawer?: { open: boolean; onClose: () => void };
 }
 
 const NAV1: { href: string; icon: React.ReactNode; label: string }[] = [
@@ -47,8 +49,9 @@ const NAV2: { href: string; label: string }[] = [
 ];
 
 export default function Sidebar({
-  poolCount, catalogCount, tenantName, planTier, onNavClick,
+  poolCount, catalogCount, tenantName, planTier, onNavClick, drawer,
 }: Props) {
+  const navClick = () => { onNavClick?.(); drawer?.onClose(); };
   const pathname = usePathname();
   const initials = tenantName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 
@@ -70,10 +73,20 @@ export default function Sidebar({
   };
 
   return (
+    <>
+    {drawer?.open && (
+      <div onClick={drawer.onClose} aria-hidden
+        style={{ position: "fixed", inset: 0, background: "rgba(31,41,51,0.45)", zIndex: 90 }} />
+    )}
     <aside style={{
       width: 236, flexShrink: 0, background: T.ink, color: "#C9CFD8", // AA-605: 220 -> 236, same as admin (wider Poppins)
       padding: "22px 14px 24px", display: "flex", flexDirection: "column",
       gap: 28, position: "sticky", top: 0, height: "100vh", overflowY: "auto",
+      ...(drawer ? {
+        position: "fixed", left: 0, zIndex: 100, height: "100dvh",
+        transform: drawer.open ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform .2s ease", boxShadow: drawer.open ? "4px 0 24px rgba(0,0,0,0.25)" : "none",
+      } : {}),
     }}>
       {/* Brand */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
@@ -96,13 +109,13 @@ export default function Sidebar({
         <NavGroup label="Workspace">
           {NAV1.map(n => (
             <NavItem key={n.href} href={n.href} active={pathname === n.href} icon={n.icon} label={n.label}
-              count={counts[n.href]} onClick={onNavClick} />
+              count={counts[n.href]} onClick={navClick} />
           ))}
         </NavGroup>
         <NavGroup label="Account">
           {NAV2.map(n => (
             <NavItem key={n.href} href={n.href} active={pathname === n.href} icon={null} label={n.label}
-              onClick={onNavClick} />
+              onClick={navClick} />
           ))}
         </NavGroup>
       </div>
@@ -133,6 +146,7 @@ export default function Sidebar({
         </div>
       </div>
     </aside>
+    </>
   );
 }
 

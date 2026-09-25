@@ -45,7 +45,7 @@ interface Tenant {
   lifecycle: Lifecycle;
 }
 
-interface NewApiKey { tenant_id: string; tenant_name: string; api_key: string; }
+interface NewApiKey { tenant_id: string; tenant_name: string; api_key: string; rotated?: boolean; }
 
 // AA-629 Tier 2 — GET /admin/unmapped-market-requests
 interface UnmappedMarketRequest {
@@ -207,7 +207,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
       <div style={{ background: A.card, border: "1px solid #86EFAC", borderRadius: 16, padding: 32, width: 460 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <CheckCircle size={20} color={A.green} />
-          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>Tenant Created</div>
+          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>{keyData.rotated ? "New API Key" : "Tenant Created"}</div>
         </div>
         <p style={{ fontSize: 13, color: A.muted, marginBottom: 24 }}>
           <strong style={{ color: A.ink }}>{keyData.tenant_name}</strong> — share this API key once. It will <strong style={{ color: A.red }}>never be shown again</strong>.
@@ -914,7 +914,7 @@ export default function TenantsPage() {
     try {
       const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}/generate-key`, { method: "POST" });
       const data = await res.json();
-      if (res.ok) setNewKey({ tenant_id: tenant.tenant_id, tenant_name: tenant.name, api_key: data.api_key });
+      if (res.ok) setNewKey({ tenant_id: tenant.tenant_id, tenant_name: tenant.name, api_key: data.api_key, rotated: true });
     } catch { /* silent */ }
   }
 
