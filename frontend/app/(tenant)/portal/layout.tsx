@@ -15,7 +15,7 @@
 // wasn't refetched/reset on a tab switch before.
 import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell } from "lucide-react";
+import { Search, Bell, Menu, CheckCircle2 } from "lucide-react";
 import Sidebar from "./_components/Sidebar";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans, countUniqueTours } from "./_components/ui";
@@ -53,6 +53,16 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   const [toast, setToast]     = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  // AA-605: below 900px the sidebar becomes an off-canvas drawer opened from the top bar.
+  const [narrow, setNarrow]   = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const sync = () => { setNarrow(mq.matches); if (!mq.matches) setNavOpen(false); };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     // AA-443 (gap left by AA-427): cis_tenant_name / cis_tenant_plan became httpOnly in AA-427
@@ -138,8 +148,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             padding: "12px 20px", background: T.green, borderRadius: 10,
             color: "#fff", fontSize: 13, fontWeight: 600,
             boxShadow: "0 4px 20px rgba(0,0,0,0.18)",
+            display: "flex", alignItems: "center", gap: 8, maxWidth: "calc(100vw - 48px)",
           }}>
-            ✓ {toast}
+            <CheckCircle2 size={15} style={{ flexShrink: 0 }} /> {toast}
           </div>
         )}
 
@@ -149,6 +160,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           tenantName={tenantName}
           planTier={planTier}
           onNavClick={() => setGlobalSearch("")}
+          drawer={narrow ? { open: navOpen, onClose: () => setNavOpen(false) } : undefined}
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh", overflow: "hidden" }}>
@@ -156,10 +168,16 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           {/* Top bar */}
           <header style={{
             height: 56, background: "#fff", borderBottom: `1px solid ${T.line}`,
-            display: "flex", alignItems: "center", padding: "0 32px", gap: 16,
+            display: "flex", alignItems: "center", padding: narrow ? "0 16px" : "0 32px", gap: narrow ? 10 : 16,
             position: "sticky", top: 0, zIndex: 10, flexShrink: 0,
           }}>
-            <div style={{ fontSize: 12, color: T.muted2, display: "flex", gap: 6, alignItems: "center" }}>
+            {narrow && (
+              <button onClick={() => setNavOpen(true)} aria-label="Open menu"
+                style={{ width: 36, height: 36, borderRadius: 8, background: "#fff", border: `1px solid ${T.line}`, display: "grid", placeItems: "center", cursor: "pointer", color: T.ink3, flexShrink: 0 }}>
+                <Menu size={16} />
+              </button>
+            )}
+            <div style={{ fontSize: 12, color: T.muted2, display: "flex", gap: 6, alignItems: "center", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden" }}>
               <span>Workspace</span>
               <span style={{ color: T.line }}>/</span>
               <span style={{ color: T.body, fontWeight: 500 }}>{BREADCRUMBS[pathname] ?? ""}</span>
@@ -167,7 +185,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             <div style={{ flex: 1 }} />
 
             {/* Functional search */}
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative", display: narrow ? "none" : "block" }}>
               <Search size={13} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: T.muted2 }} />
               <input
                 ref={searchRef}
@@ -195,7 +213,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           </header>
 
           {/* Content */}
-          <main style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+          <main style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: narrow ? "20px 16px 40px" : "28px 36px 56px" }}>
             {children}
           </main>
         </div>

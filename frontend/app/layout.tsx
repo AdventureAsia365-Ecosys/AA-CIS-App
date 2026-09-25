@@ -1,16 +1,9 @@
 // app/layout.tsx
-// SAFE VERSION:
-// - Giữ nguyên Inter cho admin/internal (không thay đổi gì)
-// - Thêm Fraunces + JetBrains Mono qua Google Fonts <link> cho portal dùng
-// - IBM Plex Sans cũng load nhưng không đặt làm default body font
-// Admin/Internal layout KHÔNG bị ảnh hưởng vì họ set font riêng trong layout của mình
+// AA-605: brand fonts (Fahkwang display, Poppins body, JetBrains Mono for IDs) are loaded once
+// here via Google Fonts; globals.css sets Poppins as the body default. Inter is no longer used.
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-
-// Giữ Inter — đây là font default cho admin + internal + login (không thay đổi)
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
   title: "AA-CIS",
@@ -39,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className={inter.variable} style={{ margin: 0 }}>
+      <body style={{ margin: 0 }}>
         {children}
       </body>
     </html>
