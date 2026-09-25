@@ -4,6 +4,7 @@
 // rewrite job that runs T2-T5). Route slug confirmed against the ADR-2026-038 mapping.
 import { useRouter } from "next/navigation";
 import PoolTab from "../_components/PoolTab";
+import { PageHeader } from "../_components/ui";
 import { usePortalShell } from "../_components/PortalShellContext";
 
 export default function T1RewritePage() {
@@ -16,5 +17,11 @@ export default function T1RewritePage() {
     router.push("/portal/t4-pool");
   }
 
-  return <PoolTab onRewriteDone={handleRewriteDone} externalSearch={globalSearch} />;
+  return (
+    <>
+      <PageHeader title="Browse Tours"
+        sub="Published Adventure Asia tours. Pick one and rewrite it in your brand voice — it lands in My Catalog Tours." />
+      <PoolTab onRewriteDone={handleRewriteDone} externalSearch={globalSearch} />
+    </>
+  );
 }

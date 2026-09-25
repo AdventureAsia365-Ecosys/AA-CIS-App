@@ -315,6 +315,29 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             ORDER BY ttv.created_at DESC LIMIT 5
         """, tenant_id)
 
+        # AA-636: the portal hardcoded "300 RPM", "20,000 API calls" and a Growth-is-current plan
+        # table for every tenant. Serve the tenant's real rate limit and the sellable plans
+        # (shared.membership_plans, the same table v_tenant_monthly_usage reads) instead.
+        rate_limit_rpm = await conn.fetchval(
+            "SELECT rate_limit_rpm FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id
+        )
+        plan_rows = await conn.fetch("""
+            SELECT plan_name, tours_quota_monthly, api_calls_quota_monthly, price_usd_monthly
+            FROM shared.membership_plans
+            WHERE is_active AND plan_name <> 'internal'
+            ORDER BY price_usd_monthly NULLS LAST, tours_quota_monthly
+        """)
+    plans = [
+        {
+            "plan_name": p["plan_name"],
+            "tours_quota_monthly": p["tours_quota_monthly"],
+            "api_calls_quota_monthly": p["api_calls_quota_monthly"],
+            "price_usd_monthly": float(p["price_usd_monthly"]) if p["price_usd_monthly"] is not None else None,
+            "rate_limit_rpm": PLAN_LIMITS.get(p["plan_name"], {}).get("rpm"),
+        }
+        for p in plan_rows
+    ]
+
     if not row:
         return {
             "plan_tier": "starter", "tours_quota_monthly": 50,
@@ -323,6 +346,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "quota_tours_pct": 0.0, "quota_calls_pct": 0.0,
             "tours_overage": 0, "overage_usd": 0.0,
             "llm_cost_usd": 0.0, "overage_rate_usd_per_tour": 4.0,
+            "rate_limit_rpm": rate_limit_rpm, "plans": plans,
             "activity": [],
         }
 
@@ -330,6 +354,8 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         **{k: (float(v) if hasattr(v, '__float__') and not isinstance(v, int) else v)
            for k, v in dict(row).items() if k != "billing_month"},
         "billing_month": str(row["billing_month"])[:7] if row["billing_month"] else None,
+        "rate_limit_rpm": rate_limit_rpm,
+        "plans": plans,
         "activity": [
             {
                 "id": str(a["id"]),

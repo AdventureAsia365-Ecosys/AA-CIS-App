@@ -6,14 +6,19 @@
 // UI yet, see AA-430 implementation notes).
 import { Suspense } from "react";
 import CatalogTab from "../_components/CatalogTab";
+import { PageHeader } from "../_components/ui";
 
 // AA-454 — CatalogTab now reads useSearchParams() (?tour_id= from AtomsTab's nav link),
 // which requires a Suspense boundary or `next build` fails prerendering this route
 // (same pattern as frontend/app/admin/curation/page.tsx).
 export default function T4PoolPage() {
   return (
-    <Suspense>
-      <CatalogTab />
-    </Suspense>
+    <>
+      <PageHeader title="My Catalog Tours"
+        sub="Your rewritten tours. Review, edit, approve and export them from here." />
+      <Suspense>
+        <CatalogTab />
+      </Suspense>
+    </>
   );
 }

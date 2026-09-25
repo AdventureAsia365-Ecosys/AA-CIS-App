@@ -21,10 +21,12 @@ import pytest
 from api.routers import v1_tours
 
 
-def _make_pool(row=None, activity=None):
+def _make_pool(row=None, activity=None, plans=None, rpm=300):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=row)
-    conn.fetch = AsyncMock(return_value=activity or [])
+    # get_my_billing runs two fetch() calls in order: activity, then (AA-636) plans.
+    conn.fetch = AsyncMock(side_effect=[activity or [], plans or []])
+    conn.fetchval = AsyncMock(return_value=rpm)
 
     pool = MagicMock()
     pool.acquire.return_value.__aenter__.return_value = conn
@@ -44,8 +46,10 @@ class TestAA496TenantBilling:
         # the ONLY tenant identifier passed into any query must be the JWT's own sub
         fetchrow_args = conn.fetchrow.await_args.args
         assert "tenant-abc-123" in fetchrow_args
-        fetch_args = conn.fetch.await_args.args
-        assert "tenant-abc-123" in fetch_args
+        activity_args = conn.fetch.await_args_list[0].args
+        assert "tenant-abc-123" in activity_args
+        # AA-636 rate-limit lookup is scoped by the same JWT tenant id
+        assert "tenant-abc-123" in conn.fetchval.await_args.args
 
     async def test_get_my_billing_shape_matches_admin_view(self):
         row = {
@@ -112,3 +116,42 @@ class TestAA496TenantBilling:
         assert a["tour_name"] == "Hidden Trails of Da Lat"
         assert a["country"] == "Vietnam"
         assert a["status"] == "approved"
+
+
+@pytest.mark.asyncio
+class TestAA636BillingPlanFields:
+    """AA-636 — the portal hardcoded "300 RPM", "20,000 API calls" and Growth-as-current for every
+    tenant. /v1/billing now serves the tenant's own rate limit and the sellable plan list."""
+
+    async def test_billing_returns_tenant_rate_limit_and_plans(self):
+        plans = [
+            {"plan_name": "starter", "tours_quota_monthly": 50, "api_calls_quota_monthly": 5000,
+             "price_usd_monthly": 299.0},
+            {"plan_name": "enterprise", "tours_quota_monthly": 999999, "api_calls_quota_monthly": 999999,
+             "price_usd_monthly": None},
+        ]
+        pool, conn = _make_pool(row=None, activity=[], plans=plans, rpm=1000)
+        request = MagicMock()
+        request.app.state.pool = pool
+
+        result = await v1_tours.get_my_billing(request, tenant={"sub": "tenant-1"})
+
+        assert result["rate_limit_rpm"] == 1000
+        assert [p["plan_name"] for p in result["plans"]] == ["starter", "enterprise"]
+        starter = result["plans"][0]
+        assert starter["price_usd_monthly"] == 299.0
+        assert starter["rate_limit_rpm"] == 60  # PLAN_LIMITS["starter"]["rpm"]
+        # a plan with no fixed price / no PLAN_LIMITS entry is served as None, not invented
+        assert result["plans"][1]["price_usd_monthly"] is None
+        assert result["plans"][1]["rate_limit_rpm"] is None
+
+    async def test_plans_query_excludes_internal_plan(self):
+        pool, conn = _make_pool(row=None)
+        request = MagicMock()
+        request.app.state.pool = pool
+
+        await v1_tours.get_my_billing(request, tenant={"sub": "tenant-1"})
+
+        plans_sql = conn.fetch.await_args_list[1].args[0]
+        assert "membership_plans" in plans_sql
+        assert "plan_name <> 'internal'" in plans_sql

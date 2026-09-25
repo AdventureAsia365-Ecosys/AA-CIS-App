@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { Eye, EyeOff, Copy, CheckCircle, Bell } from "lucide-react";
+import { SUPPORT_EMAIL } from "../../../_brand/tokens";
 import { T, serif, mono, sans, Card } from "./ui";
 import { ApiPlayground } from "./ApiPlayground";
 
@@ -88,7 +89,7 @@ export default function ApiTab() {
           </button>
         </div>
         <div style={{ marginTop: 12, fontSize: 12, color: T.muted2 }}>
-          Your API key was shown once at creation. Contact <a href="mailto:admin@adventureasia.com" style={{ color: T.gold }}>admin@adventureasia.com</a> to rotate or retrieve it.
+          Your API key was shown once at creation. Contact <a href={`mailto:${SUPPORT_EMAIL}`} style={{ color: T.gold }}>{SUPPORT_EMAIL}</a> to rotate or retrieve it.
         </div>
       </Card>
 
@@ -107,7 +108,7 @@ curl -X POST https://api-cis.lumiguides.it.com/auth/tenant-login \\
   -H "Content-Type: application/json" \\
   -d '{"api_key":"<YOUR_KEY>"}' | jq .token
 
-# 2. Browse the pool
+# 2. Browse published tours
 curl -H "Authorization: Bearer <JWT>" \\
   https://api-cis.lumiguides.it.com/v1/tours/pool
 
