@@ -57,3 +57,33 @@ async def test_rewrite_tour_seeds_graph_state_with_feedback():
          patch.object(v1_pipeline, "build_graph", return_value=FakeGraph()):
         await v1_pipeline._rewrite_tour({"name": "T"}, idx=0, total=1, feedback="FIX THIS")
     assert seen["feedback"] == "FIX THIS"
+
+
+# ── AA-639 root causes found in CloudWatch (Manaslu, version 24e60fb3) ─────────
+
+from services.acp_shared.grounding import find_novel_numeric_claims  # noqa: E402
+
+
+@pytest.mark.parametrize("sentence,source", [
+    ("Cross Larkya La at 4,460 m before descending.", "Larkya La (5,106m) ... camp at 4,460m"),
+    ("Soti Khola sits at 710 metres.", "Drive to Soti Khola (710m)."),
+    ("Samagaun lies at 3,520m.", "Samagaun 3520m"),
+    ("A 12 km walk.", "walk 12km today"),
+])
+def test_unit_suffixed_and_comma_numbers_match_the_source(sentence, source):
+    # these were all flagged as "novel" live (e.g. 460, 710) purely from formatting
+    assert find_novel_numeric_claims(sentence, [source]) == []
+
+
+def test_genuinely_new_numbers_are_still_flagged():
+    assert find_novel_numeric_claims("A 30-minute flight to Lukla (2,804m).", ["Fly to Lukla (2,804m)."]) == ["30"]
+    assert find_novel_numeric_claims("Summit at 6,189 m.", ["Summit Island Peak."]) == ["6189"]
+
+
+def test_t3_structural_only_fails_on_hard_codes():
+    with patch("services.content_generation.graph.validate_node",
+               return_value={"failure_codes": ["HIGHLIGHTS_TOO_GENERIC", "FORBIDDEN_WORD", "GENERIC_AI_WORDING"]}):
+        assert tp._t3_structural_issues({}, {}, {}) == ["FORBIDDEN_WORD"]
+    with patch("services.content_generation.graph.validate_node",
+               return_value={"failure_codes": ["HIGHLIGHTS_TOO_GENERIC"]}):
+        assert tp._t3_structural_issues({}, {}, {}) == []
