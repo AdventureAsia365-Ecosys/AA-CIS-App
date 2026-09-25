@@ -128,7 +128,7 @@ class TestAA636BillingPlanFields:
             {"plan_name": "starter", "tours_quota_monthly": 50, "api_calls_quota_monthly": 5000,
              "price_usd_monthly": 299.0},
             {"plan_name": "enterprise", "tours_quota_monthly": 999999, "api_calls_quota_monthly": 999999,
-             "price_usd_monthly": None},
+             "price_usd_monthly": 0},
         ]
         pool, conn = _make_pool(row=None, activity=[], plans=plans, rpm=1000)
         request = MagicMock()
@@ -141,7 +141,7 @@ class TestAA636BillingPlanFields:
         starter = result["plans"][0]
         assert starter["price_usd_monthly"] == 299.0
         assert starter["rate_limit_rpm"] == 60  # PLAN_LIMITS["starter"]["rpm"]
-        # a plan with no fixed price / no PLAN_LIMITS entry is served as None, not invented
+        # enterprise's stored 0.00 means "negotiated" -> None ("Custom"), never "$0/mo"
         assert result["plans"][1]["price_usd_monthly"] is None
         assert result["plans"][1]["rate_limit_rpm"] is None
 
@@ -155,3 +155,5 @@ class TestAA636BillingPlanFields:
         plans_sql = conn.fetch.await_args_list[1].args[0]
         assert "membership_plans" in plans_sql
         assert "plan_name <> 'internal'" in plans_sql
+        # custom-priced plans (NULL / 0) sort after the priced ones
+        assert "(price_usd_monthly IS NULL OR price_usd_monthly <= 0)" in plans_sql
