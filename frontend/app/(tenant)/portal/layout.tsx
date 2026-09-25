@@ -15,8 +15,9 @@
 // wasn't refetched/reset on a tab switch before.
 import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Search, Bell, Menu, CheckCircle2 } from "lucide-react";
+import { Search, Menu, CheckCircle2 } from "lucide-react";
 import Sidebar from "./_components/Sidebar";
+import NotificationsBell from "./_components/NotificationsBell";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans, countUniqueTours } from "./_components/ui";
 
@@ -207,9 +208,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
               }}>⌘K</span>
             </div>
 
-            <button style={{ width: 36, height: 36, borderRadius: 8, background: "#fff", border: `1px solid ${T.line}`, display: "grid", placeItems: "center", cursor: "pointer", color: T.ink3 }}>
-              <Bell size={15} />
-            </button>
+            <NotificationsBell activity={billing?.activity ?? []} />
           </header>
 
           {/* Content */}

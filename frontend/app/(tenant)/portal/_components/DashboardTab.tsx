@@ -6,12 +6,13 @@
 //      GET /api/tenant/v1/tours/pool?page_size=1 (for total count)
 
 import { useState, useEffect } from "react";
-import { ArrowRight, FileText, Code2, RotateCcw, Globe2, BookOpen, Sparkles, Clock } from "lucide-react";
+import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, CardHead, Badge, ProgressBar, Spinner, LoadingScreen,
+  Card, CardHead, Badge, ProgressBar, LoadingScreen, PageHeader, TextLink,
   fmtDateTime, statusVariant,
 } from "./ui";
+import { usePortalShell } from "./PortalShellContext";
 
 interface BillingData {
   tenant_name: string; plan_tier: string; tours_quota_monthly: number;
@@ -19,7 +20,8 @@ interface BillingData {
   tours_rewritten: number; api_calls_used: number;
   quota_tours_pct: number; quota_calls_pct: number;
   llm_cost_usd: number; billing_month: string;
-  overage_usd: number; overage_rate_usd_per_tour: number;
+  overage_usd: number; overage_rate_usd_per_tour: number; tours_overage?: number;
+  rate_limit_rpm?: number | null;
   activity: { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string }[];
 }
 
@@ -30,14 +32,18 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const [pool, setPool]       = useState(0);
   const [loading, setLoading] = useState(true);
   const [dismissAlert, setDismissAlert] = useState(false);
+  const [resetsAt, setResetsAt] = useState<string | null>(null);
+  const { tenantName } = usePortalShell();
 
   useEffect(() => {
     Promise.all([
       fetch("/api/tenant/v1/billing"),
       fetch("/api/tenant/v1/tours/pool?page_size=1"),
-    ]).then(async ([bRes, pRes]) => {
+      fetch("/api/tenant/v1/quota"),
+    ]).then(async ([bRes, pRes, qRes]) => {
       if (bRes.ok) setBilling(await bRes.json());
       if (pRes.ok) { const d = await pRes.json(); setPool(d.pagination?.total ?? 0); }
+      if (qRes.ok) { const d = await qRes.json(); setResetsAt(d.resets_at ?? null); }
     }).finally(() => setLoading(false));
   }, []);
 
@@ -50,24 +56,33 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const apiUsed    = b?.api_calls_used ?? 0;
   const apiTotal   = b?.api_calls_quota_monthly ?? 20000;
   const apiPct     = b?.quota_calls_pct ?? 0;
-  const llmCost    = b?.llm_cost_usd ?? 0;
   const price      = b?.price_usd_monthly ?? 0;
   const planName   = (b?.plan_tier ?? "growth");
   const planLabel  = planName.charAt(0).toUpperCase() + planName.slice(1);
   const month      = b?.billing_month ?? "—";
   const activity   = b?.activity ?? [];
+  const overage    = b?.overage_usd ?? 0;
+  const rpm        = b?.rate_limit_rpm ?? null;
+  // AA-636: was the literal "22 days". Quota resets on the 1st of next month (UTC) — the same
+  // rule the backend enforces (v1_tours._current_year_month_and_reset); /v1/quota serves the date.
+  const resetDays  = daysUntil(resetsAt ?? firstOfNextMonthUTC());
 
   return (
     <div style={{ fontFamily: sans }}>
+      <PageHeader
+        title={tenantName && tenantName !== "Partner" ? `Welcome back, ${tenantName}` : "Dashboard"}
+        sub={`Your plan, usage and recent activity for ${month}.`}
+      />
 
-      {/* Rate limit alert */}
-      {!dismissAlert && apiPct > 30 && (
-        <div style={{ background: T.amberSoft, border: `1px solid #F1DDB4`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ color: T.amber, flexShrink: 0 }}>⚠</span>
+      {/* Usage alert — AA-636: was "> 30%" with a hardcoded "Growth plan = 300 RPM" for every plan */}
+      {!dismissAlert && (apiPct >= 80 || toursPct >= 80) && (
+        <div role="status" style={{ background: T.amberSoft, border: `1px solid #F1DDB4`, borderLeft: `4px solid ${T.amber}`, borderRadius: "0 8px 8px 0", padding: "11px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+          <AlertTriangle size={16} color={T.amber} style={{ flexShrink: 0 }} />
           <div style={{ flex: 1, fontSize: 13, color: "#78350F", lineHeight: 1.5 }}>
-            <strong>API usage at {apiPct.toFixed(0)}%</strong> — approaching limit. Growth plan = 300 RPM. Consider upgrading to Business (1,000 RPM).
+            <strong>You have used {Math.max(apiPct, toursPct).toFixed(0)}% of this month&rsquo;s {apiPct >= toursPct ? "API calls" : "tour rewrites"}.</strong>{" "}
+            Usage resets in {resetDays} {resetDays === 1 ? "day" : "days"}. <TextLink href="/portal/billing">Compare plans →</TextLink>
           </div>
-          <button onClick={() => setDismissAlert(true)} style={{ background: "none", border: "none", color: T.amber, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+          <button onClick={() => setDismissAlert(true)} aria-label="Dismiss" style={{ background: "none", border: "none", color: T.amber, cursor: "pointer", padding: 0, display: "flex" }}><X size={16} /></button>
         </div>
       )}
 
@@ -97,7 +112,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </div>
           </div>
           <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-            {[["Tours/Mo", toursTotal.toLocaleString()], ["API Calls", apiTotal.toLocaleString()], ["Billing", month]].map(([l, v]) => (
+            {[["Tours/Mo", toursTotal.toLocaleString()], ["API Calls", apiTotal.toLocaleString()], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{v}</div>
@@ -108,60 +123,41 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
         {/* Quota */}
         <Card>
-          <CardHead title="Quota Usage" action={<span style={{ cursor: "pointer" }}>Details →</span>} />
+          <CardHead title="Quota Usage" action={<TextLink href="/portal/billing">Details →</TextLink>} />
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} />
-            <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct > 30} />
+            <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80} />
+            <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
           </div>
           <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${T.line}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
-            <Clock size={13} color={T.muted2} /> Resets in <strong style={{ color: T.ink }}>22 days</strong> · {month}
+            <Clock size={13} color={T.muted2} /> Resets in <strong style={{ color: T.ink }}>{resetDays} {resetDays === 1 ? "day" : "days"}</strong> · {month}
           </div>
         </Card>
 
-        {/* Re-rewrite balance */}
-        <Card>
-          <CardHead title="Re-rewrite Balance" action={<span style={{ cursor: "pointer" }}>How it works →</span>} />
-          <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <div style={{ width: 44, height: 44, borderRadius: 10, background: T.goldTint, color: T.gold, display: "grid", placeItems: "center", flexShrink: 0, border: `1px solid ${T.goldSoft}` }}>
-              <RotateCcw size={20} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 28, fontWeight: 600, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
-                2 <span style={{ color: T.muted2, fontSize: 18 }}>/ 3</span>
-              </div>
-              <div style={{ color: T.muted, fontSize: 12.5, marginTop: 6, lineHeight: 1.4 }}>
-                free re-rewrites remaining <strong style={{ color: T.ink }}>per tour</strong> this month.
-              </div>
-              <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
-                {[1, 2, 3].map(i => (
-                  <div key={i} style={{ flex: 1, height: 6, borderRadius: 3, background: i <= 2 ? T.gold : T.line2 }} />
-                ))}
-              </div>
-            </div>
-          </div>
-        </Card>
       </div>
 
       {/* Row 2: Spend + Activity */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, marginTop: 18 }}>
 
-        {/* Spend */}
+        {/* This month — AA-636: was "LLM Cost $0.0000" + "~$0.018/tour · Bedrock" (internal
+            cost / model names). Tenants see what they pay for: plan fee, usage, any overage. */}
         <Card>
-          <CardHead title="Spend Summary" action={<span style={{ cursor: "pointer" }}>View invoice →</span>} />
-          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
+          <CardHead title={`This Month · ${month}`} action={<TextLink href="/portal/billing">View billing →</TextLink>} />
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>LLM Cost · {month}</div>
+              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: T.muted, marginBottom: 6, fontWeight: 600 }}>Amount due</div>
               <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: T.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
-                ${Math.floor(llmCost)}<span style={{ fontSize: 18, color: T.muted2 }}>.{String(Math.round((llmCost % 1) * 10000)).padStart(4, "0")}</span>
+                ${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
             </div>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 600, color: T.green, background: T.greenSoft, padding: "3px 8px", borderRadius: 5 }}>
-              ↑ Low LLM spend
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: overage > 0 ? T.amber : T.green, background: overage > 0 ? T.amberSoft : T.greenSoft, padding: "3px 8px", borderRadius: 5 }}>
+              {overage > 0 ? <AlertTriangle size={12} /> : <Check size={12} />}
+              {overage > 0 ? "Includes overage" : "Within plan"}
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
-            <SpendTile label="Platform Fee" value={`$${price.toLocaleString()}`} sub="billed monthly" />
-            <SpendTile label="Rewrites" value={`${toursUsed} tours`} sub={`~$0.018/tour · Bedrock`} warn />
+            <SpendTile label="Plan fee" value={`$${price.toLocaleString()}`} sub={`${planLabel} · billed monthly`} />
+            <SpendTile label="Tours rewritten" value={`${toursUsed.toLocaleString()} / ${toursTotal.toLocaleString()}`}
+              sub={overage > 0 ? `Overage $${overage.toLocaleString()}` : "No overage"} warn={overage > 0} />
           </div>
         </Card>
 
@@ -169,21 +165,21 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: "22px 22px 8px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted }}>Recent Activity</span>
-            <span style={{ fontSize: 12, color: T.muted, cursor: "pointer" }}>View all →</span>
+            <TextLink href="/portal/activity">View all →</TextLink>
           </div>
           {activity.length === 0 ? (
             <div style={{ padding: "32px 0", textAlign: "center", color: T.muted2, fontSize: 13 }}>
-              No activity yet — browse the pool to start
+              No activity yet — browse tours to rewrite your first one
             </div>
           ) : activity.slice(0, 5).map((a, i) => {
             const v = statusVariant(a.status);
             const iconBg   = a.status === "approved" ? T.greenSoft : a.status === "rejected" ? T.redSoft : T.goldTint;
             const iconColor = a.status === "approved" ? T.green    : a.status === "rejected" ? T.red     : T.amber;
-            const emoji     = a.status === "approved" ? "✓" : a.status === "rejected" ? "✗" : "↻";
+            const Icon      = a.status === "approved" ? Check : a.status === "rejected" ? X : RefreshCw;
             return (
               <div key={a.id} style={{ display: "grid", gridTemplateColumns: "36px 1fr auto auto", alignItems: "center", gap: 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: iconBg, color: iconColor, display: "grid", placeItems: "center", fontSize: 14, fontWeight: 700 }}>
-                  {emoji}
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: iconBg, color: iconColor, display: "grid", placeItems: "center" }}>
+                  <Icon size={15} strokeWidth={2.2} />
                 </div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
@@ -223,6 +219,20 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   );
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function firstOfNextMonthUTC(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+}
+
+// Whole days from now until 00:00 UTC of `isoDate` — at least 1 while still inside the month.
+function daysUntil(isoDate: string): number {
+  const target = Date.parse(isoDate.length === 10 ? `${isoDate}T00:00:00Z` : isoDate);
+  if (Number.isNaN(target)) return 0;
+  return Math.max(1, Math.ceil((target - Date.now()) / 86_400_000));
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function QuotaRow({ icon, label, used, total, pct, warn = false }: {
@@ -242,7 +252,7 @@ function QuotaRow({ icon, label, used, total, pct, warn = false }: {
       <div style={{ fontSize: 11, color: warn ? T.amber : T.muted, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
         <span>{pct.toFixed(0)}% used</span>
         <span style={{ fontWeight: warn ? 600 : 400 }}>
-          {warn ? "⚠ Rate limit risk" : `${(total - used).toLocaleString()} remaining`}
+          {warn ? "Approaching your limit" : `${Math.max(total - used, 0).toLocaleString()} remaining`}
         </span>
       </div>
     </div>

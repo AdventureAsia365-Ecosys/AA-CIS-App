@@ -2,6 +2,7 @@
 // Design system — Adventure Asia brand tokens shared with the admin UI (app/_brand/tokens.ts,
 // AA-605): Fahkwang display + Poppins UI + JetBrains Mono, gold accent, pill buttons.
 
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../../_brand/tokens";
 
@@ -127,6 +128,33 @@ export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 
       marginTop: mt, paddingTop: pt,
       ...rest,
     }}>{children}</div>
+  );
+}
+
+// AA-636 — one page header for every portal page (title + one-line description + optional
+// action on the right), so pages stop each inventing their own h1/h2 styling.
+export function PageHeader({ title, sub, action }: {
+  title: React.ReactNode; sub?: React.ReactNode; action?: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 22 }}>
+      <div style={{ minWidth: 0 }}>
+        <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em", textWrap: "balance" as React.CSSProperties["textWrap"] }}>
+          {title}
+        </h1>
+        {sub && <p style={{ fontSize: 13, color: T.muted, margin: 0, lineHeight: 1.5, maxWidth: 640 }}>{sub}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+// Small in-card link ("View all →"). Next <Link> so it is a real, keyboard-reachable link.
+export function TextLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link href={href} style={{ fontSize: 12, color: T.ink3, textDecoration: "none", fontWeight: 500, whiteSpace: "nowrap" }}>
+      {children}
+    </Link>
   );
 }
 

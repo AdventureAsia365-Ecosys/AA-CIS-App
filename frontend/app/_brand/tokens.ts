@@ -50,3 +50,9 @@ export const BTN_PRIMARY_TEXT: { textTransform: "uppercase"; letterSpacing: stri
 // Served from /assets, NOT /brand: middleware.ts matches "/brand/:path*" (the internal Brand
 // page) and would redirect tenants / logged-out visitors, breaking the image on the login pages.
 export const LOGO_SRC = "/assets/adventure-asia-logo.png";
+
+// AA-636: tenant-facing contact points. The portal used admin@adventureasia.com and
+// adventureasia.com/contact — not Adventure Asia's domain (the contact page 404s). These are the
+// ones published on adventure.asia itself (checked 25/09/2026).
+export const SUPPORT_EMAIL = "info@adventure.asia";
+export const SITE_URL = "https://adventure.asia/";
