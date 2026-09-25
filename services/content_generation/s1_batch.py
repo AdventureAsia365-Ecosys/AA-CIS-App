@@ -162,7 +162,7 @@ async def submit_s1_batch(
     *,
     tenant_id: str = _MASTER_TENANT_ID,
     account: str = "acc3",
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,  # AA-639: same ceiling as graph.GENERATE_MAX_TOKENS (4096 truncated long tours)
     enforce_min: bool = True,
 ) -> dict:
     """Materialize attempt-1 prompts for tour_ids, upload the JSONL manifest, and submit a Bedrock

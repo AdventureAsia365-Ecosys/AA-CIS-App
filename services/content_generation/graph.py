@@ -24,6 +24,11 @@ from .itinerary_utils import (
 logger = structlog.get_logger()
 
 MAX_RETRIES = 3
+# AA-639: the tour writer's output ceiling. The LLMRequest default (4096) truncated long tours —
+# live, an 18-day tour stopped at exactly 4096 output tokens (stop_reason=max_tokens) three times in
+# a row, the cut JSON lost its trailing fields (MISSING_FIELD) and every truncation cost a full
+# rewrite. Output tokens are billed as used, so a higher ceiling costs nothing for shorter tours.
+GENERATE_MAX_TOKENS = 8192
 MIN_QUALITY = 7.0
 
 
@@ -327,6 +332,7 @@ def generate_node(state: ContentState) -> ContentState:
         # opt-in sonnet re-run) still overrides, unchanged.
         model_tier=state.get("model_tier"),
         stage=gen_stage,  # AA-620: t2_generate for tenant, s1_generate for A1 admin
+        max_tokens=GENERATE_MAX_TOKENS,  # AA-639
     )
 
     resp = None

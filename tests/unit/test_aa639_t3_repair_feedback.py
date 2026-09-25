@@ -129,3 +129,25 @@ async def test_t3_fixes_long_seo_title_without_a_rewrite():
     rewrite.assert_not_awaited()
     assert out["passed"] is True
     assert out["result"]["generated"]["seo_title"] == "Manaslu Circuit Trek"
+
+
+# ── AA-639: writer output ceiling (live: 18-day tour cut at exactly 4096 tokens, 3 times) ──
+
+def test_generate_node_requests_the_raised_output_ceiling():
+    from services.content_generation import graph
+
+    captured = {}
+
+    class FakeClient:
+        def generate(self, request):
+            captured["max_tokens"] = request.max_tokens
+            raise RuntimeError("stop here")
+
+    assert graph.GENERATE_MAX_TOKENS >= 8192
+    with patch.object(graph, "LLMClient", return_value=FakeClient()):
+        try:
+            graph.generate_node({"tour": {"name": "T"}, "seo": {}, "few_shots": [], "retry_count": 0,
+                                 "generate_stage": "t2_generate"})
+        except Exception:
+            pass
+    assert captured.get("max_tokens") == graph.GENERATE_MAX_TOKENS
