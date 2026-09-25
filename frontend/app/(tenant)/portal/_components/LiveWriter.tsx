@@ -35,6 +35,8 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
   const [shown, setShown] = useState<Record<string, string>>({});
   const targetRef = useRef<Section[]>([]);
   const reduce = usePrefersReducedMotion();
+  const docRef = useRef<HTMLDivElement>(null);
+  const followRef = useRef(true);
   const terminal = snap?.status === "done" || snap?.status === "failed";
 
   // poll
@@ -92,6 +94,12 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
     return () => cancelAnimationFrame(raf);
   }, [snap, reduce]);
 
+  // keep the newest line in view while writing (unless the reader scrolled up to read)
+  useEffect(() => {
+    const el = docRef.current;
+    if (el && followRef.current && !terminal) el.scrollTop = el.scrollHeight;
+  }, [shown, terminal]);
+
   const steps = (snap?.steps ?? []).filter(s => s.state !== "skipped");
   const sections = snap?.sections ?? [];
   const lastKey = sections.length ? sections[sections.length - 1].key : null;
@@ -114,7 +122,10 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
 
       {/* Live document */}
       {sections.length > 0 && (
-        <div style={{
+        <div ref={docRef} onScroll={e => {
+          const el = e.currentTarget;
+          followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }} style={{
           background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: compact ? "14px 16px" : "18px 22px",
           maxHeight: compact ? 320 : 520, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14,
         }}>

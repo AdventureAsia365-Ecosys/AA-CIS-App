@@ -9,10 +9,13 @@ import { useState, useEffect } from "react";
 import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTriangle, Check, X, RefreshCw } from "lucide-react";
 import {
   T, serif, mono, sans,
-  Card, CardHead, Badge, ProgressBar, LoadingScreen, PageHeader, TextLink,
+  Card, CardHead, Badge, ProgressBar, PageHeader, TextLink,
   fmtDateTime, statusVariant,
 } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
+import GettingStarted from "./GettingStarted";
+import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
+import { DashboardSkeleton } from "./Skeleton";
 
 interface BillingData {
   tenant_name: string; plan_tier: string; tours_quota_monthly: number;
@@ -22,6 +25,7 @@ interface BillingData {
   llm_cost_usd: number; billing_month: string;
   overage_usd: number; overage_rate_usd_per_tour: number; tours_overage?: number;
   rate_limit_rpm?: number | null;
+  daily?: DailyPoint[];
   activity: { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string }[];
 }
 
@@ -33,7 +37,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const [loading, setLoading] = useState(true);
   const [dismissAlert, setDismissAlert] = useState(false);
   const [resetsAt, setResetsAt] = useState<string | null>(null);
-  const { tenantName } = usePortalShell();
+  const { tenantName, catTotal } = usePortalShell();
 
   useEffect(() => {
     Promise.all([
@@ -47,7 +51,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
     }).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <LoadingScreen message="Loading dashboard…" />;
+  if (loading) return <DashboardSkeleton />;
 
   const b = billing;
   const toursUsed  = b?.tours_rewritten ?? 0;
@@ -128,11 +132,18 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             <QuotaRow icon={<FileText size={13} color={T.gold} />} label="Tours rewritten" used={toursUsed} total={toursTotal} pct={toursPct} warn={toursPct >= 80} />
             <QuotaRow icon={<Code2 size={13} color={T.gold} />} label="API calls" used={apiUsed} total={apiTotal} pct={apiPct} warn={apiPct >= 80} />
           </div>
+          {(b?.daily?.length ?? 0) >= 2 && (
+            <div style={{ marginTop: 18 }}>
+              <UsageSparkline data={b!.daily!} metric="api_calls" label="API calls" />
+            </div>
+          )}
           <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px dashed ${T.line}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
             <Clock size={13} color={T.muted2} /> Resets in <strong style={{ color: T.ink }}>{resetDays} {resetDays === 1 ? "day" : "days"}</strong> · {month}
           </div>
         </Card>
 
+        {/* AA-638 — getting started (hides itself once every step is done) */}
+        <GettingStarted catalogCount={catTotal} />
       </div>
 
       {/* Row 2: Spend + Activity */}

@@ -21,11 +21,11 @@ import pytest
 from api.routers import v1_tours
 
 
-def _make_pool(row=None, activity=None, plans=None, rpm=300):
+def _make_pool(row=None, activity=None, plans=None, rpm=300, daily=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=row)
-    # get_my_billing runs two fetch() calls in order: activity, then (AA-636) plans.
-    conn.fetch = AsyncMock(side_effect=[activity or [], plans or []])
+    # get_my_billing runs fetch() calls in order: activity, (AA-636) plans, (AA-638) daily usage.
+    conn.fetch = AsyncMock(side_effect=[activity or [], plans or [], daily or []])
     conn.fetchval = AsyncMock(return_value=rpm)
 
     pool = MagicMock()
@@ -157,3 +157,26 @@ class TestAA636BillingPlanFields:
         assert "plan_name <> 'internal'" in plans_sql
         # custom-priced plans (NULL / 0) sort after the priced ones
         assert "(price_usd_monthly IS NULL OR price_usd_monthly <= 0)" in plans_sql
+
+
+@pytest.mark.asyncio
+class TestAA638DailyUsage:
+    async def test_daily_usage_series_is_returned_and_tenant_scoped(self):
+        import datetime as dt
+        daily = [
+            {"day": dt.date(2026, 9, 1), "api_calls": 12, "rewrites": 1},
+            {"day": dt.date(2026, 9, 2), "api_calls": 0, "rewrites": 0},
+        ]
+        pool, conn = _make_pool(row=None, daily=daily)
+        request = MagicMock()
+        request.app.state.pool = pool
+
+        result = await v1_tours.get_my_billing(request, tenant={"sub": "tenant-9"})
+
+        assert result["daily"] == [
+            {"day": "2026-09-01", "api_calls": 12, "rewrites": 1},
+            {"day": "2026-09-02", "api_calls": 0, "rewrites": 0},
+        ]
+        daily_call = conn.fetch.await_args_list[2]
+        assert "generate_series" in daily_call.args[0]
+        assert daily_call.args[1] == "tenant-9"

@@ -25,10 +25,9 @@ const describe = (a: Activity) =>
 
 export default function NotificationsBell({ activity }: { activity: Activity[] }) {
   const [open, setOpen] = useState(false);
-  const [seenAt, setSeenAt] = useState(0);
+  const [seenAt, setSeenAt] = useState<number>(() => (typeof window === "undefined" ? 0 : readSeen()));
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setSeenAt(readSeen()); }, []);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };

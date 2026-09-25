@@ -24,6 +24,7 @@ import {
   parseHighlights, parseContent, fmtDateTime,
 } from "./ui";
 import LiveWriter from "./LiveWriter";
+import { ListSkeleton } from "./Skeleton";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 
 interface Version {
@@ -498,7 +499,7 @@ export default function CatalogTab() {
       </div>
     </div>
 
-    {loading ? <LoadingScreen message="Loading catalog…" /> :
+    {loading ? <ListSkeleton rows={6} label="Loading your catalog" /> :
      visibleList.length === 0 ? (
        <EmptyState icon={<Package size={32} strokeWidth={1.5} color={T.gold} />} title="No rewrites yet" sub="Browse tours and rewrite your first one in your brand voice" />
      ) : (
@@ -616,7 +617,7 @@ export default function CatalogTab() {
             <div style={{ flex: 1, overflowY: "auto", minHeight: 0, padding: "18px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
               <LiveWriter kind="tour" jobId={openGroup.id} title="Writing your tour" />
               <div style={{ fontSize: 12, color: T.muted }}>
-                Usually 1–2 minutes. You can close this and keep browsing — it will be ready in My Catalog Tours.
+                Usually a few minutes — longer when the checks ask for a revision. You can close this and keep browsing; it will be ready in My Catalog Tours.
               </div>
             </div>
           ) : dlLoad ? (

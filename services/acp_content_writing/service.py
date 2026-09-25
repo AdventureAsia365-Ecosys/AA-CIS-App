@@ -653,6 +653,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     ],
                 })
 
+        progress_step("save")  # AA-637 live view
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,
             content_text=content_text, status=status, held_reason=held_reason,
