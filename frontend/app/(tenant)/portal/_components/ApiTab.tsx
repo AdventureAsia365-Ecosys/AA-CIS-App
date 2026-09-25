@@ -63,7 +63,7 @@ export default function ApiTab() {
       {/* ── Overview ── */}
       {activeSection === "overview" && (
       <div style={{ maxWidth: 680 }}>
-      <h2 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>API Access</h2>
+      <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: T.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>API Access</h1>
       <p style={{ fontSize: 13, color: T.muted, marginBottom: 28, lineHeight: 1.6 }}>
         Use your API key to access your rewritten tour catalog programmatically. All requests require <code style={{ fontFamily: mono, background: T.bg, padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>Authorization: Bearer &lt;jwt&gt;</code> — obtain a JWT via <code style={{ fontFamily: mono, background: T.bg, padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>POST /auth/tenant-login</code>.
       </p>

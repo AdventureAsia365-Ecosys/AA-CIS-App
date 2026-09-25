@@ -499,7 +499,7 @@ export default function CatalogTab() {
 
     {loading ? <LoadingScreen message="Loading catalog…" /> :
      visibleList.length === 0 ? (
-       <EmptyState icon={<Package size={32} strokeWidth={1.5} color={T.gold} />} title="No rewrites yet" sub="Browse the pool and rewrite your first tour" />
+       <EmptyState icon={<Package size={32} strokeWidth={1.5} color={T.gold} />} title="No rewrites yet" sub="Browse tours and rewrite your first one in your brand voice" />
      ) : (
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>

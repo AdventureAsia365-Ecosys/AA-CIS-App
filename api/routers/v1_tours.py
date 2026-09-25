@@ -325,14 +325,17 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             SELECT plan_name, tours_quota_monthly, api_calls_quota_monthly, price_usd_monthly
             FROM shared.membership_plans
             WHERE is_active AND plan_name <> 'internal'
-            ORDER BY price_usd_monthly NULLS LAST, tours_quota_monthly
+            ORDER BY (price_usd_monthly IS NULL OR price_usd_monthly <= 0), price_usd_monthly, tours_quota_monthly
         """)
     plans = [
         {
             "plan_name": p["plan_name"],
             "tours_quota_monthly": p["tours_quota_monthly"],
             "api_calls_quota_monthly": p["api_calls_quota_monthly"],
-            "price_usd_monthly": float(p["price_usd_monthly"]) if p["price_usd_monthly"] is not None else None,
+            # enterprise is stored as 0.00 = negotiated, not free -> served as None ("Custom")
+            "price_usd_monthly": (
+                float(p["price_usd_monthly"]) if p["price_usd_monthly"] and p["price_usd_monthly"] > 0 else None
+            ),
             "rate_limit_rpm": PLAN_LIMITS.get(p["plan_name"], {}).get("rpm"),
         }
         for p in plan_rows
