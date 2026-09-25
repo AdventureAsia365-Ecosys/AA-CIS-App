@@ -72,7 +72,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
       )}
 
       {/* Row 1: Membership · Quota · Re-rewrite */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr 1fr", gap: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 18 }}>
 
         {/* Membership — dark */}
         <Card dark>
@@ -143,7 +143,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
       </div>
 
       {/* Row 2: Spend + Activity */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, marginTop: 18 }}>
 
         {/* Spend */}
         <Card>
@@ -159,7 +159,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               ↑ Low LLM spend
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 18 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
             <SpendTile label="Platform Fee" value={`$${price.toLocaleString()}`} sub="billed monthly" />
             <SpendTile label="Rewrites" value={`${toursUsed} tours`} sub={`~$0.018/tour · Bedrock`} warn />
           </div>
@@ -209,7 +209,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
         <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 12 }}>
           Quick Actions
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
           {[
             { icon: <Globe2 size={18} />, title: "Browse Tours",      sub: `${pool.toLocaleString()} published tours available`, href: "/portal/t1-rewrite" }, // AA-576 Phần 3 (was "Browse Pool")
             { icon: <BookOpen size={18} />, title: "My Catalog Tours",  sub: `${toursUsed} rewrites · approve, edit, export`,     href: "/portal/t4-pool" }, // AA-576 Phần 3 (was "My Catalog")

@@ -136,7 +136,7 @@ export function BillingTab({ billing }: { billing: any }) {
       {/* This period */}
       <Card style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>This Period — {month}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
             { l: "Tours Rewritten", v: `${toursUsed} / ${toursTotal}`, sub: `${((toursUsed / toursTotal) * 100).toFixed(0)}% used` },
             { l: "LLM Cost",        v: `$${llmCost.toFixed(4)}`,        sub: "~$0.018 per tour · Bedrock" },
@@ -154,7 +154,7 @@ export function BillingTab({ billing }: { billing: any }) {
       {/* Plan comparison */}
       <Card>
         <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.14em", color: T.muted, marginBottom: 16 }}>Compare Plans</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           {[
             { name: "Starter",    price: "$299",   tours: "50",   rpm: "60",    active: false },
             { name: "Growth",     price: "$799",   tours: "200",  rpm: "300",   active: true  },

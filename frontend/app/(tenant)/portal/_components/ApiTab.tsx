@@ -74,7 +74,7 @@ export default function ApiTab() {
           <code style={{
             flex: 1, padding: "10px 14px", background: T.bg, borderRadius: 8,
             fontSize: 13, color: T.body, letterSpacing: 1, fontFamily: mono,
-            border: `1px solid ${T.line}`,
+            border: `1px solid ${T.line}`, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
             {showKey ? keyPlaceholder : "•".repeat(40)}
           </code>
@@ -101,7 +101,7 @@ export default function ApiTab() {
             Copy
           </button>
         </div>
-        <pre style={{ margin: 0, fontFamily: mono, fontSize: 12, color: "#A5D6A7", lineHeight: 1.7 }}>
+        <pre style={{ margin: 0, fontFamily: mono, fontSize: 12, color: "#A5D6A7", lineHeight: 1.7, overflowX: "auto" }}>
 {`# 1. Get a JWT
 curl -X POST https://api-cis.lumiguides.it.com/auth/tenant-login \\
   -H "Content-Type: application/json" \\
