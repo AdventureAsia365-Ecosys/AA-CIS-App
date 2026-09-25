@@ -238,8 +238,9 @@ class _FakeRewriteRequest:
 
 async def _drive_trigger_rewrite():
     conn = AsyncMock()
-    conn.fetchrow.side_effect = [REWRITE_PT_ROW, None, REWRITE_EXISTING_SEO_ROW]
-    conn.fetchval.side_effect = ["starter", 1, 1, REWRITE_VERSION_ID]
+    # AA-640: plan quota is a fetchrow (plan + membership_plans quota) ahead of the others
+    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, REWRITE_PT_ROW, None, REWRITE_EXISTING_SEO_ROW]
+    conn.fetchval.side_effect = [1, 1, REWRITE_VERSION_ID]
     pool = _rewrite_pool_ctx(conn)
     request = _FakeRewriteRequest(pool)
     tenant = {"sub": REWRITE_TENANT_ID}

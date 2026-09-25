@@ -70,12 +70,10 @@ async def _drive_trigger_rewrite(qa_result: dict):
     background task to completion — the only way to actually exercise
     _do_rewrite_and_save()'s closure body from outside."""
     conn = AsyncMock()
-    conn.fetchrow.side_effect = [PT_ROW, None, EXISTING_SEO_ROW]        # pt, brand_rules(_br), seo(_existing)
-    # AA-489: trigger_rewrite() now does 2 fetchval calls up front for the quota check
-    # (_get_tenant_plan_limit's plan_tier SELECT, then the quota INSERT..RETURNING) before
-    # any of the pre-existing calls below.
-    conn.fetchval.side_effect = ["starter", 1, 1, VERSION_ID, 5.0]      # plan_tier, quota used,
-    #                                                                     next_ver, INSERT id, source_score
+    # AA-489/AA-640: the quota check runs first — _get_tenant_plan_limit is a fetchrow (plan +
+    # membership_plans quota), then the usage INSERT..RETURNING is a fetchval.
+    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, PT_ROW, None, EXISTING_SEO_ROW]
+    conn.fetchval.side_effect = [1, 1, VERSION_ID, 5.0]      # quota used, next_ver, INSERT id, source_score
     pool = _pool_ctx(conn)
     request = _FakeRequest(pool)
     tenant = {"sub": TENANT_ID}
