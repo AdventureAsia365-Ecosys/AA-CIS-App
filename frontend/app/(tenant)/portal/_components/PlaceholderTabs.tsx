@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { Check, X, RefreshCw, Mail, ExternalLink, KeyRound, LogOut } from "lucide-react";
-import { T, sans, Card, PageHeader, Btn, fmtDateTime } from "./ui";
+import { T, sans, Card, PageHeader, Btn, fmtDateTime, statusLabel } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
 import { SUPPORT_EMAIL, SITE_URL } from "../../../_brand/tokens";
 
@@ -48,7 +48,7 @@ export function ActivityLogTab({ activity }: { activity: Activity[] }) {
                     {a.country ? ` · ${a.country}` : ""} · {fmtDateTime(a.created_at)}
                   </div>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, textTransform: "uppercase", letterSpacing: "0.04em", background: s.bg, color: s.color }}>{a.status}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, textTransform: "uppercase", letterSpacing: "0.04em", background: s.bg, color: s.color, whiteSpace: "nowrap" }}>{statusLabel(a.status)}</span>
               </div>
             );
           })}
