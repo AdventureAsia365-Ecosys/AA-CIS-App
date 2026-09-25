@@ -30,9 +30,18 @@ from __future__ import annotations
 
 import re
 
-_NUM_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+# AA-639: a number is a digit run (optionally with thousands separators and a decimal part) that
+# does not start inside a word/number. It may be followed directly by a unit ("4,460m", "710m",
+# "12km") — the old `\b\d+\b` could not match "460m" at all (no word boundary between "0" and
+# "m"), so a source written "4,460m" contributed only "4", and a rewrite written "4,460 m"
+# was flagged for a "novel" 460. Thousands separators are normalised away ("4,460" == "4460").
+_NUM_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 _DAY_LABEL_RE = re.compile(r"\bDay\s+\d+\b\s*:?", re.IGNORECASE)
 _CITE_RE = re.compile(r"\[(?:R|F):[^\]]*\]")
+
+
+def _numbers(text: str) -> set[str]:
+    return {m.replace(",", "") for m in _NUM_RE.findall(text or "")}
 
 
 def find_novel_numeric_claims(sentence: str, cited_atom_texts: list[str]) -> list[str]:
@@ -42,12 +51,12 @@ def find_novel_numeric_claims(sentence: str, cited_atom_texts: list[str]) -> lis
     labels before scanning — neither is a factual claim."""
     clean = _DAY_LABEL_RE.sub("", sentence)
     clean = _CITE_RE.sub("", clean)
-    sentence_nums = set(_NUM_RE.findall(clean))
+    sentence_nums = _numbers(clean)
     if not sentence_nums:
         return []
     atom_nums: set[str] = set()
     for text in cited_atom_texts:
-        atom_nums.update(_NUM_RE.findall(text or ""))
+        atom_nums.update(_numbers(text))
     return sorted(sentence_nums - atom_nums)
 
 

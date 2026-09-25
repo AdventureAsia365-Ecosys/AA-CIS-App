@@ -131,14 +131,20 @@ def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -
     words. Calling validate_node fresh, on exactly what gets persisted, is the only way
     this check can't go stale relative to what a human reviewer (or the tenant) actually
     sees."""
-    from services.content_generation.graph import validate_node
+    from services.content_generation.graph import validate_node, _HARD_BLOCK_CODES
     state = {
         "generated": generated,
         "tour": tour_dict,
         "brand_forbidden_words": brand_rules.get("forbidden_words") or [],
         "retry_count": 0,
     }
-    return list(validate_node(state).get("failure_codes") or [])
+    codes = list(validate_node(state).get("failure_codes") or [])
+    # AA-639: only HARD codes fail T3 — the same line graph.py draws (AA-234 _HARD_BLOCK_CODES:
+    # SEO length/floor, forbidden words, missing fields). Soft codes (HIGHLIGHTS_*, *_GENERIC,
+    # SUMMARY_OFF_BRAND) are advisory there by design; treating them as failures here made T3
+    # re-write the whole tour for e.g. HIGHLIGHTS_TOO_GENERIC, which a full rewrite rarely clears
+    # (live: 2 wasted rewrites, then escalated anyway).
+    return [c for c in codes if c in _HARD_BLOCK_CODES]
 
 
 _T3_FEEDBACK_MAX_SENTENCES = 8
