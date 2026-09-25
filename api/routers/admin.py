@@ -27,10 +27,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 
 PLAN_LIMITS = {
-    "starter":  {"rpm": 60,   "tours_per_month": 100},
-    "growth":   {"rpm": 300,  "tours_per_month": 500},
-    "business": {"rpm": 1000, "tours_per_month": 2000},
-    "internal": {"rpm": 60,   "tours_per_month": 999999},
+    # AA-640: tours per month now live ONLY in shared.membership_plans (what tenants see and are
+    # billed on). This table keeps the per-plan rate limit.
+    "starter":  {"rpm": 60},
+    "growth":   {"rpm": 300},
+    "business": {"rpm": 1000},
+    "internal": {"rpm": 60},
 }
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
@@ -313,9 +315,12 @@ async def get_tenant_usage(
             SELECT COUNT(*) FROM gold_aa_internal.published_tours
             WHERE tenant_id = $1 AND master_status <> 'trashed'
         """, tenant_id)
+        tours_quota = await conn.fetchval(
+            "SELECT tours_quota_monthly FROM shared.membership_plans WHERE plan_name = $1",
+            str(tenant["plan_tier"]),
+        )
 
     plan = str(tenant["plan_tier"])
-    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["starter"])
 
     return {
         "tenant_id":   str(tenant_id),
@@ -324,7 +329,7 @@ async def get_tenant_usage(
         "plan_tier":   plan,
         "limits": {
             "rate_limit_rpm":    tenant["rate_limit_rpm"],
-            "tours_per_month":   limits["tours_per_month"],
+            "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
         },
         "tours_published": tours_published,
         "monthly_usage": [

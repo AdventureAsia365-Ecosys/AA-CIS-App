@@ -195,11 +195,14 @@ async def browse_pool(
 # S2/S3/S4 quota, dead since 13/07/2026. New table: shared.tenant_rewrite_usage (migration
 # 142), one row per (tenant_id, year_month).
 #
-# Business decisions (conservative defaults, per this chain's own build prompt — not
-# separately confirmed live by Nghiệp, flagged for review, not treated as silently final):
-#   * Limit = PLAN_LIMITS[plan_tier].tours_per_month as-is, no new number invented.
+# Business decisions — confirmed by Nghiệp 25/09/2026 (AA-640), replacing AA-489's defaults:
+#   * Limit = shared.membership_plans.tours_quota_monthly for the tenant's plan — the SAME number
+#     the portal shows and billing (v_tenant_monthly_usage overage) uses. PLAN_LIMITS in admin.py
+#     used to carry a second, different set (growth 500 vs 200 shown) — it now only holds RPM.
 #   * Reset = calendar month, not rolling 30d.
-#   * Hard-block (429) over quota — matches this issue's stated purpose, LLM cost control.
+#   * NO hard block while the product is in trial: a rewrite past the quota is allowed and billed
+#     as overage (overage_rate_usd_per_tour, already computed by v_tenant_monthly_usage). Logged as
+#     `rewrite_over_quota` so it stays visible.
 
 
 def _current_year_month_and_reset() -> tuple:
@@ -211,23 +214,29 @@ def _current_year_month_and_reset() -> tuple:
 
 
 async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
-    """(plan_tier str, tours_per_month int) — read live from shared.tenants, not the JWT's
-    own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
-    plan change shouldn't take up to 24h, the JWT's TTL, to take effect)."""
-    plan = await conn.fetchval(
-        "SELECT plan_tier FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id
-    )
-    limit = PLAN_LIMITS.get(str(plan), PLAN_LIMITS["starter"])["tours_per_month"]
-    return str(plan), limit
+    """(plan_tier str, tours_quota_monthly int) — plan read live from shared.tenants, not the
+    JWT's own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
+    plan change shouldn't take up to 24h, the JWT's TTL, to take effect). The quota comes from
+    shared.membership_plans (AA-640); a plan with no row falls back to the starter row."""
+    row = await conn.fetchrow("""
+        SELECT t.plan_tier::text AS plan,
+               COALESCE(mp.tours_quota_monthly,
+                        (SELECT tours_quota_monthly FROM shared.membership_plans
+                         WHERE plan_name = 'starter')) AS quota
+        FROM shared.tenants t
+        LEFT JOIN shared.membership_plans mp ON mp.plan_name = t.plan_tier::text
+        WHERE t.tenant_id = $1::uuid
+    """, tenant_id)
+    if not row:
+        return "starter", 0
+    return str(row["plan"]), int(row["quota"] or 0)
 
 
 async def _check_and_consume_rewrite_quota(conn, tenant_id: str) -> None:
-    """Atomically increments this month's rewrite count and raises 429 if it now exceeds the
-    tenant's plan limit. Increment-then-check (same order rate_limit_middleware's
-    redis.incr()-then-compare already uses) — a request that pushes the count past the limit
-    still counts, consistent with "quota consumed by requesting"."""
-    _, limit = await _get_tenant_plan_limit(conn, tenant_id)
-    year_month, next_month = _current_year_month_and_reset()
+    """Atomically increments this month's rewrite count. AA-640: past the plan quota the rewrite
+    is still allowed (billed as overage) — logged, never blocked, while the product is in trial."""
+    plan, limit = await _get_tenant_plan_limit(conn, tenant_id)
+    year_month, _next_month = _current_year_month_and_reset()
     used = await conn.fetchval("""
         INSERT INTO shared.tenant_rewrite_usage (tenant_id, year_month, rewrite_count)
         VALUES ($1::uuid, $2, 1)
@@ -237,11 +246,8 @@ async def _check_and_consume_rewrite_quota(conn, tenant_id: str) -> None:
         RETURNING rewrite_count
     """, tenant_id, year_month)
     if used > limit:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Monthly rewrite quota exceeded ({used - 1}/{limit} used this month, "
-                   f"resets {next_month.strftime('%Y-%m-%d')})",
-        )
+        logger.info("rewrite_over_quota", tenant_id=tenant_id, plan=plan, used=used, quota=limit,
+                    year_month=year_month)
 
 
 # Real replacement for the endpoint CatalogTab.tsx used to call before AA-428 deleted that
@@ -426,10 +432,8 @@ async def trigger_rewrite(
     pool = request.app.state.pool
 
     async with pool.acquire() as conn:
-        # AA-489 — real monthly rewrite quota, enforced here for the first time. See the
-        # helper's own docstring/comment block above (_check_and_consume_rewrite_quota) for
-        # the full rationale; raises 429 before any tour lookup or LLM work if this request
-        # would push the tenant over their plan's tours_per_month for the current month.
+        # AA-489/AA-640 — count this rewrite against the monthly plan quota. Over-quota rewrites
+        # are allowed and billed as overage (trial phase) — see the helper's comment block.
         await _check_and_consume_rewrite_quota(conn, tenant_id)
 
         # Check published tour exists
