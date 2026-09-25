@@ -141,6 +141,34 @@ def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -
     return list(validate_node(state).get("failure_codes") or [])
 
 
+_T3_FEEDBACK_MAX_SENTENCES = 8
+
+
+def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
+    """AA-639 — turn T3's findings into the writer's PREVIOUS ATTEMPT FEEDBACK block
+    (graph.py generate_node appends it to the prompt). Grounding: list each number the draft
+    asserted that the source never states, with the sentence it came from, and say what to do
+    (keep only figures from the source; drop or rephrase the rest without a number). Structural:
+    the validate_node codes. Capped so a noisy draft doesn't blow up the prompt."""
+    parts: list[str] = []
+    if grounding:
+        parts.append(
+            "FACT CHECK FAILED — these sentences state numbers that do NOT appear anywhere in the "
+            "source tour. Use only figures (distances, altitudes, durations, counts, prices, years) "
+            "that the source itself gives; otherwise remove the number or rephrase without one. "
+            "Do not add conversions (e.g. feet) or outside facts."
+        )
+        for g in grounding[:_T3_FEEDBACK_MAX_SENTENCES]:
+            sent = " ".join(str(g.get("sentence", "")).split())[:240]
+            parts.append(f"- [{g.get('field')}] numbers {', '.join(g.get('novel_numbers', []))}: \"{sent}\"")
+        if len(grounding) > _T3_FEEDBACK_MAX_SENTENCES:
+            extra = len(grounding) - _T3_FEEDBACK_MAX_SENTENCES
+            parts.append(f"- …and {extra} more sentence(s) with the same problem.")
+    if structural:
+        parts.append("STRUCTURE CHECK FAILED — fix these issues: " + ", ".join(structural[:15]))
+    return "\n".join(parts)
+
+
 async def run_t3_qa_gate(
     tour_dict: dict,
     source_texts: list[str],
@@ -187,12 +215,18 @@ async def run_t3_qa_gate(
 
         attempt += 1
         logger.info("t3_qa_repair_attempt", attempt=attempt,
-                    structural_count=len(structural), grounding_count=len(grounding))
+                    structural_count=len(structural), grounding_count=len(grounding),
+                    structural_codes=structural[:10],
+                    novel_numbers=sorted({n for g in grounding for n in g["novel_numbers"]})[:20])
         result = await _rewrite_tour(
             tour_dict, idx=0, total=1, brand_rules=brand_rules, is_tenant_rewrite=True,
             seo=seo_data,
             tenant_id=tenant_id,             # AA-620: same tenant as attempt 0
             generate_stage="t2_generate",    # AA-620: T2 repair-round stays on the tenant stage
+            # AA-639: tell the writer WHAT failed. Before this, a repair round was a blind
+            # re-roll (feedback="") hoping the next draft happened to pass — live, a tour took
+            # 1 write + 3 full rewrites (~4 min) to clear T3.
+            feedback=t3_repair_feedback(structural, grounding),
         )
 
 
