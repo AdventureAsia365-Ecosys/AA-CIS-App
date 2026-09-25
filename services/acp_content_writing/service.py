@@ -30,6 +30,8 @@ import json
 from typing import Optional
 from uuid import UUID
 
+from services.acp_shared.writing_progress import progress_step
+
 import structlog
 from fastapi import Request
 
@@ -505,6 +507,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             "writer_missing_brand_rules": await _tenant_missing_brand_rules(tenant_id, pool),
                         }
 
+            progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
                 goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,

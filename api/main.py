@@ -39,6 +39,7 @@ from api.routers.admin_atoms import router as admin_atoms_router
 from api.routers.admin_a4 import router as admin_a4_router
 from api.routers.admin_dashboard import router as admin_dashboard_router
 from api.routers.admin_llm_ops import router as admin_llm_ops_router  # AA-518/AA-505
+from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.core.sentry import init_sentry
@@ -198,6 +199,7 @@ app.include_router(admin_atoms_router)
 app.include_router(admin_a4_router)
 app.include_router(admin_dashboard_router)  # AA-527 (bổ sung) — Segment/Score/Route-Hub/Slate audit panels
 app.include_router(admin_llm_ops_router)  # AA-518/AA-505 — /admin/llm-config, /admin/llm-usage/*
+app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 
 app.middleware("http")(rate_limit_middleware)
 app.middleware("http")(sentry_context_middleware)

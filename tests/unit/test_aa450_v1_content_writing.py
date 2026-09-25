@@ -57,7 +57,10 @@ class TestWrite:
         api/routers/v1_tours.py::trigger_rewrite() already uses. A bare create_task() with no
         ref can be garbage-collected mid-flight."""
         body = v1_content_writing.WriteBody(cta=None)
-        assert len(v1_content_writing._background_tasks) == 0
+        # AA-637: other tests in this module also call write(); their background task now takes a
+        # few more ticks (it closes its live-progress view), so it can still be pending when that
+        # test's event loop closes and linger in the shared set. Start from a clean set.
+        v1_content_writing._background_tasks.clear()
         with patch.object(v1_content_writing.service, "start_write",
                            new=AsyncMock(return_value=_started())), \
              patch.object(v1_content_writing.service, "run_write_background",
@@ -65,8 +68,9 @@ class TestWrite:
              patch.object(v1_content_writing, "write_audit_log", new=AsyncMock()):
             await v1_content_writing.write(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
             assert len(v1_content_writing._background_tasks) == 1  # added before the task ran
-            # task completion -> add_done_callback fires via call_soon, needs 2 ticks to observe
-            await asyncio.sleep(0)
+            # AA-637: the task now also closes its live-progress view, so wait for it to finish
+            # instead of counting event-loop ticks; the done-callback then fires via call_soon.
+            await asyncio.wait_for(asyncio.gather(*list(v1_content_writing._background_tasks)), 5)
             await asyncio.sleep(0)
         assert len(v1_content_writing._background_tasks) == 0
 
