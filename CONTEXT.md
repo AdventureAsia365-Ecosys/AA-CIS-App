@@ -34,6 +34,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **AI/Bedrock**: LLM calls (rewrite, research, embeddings, gates) route through the ecosystem
   Bedrock path (acc3 primary → acc1 fallback); the cross-account trust is provisioned in
   AA-CIS-Infra.
+- **Live writing progress (AA-637, `docs/adr/0004-*.md`)**:
+  - Tenant writing jobs run in the background: the T2 tour rewrite and the T9 post write.
+  - While running, each job binds a stream sink (`shared/llm_client/stream_sink.py`).
+  - Writer-stage LLM calls stream through that sink into a Redis snapshot
+    (`services/acp_shared/writing_progress.py`, key `wp:{tenant}:{kind}:{job}`, 1h TTL).
+  - The portal polls `GET /v1/progress/{tour|piece}/{id}` (`LiveWriter.tsx`).
+  - This is a view only: persisted rows are unchanged. There is no SSE, and API Gateway is
+    unchanged.
 - **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
   `acp_contract.*` and `acp_shared.*` (the pipeline tables — atoms, segments, ranking, routes,
   hubs, subjects, pieces, facts), migrations under the repo's `migrations/`.

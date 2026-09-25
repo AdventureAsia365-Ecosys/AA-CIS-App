@@ -8,6 +8,7 @@ from .models import LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
 from .role_config import get_stage_config_sync
+from . import stream_sink
 
 logger = structlog.get_logger()
 
@@ -53,6 +54,17 @@ class LLMClient:
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
+        # AA-637 — report call boundaries to a bound live-progress sink (no-op without one).
+        stream_sink.emit_call_start(request.stage)
+        ok = False
+        try:
+            resp = self._generate(request)
+            ok = True
+            return resp
+        finally:
+            stream_sink.emit_call_end(request.stage, ok)
+
+    def _generate(self, request: LLMRequest) -> LLMResponse:
         # AA-518 — request.stage (when set) resolves the admin's per-stage config; an explicit
         # request.model_tier still wins over it (AA-237's opt-in haiku->sonnet auto-upgrade, and
         # any other real per-request override), same relationship model_tier already had with
@@ -174,6 +186,9 @@ class LLMClient:
             "messages": messages,
         }
 
+        # AA-637 — a new provider attempt: drop any partial text a failed attempt already showed.
+        stream_sink.emit_restart(request.stage)
+        on_delta = stream_sink.delta_callback(request.stage)
         response = self._bedrock.invoke_model_with_response_stream(
             modelId=model,
             contentType="application/json",
@@ -201,6 +216,8 @@ class LLMClient:
                 d = chunk.get("delta", {})
                 if d.get("type") == "text_delta":
                     content_parts.append(d.get("text", ""))
+                    if on_delta is not None:
+                        on_delta(d.get("text", ""))
             elif ctype == "message_delta":
                 out_tok = chunk.get("usage", {}).get("output_tokens", out_tok)
                 # AA-493: stop_reason ("end_turn" | "max_tokens" | "stop_sequence" | ...) arrives
@@ -236,6 +253,7 @@ class LLMClient:
         """
         from .bedrock_satellite import invoke_claude, BedrockUnavailable
         model_key = "sonnet" if model == BEDROCK_SONNET else "haiku"
+        stream_sink.emit_restart(request.stage)  # AA-637
         try:
             result = invoke_claude(
                 request.user_prompt,
@@ -243,6 +261,9 @@ class LLMClient:
                 max_tokens=request.max_tokens,
                 system=request.system_prompt,
                 account=account,
+                # AA-637 — only set when a live-progress sink streams this stage; None keeps the
+                # exact pre-AA-637 non-streaming invoke_model request.
+                on_delta=stream_sink.delta_callback(request.stage),
             )
         except BedrockUnavailable as e:
             raise RuntimeError(f"Satellite Bedrock failed: {e}") from e
@@ -293,8 +314,13 @@ class LLMClient:
             kwargs["temperature"] = request.temperature
         if "seed" in fields_set and request.seed is not None:
             kwargs["seed"] = request.seed
+        stream_sink.emit_restart(request.stage)  # AA-637
         resp = self._openai.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
+        # AA-637 — no token streaming on this last-resort path; a live view gets the whole text.
+        _cb = stream_sink.delta_callback(request.stage)
+        if _cb is not None and content:
+            _cb(content)
         in_tok  = resp.usage.prompt_tokens
         out_tok = resp.usage.completion_tokens
         cost    = self._calc_cost(model, in_tok, out_tok)

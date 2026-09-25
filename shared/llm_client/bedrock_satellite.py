@@ -92,7 +92,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import boto3
 import structlog
@@ -221,12 +221,46 @@ def get_satellite_client(service_name: str = "bedrock-runtime", account: str = "
     return session.client(service_name, region_name=region)
 
 
+def _invoke_streaming(bedrock_rt, inference_profile: str, body: str, model_label: str, t0: float,
+                      on_delta: Callable[[str], None]) -> BedrockInvokeResult:
+    """AA-637 — invoke_model_with_response_stream, accumulating the same fields the non-streaming
+    payload carries (text, usage incl. cache tokens, stop_reason) and forwarding each text delta."""
+    resp = bedrock_rt.invoke_model_with_response_stream(
+        modelId=inference_profile, body=body,
+        contentType="application/json", accept="application/json",
+    )
+    parts: list[str] = []
+    usage: dict = {}
+    stop_reason = None
+    for event in resp["body"]:
+        chunk = json.loads(event["chunk"]["bytes"])
+        ctype = chunk.get("type")
+        if ctype == "message_start":
+            usage.update(chunk.get("message", {}).get("usage", {}) or {})
+        elif ctype == "content_block_delta":
+            d = chunk.get("delta", {})
+            if d.get("type") == "text_delta":
+                t = d.get("text", "")
+                parts.append(t)
+                on_delta(t)
+        elif ctype == "message_delta":
+            out = chunk.get("usage", {}).get("output_tokens")
+            if out is not None:
+                usage["output_tokens"] = out
+            stop_reason = chunk.get("delta", {}).get("stop_reason", stop_reason)
+    return BedrockInvokeResult(
+        text="".join(parts), model_used=model_label,
+        latency_ms=round((time.time() - t0) * 1000, 1), usage=usage, stop_reason=stop_reason,
+    )
+
+
 def invoke_claude(
     prompt: str,
     model: str = "sonnet",
     max_tokens: int = 4096,
     system: Optional[str] = None,
     account: str = "acc1",
+    on_delta: Optional[Callable[[str], None]] = None,
 ) -> BedrockInvokeResult:
     """
     model: "sonnet" (editorial, S1 rewrite) | "haiku" (schema/fast tasks)
@@ -280,6 +314,10 @@ def invoke_claude(
             from .prompt_cache import build_cached_system_prompt
             body_dict["system"] = build_cached_system_prompt(system)
         body = json.dumps(body_dict)
+        if on_delta is not None:
+            # AA-637 — live-progress path: same request, streamed. The acc1/acc3 roles already
+            # allow InvokeModelWithResponseStream (see get_satellite_client docstring).
+            return _invoke_streaming(bedrock_rt, inference_profile, body, model_label, t0, on_delta)
         resp = bedrock_rt.invoke_model(
             modelId=inference_profile,
             body=body,

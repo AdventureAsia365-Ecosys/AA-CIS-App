@@ -56,6 +56,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
+import LiveWriter from "./LiveWriter";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_CEILING_MS = 180_000;
@@ -624,11 +625,17 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
             </div>
           )}
 
-          {writing && (
+          {/* AA-637 — live steps + text while T9 writes; falls back to the spinner line until the
+              placeholder piece id is known. */}
+          {writing && (piece?.piece_id ? (
+            <div style={{ marginBottom: 12 }}>
+              <LiveWriter kind="piece" jobId={piece.piece_id} title="Writing your post" />
+            </div>
+          ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
               <Spinner size={16} /> Writing and checking your content — one moment…
             </div>
-          )}
+          ))}
 
           {pollTimedOut && !writing && piece && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "9px 12px", background: T.goldTint, border: `1px solid ${T.gold}`, borderRadius: 8, marginBottom: 10 }}>

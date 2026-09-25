@@ -36,6 +36,8 @@ from services.acp_content_writing.export import (
     render_content_text_to_fragment,
 )
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from services.acp_shared.writing_progress import WritingProgress
+from shared.llm_client import stream_sink
 
 router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"])
 
@@ -45,6 +47,44 @@ router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"]
 # sibling api/routers/v1_tours.py::trigger_rewrite() — this endpoint now runs the same length of
 # background work T9's write/rewrite + T10 gate loop does, up to ~89s, so it needs the same guard).
 _background_tasks: set = set()
+
+# AA-637 — tenant-facing steps for a T9 write (plain language: no gate names, no model names).
+T9_STEPS = [
+    ("prepare", "Reading your topic and brand voice"),
+    ("write", "Writing your post"),
+    ("check", "Checking facts, tone and quality"),
+    ("revise", "Revising what the checks flagged"),
+    ("save", "Saving to My Content"),
+]
+
+
+async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: dict, pool, progress) -> None:
+    """run_write_background() unchanged, with a live-progress sink bound around it. The piece's
+    own final status decides how the live view ends; the view never affects the piece."""
+    progress.start()
+    progress.step("prepare")
+    try:
+        with stream_sink.bind(progress):
+            await service.run_write_background(request_id, piece_id, context, pool)
+    except Exception:
+        progress.fail()
+        raise
+    finally:
+        if progress.failed:
+            await progress.finish(False, "Writing didn't finish. Please try again.")
+    status = None
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.fetchval(
+                "SELECT status FROM acp_shared.content_piece WHERE piece_id = $1", piece_id
+            )
+    except Exception:
+        pass
+    if status == "failed":
+        progress.fail()
+        await progress.finish(False, "Writing didn't finish. Please try again.")
+    else:
+        await progress.finish(True)
 
 
 class WriteBody(BaseModel):
@@ -84,8 +124,14 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
         resource_id=str(request_id), details={"piece_id": piece["piece_id"]},
     )
 
+    # AA-637 — live progress (steps + streamed text) for this piece, read by GET /v1/progress.
+    progress = WritingProgress(
+        getattr(request.app.state, "redis", None), tenant_id=str(tenant_id), kind="piece", job_id=piece["piece_id"],
+        steps=T9_STEPS, stream_stages={"t9_write"},
+        display="blog_json" if context.get("channel") == "blog" else "text",
+    )
     task = asyncio.create_task(
-        service.run_write_background(request_id, UUID(piece["piece_id"]), context, pool)
+        _run_write_with_progress(request_id, UUID(piece["piece_id"]), context, pool, progress)
     )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)

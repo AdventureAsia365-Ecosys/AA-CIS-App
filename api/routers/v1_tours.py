@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel as _BM
 from api.routers.auth import verify_jwt
 from api.routers.admin import PLAN_LIMITS
+from services.acp_shared.writing_progress import progress_fail, progress_step
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
 logger = structlog.get_logger()
@@ -603,6 +604,7 @@ async def trigger_rewrite(
                 # tenant rewrite must not introduce new numbers/measurements beyond.
                 from services.acp_produce.tenant_pipeline import run_t3_qa_gate
                 source_texts = [str(v) for v in tour_dict.values() if v]
+                progress_step("check")  # AA-637
                 qa = await run_t3_qa_gate(
                     tour_dict, source_texts, result, brand_rules,
                     seo_data=seo_data,  # AA-445-02 — repair-round rewrites also carry seo_data
@@ -649,6 +651,7 @@ async def trigger_rewrite(
                 # this version reached the pool despite qa_status='escalated'.
                 qa_status = "passed" if qa["passed"] else "escalated"
                 qa_auto_passed = not qa["passed"]
+                progress_step("save")  # AA-637
                 async with pool.acquire() as _conn3:
                     await _conn3.execute("""
                         UPDATE gold_aa_internal.tenant_tour_versions
@@ -704,6 +707,7 @@ async def trigger_rewrite(
         except Exception as _e:
             import structlog as _sl
             _sl.get_logger().error("tenant_rewrite_failed", error=str(_e))
+            progress_fail()  # AA-637
             # Mark as needs_review so polling detects completion even on error
             try:
                 async with pool.acquire() as _conn_err:
@@ -715,7 +719,29 @@ async def trigger_rewrite(
             except Exception:
                 pass
 
-    _rewrite_task = _asyncio.create_task(_do_rewrite_and_save())
+    # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
+    from services.acp_shared.writing_progress import WritingProgress, TOUR_STEPS, TOUR_STAGE_STEPS
+    from shared.llm_client import stream_sink as _stream_sink
+    _progress = WritingProgress(
+        getattr(request.app.state, "redis", None), tenant_id=str(tenant_id), kind="tour", job_id=str(version_id),
+        steps=TOUR_STEPS, stream_stages={"t2_generate", "s1_generate"}, display="tour_json",
+        stage_steps=TOUR_STAGE_STEPS,
+    )
+
+    async def _rewrite_with_progress():
+        _progress.start()
+        _progress.step("research")
+        try:
+            with _stream_sink.bind(_progress):
+                await _do_rewrite_and_save()
+        except Exception:
+            _progress.fail()
+            raise
+        finally:
+            await _progress.finish(not _progress.failed,
+                                   None if not _progress.failed else "Writing didn't finish. Please try again.")
+
+    _rewrite_task = _asyncio.create_task(_rewrite_with_progress())
     _background_tasks.add(_rewrite_task)
     _rewrite_task.add_done_callback(_background_tasks.discard)
 

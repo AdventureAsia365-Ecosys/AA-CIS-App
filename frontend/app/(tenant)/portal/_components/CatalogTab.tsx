@@ -23,6 +23,7 @@ import {
   Btn, LoadingScreen, EmptyState,
   parseHighlights, parseContent, fmtDateTime,
 } from "./ui";
+import LiveWriter from "./LiveWriter";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 
 interface Version {
@@ -611,12 +612,10 @@ export default function CatalogTab() {
           </div>
 
           {isAiWriting(openGroup) ? (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 40 }}>
-              <PenLine size={32} strokeWidth={1.5} color={T.gold} style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }} />
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, textAlign: "center" as const }}>
-                Writing your tour content…
-              </div>
-              <div style={{ fontSize: 12, color: T.muted, textAlign: "center" as const }}>
+            // AA-637 — live steps + the tour fields as they are written.
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 0, padding: "18px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <LiveWriter kind="tour" jobId={openGroup.id} title="Writing your tour" />
+              <div style={{ fontSize: 12, color: T.muted }}>
                 Usually 1–2 minutes. You can close this and keep browsing — it will be ready in My Catalog Tours.
               </div>
             </div>
