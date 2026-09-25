@@ -54,7 +54,7 @@ function Palette({ onClose, onSearchTours }: { onClose: () => void; onSearchTour
       id: "search", label: `Search tours for “${q.trim()}”`, hint: "Browse Tours", icon: <Search size={15} />,
       run: () => { onClose(); onSearchTours(q.trim()); },
     }] : [];
-    return [...search, ...pages];
+    return [...pages, ...search];
   }, [q, onClose, onSearchTours, router]);
 
   function onKey(e: React.KeyboardEvent) {

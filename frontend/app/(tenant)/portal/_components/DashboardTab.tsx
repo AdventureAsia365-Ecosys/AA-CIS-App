@@ -10,7 +10,7 @@ import { ArrowRight, FileText, Code2, Globe2, BookOpen, Sparkles, Clock, AlertTr
 import {
   T, serif, mono, sans,
   Card, CardHead, Badge, ProgressBar, PageHeader, TextLink,
-  fmtDateTime, statusVariant,
+  fmtDateTime, statusVariant, statusLabel,
 } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
 import GettingStarted from "./GettingStarted";
@@ -201,7 +201,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
                   </div>
                   <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
                 </div>
-                <Badge variant={v}>{a.status}</Badge>
+                <Badge variant={v}>{statusLabel(a.status)}</Badge>
                 <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
                   {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
                 </div>

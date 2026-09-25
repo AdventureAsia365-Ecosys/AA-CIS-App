@@ -81,6 +81,19 @@ const BADGE_MAP: Record<BadgeVariant, { bg: string; color: string; dot: string }
   default: { bg: "#F0EBE0", color: "#6B7380", dot: "#9099A6" },
 };
 
+// AA-638 — tenant-facing label for a tour-version status (the raw values are internal enums,
+// e.g. "ai_generated" was rendered verbatim as "AI_GENERATED").
+export function statusLabel(s: string): string {
+  switch (s) {
+    case "approved": return "Approved";
+    case "rejected": return "Rejected";
+    case "ai_generated": return "Ready to review";
+    case "needs_review": return "Needs review";
+    case "pending": case "generating": return "Writing";
+    default: return s ? s.replace(/_/g, " ") : "—";
+  }
+}
+
 export function statusVariant(s: string): BadgeVariant {
   if (s === "approved") return "success";
   if (s === "rejected") return "error";
