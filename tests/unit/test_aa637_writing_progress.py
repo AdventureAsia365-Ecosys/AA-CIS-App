@@ -42,7 +42,7 @@ def test_tour_sections_are_labelled_and_ordered():
            '"seo_title": "Bhutan tour", "trip_type": "cultural"}')
     secs = wp.build_sections(raw, "tour_json")
     assert [s["label"] for s in secs] == ["Title", "Subtitle", "Highlights", "Itinerary", "SEO title"]
-    assert secs[2]["text"] == "• A\n\n• B"
+    assert secs[2]["text"] == "• A\n• B"
     assert secs[3]["text"] == "Day 1 — Paro\n\nArrive in Paro."
     # trip_type is internal — not shown
     assert all(s["key"] != "trip_type" for s in secs)

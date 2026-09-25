@@ -328,6 +328,34 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             WHERE is_active AND plan_name <> 'internal'
             ORDER BY (price_usd_monthly IS NULL OR price_usd_monthly <= 0), price_usd_monthly, tours_quota_monthly
         """)
+        # AA-638 — per-day API calls + tour rewrites for the current month (Dashboard sparkline).
+        daily_rows = await conn.fetch("""
+            WITH days AS (
+                SELECT generate_series(date_trunc('month', now()), date_trunc('day', now()),
+                                       interval '1 day') AS day
+            ),
+            api AS (
+                SELECT date_trunc('day', called_at) AS day, COUNT(*) AS n
+                FROM shared.tenant_api_usage
+                WHERE tenant_id = $1::uuid AND called_at >= date_trunc('month', now())
+                GROUP BY 1
+            ),
+            rw AS (
+                SELECT date_trunc('day', created_at) AS day, COUNT(*) AS n
+                FROM gold_aa_internal.tenant_tour_versions
+                WHERE tenant_id = $1::uuid AND created_at >= date_trunc('month', now())
+                GROUP BY 1
+            )
+            SELECT days.day::date AS day, COALESCE(api.n, 0) AS api_calls, COALESCE(rw.n, 0) AS rewrites
+            FROM days
+            LEFT JOIN api ON api.day = days.day
+            LEFT JOIN rw ON rw.day = days.day
+            ORDER BY days.day
+        """, tenant_id)
+    daily = [
+        {"day": str(d["day"]), "api_calls": int(d["api_calls"]), "rewrites": int(d["rewrites"])}
+        for d in daily_rows
+    ]
     plans = [
         {
             "plan_name": p["plan_name"],
@@ -350,7 +378,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "quota_tours_pct": 0.0, "quota_calls_pct": 0.0,
             "tours_overage": 0, "overage_usd": 0.0,
             "llm_cost_usd": 0.0, "overage_rate_usd_per_tour": 4.0,
-            "rate_limit_rpm": rate_limit_rpm, "plans": plans,
+            "rate_limit_rpm": rate_limit_rpm, "plans": plans, "daily": daily,
             "activity": [],
         }
 
@@ -360,6 +388,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         "billing_month": str(row["billing_month"])[:7] if row["billing_month"] else None,
         "rate_limit_rpm": rate_limit_rpm,
         "plans": plans,
+        "daily": daily,
         "activity": [
             {
                 "id": str(a["id"]),

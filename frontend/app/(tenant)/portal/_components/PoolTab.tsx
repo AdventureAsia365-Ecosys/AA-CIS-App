@@ -4,6 +4,7 @@
 //      POST /api/tenant/v1/tours/pool/{id}/rewrite
 
 import { useState, useEffect, useCallback } from "react";
+import { ListSkeleton } from "./Skeleton";
 import { Search, ChevronRight, X, RotateCcw, Globe2, MapPin, Clock, Wallet, PenLine } from "lucide-react";
 import {
   T, serif, mono, sans,
@@ -166,7 +167,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
         )}
 
         {/* Tour list */}
-        {loading ? <LoadingScreen message="Loading pool…" /> : tours.length === 0 ? (
+        {loading ? <ListSkeleton rows={8} label="Loading tours" /> : tours.length === 0 ? (
           <EmptyState icon={<Globe2 size={32} strokeWidth={1.5} color={T.gold} />} title="No tours found" sub="Try adjusting your search or filters" />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

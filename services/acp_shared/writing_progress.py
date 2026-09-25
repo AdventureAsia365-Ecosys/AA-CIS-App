@@ -209,7 +209,9 @@ def _sections_from_values(values: Iterable[tuple[tuple, str]], labels: dict[str,
                 sec["parts"].append(v)
         elif len(p) == 1:
             sec["parts"].append(v)
-    return [{"key": s["key"], "label": s["label"], "text": "\n\n".join(x for x in s["parts"] if x)}
+    # highlights read as a tight bullet list; everything else as paragraphs
+    return [{"key": s["key"], "label": s["label"],
+             "text": ("\n" if s["key"] == "highlights" else "\n\n").join(x for x in s["parts"] if x)}
             for s in sections if any(s["parts"])]
 
 

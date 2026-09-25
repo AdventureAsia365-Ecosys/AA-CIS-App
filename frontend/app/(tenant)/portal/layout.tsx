@@ -18,6 +18,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Search, Menu, CheckCircle2 } from "lucide-react";
 import Sidebar from "./_components/Sidebar";
 import NotificationsBell from "./_components/NotificationsBell";
+import CommandPalette from "./_components/CommandPalette";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans, countUniqueTours } from "./_components/ui";
 
@@ -57,6 +58,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   // AA-605: below 900px the sidebar becomes an off-canvas drawer opened from the top bar.
   const [narrow, setNarrow]   = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
     const sync = () => { setNarrow(mq.matches); if (!mq.matches) setNavOpen(false); };
@@ -99,12 +101,12 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
     }).catch(() => {});
   }, []);
 
-  // ⌘K focus search
+  // ⌘K / Ctrl+K opens the command palette (AA-638; was: focus the search box)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        searchRef.current?.focus();
+        setPaletteOpen(o => !o);
       }
     };
     document.addEventListener("keydown", handler);
@@ -154,6 +156,12 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             <CheckCircle2 size={15} style={{ flexShrink: 0 }} /> {toast}
           </div>
         )}
+
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          onSearchTours={q => { setGlobalSearch(q); if (pathname !== "/portal/t1-rewrite") router.push("/portal/t1-rewrite"); }}
+        />
 
         <Sidebar
           poolCount={poolTotal}
