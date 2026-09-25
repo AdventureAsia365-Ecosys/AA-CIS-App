@@ -87,3 +87,45 @@ def test_t3_structural_only_fails_on_hard_codes():
     with patch("services.content_generation.graph.validate_node",
                return_value={"failure_codes": ["HIGHLIGHTS_TOO_GENERIC"]}):
         assert tp._t3_structural_issues({}, {}, {}) == []
+
+
+# ── AA-639: over-long SEO title fixed without a rewrite (live: 1 full rewrite for this alone) ──
+
+@pytest.mark.parametrize("title,expected", [
+    ("Manaslu Circuit Trek — 18 Days Around Nepal's Eighth-Highest Peak", "Manaslu Circuit Trek"),
+    ("Manaslu Circuit Trek: 18-Day Himalayan Loop | Adventure Asia Private Trip",
+     "Manaslu Circuit Trek: 18-Day Himalayan Loop"),
+    ("Short title — fine", "Short title — fine"),
+])
+def test_fit_seo_title_drops_trailing_segments(title, expected):
+    assert tp.fit_seo_title(title) == expected
+
+
+def test_fit_seo_title_word_boundary_and_dangling_words():
+    t = "Trekking through the remote valleys of Upper Mustang and the ancient walled city of Lo"
+    out = tp.fit_seo_title(t)
+    assert len(out) <= 60 and not out.endswith((" of", " the", " and"))
+    assert t.startswith(out)
+
+
+def test_fit_seo_title_always_within_limit():
+    for t in ["x" * 90, "A " * 50, "One — Two — Three — Four — Five — Six — Seven — Eight — Nine"]:
+        assert 0 < len(tp.fit_seo_title(t)) <= 60
+
+
+@pytest.mark.asyncio
+async def test_t3_fixes_long_seo_title_without_a_rewrite():
+    long_title = "Manaslu Circuit Trek — 18 Days Around Nepal's Eighth-Highest Peak"
+    result = {"generated": {"seo_title": long_title, "summary": "No numbers."}}
+    rewrite = AsyncMock()
+
+    def fake_validate(state):  # only the rule under test: >60-char title is a hard failure
+        long_ = len(state["generated"].get("seo_title", "")) > 60
+        return {"failure_codes": ["SEO_TITLE_TOO_LONG"] if long_ else []}
+
+    with patch("api.routers.v1_pipeline._rewrite_tour", rewrite), \
+         patch("services.content_generation.graph.validate_node", side_effect=fake_validate):
+        out = await tp.run_t3_qa_gate({"name": "T"}, ["src"], result, {}, tenant_id="t1")
+    rewrite.assert_not_awaited()
+    assert out["passed"] is True
+    assert out["result"]["generated"]["seo_title"] == "Manaslu Circuit Trek"

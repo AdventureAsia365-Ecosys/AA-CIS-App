@@ -147,6 +147,37 @@ def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -
     return [c for c in codes if c in _HARD_BLOCK_CODES]
 
 
+SEO_TITLE_MAX = 60  # same limit graph.py validate_node applies (SEO_TITLE_TOO_LONG)
+_TITLE_SEPARATORS = (" — ", " – ", " | ", ": ", " - ")
+_TITLE_DANGLING = {"and", "&", "with", "of", "in", "to", "for", "the", "a", "an", "—", "–", "-", "|", ":", ","}
+
+
+def fit_seo_title(title: str, max_len: int = SEO_TITLE_MAX) -> str:
+    """AA-639 — shorten an SEO title to max_len without an LLM call. First drop trailing
+    separator-delimited segments ("Manaslu Circuit Trek — 18 Days | Nepal" → "Manaslu Circuit
+    Trek — 18 Days") while that keeps a meaningful title; otherwise cut at the last word boundary
+    and trim a dangling connector/punctuation. Titles already within the limit are unchanged."""
+    t = " ".join(title.split())
+    if len(t) <= max_len:
+        return t
+    head = t
+    while len(head) > max_len:
+        cut = max((head.rfind(sep) for sep in _TITLE_SEPARATORS), default=-1)
+        if cut <= 0:
+            break
+        head = head[:cut].rstrip()
+    # a clean leading segment (the tour's own name) beats a phrase cut mid-way
+    if len(head) <= max_len and len(head) >= min(15, max_len // 2):
+        return head
+    words = t[: max_len + 1].split(" ")
+    if len(t) > max_len:
+        words = words[:-1] if len(words) > 1 else words
+    while words and words[-1].lower().strip(",:;") in _TITLE_DANGLING:
+        words.pop()
+    out = " ".join(words).rstrip(" ,;:—–-|")
+    return out[:max_len] if out else t[:max_len]
+
+
 _T3_FEEDBACK_MAX_SENTENCES = 8
 
 
@@ -204,6 +235,11 @@ async def run_t3_qa_gate(
     attempt = 0
     while True:
         generated = result.get("generated") or {}
+        # AA-639: an over-long SEO title is fixed deterministically here — live, a single
+        # SEO_TITLE_TOO_LONG (flag_fix's LLM pass missed the 60-char count) cost a full rewrite of an
+        # 18-day tour. Mutates the result that gets persisted.
+        if isinstance(generated.get("seo_title"), str):
+            generated["seo_title"] = fit_seo_title(generated["seo_title"])
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         grounding = _t3_grounding_check(generated, source_texts)
 
