@@ -220,26 +220,16 @@ class TestRunA3AtomizeBackground:
         conn.close.assert_awaited_once()  # connection still cleaned up on the failure path
 
 
-@pytest.mark.asyncio
-class TestRunResearchOnlyNoLongerTouchesSegmentScoreRoute:
-    """AA-545 — api/routers/v1_tours.py::_run_research_only() (replaces the removed
-    _run_ranking_pipeline()) ONLY runs `run_segment_research()` now — Segment/Score/Route moved
-    to A3, explicitly out of this function's job. Confirms it does NOT import/call any of the 3
-    (a regression here would silently double-run ranking per-tenant-rewrite AND per-tour-at-A3)."""
+class TestTenantRewriteNoLongerHasAResearchHook:
+    """AA-646 — the per-tenant-rewrite research hook (`_run_research_only`, AA-545) is gone:
+    after AA-545 it swept every platform place per rewrite. Research is admin-triggered only
+    (api/routers/admin_segment_research.py). The behavioural check (a rewrite never calls
+    run_segment_research) lives in test_aa469_viec1_t4_t5_split.py."""
 
-    async def test_only_calls_segment_research(self):
+    def test_hook_removed(self):
         from api.routers import v1_tours
 
-        pool = MagicMock()
-        fake_cfg = MagicMock(target_market={"country": "Vietnam"})
-        research_called = AsyncMock(return_value={"status": "success"})
-
-        with patch("services.acp_contract.segment_research.run_segment_research", research_called), \
-             patch("shared.services.tenant_config_service.TenantConfigService") as MockCfgSvc:
-            MockCfgSvc.return_value.get_seo_config = AsyncMock(return_value=fake_cfg)
-            await v1_tours._run_research_only("some-tenant-id", pool)
-
-        research_called.assert_awaited_once()
+        assert not hasattr(v1_tours, "_run_research_only")
 
 
 @pytest.mark.asyncio

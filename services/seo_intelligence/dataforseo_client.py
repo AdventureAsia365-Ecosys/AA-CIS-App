@@ -12,6 +12,54 @@ DEFAULT_LOCATION_CODE = 2840          # United States
 DEFAULT_LOCATION_NAME = "United States"
 DEFAULT_LANGUAGE_CODE = "en"
 
+DFS_OK = 20000
+# AA-647 — HTTP statuses / DFS status-code families that mean "every further call will fail too"
+# (auth or payment). Anything else is a failure of this one call only.
+_FATAL_HTTP = {401, 402, 403}
+_FATAL_DFS_PREFIXES = ("401", "402")
+
+
+class DFSCallError(Exception):
+    """AA-647 — a DataForSEO call that did not return a usable answer (HTTP error, or HTTP 200 with a
+    non-20000 status in the body). `fatal=True` means auth/payment trouble: stop the whole run
+    instead of retrying the next keyword. Callers must NOT cache anything for a failed call."""
+
+    def __init__(self, message: str, fatal: bool = False, status_code: int | None = None):
+        super().__init__(message, fatal, status_code)
+        self.message = message
+        self.fatal = fatal
+        self.status_code = status_code
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def _dfs_status_error(data: dict) -> DFSCallError | None:
+    """Return a DFSCallError when a 200 response carries a failed top-level or task status."""
+    if not isinstance(data, dict):
+        return DFSCallError("DataForSEO returned a non-object body")
+    codes = [data.get("status_code")]
+    tasks = data.get("tasks") or []
+    if tasks and isinstance(tasks[0], dict):
+        codes.append(tasks[0].get("status_code"))
+        message = tasks[0].get("status_message") or data.get("status_message")
+    else:
+        message = data.get("status_message")
+    for code in codes:
+        if code is not None and code != DFS_OK:
+            return DFSCallError(f"DataForSEO status {code}: {message}",
+                                fatal=str(code).startswith(_FATAL_DFS_PREFIXES), status_code=code)
+    return None
+
+
+def as_dfs_error(exc: Exception) -> DFSCallError:
+    """Wrap a transport/HTTP exception, classifying 401/402/403 as fatal."""
+    if isinstance(exc, DFSCallError):
+        return exc
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return DFSCallError(f"DataForSEO request failed: {exc}", fatal=status in _FATAL_HTTP,
+                        status_code=status)
+
 
 class DataForSEOClient:
     def __init__(self, login: str = None, password: str = None,
@@ -101,6 +149,7 @@ class DataForSEOClient:
         keywords: list[str],
         location_code: int = DEFAULT_LOCATION_CODE,
         language_code: str = DEFAULT_LANGUAGE_CODE,
+        raise_on_error: bool = False,
     ) -> dict[str, int | None]:
         """AA-515 — search volume for MANY keywords, ONE market, in ONE request.
 
@@ -118,6 +167,10 @@ class DataForSEOClient:
         every keyword mapped to None, same self-contained-on-error shape fetch_keyword_ideas()
         above already uses, so a network hiccup degrades one place's research to "no measured
         demand this run" rather than aborting the whole loop.
+
+        AA-647 — `raise_on_error=True` raises `DFSCallError` instead (also for an HTTP-200 body
+        whose status is not 20000). Research uses it so a failed call is never cached as "no
+        volume"; the default keeps the old behaviour for other callers.
         """
         if not keywords:
             return {}
@@ -136,11 +189,22 @@ class DataForSEOClient:
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:
-            logger.warning("dfs_volumes_bulk_failed", count=len(keywords), error=str(e))
+            err = as_dfs_error(e)
+            logger.warning("dfs_volumes_bulk_failed", count=len(keywords), error=str(e),
+                           status_code=err.status_code, fatal=err.fatal)
+            if raise_on_error:
+                raise err from e
             return {kw: None for kw in keywords}
 
         self._log_live("search_volume_bulk", data, location_code=location_code,
                        keyword_count=len(keywords[:1000]))
+        status_err = _dfs_status_error(data)
+        if status_err is not None:
+            logger.warning("dfs_volumes_bulk_status_error", count=len(keywords),
+                           status_code=status_err.status_code, fatal=status_err.fatal)
+            if raise_on_error:
+                raise status_err
+            return {kw: None for kw in keywords}
         out: dict[str, int | None] = {kw: None for kw in keywords}
         try:
             results = data["tasks"][0]["result"] or []
@@ -173,6 +237,11 @@ class DataForSEOClient:
             resp.raise_for_status()
             data = resp.json()
         self._log_live("serp_advanced", data, keyword=seed, location_code=location_code, keyword_count=1)
+        # AA-647 — an HTTP-200 body with a failed task status is not a SERP; every caller already
+        # wraps this method in try/except, so raising keeps a failure from being parsed as "0 PAA".
+        status_err = _dfs_status_error(data)
+        if status_err is not None:
+            raise status_err
         return data
 
     async def fetch_people_also_ask(
@@ -215,8 +284,10 @@ class DataForSEOClient:
         seed: str,
         location_code: int = DEFAULT_LOCATION_CODE,
         language_code: str = DEFAULT_LANGUAGE_CODE,
+        raise_on_error: bool = False,
     ) -> list[dict]:
-        # Real keyword ideas (~100s of rows) with volume/competition/cpc. Self-contained: [] on error.
+        # Real keyword ideas (~100s of rows) with volume/competition/cpc. Self-contained: [] on error,
+        # unless raise_on_error (AA-647) — then DFSCallError, so research can tell failure from "none".
         payload = [{
             "keywords":      [seed],
             "location_code": location_code,
@@ -233,9 +304,18 @@ class DataForSEOClient:
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as e:
-            logger.warning("dfs_ideas_failed", error=str(e))
+            err = as_dfs_error(e)
+            logger.warning("dfs_ideas_failed", error=str(e), status_code=err.status_code, fatal=err.fatal)
+            if raise_on_error:
+                raise err from e
             return []
         self._log_live("keywords_for_keywords", data, keyword=seed, location_code=location_code, keyword_count=1)
+        status_err = _dfs_status_error(data)
+        if status_err is not None:
+            logger.warning("dfs_ideas_status_error", status_code=status_err.status_code, fatal=status_err.fatal)
+            if raise_on_error:
+                raise status_err
+            return []
         return self._parse_keyword_ideas(data)
 
     async def fetch_all(
