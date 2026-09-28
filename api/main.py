@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
     if in_api_enabled():
         try:
             load_kinds()
-            job_worker = Worker(pool)
+            job_worker = Worker(pool, resources={"redis": redis})
             job_worker_task = asyncio.create_task(job_worker.run(), name="job-worker")
         except Exception as e:
             logger.warning("job_worker_start_failed", error=repr(e))

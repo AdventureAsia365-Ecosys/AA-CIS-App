@@ -146,6 +146,13 @@ def test_kinds(monkeypatch):
         ctx.set_result({"partial": True})
         raise BudgetExceeded("dfs daily budget $10.00 reached")
 
+    async def record_terminal(pool, job_row):
+        seen.setdefault("terminal", []).append((job_row["kind"], job_row["status"]))
+
+    @registry.job_kind("doomed_job", max_attempts=1, on_terminal=record_terminal)
+    async def doomed_job(ctx):
+        raise RuntimeError("always fails")
+
     @registry.job_kind("slow_job")
     async def slow_job(ctx):
         seen["started"] = True
@@ -203,6 +210,24 @@ async def test_worker_stops_a_running_job_on_admin_cancel(pool, test_kinds):
         await _wait_for(pool, slow, ("running",))
         await queue.request_cancel(pool, slow)
         await _wait_for(pool, slow, ("cancelled",))
+    finally:
+        await worker.shutdown()
+        await runner
+
+
+@pytest.mark.asyncio
+async def test_worker_runs_the_terminal_hook_when_a_job_finally_fails(pool, test_kinds):
+    """AA-652 — the domain row (e.g. a tour version) is told when its job ends without success."""
+    doomed, _ = await registry.enqueue(pool, "doomed_job", {})
+    worker = Worker(pool, poll_seconds=0.1, heartbeat_seconds=0.2)
+    runner = asyncio.create_task(worker.run())
+    try:
+        await _wait_for(pool, doomed, ("failed",))
+        for _ in range(20):
+            if test_kinds.get("terminal"):
+                break
+            await asyncio.sleep(0.1)
+        assert test_kinds["terminal"] == [("doomed_job", "failed")]
     finally:
         await worker.shutdown()
         await runner

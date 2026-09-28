@@ -37,6 +37,7 @@ interface Version {
   aa_quality_score: number; country: string | null; duration: string | null;
   inclusions?: string | null; exclusions?: string | null; // AA-566 Phần B.4
   published_tour_id?: string;
+  job_status?: string | null;  // AA-652 — the rewrite job's status; null for manual edits/old rows
   tour_id?: string;  // AA-454 — raw_tours.tour_id, used for the ?tour_id= "showing versions for
                       // this tour" filter below (AA-526 — no longer also a deep-link target into
                       // AtomsTab/T6, removed along with tenant atom visibility)
@@ -53,8 +54,20 @@ type SortKey = "aa_name" | "country";
 // the 5s poll below running forever for any tenant who has ever clicked Save once. Both are real
 // bugs, not hypothetical — confirmed by reading update_version()'s edit branch in
 // api/routers/v1_tours.py, which never advances a tenant_edit row past 'pending'.
-function isAiWriting(v: Pick<Version, "status" | "edit_source">): boolean {
-  return v.status === "pending" && v.edit_source === "ai_generated";
+// AA-652 — the rewrite runs as a durable job. A job that ended without success (retries used,
+// cancelled, budget) is NOT writing any more, even in the moment before the backend marks the
+// version 'failed' — so the portal never shows an endless "Writing…".
+const JOB_ENDED_UNSUCCESSFULLY = ["failed", "cancelled", "stopped_budget"];
+
+function isAiWriting(v: Pick<Version, "status" | "edit_source" | "job_status">): boolean {
+  return v.status === "pending" && v.edit_source === "ai_generated"
+    && !JOB_ENDED_UNSUCCESSFULLY.includes(v.job_status ?? "");
+}
+
+function isRewriteFailed(v: Pick<Version, "status" | "edit_source" | "job_status">): boolean {
+  return v.status === "failed"
+    || (v.status === "pending" && v.edit_source === "ai_generated"
+        && JOB_ENDED_UNSUCCESSFULLY.includes(v.job_status ?? ""));
 }
 
 export default function CatalogTab() {
@@ -113,6 +126,16 @@ export default function CatalogTab() {
   }, []);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  // AA-652 — Retry a failed AI rewrite: re-queues the same job (no second quota charge).
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const retryRewrite = useCallback(async (versionId: string) => {
+    setRetryingId(versionId);
+    try {
+      await fetch(`/api/tenant/v1/tours/versions/${versionId}/retry`, { method: "POST" });
+      await fetchList();
+    } finally { setRetryingId(null); }
+  }, [fetchList]);
 
   // AA-565 — 1 row per tour: group the flat my-versions response by published_tour_id, keeping
   // only the highest version_number per group. Pure client-side reduction, no backend change —
@@ -226,7 +249,7 @@ export default function CatalogTab() {
   // still being AI-written (loading placeholder handles that case instead).
   useEffect(() => {
     if (!openGroup) { setDetail(null); return; }
-    if (isAiWriting(openGroup)) { setDetail(null); return; }
+    if (isAiWriting(openGroup) || isRewriteFailed(openGroup)) { setDetail(null); return; }
     if (detail?.id === openGroup.id) return;
     loadDetail(openGroup);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -556,7 +579,16 @@ export default function CatalogTab() {
                   <td style={{ ...TDStyle, textAlign: "right" as const }}>
                     {writing ? (
                       <span style={{ fontSize: 12, color: T.amber, fontFamily: sans, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <PenLine size={13} style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }} /> Writing…
+                        <PenLine size={13} style={{ animation: "cis-pulse 1.4s ease-in-out infinite" }} />
+                        {v.job_status === "queued" ? "Queued…" : "Writing…"}
+                      </span>
+                    ) : isRewriteFailed(v) ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }} onClick={e => e.stopPropagation()}>
+                        <span style={{ fontSize: 12, color: T.red, fontFamily: sans }}>Writing failed</span>
+                        <button onClick={() => retryRewrite(v.id)} disabled={retryingId === v.id}
+                          style={{ padding: "5px 12px", fontSize: 12, fontWeight: 600, border: `1px solid ${T.gold}`, borderRadius: 6, background: T.goldTint, color: T.gold, cursor: "pointer", fontFamily: sans }}>
+                          {retryingId === v.id ? "Retrying…" : "Retry"}
+                        </button>
                       </span>
                     ) : (
                       <button onClick={e => { e.stopPropagation(); setOpenTourId(v.published_tour_id ?? null); }}
@@ -619,6 +651,17 @@ export default function CatalogTab() {
               <div style={{ fontSize: 12, color: T.muted }}>
                 Usually a few minutes — longer when the checks ask for a revision. You can close this and keep browsing; it will be ready in My Catalog Tours.
               </div>
+            </div>
+          ) : isRewriteFailed(openGroup) ? (
+            <div style={{ flex: 1, padding: "28px 22px", display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>Writing didn&apos;t finish</div>
+              <div style={{ fontSize: 12.5, color: T.muted }}>
+                Something went wrong while writing this tour. Retrying does not use another rewrite from your plan.
+              </div>
+              <button onClick={() => retryRewrite(openGroup.id)} disabled={retryingId === openGroup.id}
+                style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, border: `1px solid ${T.gold}`, borderRadius: 6, background: T.goldTint, color: T.gold, cursor: "pointer", fontFamily: sans }}>
+                {retryingId === openGroup.id ? "Retrying…" : "Retry writing"}
+              </button>
             </div>
           ) : dlLoad ? (
             <LoadingScreen message="Loading your content…" />
