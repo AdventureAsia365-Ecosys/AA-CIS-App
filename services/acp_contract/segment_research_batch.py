@@ -288,8 +288,13 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
                 p.failed = True
             continue
         stats["idea_tasks"] += 1
+        stats["ideas_returned"] = stats.get("ideas_returned", 0) + len(ideas)
         rows = [(_tidy(i["keyword"]), market, i.get("search_volume"))
                 for i in ideas if i.get("keyword") and i.get("search_volume")]
+        # Bhutan pilot (28/09) stored 0 ideas from an 18-seed task: log what came back so we can
+        # tell "DFS returned nothing for obscure seeds" from "we parsed the response wrong".
+        logger.info("segment_research_ideas_task", seeds=len(seeds), ideas_returned=len(ideas),
+                    ideas_with_volume=len(rows), sample=[i.get("keyword") for i in ideas[:5]])
         if rows:
             async with pool.acquire() as conn:
                 await conn.executemany(_UPSERT_VOLUME_SQL, rows)
@@ -311,6 +316,7 @@ async def research_batch(
     serp_calls = await _buy_serps(places, markets, client, pool, guard)
     idea_stats = (await _buy_suggestions(places, markets, client, pool, guard)
                   if use_suggestions else {"idea_tasks": 0, "ideas_stored": 0})
+    idea_stats.setdefault("ideas_returned", 0)
 
     done = [p for p in places if not p.failed and not guard.aborted]
     if done:
@@ -327,6 +333,7 @@ async def research_batch(
         "serp_calls": serp_calls,
         "idea_tasks": idea_stats["idea_tasks"],
         "ideas_stored": idea_stats["ideas_stored"],
+        "ideas_returned": idea_stats["ideas_returned"],
         "llm_calls": llm_stats["llm_calls"],
         "cost_usd": llm_stats["llm_usd"],
     }

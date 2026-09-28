@@ -37,11 +37,12 @@ SAFE_DEFAULTS: dict[tuple[str, str], tuple[Optional[float], Optional[float]]] = 
 }
 
 # Worst-case price of one call, used for the pre-call check when the exact price is not known yet.
-# Observed on 25/09/2026: search_volume task ~$0.057-0.059, keywords_for_keywords $0.09,
-# serp advanced $0.002. Rounded up.
+# Observed: search_volume task $0.057-0.059 with <=13 keywords (25/09/2026) but $0.09 with ~150
+# keywords (Bhutan pilot, 28/09/2026 — the task price rises with keyword count), keywords_for_keywords
+# $0.09, serp advanced $0.002. Use the highest observed price.
 DFS_CALL_ESTIMATE_USD = {
-    "search_volume": 0.075,
-    "search_volume_bulk": 0.075,
+    "search_volume": 0.09,
+    "search_volume_bulk": 0.09,
     "keywords_for_keywords": 0.09,
     "serp_advanced": 0.002,
 }
