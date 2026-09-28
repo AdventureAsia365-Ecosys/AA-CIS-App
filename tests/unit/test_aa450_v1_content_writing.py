@@ -1,8 +1,8 @@
 """AA-450 (endpoint shape) + AA-466 (202 Accepted + poll) — api/routers/v1_content_writing.py.
 Same convention test_aa449_v1_angle_gate.py uses: endpoint functions called directly,
 service.py patched (already unit-tested separately in test_aa450_content_writing_service.py) —
-this file checks HTTP status-code mapping + that the background task is actually launched with
-a strong ref (AA-466 — the GC-safety pattern api/routers/v1_tours.py's trigger_rewrite() uses)."""
+this file checks HTTP status-code mapping + that the write is enqueued as a durable job (AA-652;
+before, an in-process background task with a strong ref, AA-466)."""
 import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,7 +22,19 @@ PIECE_ID = uuid.uuid4()
 def _make_request():
     request = MagicMock()
     request.app.state.pool = MagicMock()
+    # AA-652 — write() stores the enqueued job_id on the piece through pool.acquire().
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    request.app.state.pool.acquire = MagicMock(return_value=ctx)
     return request
+
+
+@pytest.fixture(autouse=True)
+def _no_real_enqueue():
+    """AA-652 — write() enqueues a `t9_write` job; keep that off the database in every test."""
+    with patch("shared.jobs.registry.enqueue", new=AsyncMock(return_value=("job-1", True))) as m:
+        yield m
 
 
 def _started(status="processing"):
@@ -39,40 +51,37 @@ class TestWrite:
         body = v1_content_writing.WriteBody(cta=None)
         with patch.object(v1_content_writing.service, "start_write",
                            new=AsyncMock(return_value=_started())), \
-             patch.object(v1_content_writing.service, "run_write_background",
-                           new=AsyncMock(return_value=None)) as mock_bg, \
+             patch("shared.jobs.registry.enqueue", new=AsyncMock(return_value=("job-1", True))), \
              patch.object(v1_content_writing, "write_audit_log", new=AsyncMock()):
             result = await v1_content_writing.write(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
-            await asyncio.sleep(0)  # let the scheduled background task actually run
 
         # AA-613 — tenant-safe 202 body: ready_state instead of raw status, no gate/held fields.
         assert result["ready_state"] == "in_progress"
         assert result["piece_id"] == str(PIECE_ID)
-        mock_bg.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_background_task_launched_with_strong_ref(self):
-        """AA-466 — the task must be added to the module-level _background_tasks set (and
-        removed again on completion via add_done_callback), the same GC-safety guard
-        api/routers/v1_tours.py::trigger_rewrite() already uses. A bare create_task() with no
-        ref can be garbage-collected mid-flight."""
+    async def test_write_is_enqueued_as_a_durable_job(self):
+        """AA-652 — the write runs as a `t9_write` job (was an in-process task a deploy killed),
+        one job per piece (idempotency key), and the piece records its job_id."""
         body = v1_content_writing.WriteBody(cta=None)
-        # AA-637: other tests in this module also call write(); their background task now takes a
-        # few more ticks (it closes its live-progress view), so it can still be pending when that
-        # test's event loop closes and linger in the shared set. Start from a clean set.
-        v1_content_writing._background_tasks.clear()
+        request = _make_request()
+        conn = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=conn)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        request.app.state.pool.acquire = MagicMock(return_value=ctx)
         with patch.object(v1_content_writing.service, "start_write",
                            new=AsyncMock(return_value=_started())), \
-             patch.object(v1_content_writing.service, "run_write_background",
-                           new=AsyncMock(return_value=None)), \
+             patch("shared.jobs.registry.enqueue", new=AsyncMock(return_value=("job-1", True))) as m_enqueue, \
              patch.object(v1_content_writing, "write_audit_log", new=AsyncMock()):
-            await v1_content_writing.write(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
-            assert len(v1_content_writing._background_tasks) == 1  # added before the task ran
-            # AA-637: the task now also closes its live-progress view, so wait for it to finish
-            # instead of counting event-loop ticks; the done-callback then fires via call_soon.
-            await asyncio.wait_for(asyncio.gather(*list(v1_content_writing._background_tasks)), 5)
-            await asyncio.sleep(0)
-        assert len(v1_content_writing._background_tasks) == 0
+            await v1_content_writing.write(REQUEST_ID, body, request, tenant={"sub": TENANT_ID})
+        args, kwargs = m_enqueue.call_args
+        assert args[1] == "t9_write"
+        assert args[2] == {"request_id": str(REQUEST_ID), "piece_id": str(PIECE_ID),
+                           "tenant_id": TENANT_ID, "context": {"atom_text": "x"}}
+        assert kwargs["idempotency_key"] == f"t9_write:{PIECE_ID}"
+        sql, piece_id, job_id = conn.execute.call_args.args
+        assert "SET job_id" in sql and piece_id == str(PIECE_ID) and job_id == "job-1"
 
     @pytest.mark.asyncio
     async def test_request_not_found_404(self):

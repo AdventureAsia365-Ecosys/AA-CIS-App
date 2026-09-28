@@ -7,11 +7,9 @@ staff/admin path. Written fresh per ADR §0.5 — no import from services.acp_s4
 
 AA-466: POST .../write moved to 202 Accepted + poll (real API Gateway 504s on long LLM+T10 runs,
 AA-453/465). `service.start_write()` does the fast pre-flight (unchanged 404/409/422 contract)
-and inserts a `content_piece` placeholder (status='processing'); the slow write/check loop runs
-in `service.run_write_background()`, launched via `asyncio.create_task()` with a strong ref
-(`_background_tasks` set + `add_done_callback`) — same GC-safety pattern
-`api/routers/v1_tours.py::trigger_rewrite()` already uses (AA-425), not the bare
-`asyncio.create_task()` `v1_s4_blog.py` uses.
+and inserts a `content_piece` placeholder (status='processing'); the slow write/check loop
+(`service.run_write_background()`) runs as a durable `t9_write` job since AA-652
+(services/jobs/t9_write_job.py), so a deploy mid-write re-queues it instead of losing it.
 
 Endpoint shape:
   POST /v1/content-writing/requests/{angle_gate_request_id}/write — 202 Accepted immediately,
@@ -22,7 +20,6 @@ Endpoint shape:
 """
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -36,55 +33,12 @@ from services.acp_content_writing.export import (
     render_content_text_to_fragment,
 )
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
-from services.acp_shared.writing_progress import WritingProgress
-from shared.llm_client import stream_sink
 
 router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"])
 
-# AA-466: strong refs to the fire-and-forget write+check background task — asyncio only keeps a
-# weak ref to a bare create_task() result, so an unreferenced task can be GC'd mid-flight (same
-# class of bug AA-223 found/fixed for admin_pipeline.py, AA-425 found/fixed for this router's own
-# sibling api/routers/v1_tours.py::trigger_rewrite() — this endpoint now runs the same length of
-# background work T9's write/rewrite + T10 gate loop does, up to ~89s, so it needs the same guard).
-_background_tasks: set = set()
-
-# AA-637 — tenant-facing steps for a T9 write (plain language: no gate names, no model names).
-T9_STEPS = [
-    ("prepare", "Reading your topic and brand voice"),
-    ("write", "Writing your post"),
-    ("check", "Checking facts, tone and quality"),
-    ("revise", "Revising what the checks flagged"),
-    ("save", "Saving to My Content"),
-]
-
-
-async def _run_write_with_progress(request_id: UUID, piece_id: UUID, context: dict, pool, progress) -> None:
-    """run_write_background() unchanged, with a live-progress sink bound around it. The piece's
-    own final status decides how the live view ends; the view never affects the piece."""
-    progress.start()
-    progress.step("prepare")
-    try:
-        with stream_sink.bind(progress):
-            await service.run_write_background(request_id, piece_id, context, pool)
-    except Exception:
-        progress.fail()
-        raise
-    finally:
-        if progress.failed:
-            await progress.finish(False, "Writing didn't finish. Please try again.")
-    status = None
-    try:
-        async with pool.acquire() as conn:
-            status = await conn.fetchval(
-                "SELECT status FROM acp_shared.content_piece WHERE piece_id = $1", piece_id
-            )
-    except Exception:
-        pass
-    if status == "failed":
-        progress.fail()
-        await progress.finish(False, "Writing didn't finish. Please try again.")
-    else:
-        await progress.finish(True)
+# AA-652 — T9_STEPS and the progress wrapper moved to services/jobs/t9_write_job.py; the
+# write runs as a durable `t9_write` job. Re-exported for existing imports.
+from services.jobs.t9_write_job import T9_STEPS  # noqa: E402,F401
 
 
 class WriteBody(BaseModel):
@@ -124,17 +78,21 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
         resource_id=str(request_id), details={"piece_id": piece["piece_id"]},
     )
 
-    # AA-637 — live progress (steps + streamed text) for this piece, read by GET /v1/progress.
-    progress = WritingProgress(
-        getattr(request.app.state, "redis", None), tenant_id=str(tenant_id), kind="piece", job_id=piece["piece_id"],
-        steps=T9_STEPS, stream_stages={"t9_write"},
-        display="blog_json" if context.get("channel") == "blog" else "text",
+    # AA-652 — the write + T10 check runs as a durable `t9_write` job (was an in-process asyncio
+    # task that a deploy/restart killed, leaving the piece 'processing' forever). The live
+    # progress view (AA-637) now starts inside the job.
+    from services.jobs.t9_write_job import KIND as _T9_KIND
+    from shared.jobs.registry import enqueue as _enqueue_job
+    job_id, _ = await _enqueue_job(
+        pool, _T9_KIND,
+        {"request_id": str(request_id), "piece_id": piece["piece_id"], "tenant_id": str(tenant_id),
+         "context": context},
+        idempotency_key=f"{_T9_KIND}:{piece['piece_id']}", created_by=f"tenant:{tenant_id}",
     )
-    task = asyncio.create_task(
-        _run_write_with_progress(request_id, UUID(piece["piece_id"]), context, pool, progress)
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE acp_shared.content_piece SET job_id = $2::uuid WHERE piece_id = $1::uuid",
+            piece["piece_id"], job_id)
     # AA-613 — tenant-safe 202 body: just enough for the FE to start polling GET .../pieces/{id}
     # (which is itself tenant-safe now). No raw status/gate fields on the placeholder either.
     return {
