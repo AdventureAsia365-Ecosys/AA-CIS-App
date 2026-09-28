@@ -40,6 +40,7 @@ from api.routers.admin_a4 import router as admin_a4_router
 from api.routers.admin_dashboard import router as admin_dashboard_router
 from api.routers.admin_llm_ops import router as admin_llm_ops_router  # AA-518/AA-505
 from api.routers.admin_segment_research import router as admin_segment_research_router  # AA-646
+from api.routers.admin_job_runner import router as admin_job_runner_router  # AA-650
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
@@ -82,7 +83,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("aa223_startup_sweep_failed", error=repr(e))
 
+    # AA-650 — durable job runner. The worker loop runs inside this process for now (Nghiệp,
+    # S201); set JOB_WORKER_IN_API=false once it has its own ECS service (AA-651).
+    job_worker, job_worker_task = None, None
+    from shared.jobs.worker import Worker, in_api_enabled, load_kinds
+    if in_api_enabled():
+        try:
+            load_kinds()
+            job_worker = Worker(pool)
+            job_worker_task = asyncio.create_task(job_worker.run(), name="job-worker")
+        except Exception as e:
+            logger.warning("job_worker_start_failed", error=repr(e))
+
     yield
+
+    # AA-650 — stop claiming, let running jobs finish within the grace period, release the rest
+    # back to the queue (not counted as an attempt) before the pool closes.
+    if job_worker is not None:
+        await job_worker.shutdown()
+        if job_worker_task is not None:
+            await asyncio.gather(job_worker_task, return_exceptions=True)
 
     # AA-295: drain in-flight background jobs (run-tour-async / revalidate) before closing
     # the pool. _background_tasks is module-private to admin_pipeline (leading underscore) —
@@ -202,6 +222,7 @@ app.include_router(admin_a4_router)
 app.include_router(admin_dashboard_router)  # AA-527 (bổ sung) — Segment/Score/Route-Hub/Slate audit panels
 app.include_router(admin_llm_ops_router)  # AA-518/AA-505 — /admin/llm-config, /admin/llm-usage/*
 app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-research/{preview,run,status}
+app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 

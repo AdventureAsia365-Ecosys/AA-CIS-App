@@ -86,6 +86,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     bill, splitting Bedrock from infrastructure per account, over any date range.
   - Rule for manual scripts that call an LLM: go through `LLMClient.generate()` and log to
     `llm_call_log` with `stage="adhoc_<issue>"` (steering rule, from AA-635).
+- **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
+  (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
+  losing it.
+  - `shared/jobs/`: `queue.py` (enqueue with idempotency key, claim `FOR UPDATE SKIP LOCKED` under
+    an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
+    (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
+  - Job kinds live in `services/jobs/` (today: `segment_research`, concurrency 1).
+  - The worker loop runs **inside the API process** (lifespan, `JOB_WORKER_IN_API`, default on),
+    Nghiệp's choice for low Dev traffic. `python -m shared.jobs.worker` runs it standalone; a
+    separate ECS service is AA-651 (deferred).
+  - A graceful shutdown releases running jobs (attempt not counted); a crash is caught by the
+    reaper after the 90 s lease.
+  - Admin: `/admin/jobs` page, API `/admin/job-runner/*`. (`/admin/jobs/{id}` is still the older
+    `shared.pipeline_jobs` poll for A1 run-tour; AA-652 moves run-tour, T2, T9 and atomize here.)
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet

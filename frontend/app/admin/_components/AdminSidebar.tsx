@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Wallet, Puzzle } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -224,6 +224,10 @@ export default function AdminSidebar() {
             <NavItem active={active("/admin/llm-usage")} accent={A.accent} adminOnly
               icon={<Wallet size={15} />} label="External Spend"
               onClick={() => router.push("/admin/llm-usage")} />
+            {/* AA-650 — durable job queue: background runs that survive deploys. */}
+            <NavItem active={active("/admin/jobs")} accent={A.accent} adminOnly
+              icon={<ListChecks size={15} />} label="Jobs"
+              onClick={() => router.push("/admin/jobs")} />
             {/* AA-553 — "Atom Curation" moved out of this group, down into "AA Internal Content"
                 (right under Master Content) — it's Master Content pool data (Atom/Segment/Score/
                 Route/Hub/Slate), not platform config, so it didn't belong alongside Tenants/Run

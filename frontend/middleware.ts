@@ -60,6 +60,8 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   // tenants above — this shows real per-call spend + Việc C's model choice is
   // reached via /admin/settings (already admin+reviewer+content, unchanged).
   { prefix: "/admin/llm-usage", roles: ["admin"] },
+  // AA-650 — durable job queue (cancel/retry of paid background work). Admin-only.
+  { prefix: "/admin/jobs", roles: ["admin"] },
   // AA-527 — Atom Curation, replacing the removed tenant-facing T6 (AA-526): admin decides which
   // atoms are good to use, same admin-only tier as llm-usage above (Nghiệp's
   // explicit choice among 2 options presented, 05/09/2026), not the broader content-team tier.
