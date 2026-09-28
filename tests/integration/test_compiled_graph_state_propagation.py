@@ -123,17 +123,27 @@ def patch_llm_client(monkeypatch):
     LLMClient usage out of judge_node.py into brand_fit.py — judge_node.py no longer imports it
     at all, so patching judge_node.LLMClient would silently do nothing post-AA-631).
 
-    request.model_tier distinguishes a generate_node call ("haiku"/"sonnet", whatever the test
-    passes to _rewrite_tour) from the brand-fit judge call (always "gpt-4.1" per brand_fit.py),
-    so one mock serves both call sites without either module knowing about the other.
+    AA-659: the judges no longer pin model_tier="gpt-4.1"; request.stage tells the calls apart
+    ("s1_judge" = brand-fit judge, "s1_brand_audit" = brand audit, anything else = generate_node),
+    so one mock serves every call site without either module knowing about the other.
+    brand_audit_node now calls the gateway too, so it is patched as well (it used to skip itself
+    when OPENAI_API_KEY was unset, which returned "pass" — the mock keeps that same outcome).
     """
     def _install(haiku_responses, judge_response=None):
         queue = list(haiku_responses)
         judge_resp = judge_response or _judge_response()
+        audit_resp = LLMResponse(
+            content=json.dumps({"brand_audit": {
+                "status": "pass", "failure_codes": [], "issues": [], "fields_to_fix": [],
+                "lessons_extracted": []}}),
+            model_used="gpt-4.1", provider="openai", cost_usd=0.0,
+        )
 
         def _generate(request):
-            if request.model_tier == "gpt-4.1":
+            if request.stage == "s1_judge":
                 return judge_resp
+            if request.stage == "s1_brand_audit":
+                return audit_resp
             # Pop each queued response once (retry test), but keep returning the last one if
             # called more times than expected rather than raising IndexError mid-graph-run.
             return queue.pop(0) if len(queue) > 1 else queue[0]
@@ -143,6 +153,7 @@ def patch_llm_client(monkeypatch):
         mock_client_cls = MagicMock(return_value=mock_client)
         monkeypatch.setattr("services.content_generation.graph.LLMClient", mock_client_cls)
         monkeypatch.setattr("services.content_generation.brand_fit.LLMClient", mock_client_cls)
+        monkeypatch.setattr("services.content_generation.brand_audit_node.LLMClient", mock_client_cls)
         return mock_client
 
     return _install
