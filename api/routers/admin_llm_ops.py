@@ -33,6 +33,7 @@ from shared.aws_client.cost_explorer import (
 )
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
+from shared.llm_client.catalog import list_models
 from shared.llm_client.role_config import list_stage_configs, set_stage_config
 
 # AA-627 — DFS low-balance alert threshold (USD). Env-driven to match the repo's config
@@ -54,30 +55,71 @@ router = APIRouter(prefix="/admin", tags=["admin-llm-ops"])
 # GPT-5.6" events, not per-request. Update this table (not the DB) when that STEP0 picture
 # changes — it is presentation metadata for the dropdown, not itself a source of truth for what
 # a stage IS configured to (that's shared.llm_role_config).
+# AA-658 / ADR 0005 — options now come from shared.llm_model_catalog. These two lists are only
+# the fallback when the catalog is unreachable.
 _WRITER_OPTIONS = [
     {"model_id": "haiku", "label": "Claude Haiku 4.5", "available": True},
     {"model_id": "sonnet", "label": "Claude Sonnet 4.5", "available": True},
 ]
 _JUDGE_OPTIONS = [
     {"model_id": "gpt-4.1", "label": "GPT-4.1 (OpenAI direct)", "available": True},
-    {"model_id": "gpt-5.6", "label": "GPT-5.6 (Bedrock)", "available": False,
-     "reason": "AccessDeniedException trên cả 3 account AWS — chờ gỡ chặn (AA-351)"},
-    {"model_id": "nova_pro", "label": "Amazon Nova Pro (Bedrock)", "available": False,
-     "reason": "Cùng vendor rủi ro self-preference bias thấp hơn GPT nhưng KHÔNG phải "
-               "frontier-judge-quality — chỉ còn dùng thủ công (JUDGE_MODEL=nova_pro), "
-               "không phải lựa chọn khuyến nghị qua UI (AA-518, 02/09/2026)"},
 ]
 _ACCOUNT_ROUTE_OPTIONS = [
     {"value": "acc3", "label": "acc3 (satellite chính)"},
     {"value": "acc1", "label": "acc1 (satellite fallback)"},
 ]
-# Permanently rejected — never shown, not even as "blocked" (different from a temporarily-
-# blocked model like GPT-5.6 above; see AA-518.md round-1 wireframe's own footer distinction).
+# Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
 
+# How each stage's call site actually runs its model (ADR 0005 decision 5). Unlisted stages go
+# through LLMClient without a pinned tier ("llm_client").
+_STAGE_EXEC_PATH = {
+    "s1_brand_audit": "openai_direct",   # brand_audit_node.py calls OpenAI() directly
+    "s1_judge": "pinned",                # brand_fit.py pins model_tier="gpt-4.1"
+    "t10_judge": "pinned",               # judge_client.py hardcodes GPT41_MODEL
+    "n7_judge": "pinned",
+}
+_EXEC_PATH_REASON = {
+    "pinned": "Stage này đang ghim cứng GPT-4.1 trong code — mở được sau AA-659",
+    "openai_direct": "Stage này gọi thẳng OpenAI API — model Bedrock chỉ chọn được sau AA-659",
+    "llm_client": "Model này không gọi được qua LLMClient",
+}
 
-def _options_for_role(role: str) -> list[dict]:
-    return _JUDGE_OPTIONS if role == "judge" else _WRITER_OPTIONS
+
+def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
+    path = _STAGE_EXEC_PATH.get(stage, "llm_client")
+    options = []
+    for m in models:
+        if m.api_style == "embed":
+            continue
+        reason = None
+        if not m.enabled:
+            reason = m.blocked_reason or "Chưa bật trong model catalog"
+        elif path not in m.callable_via:
+            reason = _EXEC_PATH_REASON[path]
+        elif role != "judge" and m.vendor != "anthropic":
+            # Judges are OpenAI; writer and judge must stay different vendors (ADR-2026-014/027).
+            reason = "Writer và judge phải khác vendor (judge đang là OpenAI)"
+        opt = {"model_id": m.model_key, "label": m.label, "available": reason is None}
+        if reason:
+            opt["reason"] = reason
+        options.append(opt)
+    options.sort(key=lambda o: (not o["available"], o["label"]))
+    return options
+
+
+async def _load_catalog() -> Optional[list]:
+    try:
+        return await list_models()
+    except Exception as e:
+        logger.warning("llm_model_catalog_unavailable_for_admin", error=str(e))
+        return None
+
+
+def _options_for(role: str, stage: str, models: Optional[list]) -> list[dict]:
+    if models is None:
+        return _JUDGE_OPTIONS if role == "judge" else _WRITER_OPTIONS
+    return _catalog_options(role, stage, models)
 
 
 class LlmConfigPatch(BaseModel):
@@ -88,9 +130,10 @@ class LlmConfigPatch(BaseModel):
 @router.get("/llm-config", summary="Việc C — list all 16 per-stage LLM configs + option metadata")
 async def get_llm_config():
     rows = await list_stage_configs()
+    models = await _load_catalog()
     for r in rows:
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
-        r["options"] = _options_for_role(r["role"])
+        r["options"] = _options_for(r["role"], r["stage"], models)
         r["account_route_options"] = _ACCOUNT_ROUTE_OPTIONS if r["provider"] == "claude" else []
     return {"stages": rows}
 
@@ -104,6 +147,16 @@ async def patch_llm_config(
 ):
     verify_admin_secret(x_admin_secret)
     admin_actor = x_admin_user_id or "unknown"  # same fallback shape as admin_a4.py::force_unpublish
+    # AA-658 — only a model the stage can really execute may be saved (the UI must not claim a
+    # change that never takes effect).
+    current = next((r for r in await list_stage_configs() if r["stage"] == stage), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"unknown stage: {stage!r}")
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, await _load_catalog())
+               if o["available"]}
+    if body.model_id not in allowed:
+        raise HTTPException(status_code=422,
+                            detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",

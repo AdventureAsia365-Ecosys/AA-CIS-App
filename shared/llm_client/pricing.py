@@ -6,7 +6,14 @@ importing client.py (which would be a heavier/circular-risking import for those 
 
 Values themselves are UNCHANGED from client.py's own COST_TABLE — this is a pure relocation, not
 a repricing. client.py re-exports the same names so nothing importing from client.py breaks.
+
+AA-658: prices now come from shared.llm_model_catalog first; COST_TABLE is the fallback.
 """
+from typing import Optional
+
+import structlog
+
+logger = structlog.get_logger()
 
 # Bedrock model IDs (cross-region inference profiles)
 # AA-348 — BEDROCK_SONNET names the acc2-NATIVE (T1) Sonnet model only. When a call falls
@@ -52,19 +59,55 @@ _SHORT_KEY_TO_MODEL_ID = {
 }
 
 
+_MODEL_ID_TO_CATALOG_KEY = {
+    BEDROCK_SONNET: "sonnet", BEDROCK_HAIKU: "haiku",
+    "sonnet-4-6": "sonnet", "haiku-4-5": "haiku",
+}
+
+
+def _catalog_rates(model: str) -> Optional[dict]:
+    """AA-658 — $/1K rates from shared.llm_model_catalog, or None when the catalog is
+    unreachable or has no price for this model."""
+    from .catalog import get_model_sync
+    key = model[len("satellite-"):] if model and model.startswith("satellite-") else model
+    key = _MODEL_ID_TO_CATALOG_KEY.get(key, key)
+    try:
+        m = get_model_sync(key)
+    except Exception:
+        return None
+    if m is None or m.price_in_per_mtok is None or m.price_out_per_mtok is None:
+        return None
+    rate_in = m.price_in_per_mtok / 1000
+    return {
+        "in": rate_in,
+        "out": m.price_out_per_mtok / 1000,
+        "cache_read": (m.price_cache_read_per_mtok / 1000 if m.price_cache_read_per_mtok is not None
+                       else rate_in * CACHE_READ_MULTIPLIER),
+        "cache_write": (m.price_cache_write_per_mtok / 1000 if m.price_cache_write_per_mtok is not None
+                        else rate_in * CACHE_WRITE_MULTIPLIER),
+    }
+
+
 def calc_cost(model: str, in_tok: int, out_tok: int,
               cache_read: int = 0, cache_write: int = 0) -> float:
-    """`model` accepts either a full Bedrock model id, a short key ("sonnet"/"haiku"), a
-    bedrock_satellite `model_used` label, or "gpt-4.1". Unknown model falls back to Sonnet-tier
-    rates (matches client.py's own prior `_calc_cost` fallback exactly) rather than raising —
-    pricing must never be the reason an LLM call fails.
+    """`model` accepts a Model Key ("sonnet-5"), a full Bedrock model id, a short key
+    ("sonnet"/"haiku"), a bedrock_satellite `model_used` label, or "gpt-4.1".
+
+    AA-658 — the catalog (shared.llm_model_catalog) is the price source; COST_TABLE is the
+    fallback when the catalog is unreachable. A model known to neither is priced at Sonnet rates
+    (pricing must never be the reason an LLM call fails) and logged as a warning.
 
     `cache_read`/`cache_write` (AA-635) are Anthropic's `cache_read_input_tokens` /
-    `cache_creation_input_tokens`, priced off the model's input rate. Default 0 keeps every
-    existing caller's result unchanged."""
-    resolved = _SHORT_KEY_TO_MODEL_ID.get(model, model)
-    rates = COST_TABLE.get(resolved, {"in": 0.003, "out": 0.015})
-    cache_cost = rates["in"] * (
-        (cache_write or 0) * CACHE_WRITE_MULTIPLIER + (cache_read or 0) * CACHE_READ_MULTIPLIER
-    )
+    `cache_creation_input_tokens`. Default 0 keeps every existing caller's result unchanged."""
+    rates = _catalog_rates(model)
+    if rates is None:
+        resolved = _SHORT_KEY_TO_MODEL_ID.get(model, model)
+        base = COST_TABLE.get(resolved)
+        if base is None:
+            logger.warning("llm_price_unknown_model", model=model, hint="priced at Sonnet rates")
+            base = {"in": 0.003, "out": 0.015}
+        rates = {"in": base["in"], "out": base["out"],
+                 "cache_read": base["in"] * CACHE_READ_MULTIPLIER,
+                 "cache_write": base["in"] * CACHE_WRITE_MULTIPLIER}
+    cache_cost = (cache_write or 0) * rates["cache_write"] + (cache_read or 0) * rates["cache_read"]
     return round((in_tok * rates["in"] + out_tok * rates["out"] + cache_cost) / 1000, 6)
