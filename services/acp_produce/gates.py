@@ -940,12 +940,11 @@ def run_gates(
     reviewing a held piece has the full per-round repair history in the same
     place they already look (`acp_deliver.pieces`), not a separate log
     store. Promoting a recurring pattern from that history into an
-    `acp_output_rules` row stays a MANUAL step — H-3's automatic
-    Haiku-extraction path (`services/acp_shared/h3_rule_extractor.py::
-    extract_and_save_rule()`) is keyed on a human reviewer's rejection note
-    tied to a real `acp_hitl_requests` row, which an auto-repair-exhausted
-    N7 piece never has; wiring N7 into that path is a separate follow-up,
-    not built here.
+    `acp_output_rules` row stays a MANUAL step. H-3's automatic
+    Haiku-extraction path (`h3_rule_extractor.py`) was keyed on a human
+    reviewer's rejection note tied to a real `acp_hitl_requests` row, which
+    an auto-repair-exhausted N7 piece never has; it had no caller left and
+    was deleted in AA-685.
 
     AA-415 (verify-real-run follow-up, docs/implementation-notes/AA-415-
     verify-real-run.md): `repair_budget` is still computed ONCE from the

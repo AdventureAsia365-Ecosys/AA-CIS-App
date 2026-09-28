@@ -77,11 +77,14 @@ def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
     judges are never Anthropic."""
     options = []
     for m in models:
-        if m.api_style == "embed":
+        # AA-685: embedding stages only offer embedding models, and text stages never do.
+        if (m.api_style == "embed") != (role == "embed"):
             continue
         reason = None
         if not m.enabled:
             reason = m.blocked_reason or "Chưa bật trong model catalog"
+        elif role == "embed":
+            pass
         elif "llm_client" not in m.callable_via:
             reason = "Model này không gọi được qua gateway"
         elif role == "judge" and m.vendor == "anthropic":
@@ -106,6 +109,8 @@ async def _load_catalog() -> Optional[list]:
 
 def _options_for(role: str, stage: str, models: Optional[list]) -> list[dict]:
     if models is None:
+        if role == "embed":
+            return []
         return _JUDGE_OPTIONS if role == "judge" else _WRITER_OPTIONS
     return _catalog_options(role, stage, models)
 

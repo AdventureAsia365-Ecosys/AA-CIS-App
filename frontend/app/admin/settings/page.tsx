@@ -398,6 +398,10 @@ const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = [
   { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
   { key: "n7", label: "N7 — Production pipeline (blog/social)",
     stages: ["n7_draft", "n7_adapt", "n7_faq", "n7_repair", "n7_gap_research", "n7_judge"] },
+  // AA-685: call sites that bypassed the gateway before.
+  { key: "a0", label: "A0 — Excel column auto-detect", stages: ["a0_column_map"] },
+  { key: "embed", label: "Embeddings (question/atom matching)", stages: ["f10_embed"] },
+  { key: "tp", label: "TripPlanner", stages: ["tp_compose", "tp_search_embed"] },
 ];
 const STAGE_LABELS: Record<string, string> = {
   s1_generate: "Content generate", s1_judge: "Brand-fit judge",
@@ -408,8 +412,12 @@ const STAGE_LABELS: Record<string, string> = {
   t9_write: "Content write", t10_judge: "Quality judge (F8+F9)",
   n7_draft: "Draft (E2)", n7_adapt: "Channel adapt (E3)", n7_faq: "FAQ answer (E4)",
   n7_repair: "Repair (E5)", n7_gap_research: "Competitor gap research", n7_judge: "Framework/brand judge",
+  a0_column_map: "Column mapping", f10_embed: "Content embedding",
+  tp_compose: "Trip plan compose", tp_search_embed: "Search query embedding",
 };
-const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
+const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = {
+  writer: "gold", judge: "green", validate: "gray", embed: "gray",
+};
 
 function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageConfigRow) => void }) {
   const [modelId, setModelId] = useState(row.model_id);

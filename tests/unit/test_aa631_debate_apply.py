@@ -8,6 +8,13 @@ import pytest
 from services.acp_shared.slate import Candidate
 
 
+@pytest.fixture(autouse=True)
+def _no_llm_call_log_writes():
+    """AA-685 — apply_debate() now logs each brand-fit call; keep that off the database here."""
+    with patch("services.acp_shared.debate.record_call", new=AsyncMock()) as m_log:
+        yield m_log
+
+
 def _seg_candidate(segment_id="seg-1", place="Sukhbaatar Square", action="visit", score=1.0):
     return Candidate(
         segment_id=segment_id, route_id=None, score=score, demand=1000,
@@ -166,7 +173,7 @@ async def test_apply_debate_brand_fit_cache_hit_skips_llm_call():
 
 
 @pytest.mark.asyncio
-async def test_apply_debate_brand_fit_cache_miss_calls_llm_and_stores():
+async def test_apply_debate_brand_fit_cache_miss_calls_llm_and_stores(_no_llm_call_log_writes):
     from services.acp_shared.debate import apply_debate
     from services.content_generation.brand_fit import BrandFitResult
 
@@ -195,6 +202,9 @@ async def test_apply_debate_brand_fit_cache_miss_calls_llm_and_stores():
     m_score.assert_called_once()
     conn.execute.assert_called_once()  # cache write
     assert out == [candidate]
+    log = _no_llm_call_log_writes.call_args.kwargs
+    assert log["stage"] == "s1_judge" and log["quality_signal"]["source"] == "debate"
+    assert log["cost_usd"] == 0.001 and log["tenant_id"]
 
 
 @pytest.mark.asyncio

@@ -68,6 +68,9 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "n7_repair":          StageConfig("n7_repair", "writer", "claude", "sonnet", "acc3"),
     "n7_gap_research":    StageConfig("n7_gap_research", "validate", "claude", "haiku", "acc3"),
     "n7_judge":           StageConfig("n7_judge", "judge", "openai", "gpt-4.1", None),
+    # AA-685 (migration 172) — call sites that bypassed the gateway before.
+    "a0_column_map":      StageConfig("a0_column_map", "writer", "claude", "haiku", "acc3"),
+    "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")

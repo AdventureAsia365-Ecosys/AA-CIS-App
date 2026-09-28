@@ -44,9 +44,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
     live in `frontend/app/_brand/tokens.ts` and are used by admin, portal and login pages
     (AA-605). New pages should reuse them.
-- **AI/Bedrock**: LLM calls (rewrite, research, embeddings, gates) route through the ecosystem
-  Bedrock path (acc3 primary → acc1 fallback); the cross-account trust is provisioned in
-  AA-CIS-Infra. Claude cannot be invoked from a local shell — the satellite roles only trust the
+- **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
+  (acc3 primary → acc1 fallback); the cross-account trust is provisioned in AA-CIS-Infra.
+  Embeddings (Cohere Embed v4) run natively on acc2. Claude cannot be invoked from a local shell — the satellite roles only trust the
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
   `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
@@ -57,6 +57,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
   tried. The four judge stages run GPT-5.6 Luna (Bedrock) → GPT-6 Luna (OpenAI API), with GPT-4.1
   as the shadow; no judge has its own hardcoded model path any more.
+- **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
+  `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
+  (catalog `api_style='embed'`, stage role `embed`). The caller writes the `llm_call_log` row.
+  `tests/unit/test_aa685_no_raw_model_calls.py` fails on any raw Bedrock/OpenAI call outside
+  `shared/llm_client/`; the only allowed exception is the legacy judge path in `judge_client.py`
+  used by comparison scripts. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
+  `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide

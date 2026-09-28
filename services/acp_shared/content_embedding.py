@@ -21,16 +21,10 @@ shape verified directly (`{"embeddings": {"float": [[1536 floats]]}}`), same cla
 codebase has hit before for Anthropic/GPT models (AA-329/AA-351). Genuinely lucky that Cohere v4's
 requested `output_dimension` still lands on exactly 1536 — no migration change needed either way.
 
-Deliberately a plain function using its own `boto3.client("bedrock-runtime")`, not
-`shared.llm_client.client.LLMClient` — that class's `generate()` is shaped around
-`invoke_model_with_response_stream()` (text generation, streaming) and the T1/T1.5/T2/T3 model-
-tier fallback chain for TEXT models; embedding is a single non-streaming `invoke_model()` call
-with a completely different request/response shape (`texts`/`embedding_types` in, a nested float
-vector out). Reusing `LLMClient` would mean bending its streaming/tiering machinery around a
-shape it was never built for, for one call site — not worth the coupling. No cross-account
-satellite fallback (AA-296/397-style) built here either — Cohere Embed v4 is available natively
-on acc2 (confirmed live), unlike the Anthropic "channel program accounts" restriction this
-codebase has repeatedly hit; add one later only if a real failure pattern shows up.
+AA-685: the call goes through the gateway embed path (`shared.llm_client.embed.embed()`, stage
+`f10_embed`), which takes the model and price from shared.llm_model_catalog, and every call now
+writes a shared.llm_call_log row. Before AA-685 this module called boto3 directly and logged
+nothing, so embedding spend never showed on External Spend.
 
 Synchronous, like every other blocking Bedrock call in this codebase (`generate.py`'s own
 docstring: "wrap at the async/sync boundary, not inside every helper", AA-416's documented
@@ -39,20 +33,17 @@ lesson) — the caller (`services/acp_content_writing/service.py`) wraps this in
 """
 from __future__ import annotations
 
-import json
-import os
 import threading
 import time
 
-import boto3
 import structlog
-from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+
+from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.embed import embed
 
 logger = structlog.get_logger()
 
-BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "us-west-1")
-EMBEDDING_MODEL_ID = "us.cohere.embed-v4:0"
+EMBEDDING_STAGE = "f10_embed"
 EMBEDDING_DIMENSIONS = 1536  # matches content_piece.content_embedding vector(1536)
 
 # Cohere Embed v4 accepts up to 128k tokens per text; a T9 piece is one short single-channel
@@ -96,18 +87,6 @@ def _pace_calls() -> None:
         _last_call_at = time.monotonic()
 
 
-def _client():
-    # AA-610 (Sub 2) — max_attempts dropped 2 -> 1 (no retry): with _pace_calls() keeping this
-    # process at the account's own quota ceiling, a ThrottlingException means either another
-    # caller used this minute's budget or the ceiling was momentarily exceeded — retrying
-    # immediately just spends another call's worth of the SAME minute's quota for the same
-    # likely outcome, doubling how long a throttled call takes to soft-fail for no real gain.
-    return boto3.client(
-        "bedrock-runtime", region_name=BEDROCK_REGION,
-        config=Config(read_timeout=30, connect_timeout=10, retries={"max_attempts": 1, "mode": "standard"}),
-    )
-
-
 def compute_embedding(text: str) -> list[float] | None:
     """Returns a 1536-float embedding, or `None` on any failure — soft-fail, same contract
     `generate.py`'s own summary extraction follows: a piece must never fail to persist because
@@ -120,26 +99,22 @@ def compute_embedding(text: str) -> list[float] | None:
     fragment, so `search_document` is correct for all of them, not just the common case."""
     if not text or not text.strip():
         return None
-    body = json.dumps({
-        "texts": [text[:_MAX_INPUT_CHARS]], "input_type": "search_document",
-        "embedding_types": ["float"], "output_dimension": EMBEDDING_DIMENSIONS,
-    })
     _pace_calls()
     try:
-        resp = _client().invoke_model(modelId=EMBEDDING_MODEL_ID, body=body)
-        payload = json.loads(resp["body"].read())
-    except (ClientError, BotoCoreError, json.JSONDecodeError, KeyError) as exc:
+        resp = embed(EMBEDDING_STAGE, [text[:_MAX_INPUT_CHARS]], input_type="search_document",
+                     dimensions=EMBEDDING_DIMENSIONS)
+    except Exception as exc:
         logger.warning("content_embedding_call_failed", error_type=type(exc).__name__, error=str(exc))
         return None
-    vectors = payload.get("embeddings", {}).get("float") if isinstance(payload.get("embeddings"), dict) else None
-    if not isinstance(vectors, list) or not vectors or not isinstance(vectors[0], list) \
-            or len(vectors[0]) != EMBEDDING_DIMENSIONS:
-        logger.warning(
-            "content_embedding_malformed_response",
-            got_len=len(vectors[0]) if isinstance(vectors, list) and vectors and isinstance(vectors[0], list) else None,
-        )
-        return None
-    return vectors[0]
+    record_call_sync(
+        stage=EMBEDDING_STAGE, role="embed", model=resp.model_used,
+        tokens_in=resp.input_tokens, tokens_out=0, cost_usd=resp.cost_usd,
+        quality_signal={"texts": 1, "dimensions": len(resp.vectors[0]),
+                        "tokens_estimated": resp.tokens_estimated},
+        account=resp.account, fallback_used=resp.fallback_used,
+        provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
+    )
+    return resp.vectors[0]
 
 
 def embedding_to_pgvector_literal(embedding: list[float]) -> str:
@@ -151,4 +126,4 @@ def embedding_to_pgvector_literal(embedding: list[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
 
 
-__all__ = ["EMBEDDING_MODEL_ID", "EMBEDDING_DIMENSIONS", "compute_embedding", "embedding_to_pgvector_literal"]
+__all__ = ["EMBEDDING_STAGE", "EMBEDDING_DIMENSIONS", "compute_embedding", "embedding_to_pgvector_literal"]
