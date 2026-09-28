@@ -71,23 +71,10 @@ _ACCOUNT_ROUTE_OPTIONS = [
 # Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
 
-# How each stage's call site actually runs its model (ADR 0005 decision 5). Unlisted stages go
-# through LLMClient without a pinned tier ("llm_client").
-_STAGE_EXEC_PATH = {
-    "s1_brand_audit": "openai_direct",   # brand_audit_node.py calls OpenAI() directly
-    "s1_judge": "pinned",                # brand_fit.py pins model_tier="gpt-4.1"
-    "t10_judge": "pinned",               # judge_client.py hardcodes GPT41_MODEL
-    "n7_judge": "pinned",
-}
-_EXEC_PATH_REASON = {
-    "pinned": "Stage này đang ghim cứng GPT-4.1 trong code — mở được sau AA-659",
-    "openai_direct": "Stage này gọi thẳng OpenAI API — model Bedrock chỉ chọn được sau AA-659",
-    "llm_client": "Model này không gọi được qua LLMClient",
-}
-
-
 def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
-    path = _STAGE_EXEC_PATH.get(stage, "llm_client")
+    """AA-659: every stage now runs through the gateway route, so availability depends only on
+    the catalog row and the writer/judge vendor rule (ADR-2026-014/027): writers are Anthropic,
+    judges are never Anthropic."""
     options = []
     for m in models:
         if m.api_style == "embed":
@@ -95,11 +82,12 @@ def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
         reason = None
         if not m.enabled:
             reason = m.blocked_reason or "Chưa bật trong model catalog"
-        elif path not in m.callable_via:
-            reason = _EXEC_PATH_REASON[path]
+        elif "llm_client" not in m.callable_via:
+            reason = "Model này không gọi được qua gateway"
+        elif role == "judge" and m.vendor == "anthropic":
+            reason = "Judge phải khác vendor với writer (writer là Anthropic)"
         elif role != "judge" and m.vendor != "anthropic":
-            # Judges are OpenAI; writer and judge must stay different vendors (ADR-2026-014/027).
-            reason = "Writer và judge phải khác vendor (judge đang là OpenAI)"
+            reason = "Writer và judge phải khác vendor (judge là OpenAI)"
         opt = {"model_id": m.model_key, "label": m.label, "available": reason is None}
         if reason:
             opt["reason"] = reason

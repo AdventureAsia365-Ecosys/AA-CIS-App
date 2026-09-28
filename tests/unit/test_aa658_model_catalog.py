@@ -240,12 +240,13 @@ def test_writer_stage_offers_anthropic_converse_models_only():
 
 
 @pytest.mark.parametrize("stage", ["s1_judge", "t10_judge", "n7_judge", "s1_brand_audit"])
-def test_judge_stages_only_offer_gpt41_until_aa659(stage):
+def test_judge_stages_offer_non_anthropic_models(stage):
+    # AA-659: judges run through the gateway route, so any enabled non-Anthropic model works.
     from api.routers.admin_llm_ops import _catalog_options
     opts = _catalog_options("judge", stage, ALL)
-    assert _available(opts) == {"gpt-4.1"}
-    luna = next(o for o in opts if o["model_id"] == "gpt-5.6-luna")
-    assert "AA-659" in luna["reason"]
+    assert _available(opts) == {"gpt-4.1", "gpt-5.6-luna"}
+    sonnet5 = next(o for o in opts if o["model_id"] == "sonnet-5")
+    assert "vendor" in sonnet5["reason"]
 
 
 def test_catalog_unreachable_falls_back_to_static_lists():
@@ -270,7 +271,7 @@ async def test_patch_rejects_model_the_stage_cannot_execute():
             patch.object(ops, "_load_catalog", side_effect=fake_catalog), \
             patch.object(ops, "set_stage_config") as setter:
         with pytest.raises(HTTPException) as exc:
-            await ops.patch_llm_config("t10_judge", ops.LlmConfigPatch(model_id="gpt-5.6-luna"),
+            await ops.patch_llm_config("t10_judge", ops.LlmConfigPatch(model_id="sonnet-5"),
                                        x_admin_secret="x", x_admin_user_id="u")
         assert exc.value.status_code == 422
         with pytest.raises(HTTPException) as exc:

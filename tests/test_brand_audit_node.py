@@ -145,7 +145,7 @@ def test_brand_audit_schema_validates_correct_json():
 # ── brand_audit_node graceful fallback ────────────────────────────────────────
 
 def test_brand_audit_node_graceful_fallback_on_openai_error():
-    """When OpenAI raises an exception, node should return pass and not re-raise."""
+    """When the model call raises, node should return pass and not re-raise."""
     state = {
         "generated": {
             "name": "Bhutan Tour",
@@ -163,8 +163,8 @@ def test_brand_audit_node_graceful_fallback_on_openai_error():
     }
 
     with patch(
-        "services.content_generation.brand_audit_node.OpenAI",
-        side_effect=Exception("OpenAI is down"),
+        "services.content_generation.brand_audit_node.LLMClient",
+        side_effect=Exception("all judge models down"),
     ):
         result = brand_audit_node(state)
 

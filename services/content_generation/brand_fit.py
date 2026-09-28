@@ -140,10 +140,8 @@ def score_brand_fit(
     request = LLMRequest(
         system_prompt=JUDGE_SYSTEM,
         user_prompt=_build_judge_prompt(brand_profile, generated),
-        # AA-518: "s1_judge" stage config is seeded to gpt-4.1 today — kept as an explicit
-        # model_tier too (not just stage) since this judge must NEVER silently drift onto a
-        # Bedrock tier (ADR-2026-014/027: judge must stay a different vendor than the writer).
-        model_tier="gpt-4.1",
+        # AA-659 / ADR 0006: the model comes from the "s1_judge" stage route. The judge-vendor ≠
+        # writer-vendor rule (ADR-2026-014/027) is enforced when the route is saved in admin.
         stage="s1_judge",
         temperature=_JUDGE_TEMPERATURE,
         seed=_JUDGE_SEED,

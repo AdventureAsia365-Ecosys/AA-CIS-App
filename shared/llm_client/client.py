@@ -1,7 +1,12 @@
 import os
 import json
+import random
+import threading
+import time
 import boto3
 from botocore.config import Config
+from typing import Optional
+
 import openai
 import structlog
 from .models import LLMRequest, LLMResponse
@@ -71,19 +76,88 @@ class LLMClient:
         # any other real per-request override), same relationship model_tier already had with
         # the DEFAULT_MODEL_TIER env var before this task.
         stage_cfg = get_stage_config_sync(request.stage) if request.stage else None
-        tier = request.model_tier or (stage_cfg.model_id if stage_cfg else DEFAULT_MODEL_TIER)
         # Which satellite account is tried FIRST when acc2-native fails — 'acc3' unless the
         # stage's admin config explicitly says 'acc1' (e.g. a real acc3 outage). Unknown/no-stage
         # calls keep the pre-AA-518 hardcoded acc3-first order exactly.
         primary_acct = stage_cfg.account_route if (stage_cfg and stage_cfg.account_route) else "acc3"
         fallback_acct = "acc1" if primary_acct == "acc3" else "acc3"
 
-        # AA-658 / ADR 0005 — any non-legacy Model Key is resolved through the catalog. No
-        # fallback here on purpose: silently switching vendor/model is worse than a visible
-        # failure; fallback chains become route config in AA-659.
-        if tier not in LEGACY_KEYS:
-            return self._call_catalog_model(request, tier, primary_acct)
+        # AA-659 / ADR 0006 — the stage route is model_id + fallback_model_ids. An explicit
+        # request.model_tier still wins and runs alone (no route, no shadow).
+        if request.model_tier:
+            chain = [request.model_tier]
+        elif stage_cfg:
+            chain = [stage_cfg.model_id, *stage_cfg.fallback_model_ids]
+        else:
+            chain = [DEFAULT_MODEL_TIER]
 
+        if len(chain) == 1:
+            resp = self._call_key(request, chain[0], primary_acct, fallback_acct)
+        else:
+            resp = self._call_route(request, chain, primary_acct, fallback_acct)
+
+        if (stage_cfg and not request.model_tier and stage_cfg.shadow_model_id
+                and random.random() * 100 < stage_cfg.shadow_sample_pct):
+            self._start_shadow(request, stage_cfg, resp, primary_acct, fallback_acct)
+        return resp
+
+    def _call_key(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
+        # AA-658 / ADR 0005 — non-legacy Model Keys resolve through the catalog, with no hidden
+        # fallback; a stage that wants one lists it in its route (AA-659).
+        if key not in LEGACY_KEYS:
+            return self._call_catalog_model(request, key, primary_acct)
+        return self._legacy_chain(request, key, primary_acct, fallback_acct)
+
+    def _call_route(self, request: LLMRequest, chain: list, primary_acct: str, fallback_acct: str) -> LLMResponse:
+        errors = []
+        for position, key in enumerate(chain):
+            if key not in LEGACY_KEYS:
+                m = get_model_sync(key)
+                if m is None or not m.enabled:
+                    reason = "not in catalog" if m is None else (m.blocked_reason or "disabled")
+                    logger.info("llm_route_skip", stage=request.stage, model=key, reason=reason)
+                    errors.append(f"{key}: skipped ({reason})")
+                    continue
+            try:
+                resp = self._call_key(request, key, primary_acct, fallback_acct)
+            except Exception as e:
+                logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
+                               position=position, error=str(e)[:300])
+                errors.append(f"{key}: {str(e)[:200]}")
+                continue
+            if position > 0:
+                resp.fallback_used = True
+            logger.info("llm_route_used", stage=request.stage, model=key, position=position)
+            return resp
+        raise RuntimeError(f"All models in the route failed for stage {request.stage!r}: "
+                           + "; ".join(errors))
+
+    def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
+                      primary_acct: str, fallback_acct: str) -> None:
+        # A plain thread does not inherit contextvars, so the shadow never writes to the
+        # live-progress stream sink bound to the primary call.
+        threading.Thread(
+            target=self._run_shadow,
+            args=(request.model_copy(), cfg, primary, primary_acct, fallback_acct),
+            daemon=True,
+        ).start()
+
+    def _run_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
+                    primary_acct: str, fallback_acct: str) -> None:
+        from .shadow import record_shadow_sync
+        t0 = time.monotonic()
+        resp, error = None, None
+        try:
+            resp = self._call_key(request, cfg.shadow_model_id, primary_acct, fallback_acct)
+        except Exception as e:
+            error = str(e)[:1000]
+        record_shadow_sync(
+            stage=cfg.stage, role=cfg.role, request=request, primary=primary,
+            shadow_model=cfg.shadow_model_id, shadow=resp, error=error,
+            latency_ms=int((time.monotonic() - t0) * 1000),
+        )
+
+    def _legacy_chain(self, request: LLMRequest, tier: str, primary_acct: str, fallback_acct: str) -> LLMResponse:
         # Direct GPT-4.1 — no Bedrock fallback (explicit choice)
         if tier == "gpt-4.1":
             try:
@@ -312,6 +386,8 @@ class LLMClient:
         if not model.enabled:
             raise RuntimeError(f"Model {model_key!r} is disabled in the catalog: "
                                f"{model.blocked_reason or 'no reason given'}")
+        if model.api_style == "openai_chat":
+            return self._call_openai(request, model=model.wire_model or model.model_key, catalog_model=model)
         if model.api_style != "converse":
             raise RuntimeError(f"Model {model_key!r} has api_style={model.api_style!r}, "
                                "which LLMClient cannot call through the catalog path")
@@ -337,18 +413,32 @@ class LLMClient:
             "messages": [{"role": "user", "content": [{"text": request.user_prompt}]}],
             "inferenceConfig": inference,
         }
+        schema = request.json_schema
+        if schema:
+            # AA-659 — structured output on Converse: one tool, forced, whose input is the schema.
+            kwargs["toolConfig"] = {
+                "tools": [{"toolSpec": {"name": schema["name"],
+                                        "description": "Return the result as this object.",
+                                        "inputSchema": {"json": schema["schema"]}}}],
+                "toolChoice": {"tool": {"name": schema["name"]}},
+            }
 
         stream_sink.emit_restart(request.stage)
-        on_delta = stream_sink.delta_callback(request.stage)
+        on_delta = None if schema else stream_sink.delta_callback(request.stage)
         rt = get_satellite_client("bedrock-runtime", account=account)
 
         in_tok = out_tok = cache_read = cache_write = 0
         stop_reason = None
         if on_delta is None:
             resp = rt.converse(**kwargs)
-            content = "".join(
-                block.get("text", "") for block in resp["output"]["message"]["content"]
-            )
+            blocks = resp["output"]["message"]["content"]
+            if schema:
+                tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
+                if not tool_inputs:
+                    raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
+                content = json.dumps(tool_inputs[0])
+            else:
+                content = "".join(block.get("text", "") for block in blocks)
             usage = resp.get("usage", {})
             stop_reason = resp.get("stopReason")
         else:
@@ -366,6 +456,8 @@ class LLMClient:
                 elif "metadata" in event:
                     usage = event["metadata"].get("usage", {})
             content = "".join(parts)
+        if not content:
+            raise RuntimeError(f"{model.model_key} returned empty content (stopReason={stop_reason})")
         in_tok = usage.get("inputTokens", 0) or 0
         out_tok = usage.get("outputTokens", 0) or 0
         cache_read = usage.get("cacheReadInputTokens", 0) or 0
@@ -386,44 +478,61 @@ class LLMClient:
             stop_reason=stop_reason,
         )
 
-    def _call_openai(self, request: LLMRequest, model: str) -> LLMResponse:
+    def _call_openai(self, request: LLMRequest, model: str,
+                     catalog_model: Optional[CatalogModel] = None) -> LLMResponse:
         # AA-209: forward sampling controls only when the caller explicitly set them. This makes the
         # GPT-4.1 judge reproducible (it passes temperature + seed) without changing behavior of
         # content/T3-fallback calls that rely on provider defaults (they never set these fields).
+        # AA-659: catalog models (e.g. gpt-6-luna-openai) are reasoning models — they take
+        # max_completion_tokens, and temperature/seed only when the catalog says they are supported.
         kwargs = {
             "model": model,
-            "max_tokens": request.max_tokens,
             "messages": [
                 {"role": "system", "content": request.system_prompt},
                 {"role": "user",   "content": request.user_prompt},
             ],
         }
+        if catalog_model is None:
+            kwargs["max_tokens"] = request.max_tokens
+        else:
+            kwargs["max_completion_tokens"] = request.max_tokens
+        sampling_ok = catalog_model is None or catalog_model.supports_temperature
         fields_set = request.model_fields_set
-        if "temperature" in fields_set:
+        if sampling_ok and "temperature" in fields_set:
             kwargs["temperature"] = request.temperature
-        if "seed" in fields_set and request.seed is not None:
+        if sampling_ok and "seed" in fields_set and request.seed is not None:
             kwargs["seed"] = request.seed
+        if request.json_schema:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": request.json_schema["name"], "strict": True,
+                                "schema": request.json_schema["schema"]},
+            }
+        model_label = catalog_model.model_key if catalog_model else model
         stream_sink.emit_restart(request.stage)  # AA-637
         resp = self._openai.chat.completions.create(**kwargs)
-        content = resp.choices[0].message.content
+        content = resp.choices[0].message.content or ""
         # AA-637 — no token streaming on this last-resort path; a live view gets the whole text.
         _cb = stream_sink.delta_callback(request.stage)
         if _cb is not None and content:
             _cb(content)
         in_tok  = resp.usage.prompt_tokens
         out_tok = resp.usage.completion_tokens
-        cost    = self._calc_cost(model, in_tok, out_tok)
+        cost    = self._calc_cost(model_label, in_tok, out_tok)
         # AA-493: OpenAI's field is "finish_reason" ("stop" | "length" | "content_filter" | ...)
         # — different name from Anthropic's "stop_reason", same purpose. Stored under the same
         # LLMResponse.stop_reason field so callers/the DB log don't need a provider branch.
         finish_reason = resp.choices[0].finish_reason
+        if catalog_model is not None and not content:
+            # A reasoning model can spend the whole token budget thinking and return nothing.
+            raise RuntimeError(f"{model_label} returned empty content (finish_reason={finish_reason})")
 
-        logger.info("llm_success", provider="openai", model=model,
+        logger.info("llm_success", provider="openai", model=model_label,
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost,
                     stop_reason=finish_reason)
 
         return LLMResponse(
-            content=content, model_used=model, provider="openai",
+            content=content, model_used=model_label, provider="openai",
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
             stop_reason=finish_reason,
         )

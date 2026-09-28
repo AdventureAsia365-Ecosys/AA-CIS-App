@@ -4,9 +4,8 @@ import json
 import os
 import re
 import structlog
-from openai import OpenAI
-
-from shared.llm_client.role_config import get_stage_config_sync
+from shared.llm_client.client import LLMClient
+from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
 
@@ -240,60 +239,37 @@ REVIEW ORDER:
 
 Return JSON only per schema."""
 
-        openai_key = os.environ.get("OPENAI_API_KEY", "")
-        if not openai_key:
-            logger.warning("brand_audit_skipped", reason="no OPENAI_API_KEY")
-            return {
-                **state,
-                "brand_audit_status": "pass",
-                "brand_audit_codes":  pre_codes,
-                "brand_audit_issues": [],
-                "brand_audit_fields": [],
-                "lessons_extracted":  [],
-            }
-
-        client = OpenAI(api_key=openai_key)
-        # AA-518: model comes from the "s1_brand_audit" stage config now, not a bare "gpt-4.1"
-        # literal — SAFE_DEFAULTS keeps gpt-4.1 as the fallback if the config read fails, so this
-        # is a zero-behavior-change swap until an admin actually touches the UI.
-        _stage_cfg = get_stage_config_sync("s1_brand_audit")
-        resp = client.chat.completions.create(
-            model=_stage_cfg.model_id,
+        # AA-659 / ADR 0006: the model comes from the "s1_brand_audit" stage route through the
+        # gateway (Bedrock first, OpenAI API as fallback). The strict schema is kept: OpenAI
+        # json_schema, or a forced tool on Bedrock Converse.
+        resp = LLMClient().generate(LLMRequest(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             temperature=0.1,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name":   "brand_audit_result",
-                    "strict": True,
-                    "schema": BRAND_AUDIT_SCHEMA,
-                },
-            },
-        )
-        result = json.loads(resp.choices[0].message.content)["brand_audit"]
+            stage="s1_brand_audit",
+            json_schema={"name": "brand_audit_result", "schema": BRAND_AUDIT_SCHEMA},
+        ))
+        result = json.loads(resp.content)["brand_audit"]
 
         # Merge deterministic pre-codes into LLM codes
         all_codes = list(dict.fromkeys(result["failure_codes"] + pre_codes))
         result["failure_codes"] = all_codes
 
-        in_tok = resp.usage.prompt_tokens if resp.usage else 0
-        out_tok = resp.usage.completion_tokens if resp.usage else 0
-        cost = round((in_tok * 0.002 + out_tok * 0.008) / 1000, 6)
-        stop_reason = resp.choices[0].finish_reason  # AA-493
+        in_tok, out_tok = resp.input_tokens, resp.output_tokens
+        cost = resp.cost_usd
+        stop_reason = resp.stop_reason  # AA-493
 
         logger.info("brand_audit_done",
                     status=result["status"],
-                    codes=result["failure_codes"],
+                    codes=result["failure_codes"], model=resp.model_used,
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
 
         record_call_sync(
-            stage="s1_brand_audit", role="judge", model=_stage_cfg.model_id,
+            stage="s1_brand_audit", role="judge", model=resp.model_used,
             tokens_in=in_tok, tokens_out=out_tok, cost_usd=cost, tenant_id=None,
             quality_signal={"status": result["status"], "failure_code_count": len(all_codes)},
-            stop_reason=stop_reason,
+            stop_reason=stop_reason, account=resp.satellite_account,
+            fallback_used=resp.fallback_used, provider=resp.provider,
         )
         return {
             **state,

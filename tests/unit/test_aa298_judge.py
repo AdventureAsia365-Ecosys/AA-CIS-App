@@ -29,6 +29,11 @@ def _pin_judge_model_to_nova_pro(monkeypatch):
     so every test in this file keeps exercising the same Nova Pro path/mock
     shape it always has, independent of that production default."""
     monkeypatch.setenv("JUDGE_MODEL", "nova_pro")
+    # AA-659: production call sites now pass stage= and go through the gateway route; send the
+    # route to the mocked Nova Pro backend so these gate-logic tests stay offline and unchanged.
+    from services.acp_produce import judge_client
+    monkeypatch.setattr(judge_client, "_invoke_judge_via_route",
+                        lambda s, u, m, stage: judge_client._invoke_judge_legacy(s, u, m, "nova_pro"))
 
 
 def _bedrock_response(text: str):

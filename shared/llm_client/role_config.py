@@ -35,8 +35,14 @@ class StageConfig:
     provider: str
     model_id: str
     account_route: Optional[str]
+    # AA-659 (migration 170) — route: models tried after model_id, plus an optional shadow.
+    fallback_model_ids: tuple = ()
+    shadow_model_id: Optional[str] = None
+    shadow_sample_pct: int = 0
 
 
+# AA-659: SAFE_DEFAULTS deliberately keep GPT-4.1 for the judges (no route) — the known-good
+# setup when the DB cannot be read; the live judge route (migration 171) is DB-only.
 # Matches shared.llm_role_config's own seed data (migration 137) exactly — see that file's
 # header for why each value is what it is. This is the fallback when the DB is unreachable OR a
 # stage has no row yet (e.g. a new call site shipped before its migration/seed caught up).
@@ -74,14 +80,20 @@ def _row_to_config(row) -> StageConfig:
     return StageConfig(
         stage=row["stage"], role=row["role"], provider=row["provider"],
         model_id=row["model_id"], account_route=row["account_route"],
+        fallback_model_ids=tuple(row["fallback_model_ids"] or ()),
+        shadow_model_id=row["shadow_model_id"],
+        shadow_sample_pct=row["shadow_sample_pct"] or 0,
     )
+
+
+_ROUTE_COLUMNS = "fallback_model_ids, shadow_model_id, shadow_sample_pct"
 
 
 async def _fetch_one(stage: str) -> Optional[StageConfig]:
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         row = await conn.fetchrow(
-            "SELECT stage, role, provider, model_id, account_route "
+            f"SELECT stage, role, provider, model_id, account_route, {_ROUTE_COLUMNS} "
             "FROM shared.llm_role_config WHERE stage = $1 AND is_active",
             stage,
         )
@@ -165,10 +177,13 @@ async def list_stage_configs() -> list[StageConfig]:
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         rows = await conn.fetch(
-            "SELECT stage, role, provider, model_id, account_route, is_active, updated_at, updated_by "
-            "FROM shared.llm_role_config ORDER BY stage",
+            "SELECT stage, role, provider, model_id, account_route, is_active, updated_at, "
+            f"updated_by, {_ROUTE_COLUMNS} FROM shared.llm_role_config ORDER BY stage",
         )
-        return [dict(r) for r in rows]
+        out = [dict(r) for r in rows]
+        for r in out:
+            r["fallback_model_ids"] = list(r["fallback_model_ids"] or [])
+        return out
     finally:
         await conn.close()
 
@@ -188,13 +203,16 @@ async def set_stage_config(
             UPDATE shared.llm_role_config
             SET model_id = $2, account_route = $3, updated_at = now(), updated_by = $4
             WHERE stage = $1
-            RETURNING stage, role, provider, model_id, account_route, is_active, updated_at, updated_by
+            RETURNING stage, role, provider, model_id, account_route, is_active, updated_at, updated_by,
+                      fallback_model_ids, shadow_model_id, shadow_sample_pct
             """,
             stage, model_id, account_route, updated_by,
         )
         if row is None:
             raise ValueError(f"unknown stage: {stage!r}")
-        return dict(row)
+        out = dict(row)
+        out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
+        return out
     finally:
         await conn.close()
         invalidate(stage)
