@@ -51,6 +51,7 @@ from services.seo_intelligence.seed_builder import (
     resolve_buyer_market,
     resolve_buyer_markets,
 )
+from shared.cost_guard import BudgetExceeded, RunBudget
 from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -64,6 +65,10 @@ MAX_STEPS = 4
 MAX_KEYWORDS = 8
 MAX_SERPS = 2
 MAX_SUGGESTIONS = 1
+
+# AA-649 — pre-call estimate for one research-loop Haiku turn. Observed average on 25/09/2026:
+# $10.27 / 7,856 calls ≈ $0.0013; rounded up for the budget check.
+LLM_CALL_ESTIMATE_USD = 0.005
 
 # 182 days (~6 months) — STEP0b: "the horizon over which travel demand for a place actually
 # moves", Ms. Thư's own measured constant, not re-derived here.
@@ -180,6 +185,12 @@ class _RunGuard:
     reason: str | None = None
 
     def record(self, exc: BaseException) -> None:
+        if isinstance(exc, BudgetExceeded):  # AA-649 — a budget stop ends the run like a fatal DFS error
+            if not self.aborted:
+                self.aborted = True
+                self.reason = str(exc)
+                logger.warning("segment_research_budget_stop", reason=self.reason)
+            return
         err = as_dfs_error(exc) if isinstance(exc, Exception) else None
         if err is not None and err.fatal and not self.aborted:
             self.aborted = True
@@ -431,7 +442,7 @@ async def _research_place(
     place: str, actions: list[str], market_codes: list[str],
     markets: list[tuple[int, str, str]], batchers: dict[str, _VolumeBatcher],
     client: DataForSEOClient, pool, sem: asyncio.Semaphore,
-    guard: _RunGuard | None = None,
+    guard: _RunGuard | None = None, llm_budget: RunBudget | None = None,
 ) -> PlaceResearchResult:
     location_by_market = {
         LOCATION_CODE_TO_MARKET[loc]: (loc, lang) for loc, _name, lang in markets
@@ -471,9 +482,18 @@ async def _research_place(
                 system_prompt=SYSTEM_PROMPT, user_prompt=prompt,
                 model_tier="haiku", max_tokens=1024,
             )
+            if llm_budget is not None:
+                try:
+                    llm_budget.check(LLM_CALL_ESTIMATE_USD)  # AA-649
+                except BudgetExceeded as exc:
+                    guard.record(exc)
+                    purchase_failed = True
+                    break
             resp = await asyncio.to_thread(llm_client.generate, request)
             llm_calls += 1
             cost_usd += resp.cost_usd
+            if llm_budget is not None:
+                llm_budget.charge(resp.cost_usd)
             try:
                 turn = _parse_step(resp.content)
             except ResearchLoopError:
@@ -627,6 +647,8 @@ async def run_segment_research(
     country: str | None = None,
     max_places: int | None = None,
     dry_run: bool = False,
+    dfs_budget: RunBudget | None = None,
+    llm_budget: RunBudget | None = None,
 ) -> dict:
     """Research the stale places in the requested scope, for the requested markets.
 
@@ -640,6 +662,9 @@ async def run_segment_research(
 
     AA-647 — a fatal DataForSEO error (auth/payment) aborts the run; places whose purchases failed
     are not marked researched, so they are retried by the next run.
+
+    AA-649 — `dfs_budget` / `llm_budget` (shared.cost_guard.RunBudget) are checked before every
+    paid DataForSEO / Haiku call; a breach stops the run the same way a fatal DFS error does.
     """
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
@@ -670,7 +695,7 @@ async def run_segment_research(
                 "aborted": False, "abort_reason": None}
 
     guard = _RunGuard()
-    client = DataForSEOClient()
+    client = DataForSEOClient(budget=dfs_budget)
     batchers = {
         market: _VolumeBatcher(client, location_by_market[market][0], location_by_market[market][1],
                                guard=guard)
@@ -680,6 +705,7 @@ async def run_segment_research(
     results = await asyncio.gather(*[
         _research_place(
             place, by_place[place], missing_markets, markets, batchers, client, pool, sem, guard,
+            llm_budget,
         )
         for place, missing_markets in stale
     ])
@@ -693,6 +719,8 @@ async def run_segment_research(
         "cost_usd": round(sum(r.cost_usd for r in results), 5),
         "aborted": guard.aborted,
         "abort_reason": guard.reason,
+        "dfs_spent_usd": round(dfs_budget.run_spent, 4) if dfs_budget else None,
+        "budgets": [b.summary() for b in (dfs_budget, llm_budget) if b is not None],
     }
 
 
