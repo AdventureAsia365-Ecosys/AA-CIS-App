@@ -424,8 +424,45 @@ class DataForSEOClient:
             pass
         return domains
 
-    def _parse_keyword_ideas(self, data: dict) -> list[dict]:
-        # keywords_for_keywords: tasks[0].result[] flat list of idea objects. Dedupe casefold, ≤25.
+    async def fetch_keyword_ideas_multi(
+        self,
+        seeds: list[str],
+        location_code: int = DEFAULT_LOCATION_CODE,
+        language_code: str = DEFAULT_LANGUAGE_CODE,
+        limit: int = 300,
+    ) -> list[dict]:
+        """AA-648 — keyword ideas for up to 20 seeds in ONE paid task (DFS keywords_for_keywords
+        accepts up to 20 keywords per task at the same per-task price). Raises DFSCallError on
+        failure — batch research must never read a failed call as "no ideas"."""
+        if not seeds:
+            return []
+        payload = [{
+            "keywords":      seeds[:20],
+            "location_code": location_code,
+            "language_code": language_code,
+            "limit":         limit,
+        }]
+        self._precheck("keywords_for_keywords")
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    f"{DATAFORSEO_BASE}/keywords_data/google_ads/keywords_for_keywords/live",
+                    auth=self._auth(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            raise as_dfs_error(e) from e
+        self._log_live("keywords_for_keywords", data, location_code=location_code,
+                       keyword_count=len(seeds[:20]))
+        status_err = _dfs_status_error(data)
+        if status_err is not None:
+            raise status_err
+        return self._parse_keyword_ideas(data, cap=limit)
+
+    def _parse_keyword_ideas(self, data: dict, cap: int = 25) -> list[dict]:
+        # keywords_for_keywords: tasks[0].result[] flat list of idea objects. Dedupe casefold, ≤cap.
         try:
             results = data["tasks"][0]["result"] or []
         except (KeyError, IndexError, TypeError):
@@ -449,7 +486,7 @@ class DataForSEOClient:
                 "competition_index": el.get("competition_index"),
                 "cpc":               el.get("cpc"),
             })
-            if len(out) >= 25:
+            if len(out) >= cap:
                 break
         return out
 
