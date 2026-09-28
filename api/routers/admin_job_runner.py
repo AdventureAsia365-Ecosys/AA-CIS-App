@@ -17,7 +17,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from api.routers.admin import verify_admin_secret
 from shared.jobs import queue
-from shared.jobs.registry import kinds
+from shared.jobs.registry import kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
@@ -70,6 +70,8 @@ async def cancel_job(job_id: str, request: Request, x_admin_secret: str = Header
     status = await queue.request_cancel(request.app.state.pool, job_id)
     if status is None:
         raise HTTPException(status_code=409, detail="job is not queued or running")
+    if status == "cancelled":  # a queued job ends here, so its domain row must be told now
+        await run_terminal_hook(request.app.state.pool, job_id)
     logger.info("admin_job_cancel", job_id=job_id, admin_user=x_admin_user_id, status=status)
     return {"job_id": job_id, "status": status,
             "note": "running jobs stop at their next heartbeat" if status == "running" else None}

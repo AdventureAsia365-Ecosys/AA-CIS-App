@@ -26,7 +26,7 @@ import structlog
 from shared.cost_guard import BudgetExceeded
 
 from . import queue
-from .registry import JobContext, NonRetryable, kinds
+from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
@@ -35,8 +35,9 @@ class Worker:
     def __init__(self, pool, *, worker_id: Optional[str] = None, poll_seconds: float = 5.0,
                  lease_seconds: int = 90, heartbeat_seconds: float = 20.0,
                  reap_every_seconds: float = 30.0, grace_seconds: float = 20.0,
-                 max_parallel: int = 4):
+                 max_parallel: int = 4, resources: Optional[dict] = None):
         self.pool = pool
+        self.resources = resources or {}
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
         self.poll_seconds = poll_seconds
         self.lease_seconds = lease_seconds
@@ -61,6 +62,8 @@ class Worker:
                     reaped = await queue.reap(self.pool)
                     if reaped["requeued"] or reaped["failed"]:
                         logger.warning("job_reaped", **reaped)
+                    for job_id in reaped["failed"]:
+                        await run_terminal_hook(self.pool, job_id)
                     last_reap = loop.time()
                 claimed = await self._fill_slots()
             except Exception as e:  # never let one bad cycle kill the loop
@@ -88,11 +91,12 @@ class Worker:
     # ── one job ───────────────────────────────────────────────────────────────────────────────
     async def _execute(self, job: queue.Job) -> None:
         kind = kinds().get(job.kind)
-        ctx = JobContext(self.pool, job)
+        ctx = JobContext(self.pool, job, self.resources)
         log = logger.bind(job_id=job.id, kind=job.kind, attempt=job.attempt)
         if kind is None:  # claimed only kinds in caps(), so this means a deploy dropped the kind
             await queue.fail(self.pool, job, self.worker_id, f"no handler for kind {job.kind!r}",
                              retryable=False, cost_usd=None)
+            await run_terminal_hook(self.pool, job.id)
             return
         log.info("job_started")
         handler_task = asyncio.create_task(kind.handler(ctx))
@@ -114,6 +118,7 @@ class Worker:
                     handler_task.cancel()
                     await asyncio.gather(handler_task, return_exceptions=True)
                     await queue.mark_cancelled(self.pool, job.id, self.worker_id, ctx.cost_usd)
+                    await run_terminal_hook(self.pool, job.id)
                     log.info("job_cancelled")
                     return
             result = handler_task.result()
@@ -132,6 +137,7 @@ class Worker:
         except BudgetExceeded as e:
             await queue.stop_budget(self.pool, job.id, self.worker_id, str(e), ctx.result,
                                     round(ctx.cost_usd, 6))
+            await run_terminal_hook(self.pool, job.id)
             log.warning("job_stopped_budget", reason=str(e))
         except Exception as e:
             status = await queue.fail(self.pool, job, self.worker_id,
@@ -139,6 +145,8 @@ class Worker:
                                       retryable=not isinstance(e, NonRetryable),
                                       cost_usd=round(ctx.cost_usd, 6), result=ctx.result)
             log.error("job_failed", next_status=status, error=str(e)[:300], exc_info=True)
+            if status == "failed":
+                await run_terminal_hook(self.pool, job.id)
 
     # ── shutdown ──────────────────────────────────────────────────────────────────────────────
     async def shutdown(self) -> None:
@@ -171,7 +179,12 @@ async def _main() -> None:
 
     load_kinds()
     pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=5)
-    worker = Worker(pool)
+    redis = None
+    if os.environ.get("REDIS_HOST"):
+        import redis.asyncio as aioredis
+        redis = aioredis.from_url(f"redis://{os.environ['REDIS_HOST']}:6379", encoding="utf-8",
+                                  decode_responses=True)
+    worker = Worker(pool, resources={"redis": redis})
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, worker._stopping.set)

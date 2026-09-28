@@ -8,6 +8,10 @@ the job's `result`. Register with the decorator, next to the code it runs (servi
 
 Raise `NonRetryable` for failures a retry cannot fix (bad payload); raise
 `shared.cost_guard.BudgetExceeded` to stop with status `stopped_budget`.
+
+`on_terminal(pool, job_row)` (optional) runs once a job ends without success — failed,
+stopped_budget or cancelled — whoever ended it (the worker, the reaper, or an admin cancelling a
+queued job). Use it to mark the domain row (e.g. a tour version) so no UI waits forever.
 """
 from __future__ import annotations
 
@@ -27,16 +31,33 @@ class JobKind:
     handler: Callable[["JobContext"], Awaitable[Optional[dict]]]
     concurrency: int = 1
     max_attempts: int = 3
+    on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None
 
 
 _KINDS: dict[str, JobKind] = {}
 
 
-def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3):
+def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
+             on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None):
     def deco(fn):
-        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts)
+        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal)
         return fn
     return deco
+
+
+async def run_terminal_hook(pool, job_id: str) -> None:
+    """Calls the kind's on_terminal for a job that ended without success. Never raises."""
+    import structlog
+    log = structlog.get_logger()
+    try:
+        row = await queue.get(pool, job_id)
+        if row is None or row["status"] not in ("failed", "stopped_budget", "cancelled"):
+            return
+        kind = _KINDS.get(row["kind"])
+        if kind is not None and kind.on_terminal is not None:
+            await kind.on_terminal(pool, row)
+    except Exception as e:
+        log.warning("job_terminal_hook_failed", job_id=job_id, error=str(e)[:300])
 
 
 def kinds() -> dict[str, JobKind]:
@@ -50,9 +71,11 @@ def get_kind(name: str) -> Optional[JobKind]:
 class JobContext:
     """What a handler sees: the job, the pool, and ways to report progress and cost."""
 
-    def __init__(self, pool, job: queue.Job):
+    def __init__(self, pool, job: queue.Job, resources: Optional[dict] = None):
         self.pool = pool
         self.job = job
+        # Shared clients the worker owns (e.g. "redis" for live-writing progress, ADR 0004).
+        self.resources: dict = resources or {}
         self.payload: dict = job.payload
         self.cost_usd: float = job.cost_usd
         self.result: Optional[dict] = None

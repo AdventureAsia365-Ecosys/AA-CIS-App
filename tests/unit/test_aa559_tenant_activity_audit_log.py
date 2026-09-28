@@ -246,19 +246,17 @@ async def _drive_trigger_rewrite():
     tenant = {"sub": REWRITE_TENANT_ID}
     body = v1_tours.RewriteRequest(rewrite_language="en-US", seo_mode="standard")
 
-    with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock(return_value={"status": "failed"})):
-        before = set(v1_tours._background_tasks)
+    # AA-652 — the rewrite is now an enqueued job, not a background task of this request.
+    with patch("shared.jobs.registry.enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue:
         resp = await v1_tours.trigger_rewrite(REWRITE_PUBLISHED_TOUR_ID, body, request, tenant)
-        new_tasks = v1_tours._background_tasks - before
-        assert len(new_tasks) == 1
-        await next(iter(new_tasks))  # drain the background task so nothing is left pending
+        m_enqueue.assert_awaited_once()
 
     return resp, conn
 
 
 @pytest.mark.asyncio
 class TestTriggerRewriteAuditLog:
-    async def test_writes_audit_row_before_background_rewrite_starts(self):
+    async def test_writes_audit_row_before_the_rewrite_job_is_enqueued(self):
         resp, conn = await _drive_trigger_rewrite()
 
         assert resp["status"] == "pending"

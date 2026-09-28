@@ -70,14 +70,21 @@ REWRITE_RESULT = {
 
 
 async def _drive_trigger_rewrite(qa_result: dict):
-    """Calls the real trigger_rewrite() endpoint function, then awaits its fire-and-forget
-    background task to completion — the only way to actually exercise
-    _do_rewrite_and_save()'s closure body from outside."""
+    """Calls the real trigger_rewrite() endpoint, then runs the `t2_rewrite` job it enqueued
+    (AA-652 — the rewrite moved from a nested closure into services/jobs/t2_rewrite_job.py)
+    against the same fake pool."""
+    from services.jobs import t2_rewrite_job
+    from shared.jobs import queue
+    from shared.jobs.registry import JobContext
+
     conn = AsyncMock()
-    # AA-489/AA-640: the quota check runs first — _get_tenant_plan_limit is a fetchrow (plan +
-    # membership_plans quota), then the usage INSERT..RETURNING is a fetchval.
-    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, PT_ROW, None, EXISTING_SEO_ROW]
-    conn.fetchval.side_effect = [1, 1, VERSION_ID, 5.0]      # quota used, next_ver, INSERT id, source_score
+    # Endpoint: quota plan fetchrow, PT_ROW. Job: PT_ROW again, brand rules (none), existing SEO,
+    # then the final version row.
+    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, PT_ROW,
+                                 PT_ROW, None, EXISTING_SEO_ROW,
+                                 {"status": "ai_generated", "score": 8.5, "qa_status": "passed"}]
+    # Endpoint: quota used, next_ver, INSERT id. Job: version status, source_score.
+    conn.fetchval.side_effect = [1, 1, VERSION_ID, "pending", 5.0]
     pool = _pool_ctx(conn)
     request = _FakeRequest(pool)
     tenant = {"sub": TENANT_ID}
@@ -87,19 +94,17 @@ async def _drive_trigger_rewrite(qa_result: dict):
          patch("services.acp_produce.tenant_pipeline.run_t3_qa_gate", AsyncMock(return_value=qa_result)) as m_qa, \
          patch("services.acp_produce.tenant_pipeline.escalate_t3_failure", AsyncMock()) as m_escalate, \
          patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock()) as m_atomize, \
-         patch("services.acp_contract.segment_research.run_segment_research", AsyncMock()) as m_ranking:
+         patch("services.acp_contract.segment_research.run_segment_research", AsyncMock()) as m_ranking, \
+         patch("shared.jobs.registry.enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue:
 
-        before = set(v1_tours._background_tasks)
         resp = await v1_tours.trigger_rewrite(PUBLISHED_TOUR_ID, body, request, tenant)
-        new_tasks = v1_tours._background_tasks - before
-        assert len(new_tasks) == 1, "trigger_rewrite() should schedule exactly 1 background task"
-        await next(iter(new_tasks))
-        # AA-526 — the outer task above (T2->T3) itself schedules a SECOND, nested background
-        # task (the ranking pipeline, now moved here from the removed atomize endpoint) — drain
-        # it too so nothing is left pending when this helper returns.
-        leftover = v1_tours._background_tasks - before
-        if leftover:
-            await next(iter(leftover))
+        m_enqueue.assert_awaited_once()
+        payload = m_enqueue.call_args.args[2]
+        job = queue.Job(id="job-1", kind="t2_rewrite", payload=payload, status="running",
+                        attempt=1, max_attempts=2, progress={}, cost_usd=0.0)
+        ctx = JobContext(pool, job, {"redis": None})
+        ctx.progress = AsyncMock()
+        await t2_rewrite_job.run(ctx)
 
     return resp, conn, m_rewrite, m_qa, m_escalate, m_atomize, m_ranking
 
@@ -122,7 +127,8 @@ async def test_real_qa_pass_does_not_auto_atomize():
     m_ranking.assert_not_awaited()  # AA-646 — a tenant rewrite never buys DFS research
 
     execute_calls = [c for c in conn.execute.call_args_list
-                      if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]]
+                      if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]
+                      and "rewritten_content" in c.args[0]]
     assert len(execute_calls) == 1
     args = execute_calls[0].args
     assert args[2] == "ai_generated"   # new_status (score >= 7.0)
@@ -147,7 +153,8 @@ async def test_qa_auto_pass_does_not_auto_atomize():
     m_ranking.assert_not_awaited()     # AA-646 — nor on the auto-pass path
 
     execute_calls = [c for c in conn.execute.call_args_list
-                      if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]]
+                      if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]
+                      and "rewritten_content" in c.args[0]]
     args = execute_calls[0].args
     assert args[2] == "needs_review"
     assert args[6] is True             # qa_auto_passed=True — the exact flag the bug ignored
