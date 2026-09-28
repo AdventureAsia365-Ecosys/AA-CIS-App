@@ -52,8 +52,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
 - **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
   LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
-  are called with the Bedrock Converse API on the acc3 satellite, with no silent fallback. Judge
-  stages stay on GPT-4.1 until AA-659 removes the hardcoded judge paths.
+  are called with the Bedrock Converse API on the acc3 satellite.
+- **Stage Route** (AA-659, ADR 0006): each stage has a model plus an ordered fallback list and an
+  optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
+  tried. The four judge stages run GPT-5.6 Luna (Bedrock) → GPT-6 Luna (OpenAI API), with GPT-4.1
+  as the shadow; no judge has its own hardcoded model path any more.
   Current choices, each decided from a real A/B run:
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide
@@ -311,6 +314,11 @@ The single list of models the platform can call, with each Model Key's vendor, h
 which accounts serve it, its price, and whether it is enabled. The admin dropdowns and every cost
 figure come from it. See ADR 0005.
 _Avoid_: model list, pricing table.
+
+**Stage Route**:
+The ordered list of Model Keys a Stage tries (primary first, then fallbacks), plus an optional
+shadow model that runs alongside for comparison and never changes the result. See ADR 0006.
+_Avoid_: fallback chain (the old hardcoded Haiku/Sonnet chain), routing.
 
 ## Pipeline stages
 

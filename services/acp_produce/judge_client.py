@@ -103,7 +103,43 @@ GPT56_SOL_INFERENCE_PROFILE = (
 GPT41_MODEL = "gpt-4.1"
 
 
+def _invoke_judge_via_route(system_prompt: str, user_prompt: str, max_tokens: int, stage: str) -> dict:
+    """AA-659 / ADR 0006 — the judge model comes from the stage route (shared.llm_role_config:
+    model + fallbacks + shadow), not from JUDGE_MODEL. temperature=0 is still requested; the
+    catalog drops it for models that do not accept it."""
+    from shared.llm_client.client import LLMClient
+    from shared.llm_client.models import LLMRequest
+
+    resp = LLMClient().generate(LLMRequest(
+        system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=max_tokens,
+        temperature=0, stage=stage,
+    ))
+    return {
+        "text": resp.content,
+        "model_used": resp.model_used,
+        "provider": resp.provider,
+        "input_tokens": resp.input_tokens,
+        "output_tokens": resp.output_tokens,
+        "stop_reason": resp.stop_reason,
+        "account": resp.satellite_account,
+        "fallback_used": resp.fallback_used,
+        "cost_usd": resp.cost_usd,
+    }
+
+
 def invoke_judge(
+    system_prompt: str, user_prompt: str, max_tokens: int = 2048, model: str | None = None,
+    stage: str | None = None,
+) -> dict:
+    """AA-659: with `stage` (every production call site) and no explicit `model`, the call goes
+    through the stage route — see _invoke_judge_via_route(). The historical docstring below
+    describes the explicit-`model` / JUDGE_MODEL path, kept for comparison scripts."""
+    if model is None and stage is not None:
+        return _invoke_judge_via_route(system_prompt, user_prompt, max_tokens, stage)
+    return _invoke_judge_legacy(system_prompt, user_prompt, max_tokens, model)
+
+
+def _invoke_judge_legacy(
     system_prompt: str, user_prompt: str, max_tokens: int = 2048, model: str | None = None,
 ) -> dict:
     """One seam, mirrors the writer's generate_draft() seam

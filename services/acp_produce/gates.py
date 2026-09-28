@@ -535,12 +535,15 @@ def _log_n7_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> No
     from shared.llm_client.call_log import record_call_sync
     model = raw.get("model_used", "unknown")
     in_tok, out_tok = raw.get("input_tokens", 0), raw.get("output_tokens", 0)
+    cost = raw.get("cost_usd")
     record_call_sync(
         stage="n7_judge", role="judge", model=model,
-        tokens_in=in_tok, tokens_out=out_tok, cost_usd=calc_cost(model, in_tok, out_tok),
+        tokens_in=in_tok, tokens_out=out_tok,
+        cost_usd=cost if cost is not None else calc_cost(model, in_tok, out_tok),
         tenant_id=None,
         quality_signal={"gate": gate, "passed": passed, **extra},
         stop_reason=raw.get("stop_reason"),
+        account=raw.get("account"), fallback_used=raw.get("fallback_used"),
     )
 
 
@@ -571,7 +574,7 @@ def gate_framework(piece_body: str, framework: str) -> GateResult:
         f"\n\nOutput ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt)
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="n7_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         violations.append(f"judge unavailable: {e} — manual check")
@@ -709,7 +712,7 @@ def gate_brand_seo_audit(piece_body: str, brand_rubric_text: str) -> tuple[GateR
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt)
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="n7_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         return GateResult(gate="F9_brand_seo_audit", passed=False,
@@ -823,7 +826,7 @@ def gate_brand_seo_audit_social(
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt)
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="n7_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         return GateResult(gate="F9_brand_seo_audit_social", passed=False,

@@ -25,6 +25,10 @@ class LLMRequest(BaseModel):
     # AA-209: optional sampling seed. Forwarded to OpenAI only when explicitly set, so the judge
     # can run reproducibly while content calls that omit it keep provider-default behavior.
     seed:          Optional[int] = None
+    # AA-659 — structured output: {"name": str, "schema": dict}. OpenAI -> strict json_schema
+    # response_format; Bedrock Converse -> one forced tool whose input is the schema. The
+    # response content is then the JSON text of that object.
+    json_schema:   Optional[dict] = None
 
 class LLMResponse(BaseModel):
     content:       str

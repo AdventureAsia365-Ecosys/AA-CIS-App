@@ -506,12 +506,15 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
     from shared.llm_client.pricing import calc_cost
     model = raw.get("model_used", "unknown")
     in_tok, out_tok = raw.get("input_tokens", 0), raw.get("output_tokens", 0)
+    cost = raw.get("cost_usd")
     record_call_sync(
         stage="t10_judge", role="judge", model=model,
-        tokens_in=in_tok, tokens_out=out_tok, cost_usd=calc_cost(model, in_tok, out_tok),
+        tokens_in=in_tok, tokens_out=out_tok,
+        cost_usd=cost if cost is not None else calc_cost(model, in_tok, out_tok),
         tenant_id=None,
         quality_signal={"gate": gate, "passed": passed, **extra},
         stop_reason=raw.get("stop_reason"),
+        account=raw.get("account"), fallback_used=raw.get("fallback_used"),
     )
 
 
@@ -537,7 +540,7 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
         f"\n\nOutput ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt)
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="t10_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         logger.warning("t10_f8_judge_unavailable", error=str(e))
@@ -599,7 +602,7 @@ def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> lis
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt)
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="t10_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         logger.warning("t10_f9_judge_unavailable", error=str(e))
