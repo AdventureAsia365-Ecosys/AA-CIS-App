@@ -4,16 +4,22 @@ Covers the Done-when list: claim, retry, reaper and idempotency, plus the concur
 cancel, release-on-shutdown and a worker running a real handler end to end.
 """
 import asyncio
+import os
+import sys
 
 import asyncpg
 import pytest
 import pytest_asyncio
 
-from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER
-from shared.cost_guard import BudgetExceeded
-from shared.jobs import queue
-from shared.jobs import registry
-from shared.jobs.worker import Worker
+# The integration run adds only this directory to sys.path (conftest); add the repo root for
+# `shared.*`, same as test_compiled_graph_state_propagation.py.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from shared.cost_guard import BudgetExceeded  # noqa: E402
+from shared.jobs import queue  # noqa: E402
+from shared.jobs import registry  # noqa: E402
+from shared.jobs.worker import Worker  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
