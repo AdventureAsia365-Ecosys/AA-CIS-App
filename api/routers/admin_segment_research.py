@@ -19,7 +19,7 @@ refused up front when the DFS balance is below the run's DFS budget.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Literal, Optional
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -48,6 +48,9 @@ class ResearchScope(BaseModel):
     places: Optional[list[str]] = None
     tour_ids: Optional[list[str]] = None
     country: Optional[str] = None
+    # AA-648 — "batch" (default): few large paid tasks. "loop": the original per-place ReAct loop.
+    strategy: Literal["batch", "loop"] = "batch"
+    use_suggestions: bool = True
 
     @field_validator("markets")
     @classmethod
@@ -65,6 +68,8 @@ def _kwargs(scope: ResearchScope) -> dict:
         "tour_ids": scope.tour_ids,
         "country": scope.country,
         "max_places": scope.max_places,
+        "strategy": scope.strategy,
+        "use_suggestions": scope.use_suggestions,
     }
 
 

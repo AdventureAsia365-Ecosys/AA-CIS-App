@@ -649,6 +649,8 @@ async def run_segment_research(
     dry_run: bool = False,
     dfs_budget: RunBudget | None = None,
     llm_budget: RunBudget | None = None,
+    strategy: str = "batch",
+    use_suggestions: bool = True,
 ) -> dict:
     """Research the stale places in the requested scope, for the requested markets.
 
@@ -665,7 +667,13 @@ async def run_segment_research(
 
     AA-649 — `dfs_budget` / `llm_budget` (shared.cost_guard.RunBudget) are checked before every
     paid DataForSEO / Haiku call; a breach stops the run the same way a fatal DFS error does.
+
+    AA-648 — `strategy="batch"` (default) runs `segment_research_batch.research_batch()`: few large
+    paid tasks instead of the per-place ReAct loop's many small ones. `strategy="loop"` keeps the
+    original per-place loop (for comparison; slated for removal once batch is proven on real runs).
     """
+    if strategy not in ("batch", "loop"):
+        raise ValueError(f"unknown strategy {strategy!r}")
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
     location_by_market = {
@@ -689,13 +697,33 @@ async def run_segment_research(
         "places_in_scope": len(by_place),
         "places_stale": stale_total,
         "places_selected": len(stale),
+        "strategy": strategy,
     }
+    if strategy == "batch":
+        from services.acp_contract.segment_research_batch import estimate_cost
+        summary["estimate"] = estimate_cost(len(stale), len(market_codes), use_suggestions)
     if dry_run or not stale:
         return {**summary, "places_researched": 0, "places_failed": 0, "cost_usd": 0.0,
                 "aborted": False, "abort_reason": None}
 
     guard = _RunGuard()
     client = DataForSEOClient(budget=dfs_budget)
+
+    if strategy == "batch":
+        from services.acp_contract.segment_research_batch import research_batch
+        batch_result = await research_batch(
+            [(place, by_place[place], missing) for place, missing in stale], markets, pool, client, guard,
+            llm_budget=llm_budget, use_suggestions=use_suggestions,
+        )
+        return {
+            **summary, **batch_result,
+            "aborted": guard.aborted,
+            "abort_reason": guard.reason,
+            "dfs_spent_usd": round(dfs_budget.run_spent, 4) if dfs_budget else None,
+            "budgets": [b.summary() for b in (dfs_budget, llm_budget) if b is not None],
+        }
+
+    # strategy == "loop" — the original per-place ReAct loop.
     batchers = {
         market: _VolumeBatcher(client, location_by_market[market][0], location_by_market[market][1],
                                guard=guard)
