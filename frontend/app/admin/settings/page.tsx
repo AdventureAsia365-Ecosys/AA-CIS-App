@@ -401,7 +401,8 @@ const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = [
   // AA-685: call sites that bypassed the gateway before.
   { key: "a0", label: "A0 — Excel column auto-detect", stages: ["a0_column_map"] },
   { key: "embed", label: "Embeddings (question/atom matching)", stages: ["f10_embed"] },
-  { key: "tp", label: "TripPlanner", stages: ["tp_compose", "tp_search_embed"] },
+  { key: "tp", label: "TripPlanner",
+    stages: ["tp_compose", "tp_search_embed", "tp_extract", "tp_component_embed"] },
 ];
 const STAGE_LABELS: Record<string, string> = {
   s1_generate: "Content generate", s1_judge: "Brand-fit judge",
@@ -414,6 +415,7 @@ const STAGE_LABELS: Record<string, string> = {
   n7_repair: "Repair (E5)", n7_gap_research: "Competitor gap research", n7_judge: "Framework/brand judge",
   a0_column_map: "Column mapping", f10_embed: "Content embedding",
   tp_compose: "Trip plan compose", tp_search_embed: "Search query embedding",
+  tp_extract: "Component extraction (offline)", tp_component_embed: "Component embedding (offline)",
 };
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = {
   writer: "gold", judge: "green", validate: "gray", embed: "gray",
