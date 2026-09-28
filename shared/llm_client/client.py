@@ -14,6 +14,7 @@ from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
 from .role_config import get_stage_config_sync
 from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
+from .schema_check import SchemaMismatch, conform
 from . import stream_sink
 
 logger = structlog.get_logger()
@@ -31,6 +32,15 @@ DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 # call sites (invoke_claude() direct, e.g. T5 atomize, N7 E2-E5) can price a call without
 # importing this whole client — re-exported here unchanged so nothing importing them FROM this
 # module breaks.
+
+def _checked_json(model_label: str, value, schema: dict) -> str:
+    """AA-659 — a structured output that does not match its schema raises, so the stage route
+    moves to its next model instead of a caller's error path accepting it silently."""
+    try:
+        return json.dumps(conform(value, schema["schema"]))
+    except SchemaMismatch as e:
+        raise RuntimeError(f"{model_label} output does not match schema {schema['name']!r}: {e}") from e
+
 
 class LLMClient:
     """
@@ -436,7 +446,7 @@ class LLMClient:
                 tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
                 if not tool_inputs:
                     raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
-                content = json.dumps(tool_inputs[0])
+                content = _checked_json(model.model_key, tool_inputs[0], schema)
             else:
                 content = "".join(block.get("text", "") for block in blocks)
             usage = resp.get("usage", {})
@@ -526,6 +536,13 @@ class LLMClient:
         if catalog_model is not None and not content:
             # A reasoning model can spend the whole token budget thinking and return nothing.
             raise RuntimeError(f"{model_label} returned empty content (finish_reason={finish_reason})")
+        if request.json_schema:
+            try:
+                parsed = json.loads(content)
+            except ValueError as e:
+                raise RuntimeError(f"{model_label} returned invalid JSON for schema "
+                                   f"{request.json_schema['name']!r}: {e}") from e
+            content = _checked_json(model_label, parsed, request.json_schema)
 
         logger.info("llm_success", provider="openai", model=model_label,
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost,

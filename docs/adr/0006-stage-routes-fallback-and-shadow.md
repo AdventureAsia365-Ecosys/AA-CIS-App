@@ -35,7 +35,9 @@ GPT-6 Luna on Bedrock is not usable yet (acc3 agreement not accepted).
    (ADR-2026-014/027) is kept by the vendor rule enforced in admin: writers are Anthropic, judges
    are not.
 6. **Structured output** (`json_schema` on the request): strict `response_format` on the OpenAI
-   API, a single forced tool on Bedrock Converse. Reasoning models get `max_completion_tokens`,
+   API, a single forced tool on Bedrock Converse. A forced tool does not enforce the schema: on
+   the first live run GPT-5.6 Luna left out a required key. So **the gateway checks every
+   structured output against its schema**, and a mismatch raises and moves the route on. Reasoning models get `max_completion_tokens`,
    and `temperature`/`seed` only when the catalog allows them. An empty answer raises, so the
    route moves on instead of passing an empty string to a gate.
 7. **`SAFE_DEFAULTS` keep GPT-4.1 for the judges with no route.** If the DB cannot be read, the
