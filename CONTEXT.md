@@ -103,7 +103,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - **T2 tenant rewrite is a job** (`t2_rewrite`, AA-652): `tenant_tour_versions.job_id`; a job
     that ends without success marks the version `status='failed'` (kind hook `on_terminal`), and
     the portal shows "Writing failed" + Retry (`POST /v1/tours/versions/{id}/retry`) instead of
-    an endless "Writing…". T9 write and A3 atomize follow (AA-652 PR-B/C).
+    an endless "Writing…". **T9 write is a job** too (`t9_write`, `content_piece.job_id`; a job that
+    ends without success marks the piece `failed`, which the portal already shows with Retry).
+    A3 atomize follows (AA-652 PR-C).
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet
