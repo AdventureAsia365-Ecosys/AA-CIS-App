@@ -1,5 +1,6 @@
 from shared.secrets import get_dataforseo_creds
 from shared.dfs_client.call_log import record_dfs_call_sync, extract_cost
+from shared.cost_guard import DFS_CALL_ESTIMATE_USD
 import httpx
 import structlog
 
@@ -63,11 +64,14 @@ def as_dfs_error(exc: Exception) -> DFSCallError:
 
 class DataForSEOClient:
     def __init__(self, login: str = None, password: str = None,
-                 tenant_id: str = None, tour_id: str = None):
+                 tenant_id: str = None, tour_id: str = None, budget=None):
         if not login or not password:
             login, password = get_dataforseo_creds()
         self.login    = login
         self.password = password
+        # AA-649 — optional shared.cost_guard.RunBudget. When set, every paid call is checked
+        # BEFORE it is sent (BudgetExceeded) and charged with the real response cost after.
+        self.budget = budget
         # AA-618 — optional attribution context for shared.dfs_call_log. Set by the caller that
         # has it in scope (process_seo has tenant_id+tour_id; segment_research/research have
         # neither meaningfully — platform-wide). Every live HTTP method below logs one row with
@@ -79,11 +83,19 @@ class DataForSEOClient:
                   location_code: int = None, keyword_count: int = None) -> None:
         """AA-618 — record one live DFS call (fetched_live=True) with the real cost from the
         response. Fire-and-forget; never raises into the fetch path."""
+        cost = extract_cost(response)
+        if self.budget is not None:
+            self.budget.charge(cost if cost is not None else DFS_CALL_ESTIMATE_USD.get(endpoint, 0.0))
         record_dfs_call_sync(
-            endpoint=endpoint, fetched_live=True, cost_usd=extract_cost(response),
+            endpoint=endpoint, fetched_live=True, cost_usd=cost,
             tenant_id=self.tenant_id, tour_id=self.tour_id, keyword=keyword,
             location_code=location_code, keyword_count=keyword_count,
         )
+
+    def _precheck(self, endpoint: str) -> None:
+        """AA-649 — raise BudgetExceeded before a paid call that would breach the run's budget."""
+        if self.budget is not None:
+            self.budget.check(DFS_CALL_ESTIMATE_USD.get(endpoint, 0.1))
 
     def _auth(self) -> tuple[str, str]:
         return (self.login, self.password)
@@ -132,6 +144,7 @@ class DataForSEOClient:
             "location_code": location_code,
             "keywords":      [seed],
         }]
+        self._precheck("search_volume")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{DATAFORSEO_BASE}/keywords_data/google_ads/search_volume/live",
@@ -179,6 +192,7 @@ class DataForSEOClient:
             "location_code": location_code,
             "keywords":      keywords[:1000],
         }]
+        self._precheck("search_volume_bulk")  # outside the try: BudgetExceeded is never swallowed
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
@@ -228,6 +242,7 @@ class DataForSEOClient:
             "location_code": location_code,
             "keyword":       seed,
         }]
+        self._precheck("serp_advanced")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{DATAFORSEO_BASE}/serp/google/organic/live/advanced",
@@ -294,6 +309,7 @@ class DataForSEOClient:
             "language_code": language_code,
             "limit":         25,
         }]
+        self._precheck("keywords_for_keywords")  # outside the try: BudgetExceeded is never swallowed
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
