@@ -50,6 +50,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
   `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
+- **Model Catalog** (`shared.llm_model_catalog`, AA-658, ADR 0005): the admin dropdown options and
+  LLM prices come from it (`pricing.py` is the fallback). Non-legacy Model Keys (e.g. `sonnet-5`)
+  are called with the Bedrock Converse API on the acc3 satellite, with no silent fallback. Judge
+  stages stay on GPT-4.1 until AA-659 removes the hardcoded judge paths.
   Current choices, each decided from a real A/B run:
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide
@@ -289,6 +293,24 @@ One hand-written, sourced claim a tenant writes for themselves only (their own p
 cancel/rebook terms, deals) — visible only to that tenant, never to others. Same table as the
 platform-scope entry above; `tenant_id` is required here, NULL there (enforced by a DB CHECK).
 _Avoid_: Fact (bare) — always say which scope.
+
+### Model operations (platform)
+
+**Stage**:
+One named place in the code that calls a model for one purpose (`t9_write`, `s1_judge`,
+`t5_atomize`...). Admin picks the model per Stage; every call is logged under its Stage.
+_Avoid_: step, node, role (Role is a separate property: writer / judge / validate).
+
+**Model Key**:
+The short, stable name the platform uses for one model (`haiku`, `sonnet-5`, `gpt-5.6-luna`),
+independent of vendor ids, inference-profile prefixes or which AWS account serves it.
+_Avoid_: model id, tier (the old name for the same thing).
+
+**Model Catalog**:
+The single list of models the platform can call, with each Model Key's vendor, how it is called,
+which accounts serve it, its price, and whether it is enabled. The admin dropdowns and every cost
+figure come from it. See ADR 0005.
+_Avoid_: model list, pricing table.
 
 ## Pipeline stages
 

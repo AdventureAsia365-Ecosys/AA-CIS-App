@@ -8,6 +8,7 @@ from .models import LLMRequest, LLMResponse
 from .prompt_cache import build_cached_system_prompt, build_cached_messages
 from .pricing import BEDROCK_SONNET, BEDROCK_HAIKU, COST_TABLE, calc_cost
 from .role_config import get_stage_config_sync
+from .catalog import LEGACY_KEYS, CatalogModel, get_model_sync
 from . import stream_sink
 
 logger = structlog.get_logger()
@@ -76,6 +77,12 @@ class LLMClient:
         # calls keep the pre-AA-518 hardcoded acc3-first order exactly.
         primary_acct = stage_cfg.account_route if (stage_cfg and stage_cfg.account_route) else "acc3"
         fallback_acct = "acc1" if primary_acct == "acc3" else "acc3"
+
+        # AA-658 / ADR 0005 — any non-legacy Model Key is resolved through the catalog. No
+        # fallback here on purpose: silently switching vendor/model is worse than a visible
+        # failure; fallback chains become route config in AA-659.
+        if tier not in LEGACY_KEYS:
+            return self._call_catalog_model(request, tier, primary_acct)
 
         # Direct GPT-4.1 — no Bedrock fallback (explicit choice)
         if tier == "gpt-4.1":
@@ -295,6 +302,88 @@ class LLMClient:
             cache_read_tokens=cache_read,
             cache_write_tokens=cache_write,
             stop_reason=result.stop_reason,
+        )
+
+    def _call_catalog_model(self, request: LLMRequest, model_key: str, preferred_acct: str) -> LLMResponse:
+        model = get_model_sync(model_key)
+        if model is None:
+            raise RuntimeError(f"Model {model_key!r} is not in shared.llm_model_catalog "
+                               "(or the catalog is unreachable)")
+        if not model.enabled:
+            raise RuntimeError(f"Model {model_key!r} is disabled in the catalog: "
+                               f"{model.blocked_reason or 'no reason given'}")
+        if model.api_style != "converse":
+            raise RuntimeError(f"Model {model_key!r} has api_style={model.api_style!r}, "
+                               "which LLMClient cannot call through the catalog path")
+        account = model.account_for(preferred_acct)
+        if account is None or account == "acc2":
+            raise RuntimeError(f"Model {model_key!r} has no satellite account in bedrock_profile_ids")
+        return self._call_bedrock_converse(request, model, account)
+
+    def _call_bedrock_converse(self, request: LLMRequest, model: CatalogModel, account: str) -> LLMResponse:
+        """AA-658 — Bedrock Converse / ConverseStream on a satellite session. One wire format for
+        every vendor on Bedrock (Anthropic and OpenAI models alike)."""
+        from .bedrock_satellite import get_satellite_client
+
+        profile_id = model.bedrock_profile_ids[account]
+        inference = {"maxTokens": request.max_tokens}
+        if model.max_output_tokens:
+            inference["maxTokens"] = min(request.max_tokens, model.max_output_tokens)
+        if model.supports_temperature and "temperature" in request.model_fields_set:
+            inference["temperature"] = request.temperature
+        kwargs = {
+            "modelId": profile_id,
+            "system": [{"text": request.system_prompt}],
+            "messages": [{"role": "user", "content": [{"text": request.user_prompt}]}],
+            "inferenceConfig": inference,
+        }
+
+        stream_sink.emit_restart(request.stage)
+        on_delta = stream_sink.delta_callback(request.stage)
+        rt = get_satellite_client("bedrock-runtime", account=account)
+
+        in_tok = out_tok = cache_read = cache_write = 0
+        stop_reason = None
+        if on_delta is None:
+            resp = rt.converse(**kwargs)
+            content = "".join(
+                block.get("text", "") for block in resp["output"]["message"]["content"]
+            )
+            usage = resp.get("usage", {})
+            stop_reason = resp.get("stopReason")
+        else:
+            resp = rt.converse_stream(**kwargs)
+            parts = []
+            usage = {}
+            for event in resp["stream"]:
+                if "contentBlockDelta" in event:
+                    text = event["contentBlockDelta"].get("delta", {}).get("text", "")
+                    if text:
+                        parts.append(text)
+                        on_delta(text)
+                elif "messageStop" in event:
+                    stop_reason = event["messageStop"].get("stopReason")
+                elif "metadata" in event:
+                    usage = event["metadata"].get("usage", {})
+            content = "".join(parts)
+        in_tok = usage.get("inputTokens", 0) or 0
+        out_tok = usage.get("outputTokens", 0) or 0
+        cache_read = usage.get("cacheReadInputTokens", 0) or 0
+        cache_write = usage.get("cacheWriteInputTokens", 0) or 0
+        cost = self._calc_cost(model.model_key, in_tok, out_tok,
+                               cache_read=cache_read, cache_write=cache_write)
+
+        logger.info("llm_success", provider="bedrock-satellite", api="converse",
+                    model=model.model_key, account=account,
+                    in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
+
+        return LLMResponse(
+            # "satellite-" prefix: call_log.py strips it and records provider=bedrock-satellite.
+            content=content, model_used=f"satellite-{model.model_key}", provider="bedrock-satellite",
+            input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
+            fallback_used=False, satellite_account=account,
+            cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+            stop_reason=stop_reason,
         )
 
     def _call_openai(self, request: LLMRequest, model: str) -> LLMResponse:
