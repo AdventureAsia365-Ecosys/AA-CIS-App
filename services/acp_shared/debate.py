@@ -34,6 +34,7 @@ import structlog
 
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
 from services.content_generation.brand_fit import has_brand_signals, score_brand_fit
+from shared.llm_client.call_log import record_call
 
 if TYPE_CHECKING:
     from services.acp_shared.slate import Candidate
@@ -210,6 +211,19 @@ async def apply_debate(
                     # a cache HIT (the expected steady state after brand_version stabilizes) never
                     # reaches this line at all.
                     result = score_brand_fit(brand_profile, generated)
+                    # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
+                    # own use of the same helper).
+                    await record_call(
+                        stage="s1_judge", role="judge", model=result.model_used,
+                        tokens_in=result.input_tokens, tokens_out=result.output_tokens,
+                        cost_usd=result.cost_usd, tenant_id=str(tenant_id),
+                        quality_signal={
+                            "source": "debate", "judge_score": result.judge_score,
+                            "passed": result.judge_score >= BRAND_FIT_CUT_THRESHOLD,
+                        },
+                        stop_reason=result.stop_reason, account=result.account,
+                        fallback_used=result.fallback_used,
+                    )
                     await _store_brand_fit_cache(conn, tenant_id, candidate, brand_profile["_version"], result)
                     judge_score = result.judge_score
                 if judge_score < BRAND_FIT_CUT_THRESHOLD:

@@ -57,9 +57,13 @@ def test_compute_embedding_calls_pace_before_invoking_bedrock():
     # after a throttled call already happened is too late to have prevented it).
     _reset_pacing()
     call_order = []
+    from shared.llm_client.role_config import SAFE_DEFAULTS
     with patch("services.acp_shared.content_embedding._pace_calls",
                side_effect=lambda: call_order.append("pace")), \
-         patch("services.acp_shared.content_embedding._client") as m_client:
+         patch("shared.llm_client.embed.get_stage_config_sync", return_value=SAFE_DEFAULTS["f10_embed"]), \
+         patch("shared.llm_client.embed.get_model_sync", return_value=None), \
+         patch("services.acp_shared.content_embedding.record_call_sync"), \
+         patch("shared.llm_client.embed._runtime_for") as m_client:
         m_client.return_value.invoke_model.side_effect = lambda **_: call_order.append("invoke") or {
             "body": __import__("io").BytesIO(
                 b'{"embeddings": {"float": [[' + b",".join([b"0.1"] * 1536) + b']]}}',

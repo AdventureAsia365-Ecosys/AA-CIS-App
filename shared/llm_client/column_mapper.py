@@ -2,15 +2,20 @@
 P2-S7: LLM Column Auto-detect
 When Excel columns don't match COLUMN_MAP (< 50% hit rate),
 use LLM to map arbitrary column names to raw_tours schema fields.
+
+AA-685: the call goes through LLMClient with stage "a0_column_map" (model from the stage route,
+seeded to Haiku — the model this file hardcoded before) and writes a shared.llm_call_log row.
 """
 import json
-import boto3
 import structlog
+
+from .call_log import record_call_sync
+from .client import LLMClient
+from .models import LLMRequest
 
 logger = structlog.get_logger()
 
-BEDROCK_REGION = "us-west-1"
-BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+STAGE = "a0_column_map"
 
 # Target schema fields with descriptions
 TARGET_FIELDS = {
@@ -42,8 +47,6 @@ def detect_column_mapping(excel_columns: list[str]) -> dict[str, str]:
     Returns dict: {excel_column: schema_field}
     Only includes high-confidence mappings.
     """
-    client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
-
     target_desc = "\n".join([
         f"  - {field}: {desc}"
         for field, desc in TARGET_FIELDS.items()
@@ -70,21 +73,13 @@ Respond ONLY with a JSON object like:
 
 No explanation, no markdown, just the JSON object."""
 
-    body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 500,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-
+    resp = None
     try:
-        response = client.invoke_model(
-            modelId=BEDROCK_MODEL,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(body),
-        )
-        result = json.loads(response["body"].read())
-        raw = result["content"][0]["text"].strip()
+        resp = LLMClient().generate(LLMRequest(
+            system_prompt="You map spreadsheet columns to database fields. Reply with JSON only.",
+            user_prompt=prompt, max_tokens=500, stage=STAGE,
+        ))
+        raw = resp.content.strip()
 
         # Strip markdown fences if present
         if raw.startswith("```"):
@@ -106,11 +101,24 @@ No explanation, no markdown, just the JSON object."""
                     input_cols=len(excel_columns),
                     mapped=len(valid),
                     mapping=valid)
+        _log_call(resp, json_parsed=True, mapped=len(valid))
         return valid
 
     except Exception as e:
         logger.error("llm_column_mapping_failed", error=str(e))
+        if resp is not None:
+            _log_call(resp, json_parsed=False, mapped=0)
         return {}
+
+
+def _log_call(resp, *, json_parsed: bool, mapped: int) -> None:
+    record_call_sync(
+        stage=STAGE, role="writer", model=resp.model_used,
+        tokens_in=resp.input_tokens, tokens_out=resp.output_tokens, cost_usd=resp.cost_usd,
+        quality_signal={"json_parsed": json_parsed, "mapped_columns": mapped},
+        stop_reason=resp.stop_reason, account=resp.satellite_account,
+        fallback_used=resp.fallback_used,
+    )
 
 
 def build_dynamic_column_map(

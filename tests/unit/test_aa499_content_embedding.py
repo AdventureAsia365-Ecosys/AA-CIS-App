@@ -1,5 +1,6 @@
-"""AA-499 (AA-494 Decision 5) — services/acp_shared/content_embedding.py. boto3 client is
-patched, same convention test_aa449_angle_gate_generate.py uses for LLMClient.
+"""AA-499 (AA-494 Decision 5) — services/acp_shared/content_embedding.py. AA-685: the Bedrock
+runtime client is patched at the gateway embed path (shared.llm_client.embed._runtime_for), with
+the stage route and catalog stubbed so no test touches the database.
 
 Model is Cohere Embed v4 (`us.cohere.embed-v4:0`), NOT Titan Embed — migration 041/124's own
 comment assumed Titan, but a real `aws bedrock list-foundation-models` call (this build's own
@@ -12,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from services.acp_shared import content_embedding as ce_mod
+from shared.llm_client import embed as embed_mod
+from shared.llm_client.role_config import SAFE_DEFAULTS
 from services.acp_shared.content_embedding import (
     EMBEDDING_DIMENSIONS, compute_embedding, embedding_to_pgvector_literal,
 )
@@ -30,6 +33,16 @@ def _boto_client_returning(payload: dict):
 
 
 @pytest.fixture(autouse=True)
+def _gateway_offline():
+    """AA-685 — route from SAFE_DEFAULTS, catalog unreachable (embed.py's built-in fallback row),
+    and the llm_call_log write captured instead of sent to a database."""
+    with patch.object(embed_mod, "get_stage_config_sync", return_value=SAFE_DEFAULTS["f10_embed"]), \
+         patch.object(embed_mod, "get_model_sync", return_value=None), \
+         patch.object(ce_mod, "record_call_sync") as m_log:
+        yield m_log
+
+
+@pytest.fixture(autouse=True)
 def _no_real_pacing_wait():
     """AA-610 (Sub 2) — compute_embedding() now calls _pace_calls() (this account's real
     Bedrock quota is 20 req/minute, see content_embedding.py's own comment on that constant),
@@ -45,13 +58,35 @@ def _no_real_pacing_wait():
 class TestComputeEmbedding:
     def test_valid_response_returns_the_vector(self):
         vector = [0.1] * EMBEDDING_DIMENSIONS
-        with patch.object(ce_mod, "_client", return_value=_boto_client_returning(_cohere_response(vector))):
+        with patch.object(embed_mod, "_runtime_for", return_value=_boto_client_returning(_cohere_response(vector))):
             result = compute_embedding("Some real piece text.")
         assert result == vector
 
+    def test_successful_call_writes_one_llm_call_log_row(self, _gateway_offline):
+        vector = [0.1] * EMBEDDING_DIMENSIONS
+        client = _boto_client_returning(_cohere_response(vector))
+        client.invoke_model.return_value["ResponseMetadata"] = {
+            "HTTPHeaders": {"x-amzn-bedrock-input-token-count": "1000"}}
+        with patch.object(embed_mod, "_runtime_for", return_value=client):
+            compute_embedding("Some real piece text.")
+        kwargs = _gateway_offline.call_args.kwargs
+        assert kwargs["stage"] == "f10_embed" and kwargs["role"] == "embed"
+        assert kwargs["model"] == "cohere-embed-v4" and kwargs["account"] == "acc2"
+        assert kwargs["tokens_in"] == 1000
+        assert kwargs["cost_usd"] == pytest.approx(0.00012)  # 1000 tokens x $0.12/1M
+        assert kwargs["quality_signal"]["tokens_estimated"] is False
+
+    def test_failed_call_writes_no_log_row(self, _gateway_offline):
+        from botocore.exceptions import ClientError
+        client = MagicMock()
+        client.invoke_model.side_effect = ClientError({"Error": {"Code": "Throttling"}}, "InvokeModel")
+        with patch.object(embed_mod, "_runtime_for", return_value=client):
+            assert compute_embedding("Some text.") is None
+        _gateway_offline.assert_not_called()
+
     def test_empty_text_returns_none_without_calling_bedrock(self):
         client = _boto_client_returning(_cohere_response([0.1] * EMBEDDING_DIMENSIONS))
-        with patch.object(ce_mod, "_client", return_value=client):
+        with patch.object(embed_mod, "_runtime_for", return_value=client):
             result = compute_embedding("   ")
         assert result is None
         client.invoke_model.assert_not_called()
@@ -60,29 +95,29 @@ class TestComputeEmbedding:
         from botocore.exceptions import ClientError
         client = MagicMock()
         client.invoke_model.side_effect = ClientError({"Error": {"Code": "Throttling"}}, "InvokeModel")
-        with patch.object(ce_mod, "_client", return_value=client):
+        with patch.object(embed_mod, "_runtime_for", return_value=client):
             result = compute_embedding("Some text.")
         assert result is None
 
     def test_malformed_response_wrong_length_is_soft_fail(self):
-        with patch.object(ce_mod, "_client", return_value=_boto_client_returning(_cohere_response([0.1, 0.2]))):
+        with patch.object(embed_mod, "_runtime_for", return_value=_boto_client_returning(_cohere_response([0.1, 0.2]))):
             result = compute_embedding("Some text.")
         assert result is None
 
     def test_missing_embeddings_key_is_soft_fail(self):
-        with patch.object(ce_mod, "_client", return_value=_boto_client_returning({"texts": ["x"]})):
+        with patch.object(embed_mod, "_runtime_for", return_value=_boto_client_returning({"texts": ["x"]})):
             result = compute_embedding("Some text.")
         assert result is None
 
     def test_empty_embeddings_list_is_soft_fail(self):
-        with patch.object(ce_mod, "_client",
+        with patch.object(embed_mod, "_runtime_for",
                            return_value=_boto_client_returning({"embeddings": {"float": []}})):
             result = compute_embedding("Some text.")
         assert result is None
 
     def test_input_text_and_model_id_reach_the_request(self):
         client = _boto_client_returning(_cohere_response([0.1] * EMBEDDING_DIMENSIONS))
-        with patch.object(ce_mod, "_client", return_value=client):
+        with patch.object(embed_mod, "_runtime_for", return_value=client):
             compute_embedding("A very specific piece of text.")
         call = client.invoke_model.call_args
         assert call.kwargs["modelId"] == "us.cohere.embed-v4:0"
