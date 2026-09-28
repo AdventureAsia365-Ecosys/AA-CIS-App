@@ -15,7 +15,11 @@ moves to A3 (services/export/handler.py::process_export()), platform-scope, not 
 at all anymore. That half of this file's own tests is removed with it. What replaces it in this
 closure: Segment research + ranking + route-detection (AA-509/510/515, tenant-market-specific,
 still needs a per-tenant trigger unlike atomize itself) now fires HERE instead — see the 2
-remaining tests' own `m_ranking` assertions."""
+remaining tests' own `m_ranking` assertions.
+
+AA-646 (28/09/2026) — superseded: segment research no longer fires from a tenant rewrite at all
+(it swept every platform place per rewrite after AA-545). `m_ranking` now patches
+run_segment_research itself and both tests assert it is NOT awaited."""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,7 +87,7 @@ async def _drive_trigger_rewrite(qa_result: dict):
          patch("services.acp_produce.tenant_pipeline.run_t3_qa_gate", AsyncMock(return_value=qa_result)) as m_qa, \
          patch("services.acp_produce.tenant_pipeline.escalate_t3_failure", AsyncMock()) as m_escalate, \
          patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock()) as m_atomize, \
-         patch("api.routers.v1_tours._run_research_only", AsyncMock()) as m_ranking:
+         patch("services.acp_contract.segment_research.run_segment_research", AsyncMock()) as m_ranking:
 
         before = set(v1_tours._background_tasks)
         resp = await v1_tours.trigger_rewrite(PUBLISHED_TOUR_ID, body, request, tenant)
@@ -115,7 +119,7 @@ async def test_real_qa_pass_does_not_auto_atomize():
     m_qa.assert_awaited_once()
     m_escalate.assert_not_awaited()
     m_atomize.assert_not_awaited()  # <- the actual AA-469 Việc 1 regression guard
-    m_ranking.assert_awaited_once()  # AA-526 — ranking now fires here instead
+    m_ranking.assert_not_awaited()  # AA-646 — a tenant rewrite never buys DFS research
 
     execute_calls = [c for c in conn.execute.call_args_list
                       if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]]
@@ -140,7 +144,7 @@ async def test_qa_auto_pass_does_not_auto_atomize():
     assert resp["status"] == "pending"
     m_escalate.assert_awaited_once()   # review_queue / A4 path unaffected by this fix
     m_atomize.assert_not_awaited()     # <- was unconditionally called pre-fix; must not be now
-    m_ranking.assert_awaited_once()    # AA-526 — ranking still fires even on the auto-pass path
+    m_ranking.assert_not_awaited()     # AA-646 — nor on the auto-pass path
 
     execute_calls = [c for c in conn.execute.call_args_list
                       if "UPDATE gold_aa_internal.tenant_tour_versions" in c.args[0]]

@@ -36,28 +36,6 @@ def get_pool(request: Request):
     return request.app.state.pool
 
 
-async def _run_research_only(tenant_id: str, pool) -> None:
-    """AA-545 — Segment-matching/ranking/route-detection MOVED to A3
-    (`services/export/handler.py::_run_a3_atomize_background()`), platform-wide, per Q2's locked
-    decision (see docs/implementation-notes/AA-545.md Decision 3 and the AA-545 Linear issue).
-    Only `run_segment_research()` (the search-demand PURCHASE decision — explicitly OUTSIDE
-    AA-545's 4-layer scope: Segment/Score/Route/Hub, not this module) stays triggered here,
-    per-tenant-rewrite, exactly as before AA-545 — its cost profile (real DataForSEO spend) and
-    per-tenant `target_market` scoping were a deliberate, disclosed non-change, not an oversight.
-    """
-    try:
-        from services.acp_contract.segment_research import run_segment_research
-        from shared.services.tenant_config_service import TenantConfigService
-
-        async with pool.acquire() as conn:
-            cfg = await TenantConfigService(conn).get_seo_config(tenant_id)
-
-        research_result = await run_segment_research(tenant_id, cfg.target_market, pool)
-        logger.info("t5_segment_research_done", tenant_id=tenant_id, result=research_result)
-    except Exception:
-        logger.warning("t5_segment_research_failed", tenant_id=tenant_id, exc_info=True)
-
-
 # AA-579: bare `GET /v1/tours` (list_tours()) removed — tàn dư kiến trúc S8/S9 (21/04/2026,
 # commit a5e207d), viết cho 1 model RLS-per-tenant-row trên published_tours chưa từng thành hiện
 # thực (bị đè bởi Pool/Rewrite model 2 tuần sau, 05/05/2026, cùng file). `pt.tenant_id = $1` không
@@ -730,13 +708,12 @@ async def trigger_rewrite(
                 # right after atomize itself, platform-wide — not per-tenant-rewrite anymore
                 # (AA-526's own note above, kept for history, is now superseded: Segment/Route/
                 # Ranking are the single global set A3 already computes once for everyone; see
-                # docs/implementation-notes/AA-545.md). Only `run_segment_research()` (search-
-                # demand purchase decision, explicitly out of AA-545's scope) still fires here,
-                # per-tenant-rewrite, unchanged.
-                import asyncio as _asyncio_ranking
-                _ranking_task = _asyncio_ranking.create_task(_run_research_only(tenant_id, pool))
-                _background_tasks.add(_ranking_task)
-                _ranking_task.add_done_callback(_background_tasks.discard)
+                # docs/implementation-notes/AA-545.md).
+                #
+                # AA-646 — `run_segment_research()` (the DataForSEO purchase) no longer fires here.
+                # After AA-545 it swept every platform place per tenant rewrite ($49 on 25/09/2026).
+                # A tenant action never buys DFS; research is admin-triggered and scoped
+                # (`POST /admin/segment-research/run`, api/routers/admin_segment_research.py).
         except Exception as _e:
             import structlog as _sl
             _sl.get_logger().error("tenant_rewrite_failed", error=str(_e))

@@ -90,8 +90,10 @@ async def test_serp_tool_single_call_feeds_both_paa_and_domains():
 
 
 @pytest.mark.asyncio
-async def test_serp_tool_handles_serp_advanced_failure_gracefully():
-    from services.acp_contract.segment_research import _serp_tool
+async def test_serp_tool_failure_stores_nothing_and_raises():
+    """AA-647 — a failed SERP call is not "0 PAA": nothing is stored and the place is marked
+    failed (PlacePurchaseFailed), so it stays stale for the next run. Was: stored [] (AA-631)."""
+    from services.acp_contract.segment_research import PlacePurchaseFailed, _serp_tool
 
     client = AsyncMock()
     client._serp_advanced = AsyncMock(side_effect=RuntimeError("DFS down"))
@@ -103,8 +105,8 @@ async def test_serp_tool_handles_serp_advanced_failure_gracefully():
 
     with patch("services.acp_contract.segment_research._store_paa", new=AsyncMock()) as m_paa, \
          patch("services.acp_contract.segment_research._store_serp_domains", new=AsyncMock()) as m_domains:
-        seen = await _serp_tool(client, "kw", ["US"], {"US": (2840, "en")}, pool)
+        with pytest.raises(PlacePurchaseFailed):
+            await _serp_tool(client, "kw", ["US"], {"US": (2840, "en")}, pool)
 
-    assert seen == []
-    m_paa.assert_awaited_once_with(conn, "kw", "US", [])
-    m_domains.assert_awaited_once_with(conn, "kw", "US", [])
+    m_paa.assert_not_awaited()
+    m_domains.assert_not_awaited()

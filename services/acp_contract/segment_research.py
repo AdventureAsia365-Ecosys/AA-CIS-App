@@ -45,7 +45,7 @@ from datetime import timedelta
 import structlog
 from json_repair import repair_json
 
-from services.seo_intelligence.dataforseo_client import DataForSEOClient
+from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
 from services.seo_intelligence.seed_builder import (
     LOCATION_CODE_TO_MARKET,
     resolve_buyer_market,
@@ -165,20 +165,46 @@ def _parse_step(raw: str) -> ResearchStep:
     )
 
 
+class PlacePurchaseFailed(Exception):
+    """AA-647 — a DataForSEO purchase for this place failed. Nothing about the place may be recorded
+    as fresh: its `segment_research_log` row is not written, so the next run retries it."""
+
+
+@dataclass
+class _RunGuard:
+    """AA-647 — run-level circuit breaker. A fatal DFS error (auth/payment, e.g. the balance ran
+    out) stops the whole run: every place not yet started is skipped before its first LLM call.
+    On 25/09/2026 the balance ran out mid-run and the old code kept going for ~2 more hours,
+    caching 14,691 failed lookups as NULL volume."""
+    aborted: bool = False
+    reason: str | None = None
+
+    def record(self, exc: BaseException) -> None:
+        err = as_dfs_error(exc) if isinstance(exc, Exception) else None
+        if err is not None and err.fatal and not self.aborted:
+            self.aborted = True
+            self.reason = str(err)
+            logger.error("segment_research_aborted", reason=self.reason, status_code=err.status_code)
+
+
 class _VolumeBatcher:
     """Gathers concurrent `volumes` asks for ONE market into as few DataForSEO requests as
     possible — the asyncio-native equivalent of Ms. Thư's `CoalescingSearchDemand`, see this
     module's docstring item 1. The first ask into an empty window starts a linger timer; every
     ask that arrives before it fires joins the same batch; the timer firing sends ONE bulk
     `fetch_volumes_bulk()` call and resolves every waiter.
+
+    AA-647 — a failed bulk call resolves every waiter with the exception (never with None), so
+    the caller cannot mistake a failure for "no search volume".
     """
 
     def __init__(self, client: DataForSEOClient, location_code: int, language_code: str,
-                 linger: float = 5.0) -> None:
+                 linger: float = 5.0, guard: _RunGuard | None = None) -> None:
         self._client = client
         self._location_code = location_code
         self._language_code = language_code
         self._linger = linger
+        self._guard = guard
         self._lock = asyncio.Lock()
         self._pending: dict[str, list[asyncio.Future]] = {}
         self._flush_task: asyncio.Task | None = None
@@ -202,9 +228,11 @@ class _VolumeBatcher:
         try:
             volumes = await self._client.fetch_volumes_bulk(
                 list(batch.keys()), self._location_code, self._language_code,
+                raise_on_error=True,
             )
-        except Exception as e:  # pragma: no cover — fetch_volumes_bulk itself never raises
-            volumes = {}
+        except Exception as e:
+            if self._guard is not None:
+                self._guard.record(e)
             for futs in batch.values():
                 for fut in futs:
                     if not fut.done():
@@ -225,6 +253,8 @@ class PlaceResearchResult:
     llm_calls: int
     cost_usd: float
     skipped: bool = False
+    # AA-647 — a DFS purchase failed (or the run was aborted); no research_log row was written.
+    failed: bool = False
 
 
 async def _cached_volume(conn, keyword: str, market: str) -> tuple[bool, int | None]:
@@ -323,17 +353,24 @@ async def _volumes_tool(
         return out
     results = await asyncio.gather(*[
         batchers[market].ask(kw) for kw, market in to_buy
-    ])
+    ], return_exceptions=True)
+    # AA-647 — only real answers are cached. A failed lookup is neither stored nor reported as
+    # "no volume"; the place is marked failed so it stays stale for the next run.
+    failures = [r for r in results if isinstance(r, BaseException)]
     async with pool.acquire() as conn:
         for (kw, market), volume in zip(to_buy, results):
+            if isinstance(volume, BaseException):
+                continue
             out[kw][market] = volume
             await _store_volume(conn, kw, market, volume)
+    if failures:
+        raise PlacePurchaseFailed(f"volumes: {failures[0]}") from failures[0]
     return out
 
 
 async def _serp_tool(
     client: DataForSEOClient, keyword: str, market_codes: list[str],
-    location_by_market: dict[str, tuple[int, str]], pool,
+    location_by_market: dict[str, tuple[int, str]], pool, guard: _RunGuard | None = None,
 ) -> list[str]:
     """PAA questions for one keyword, fanned out across every tenant market (docstring item 3),
     deduped. Always makes a real call per market — PAA/first-page freshness isn't cache-checked
@@ -354,6 +391,13 @@ async def _serp_tool(
             location_code, language_code = location_by_market[market]
             try:
                 serp = await client._serp_advanced(keyword, location_code, language_code)
+            except Exception as exc:
+                # AA-647 — a failed SERP call is not "0 PAA": nothing is stored for this market
+                # and the place is marked failed (stays stale, retried next run).
+                if guard is not None:
+                    guard.record(exc)
+                raise PlacePurchaseFailed(f"serp({keyword!r}, {market}): {exc}") from exc
+            try:
                 paa = client._parse_paa(serp)
                 domains = client._parse_organic_domains(serp)
             except Exception:
@@ -368,12 +412,18 @@ async def _serp_tool(
 
 async def _suggestions_tool(
     client: DataForSEOClient, keyword: str, primary_location: int, primary_language: str,
+    guard: _RunGuard | None = None,
 ) -> list[str]:
-    """Keyword suggestions, primary market only (docstring item 3)."""
+    """Keyword suggestions, primary market only (docstring item 3). AA-647: a failed call raises
+    PlacePurchaseFailed instead of looking like "no suggestions"."""
     try:
-        ideas = await client.fetch_keyword_ideas(keyword, primary_location, primary_language)
-    except Exception:
-        ideas = []
+        ideas = await client.fetch_keyword_ideas(
+            keyword, primary_location, primary_language, raise_on_error=True,
+        )
+    except Exception as exc:
+        if guard is not None:
+            guard.record(exc)
+        raise PlacePurchaseFailed(f"suggestions({keyword!r}): {exc}") from exc
     return [i["keyword"] for i in ideas if i.get("keyword")][:10]
 
 
@@ -381,14 +431,23 @@ async def _research_place(
     place: str, actions: list[str], market_codes: list[str],
     markets: list[tuple[int, str, str]], batchers: dict[str, _VolumeBatcher],
     client: DataForSEOClient, pool, sem: asyncio.Semaphore,
+    guard: _RunGuard | None = None,
 ) -> PlaceResearchResult:
     location_by_market = {
         LOCATION_CODE_TO_MARKET[loc]: (loc, lang) for loc, _name, lang in markets
     }
     primary_code, _primary_name, primary_lang = markets[0]
+    guard = guard or _RunGuard()
 
     async with sem:
+        if guard.aborted:
+            # AA-647 — the run already hit a fatal DFS error: skip before spending an LLM call.
+            return PlaceResearchResult(
+                place=place, markets_researched=[], keywords_bought=0, llm_calls=0,
+                cost_usd=0.0, skipped=True, failed=True,
+            )
         llm_client = LLMClient()
+        purchase_failed = False
         transcript_lines: list[str] = []
         keywords_named: set[str] = set()
         measured: dict[str, dict[str, int | None]] = {}
@@ -398,6 +457,9 @@ async def _research_place(
         cost_usd = 0.0
 
         for step_num in range(1, MAX_STEPS + 1):
+            if guard.aborted:
+                purchase_failed = True
+                break
             prompt = USER_PROMPT.format(
                 place=place,
                 actions=", ".join(sorted(set(actions))),
@@ -437,67 +499,78 @@ async def _research_place(
             if turn.tool == "done":
                 break
 
-            if turn.tool == "volumes":
-                remaining = MAX_KEYWORDS - len(keywords_named)
-                asked = [k for k in turn.keywords if k not in keywords_named][:max(remaining, 0)]
-                if not asked:
-                    transcript_lines.append("You: (no new keywords — budget spent) -> stop.")
-                    break
-                keywords_named.update(asked)
-                bought = await _volumes_tool(asked, market_codes, batchers, pool)
-                measured.update(bought)
-                for kw, per_market in bought.items():
-                    summary = ", ".join(f"{m}: {v if v is not None else 'no data'}"
-                                         for m, v in per_market.items())
-                    transcript_lines.append(f"volumes({kw!r}) -> {summary}")
+            try:
+                if turn.tool == "volumes":
+                    remaining = MAX_KEYWORDS - len(keywords_named)
+                    asked = [k for k in turn.keywords if k not in keywords_named][:max(remaining, 0)]
+                    if not asked:
+                        transcript_lines.append("You: (no new keywords — budget spent) -> stop.")
+                        break
+                    keywords_named.update(asked)
+                    bought = await _volumes_tool(asked, market_codes, batchers, pool)
+                    measured.update(bought)
+                    for kw, per_market in bought.items():
+                        summary = ", ".join(f"{m}: {v if v is not None else 'no data'}"
+                                             for m, v in per_market.items())
+                        transcript_lines.append(f"volumes({kw!r}) -> {summary}")
 
-            elif turn.tool == "serp":
-                if serps_spent >= MAX_SERPS:
-                    transcript_lines.append("You: (serp budget spent) -> stop.")
-                    break
-                kw = turn.keywords[0] if turn.keywords else None
-                has_volume = kw and any(
-                    v for v in measured.get(kw, {}).values() if v
-                )
-                if not kw or not has_volume:
-                    transcript_lines.append(
-                        f"serp({kw!r}) refused — no measured volume for this keyword yet."
+                elif turn.tool == "serp":
+                    if serps_spent >= MAX_SERPS:
+                        transcript_lines.append("You: (serp budget spent) -> stop.")
+                        break
+                    kw = turn.keywords[0] if turn.keywords else None
+                    has_volume = kw and any(
+                        v for v in measured.get(kw, {}).values() if v
                     )
-                    continue
-                serps_spent += 1
-                questions = await _serp_tool(client, kw, market_codes, location_by_market, pool)
-                transcript_lines.append(f"serp({kw!r}) -> {len(questions)} PAA questions")
+                    if not kw or not has_volume:
+                        transcript_lines.append(
+                            f"serp({kw!r}) refused — no measured volume for this keyword yet."
+                        )
+                        continue
+                    serps_spent += 1
+                    questions = await _serp_tool(
+                        client, kw, market_codes, location_by_market, pool, guard,
+                    )
+                    transcript_lines.append(f"serp({kw!r}) -> {len(questions)} PAA questions")
 
-            elif turn.tool == "suggestions":
-                any_volume = any(v for per in measured.values() for v in per.values() if v)
-                if suggestions_spent >= MAX_SUGGESTIONS or any_volume:
-                    transcript_lines.append("You: (suggestions refused — budget spent, or "
-                                             "something already has volume) -> stop.")
-                    continue
-                suggestions_spent += 1
-                seed = turn.keywords[0] if turn.keywords else place
-                ideas = await _suggestions_tool(client, seed, primary_code, primary_lang)
-                transcript_lines.append(f"suggestions({seed!r}) -> {ideas}")
+                elif turn.tool == "suggestions":
+                    any_volume = any(v for per in measured.values() for v in per.values() if v)
+                    if suggestions_spent >= MAX_SUGGESTIONS or any_volume:
+                        transcript_lines.append("You: (suggestions refused — budget spent, or "
+                                                 "something already has volume) -> stop.")
+                        continue
+                    suggestions_spent += 1
+                    seed = turn.keywords[0] if turn.keywords else place
+                    ideas = await _suggestions_tool(client, seed, primary_code, primary_lang, guard)
+                    transcript_lines.append(f"suggestions({seed!r}) -> {ideas}")
+            except PlacePurchaseFailed as exc:
+                # AA-647 — stop this place; whatever real answers were bought are already cached,
+                # but the place itself is NOT marked researched, so the next run retries it.
+                purchase_failed = True
+                logger.warning("segment_research_place_failed", place=place, error=str(exc))
+                break
 
-        async with pool.acquire() as conn:
-            for market in market_codes:
-                await conn.execute(
-                    """
-                    INSERT INTO acp_contract.segment_research_log
-                        (canonical_place, market, researched_at)
-                    VALUES ($1, $2, now())
-                    ON CONFLICT (canonical_place, market) DO UPDATE SET researched_at = now()
-                    """,
-                    place, market,
-                )
+        if not purchase_failed:
+            async with pool.acquire() as conn:
+                for market in market_codes:
+                    await conn.execute(
+                        """
+                        INSERT INTO acp_contract.segment_research_log
+                            (canonical_place, market, researched_at)
+                        VALUES ($1, $2, now())
+                        ON CONFLICT (canonical_place, market) DO UPDATE SET researched_at = now()
+                        """,
+                        place, market,
+                    )
 
         logger.info(
             "segment_research_place_done", place=place, keywords=len(keywords_named),
-            llm_calls=llm_calls, cost_usd=round(cost_usd, 5),
+            llm_calls=llm_calls, cost_usd=round(cost_usd, 5), failed=purchase_failed,
         )
         return PlaceResearchResult(
-            place=place, markets_researched=market_codes,
+            place=place, markets_researched=[] if purchase_failed else market_codes,
             keywords_bought=len(keywords_named), llm_calls=llm_calls, cost_usd=cost_usd,
+            failed=purchase_failed,
         )
 
 
@@ -514,12 +587,59 @@ async def _stale_markets(conn, place: str, market_codes: list[str]) -> list[str]
     return [m for m in market_codes if m not in fresh]
 
 
-async def run_segment_research(tenant_id: str, target_market: dict, pool) -> dict:
-    """Research every place behind this tenant's current Segments that isn't already fresh.
+_SCOPED_PLACES_SQL = """
+    SELECT DISTINCT s.canonical_place, s.canonical_action
+    FROM acp_contract.atom_segment s
+    JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
+    JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
+    JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE ta.owner_scope = 'platform'
+      AND ($1::uuid[] IS NULL OR ta.tour_id = ANY($1::uuid[]))
+      AND ($2::text IS NULL OR lower(rt.country) = lower($2::text))
+"""
 
-    Recomputes over the tenant's WHOLE Segment set (like `run_segment_matching()` and the
-    ranking module below), not just one just-atomized tour — cheap to re-check because a
-    place already fresh in `segment_research_log` costs one index lookup, not an LLM call.
+
+async def _places_in_scope(
+    pool, places: list[str] | None, tour_ids: list[str] | None, country: str | None,
+) -> dict[str, list[str]]:
+    """AA-646 — canonical place -> its canonical actions, limited to the requested scope.
+    No scope at all means the whole platform (the caller still caps it with `max_places`)."""
+    async with pool.acquire() as conn:
+        if tour_ids or country:
+            rows = await conn.fetch(_SCOPED_PLACES_SQL, tour_ids or None, country or None)
+        else:
+            rows = await conn.fetch(
+                "SELECT canonical_place, canonical_action FROM acp_contract.atom_segment"
+            )
+    wanted = set(places) if places else None
+    by_place: dict[str, list[str]] = {}
+    for r in rows:
+        if wanted is not None and r["canonical_place"] not in wanted:
+            continue
+        by_place.setdefault(r["canonical_place"], []).append(r["canonical_action"])
+    return by_place
+
+
+async def run_segment_research(
+    target_market: dict, pool, *,
+    places: list[str] | None = None,
+    tour_ids: list[str] | None = None,
+    country: str | None = None,
+    max_places: int | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Research the stale places in the requested scope, for the requested markets.
+
+    AA-646 — this used to run after EVERY tenant T2 rewrite over the whole platform (AA-545 made
+    Segments platform-wide, so "this tenant's Segments" became "every Segment"): one rewrite on
+    25/09/2026 swept 2,215 places x AU/US/UK and spent $49 of DataForSEO. It is now admin-triggered
+    only (`POST /admin/segment-research/run`), with an explicit scope and a `max_places` cap.
+    `target_market` uses the tenant-config shape, e.g. `{"countries": ["US", "UK"]}`.
+
+    `dry_run=True` returns the scope and stale counts without any LLM or DataForSEO call.
+
+    AA-647 — a fatal DataForSEO error (auth/payment) aborts the run; places whose purchases failed
+    are not marked researched, so they are retried by the next run.
     """
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
@@ -527,48 +647,52 @@ async def run_segment_research(tenant_id: str, target_market: dict, pool) -> dic
         LOCATION_CODE_TO_MARKET[loc]: (loc, lang) for loc, _name, lang in markets
     }
 
-    async with pool.acquire() as conn:
-        # AA-545 — atom_segment dropped tenant_id (platform-wide now); reads every platform
-        # Segment regardless of `tenant_id` (still accepted as a parameter — resolves this
-        # tenant's own `target_market`, out of AA-545's 4-layer scope to re-trigger from A3, see
-        # docs/implementation-notes/AA-545.md Decision 3). `tenant_id` param itself is otherwise
-        # unused now, kept for call-site compatibility per that same decision.
-        rows = await conn.fetch(
-            "SELECT canonical_place, canonical_action FROM acp_contract.atom_segment"
-        )
-    by_place: dict[str, list[str]] = {}
-    for r in rows:
-        by_place.setdefault(r["canonical_place"], []).append(r["canonical_action"])
+    by_place = await _places_in_scope(pool, places, tour_ids, country)
 
     stale: list[tuple[str, list[str]]] = []
     async with pool.acquire() as conn:
-        for place in by_place:
+        for place in sorted(by_place):
             missing = await _stale_markets(conn, place, market_codes)
             if missing:
                 stale.append((place, missing))
+    stale_total = len(stale)
+    if max_places is not None:
+        stale = stale[:max(max_places, 0)]
 
-    if not stale:
-        return {"places_total": len(by_place), "places_researched": 0, "cost_usd": 0.0}
+    summary = {
+        "markets": market_codes,
+        "places_in_scope": len(by_place),
+        "places_stale": stale_total,
+        "places_selected": len(stale),
+    }
+    if dry_run or not stale:
+        return {**summary, "places_researched": 0, "places_failed": 0, "cost_usd": 0.0,
+                "aborted": False, "abort_reason": None}
 
+    guard = _RunGuard()
     client = DataForSEOClient()
     batchers = {
-        market: _VolumeBatcher(client, location_by_market[market][0], location_by_market[market][1])
+        market: _VolumeBatcher(client, location_by_market[market][0], location_by_market[market][1],
+                               guard=guard)
         for market in market_codes
     }
     sem = asyncio.Semaphore(CONCURRENCY)
     results = await asyncio.gather(*[
         _research_place(
-            place, by_place[place], missing_markets, markets, batchers, client, pool, sem,
+            place, by_place[place], missing_markets, markets, batchers, client, pool, sem, guard,
         )
         for place, missing_markets in stale
     ])
 
     return {
-        "places_total": len(by_place),
-        "places_researched": len(results),
+        **summary,
+        "places_researched": sum(1 for r in results if not r.failed),
+        "places_failed": sum(1 for r in results if r.failed),
         "keywords_bought": sum(r.keywords_bought for r in results),
         "llm_calls": sum(r.llm_calls for r in results),
         "cost_usd": round(sum(r.cost_usd for r in results), 5),
+        "aborted": guard.aborted,
+        "abort_reason": guard.reason,
     }
 
 
