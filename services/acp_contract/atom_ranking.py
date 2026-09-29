@@ -69,7 +69,8 @@ from dataclasses import dataclass
 
 from services.acp_contract.atom_matching import (
     claim_by_name_fallback,
-    ensure_atom_embeddings,
+    embed_questions_cached,
+    ensure_atom_embeddings_batch,
     land_question_on_atom,
 )
 from services.acp_contract.ranking_reference import (
@@ -399,8 +400,23 @@ def _candidate_questions(
 _MAX_QUESTION_CANDIDATES_PER_SEGMENT = 20
 
 
+def _capped_candidates(
+    place: str, action: str, paa_rows: list[tuple[str, str, list[str]]],
+) -> set[str]:
+    """`_candidate_questions()` trimmed to `_MAX_QUESTION_CANDIDATES_PER_SEGMENT` (see that
+    constant's own comment). Shared by the landing itself and AA-688's embedding pre-pass, so the
+    pre-pass embeds exactly the questions the landing will ask about."""
+    candidates = _candidate_questions(place, action, paa_rows)
+    if len(candidates) > _MAX_QUESTION_CANDIDATES_PER_SEGMENT:
+        candidates = set(
+            sorted(candidates, key=len, reverse=True)[:_MAX_QUESTION_CANDIDATES_PER_SEGMENT],
+        )
+    return candidates
+
+
 async def land_questions_for_segment(
     conn, place: str, action: str, atom_ids: list[str], paa_rows: list[tuple[str, str, list[str]]],
+    question_vectors: dict[str, list[float]] | None = None, atoms_embedded: bool = False,
 ) -> int:
     """AA-610 (Sub 2) — how many distinct PAA questions this Segment claims, now by
     embedding-match (`services/acp_contract/atom_matching.py`) instead of claim-by-name alone.
@@ -414,26 +430,36 @@ async def land_questions_for_segment(
     per-question (`claim_by_name_fallback()`) whenever the embedding path can't produce a
     landing (Bedrock failure, or this Segment's atoms were never embedded) — every candidate
     question the shortlist found still gets a chance to count, never silently dropped just
-    because the model call failed."""
-    candidates = _candidate_questions(place, action, paa_rows)
+    because the model call failed.
+
+    AA-688 — embeddings are fetched in batches, not one paced call per text.
+    `precompute_question_landings()` embeds every segment's atoms and questions up front and
+    passes `question_vectors` + `atoms_embedded=True`; a direct caller that passes neither gets
+    the same batching for this one Segment. A question absent from `question_vectors` (its
+    embedding call failed) goes straight to claim-by-name."""
+    candidates = _capped_candidates(place, action, paa_rows)
     if not candidates or not atom_ids:
         return 0
-    if len(candidates) > _MAX_QUESTION_CANDIDATES_PER_SEGMENT:
-        candidates = set(
-            sorted(candidates, key=len, reverse=True)[:_MAX_QUESTION_CANDIDATES_PER_SEGMENT],
-        )
 
     atom_rows = await conn.fetch(
         "SELECT atom_id, place, action FROM acp_contract.tour_atoms WHERE atom_id = ANY($1::text[])",
         atom_ids,
     )
-    for row in atom_rows:
-        await ensure_atom_embeddings(conn, row["atom_id"], row["place"] or "", row["action"] or "")
     name_candidates = [(r["atom_id"], r["place"] or "", r["action"] or "") for r in atom_rows]
+    if not atoms_embedded:
+        await ensure_atom_embeddings_batch(conn, name_candidates)
+    if question_vectors is None:
+        question_vectors = await embed_questions_cached(conn, candidates)
 
     claimed: set[str] = set()
     for question in candidates:
-        atom_id, distance, matched_by = await land_question_on_atom(conn, question, atom_ids)
+        vector = question_vectors.get(question)
+        if vector is not None:
+            atom_id, distance, matched_by = await land_question_on_atom(
+                conn, question, atom_ids, vector=vector,
+            )
+        else:
+            atom_id, distance, matched_by = None, None, "tokens"
         if atom_id is None:
             atom_id = claim_by_name_fallback(question, name_candidates)
             distance, matched_by = None, "tokens"
@@ -454,6 +480,7 @@ async def land_questions_for_segment(
 
 async def precompute_question_landings(
     pool, segment_ids: set[str] | None = None,
+    progress: Callable[[dict], None] | None = None,
 ) -> dict[str, int]:
     """AA-610 (Sub 2 redesign, then Sub 2 scope fix) — lands PAA questions on every
     currently-ranked Segment's atoms, independent of market (`questions` does not vary by
@@ -483,7 +510,15 @@ async def precompute_question_landings(
     backfill, or a future scheduled full re-check of `questions_count` staleness).
 
     A Segment with `questions_count IS NULL` (never computed — brand new) is ALWAYS recomputed
-    this call regardless of `segment_ids`, never served a cache value that does not exist yet."""
+    this call regardless of `segment_ids`, never served a cache value that does not exist yet.
+
+    AA-688 — before landing, one pre-pass embeds every in-scope Segment's missing atom views and
+    uncached candidate questions in batches of 96 (`ensure_atom_embeddings_batch()` /
+    `embed_questions_cached()`). Before this, each text was its own paced 3.5 s call: the first
+    a3_atomize after the data reset had ~16,000 atom views + ~1,500 questions to embed (every
+    NULL-count Segment is in scope), about 16 hours. `progress`, when given, receives
+    `{"step", "done", "total"}` dicts (a sync callback — the A3 job forwards them to the Jobs
+    page)."""
     async with pool.acquire() as conn:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
@@ -508,21 +543,51 @@ async def precompute_question_landings(
             paa_tuples.append((r["keyword"], r["market"], paa or []))
 
         counts: dict[str, int] = {}
-        recomputed_ids: list[str] = []
+        in_scope_rows = []
         for row in segment_rows:
             place, action = row["canonical_place"], row["canonical_action"]
             if classify_exclusion(place, action):
                 continue
             segment_id = row["segment_id"]
             cached = row["questions_count"]
-            in_scope = segment_ids is None or segment_id in segment_ids or cached is None
-            if not in_scope:
+            if segment_ids is None or segment_id in segment_ids or cached is None:
+                in_scope_rows.append(row)
+            else:
                 counts[segment_id] = cached
-                continue
+
+        # AA-688 pre-pass — embed everything the landing below will need, in batches.
+        segment_candidates = {
+            row["segment_id"]: _capped_candidates(row["canonical_place"], row["canonical_action"],
+                                                  paa_tuples)
+            for row in in_scope_rows
+        }
+        landing_rows = [r for r in in_scope_rows if segment_candidates[r["segment_id"]]]
+        atom_ids_needed = sorted({str(a) for r in landing_rows for a in r["atom_ids"]})
+        question_vectors: dict[str, list[float]] = {}
+        if atom_ids_needed:
+            atom_rows = await conn.fetch(
+                "SELECT atom_id, place, action FROM acp_contract.tour_atoms "
+                "WHERE atom_id = ANY($1::text[])",
+                atom_ids_needed,
+            )
+            await ensure_atom_embeddings_batch(
+                conn, [(r["atom_id"], r["place"] or "", r["action"] or "") for r in atom_rows],
+                progress,
+            )
+            all_questions = {q for r in landing_rows for q in segment_candidates[r["segment_id"]]}
+            question_vectors = await embed_questions_cached(conn, all_questions, progress)
+
+        recomputed_ids: list[str] = []
+        for done, row in enumerate(in_scope_rows, start=1):
+            segment_id = row["segment_id"]
             atom_ids = [str(a) for a in row["atom_ids"]]
-            count = await land_questions_for_segment(conn, place, action, atom_ids, paa_tuples)
-            counts[segment_id] = count
+            counts[segment_id] = await land_questions_for_segment(
+                conn, row["canonical_place"], row["canonical_action"], atom_ids, paa_tuples,
+                question_vectors=question_vectors, atoms_embedded=True,
+            )
             recomputed_ids.append(segment_id)
+            if progress and (done % 100 == 0 or done == len(in_scope_rows)):
+                progress({"step": "landing_questions", "done": done, "total": len(in_scope_rows)})
 
         if recomputed_ids:
             await conn.executemany(

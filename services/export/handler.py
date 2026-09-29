@@ -36,7 +36,8 @@ class _SingleConnAsPool:
         return False
 
 
-async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None) -> dict:
+async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None,
+                                       progress=None) -> dict:
     """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below (which still calls this
     right after atomize, unchanged) so it can ALSO be fired on its own, from
     `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag changes. Before
@@ -76,7 +77,8 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
             tour_id,
         )
     this_tour_segment_ids = {r["segment_id"] for r in this_tour_segment_rows}
-    question_counts = await precompute_question_landings(pool, this_tour_segment_ids)
+    # AA-688: `progress` (optional sync callback) reports the embedding pre-pass to the Jobs page.
+    question_counts = await precompute_question_landings(pool, this_tour_segment_ids, progress)
     ranking_results = {}
     for market_code in DFS_LOCATION_MAP:
         ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
@@ -89,7 +91,7 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
-                                      reraise: bool = False) -> None:
+                                      reraise: bool = False, progress=None) -> None:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_produce.tenant_pipeline.run_t5_atomize(), up to
     one invoke_claude() call per itinerary day) never adds latency to — or risks an API Gateway
@@ -130,7 +132,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         # superseded by AA-545; Segment/Score/Route are that single global set now, Slate/Subject
         # (T7) remain the per-tenant layer on top (unchanged, out of AA-545's scope).
         try:
-            await recompute_segment_score_route(tour_id, pool, log_tour_id=tour_id)
+            await recompute_segment_score_route(tour_id, pool, log_tour_id=tour_id, progress=progress)
         except Exception:
             # Best-effort, same precedent as every other step in this function — a Segment/Score/
             # Route failure must never be mistaken for atomize (already logged done above) or the

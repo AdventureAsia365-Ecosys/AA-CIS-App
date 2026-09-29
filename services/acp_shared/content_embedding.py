@@ -97,24 +97,45 @@ def compute_embedding(text: str) -> list[float] | None:
     retrieval/comparison, as opposed to `"search_query"`, a query text searching against stored
     documents) — every call site in this build stores a finished piece, never searches with a
     fragment, so `search_document` is correct for all of them, not just the common case."""
-    if not text or not text.strip():
-        return None
-    _pace_calls()
-    try:
-        resp = embed(EMBEDDING_STAGE, [text[:_MAX_INPUT_CHARS]], input_type="search_document",
-                     dimensions=EMBEDDING_DIMENSIONS)
-    except Exception as exc:
-        logger.warning("content_embedding_call_failed", error_type=type(exc).__name__, error=str(exc))
-        return None
-    record_call_sync(
-        stage=EMBEDDING_STAGE, role="embed", model=resp.model_used,
-        tokens_in=resp.input_tokens, tokens_out=0, cost_usd=resp.cost_usd,
-        quality_signal={"texts": 1, "dimensions": len(resp.vectors[0]),
-                        "tokens_estimated": resp.tokens_estimated},
-        account=resp.account, fallback_used=resp.fallback_used,
-        provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
-    )
-    return resp.vectors[0]
+    return compute_embeddings([text])[0]
+
+
+# AA-688 — Cohere Embed v4 on Bedrock takes up to 96 texts per request. The account quota
+# (`_MIN_SECONDS_BETWEEN_CALLS`) counts requests, not texts, so one full batch costs the same
+# 3.5 s of pacing as one text did.
+MAX_TEXTS_PER_CALL = 96
+
+
+def compute_embeddings(texts: list[str]) -> list[list[float] | None]:
+    """AA-688 — embeds many texts in as few Bedrock calls as possible: `MAX_TEXTS_PER_CALL` texts
+    per call, pacing per call. Returns one entry per input text, in order; an entry is `None`
+    when that text is blank or its batch's call failed (same soft-fail contract as
+    `compute_embedding()`). Writes one `llm_call_log` row per successful call.
+
+    Blocking (pacing sleeps + the Bedrock call): async callers wrap it in `asyncio.to_thread()`."""
+    out: list[list[float] | None] = [None] * len(texts)
+    todo = [i for i, t in enumerate(texts) if t and t.strip()]
+    for start in range(0, len(todo), MAX_TEXTS_PER_CALL):
+        batch = todo[start:start + MAX_TEXTS_PER_CALL]
+        _pace_calls()
+        try:
+            resp = embed(EMBEDDING_STAGE, [texts[i][:_MAX_INPUT_CHARS] for i in batch],
+                         input_type="search_document", dimensions=EMBEDDING_DIMENSIONS)
+        except Exception as exc:
+            logger.warning("content_embedding_call_failed", texts=len(batch),
+                           error_type=type(exc).__name__, error=str(exc))
+            continue
+        record_call_sync(
+            stage=EMBEDDING_STAGE, role="embed", model=resp.model_used,
+            tokens_in=resp.input_tokens, tokens_out=0, cost_usd=resp.cost_usd,
+            quality_signal={"texts": len(batch), "dimensions": len(resp.vectors[0]),
+                            "tokens_estimated": resp.tokens_estimated},
+            account=resp.account, fallback_used=resp.fallback_used,
+            provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
+        )
+        for i, vector in zip(batch, resp.vectors):
+            out[i] = vector
+    return out
 
 
 def embedding_to_pgvector_literal(embedding: list[float]) -> str:
@@ -126,4 +147,5 @@ def embedding_to_pgvector_literal(embedding: list[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in embedding) + "]"
 
 
-__all__ = ["EMBEDDING_STAGE", "EMBEDDING_DIMENSIONS", "compute_embedding", "embedding_to_pgvector_literal"]
+__all__ = ["EMBEDDING_STAGE", "EMBEDDING_DIMENSIONS", "MAX_TEXTS_PER_CALL", "compute_embedding",
+           "compute_embeddings", "embedding_to_pgvector_literal"]

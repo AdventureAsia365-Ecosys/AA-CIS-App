@@ -19,13 +19,21 @@ own DB connection, so nothing is shared with the worker's loop. Trade-off: an ad
 shutdown cannot interrupt the thread; the job is released and the thread ends with the process.
 Concurrency 1: the Segment/Score/Route recompute is platform-wide, and one tour at a time is what
 the admin trigger already did.
+
+AA-688: the thread reports progress (embedding pre-pass, question landing) through a sync
+callback that schedules ctx.progress() on the worker's loop — fire-and-forget, so a failed
+progress write never fails or blocks the atomize run.
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Optional
 
+import structlog
+
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
+
+logger = structlog.get_logger()
 
 KIND = "a3_atomize"
 
@@ -52,11 +60,21 @@ async def run(ctx: JobContext) -> Optional[dict]:
     if not (p.get("tour_id") and p.get("version_id") and isinstance(p.get("rewritten"), dict)):
         raise NonRetryable("payload needs tour_id, version_id and rewritten")
     await ctx.progress(phase="atomizing", tour_id=p["tour_id"])
+    worker_loop = asyncio.get_running_loop()
+
+    def _log_failure(future) -> None:
+        if not future.cancelled() and future.exception() is not None:
+            logger.warning("a3_progress_write_failed", job_id=ctx.job_id, error=str(future.exception()))
+
+    def _report(fields: dict) -> None:
+        # Sub-steps use the "step" key, never "phase", so a late write cannot overwrite the
+        # final phase="done" below.
+        asyncio.run_coroutine_threadsafe(ctx.progress(**fields), worker_loop).add_done_callback(_log_failure)
 
     def _in_own_loop() -> None:
         asyncio.run(_run_a3_atomize_background(
             tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
-            version_id=p["version_id"], reraise=True,
+            version_id=p["version_id"], reraise=True, progress=_report,
         ))
 
     await asyncio.to_thread(_in_own_loop)
