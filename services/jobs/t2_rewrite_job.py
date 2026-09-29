@@ -129,14 +129,11 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     except that a failure raises (so the job retries) instead of silently marking the version."""
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
 
-    # AA-445-02 — DFS mở rộng T2 (docs/claude_audit/AA-445-01-dfs-distinctiveness-step0-audit
-    # .md Q2a): T1/T2 never called process_seo(), so `seo` reached the shared
-    # _rewrite_tour()/validate_node graph as {} — structurally, not by a tier flag. Mirrors
-    # admin_pipeline.py's A1 pattern (lines ~458-488): reuse an existing seo_context row for
-    # this tour_id if one exists (free — AA-439-05 confirmed most tenant-rewritten tours were
-    # originally A1-generated and already have one), else call process_seo() on a miss
-    # (~$0.18/tour, AA-439-05 §7). Best-effort — a SEO fetch failure must not block the
-    # rewrite itself, same as A1's own try/except around this block.
+    # AA-445-02 — T2 passes the tour's SEO context to the shared rewrite graph (it used to reach it
+    # as {}). AA-646 follow-up (KAN-90, 29/09/2026): a tenant action never buys DataForSEO, so T2
+    # only READS the cached seo_context row; it no longer calls process_seo() on a miss (~$0.18
+    # per tour, outside every spend budget). A tour with no row is rewritten without SEO keywords
+    # and logged (`t2_seo_context_missing`) so admin research can cover it.
     seo_data: dict = {}
     try:
         async with pool.acquire() as _conn_seo:
@@ -154,20 +151,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             }
             seo_data["keywords"] = {"top_keywords": seo_data["top_keywords"]}
         else:
-            from services.seo_intelligence.handler import process_seo
-            from services.seo_intelligence.seed_builder import build_seed
-            seed = build_seed(tour_dict.get("country"), None, tour_dict.get("name")) or tour_dict.get("name", "")
-            if seed:
-                _seo_result = await process_seo(
-                    tour_id=pt["tour_id"], destination=seed, seed=seed,
-                    tenant_id=tenant_id, seo_mode="dataforseo",
-                )
-                seo_data = _seo_result.get("data", {})
-                if "keywords" in seo_data and "top_keywords" not in seo_data:
-                    seo_data["top_keywords"] = seo_data["keywords"].get("top_keywords", [])
-                elif "top_keywords" in seo_data and "keywords" not in seo_data:
-                    seo_data["keywords"] = {"top_keywords": seo_data["top_keywords"]}
-                seo_data.setdefault("top_keywords", [])
+            import structlog as _sl_seo
+            _sl_seo.get_logger().info("t2_seo_context_missing", tour_id=pt["tour_id"],
+                                      tenant_id=tenant_id)
     except Exception as _seo_err:
         import structlog as _sl_seo
         _sl_seo.get_logger().warning("t2_seo_step_failed", tour_id=pt["tour_id"], error=str(_seo_err))
