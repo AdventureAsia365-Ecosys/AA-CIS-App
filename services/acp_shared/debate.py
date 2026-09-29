@@ -33,7 +33,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
-from services.content_generation.brand_fit import has_brand_signals, score_brand_fit
+from services.content_generation.brand_fit import has_brand_signals, score_candidate_fit
 from shared.llm_client.call_log import record_call
 
 if TYPE_CHECKING:
@@ -46,6 +46,9 @@ logger = structlog.get_logger()
 # LLM judgement with its own restraint, so a single bad threshold/data point could otherwise
 # cut an unbounded fraction of a Channel's candidates in one `propose_slate()` call.
 MAX_CUT_FRACTION = 0.5
+# Evidence shown to the brand-fit judge per candidate (distinct atom texts, each trimmed).
+EVIDENCE_ITEMS = 12
+EVIDENCE_CHARS = 240
 
 
 async def _fetch_brand_profile(conn, tenant_id: UUID) -> dict | None:
@@ -73,14 +76,12 @@ async def _fetch_brand_profile(conn, tenant_id: UUID) -> dict | None:
 
 
 async def _fetch_candidate_text(conn, candidate: "Candidate") -> dict:
-    """Debate runs BEFORE T2 rewrite — a candidate Segment/Route has no `generated_content`
-    row yet (that is created by T2, AFTER a tenant picks it off the Slate). `brand_fit.
-    score_brand_fit()` needs a `generated`-shaped dict (name/subtitle/summary/highlights/
-    itineraries/seo_title/seo_meta) to judge — synthesized here from the candidate's own member
-    atoms' raw `text` (acp_contract.tour_atoms), the only real content that exists at this
-    point in the pipeline. Deliberately thin (not a rewrite-quality judgement — Debate's own
-    brand-fit standard is "does this read as this brand's angle", answerable from raw atom text
-    same as the origin's own Critic reads a Segment/Route's raw evidence, not a written page)."""
+    """Debate runs BEFORE T2 rewrite — a candidate Segment/Route has no `generated_content` row
+    yet (T2 creates it after a tenant picks it off the Slate). The only real content is its
+    member atoms' raw `text` (acp_contract.tour_atoms), so `score_candidate_fit()` is given the
+    topic (place + action) plus that text as evidence: deduped, capped, never dressed up as a
+    tour page. (Until S203 the same joined text was pasted into summary, highlights and
+    itineraries of a fake page and judged as a rewrite — the judge read it as corrupted.)"""
     if candidate.segment_id:
         rows = await conn.fetch("""
             SELECT ta.text FROM acp_contract.atom_segment_member asm
@@ -96,14 +97,20 @@ async def _fetch_candidate_text(conn, candidate: "Candidate") -> dict:
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
             WHERE r.route_id = $1 AND NOT ta.deleted
         """, candidate.route_id)
-    texts = [r["text"] for r in rows if r["text"]]
+    evidence: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        text = " ".join((r["text"] or "").split())
+        if not text or text.casefold() in seen:
+            continue
+        seen.add(text.casefold())
+        evidence.append(text[:EVIDENCE_CHARS])
+        if len(evidence) >= EVIDENCE_ITEMS:
+            break
     return {
-        "name": candidate.place or candidate.hub_name or "",
-        "subtitle": candidate.action or "",
-        "summary": " ".join(texts)[:800],
-        "highlights": texts[:5],
-        "itineraries": " ".join(texts)[:600],
-        "seo_title": "", "seo_meta": "",
+        "place": candidate.place or candidate.hub_name or "",
+        "action": candidate.action or "",
+        "evidence": evidence,
     }
 
 
@@ -203,14 +210,14 @@ async def apply_debate(
                 if cached is not None:
                     judge_score = cached["judge_score"]
                 else:
-                    generated = await _fetch_candidate_text(conn, candidate)
-                    # NOTE: score_brand_fit() is synchronous (same as judge_node.py's own call
+                    topic = await _fetch_candidate_text(conn, candidate)
+                    # NOTE: score_candidate_fit() is synchronous (same as judge_node.py's own call
                     # site in the T2 LangGraph) — a real LLM call here blocks this task's event
                     # loop for its duration. Same pre-existing characteristic every judge_node.py
                     # call already has platform-wide, not a new regression introduced by Debate;
                     # a cache HIT (the expected steady state after brand_version stabilizes) never
                     # reaches this line at all.
-                    result = score_brand_fit(brand_profile, generated)
+                    result = score_candidate_fit(brand_profile, topic)
                     # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
                     # own use of the same helper).
                     await record_call(

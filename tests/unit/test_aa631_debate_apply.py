@@ -164,7 +164,7 @@ async def test_apply_debate_brand_fit_cache_hit_skips_llm_call():
 
     with patch("services.acp_shared.debate._fetch_brand_profile",
                new=AsyncMock(return_value=_BRAND_PROFILE)), \
-         patch("services.acp_shared.debate.score_brand_fit") as m_score:
+         patch("services.acp_shared.debate.score_candidate_fit") as m_score:
         candidate = _seg_candidate("seg-1")
         out = await apply_debate(uuid4(), [candidate], conn)
 
@@ -195,7 +195,7 @@ async def test_apply_debate_brand_fit_cache_miss_calls_llm_and_stores(_no_llm_ca
 
     with patch("services.acp_shared.debate._fetch_brand_profile",
                new=AsyncMock(return_value=_BRAND_PROFILE)), \
-         patch("services.acp_shared.debate.score_brand_fit", return_value=fake_result) as m_score:
+         patch("services.acp_shared.debate.score_candidate_fit", return_value=fake_result) as m_score:
         candidate = _seg_candidate("seg-1")
         out = await apply_debate(uuid4(), [candidate], conn)
 
@@ -246,7 +246,7 @@ async def test_apply_debate_skips_brand_fit_when_no_signals():
     }
     with patch("services.acp_shared.debate._fetch_brand_profile",
                new=AsyncMock(return_value=empty_profile)), \
-         patch("services.acp_shared.debate.score_brand_fit") as m_score:
+         patch("services.acp_shared.debate.score_candidate_fit") as m_score:
         candidate = _seg_candidate("seg-1")
         out = await apply_debate(uuid4(), [candidate], conn)
 
