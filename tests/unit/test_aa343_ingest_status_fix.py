@@ -26,6 +26,17 @@ from services.ingestion import handler
 from shared.repository.raw_tour_repository import RawTourRepository
 
 
+@pytest.fixture(autouse=True)
+def _no_jev_ingest_gates():
+    """AA-690: ingest now asks Jev; these tests predate it and exercise other rules."""
+    from services.ingestion import jev_gates
+
+    async def none(rows, *a, **k):
+        return [jev_gates.RowVerdict() for _ in rows]
+    with patch.object(jev_gates, "assess_rows", new=none), patch.object(jev_gates, "assess_rows_standalone", new=none):
+        yield
+
+
 def _make_conn(fetchrow_return=None, fetchval_return="staging-id-1"):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=fetchrow_return)
