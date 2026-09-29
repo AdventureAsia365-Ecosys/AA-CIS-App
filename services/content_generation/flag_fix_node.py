@@ -14,6 +14,7 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
 from .seo_meta_utils import (best_meta_candidate, meta_in_band, SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX)
+from .forbidden_words import all_forbidden, forbidden_in
 from .prompts import parse_source_day_word_counts
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
@@ -253,6 +254,21 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str):
     return serialize_itinerary_days(days), extra_cost, True
 
 
+def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
+    """AA-641: restore, per field, the pre-repair value of any field whose repair ADDED a forbidden
+    word it did not have before. Mutates `after`; returns {field: [words added]}. A field that
+    already contained the word keeps its repair (the repair did not make it worse)."""
+    reverted = {}
+    for k in keys:
+        if k not in after or k not in before:
+            continue
+        added = forbidden_in(after[k], forbidden) - forbidden_in(before[k], forbidden)
+        if added:
+            after[k] = before[k]
+            reverted[k] = sorted(added)
+    return reverted
+
+
 def flag_fix_node(state: dict) -> dict:
     """AA-134: Fix only the flagged fields identified by brand_audit_node."""
     # AA-204: run if brand-flagged OR a deterministic SEO length/sentence code fired.
@@ -288,8 +304,18 @@ def flag_fix_node(state: dict) -> dict:
             )
             extra_cost += itin_cost
             if itin_applied:
-                current_content["itineraries"] = new_itinerary
-                applied_fields.add("itineraries")
+                # AA-641: same forbidden-word guard as the generic pass below.
+                itin_after = {"itineraries": new_itinerary}
+                itin_reverted = _revert_introduced_forbidden(
+                    current_content, itin_after, {"itineraries"},
+                    all_forbidden(state.get("brand_forbidden_words")),
+                )
+                if itin_reverted:
+                    logger.warning("flag_fix_introduced_forbidden", fields=itin_reverted,
+                                   tour=current_content.get("name"))
+                else:
+                    current_content["itineraries"] = new_itinerary
+                    applied_fields.add("itineraries")
 
         if not fix_keys:
             # Nothing left for the generic FIX_SYSTEM pass — either the itinerary repair above was
@@ -318,6 +344,9 @@ def flag_fix_node(state: dict) -> dict:
             for k in fix_keys if k in current_content
         )
         tour = state.get("tour", {})
+        # AA-641: the words validate_node fires FORBIDDEN_WORD on (AA list + tenant list). A repair
+        # that adds one of them turns a soft/length problem into a hard code and a full rewrite.
+        forbidden = all_forbidden(state.get("brand_forbidden_words"))
 
         # AA-201/AA-204: seo_meta repair-to-band rules (port of v5 repair_seo_fields)
         meta_rules = ""
@@ -347,6 +376,8 @@ TOUR CONTEXT:
 Name: {current_content.get("name")}
 Trip type: {current_content.get("trip_type") or tour.get("trip_type")}
 Duration: {tour.get("duration")}{meta_rules}
+
+NEVER USE these words or phrases anywhere in your output: {", ".join(forbidden)}.
 
 Return JSON with ONLY these keys: {list(fix_keys)}
 Keep all other fields unchanged."""
@@ -402,6 +433,9 @@ Keep all other fields unchanged."""
         for k, v in fixed_fields.items():
             if k in fix_keys:
                 new_generated[k] = v
+        reverted = _revert_introduced_forbidden(current_content, new_generated, fix_keys, forbidden)
+        if reverted:
+            logger.warning("flag_fix_introduced_forbidden", fields=reverted, tour=current_content.get("name"))
 
         # AA-205: deterministic post-repair band guard for seo_meta (no pad, no escalate).
         # LLM repair can overshoot under SEO_META_MIN (e.g. 132). AA-215 revalidate re-runs
@@ -448,7 +482,7 @@ Keep all other fields unchanged."""
         if lessons:
             _write_lessons_safe(lessons, state)
 
-        applied_fields |= fix_keys
+        applied_fields |= set(fix_keys) - set(reverted)
         return {
             **state,
             "generated":       new_generated,
