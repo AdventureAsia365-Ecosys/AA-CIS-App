@@ -9,6 +9,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 import AdminSidebar from "../_components/AdminSidebar";
+import BudgetsPanel from "./BudgetsPanel";
 import {
   A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
@@ -699,7 +700,8 @@ export default function ExternalSpendPage() {
 
         <div style={{ marginBottom: 20 }}>
           <TabBar
-            tabs={[{ key: "overview", label: "Overview" }, { key: "llm", label: "LLM" }, { key: "dfs", label: "DataForSEO" }]}
+            tabs={[{ key: "overview", label: "Overview" }, { key: "llm", label: "LLM" }, { key: "dfs", label: "DataForSEO" },
+                   { key: "budgets", label: "Budgets" }]}
             active={tab} onChange={setTab}
           />
         </div>
@@ -723,15 +725,18 @@ export default function ExternalSpendPage() {
           </Card>
         )}
 
-        {loading && <LoadingScreen msg="Loading spend…" />}
-        {!loading && error && (
+        {/* AA-665 — budgets load on their own; the page's time window and filters do not apply. */}
+        {tab === "budgets" && <BudgetsPanel />}
+
+        {tab !== "budgets" && loading && <LoadingScreen msg="Loading spend…" />}
+        {tab !== "budgets" && !loading && error && (
           <Card style={{ textAlign: "center", padding: 40 }}>
             <div style={{ color: A.red, marginBottom: 12 }}>{error}</div>
             <Btn variant="secondary" onClick={() => load(rangeQs)}>Retry</Btn>
           </Card>
         )}
 
-        {!loading && !error && (
+        {tab !== "budgets" && !loading && !error && (
           <>
             {/* ═══════════ OVERVIEW ═══════════ */}
             {tab === "overview" && (
