@@ -178,6 +178,9 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
   // trigger existed, never gets atomized on its own).
   const [unatomizedTours, setUnatomizedTours] = useState<{ tour_id: string; tour_name: string }[]>([]);
   const [atomizeRunning, setAtomizeRunning] = useState<string | null>(null); // status line while polling
+  // AA-687 — the a3_atomize jobs the last trigger enqueued, linked to the Jobs page (kept after the
+  // poll ends so a slow or failed run can still be opened).
+  const [atomizeJobIds, setAtomizeJobIds] = useState<string[]>([]);
   const [atomizeTriggering, setAtomizeTriggering] = useState(false);
 
   const loadUnatomized = useCallback(() => {
@@ -195,7 +198,8 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
         body: JSON.stringify(target),
       });
       if (!res.ok) { setAtomizeTriggering(false); return; }
-      const body: { tour_ids: string[] } = await res.json();
+      const body: { tour_ids: string[]; job_ids?: string[] } = await res.json();
+      setAtomizeJobIds(body.job_ids ?? []);
       setAtomizeRunning(
         "all" in target ? `Atomizing ${body.tour_ids.length} tours…` : "Atomizing…",
       );
@@ -316,6 +320,12 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                   Atomize all {unatomizedTours.length} tours (runs in background)
                 </Btn>
                 {atomizeRunning && <span style={{ fontSize: 12, color: A.muted }}>{atomizeRunning}</span>}
+                {atomizeJobIds.length > 0 && (
+                  <a href={atomizeJobIds.length === 1 ? `/admin/jobs?job=${atomizeJobIds[0]}` : "/admin/jobs?kind=a3_atomize"}
+                     style={{ fontSize: 12, color: A.accent }}>
+                    {atomizeJobIds.length === 1 ? "View job →" : `View ${atomizeJobIds.length} jobs →`}
+                  </a>
+                )}
               </div>
             </Card>
           )}

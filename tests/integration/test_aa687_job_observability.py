@@ -124,3 +124,13 @@ async def test_llm_calls_lists_the_job_calls_with_totals_and_split(pool):
     assert out["calls"][0]["texts"] == 3 and out["truncated"] is False
     links = await queue.domain_links(pool, job_id, {"tour_id": "t-1"})
     assert links == {"tour_versions": [], "content_pieces": [], "tour_id": "t-1", "version_id": None}
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_filters_by_tour_across_payload_shapes(pool):
+    atomize, _ = await queue.enqueue(pool, "a3_atomize", {"tour_id": "tour-1"})
+    rewrite, _ = await queue.enqueue(pool, "t2_rewrite", {"published_tour_id": "tour-1", "version_id": "v"})
+    await queue.enqueue(pool, "a3_atomize", {"tour_id": "tour-2"})
+    got = {j["id"] for j in await queue.list_jobs(pool, tour_id="tour-1")}
+    assert got == {atomize, rewrite}
+    assert len(await queue.list_jobs(pool)) == 3  # no filter: everything

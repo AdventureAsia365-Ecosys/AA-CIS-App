@@ -42,10 +42,12 @@ def _iso(d: dict) -> dict:
 @router.get("/jobs", summary="AA-650 — list jobs")
 async def list_jobs(request: Request, kind: Optional[str] = None,
                     status: Optional[str] = Query(None, description="|".join(_STATUSES)),
-                    limit: int = Query(50, ge=1, le=200)):
+                    limit: int = Query(50, ge=1, le=200),
+                    tour_id: Optional[str] = Query(None, description="AA-687: jobs whose payload names this tour")):
     if status is not None and status not in _STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {_STATUSES}")
-    rows = await queue.list_jobs(request.app.state.pool, kind=kind, status=status, limit=limit)
+    rows = await queue.list_jobs(request.app.state.pool, kind=kind, status=status, limit=limit,
+                                 tour_id=tour_id)
     return {"jobs": [_iso(r) for r in rows]}
 
 

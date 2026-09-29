@@ -196,7 +196,8 @@ export default function JobDrawer({ jobId, tick, expectedSeconds, maxReleases, e
                 <SLabel>What this job wrote</SLabel>
                 {links.tour_id && (
                   <Row label="Tour">
-                    <a href={`/admin/review?tour_id=${links.tour_id}`} style={{ color: A.accent, fontFamily: mono }}>{links.tour_id}</a>
+                    <span style={{ fontFamily: mono }}>{links.tour_id}</span>
+                    {" · "}<a href={`/admin/jobs?tour_id=${links.tour_id}`} style={{ color: A.accent }}>all jobs for this tour</a>
                     {links.version_id && <span style={{ color: A.muted }}> · version <span style={{ fontFamily: mono }}>{links.version_id.slice(0, 8)}</span></span>}
                   </Row>
                 )}
