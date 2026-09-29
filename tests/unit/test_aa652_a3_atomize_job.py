@@ -78,3 +78,21 @@ async def test_publish_survives_a_failed_enqueue(monkeypatch):
          patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(side_effect=RuntimeError("db"))):
         out = await handler.process_export("gc-1")
     assert out["status"] == "exported"
+
+
+@pytest.mark.asyncio
+async def test_atomize_chain_runs_off_the_worker_event_loop():
+    """S201 incident — the chain's blocking embedding pacing must not run on the API's loop."""
+    import asyncio
+    import threading
+    seen = {}
+
+    async def fake_chain(**kwargs):
+        seen["thread"] = threading.current_thread()
+        seen["loop"] = asyncio.get_running_loop()
+
+    main_loop = asyncio.get_running_loop()
+    with patch("services.export.handler._run_a3_atomize_background", fake_chain):
+        await a3.run(_ctx())
+    assert seen["thread"] is not threading.main_thread()
+    assert seen["loop"] is not main_loop

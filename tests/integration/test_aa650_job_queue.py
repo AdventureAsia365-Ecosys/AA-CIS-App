@@ -113,9 +113,31 @@ async def test_reaper_requeues_expired_lease_and_fails_when_attempts_are_used(po
 async def test_release_does_not_count_the_attempt(pool):
     job_id, _ = await queue.enqueue(pool, "k", {})
     await queue.claim(pool, "w", {"k": 1}, 60)
-    assert await queue.release(pool, job_id, "w", 0.5)
+    assert await queue.release(pool, job_id, "w", 0.5) == "queued"
     row = await _status(pool, job_id)
     assert row["status"] == "queued" and row["attempt"] == 0 and row["cost"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_a_job_released_too_often_fails_instead_of_looping(pool):
+    """S201 incident: a job that makes its own worker process get replaced would otherwise be
+    released and re-claimed forever (a release does not count as an attempt)."""
+    job_id, _ = await queue.enqueue(pool, "k", {}, max_attempts=5)
+    statuses = []
+    for _ in range(queue.MAX_RELEASES):
+        await queue.claim(pool, "w", {"k": 1}, 60)
+        statuses.append(await queue.release(pool, job_id, "w", None))
+    assert statuses == ["queued"] * (queue.MAX_RELEASES - 1) + ["failed"]
+    row = await _status(pool, job_id)
+    assert row["status"] == "failed" and "stopped mid-run" in row["error"]
+
+
+@pytest.mark.asyncio
+async def test_release_of_a_cancel_requested_job_cancels_it(pool):
+    job_id, _ = await queue.enqueue(pool, "k", {})
+    await queue.claim(pool, "w", {"k": 1}, 60)
+    await queue.request_cancel(pool, job_id)
+    assert await queue.release(pool, job_id, "w", None) == "cancelled"
 
 
 @pytest.mark.asyncio

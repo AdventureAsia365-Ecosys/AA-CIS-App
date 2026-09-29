@@ -10,11 +10,19 @@ Re-running is safe and cheap: run_t5_atomize() skips days whose fingerprint is u
 call) and UPSERTs atoms (ON CONFLICT (atom_id)).
 
 Payload: {"tour_id", "version_id", "country", "rewritten": {name, summary, highlights, itineraries}}
+
+Runs in its OWN thread and event loop (not the worker's). The Segment/Score/Route recompute calls
+compute_embedding() straight from async code, and that function paces Cohere calls with a
+blocking time.sleep(3.5). Run on the API's loop (the worker lives in the API process), those
+sleeps starved /health and ECS replaced the task (S201 incident, 29/09/2026). The chain opens its
+own DB connection, so nothing is shared with the worker's loop. Trade-off: an admin cancel or a
+shutdown cannot interrupt the thread; the job is released and the thread ends with the process.
 Concurrency 1: the Segment/Score/Route recompute is platform-wide, and one tour at a time is what
 the admin trigger already did.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
@@ -44,9 +52,13 @@ async def run(ctx: JobContext) -> Optional[dict]:
     if not (p.get("tour_id") and p.get("version_id") and isinstance(p.get("rewritten"), dict)):
         raise NonRetryable("payload needs tour_id, version_id and rewritten")
     await ctx.progress(phase="atomizing", tour_id=p["tour_id"])
-    await _run_a3_atomize_background(
-        tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
-        version_id=p["version_id"], reraise=True,
-    )
+
+    def _in_own_loop() -> None:
+        asyncio.run(_run_a3_atomize_background(
+            tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
+            version_id=p["version_id"], reraise=True,
+        ))
+
+    await asyncio.to_thread(_in_own_loop)
     await ctx.progress(phase="done")
     return {"tour_id": p["tour_id"], "version_id": p["version_id"]}

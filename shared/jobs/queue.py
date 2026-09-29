@@ -184,20 +184,42 @@ async def fail(pool, job: Job, worker_id: str, error: str, *, retryable: bool,
     return "failed" if ok else ""
 
 
-async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float]) -> bool:
-    """Graceful shutdown: back to the queue at once, and the interrupted attempt is not counted."""
+# A job whose worker keeps stopping mid-run (e.g. the process is replaced each time the job runs)
+# is failed after this many releases instead of looping forever — a release does not count as an
+# attempt, so without this cap such a job would never end.
+MAX_RELEASES = 3
+
+
+async def release(pool, job_id: str, worker_id: str, cost_usd: Optional[float]) -> str:
+    """Graceful shutdown: back to the queue at once, and the interrupted attempt is not counted.
+    Returns the new status: 'queued', 'cancelled' (an admin asked to cancel it), 'failed'
+    (released MAX_RELEASES times), or '' when the job was no longer ours."""
     row = await pool.fetchrow(
         """
-        UPDATE shared.job SET status = 'queued', attempt = greatest(attempt - 1, 0),
-               cost_usd = coalesce($3, cost_usd), run_after = now(),
-               locked_by = NULL, locked_until = NULL, updated_at = now(),
-               progress = progress || '{"released": true}'::jsonb
-        WHERE id = $1::uuid AND status = 'running' AND locked_by = $2
-        RETURNING id
+        WITH cur AS (
+            SELECT coalesce((progress->>'releases')::int, 0) + 1 AS releases, cancel_requested
+            FROM shared.job WHERE id = $1::uuid
+        )
+        UPDATE shared.job j SET
+            status = CASE WHEN cur.cancel_requested THEN 'cancelled'
+                          WHEN cur.releases >= $4 THEN 'failed' ELSE 'queued' END,
+            attempt = greatest(j.attempt - 1, 0),
+            error = CASE WHEN cur.cancel_requested THEN 'cancelled by admin'
+                         WHEN cur.releases >= $4 THEN 'stopped mid-run ' || cur.releases
+                              || ' times (the worker process keeps stopping while this job runs)'
+                         ELSE j.error END,
+            finished_at = CASE WHEN cur.cancel_requested OR cur.releases >= $4 THEN now()
+                               ELSE j.finished_at END,
+            cost_usd = coalesce($3, j.cost_usd), run_after = now(),
+            locked_by = NULL, locked_until = NULL, updated_at = now(),
+            progress = j.progress || jsonb_build_object('released', true, 'releases', cur.releases)
+        FROM cur
+        WHERE j.id = $1::uuid AND j.status = 'running' AND j.locked_by = $2
+        RETURNING j.status
         """,
-        job_id, worker_id, cost_usd,
+        job_id, worker_id, cost_usd, MAX_RELEASES,
     )
-    return row is not None
+    return row["status"] if row else ""
 
 
 async def reap(pool) -> dict:
