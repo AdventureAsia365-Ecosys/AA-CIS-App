@@ -16,6 +16,7 @@ from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .judge_node import judge_node
 from .seo_meta_utils import SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN
+from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
     generated_day_word_counts,
@@ -243,11 +244,8 @@ _FAILURE_MAP: dict[str, tuple[str, float]] = {
 
 # AA-240: canonical validate-node forbidden list (single source; validate_node + review-queue
 # handler both consume so the re-derived per-field reason can never drift from what fired).
-_VALIDATE_FORBIDDEN = [
-    "curated", "pristine", "refined", "tailored", "bespoke",
-    "stunning", "breathtaking", "magical", "paradise",
-    "cheap", "deal", "book now", "instant booking", "discount",
-]
+# AA-641: the list now lives in forbidden_words.py so flag_fix_node can use it too (circular import).
+_VALIDATE_FORBIDDEN = VALIDATE_FORBIDDEN
 
 # AA-240: failure code -> editable gc field (column) so the review UI marks which field failed.
 # Multi-field codes (FORBIDDEN_WORD, MISSING_FIELD) are resolved by re-scanning live content in
@@ -598,10 +596,8 @@ def validate_node(state: ContentState) -> ContentState:
             score -= 1.0
 
     # Forbidden words — AA core list + tenant custom list
-    forbidden = list(_VALIDATE_FORBIDDEN)  # AA-240: shared const
-    # P3-S3: Merge tenant forbidden_words (lowercase, deduplicated)
-    tenant_forbidden = [w.lower().strip() for w in (state.get("brand_forbidden_words") or []) if w]
-    all_forbidden = list(dict.fromkeys(forbidden + tenant_forbidden))  # preserve order, dedupe
+    # P3-S3: AA core list + the tenant's own words (AA-641: shared with flag_fix_node)
+    all_forbidden = all_forbidden_words(state.get("brand_forbidden_words"))
 
     content_text = json.dumps(generated).lower()
     for word in all_forbidden:
