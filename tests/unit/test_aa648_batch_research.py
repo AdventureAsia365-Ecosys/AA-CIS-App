@@ -12,9 +12,15 @@ US = [(2840, "United States", "en")]
 US_UK = [(2840, "United States", "en"), (2826, "United Kingdom", "en")]
 
 
-def _pool(cached_rows=None):
+def _pool(cached_rows=None, countries=None):
     conn = MagicMock()
-    conn.fetch = AsyncMock(return_value=cached_rows or [])
+
+    async def _fetch(sql, *args):
+        if "mode() WITHIN GROUP" in sql:
+            return [{"canonical_place": p, "country": c} for p, c in (countries or {}).items()]
+        return cached_rows or []
+
+    conn.fetch = AsyncMock(side_effect=_fetch)
     conn.execute = AsyncMock()
     conn.executemany = AsyncMock()
     pool = MagicMock()
@@ -60,7 +66,8 @@ def test_parse_proposals_handles_fences_and_bad_items():
 
 @pytest.mark.asyncio
 async def test_batch_buys_one_volume_task_for_all_places_and_logs_researched():
-    pool, conn = _pool(cached_rows=[{"keyword": "paro", "search_volume": 5000}])
+    pool, conn = _pool(cached_rows=[{"keyword": "paro", "search_volume": 5000}],
+                       countries={"Haa Valley": "Bhutan"})
     client = MagicMock()
     client.fetch_volumes_bulk = AsyncMock(return_value={"paro festival": 800, "thimphu": 2000,
                                                         "thimphu weekend market": 0, "haa valley": None})
@@ -85,11 +92,39 @@ async def test_batch_buys_one_volume_task_for_all_places_and_logs_researched():
     assert sorted(c.args[1] for c in m_serp.await_args_list) == ["paro", "thimphu"]
     # suggestions: one multi-seed task for the zero-volume place
     client.fetch_keyword_ideas_multi.assert_awaited_once()
-    assert client.fetch_keyword_ideas_multi.await_args.args[0] == ["haa valley"]
+    assert client.fetch_keyword_ideas_multi.await_args.args[0] == ["haa valley bhutan"]
     # all 3 places marked researched in one executemany
     log_calls = [c for c in conn.executemany.await_args_list if "segment_research_log" in c.args[0]]
     assert len(log_calls) == 1 and len(log_calls[0].args[1]) == 3
     assert result["places_researched"] == 3 and result["volume_tasks"] == 1 and result["llm_calls"] == 1
+
+
+def test_idea_seed_adds_country_once_and_caps_words():
+    assert rb._idea_seed(rb._Place("Mongar", [], ["US"]), "bhutan") == "mongar bhutan"
+    assert rb._idea_seed(rb._Place("Paro, Bhutan", [], ["US"]), "bhutan") == "paro bhutan"
+    assert rb._idea_seed(rb._Place("Ura Valley", [], ["US"]), None) == "ura valley"
+    long = rb._Place(" ".join(f"w{i}" for i in range(12)), [], ["US"])
+    assert len(rb._idea_seed(long, "nepal").split()) == 10
+
+
+@pytest.mark.asyncio
+async def test_suggestion_seeds_use_place_country_not_the_zero_volume_keyword():
+    # 28/09/2026: seeds were the places' own zero-volume keywords and DFS echoed them back (0 ideas)
+    pool, conn = _pool(countries={"Mongar": "Bhutan", "Ura Valley": "Bhutan"})
+    places = [rb._Place("Mongar", [], ["US"], keywords=["mongar to bumthang"]),
+              rb._Place("Ura Valley", [], ["US"], keywords=["ura valley"]),
+              rb._Place("Somewhere", [], ["US"], keywords=["somewhere x"])]
+    client = MagicMock()
+    client.fetch_keyword_ideas_multi = AsyncMock(return_value=[
+        {"keyword": "mongar bhutan", "search_volume": 40},
+        {"keyword": "hotels in mongar", "search_volume": 10},
+        {"keyword": "ura valley bhutan", "search_volume": None}])
+    stats = await rb._buy_suggestions(places, US, client, pool, sr._RunGuard())
+    assert client.fetch_keyword_ideas_multi.await_args.args[0] == [
+        "mongar bhutan", "ura valley bhutan", "somewhere"]
+    stored = [c.args[1] for c in conn.executemany.await_args_list if "search_demand" in c.args[0]][0]
+    assert stored == [("mongar bhutan", "US", 40), ("hotels in mongar", "US", 10)]
+    assert stats["idea_tasks"] == 1 and stats["ideas_stored"] == 2
 
 
 @pytest.mark.asyncio
