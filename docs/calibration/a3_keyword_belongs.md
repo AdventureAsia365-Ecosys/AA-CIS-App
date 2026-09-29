@@ -10,7 +10,7 @@ Question (stage `a3_research`, AA-693 A3-3), asked before DataForSEO volumes are
 - **Shadow pass:** the deployed `decide()` (stage `adhoc_aa661`), 200 verdicts, 0 errors, **$0.003**.
 - Raw data: `data/a3_keyword_belongs_2026-09-29.json` (place, keyword, p, label, code).
 
-## Labels — agent-proposed, NOT independent human labels
+## Labels — agent-proposed, then reviewed by Nghiệp (69 rows)
 Operational meaning: *should this keyword's search volume be bought for / credited to this place?*
 
 | Label | Codes |
@@ -18,7 +18,7 @@ Operational meaning: *should this keyword's search volume be bought for / credit
 | **1** | `same`; `sub` (an attraction inside the place); `logi` (getting to / around it, incl. the trip to it); `var` (spelling variant) |
 | **0** | `other` (a different place, incl. a same-type neighbour); `cont` (the keyword is the containing place); `kind` (the place is only a generic kind: resort, monastery, homestay…); `route` (an "X to Y" transfer given an endpoint's demand); `ctry` (a country-level place given one spot inside it) |
 
-Balance: 100 × 1, 100 × 0.
+Balance after review: 102 × 1, 98 × 0.
 
 ## Result
 | Zone | Threshold | n | Precision vs labels |
@@ -126,6 +126,21 @@ Rule from the design doc (§5): review ≥ 20% at random plus every agent-vs-Jev
 | 50 | monastery | tiger s nest monastery | 0.94 | 0 | kind | |
 | 163 | Khone Phapheng Waterfall to Pakse | Khone Phapheng | 0.94 | 0 | route | |
 
+## Review result (Nghiệp, 29/09/2026)
+- Reviewed **69 rows** (A: 40 random + B: 36 disagreements, 7 in both). File: `AA-Ecosys/docs/calib/jev_a3_keyword_belongs_review.xlsx`.
+- **67 agree, 2 overturned (2.9%)**, below the 10% re-pose limit:
+  - #53 Beijing ↔ "Great Wall near Beijing": 0 → **1** ("the Great Wall is an attraction belonging to Beijing");
+  - #54 4000 Islands (Si Phan Don) ↔ "don daeng": 0 → **1** ("Don Daeng is an island of the 4000 Islands").
+- Both have p = 0.66 / 0.67 (grey), so the floors are unchanged after the correction: reject ≤ 0.30 → 55/55 correct, accept ≥ 0.95 → 59/59 correct.
+- Borderline notes kept with their labels: #1 "twin waterfall", #20 "Beijing Duck restaurant", #43 "longest suspension bridge bhutan". The ctry rule (#13, #63, #67) was confirmed.
+- Labels in `data/…json` now carry `review` and the corrected label (`code` suffixed `->nghiep`).
+
+## Compared with Ms. Thư's run of the same question (`aa-soscial-media`, ticket 03, 21/09/2026)
+- She judged 1,070 bought keywords **unlabelled** and put the floor at **0.15**. False rejects appeared at 0.42–0.50 (`peace memorial museum` 0.45, `kumano kodo` 0.48). Generic keywords spread 0.13–0.46, and `hot springs` (0.17) escaped her floor.
+- Our **labelled** sample has no false reject up to 0.30, which is consistent with her false rejects sitting above 0.40. Her 0.15 was chosen without labels, as a margin against the unknown.
+- Both runs agree on the asymmetry: a false reject is invisible later (a keyword never bought), while a false accept costs about a cent. So the floor stays **below every observed false reject**, and every probability is kept so the floor can move.
+
 ## Decision
-- [ ] Nghiệp reviewed A + B; overturned: __ / __.
-- [ ] Set `a3_keyword_belongs` to **enforce** with `reject_ceiling 0.30`, `accept_floor 0.95`, `calibration_ref docs/calibration/a3_keyword_belongs.md` (/admin/decisions).
+- [x] Nghiệp reviewed A + B; overturned **2 / 69** (< 10%).
+- [x] Enforce `a3_keyword_belongs` with **reject ceiling 0.30**, accept floor 0.95, `calibration_ref docs/calibration/a3_keyword_belongs.md`, threshold v1.
+- [ ] After the first enforced research run: read the rejected keywords on /admin/decisions (Verdicts → question, zone Reject) and confirm there is no false reject. If there is one, lower the ceiling toward Ms. Thư's 0.15.

@@ -42,7 +42,9 @@
 "stratum": "same",
 "p": 0.68,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": "Tên địa điểm quá chung (twin waterfall), giữ nhãn 0 — dòng biên, cần Jev/người xác nhận nếu muốn"
 },
 {
 "i": 5,
@@ -51,7 +53,9 @@
 "stratum": "same",
 "p": 0.98,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 6,
@@ -69,7 +73,9 @@
 "stratum": "same",
 "p": 0.73,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 8,
@@ -96,7 +102,9 @@
 "stratum": "same",
 "p": 0.91,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 11,
@@ -114,7 +122,9 @@
 "stratum": "same",
 "p": 0.46,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 13,
@@ -159,7 +169,9 @@
 "stratum": "same",
 "p": 0.35,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 18,
@@ -168,7 +180,9 @@
 "stratum": "same",
 "p": 0.98,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 19,
@@ -213,7 +227,9 @@
 "stratum": "same",
 "p": 0.98,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 24,
@@ -222,7 +238,9 @@
 "stratum": "same",
 "p": 0.98,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 25,
@@ -240,7 +258,9 @@
 "stratum": "same",
 "p": 0.98,
 "label": 1,
-"code": "same"
+"code": "same",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 27,
@@ -276,7 +296,9 @@
 "stratum": "longer",
 "p": 0.94,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 31,
@@ -284,8 +306,11 @@
 "keyword": "Great Wall near Beijing",
 "stratum": "longer",
 "p": 0.66,
-"label": 0,
-"code": "other"
+"label": 1,
+"code": "other->nghiep",
+"review": "Sai",
+"review_note": "Great Wall là điểm tham quan thuộc Beijing (tương tự \"punakha river rafting\" ở Punakha) → thuộc",
+"agent_label": 0
 },
 {
 "i": 32,
@@ -303,7 +328,9 @@
 "stratum": "longer",
 "p": 0.98,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 34,
@@ -411,7 +438,9 @@
 "stratum": "longer",
 "p": 0.95,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 46,
@@ -456,7 +485,9 @@
 "stratum": "longer",
 "p": 0.94,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 51,
@@ -465,7 +496,9 @@
 "stratum": "longer",
 "p": 0.92,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 52,
@@ -492,7 +525,9 @@
 "stratum": "longer",
 "p": 0.84,
 "label": 0,
-"code": "ctry"
+"code": "ctry",
+"review": "Đúng",
+"review_note": "Địa điểm là cả nước, keyword là điểm cụ thể → theo luật ctry giữ 0"
 },
 {
 "i": 55,
@@ -546,7 +581,9 @@
 "stratum": "longer",
 "p": 0.97,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 61,
@@ -573,7 +610,9 @@
 "stratum": "longer",
 "p": 0.96,
 "label": 1,
-"code": "logi"
+"code": "logi",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 64,
@@ -600,7 +639,9 @@
 "stratum": "longer",
 "p": 0.91,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 67,
@@ -636,7 +677,9 @@
 "stratum": "longer",
 "p": 0.93,
 "label": 0,
-"code": "ctry"
+"code": "ctry",
+"review": "Đúng",
+"review_note": "Theo luật ctry giữ 0"
 },
 {
 "i": 71,
@@ -690,7 +733,9 @@
 "stratum": "longer",
 "p": 0.95,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 77,
@@ -699,7 +744,9 @@
 "stratum": "longer",
 "p": 0.61,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 78,
@@ -708,7 +755,9 @@
 "stratum": "longer",
 "p": 0.49,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": "Keyword thêm \"bhutan\" mà địa điểm không nêu nơi; giữ 1 (dòng biên)"
 },
 {
 "i": 79,
@@ -762,7 +811,9 @@
 "stratum": "longer",
 "p": 0.81,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 85,
@@ -780,7 +831,9 @@
 "stratum": "longer",
 "p": 0.83,
 "label": 0,
-"code": "ctry"
+"code": "ctry",
+"review": "Đúng",
+"review_note": "Theo luật ctry giữ 0"
 },
 {
 "i": 87,
@@ -798,7 +851,9 @@
 "stratum": "longer",
 "p": 0.93,
 "label": 1,
-"code": "sub"
+"code": "sub",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 89,
@@ -807,7 +862,9 @@
 "stratum": "longer",
 "p": 0.12,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 90,
@@ -861,7 +918,9 @@
 "stratum": "longer",
 "p": 0.83,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 96,
@@ -870,7 +929,9 @@
 "stratum": "longer",
 "p": 0.17,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": "Keyword là món ăn/nhà hàng, không phải điểm tham quan → giữ 0 (dòng biên)"
 },
 {
 "i": 97,
@@ -879,7 +940,9 @@
 "stratum": "longer",
 "p": 0.83,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 98,
@@ -897,7 +960,9 @@
 "stratum": "longer",
 "p": 0.78,
 "label": 0,
-"code": "kind"
+"code": "kind",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 100,
@@ -1023,7 +1088,9 @@
 "stratum": "overlap",
 "p": 0.02,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 114,
@@ -1031,8 +1098,11 @@
 "keyword": "don daeng",
 "stratum": "overlap",
 "p": 0.67,
-"label": 0,
-"code": "other"
+"label": 1,
+"code": "other->nghiep",
+"review": "Sai",
+"review_note": "Don Daeng là một đảo thuộc 4000 Islands (Si Phan Don) → thuộc",
+"agent_label": 0
 },
 {
 "i": 115,
@@ -1050,7 +1120,9 @@
 "stratum": "overlap",
 "p": 0.04,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 117,
@@ -1077,7 +1149,9 @@
 "stratum": "overlap",
 "p": 0.78,
 "label": 0,
-"code": "cont"
+"code": "cont",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 120,
@@ -1104,7 +1178,9 @@
 "stratum": "overlap",
 "p": 0.71,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 123,
@@ -1131,7 +1207,9 @@
 "stratum": "overlap",
 "p": 0.11,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 126,
@@ -1140,7 +1218,9 @@
 "stratum": "overlap",
 "p": 0.67,
 "label": 0,
-"code": "cont"
+"code": "cont",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 127,
@@ -1158,7 +1238,9 @@
 "stratum": "overlap",
 "p": 0.89,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 129,
@@ -1185,7 +1267,9 @@
 "stratum": "overlap",
 "p": 0.58,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 132,
@@ -1212,7 +1296,9 @@
 "stratum": "overlap",
 "p": 0.55,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 135,
@@ -1230,7 +1316,9 @@
 "stratum": "overlap",
 "p": 0.61,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 137,
@@ -1284,7 +1372,9 @@
 "stratum": "overlap",
 "p": 0.02,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 143,
@@ -1293,7 +1383,9 @@
 "stratum": "overlap",
 "p": 0.61,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 144,
@@ -1320,7 +1412,9 @@
 "stratum": "overlap",
 "p": 0.21,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 147,
@@ -1356,7 +1450,9 @@
 "stratum": "overlap",
 "p": 0.04,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 151,
@@ -1374,7 +1470,9 @@
 "stratum": "overlap",
 "p": 0.07,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 153,
@@ -1383,7 +1481,9 @@
 "stratum": "overlap",
 "p": 0.76,
 "label": 0,
-"code": "cont"
+"code": "cont",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 154,
@@ -1401,7 +1501,9 @@
 "stratum": "overlap",
 "p": 0.71,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 156,
@@ -1410,7 +1512,9 @@
 "stratum": "overlap",
 "p": 0.02,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 157,
@@ -1419,7 +1523,9 @@
 "stratum": "overlap",
 "p": 0.65,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 158,
@@ -1437,7 +1543,9 @@
 "stratum": "overlap",
 "p": 0.84,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 160,
@@ -1473,7 +1581,9 @@
 "stratum": "overlap",
 "p": 0.94,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 164,
@@ -1482,7 +1592,9 @@
 "stratum": "overlap",
 "p": 0.12,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 165,
@@ -1518,7 +1630,9 @@
 "stratum": "overlap",
 "p": 0.07,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 169,
@@ -1527,7 +1641,9 @@
 "stratum": "overlap",
 "p": 0.61,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 170,
@@ -1536,7 +1652,9 @@
 "stratum": "overlap",
 "p": 0.71,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 171,
@@ -1599,7 +1717,9 @@
 "stratum": "overlap",
 "p": 0.05,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 178,
@@ -1635,7 +1755,9 @@
 "stratum": "overlap",
 "p": 0.11,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 182,
@@ -1644,7 +1766,9 @@
 "stratum": "overlap",
 "p": 0.74,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 183,
@@ -1671,7 +1795,9 @@
 "stratum": "overlap",
 "p": 0.52,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 186,
@@ -1707,7 +1833,9 @@
 "stratum": "overlap",
 "p": 0.68,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 190,
@@ -1716,7 +1844,9 @@
 "stratum": "overlap",
 "p": 0.6,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 191,
@@ -1725,7 +1855,9 @@
 "stratum": "overlap",
 "p": 0.33,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 192,
@@ -1734,7 +1866,9 @@
 "stratum": "overlap",
 "p": 0.26,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 193,
@@ -1743,7 +1877,9 @@
 "stratum": "overlap",
 "p": 0.13,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 194,
@@ -1752,7 +1888,9 @@
 "stratum": "overlap",
 "p": 0.77,
 "label": 0,
-"code": "other"
+"code": "other",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 195,
@@ -1779,7 +1917,9 @@
 "stratum": "overlap",
 "p": 0.54,
 "label": 0,
-"code": "route"
+"code": "route",
+"review": "Đúng",
+"review_note": null
 },
 {
 "i": 198,
