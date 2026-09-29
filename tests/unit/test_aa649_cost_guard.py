@@ -203,3 +203,58 @@ def test_budget_scope_validation():
         _valid("aws", "global")
     with pytest.raises(HTTPException):
         _valid("dfs", "tenant:x")
+
+
+# ── KAN-90: daily cap alert-only, per-run cap still hard ──────────────────────────────────────
+
+def test_alert_only_daily_cap_never_stops_but_per_run_cap_does():
+    b = _budget(per_run_usd=5.0, per_day_usd=10.0, hard_stop=True, hard_stop_day=False,
+                day_spent_at_start=12.0)
+    b.check(1.0)  # already over the daily cap: alert-only, so no stop
+    b.charge(4.5)
+    with pytest.raises(cg.BudgetExceeded) as e:
+        b.check(1.0)  # 4.5 + 1.0 > 5.0 per run
+    assert e.value.limit == "per_run"
+
+
+def test_remaining_ignores_an_alert_only_daily_cap():
+    b = _budget(per_run_usd=5.0, per_day_usd=10.0, hard_stop=True, hard_stop_day=False,
+                day_spent_at_start=9.9)
+    assert b.remaining_usd() == pytest.approx(5.0)
+    assert b.summary()["hard_stop_day"] is False and b.summary()["hard_stop"] is True
+
+
+def test_hard_stop_day_defaults_to_hard_stop():
+    assert _budget(hard_stop=True).day_is_hard is True
+    assert _budget(hard_stop=False).day_is_hard is False
+
+
+@pytest.mark.asyncio
+async def test_load_global_alert_only_keeps_job_per_run_hard():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[
+        {"scope": "global", "per_run_usd": None, "per_day_usd": 10.0, "hard_stop": False, "alert_pct": 80},
+        {"scope": "job:segment_research", "per_run_usd": 5.0, "per_day_usd": None, "hard_stop": True,
+         "alert_pct": 80},
+    ])
+    conn.fetchval = AsyncMock(return_value=11.0)  # already past the daily cap today
+    b = await cg.load_run_budget(_pool(conn), "dfs", "segment_research")
+    assert (b.hard_stop, b.day_is_hard) == (True, False)
+    assert b.remaining_usd() == pytest.approx(5.0)  # a run can still start, bounded by $5
+    b.check(4.0)
+    b.charge(4.0)
+    with pytest.raises(cg.BudgetExceeded):
+        b.check(2.0)
+
+
+@pytest.mark.asyncio
+async def test_load_daily_cap_is_hard_if_any_row_setting_it_is_hard():
+    conn = MagicMock()
+    conn.fetch = AsyncMock(return_value=[
+        {"scope": "global", "per_run_usd": None, "per_day_usd": 10.0, "hard_stop": False, "alert_pct": 80},
+        {"scope": "job:segment_research", "per_run_usd": 5.0, "per_day_usd": 8.0, "hard_stop": True,
+         "alert_pct": 80},
+    ])
+    conn.fetchval = AsyncMock(return_value=0.0)
+    b = await cg.load_run_budget(_pool(conn), "dfs", "segment_research")
+    assert b.day_is_hard is True and b.per_day_usd == 8.0
