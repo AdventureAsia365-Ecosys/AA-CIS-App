@@ -6,9 +6,23 @@ import pytest
 from services.acp_contract import segment_research as sr
 from services.acp_contract import segment_research_batch as rb
 from services.seo_intelligence.dataforseo_client import DFSCallError
+from shared.llm_client.decide import Decision, Verdict
 from shared.llm_client.models import LLMResponse
 
 US = [(2840, "United States", "en")]
+
+
+def _decision(key: str, zone: str = "grey", mode: str = "shadow") -> Decision:
+    return Decision(verdicts={key: Verdict(key, mode, zone)})
+
+
+@pytest.fixture(autouse=True)
+def _no_jev():
+    """AA-693: research now asks Jev; by default every verdict is a shadow grey (changes nothing)."""
+    async def fake(stage, subject, state, keys, **kw):
+        return _decision(keys[0])
+    with patch.object(rb, "decide", new=fake):
+        yield
 US_UK = [(2840, "United States", "en"), (2826, "United Kingdom", "en")]
 
 
@@ -139,6 +153,34 @@ async def test_ideas_task_skipped_below_min_seeds():
     client.fetch_keyword_ideas_multi.assert_not_awaited()
     assert stats == {"idea_tasks": 0, "ideas_stored": 0, "idea_tasks_skipped": 1}
     assert not places[0].failed          # skipping is not a purchase failure
+
+
+@pytest.mark.asyncio
+async def test_keyword_gate_drops_only_enforced_rejects_and_never_the_place_name():
+    places = [rb._Place("Nyuto Hot Spring", [], ["US"], keywords=["nyuto hot spring", "hot springs", "nyuto onsen"])]
+    asked = []
+
+    async def fake(stage, subject, state, keys, **kw):
+        asked.append(state["keyword"])
+        return _decision(keys[0], "reject", "enforce" if state["keyword"] == "hot springs" else "shadow")
+
+    with patch.object(rb, "decide", new=fake):
+        stats = await rb._gate_keywords(places, MagicMock())
+    assert sorted(asked) == ["hot springs", "nyuto onsen"]          # plain name never asked
+    assert places[0].keywords == ["nyuto hot spring", "nyuto onsen"]   # shadow reject kept
+    assert stats == {"jev_keywords_checked": 2, "jev_keywords_rejected": 1}
+
+
+@pytest.mark.asyncio
+async def test_idea_gate_drops_enforced_rejects_before_storing():
+    rows = [("hotel wangchuk mongar", "US", 10), ("mongar bhutan", "US", 40)]
+
+    async def fake(stage, subject, state, keys, **kw):
+        return _decision(keys[0], "reject" if "hotel" in state["keyword"] else "accept", "enforce")
+
+    with patch.object(rb, "decide", new=fake):
+        kept = await rb._gate_ideas(rows, ["mongar bhutan"], MagicMock())
+    assert kept == [("mongar bhutan", "US", 40)]
 
 
 @pytest.mark.asyncio
