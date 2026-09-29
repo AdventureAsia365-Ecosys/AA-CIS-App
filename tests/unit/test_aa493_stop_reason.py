@@ -86,7 +86,7 @@ async def test_record_call_forwards_stop_reason_to_insert():
     args = fake_conn.execute.call_args.args
     # AA-617 appended account/fallback_used/provider AFTER stop_reason, so stop_reason is now
     # the 4th-from-last bind param (…, stop_reason, account, fallback_used, provider).
-    assert args[-4] == "max_tokens"
+    assert args[-5] == "max_tokens"
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_record_call_with_pool_forwards_stop_reason_to_insert():
     )
     args = fake_conn.execute.call_args.args
     # AA-617: stop_reason is 4th-from-last now (…, stop_reason, account, fallback_used, provider).
-    assert args[-4] == "end_turn"
+    assert args[-5] == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_record_call_stop_reason_defaults_to_none_for_untouched_callers():
     # AA-617: bind tail is (…, stop_reason, account, fallback_used, provider). An untouched caller
     # leaves stop_reason/account/fallback_used NULL; provider is still DERIVED from the model
     # string ("sonnet-4-6" with no prefix + no explicit provider -> "bedrock-native").
-    assert args[-4] is None            # stop_reason
-    assert args[-3] is None            # account
-    assert args[-2] is None            # fallback_used
-    assert args[-1] == "bedrock-native"  # provider derived from clean model id
+    assert args[-5] is None            # stop_reason
+    assert args[-4] is None            # account
+    assert args[-3] is None            # fallback_used
+    assert args[-2] == "bedrock-native"  # provider derived from clean model id

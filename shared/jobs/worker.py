@@ -24,6 +24,7 @@ from typing import Optional
 import structlog
 
 from shared.cost_guard import BudgetExceeded
+from shared.llm_client import call_log
 
 from . import queue
 from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
@@ -99,7 +100,10 @@ class Worker:
             await run_terminal_hook(self.pool, job.id)
             return
         log.info("job_started")
-        handler_task = asyncio.create_task(kind.handler(ctx))
+        # The task copies the context at creation, so every LLM call the handler makes (threads
+        # included) logs this job's id — its cost shows on the Jobs page (call_log.bind_job).
+        with call_log.bind_job(job.id):
+            handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:
             while True:

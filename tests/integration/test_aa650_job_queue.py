@@ -175,6 +175,16 @@ def test_kinds(monkeypatch):
     async def doomed_job(ctx):
         raise RuntimeError("always fails")
 
+    @registry.job_kind("llm_job")
+    async def llm_job(ctx):
+        from shared.llm_client import call_log
+        ctx.add_cost(0.25)  # non-LLM spend the handler reports itself (e.g. DataForSEO)
+        # A worker thread (to_thread / LangGraph executor) sees the bound job id too.
+        seen["thread_job_id"] = await asyncio.to_thread(call_log.current_job_id)
+        await call_log.record_call_with_pool(
+            ctx.pool, stage="adhoc_aa652", role="writer", model="haiku-4-5", tokens_in=10,
+            tokens_out=5, cost_usd=0.1, quality_signal={"source": "test"})
+
     @registry.job_kind("slow_job")
     async def slow_job(ctx):
         seen["started"] = True
@@ -253,3 +263,28 @@ async def test_worker_runs_the_terminal_hook_when_a_job_finally_fails(pool, test
     finally:
         await worker.shutdown()
         await runner
+
+
+@pytest.mark.asyncio
+async def test_job_cost_includes_the_llm_calls_it_logged(pool, test_kinds):
+    from shared.llm_client import call_log
+    job_id, _ = await registry.enqueue(pool, "llm_job", {})
+    worker = Worker(pool, poll_seconds=0.1, heartbeat_seconds=0.2)
+    runner = asyncio.create_task(worker.run())
+    try:
+        await _wait_for(pool, job_id, ("succeeded",))
+    finally:
+        await worker.shutdown()
+        await runner
+    try:
+        assert test_kinds["thread_job_id"] == job_id
+        assert await pool.fetchval(
+            "SELECT count(*) FROM shared.llm_call_log WHERE job_id = $1::uuid", job_id) == 1
+        row = await queue.get(pool, job_id)
+        assert row["llm_cost_usd"] == pytest.approx(0.1)
+        assert row["cost_usd"] == pytest.approx(0.35)  # 0.25 reported + 0.1 logged
+        listed = await queue.list_jobs(pool, kind="llm_job")
+        assert listed[0]["cost_usd"] == pytest.approx(0.35)
+        assert call_log.current_job_id() is None  # nothing leaks outside the handler
+    finally:
+        await pool.execute("DELETE FROM shared.llm_call_log WHERE stage = 'adhoc_aa652'")
