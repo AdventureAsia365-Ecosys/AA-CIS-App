@@ -61,7 +61,7 @@ def _run():
     conn.close = AsyncMock()
 
     with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
-         patch("services.export.handler._run_a3_atomize_background", AsyncMock()):
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(return_value="job-1")):
         asyncio.run(export_handler.process_export(FAKE_UUID))
 
     insert_call = conn.fetchrow.call_args_list[1]
@@ -120,7 +120,7 @@ def test_null_highlights_defaults_to_empty_array_string_not_python_list():
     conn.close = AsyncMock()
 
     with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
-         patch("services.export.handler._run_a3_atomize_background", AsyncMock()):
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(return_value="job-1")):
         asyncio.run(export_handler.process_export(FAKE_UUID))
 
     args = conn.fetchrow.call_args_list[1].args

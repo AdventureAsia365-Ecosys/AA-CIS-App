@@ -743,7 +743,7 @@ class TestUnatomizedToursAndManualTrigger:
         assert exc.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_trigger_atomize_one_tour_fires_background_atomize(self):
+    async def test_trigger_atomize_one_tour_enqueues_a_job(self):
         tour_id = uuid.uuid4()
         gen_content_id = uuid.uuid4()
         conn = AsyncMock()
@@ -755,23 +755,24 @@ class TestUnatomizedToursAndManualTrigger:
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler._run_a3_atomize_background", AsyncMock()) as m_atomize:
+        with patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(return_value="job-1")) as m_atomize:
             body = admin_atoms.AtomizeTriggerRequest(tour_id=str(tour_id))
             result = await admin_atoms.trigger_atomize(body, request, x_admin_secret=_TEST_SECRET)
-            await asyncio.sleep(0)
 
         assert result["accepted"] is True
         assert result["tour_count"] == 1
         assert result["tour_ids"] == [str(tour_id)]
+        assert result["job_ids"] == ["job-1"]  # AA-652 — one durable job per tour
         m_atomize.assert_awaited_once()
         _args, kwargs = m_atomize.call_args
+        assert kwargs["dedupe"] is False  # admin re-runs must not be blocked by an older job
         assert kwargs["tour_id"] == str(tour_id)
         assert kwargs["version_id"] == str(gen_content_id)
         assert kwargs["country"] == "Vietnam"
         assert kwargs["rewritten"]["name"] == "Sapa Valley Trek"
 
     @pytest.mark.asyncio
-    async def test_trigger_atomize_all_runs_every_tour_sequentially(self):
+    async def test_trigger_atomize_all_enqueues_one_job_per_tour(self):
         tours = [
             {"tour_id": uuid.uuid4(), "generated_content_id": uuid.uuid4(),
              "aa_name": f"Tour {i}", "aa_summary": "", "aa_highlights": "[]",
@@ -783,34 +784,12 @@ class TestUnatomizedToursAndManualTrigger:
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler._run_a3_atomize_background", AsyncMock()) as m_atomize:
+        with patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(return_value="job-1")) as m_atomize:
             body = admin_atoms.AtomizeTriggerRequest(all=True)
             result = await admin_atoms.trigger_atomize(body, request, x_admin_secret=_TEST_SECRET)
-            await asyncio.sleep(0)
 
         assert result["tour_count"] == 3
-        assert m_atomize.await_count == 3
-
-    @pytest.mark.asyncio
-    async def test_trigger_atomize_one_failure_does_not_stop_the_rest(self):
-        tours = [
-            {"tour_id": uuid.uuid4(), "generated_content_id": uuid.uuid4(),
-             "aa_name": f"Tour {i}", "aa_summary": "", "aa_highlights": "[]",
-             "aa_itineraries": "", "country": "Vietnam"}
-            for i in range(2)
-        ]
-        conn = AsyncMock()
-        conn.fetch.return_value = tours
-        pool = _make_pool(conn)
-        request = _make_request(pool)
-
-        with patch("services.export.handler._run_a3_atomize_background",
-                   AsyncMock(side_effect=[RuntimeError("boom"), None])) as m_atomize:
-            body = admin_atoms.AtomizeTriggerRequest(all=True)
-            await admin_atoms.trigger_atomize(body, request, x_admin_secret=_TEST_SECRET)
-            await asyncio.sleep(0)
-
-        assert m_atomize.await_count == 2
+        assert m_atomize.await_count == 3  # one job each; the kind's concurrency=1 keeps them sequential
 
     @pytest.mark.asyncio
     async def test_wrong_admin_secret_rejected(self):

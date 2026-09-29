@@ -567,14 +567,11 @@ async def trigger_atomize(
     automatically — for a Master Content tour that never went through that path. Body is either
     `{"tour_id": "..."}` (one tour) or `{"all": true}` (every currently un-atomized tour).
 
-    Runs the tours SEQUENTIALLY in one background task, not N parallel tasks — `run_t5_atomize()`
-    can issue several Bedrock calls per tour (one per itinerary day), and this endpoint has no
-    cap on how many tours "all" might mean; sequential avoids a burst of concurrent LLM calls
-    against the account's rate limit. Fire-and-forget, same 202-style contract as
-    `run_write_background()` (T9) — no separate job/status row is created; the client polls
-    `GET /admin/atoms/unatomized-tours` (or `/admin/atoms/summary`) until the tour(s) drop off /
-    gain a real atom_count, the same "poll the resulting resource" pattern T9 already uses rather
-    than a dedicated job-status table."""
+    AA-652 — enqueues one durable `a3_atomize` job per tour (returned as `job_ids`, visible on the
+    admin Jobs page). The kind runs one at a time, so tours still atomize SEQUENTIALLY —
+    `run_t5_atomize()` can issue several Bedrock calls per tour and "all" has no cap. The client
+    can still poll `GET /admin/atoms/unatomized-tours` (or `/admin/atoms/summary`) until the
+    tour(s) drop off / gain a real atom_count."""
     verify_admin_secret(x_admin_secret)
     if not body.tour_id and not body.all:
         raise HTTPException(status_code=400, detail="must specify tour_id or all=true")
@@ -600,28 +597,23 @@ async def trigger_atomize(
     if not rows:
         raise HTTPException(status_code=404, detail="No un-atomized Master Content tour matches this request")
 
-    from services.export.handler import _run_a3_atomize_background
-
-    async def _run_all():
-        for r in rows:
-            try:
-                await _run_a3_atomize_background(
-                    tour_id=str(r["tour_id"]),
-                    rewritten={
-                        "name": r["aa_name"], "summary": r["aa_summary"],
-                        "highlights": r["aa_highlights"], "itineraries": r["aa_itineraries"],
-                    },
-                    country=r["country"] or "",
-                    version_id=str(r["generated_content_id"]),
-                )
-            except Exception:
-                _recompute_logger.error("manual_atomize_failed", tour_id=str(r["tour_id"]), exc_info=True)
-
-    _task = asyncio.create_task(_run_all())
-    _recompute_tasks.add(_task)
-    _task.add_done_callback(_recompute_tasks.discard)
+    # AA-652 — one durable `a3_atomize` job per tour (was one in-process task looping over every
+    # tour, lost on any deploy). The kind's concurrency of 1 keeps them sequential, as before.
+    from services.jobs.a3_atomize_job import enqueue_a3_atomize
+    job_ids = []
+    for r in rows:
+        job_ids.append(await enqueue_a3_atomize(
+            pool, tour_id=str(r["tour_id"]), version_id=str(r["generated_content_id"]),
+            country=r["country"] or "",
+            rewritten={
+                "name": r["aa_name"], "summary": r["aa_summary"],
+                "highlights": r["aa_highlights"], "itineraries": r["aa_itineraries"],
+            },
+            created_by="admin:atoms_atomize", dedupe=False,
+        ))
 
     return {
         "accepted": True, "tour_count": len(rows),
         "tour_ids": [str(r["tour_id"]) for r in rows],
+        "job_ids": job_ids,
     }
