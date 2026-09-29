@@ -131,8 +131,10 @@ class Worker:
                 handler_task.cancel()
                 await asyncio.gather(handler_task, return_exceptions=True)
             if not cancelled_by_admin:
-                await queue.release(self.pool, job.id, self.worker_id, ctx.cost_usd)
-                log.warning("job_released_on_shutdown")
+                status = await queue.release(self.pool, job.id, self.worker_id, ctx.cost_usd)
+                log.warning("job_released_on_shutdown", next_status=status)
+                if status in ("failed", "cancelled"):
+                    await run_terminal_hook(self.pool, job.id)
             raise
         except BudgetExceeded as e:
             await queue.stop_budget(self.pool, job.id, self.worker_id, str(e), ctx.result,
