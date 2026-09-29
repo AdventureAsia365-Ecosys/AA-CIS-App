@@ -80,12 +80,21 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     # AA-688: `progress` (optional sync callback) reports the embedding pre-pass to the Jobs page.
     question_counts = await precompute_question_landings(pool, this_tour_segment_ids, progress)
     ranking_results = {}
-    for market_code in DFS_LOCATION_MAP:
+    markets = list(DFS_LOCATION_MAP)
+    for i, market_code in enumerate(markets, start=1):
         ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
+        # AA-687: without these steps the Jobs page kept showing "landing_questions · n/n · ETA 0s"
+        # for the ~80 s that ranking + route detection take after the landing.
+        if progress:
+            progress({"step": "ranking_markets", "done": i, "total": len(markets)})
     logger.info("ranking_done", tour_id=log_tour_id or tour_id, result=ranking_results)
 
     from services.acp_contract.route_detection import run_route_detection
+    if progress:
+        progress({"step": "route_detection", "done": 0, "total": 1})
     route_result = await run_route_detection(pool)
+    if progress:
+        progress({"step": "route_detection", "done": 1, "total": 1})
     logger.info("route_detection_done", tour_id=log_tour_id or tour_id, result=route_result)
     return {"segment": segment_result, "ranking": ranking_results, "route": route_result}
 
