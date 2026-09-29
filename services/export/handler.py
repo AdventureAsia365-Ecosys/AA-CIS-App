@@ -8,11 +8,6 @@ from shared.repository.published_catalog_repository import PublishedCatalogRepos
 
 logger = structlog.get_logger()
 
-# AA-526 — strong refs for the A3-triggered atomize background task, same GC-safety pattern
-# api/routers/v1_tours.py::trigger_rewrite() / v1_content_writing.py::write() already use — a
-# bare asyncio.create_task() with no reference can be garbage-collected mid-flight. Module-level
-# here (not per-call) for the same reason those 2 call sites keep theirs at module level.
-_background_tasks: set = set()
 
 
 class _SingleConnAsPool:
@@ -93,7 +88,8 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
     return {"segment": segment_result, "ranking": ranking_results, "route": route_result}
 
 
-async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str) -> None:
+async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
+                                      reraise: bool = False) -> None:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_produce.tenant_pipeline.run_t5_atomize(), up to
     one invoke_claude() call per itinerary day) never adds latency to — or risks an API Gateway
@@ -106,7 +102,11 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
 
     owner_scope="platform" (not a tenant UUID) — atoms produced here are a shared backend
     resource, per AA-525/526's architecture decision (Nghiệp, 04/09/2026): tenants never create
-    or see atoms directly anymore, curation moves to AA-admin (AA-527)."""
+    or see atoms directly anymore, curation moves to AA-admin (AA-527).
+
+    AA-652 — runs inside the `a3_atomize` job (services/jobs/a3_atomize_job.py) with
+    `reraise=True`, so an atomize failure is retried and shows on the Jobs page instead of only
+    being logged. The default (False) keeps the old best-effort behaviour for any direct caller."""
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         from services.acp_produce.tenant_pipeline import run_t5_atomize
@@ -142,6 +142,8 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         # A3 (gold_aa_internal.published_tours + pipeline_status='published') is already committed
         # by the time this task is launched.
         logger.error("a3_atomize_failed", tour_id=tour_id, error=str(exc))
+        if reraise:
+            raise
     finally:
         await conn.close()
 
@@ -289,22 +291,26 @@ async def process_export(version_id: str) -> dict:
         # 3b. AA-526 — this tour has now genuinely entered A3 (Master Content Pool, real QA
         # already passed via the gate at the top of this function, gc.status = 'approved') — the
         # correct, deliberate trigger point for atomize per the 04/09/2026 architecture decision
-        # (was previously tied to tenant-rewritten-tour content, api/routers/v1_tours.py's now-
-        # removed atomize_version() endpoint; see docs/implementation-notes/AA-526.md). Launched
-        # fire-and-forget (own connection, own lifecycle — see _run_a3_atomize_background()'s own
-        # docstring for why) so a slow multi-day atomize run never adds latency to this function's
-        # own caller (an admin approve/publish action, awaited synchronously).
-        _atomize_task = asyncio.create_task(_run_a3_atomize_background(
-            tour_id=str(tour_id),
-            rewritten={
-                "name": row.get("aa_name"), "summary": row.get("aa_summary"),
-                "highlights": row.get("aa_highlights"), "itineraries": row.get("aa_itineraries"),
-            },
-            country=row.get("country") or "",
-            version_id=str(row["id"]),  # generated_content.id — this tour's real content version
-        ))
-        _background_tasks.add(_atomize_task)
-        _atomize_task.add_done_callback(_background_tasks.discard)
+        # (see docs/implementation-notes/AA-526.md). AA-652 — enqueued as a durable `a3_atomize`
+        # job (was an in-process task that a deploy — or, from the export Lambda, the Lambda
+        # itself ending — killed mid-run). Keyed on the content version, so a re-export of the
+        # same version does not atomize twice.
+        # Best-effort, like the task it replaces: the publish above is already done, and a failed
+        # enqueue must not turn it into an error. (The export Lambda package has no services/jobs;
+        # that Lambda has never been invoked — process_export runs in the ECS API.)
+        try:
+            from services.jobs.a3_atomize_job import enqueue_a3_atomize
+            await enqueue_a3_atomize(
+                conn, tour_id=str(tour_id), version_id=str(row["id"]),  # generated_content.id
+                country=row.get("country") or "",
+                rewritten={
+                    "name": row.get("aa_name"), "summary": row.get("aa_summary"),
+                    "highlights": row.get("aa_highlights"), "itineraries": row.get("aa_itineraries"),
+                },
+                created_by="system:a3_publish",
+            )
+        except Exception as exc:
+            logger.error("a3_atomize_enqueue_failed", tour_id=str(tour_id), error=str(exc))
 
         # 4. Update tours_passed to exact published count (always, not just at end)
         # AA-492: this used to also gate a one-time "ACP-S1 manifest.json + EventBridge"

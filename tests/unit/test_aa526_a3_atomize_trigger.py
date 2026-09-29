@@ -307,11 +307,10 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
 
 @pytest.mark.asyncio
 class TestProcessExportLaunchesAtomize:
-    async def test_atomize_task_scheduled_with_strong_ref_after_publish(self, monkeypatch):
+    async def test_atomize_job_enqueued_after_publish(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
-        """process_export() must schedule the A3 atomize task (not await it inline — see the
-        module docstring for why) and hold a strong reference to it (same GC-safety guard every
-        other fire-and-forget task in this codebase uses)."""
+        """process_export() must enqueue the A3 atomize job (AA-652; before, an in-process task
+        with a strong ref) rather than run it inline."""
         conn = AsyncMock()
         conn.fetchrow.side_effect = [
             {
@@ -328,14 +327,12 @@ class TestProcessExportLaunchesAtomize:
         conn.close = AsyncMock()
 
         with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
-             patch("services.export.handler._run_a3_atomize_background", AsyncMock()) as m_atomize_bg:
-            before = set(export_handler._background_tasks)
+             patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock(return_value="job-1")) as m_atomize_bg:
             await export_handler.process_export(GC_ID)
-            new_tasks = export_handler._background_tasks - before
-            assert len(new_tasks) == 1
-            await next(iter(new_tasks))  # drain it so nothing is left pending
 
+        # AA-652 — enqueued as a durable `a3_atomize` job on the publish's own connection.
         m_atomize_bg.assert_awaited_once()
+        assert m_atomize_bg.call_args.args[0] is conn
         kwargs = m_atomize_bg.call_args.kwargs
         assert kwargs["tour_id"] == TOUR_ID
         assert kwargs["version_id"] == GC_ID  # generated_content.id, this tour's real version
