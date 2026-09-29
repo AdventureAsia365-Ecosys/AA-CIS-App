@@ -122,6 +122,55 @@ Return JSON ONLY, no markdown, exactly:
 {{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, "feedback": "<string>"}}"""
 
 
+CANDIDATE_JUDGE_SYSTEM = """You are a brand-fit judge for Adventure Asia's B2B content pipeline.
+You do NOT write content. Before anything is written, you decide whether a candidate TOPIC (a place
+and what travellers do there, shown as raw catalogue evidence) is worth proposing to ONE specific
+client brand. Judge the topic, not the wording: the evidence is unedited source text and is expected
+to be plain and repetitive. Return JSON only."""
+
+
+def _build_candidate_prompt(brand_profile: dict, candidate: dict) -> str:
+    """Debate (AA-631) prompt: does this TOPIC suit this brand? The rewrite prompt above asks
+    whether finished copy reads on-brand and whether the brand's mission surfaces in each day's
+    itinerary — raw atom text can never pass that, so every fresh Debate candidate scored ≤ 6
+    (28/09/2026: 2 of 2 scored 1.0 with feedback about "repeated placeholder text")."""
+    voice_ex = [v for v in (brand_profile.get("brand_voice_examples") or []) if v]
+    evidence = "\n".join(f"- {e}" for e in candidate.get("evidence") or []) or "- (none)"
+    return f"""Decide whether this candidate topic is a good fit for THIS client brand's content.
+
+BRAND PROFILE:
+- Core idea: {brand_profile.get("brand_core_idea", "") or "(none)"}
+- Who this is for: {brand_profile.get("brand_customer_segment", "") or "(none)"}
+- What this traveller wants: {brand_profile.get("brand_customer_mindset", "") or "(none)"}
+- Voice (tone words): {", ".join(voice_ex) or "(none)"}
+
+CANDIDATE TOPIC:
+- Place: {candidate.get("place") or "(unknown)"}
+- What travellers do: {candidate.get("action") or "(unspecified)"}
+RAW EVIDENCE (catalogue source text, unedited):
+{evidence}
+
+SCORE on these axes:
+- brand_fit_score (1-10): would this brand's travellers genuinely want this experience? A topic
+  that clashes with who they are or what they want scores low; a natural match scores high.
+- cross_brand_distinct (1-10): does the evidence give this brand real material for its own angle
+  (specific detail its travellers care about), rather than something only generic copy could cover?
+- feedback (string): one or two sentences on why the topic fits or does not fit this brand.
+
+Return JSON ONLY, no markdown, exactly:
+{{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "feedback": "<string>"}}"""
+
+
+def score_candidate_fit(brand_profile: dict, candidate: dict) -> BrandFitResult:
+    """Debate's brand-fit call (AA-631): same stage route, temperature/seed and result shape as
+    `score_brand_fit()`, but scores a candidate topic from raw evidence instead of finished copy.
+    `candidate` = {"place", "action", "evidence": [str, ...]}. There is no mission axis — nothing
+    has been written yet — so `mission_present` is always True and never caps the score.
+    Raises on any failure, like `score_brand_fit()`."""
+    return _judge(CANDIDATE_JUDGE_SYSTEM, _build_candidate_prompt(brand_profile, candidate),
+                  mission_absent_cap=None)
+
+
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0,
 ) -> BrandFitResult:
@@ -137,9 +186,14 @@ def score_brand_fit(
     is a parameter here rather than a second hardcoded constant — judge_node.py passes its own
     6.0 explicitly to keep its exact existing behavior unchanged by this extraction.
     """
+    return _judge(JUDGE_SYSTEM, _build_judge_prompt(brand_profile, generated),
+                  mission_absent_cap=mission_absent_cap)
+
+
+def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None) -> BrandFitResult:
     request = LLMRequest(
-        system_prompt=JUDGE_SYSTEM,
-        user_prompt=_build_judge_prompt(brand_profile, generated),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
         # AA-659 / ADR 0006: the model comes from the "s1_judge" stage route. The judge-vendor ≠
         # writer-vendor rule (ADR-2026-014/027) is enforced when the route is saved in admin.
         stage="s1_judge",
@@ -163,7 +217,7 @@ def score_brand_fit(
     feedback = (result.get("feedback") or "").strip()
 
     judge_score = min(brand_fit, distinct)
-    if not mission_present:
+    if mission_absent_cap is not None and not mission_present:
         judge_score = min(judge_score, mission_absent_cap)
 
     return BrandFitResult(
