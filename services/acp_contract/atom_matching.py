@@ -21,6 +21,12 @@ also closed) — the question's own embedding never changes, so `_embed_question
 it up before ever calling `compute_embedding()`, at most one real Cohere Embed v4 call per
 distinct question text, ever.
 
+**AA-688 — batch paths.** `ensure_atom_embeddings_batch()` and `embed_questions_cached()` embed
+everything a ranking run is missing in calls of up to 96 texts (`compute_embeddings()`), instead
+of one paced 3.5 s call per text. On Dev (29/09/2026) a single a3_atomize job had ~16,000 atom
+views and ~1,500 questions left to embed one at a time — about 16 hours; batched, it is roughly
+200 calls. The one-at-a-time functions below stay for single-item callers.
+
 **Soft-fail, matching services/acp_shared/content_embedding.py's own contract**: if
 `compute_embedding()` returns None (any Bedrock failure), this module falls back to the existing
 claim-by-name test (`ranking_reference.claimable_words()`/`keyword_words()`) rather than raising
@@ -30,12 +36,16 @@ data, not silently indistinguishable from a real vector match.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from typing import Callable, Iterable, Optional
 
 import structlog
 
 from services.acp_contract.ranking_reference import claimable_words, keyword_words
-from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
+from services.acp_shared.content_embedding import (
+    MAX_TEXTS_PER_CALL, compute_embedding, compute_embeddings, embedding_to_pgvector_literal,
+)
 
 logger = structlog.get_logger()
 
@@ -81,6 +91,58 @@ async def _embed_question_cached(conn, question: str) -> list[float] | None:
     return vector
 
 
+def _parse_vector(literal: str) -> list[float]:
+    return [float(x) for x in literal.strip("[]").split(",")]
+
+
+async def embed_questions_cached(
+    conn, questions: Iterable[str], progress: Optional[Callable[[dict], None]] = None,
+) -> dict[str, list[float]]:
+    """AA-688 — batch form of `_embed_question_cached()`: one cache read for every question, then
+    the misses embedded `MAX_TEXTS_PER_CALL` at a time, each batch written to the cache as soon as
+    it returns (a killed job keeps what it already paid for). Returns question -> vector for every
+    question that has one; a question missing from the result had its embedding call fail
+    (soft-fail — the caller falls back to claim-by-name for it)."""
+    by_hash: dict[str, list[str]] = {}
+    for q in questions:
+        by_hash.setdefault(_question_hash(q), []).append(q)
+    if not by_hash:
+        return {}
+
+    rows = await conn.fetch(
+        "SELECT question_hash, embedding FROM acp_contract.question_embedding "
+        "WHERE question_hash = ANY($1::text[])",
+        list(by_hash),
+    )
+    vectors: dict[str, list[float]] = {r["question_hash"]: _parse_vector(r["embedding"]) for r in rows}
+    missing = [h for h in by_hash if h not in vectors]
+
+    for start in range(0, len(missing), MAX_TEXTS_PER_CALL):
+        batch = missing[start:start + MAX_TEXTS_PER_CALL]
+        texts = [by_hash[h][0] for h in batch]
+        embedded = await asyncio.to_thread(compute_embeddings, texts)
+        new_rows = []
+        for h, text, vector in zip(batch, texts, embedded):
+            if vector is None:
+                continue
+            vectors[h] = vector
+            new_rows.append((h, text, embedding_to_pgvector_literal(vector)))
+        if new_rows:
+            await conn.executemany(
+                """
+                INSERT INTO acp_contract.question_embedding (question_hash, question_text, embedding)
+                VALUES ($1, $2, $3::vector)
+                ON CONFLICT (question_hash) DO NOTHING
+                """,
+                new_rows,
+            )
+        if progress:
+            progress({"step": "embedding_questions",
+                      "done": min(start + len(batch), len(missing)), "total": len(missing)})
+
+    return {q: vectors[h] for h, qs in by_hash.items() if h in vectors for q in qs}
+
+
 def _view_text(place: str, action: str, view: str) -> str:
     if view == "place":
         return place or ""
@@ -124,8 +186,62 @@ async def ensure_atom_embeddings(conn, atom_id: str, place: str, action: str) ->
     return all_ok
 
 
+async def ensure_atom_embeddings_batch(
+    conn, atoms: list[tuple[str, str, str]], progress: Optional[Callable[[dict], None]] = None,
+) -> int:
+    """AA-688 — batch form of `ensure_atom_embeddings()` for many atoms at once. `atoms` is a list
+    of (atom_id, place, action). Reads which (atom_id, view) rows already exist in one query,
+    embeds only the missing views `MAX_TEXTS_PER_CALL` at a time, and writes each batch as soon as
+    it returns. Returns how many view embeddings were written. A view whose call failed is left
+    missing (soft-fail — `land_question_on_atom()` then finds no vector for that atom and the
+    caller falls back to claim-by-name, same as the single-atom path)."""
+    if not atoms:
+        return 0
+    existing = await conn.fetch(
+        "SELECT atom_id, view FROM acp_contract.atom_embedding WHERE atom_id = ANY($1::text[])",
+        [a[0] for a in atoms],
+    )
+    have = {(r["atom_id"], r["view"]) for r in existing}
+    todo: list[tuple[str, str, str]] = []  # (atom_id, view, text)
+    seen: set[tuple[str, str]] = set()
+    for atom_id, place, action in atoms:
+        for view in _VIEWS:
+            key = (atom_id, view)
+            if key in have or key in seen:
+                continue
+            seen.add(key)
+            text = _view_text(place, action, view)
+            if text.strip():
+                todo.append((atom_id, view, text))
+
+    written = 0
+    for start in range(0, len(todo), MAX_TEXTS_PER_CALL):
+        batch = todo[start:start + MAX_TEXTS_PER_CALL]
+        embedded = await asyncio.to_thread(compute_embeddings, [t for _, _, t in batch])
+        new_rows = [
+            (atom_id, view, embedding_to_pgvector_literal(vector))
+            for (atom_id, view, _), vector in zip(batch, embedded) if vector is not None
+        ]
+        if len(new_rows) < len(batch):
+            logger.warning("atom_embedding_batch_partial", embedded=len(new_rows), requested=len(batch))
+        if new_rows:
+            await conn.executemany(
+                """
+                INSERT INTO acp_contract.atom_embedding (atom_id, view, embedding)
+                VALUES ($1, $2, $3::vector)
+                ON CONFLICT (atom_id, view) DO NOTHING
+                """,
+                new_rows,
+            )
+            written += len(new_rows)
+        if progress:
+            progress({"step": "embedding_atoms",
+                      "done": min(start + len(batch), len(todo)), "total": len(todo)})
+    return written
+
+
 async def land_question_on_atom(
-    conn, query: str, candidate_atom_ids: list[str],
+    conn, query: str, candidate_atom_ids: list[str], vector: Optional[list[float]] = None,
 ) -> tuple[str | None, float | None, str]:
     """Finds the nearest atom (by either view's embedding) among `candidate_atom_ids` for one PAA
     question — restricted to a caller-supplied candidate list (every atom currently in the
@@ -142,11 +258,15 @@ async def land_question_on_atom(
     when the embedding path produced a real nearest-neighbour result (distance is the real
     cosine distance, in [0, 2]), 'tokens' when it fell back (distance is None) — Bedrock
     failure, or query too short to embed meaningfully (same _MAX_INPUT_CHARS-guarded soft-fail
-    content_embedding.py already has)."""
+    content_embedding.py already has).
+
+    AA-688 — `vector`, when given, is the question's embedding already fetched in bulk by
+    `embed_questions_cached()`; the per-question cache lookup and embedding call are skipped."""
     if not candidate_atom_ids:
         return None, None, "tokens"
 
-    vector = await _embed_question_cached(conn, query)
+    if vector is None:
+        vector = await _embed_question_cached(conn, query)
     if vector is not None:
         literal = embedding_to_pgvector_literal(vector)
         row = await conn.fetchrow(
@@ -182,5 +302,6 @@ def claim_by_name_fallback(
 
 
 __all__ = [
-    "ensure_atom_embeddings", "land_question_on_atom", "claim_by_name_fallback",
+    "ensure_atom_embeddings", "ensure_atom_embeddings_batch", "embed_questions_cached",
+    "land_question_on_atom", "claim_by_name_fallback",
 ]

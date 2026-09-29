@@ -76,11 +76,15 @@ async def test_land_questions_for_segment_caps_candidates_before_landing():
 
     landed_calls = []
 
-    async def fake_land(_conn, question, _atom_ids):
+    async def fake_land(_conn, question, _atom_ids, vector=None):
         landed_calls.append(question)
         return None, None, "tokens"  # forces fallback path, which claim_by_name_fallback below handles
 
-    with patch("services.acp_contract.atom_ranking.ensure_atom_embeddings", AsyncMock(return_value=True)), \
+    async def fake_embed(_conn, questions, _progress=None):
+        return {q: [0.1] * 4 for q in questions}
+
+    with patch("services.acp_contract.atom_ranking.ensure_atom_embeddings_batch", AsyncMock(return_value=0)), \
+         patch("services.acp_contract.atom_ranking.embed_questions_cached", fake_embed), \
          patch("services.acp_contract.atom_ranking.land_question_on_atom", fake_land), \
          patch("services.acp_contract.atom_ranking.claim_by_name_fallback", return_value="atom-1"):
         await land_questions_for_segment(
@@ -99,11 +103,15 @@ async def test_land_questions_for_segment_under_cap_lands_every_candidate():
 
     landed_calls = []
 
-    async def fake_land(_conn, question, _atom_ids):
+    async def fake_land(_conn, question, _atom_ids, vector=None):
         landed_calls.append(question)
         return "atom-1", 0.1, "vector"
 
-    with patch("services.acp_contract.atom_ranking.ensure_atom_embeddings", AsyncMock(return_value=True)), \
+    async def fake_embed(_conn, questions, _progress=None):
+        return {q: [0.1] * 4 for q in questions}
+
+    with patch("services.acp_contract.atom_ranking.ensure_atom_embeddings_batch", AsyncMock(return_value=0)), \
+         patch("services.acp_contract.atom_ranking.embed_questions_cached", fake_embed), \
          patch("services.acp_contract.atom_ranking.land_question_on_atom", fake_land):
         count = await land_questions_for_segment(
             conn, "Sukhbaatar Square", "visit the revolution site", ["atom-1"], paa_rows,

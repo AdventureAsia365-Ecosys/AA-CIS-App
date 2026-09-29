@@ -236,7 +236,9 @@ _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underly
 
 **Score** (Atom Ranking):
 The rank-sum of a Segment's **four** signals (AA-610): Demand (search volume), Recurrence (how
-many tours contain it), Questions (PAA questions that land on it by embedding match) and Said
+many tours contain it), Questions (PAA questions that land on it by embedding match — atom and
+question embeddings are fetched in one batched pre-pass, up to 96 texts per Cohere call, and
+cached in `atom_embedding` / `question_embedding`, AA-688) and Said
 (how much the itinerary already says about it). Deterministic, no LLM. Persisted on
 `acp_contract.atom_ranking`, **platform-wide since AA-545**: primary key
 `(market, tour_id, segment_id)`, one full pass per buyer market (US/UK/AU/DE/FR/NL). Every
