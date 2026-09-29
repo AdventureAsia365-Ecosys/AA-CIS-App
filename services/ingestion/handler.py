@@ -176,7 +176,17 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
         # both land in new_records, creating duplicate raw_tours rows from one upload.
         seen_keys: set[tuple[str, str]] = set()
 
-        for r in records:
+        # AA-690 — Jev ingest gates, the same function the Upload preview uses. Asked only for rows
+        # with itinerary text. Only enforced, confident verdicts drop a row or fill its country.
+        from services.ingestion.jev_gates import assess_rows_standalone
+        jev_idx = [i for i, r in enumerate(records) if (r.get("src_itineraries") or "").strip()]
+        jev_list = await assess_rows_standalone([records[i] for i in jev_idx], filename)
+        jev_by_row = dict(zip(jev_idx, jev_list))
+
+        for idx, r in enumerate(records):
+            jev = jev_by_row.get(idx)
+            if jev is not None and jev.country and not r.get("country"):
+                r["country"] = jev.country
             r["source_id"] = source_id
             r["batch_id"] = batch_id_new
             nname, nprov = normalize_group_key(r.get("src_name", ""), r.get("provider"))
@@ -226,6 +236,13 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                     str(existing["source_group_id"]) if existing["source_group_id"] else None,
                 )
                 staged_ids.append(staging_id)
+            elif jev is not None and jev.drop_reason:
+                # AA-690: not_a_tour | thin_itinerary — new rows only; a row matching an existing
+                # tour still goes to upload_staging for the human decision above.
+                in_file_drops.append({
+                    "identifier": r.get("src_name") or "unknown",
+                    "reason": jev.drop_reason,
+                })
             else:
                 seen_keys.add((nname, nprov))
                 r["source_group_id"] = str(uuid.uuid4())

@@ -22,6 +22,17 @@ import pytest
 from api.routers import admin_pipeline
 
 
+@pytest.fixture(autouse=True)
+def _no_jev_ingest_gates():
+    """AA-690: ingest now asks Jev; these tests predate it and exercise other rules."""
+    from services.ingestion import jev_gates
+
+    async def none(rows, *a, **k):
+        return [jev_gates.RowVerdict() for _ in rows]
+    with patch.object(jev_gates, "assess_rows", new=none), patch.object(jev_gates, "assess_rows_standalone", new=none):
+        yield
+
+
 def _make_request_and_pool(existing_hash_row=None, duplicate_names_rows=None, sources_rows=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=existing_hash_row)
