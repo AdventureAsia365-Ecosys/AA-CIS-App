@@ -12,8 +12,9 @@ whole selection, so each paid task carries as much as it can:
                    VOLUME_TASK_MAX keywords, store real answers only.
   C. serp        — for each place, its best keyword with measured volume, only in the markets where
                    it has volume (PAA + organic domains, one call serves both — AA-631).
-  D. suggestions — places with no volume anywhere: their seeds go IDEAS_SEEDS_PER_TASK per
-                   keywords_for_keywords task (primary market); ideas with volume are cached.
+  D. suggestions — places with no volume anywhere: "<place> <country>" seeds go
+                   IDEAS_SEEDS_PER_TASK per keywords_for_keywords task (primary market); ideas
+                   with volume are cached.
   E. log         — `segment_research_log` is written only for places whose purchases all succeeded.
 
 Every paid call goes through the cost guard (AA-649) and the run-level circuit breaker (AA-647): a
@@ -76,6 +77,15 @@ _UPSERT_VOLUME_SQL = """
     VALUES ($1, $2, $3, now())
     ON CONFLICT (keyword, market) DO UPDATE SET
         search_volume = excluded.search_volume, retrieved_on = excluded.retrieved_on
+"""
+_PLACE_COUNTRY_SQL = """
+    SELECT s.canonical_place, mode() WITHIN GROUP (ORDER BY rt.country) AS country
+    FROM acp_contract.atom_segment s
+    JOIN acp_contract.atom_segment_member m ON m.segment_id = s.segment_id
+    JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
+    JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE ta.owner_scope = 'platform' AND s.canonical_place = ANY($1::text[])
+    GROUP BY s.canonical_place
 """
 _LOG_RESEARCHED_SQL = """
     INSERT INTO acp_contract.segment_research_log (canonical_place, market, researched_at)
@@ -268,18 +278,42 @@ async def _buy_serps(places: list[_Place], markets: list[tuple[int, str, str]], 
     return sum(await asyncio.gather(*[_one(*job) for job in jobs]))
 
 
+async def _place_countries(pool, names: list[str]) -> dict[str, str]:
+    """Most common tour country per canonical place (platform tours), e.g. {"Mongar": "bhutan"}."""
+    if not names:
+        return {}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_PLACE_COUNTRY_SQL, names)
+    return {r["canonical_place"]: _tidy(r["country"]) for r in rows if r["country"]}
+
+
+def _idea_seed(place: _Place, country: str | None) -> str:
+    """keywords_for_keywords seed for a zero-volume place: "<place> <country>".
+
+    The place's own best keyword is a bad seed here — the place is only in this pass because that
+    keyword had no volume, and Google Ads answers a task of only unknown seeds with the seeds
+    themselves and no ideas (both runs on 28/09/2026: 4/4 and 2/2 echoed back, 0 stored). Adding
+    the country gives Google a term it knows ("mongar bhutan" 40/mo where "mongar" alone had none).
+    DFS rejects seeds over 10 words."""
+    seed = _tidy(place.name)
+    if country and country not in seed.split():
+        seed = f"{seed} {country}"
+    return " ".join(seed.split()[:10])
+
+
 async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, str]], client: DataForSEOClient,
                            pool, guard: _RunGuard) -> dict:
     loc, _name, lang = markets[0]  # primary market only (same rule as the per-place loop)
     market = LOCATION_CODE_TO_MARKET[loc]
     zero = [p for p in places if not p.failed and not p.has_volume()]
     stats = {"idea_tasks": 0, "ideas_stored": 0}
+    countries = await _place_countries(pool, [p.name for p in zero])
     for chunk in _chunks(zero, IDEAS_SEEDS_PER_TASK):
         if guard.aborted:
             for p in chunk:
                 p.failed = True
             continue
-        seeds = [p.keywords[0] if p.keywords else _tidy(p.name) for p in chunk]
+        seeds = list(dict.fromkeys(_idea_seed(p, countries.get(p.name)) for p in chunk))
         try:
             ideas = await client.fetch_keyword_ideas_multi(seeds, loc, lang)
         except Exception as exc:
@@ -291,10 +325,8 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
         stats["ideas_returned"] = stats.get("ideas_returned", 0) + len(ideas)
         rows = [(_tidy(i["keyword"]), market, i.get("search_volume"))
                 for i in ideas if i.get("keyword") and i.get("search_volume")]
-        # Bhutan pilot (28/09) stored 0 ideas from an 18-seed task: log what came back so we can
-        # tell "DFS returned nothing for obscure seeds" from "we parsed the response wrong".
         logger.info("segment_research_ideas_task", seeds=len(seeds), ideas_returned=len(ideas),
-                    ideas_with_volume=len(rows), sample=[i.get("keyword") for i in ideas[:5]])
+                    ideas_with_volume=len(rows), seed_sample=seeds[:5], sample=[r[0] for r in rows[:5]])
         if rows:
             async with pool.acquire() as conn:
                 await conn.executemany(_UPSERT_VOLUME_SQL, rows)
