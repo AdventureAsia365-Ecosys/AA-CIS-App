@@ -65,3 +65,22 @@ def get_dataforseo_creds() -> tuple[str, str]:
     raw = _get_cached("dataforseo", fetch)
     data = json.loads(raw)
     return data["login"], data["password"]
+
+
+def get_typesafe_api_key() -> str:
+    """AA-660 — Jev (TypeSafe) API key. Env `TYPESAFE_API_KEY` for local runs; otherwise the Secrets
+    Manager secret named by `SECRET_TYPESAFE_ID` (default `aa-cis/dev/typesafe`). The secret may hold
+    the bare key or a JSON object with `api_key`. Raises if neither is available — callers (decide.py)
+    turn that into zone='error' and keep their existing rule."""
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if key:
+        return key
+    secret_id = os.environ.get("SECRET_TYPESAFE_ID", "aa-cis/dev/typesafe")
+
+    def fetch():
+        raw = _fetch_secret_sdk(secret_id).strip()
+        if raw.startswith("{"):
+            return json.loads(raw)["api_key"]
+        return raw
+
+    return _get_cached("typesafe", fetch)
