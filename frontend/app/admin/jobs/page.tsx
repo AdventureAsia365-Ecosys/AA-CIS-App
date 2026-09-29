@@ -53,7 +53,9 @@ export default function JobsPage() {
   const [health, setHealth] = useState<WorkerHealthResp | null>(null);
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
+  const [tourId, setTourId] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -61,10 +63,24 @@ export default function JobsPage() {
   const samples = useRef<Map<string, Sample>>(new Map());
   const [etas, setEtas] = useState<Record<string, string | null>>({});
 
+  // AA-687 deep links from domain pages: ?job=<id> opens its drawer; ?kind= / ?status= /
+  // ?tour_id= pre-filter the list. Read once on mount (no useSearchParams, same as review/page.tsx).
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    /* eslint-disable react-hooks/set-state-in-effect -- one-time read of the deep-link params */
+    setKind(q.get("kind") ?? "");
+    setStatus(q.get("status") ?? "");
+    setTourId(q.get("tour_id") ?? "");
+    setOpen(q.get("job"));
+    setReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ limit: "100" });
     if (kind) qs.set("kind", kind);
     if (status) qs.set("status", status);
+    if (tourId) qs.set("tour_id", tourId);
     try {
       const [j, s, w] = await Promise.all([
         fetch(`/api/admin/job-runner/jobs?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
@@ -95,14 +111,15 @@ export default function JobsPage() {
       setError(`Could not load jobs (${e})`);
       setJobs(prev => prev ?? []);
     }
-  }, [kind, status]);
+  }, [kind, status, tourId]);
 
   useEffect(() => {
+    if (!ready) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + filter-change fetch, same pattern as every admin page
     load();
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, ready]);
 
   async function act(job: Job, action: "cancel" | "retry") {
     const verb = action === "cancel" ? "Cancel" : "Retry";
@@ -155,6 +172,12 @@ export default function JobsPage() {
               <option value="">All statuses</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+            {tourId && (
+              <button onClick={() => setTourId("")} title="Clear the tour filter"
+                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
+                tour {tourId.slice(0, 8)} ×
+              </button>
+            )}
             <Btn size="sm" onClick={load}><RefreshCw size={12} style={{ marginRight: 4 }} />Refresh</Btn>
           </div>
         </div>
