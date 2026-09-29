@@ -36,6 +36,7 @@ function relativeTime(isoStr: string | null | undefined): string {
 interface TourPreview {
   tour_id: string;
   src_name: string;
+  jev_notes?: string[];   // AA-690 — Jev ingest observations (shadow/grey), never a block
   country: string;
   duration: string | null;
   price_raw: string | null;
@@ -61,7 +62,8 @@ interface TourPreview {
 interface BlockedTour {
   src_name: string;
   country: string | null;
-  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file" | "empty_itinerary"; // AA-490, AA-604
+  // AA-490, AA-604; AA-690 adds the Jev gates (only when their questions are enforced)
+  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file" | "empty_itinerary" | "not_a_tour" | "thin_itinerary";
   missing_fields?: string[];
   message: string;
 }
@@ -223,7 +225,12 @@ function TourRow({ tour, idx, isExpanded, onToggle }: {
         onClick={onToggle}
       >
         <td style={{ ...TD, textAlign: "center" as const, color: A.muted2 }}>{idx}</td>
-        <td style={{ ...TD, fontWeight: 600, color: A.ink }}>{tour.src_name || "—"}</td>
+        <td style={{ ...TD, fontWeight: 600, color: A.ink }}>
+          {tour.src_name || "—"}
+          {(tour.jev_notes ?? []).map(n => (
+            <div key={n} style={{ fontSize: 11, fontWeight: 400, color: A.amber, marginTop: 2 }}>{n}</div>
+          ))}
+        </td>
         <td style={TD}>{tour.country || "—"}</td>
         <td style={TD}>{tour.duration || "—"}</td>
         <td style={TD}>{tour.price_raw || "—"}</td>

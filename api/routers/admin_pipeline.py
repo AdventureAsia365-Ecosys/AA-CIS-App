@@ -1280,11 +1280,23 @@ async def ingest_s3(
             # check) so preview and commit report the identical outcome for the identical file.
             from services.ingestion.handler import normalize_group_key as _normalize_group_key
 
+            # AA-690 — Jev ingest gates (same function the Commit path uses). Asked only for rows
+            # with itinerary text; in shadow mode they only add notes, nothing is dropped.
+            from services.ingestion.jev_gates import DROP_MESSAGES as _JEV_DROP, assess_rows as _jev_assess
+            candidates = records[:req.max_tours]
+            jev_idx = [i for i, r in enumerate(candidates) if (r.get("src_itineraries") or "").strip()]
+            jev_list = await _jev_assess([candidates[i] for i in jev_idx], pool, _clean_filename(req.s3_key))
+            jev_by_row = dict(zip(jev_idx, jev_list))
+
             ready_tours = []
             blocked_tours = []
             seen_keys: set = set()
-            for r in records[:req.max_tours]:
+            for idx, r in enumerate(candidates):
                 src_name = r.get("src_name") or "(no name)"
+                jev = jev_by_row.get(idx)
+                if jev is not None and jev.country and not r.get("country"):
+                    r["country"] = jev.country
+                    jev.notes.append(f"Country filled by Jev: {jev.country}")
                 missing = [f for f in ["src_name", "country", "duration", "price_raw"] if not r.get(f)]
                 nname, nprov = _normalize_group_key(src_name, r.get("provider"))
                 if (nname, nprov) in seen_keys:
@@ -1319,9 +1331,17 @@ async def ingest_s3(
                                    "or activity, not a multi-day tour. It cannot be rewritten and "
                                    "will be skipped on Commit.",
                     })
+                elif jev is not None and jev.drop_reason:
+                    blocked_tours.append({
+                        "src_name": src_name, "country": r.get("country"),
+                        "reason": jev.drop_reason,
+                        "message": _JEV_DROP[jev.drop_reason].format(
+                            kind=(jev.kind or "").replace("_", " ")),
+                    })
                 else:
                     seen_keys.add((nname, nprov))
                     ready_tours.append({
+                        "jev_notes":       jev.notes if jev is not None else [],
                         "tour_id":         str(_uuid.uuid4()),
                         "src_name":        src_name,
                         "country":         r.get("country"),
