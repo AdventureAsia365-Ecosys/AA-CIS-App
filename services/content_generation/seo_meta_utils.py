@@ -131,3 +131,16 @@ def best_meta_candidate(post_repair: str, pre_repair: str, forbidden=None) -> st
         if salvaged and meta_in_band(salvaged, forbidden):
             return salvaged
     return post
+
+
+def fit_seo_meta(meta: str, tenant_forbidden=None) -> str:
+    """AA-641: deterministic fit of an out-of-band seo_meta before T3 decides to rewrite the tour
+    (the meta counterpart of tenant_pipeline.fit_seo_title). Keeps the longest complete-sentence
+    prefix inside [SEO_META_MIN, SEO_META_MAX] that is forbidden-free (_salvage_to_band). If no such
+    prefix exists — e.g. the meta is too SHORT — it is returned unchanged, so this never produces an
+    invalid meta; the existing repair path handles it."""
+    forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
+    if meta_in_band(meta, forbidden):
+        return meta
+    salvaged = _salvage_to_band(meta, forbidden)
+    return salvaged if salvaged and meta_in_band(salvaged, forbidden) else meta

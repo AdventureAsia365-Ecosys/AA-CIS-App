@@ -59,6 +59,7 @@ from services.acp_shared.atom_extraction import (
 )
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
+from services.content_generation.seo_meta_utils import fit_seo_meta
 from shared.llm_client.bedrock_satellite import invoke_claude
 from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import record_call_with_pool
@@ -240,6 +241,9 @@ async def run_t3_qa_gate(
         # 18-day tour. Mutates the result that gets persisted.
         if isinstance(generated.get("seo_title"), str):
             generated["seo_title"] = fit_seo_title(generated["seo_title"])
+        # AA-641: same for an over-long seo_meta (an LLM counting characters is unreliable).
+        if isinstance(generated.get("seo_meta"), str):
+            generated["seo_meta"] = fit_seo_meta(generated["seo_meta"], brand_rules.get("forbidden_words"))
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         grounding = _t3_grounding_check(generated, source_texts)
 
