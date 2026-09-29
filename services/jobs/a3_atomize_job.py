@@ -52,7 +52,8 @@ async def enqueue_a3_atomize(db, *, tour_id: str, version_id: str, country: str,
     return job_id
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2)
+# Platform-wide recompute ≈ 5 min after AA-688 (first run after a reset embeds more).
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800)
 async def run(ctx: JobContext) -> Optional[dict]:
     from services.export.handler import _run_a3_atomize_background
 

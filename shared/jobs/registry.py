@@ -32,15 +32,18 @@ class JobKind:
     concurrency: int = 1
     max_attempts: int = 3
     on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None
+    # AA-687: a running job older than this is flagged on the Jobs page (not stopped).
+    expected_seconds: int = 600
 
 
 _KINDS: dict[str, JobKind] = {}
 
 
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
-             on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None):
+             on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
+             expected_seconds: int = 600):
     def deco(fn):
-        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal)
+        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds)
         return fn
     return deco
 

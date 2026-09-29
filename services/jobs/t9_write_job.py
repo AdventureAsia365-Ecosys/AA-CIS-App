@@ -80,7 +80,8 @@ async def mark_piece_failed(pool, job_row: dict) -> None:
                    job_status=job_row.get("status"), error=(job_row.get("error") or "")[:300])
 
 
-@job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_piece_failed)
+# Live T9 write ≈ 190 s (S201).
+@job_kind(KIND, concurrency=4, max_attempts=2, on_terminal=mark_piece_failed, expected_seconds=600)
 async def run(ctx: JobContext) -> dict:
     p = ctx.payload
     request_id, piece_id, context = p.get("request_id"), p.get("piece_id"), p.get("context")
