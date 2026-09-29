@@ -23,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         `}} />
 
         {/* AA-605 — Fahkwang (display) + Poppins (UI) are the Adventure Asia brand faces
-            (app/_brand/tokens.ts), used by admin, the tenant portal and the (internal) routes;
+            (app/_brand/tokens.ts), used by admin and the tenant portal;
             JetBrains Mono for IDs/codes. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

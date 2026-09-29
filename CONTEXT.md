@@ -36,7 +36,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     view with a Dismiss action, AA-626), `master-content`, `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
-    `brand`, `settings` (LLM model per stage). `run-health` was removed with N7/N8 (AA-603).
+    `jobs`, `settings` (pipeline gates, **Brand Identity** editor, SEO config, LLM model per
+    stage). `run-health` was removed with N7/N8 (AA-603).
+  - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
+    Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
+    **Operations** (External Spend, Jobs) · **Settings**. Admin-only items are hidden for other
+    roles (same list as `middleware.ts` PROTECTED_ROUTES). The legacy `(internal)` route group
+    (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
+    redirect in `next.config.ts`.
   - Portal pages: `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning` (titled
     "Social Content", renders the Slate), `t8-angle-gate` (T8+T9 wizard), `t10-review` (My
     Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`. The portal works

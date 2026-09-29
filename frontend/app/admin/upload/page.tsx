@@ -1618,7 +1618,7 @@ export default function UploadPage() {
             </p>
             <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
               Manage brand identity settings →{" "}
-              <a href="/admin/brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
+              <a href="/admin/settings?tab=brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
                 Brand Identity page
               </a>
             </p>

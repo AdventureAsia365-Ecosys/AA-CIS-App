@@ -1,9 +1,11 @@
 "use client";
 // app/admin/settings/page.tsx — AA-158 Admin Settings (4 tabs)
 
-import { useState, useEffect, useCallback } from "react";
-import { Settings, ChevronDown, ChevronUp, X, Plus, Save, AlertTriangle } from "lucide-react";
+import { Suspense, useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
+import { Settings, X, Plus, Save, AlertTriangle } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
+import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import {
   A, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
@@ -103,111 +105,6 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
           brand_audit only runs on tours that pass validate (score ≥ threshold).
         </p>
       </Card>
-    </div>
-  );
-}
-
-// ─── Brand Rules Tab ──────────────────────────────────────────────────────────
-
-function BrandRulesTab({ brand }: { brand: SettingsData["brand_rules"] }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (!brand) {
-    return (
-      <Card>
-        <div style={{ padding: 24, textAlign: "center", color: A.muted }}>
-          No active brand rules found.
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header */}
-      <Card>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <SLabel style={{ marginBottom: 0 }}>Active Brand Identity</SLabel>
-          <Badge color="blue">v{brand.version}</Badge>
-          {brand.is_active && <Badge color="green">active</Badge>}
-        </div>
-        {brand.updated_at && (
-          <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>
-            Last updated: {new Date(brand.updated_at).toLocaleString()}
-          </div>
-        )}
-        <div style={{
-          marginTop: 14, padding: "10px 14px", borderRadius: 8,
-          background: A.amberSoft, border: `1px solid ${A.amber}40`,
-          fontSize: 12, color: "#78350F", fontFamily: sans,
-        }}>
-          To update brand rules, upload a new Brand Brief DOCX on the{" "}
-          <a href="/admin/brand" style={{ color: A.accentDeep, fontWeight: 600 }}>Brand Identity</a> page.
-        </div>
-      </Card>
-
-      {/* Style Guide */}
-      <Card>
-        <SLabel>Style Guide</SLabel>
-        {brand.style_guide ? (
-          <>
-            <p style={{ fontSize: 13, color: A.body, lineHeight: 1.6, margin: 0, fontFamily: sans }}>
-              {expanded ? (brand.style_guide_full ?? brand.style_guide) : brand.style_guide}
-              {!expanded && brand.style_guide_full && brand.style_guide_full.length > 200 && "…"}
-            </p>
-            {brand.style_guide_full && brand.style_guide_full.length > 200 && (
-              <button
-                onClick={() => setExpanded(v => !v)}
-                style={{
-                  marginTop: 8, background: "none", border: "none",
-                  cursor: "pointer", color: A.accentDeep, fontSize: 12,
-                  fontWeight: 600, display: "flex", alignItems: "center", gap: 4,
-                  padding: 0, fontFamily: sans,
-                }}
-              >
-                {expanded ? <><ChevronUp size={13} /> Show less</> : <><ChevronDown size={13} /> View full</>}
-              </button>
-            )}
-          </>
-        ) : (
-          <span style={{ fontSize: 13, color: A.muted2 }}>Not set</span>
-        )}
-      </Card>
-
-      {/* Forbidden words */}
-      <Card>
-        <SLabel>Forbidden Words ({brand.forbidden_words.length})</SLabel>
-        {brand.forbidden_words.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {brand.forbidden_words.map((w, i) => (
-              <span key={i} style={{
-                padding: "4px 10px", borderRadius: 999,
-                background: A.redSoft, color: A.red,
-                fontSize: 12, fontWeight: 500, fontFamily: mono,
-              }}>
-                {w}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span style={{ fontSize: 13, color: A.muted2 }}>No forbidden words configured</span>
-        )}
-      </Card>
-
-      {/* System prompt preview */}
-      {brand.system_prompt && (
-        <Card>
-          <SLabel>System Prompt (preview)</SLabel>
-          <p style={{
-            fontSize: 12, color: A.body, fontFamily: mono,
-            background: A.bg, padding: "10px 14px", borderRadius: 8,
-            border: `1px solid ${A.line}`, margin: 0, lineHeight: 1.6,
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
-          }}>
-            {brand.system_prompt}
-          </p>
-        </Card>
-      )}
     </div>
   );
 }
@@ -697,16 +594,29 @@ function TenantInfoTab({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// AA-663 — "Brand Rules" (a read-only summary of the active brand) is replaced by the full Brand
+// Identity editor, which used to be its own top-level page at /admin/brand (now a redirect to
+// ?tab=brand). `?tab=` selects the initial tab so old links land in the right place.
 const TABS = [
   { key: "pipeline",  label: "Pipeline Gates" },
-  { key: "brand",     label: "Brand Rules" },
+  { key: "brand",     label: "Brand Identity" },
   { key: "seo",       label: "SEO Config" },
   { key: "models",    label: "LLM Models" },
   { key: "tenant",    label: "Tenant Info" },
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab]     = useState("pipeline");
+  // useSearchParams() needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
+
+function SettingsPageInner() {
+  const wanted = useSearchParams().get("tab");
+  const [tab, setTab]     = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "pipeline"));
   const [data, setData]   = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -741,7 +651,7 @@ export default function SettingsPage() {
               Settings
             </h1>
             <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>
-              Pipeline configuration, brand rules, SEO config, and tenant info for aa_internal
+              Pipeline gates, brand identity, SEO config, models per stage, and tenant info for aa_internal
             </div>
           </div>
         </div>
@@ -764,9 +674,7 @@ export default function SettingsPage() {
             {tab === "pipeline" && (
               <PipelineGatesTab gates={data.pipeline_gates} />
             )}
-            {tab === "brand" && (
-              <BrandRulesTab brand={data.brand_rules} />
-            )}
+            {tab === "brand" && <BrandIdentityEditor />}
             {tab === "seo" && (
               <SeoConfigTab seo={data.seo_config} />
             )}
