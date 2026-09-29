@@ -1,0 +1,1802 @@
+[
+{
+"i": 0,
+"place": "Buddha Park",
+"keyword": "Buddha Park",
+"stratum": "same",
+"p": 0.95,
+"label": 1,
+"code": "same"
+},
+{
+"i": 1,
+"place": "Chimi Lhakhang",
+"keyword": "chimi lhakhang",
+"stratum": "same",
+"p": 0.97,
+"label": 1,
+"code": "same"
+},
+{
+"i": 2,
+"place": "longest suspension bridge",
+"keyword": "longest suspension bridge",
+"stratum": "same",
+"p": 0.34,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 3,
+"place": "Hutong",
+"keyword": "hutong",
+"stratum": "same",
+"p": 0.27,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 4,
+"place": "Twin Waterfall",
+"keyword": "twin waterfall",
+"stratum": "same",
+"p": 0.68,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 5,
+"place": "Wat Xieng Thong",
+"keyword": "wat xieng thong",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 6,
+"place": "Taktshang Monastery",
+"keyword": "taktshang monastery",
+"stratum": "same",
+"p": 0.97,
+"label": 1,
+"code": "same"
+},
+{
+"i": 7,
+"place": "Khao Sok resort",
+"keyword": "khao sok resort",
+"stratum": "same",
+"p": 0.73,
+"label": 1,
+"code": "same"
+},
+{
+"i": 8,
+"place": "Death Railway",
+"keyword": "death railway",
+"stratum": "same",
+"p": 0.82,
+"label": 1,
+"code": "same"
+},
+{
+"i": 9,
+"place": "Don Khong",
+"keyword": "don khong",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 10,
+"place": "Institute of Traditional Medical Services",
+"keyword": "institute of traditional medical services",
+"stratum": "same",
+"p": 0.91,
+"label": 1,
+"code": "same"
+},
+{
+"i": 11,
+"place": "Trongsa",
+"keyword": "trongsa",
+"stratum": "same",
+"p": 0.97,
+"label": 1,
+"code": "same"
+},
+{
+"i": 12,
+"place": "Memorial Chorten",
+"keyword": "memorial chorten",
+"stratum": "same",
+"p": 0.46,
+"label": 1,
+"code": "same"
+},
+{
+"i": 13,
+"place": "Jeju Island",
+"keyword": "jeju island",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 14,
+"place": "Nasu",
+"keyword": "Nasu",
+"stratum": "same",
+"p": 0.81,
+"label": 1,
+"code": "same"
+},
+{
+"i": 15,
+"place": "Li Phi Waterfall",
+"keyword": "Li Phi Waterfall",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 16,
+"place": "Seogwipo to Seongsan",
+"keyword": "seogwipo to seongsan",
+"stratum": "same",
+"p": 0.94,
+"label": 1,
+"code": "same"
+},
+{
+"i": 17,
+"place": "hotel in Turpan",
+"keyword": "Turpan hotel",
+"stratum": "same",
+"p": 0.35,
+"label": 1,
+"code": "same"
+},
+{
+"i": 18,
+"place": "Taktsang monastery",
+"keyword": "taktsang monastery",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 19,
+"place": "Great Wall at Mutianyu",
+"keyword": "Mutianyu Great Wall",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 20,
+"place": "Dolma-La pass",
+"keyword": "dolma la pass",
+"stratum": "same",
+"p": 0.96,
+"label": 1,
+"code": "same"
+},
+{
+"i": 21,
+"place": "Leshan",
+"keyword": "Leshan",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 22,
+"place": "Bolaven Plateau",
+"keyword": "plateau bolaven",
+"stratum": "same",
+"p": 0.96,
+"label": 1,
+"code": "same"
+},
+{
+"i": 23,
+"place": "Mongar Dzong",
+"keyword": "mongar dzong",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 24,
+"place": "Manas National Park",
+"keyword": "manas national park",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 25,
+"place": "Kashgar",
+"keyword": "Kashgar",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 26,
+"place": "Khone Phapheng Waterfall",
+"keyword": "khone phapheng waterfall",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 27,
+"place": "Punakha to Bumthang",
+"keyword": "punakha to bumthang",
+"stratum": "same",
+"p": 0.96,
+"label": 1,
+"code": "same"
+},
+{
+"i": 28,
+"place": "Kumano Hongu Grand Shrine",
+"keyword": "Kumano Hongu Grand Shrine",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 29,
+"place": "Khao Sok National Park",
+"keyword": "khao sok national park",
+"stratum": "same",
+"p": 0.98,
+"label": 1,
+"code": "same"
+},
+{
+"i": 30,
+"place": "Angkor",
+"keyword": "angkor wat tour",
+"stratum": "longer",
+"p": 0.94,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 31,
+"place": "Beijing",
+"keyword": "Great Wall near Beijing",
+"stratum": "longer",
+"p": 0.66,
+"label": 0,
+"code": "other"
+},
+{
+"i": 32,
+"place": "Seoul",
+"keyword": "seoul airport transfer",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 33,
+"place": "Dochula Pass",
+"keyword": "dochula pass bhutan",
+"stratum": "longer",
+"p": 0.98,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 34,
+"place": "Jomsom",
+"keyword": "Pokhara to Jomsom",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 35,
+"place": "Jomsom",
+"keyword": "Pokhara Jomsom flight",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 36,
+"place": "Jeju",
+"keyword": "haenyeo jeju",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 37,
+"place": "Delhi",
+"keyword": "delhi monuments",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 38,
+"place": "Ishikawa",
+"keyword": "Ishikawa sakura",
+"stratum": "longer",
+"p": 0.71,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 39,
+"place": "Seoul (airport)",
+"keyword": "seoul airport transfer",
+"stratum": "longer",
+"p": 0.91,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 40,
+"place": "Chiang Rai",
+"keyword": "chiang rai airport",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 41,
+"place": "Mutianyu",
+"keyword": "Beijing to Mutianyu",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 42,
+"place": "Hutong",
+"keyword": "hutong tour",
+"stratum": "longer",
+"p": 0.3,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 43,
+"place": "Pakse",
+"keyword": "pakse airport departures",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 44,
+"place": "Hahoe Folk Village",
+"keyword": "andong hahoe folk village",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 45,
+"place": "Andong Hahoe Village",
+"keyword": "andong hahoe folk village",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 46,
+"place": "Manas National Park",
+"keyword": "manas national park bhutan",
+"stratum": "longer",
+"p": 0.68,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 47,
+"place": "Thakhek",
+"keyword": "Thakhek hotels",
+"stratum": "longer",
+"p": 0.94,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 48,
+"place": "Delhi",
+"keyword": "delhi airport",
+"stratum": "longer",
+"p": 0.89,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 49,
+"place": "Don Khong",
+"keyword": "don khong laos",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 50,
+"place": "monastery",
+"keyword": "tiger s nest monastery",
+"stratum": "longer",
+"p": 0.94,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 51,
+"place": "Kanchanaburi",
+"keyword": "Kanchanaburi River Kwai",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 52,
+"place": "Kanchanaburi",
+"keyword": "Kanchanaburi Railway Museum",
+"stratum": "longer",
+"p": 0.84,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 53,
+"place": "Mekong River",
+"keyword": "mekong river boat tour",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 54,
+"place": "Laos",
+"keyword": "don khone laos",
+"stratum": "longer",
+"p": 0.84,
+"label": 0,
+"code": "ctry"
+},
+{
+"i": 55,
+"place": "Gasa",
+"keyword": "gasa hot springs",
+"stratum": "longer",
+"p": 0.8,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 56,
+"place": "Terelj",
+"keyword": "Terelj National Park",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 57,
+"place": "Bangalore",
+"keyword": "Bangalore Hospet train",
+"stratum": "longer",
+"p": 0.88,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 58,
+"place": "Kwai River",
+"keyword": "Bridge Over the River Kwai",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 59,
+"place": "Pakse",
+"keyword": "pakse airport",
+"stratum": "longer",
+"p": 0.93,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 60,
+"place": "Royal Chitwan National Park",
+"keyword": "royal chitwan national park safari",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 61,
+"place": "Thimphu",
+"keyword": "thimphu weekend market",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 62,
+"place": "Mebar Tsho lake",
+"keyword": "mebar tsho burning lake",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 63,
+"place": "Ulaanbaatar to Irkutsk",
+"keyword": "Ulaanbaatar to Irkutsk train",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 64,
+"place": "Dewathang",
+"keyword": "dewathang bhutan",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 65,
+"place": "Punakha River",
+"keyword": "punakha river rafting",
+"stratum": "longer",
+"p": 0.9,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 66,
+"place": "Taktsang",
+"keyword": "taktsang monastery hike",
+"stratum": "longer",
+"p": 0.91,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 67,
+"place": "Savannakhet",
+"keyword": "Savannakhet Laos",
+"stratum": "longer",
+"p": 0.98,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 68,
+"place": "Kathmandu airport",
+"keyword": "kathmandu airport transfer",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 69,
+"place": "Delhi",
+"keyword": "delhi markets shopping",
+"stratum": "longer",
+"p": 0.94,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 70,
+"place": "Laos",
+"keyword": "Kong Lor Cave Laos",
+"stratum": "longer",
+"p": 0.93,
+"label": 0,
+"code": "ctry"
+},
+{
+"i": 71,
+"place": "Sarnath",
+"keyword": "sarnath buddha first sermon",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 72,
+"place": "Udo Island",
+"keyword": "Udo Island bike",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 73,
+"place": "Don Khone",
+"keyword": "don khone island",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 74,
+"place": "Urumqi",
+"keyword": "Turpan to Urumqi",
+"stratum": "longer",
+"p": 0.91,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 75,
+"place": "Jambay Lhakhang",
+"keyword": "jambay lhakhang drup festival",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 76,
+"place": "Mebar Tsho Lake",
+"keyword": "mebar tsho burning lake",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 77,
+"place": "homestay",
+"keyword": "Paro homestay",
+"stratum": "longer",
+"p": 0.61,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 78,
+"place": "longest suspension bridge",
+"keyword": "longest suspension bridge bhutan",
+"stratum": "longer",
+"p": 0.49,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 79,
+"place": "Death Railway",
+"keyword": "death railway kanchanaburi",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 80,
+"place": "Pokhara to Jomsom",
+"keyword": "Pokhara Jomsom flight",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 81,
+"place": "Yala",
+"keyword": "Yala safari",
+"stratum": "longer",
+"p": 0.94,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 82,
+"place": "Don Khone",
+"keyword": "Don Khone hotel",
+"stratum": "longer",
+"p": 0.9,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 83,
+"place": "Phuket",
+"keyword": "Big Buddha Phuket",
+"stratum": "longer",
+"p": 0.94,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 84,
+"place": "resort",
+"keyword": "Khao Sok resort",
+"stratum": "longer",
+"p": 0.81,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 85,
+"place": "Angkor Wat",
+"keyword": "angkor wat ticket",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 86,
+"place": "Laos",
+"keyword": "Don Daeng island laos",
+"stratum": "longer",
+"p": 0.83,
+"label": 0,
+"code": "ctry"
+},
+{
+"i": 87,
+"place": "Great Wall at Mutianyu",
+"keyword": "mutianyu section great wall",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 88,
+"place": "Punakha",
+"keyword": "punakha river rafting",
+"stratum": "longer",
+"p": 0.93,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 89,
+"place": "resort",
+"keyword": "hot springs resort",
+"stratum": "longer",
+"p": 0.12,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 90,
+"place": "Kwai River",
+"keyword": "Kanchanaburi River Kwai",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 91,
+"place": "Huashan",
+"keyword": "mount huashan hiking trail",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 92,
+"place": "Pakse",
+"keyword": "Pakse Laos",
+"stratum": "longer",
+"p": 0.98,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 93,
+"place": "Paro",
+"keyword": "Paro homestay",
+"stratum": "longer",
+"p": 0.88,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 94,
+"place": "Chiang Mai",
+"keyword": "best elephant sanctuary chiang mai",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 95,
+"place": "resort",
+"keyword": "khao sok resort",
+"stratum": "longer",
+"p": 0.83,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 96,
+"place": "Beijing",
+"keyword": "Beijing Duck restaurant",
+"stratum": "longer",
+"p": 0.17,
+"label": 0,
+"code": "other"
+},
+{
+"i": 97,
+"place": "monastery",
+"keyword": "Tara Monastery",
+"stratum": "longer",
+"p": 0.83,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 98,
+"place": "Wangdi",
+"keyword": "wangdi bhutan",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 99,
+"place": "monastery",
+"keyword": "tango monastery bhutan",
+"stratum": "longer",
+"p": 0.78,
+"label": 0,
+"code": "kind"
+},
+{
+"i": 100,
+"place": "Bangkok",
+"keyword": "bangkok airport",
+"stratum": "longer",
+"p": 0.89,
+"label": 1,
+"code": "logi"
+},
+{
+"i": 101,
+"place": "Yala",
+"keyword": "Yala National Park",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 102,
+"place": "Tashilhunpo Monastery",
+"keyword": "tashilhunpo monastery tibet",
+"stratum": "longer",
+"p": 0.98,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 103,
+"place": "Phobjikha",
+"keyword": "phobjikha valley",
+"stratum": "longer",
+"p": 0.95,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 104,
+"place": "Kerala Backwaters",
+"keyword": "Kerala backwaters homestay",
+"stratum": "longer",
+"p": 0.72,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 105,
+"place": "Bolaven Plateau",
+"keyword": "Bolaven Plateau coffee",
+"stratum": "longer",
+"p": 0.92,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 106,
+"place": "Terelj",
+"keyword": "Terelj Mongolia",
+"stratum": "longer",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 107,
+"place": "Polonnaruwa",
+"keyword": "ancient city of polonnaruwa",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 108,
+"place": "Seogwipo",
+"keyword": "Seogwipo Jeju",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 109,
+"place": "Great Wall at Mutianyu",
+"keyword": "mutianyu great wall private tour",
+"stratum": "longer",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 110,
+"place": "Gasa Dzong",
+"keyword": "Trongsa Dzong",
+"stratum": "overlap",
+"p": 0.06,
+"label": 0,
+"code": "other"
+},
+{
+"i": 111,
+"place": "Bogd Khan's Winter Palace Museum",
+"keyword": "Nam Khan River",
+"stratum": "overlap",
+"p": 0.11,
+"label": 0,
+"code": "other"
+},
+{
+"i": 112,
+"place": "Jeonju Hanok Village",
+"keyword": "andong hanok village",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 113,
+"place": "Thai-Cambodian border",
+"keyword": "Mongolia Russia border",
+"stratum": "overlap",
+"p": 0.02,
+"label": 0,
+"code": "other"
+},
+{
+"i": 114,
+"place": "4000 Islands (Si Phan Don)",
+"keyword": "don daeng",
+"stratum": "overlap",
+"p": 0.67,
+"label": 0,
+"code": "other"
+},
+{
+"i": 115,
+"place": "Chiang Rai",
+"keyword": "elephant tour chiang mai",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 116,
+"place": "Mardi Himal Base Camp to Low Camp",
+"keyword": "ger camp Mongolia",
+"stratum": "overlap",
+"p": 0.04,
+"label": 0,
+"code": "other"
+},
+{
+"i": 117,
+"place": "Khardung to Leh via Khardung La",
+"keyword": "dolma la",
+"stratum": "overlap",
+"p": 0.13,
+"label": 0,
+"code": "other"
+},
+{
+"i": 118,
+"place": "Manakamana Temple to Pokhara",
+"keyword": "pokhara lake",
+"stratum": "overlap",
+"p": 0.35,
+"label": 0,
+"code": "route"
+},
+{
+"i": 119,
+"place": "Thai Buddhist vihara, Sarnath",
+"keyword": "sarnath buddha first sermon",
+"stratum": "overlap",
+"p": 0.78,
+"label": 0,
+"code": "cont"
+},
+{
+"i": 120,
+"place": "Pho Chau",
+"keyword": "wat pho tour",
+"stratum": "overlap",
+"p": 0.48,
+"label": 0,
+"code": "other"
+},
+{
+"i": 121,
+"place": "Chiang Mai Canyon recreation area",
+"keyword": "chiang mai doi suthep",
+"stratum": "overlap",
+"p": 0.25,
+"label": 0,
+"code": "other"
+},
+{
+"i": 122,
+"place": "Muang Fuang to Vang Vieng",
+"keyword": "Vang Vieng tubing",
+"stratum": "overlap",
+"p": 0.71,
+"label": 0,
+"code": "route"
+},
+{
+"i": 123,
+"place": "Mount Huashan",
+"keyword": "huashan mountain hike",
+"stratum": "overlap",
+"p": 0.96,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 124,
+"place": "Jamba Lhakhang",
+"keyword": "jambay lhakhang drup festival",
+"stratum": "overlap",
+"p": 0.9,
+"label": 1,
+"code": "var"
+},
+{
+"i": 125,
+"place": "Wat Bo Phuttharam",
+"keyword": "Wat Mahathat",
+"stratum": "overlap",
+"p": 0.11,
+"label": 0,
+"code": "other"
+},
+{
+"i": 126,
+"place": "Gasa hot springs",
+"keyword": "gasa bhutan",
+"stratum": "overlap",
+"p": 0.67,
+"label": 0,
+"code": "cont"
+},
+{
+"i": 127,
+"place": "Don Khone",
+"keyword": "Don Daeng island laos",
+"stratum": "overlap",
+"p": 0.35,
+"label": 0,
+"code": "other"
+},
+{
+"i": 128,
+"place": "Yala to Tangalle",
+"keyword": "Yala",
+"stratum": "overlap",
+"p": 0.89,
+"label": 0,
+"code": "route"
+},
+{
+"i": 129,
+"place": "Nam Nern Night Safari",
+"keyword": "nam khan",
+"stratum": "overlap",
+"p": 0.27,
+"label": 0,
+"code": "other"
+},
+{
+"i": 130,
+"place": "Tad E-Tu Waterfall",
+"keyword": "Tad Yuang",
+"stratum": "overlap",
+"p": 0.37,
+"label": 0,
+"code": "other"
+},
+{
+"i": 131,
+"place": "Yala to Tangalle",
+"keyword": "Yala National Park",
+"stratum": "overlap",
+"p": 0.58,
+"label": 0,
+"code": "route"
+},
+{
+"i": 132,
+"place": "Jambay Lhakhang temple",
+"keyword": "tamchhog lhakhang",
+"stratum": "overlap",
+"p": 0.14,
+"label": 0,
+"code": "other"
+},
+{
+"i": 133,
+"place": "Wat Rong Khun",
+"keyword": "Wat Phrathat Doi Suthep",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 134,
+"place": "Jeju to Takayama",
+"keyword": "Jeju island nightlife",
+"stratum": "overlap",
+"p": 0.55,
+"label": 0,
+"code": "other"
+},
+{
+"i": 135,
+"place": "Chari Monastery",
+"keyword": "tiger s nest monastery",
+"stratum": "overlap",
+"p": 0.07,
+"label": 0,
+"code": "other"
+},
+{
+"i": 136,
+"place": "Yeosu to Jeju Island",
+"keyword": "Jeju island nightlife",
+"stratum": "overlap",
+"p": 0.61,
+"label": 0,
+"code": "other"
+},
+{
+"i": 137,
+"place": "Chiang Mai's adventure park",
+"keyword": "fisherman's village",
+"stratum": "overlap",
+"p": 0.16,
+"label": 0,
+"code": "other"
+},
+{
+"i": 138,
+"place": "overnight train to Xi'an",
+"keyword": "train station shuttle",
+"stratum": "overlap",
+"p": 0.13,
+"label": 0,
+"code": "other"
+},
+{
+"i": 139,
+"place": "Ongi Monastery",
+"keyword": "taktsang monastery",
+"stratum": "overlap",
+"p": 0.11,
+"label": 0,
+"code": "other"
+},
+{
+"i": 140,
+"place": "Tad E-Tu Waterfall",
+"keyword": "tad fane",
+"stratum": "overlap",
+"p": 0.29,
+"label": 0,
+"code": "other"
+},
+{
+"i": 141,
+"place": "overnight sleeper train to Chiang Mai",
+"keyword": "best elephant sanctuary chiang mai",
+"stratum": "overlap",
+"p": 0.09,
+"label": 0,
+"code": "other"
+},
+{
+"i": 142,
+"place": "Pinnawala Elephant Orphanage",
+"keyword": "best elephant sanctuary chiang mai",
+"stratum": "overlap",
+"p": 0.02,
+"label": 0,
+"code": "other"
+},
+{
+"i": 143,
+"place": "Lijiang's old streets",
+"keyword": "Tina's Guesthouse",
+"stratum": "overlap",
+"p": 0.61,
+"label": 0,
+"code": "other"
+},
+{
+"i": 144,
+"place": "Gasa Dzong",
+"keyword": "Lingshi Dzong",
+"stratum": "overlap",
+"p": 0.14,
+"label": 0,
+"code": "other"
+},
+{
+"i": 145,
+"place": "Khone Phapheng Waterfall to Pakse",
+"keyword": "pakse airport departures",
+"stratum": "overlap",
+"p": 0.39,
+"label": 0,
+"code": "route"
+},
+{
+"i": 146,
+"place": "Dumtse Lhakhang",
+"keyword": "kyichu lhakhang",
+"stratum": "overlap",
+"p": 0.21,
+"label": 0,
+"code": "other"
+},
+{
+"i": 147,
+"place": "Milarepa's Cave",
+"keyword": "Lover's Bridge",
+"stratum": "overlap",
+"p": 0.17,
+"label": 0,
+"code": "other"
+},
+{
+"i": 148,
+"place": "Gurdwara Bangla Sahib",
+"keyword": "gurdwara sis ganj sahib",
+"stratum": "overlap",
+"p": 0.07,
+"label": 0,
+"code": "other"
+},
+{
+"i": 149,
+"place": "Wat Mai Suwannaphumaham",
+"keyword": "angkor wat tour",
+"stratum": "overlap",
+"p": 0.06,
+"label": 0,
+"code": "other"
+},
+{
+"i": 150,
+"place": "Wat Phrathat Doi Suthep",
+"keyword": "wat xieng thong luang prabang",
+"stratum": "overlap",
+"p": 0.04,
+"label": 0,
+"code": "other"
+},
+{
+"i": 151,
+"place": "Weligalpoththa Buddhist Monastery",
+"keyword": "talo monastery",
+"stratum": "overlap",
+"p": 0.23,
+"label": 0,
+"code": "other"
+},
+{
+"i": 152,
+"place": "terraced rice paddies and suspension bridge near Shiobara",
+"keyword": "longest suspension bridge bhutan",
+"stratum": "overlap",
+"p": 0.07,
+"label": 0,
+"code": "other"
+},
+{
+"i": 153,
+"place": "Daxueshan Visitor Center",
+"keyword": "Daxueshan",
+"stratum": "overlap",
+"p": 0.76,
+"label": 0,
+"code": "cont"
+},
+{
+"i": 154,
+"place": "Grand Bazaar",
+"keyword": "bazaar shopping",
+"stratum": "overlap",
+"p": 0.1,
+"label": 0,
+"code": "other"
+},
+{
+"i": 155,
+"place": "Sukhothai to Chiang Rai",
+"keyword": "chiang rai airport",
+"stratum": "overlap",
+"p": 0.71,
+"label": 0,
+"code": "route"
+},
+{
+"i": 156,
+"place": "Samdrup Jongkhar Border Gate",
+"keyword": "Mongolia Russia border",
+"stratum": "overlap",
+"p": 0.02,
+"label": 0,
+"code": "other"
+},
+{
+"i": 157,
+"place": "Orchha to Varanasi",
+"keyword": "varanasi ghats",
+"stratum": "overlap",
+"p": 0.65,
+"label": 0,
+"code": "route"
+},
+{
+"i": 158,
+"place": "Gasa hot springs",
+"keyword": "Paro hot stone bath",
+"stratum": "overlap",
+"p": 0.26,
+"label": 0,
+"code": "other"
+},
+{
+"i": 159,
+"place": "Bangkok to Kanchanaburi",
+"keyword": "death railway kanchanaburi",
+"stratum": "overlap",
+"p": 0.84,
+"label": 0,
+"code": "route"
+},
+{
+"i": 160,
+"place": "downtown Jeju",
+"keyword": "jeju olle trail",
+"stratum": "overlap",
+"p": 0.25,
+"label": 0,
+"code": "other"
+},
+{
+"i": 161,
+"place": "Pak Klong Talaat Flower Market",
+"keyword": "Pak Ou caves",
+"stratum": "overlap",
+"p": 0.02,
+"label": 0,
+"code": "other"
+},
+{
+"i": 162,
+"place": "onsen hotel in Mashiko's forest surroundings",
+"keyword": "Tina's Guesthouse",
+"stratum": "overlap",
+"p": 0.34,
+"label": 0,
+"code": "other"
+},
+{
+"i": 163,
+"place": "Khone Phapheng Waterfall to Pakse",
+"keyword": "Khone Phapheng",
+"stratum": "overlap",
+"p": 0.94,
+"label": 0,
+"code": "route"
+},
+{
+"i": 164,
+"place": "Beijing Chongwenmen Hotel surrounding area",
+"keyword": "Beijing acrobatic show",
+"stratum": "overlap",
+"p": 0.12,
+"label": 0,
+"code": "other"
+},
+{
+"i": 165,
+"place": "Peradeniya Railway Station",
+"keyword": "Thailand-Burma Railway Museum",
+"stratum": "overlap",
+"p": 0.07,
+"label": 0,
+"code": "other"
+},
+{
+"i": 166,
+"place": "Wat Pho",
+"keyword": "Wat Phrathat Doi Suthep",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 167,
+"place": "Dali's walled old town",
+"keyword": "farmer's restaurant",
+"stratum": "overlap",
+"p": 0.12,
+"label": 0,
+"code": "other"
+},
+{
+"i": 168,
+"place": "Primate Rescue Centre",
+"keyword": "wildlife rescue center",
+"stratum": "overlap",
+"p": 0.07,
+"label": 0,
+"code": "other"
+},
+{
+"i": 169,
+"place": "Chiang Mai's adventure park",
+"keyword": "elephant nature park chiang mai",
+"stratum": "overlap",
+"p": 0.61,
+"label": 0,
+"code": "other"
+},
+{
+"i": 170,
+"place": "City Wall",
+"keyword": "Mutianyu Great Wall",
+"stratum": "overlap",
+"p": 0.71,
+"label": 0,
+"code": "other"
+},
+{
+"i": 171,
+"place": "Amarbayasgalant monastery",
+"keyword": "Tara Monastery",
+"stratum": "overlap",
+"p": 0.27,
+"label": 0,
+"code": "other"
+},
+{
+"i": 172,
+"place": "Kila Gompa nunnery",
+"keyword": "zilukha nunnery",
+"stratum": "overlap",
+"p": 0.42,
+"label": 0,
+"code": "other"
+},
+{
+"i": 173,
+"place": "Paro valley",
+"keyword": "Paro Rinpung Dzong",
+"stratum": "overlap",
+"p": 0.91,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 174,
+"place": "Mutianyu section of the Great Wall",
+"keyword": "Mutianyu Great Wall",
+"stratum": "overlap",
+"p": 0.97,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 175,
+"place": "Mongar Dzong",
+"keyword": "taa dzong",
+"stratum": "overlap",
+"p": 0.33,
+"label": 0,
+"code": "other"
+},
+{
+"i": 176,
+"place": "station to hotel resort on the banks of the Kat River",
+"keyword": "hot springs resort",
+"stratum": "overlap",
+"p": 0.12,
+"label": 0,
+"code": "other"
+},
+{
+"i": 177,
+"place": "N Seoul Tower",
+"keyword": "seoul airport luggage delivery",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 178,
+"place": "Jamba Lhakhang",
+"keyword": "chimmi lhakhang",
+"stratum": "overlap",
+"p": 0.27,
+"label": 0,
+"code": "other"
+},
+{
+"i": 179,
+"place": "Jakar Dzong",
+"keyword": "mongar dzong",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+},
+{
+"i": 180,
+"place": "Railway Market at Ratchaburi",
+"keyword": "Death Railway train ride",
+"stratum": "overlap",
+"p": 0.44,
+"label": 0,
+"code": "other"
+},
+{
+"i": 181,
+"place": "River Camp",
+"keyword": "ger camp Mongolia",
+"stratum": "overlap",
+"p": 0.11,
+"label": 0,
+"code": "other"
+},
+{
+"i": 182,
+"place": "Son La to Moc Chau",
+"keyword": "chele la pass",
+"stratum": "overlap",
+"p": 0.74,
+"label": 0,
+"code": "other"
+},
+{
+"i": 183,
+"place": "Indira Gandhi International Airport",
+"keyword": "bandaranaike international airport",
+"stratum": "overlap",
+"p": 0.03,
+"label": 0,
+"code": "other"
+},
+{
+"i": 184,
+"place": "Lisu hilltribe lodge",
+"keyword": "Lisu Lodge",
+"stratum": "overlap",
+"p": 0.77,
+"label": 1,
+"code": "var"
+},
+{
+"i": 185,
+"place": "Damodar Kunda to Pokhara",
+"keyword": "pokhara lake",
+"stratum": "overlap",
+"p": 0.52,
+"label": 0,
+"code": "route"
+},
+{
+"i": 186,
+"place": "terrain above Rigyul Sumdo camp toward Gapo Ri and Dzo Jongo",
+"keyword": "river camp",
+"stratum": "overlap",
+"p": 0.1,
+"label": 0,
+"code": "other"
+},
+{
+"i": 187,
+"place": "rural Thailand",
+"keyword": "Big Buddha Thailand",
+"stratum": "overlap",
+"p": 0.37,
+"label": 0,
+"code": "other"
+},
+{
+"i": 188,
+"place": "Aukana Buddha",
+"keyword": "Big Buddha Phuket",
+"stratum": "overlap",
+"p": 0.03,
+"label": 0,
+"code": "other"
+},
+{
+"i": 189,
+"place": "Qinghai-Tibet Railway",
+"keyword": "death railway",
+"stratum": "overlap",
+"p": 0.68,
+"label": 0,
+"code": "other"
+},
+{
+"i": 190,
+"place": "Chimi Lhakhang",
+"keyword": "kurjey lhakhang bhutan",
+"stratum": "overlap",
+"p": 0.6,
+"label": 0,
+"code": "other"
+},
+{
+"i": 191,
+"place": "Longmen Train Station",
+"keyword": "Longmen Grottoes tour",
+"stratum": "overlap",
+"p": 0.33,
+"label": 0,
+"code": "other"
+},
+{
+"i": 192,
+"place": "high-altitude valleys to forest descent",
+"keyword": "taichung high speed rail station",
+"stratum": "overlap",
+"p": 0.26,
+"label": 0,
+"code": "other"
+},
+{
+"i": 193,
+"place": "Peradeniya Railway Station",
+"keyword": "Death Railway Museum",
+"stratum": "overlap",
+"p": 0.13,
+"label": 0,
+"code": "other"
+},
+{
+"i": 194,
+"place": "Shangri-la",
+"keyword": "dochu la pass",
+"stratum": "overlap",
+"p": 0.77,
+"label": 0,
+"code": "other"
+},
+{
+"i": 195,
+"place": "Ulaanbaatar to Terelj",
+"keyword": "ulaanbaatar to irkutsk train",
+"stratum": "overlap",
+"p": 0.12,
+"label": 0,
+"code": "other"
+},
+{
+"i": 196,
+"place": "Jeju Island",
+"keyword": "jeju olle trail",
+"stratum": "overlap",
+"p": 0.93,
+"label": 1,
+"code": "sub"
+},
+{
+"i": 197,
+"place": "Punakha River",
+"keyword": "punakha to paro",
+"stratum": "overlap",
+"p": 0.54,
+"label": 0,
+"code": "route"
+},
+{
+"i": 198,
+"place": "Island Peak Base Camp",
+"keyword": "ger camp Mongolia",
+"stratum": "overlap",
+"p": 0.04,
+"label": 0,
+"code": "other"
+},
+{
+"i": 199,
+"place": "Royal Botanical Garden",
+"keyword": "royal chitwan national park safari",
+"stratum": "overlap",
+"p": 0.05,
+"label": 0,
+"code": "other"
+}
+]
