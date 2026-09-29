@@ -496,7 +496,7 @@ async def get_content_log(
             "publish_id": r["publish_id"],
             "publish_external_url": r["publish_external_url"],
             "publish_published_at": r["publish_published_at"].isoformat() if r["publish_published_at"] else None,
-            "job_id": r["job_id"],
+            "job_id": r.get("job_id"),
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
     logger.info(
