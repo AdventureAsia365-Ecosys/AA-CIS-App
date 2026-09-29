@@ -91,6 +91,8 @@ interface ContentLogRow {
   // null whenever publish_status !== "published" (no publish_log row exists yet).
   publish_id: string | null;
   publish_external_url: string | null; publish_published_at: string | null;
+  // AA-687 — the t9_write job that wrote this piece (null before AA-652 / buffer-retry pieces).
+  job_id: string | null;
   created_at: string;
 }
 
@@ -540,6 +542,13 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
         <LineageLine label="Slate">
           {p.source.kind === "direct_atom" ? "Not used — atom chosen directly" : "Picked from the Slate"}
         </LineageLine>
+        {p.job_id && (
+          <LineageLine label="Job">
+            <a href={`/admin/jobs?job=${p.job_id}`} style={{ color: A.accent, fontFamily: mono }}>
+              {p.job_id.slice(0, 8)} — attempts, LLM calls and cost
+            </a>
+          </LineageLine>
+        )}
       </div>
       {p.goal && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>Goal:</strong> {p.goal}</div>}
       {p.cta && <div style={{ fontSize: 12.5, color: A.body, marginBottom: 12 }}><strong>CTA:</strong> {p.cta}</div>}
