@@ -81,13 +81,10 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin/pipeline", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/master-content", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/review", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/brand", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/s1-rewrite", roles: ["admin", "reviewer", "content"] }, // #4
   { prefix: "/admin/settings", roles: ["admin", "reviewer", "content"] },   // #4
-  { prefix: "/upload", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/review", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/catalog", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/brand", roles: ["admin", "reviewer", "content"] }, // #5
+  // AA-663 — /upload, /review, /catalog, /brand and /admin/brand are redirects now
+  // (next.config.ts); the legacy (internal) pages behind them are deleted.
   // Tenant portal (was TENANT_PATHS) — admin now goes through the same real
   // verifyAdminToken() as every other admin route, no bypass (#3).
   { prefix: "/portal", roles: ["admin", "tenant"] },
@@ -233,10 +230,6 @@ async function verifyTenantToken(request: NextRequest): Promise<NextResponse | n
 export const config = {
   matcher: [
     "/admin/:path*",
-    "/upload/:path*",
-    "/review/:path*",
-    "/catalog/:path*",
-    "/brand/:path*", // AA-252 #5 — was missing, middleware never ran for /brand
     "/portal/:path*",
     "/login",
     "/tenant-login",

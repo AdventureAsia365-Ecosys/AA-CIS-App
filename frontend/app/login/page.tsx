@@ -62,7 +62,8 @@ export default function LoginPage() {
       // this a real navigation: whatever the server ultimately serves is
       // what renders, and a fresh page load always leaves the old stuck
       // state behind either way.
-      window.location.href = data.role === "admin" ? "/admin/dashboard" : "/upload";
+      // AA-663 — every staff role lands on the one Dashboard (the legacy /upload page is gone).
+      window.location.href = "/admin/dashboard";
     } catch {
       setError("Network error — check connection");
       setLoading(false);

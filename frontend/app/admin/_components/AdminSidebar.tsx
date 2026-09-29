@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Palette, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -19,26 +19,39 @@ interface Notif {
   created_at: string;
 }
 
-// AA-323 round 6, Phần D — sidebar reorganized around the real ACP v2
-// (N0-N8) business flow instead of historical grouping:
-//   1. Real ACP v2 (N0-N8): Tenants(N1)/Marketplace(N1)/Quarter Plan Gate B(N5).
-//   2. AA-internal's own content-authoring pipeline (Upload/S1 Rewrite/
-//      Review/Brand/Master Content) — a different, older system for AA's
-//      own tour copy, unrelated to the B2B tenant flow.
-// AA-390 — the third group (legacy ACP v1: S2 Research/S3 Calendar/S4 Blog/
-// S4 Social, admin_acp_proxy.py) was removed from this sidebar entirely
-// (nobody needs ACPv1 access anymore, per Nghiep). The routes/pages and
-// their backend are untouched and still reachable directly by URL.
-// AA-475 — the "ACP v2 — Atoms" group (Atomize N2 + Atom Curation) was
-// removed along with those pages; the non-admin Dashboard fallback that
-// group used to carry moved into "AA Internal Content" below so
-// reviewer/content roles keep a Dashboard entry point.
-const CONTENT_AUTHORING_NAV = [
-  { href: "/admin/upload",         icon: <Upload size={15} />,        label: "Upload (S0)" },
-  { href: "/admin/s1-rewrite",      icon: <Wand2 size={15} />,         label: "S1 Rewrite" },
-  { href: "/admin/review",         icon: <ClipboardList size={15} />, label: "Review Queue" },
-  { href: "/admin/brand",          icon: <Palette size={15} />,       label: "Brand Identity" },
-  { href: "/admin/master-content", icon: <Library size={15} />,       label: "Master Content" },
+// AA-663 — one information architecture (review §5.5): Overview · Content · Intelligence · Tenants ·
+// Operations · Settings. Replaces the AA-323 grouping ("ACP v2 — Setup & Approval" + "AA Internal
+// Content"), which gave admins two "Dashboard" entries. Visibility still follows middleware.ts
+// PROTECTED_ROUTES exactly (adminOnly items render for role "admin" only, so no dead links for
+// reviewer/content); the "ADMIN" tag (AA-605) is gone — a role only ever sees what it can open.
+interface NavEntry {
+  href: string; icon: React.ReactNode; label: string; adminOnly?: boolean;
+  also?: string[];  // other routes that belong to this entry (its sub-nav pages)
+}
+
+const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
+  { label: "Overview", items: [
+    { href: "/admin/dashboard", icon: <LayoutDashboard size={15} />, label: "Dashboard" },
+  ] },
+  { label: "Content", items: [
+    { href: "/admin/upload",         icon: <Upload size={15} />,        label: "Upload (S0)" },
+    { href: "/admin/s1-rewrite",     icon: <Wand2 size={15} />,         label: "Rewrite (S1)" },
+    { href: "/admin/review",         icon: <ClipboardList size={15} />, label: "Review Queue" },
+    { href: "/admin/master-content", icon: <Library size={15} />,       label: "Master Content" },
+  ] },
+  // Atoms · Segments · Scores · Routes & Hubs · Slate are tabs inside this one page (AA-553/554).
+  { label: "Intelligence", items: [
+    { href: "/admin/atom-curation", icon: <Puzzle size={15} />, label: "Social Content", adminOnly: true,
+      also: ["/admin/tenant-activity", "/admin/platform-stats"] },
+  ] },
+  { label: "Tenants", items: [
+    { href: "/admin/tenants", icon: <Users size={15} />, label: "Tenants", adminOnly: true },
+  ] },
+  { label: "Operations", items: [
+    // AA-622 — LLM + DataForSEO spend and budgets; route kept as /admin/llm-usage.
+    { href: "/admin/llm-usage", icon: <Wallet size={15} />,     label: "External Spend", adminOnly: true },
+    { href: "/admin/jobs",      icon: <ListChecks size={15} />, label: "Jobs",           adminOnly: true },
+  ] },
 ];
 
 export default function AdminSidebar() {
@@ -192,102 +205,26 @@ export default function AdminSidebar() {
         )}
       </div>
 
-      {/* Nav — AA-323 round 6, Phần D: real ACP v2 (N0-N8) flow first (N1
-          setup/approval, admin-only, then N2 atoms, all roles), then the
-          two OTHER pipelines clearly labeled as separate, then Settings.
-          Every {isAdmin && ...} / unconditional-visibility boundary below
-          is byte-for-byte the same boundary as before this round — only
-          which group an item sits in, and each group's order/label,
-          changed. */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 24 }}>
-        {/* ACP v2 — N1 setup + N5 approval (admin-only, same as before) */}
-        {isAdmin && (
-          <NavGroup label="ACP v2 — Setup & Approval">
-            <NavItem active={active("/admin/dashboard")} accent={A.accent} adminOnly
-              icon={<LayoutDashboard size={15} />} label="Dashboard"
-              onClick={() => router.push("/admin/dashboard")} />
-            <NavItem active={active("/admin/tenants")} accent={A.accent} adminOnly
-              icon={<Users size={15} />} label="Tenants"
-              onClick={() => router.push("/admin/tenants")} />
-            {/* AA-603 — "Run Health" NavItem removed with the deleted /admin/run-health page
-                (it read the dead N7/N8 acp_v2_runs/slots tables, always rendered empty). */}
-            {/* AA-437 [A4]'s "Cross-Tenant Oversight" NavItem (Eye icon) is retired here (AA-560)
-                — real Playwright confirmed BOTH its replacements work in production first: "07 ·
-                Platform Stats" (Review Log + Trust Ramp, reachable via SocialContentSubNav inside
-                Social Content, same as "06 · Content Trace" — no top-level sidebar item for
-                either) and Content Trace's new Force-unpublish button. The a4-oversight route +
-                its middleware.ts entry are deleted in this same commit. */}
-            {/* AA-505 — real per-call LLM cost/quality, Tenant->Model->Stage. Admin-only, same
-                tier Cross-Tenant Oversight used to be (middleware.ts).
-                AA-622 — expanded into the "External Spend" page (LLM + DataForSEO cost, 3 tabs);
-                route kept as /admin/llm-usage, label + icon updated to match. */}
-            <NavItem active={active("/admin/llm-usage")} accent={A.accent} adminOnly
-              icon={<Wallet size={15} />} label="External Spend"
-              onClick={() => router.push("/admin/llm-usage")} />
-            {/* AA-650 — durable job queue: background runs that survive deploys. */}
-            <NavItem active={active("/admin/jobs")} accent={A.accent} adminOnly
-              icon={<ListChecks size={15} />} label="Jobs"
-              onClick={() => router.push("/admin/jobs")} />
-            {/* AA-553 — "Atom Curation" moved out of this group, down into "AA Internal Content"
-                (right under Master Content) — it's Master Content pool data (Atom/Segment/Score/
-                Route/Hub/Slate), not platform config, so it didn't belong alongside Tenants/Run
-                Health/Cross-Tenant Oversight. Still admin-only (middleware.ts unchanged,
-                PROTECTED_ROUTES roles: ["admin"]) — see that NavItem below for the isAdmin guard
-                this move required now that it sits in an otherwise all-roles group. */}
-            {/* AA-557 H.15 — "Tenant Activity" (was here, AA-551) removed as its OWN top-level
-                entry: Nghiệp confirmed it's really Write/Gate→Review→Publish per-tenant CONTENT
-                activity, genuinely part of the same Social Content flow (01-05) below, not general
-                tenant account activity — now reachable as a "06-08" item inside Social Content's
-                own inner tab-group instead (atom-curation/page.tsx). Route itself unchanged. */}
-          </NavGroup>
-        )}
+      <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 22 }}>
+        {NAV_GROUPS.map(group => {
+          const items = group.items.filter(n => isAdmin || !n.adminOnly);
+          if (!items.length) return null;
+          return (
+            <NavGroup key={group.label} label={group.label}>
+              {items.map(n => (
+                <NavItem key={n.href} active={[n.href, ...(n.also ?? [])].some(active)} icon={n.icon} label={n.label}
+                  onClick={() => router.push(n.href)} />
+              ))}
+            </NavGroup>
+          );
+        })}
+      </nav>
 
-        {/* AA-internal's own content-authoring pipeline — a different, older
-            system for AA's own tour copy, not part of the B2B ACP v2 flow.
-            Visible to all roles (same as before). AA-475: the non-admin
-            Dashboard fallback (reviewer/content roles don't get the
-            isAdmin-gated one above) moved here from the deleted
-            "ACP v2 — Atoms" group. */}
-        <NavGroup label="AA Internal Content">
-          {!isAdmin && (
-            <NavItem active={active("/admin/dashboard")} accent={A.gold}
-              icon={<LayoutDashboard size={15} />} label="Dashboard"
-              onClick={() => router.push("/admin/dashboard")} />
-          )}
-          {CONTENT_AUTHORING_NAV.map(n => (
-            <NavItem key={n.href} active={active(n.href)} accent={A.gold}
-              icon={n.icon} label={n.label} onClick={() => router.push(n.href)} />
-          ))}
-          {/* AA-553 — moved here from "ACP v2 — Setup & Approval" (was miscategorized: this is
-              Master Content pool data — Atom/Segment/Score/Route/Hub/Slate — not platform config,
-              so it belongs right under Master Content, not next to Tenants/Run Health). Kept
-              isAdmin-gated (adminOnly tag, AA-605; was a red accent vs its gold neighbors) because
-              this group itself is NOT role-gated (renders for reviewer/content too) but
-              middleware.ts's PROTECTED_ROUTES still restricts /admin/atom-curation to
-              roles: ["admin"] — left that restriction untouched (out of this issue's scope), so a
-              non-admin NavItem here would be a dead link. AA-554 A.2 — label renamed "Social
-              Content" (Nghiệp's decision from AA-553's name options), route
-              (`/admin/atom-curation`) unchanged. */}
-          {isAdmin && (
-            <NavItem active={active("/admin/atom-curation")} accent={A.accent} adminOnly
-              icon={<Puzzle size={15} />} label="Social Content"
-              onClick={() => router.push("/admin/atom-curation")} />
-          )}
-        </NavGroup>
-
-        {/* AA-390 hid this Legacy B2B pipeline (ACP v1) sidebar entry, keeping the pages
-            reachable by direct URL "if ever needed again" — but AA-477/AA-439 later deleted
-            their backend routers entirely without anyone checking that promise. AA-633
-            (23/09/2026) found the pages 404ing live and removed them (admin/pipeline/s1, s2,
-            s3, s4-blog, s4-social) — there is no longer anything at those URLs to reach. */}
-      </div>
-
-      {/* Settings — admin only */}
-      {isAdmin && (
-        <NavItem active={active("/admin/settings")} accent={A.accent} adminOnly
-          icon={<Settings size={15} />} label="Settings"
-          onClick={() => router.push("/admin/settings")} />
-      )}
+      {/* Settings — models per stage, AA brand identity (AA-663, was a top-level page), SEO config,
+          pipeline gates. All staff roles, same as middleware.ts. */}
+      <NavItem active={active("/admin/settings")}
+        icon={<Settings size={15} />} label="Settings"
+        onClick={() => router.push("/admin/settings")} />
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
@@ -328,15 +265,12 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function NavItem({ active, icon, label, accent, onClick, adminOnly = false }: {
-  active: boolean; icon: React.ReactNode; label: string;
-  accent: string; onClick: () => void;
-  // AA-605 — admin-only items used to be told apart by a red accent; now every item shares the
-  // brand gold and admin-only ones carry a small "ADMIN" tag instead.
-  adminOnly?: boolean;
+function NavItem({ active, icon, label, onClick }: {
+  active: boolean; icon: React.ReactNode; label: string; onClick: () => void;
 }) {
+  const accent = A.gold;
   return (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} aria-current={active ? "page" : undefined} style={{
       display: "flex", alignItems: "center", gap: 10, width: "100%",
       padding: "8px 10px", borderRadius: 7, border: "none",
       background: active ? `${accent}18` : "transparent",
@@ -349,15 +283,7 @@ function NavItem({ active, icon, label, accent, onClick, adminOnly = false }: {
         <span style={{ position: "absolute", left: 0, top: 8, bottom: 8, width: 2, background: accent, borderRadius: "0 2px 2px 0" }} />
       )}
       <span style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}>{icon}</span>
-      {/* nowrap: Poppins is wider than the old IBM Plex Sans, and with the ADMIN tag labels like
-          "External Spend" wrapped onto two lines. */}
       <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
-      {adminOnly && (
-        <span style={{
-          flexShrink: 0, fontSize: 8, fontWeight: 600, letterSpacing: "0.1em", color: "#8A929D",
-          border: "1px solid #3A4453", borderRadius: 3, padding: "0 3px", lineHeight: "13px",
-        }}>ADMIN</span>
-      )}
     </button>
   );
 }

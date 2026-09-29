@@ -1,5 +1,7 @@
 "use client";
-// app/admin/brand/page.tsx — Brand Identity v3 (AA-129)
+// app/admin/_components/BrandIdentityEditor.tsx — Brand Identity v3 (AA-129)
+// AA-663 — moved from the top-level /admin/brand page into Settings → "Brand Identity" (the old
+// URL redirects there, next.config.ts). Rendered inside the Settings page, so no sidebar/header.
 // GET  /api/admin/brands         → list brands
 // GET  /api/admin/brands/{name}  → brand detail + history (with full version data)
 // POST /api/admin/brands         → create brand
@@ -9,8 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
-import { A, serif, sans, Card, SLabel, Btn } from "../_components/adminUi";
+import { A, serif, sans, Card, SLabel, Btn } from "./adminUi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -356,7 +357,7 @@ function parseBrandText(paragraphs: string[]): Partial<BrandForm> {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function AdminBrandPage() {
+export default function BrandIdentityEditor() {
   const [brands, setBrands]           = useState<BrandSummary[]>([]);
   const [selected, setSelected]       = useState<string | null>(null);
   const [detail, setDetail]           = useState<BrandDetail | null>(null);
@@ -522,15 +523,8 @@ export default function AdminBrandPage() {
     : null;
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
-      <AdminSidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{ height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
-          <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
-          <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Brand Identity</span>
-        </header>
-
-        <main style={{ flex: 1, minWidth: 0, display: "flex", gap: 0, minHeight: 0 }}>
+        <div style={{ display: "flex", minWidth: 0, minHeight: 640, height: "calc(100vh - 220px)", fontFamily: sans,
+                      background: A.bg, border: `1px solid ${A.line}`, borderRadius: 10, overflow: "hidden" }}>
           {/* Left panel — brand list */}
           <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: "#fff", display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -854,8 +848,6 @@ export default function AdminBrandPage() {
               </>
             )}
           </div>
-        </main>
-      </div>
-    </div>
+        </div>
   );
 }
