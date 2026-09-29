@@ -388,6 +388,47 @@ The ordered list of Model Keys a Stage tries (primary first, then fallbacks), pl
 shadow model that runs alongside for comparison and never changes the result. See ADR 0006.
 _Avoid_: fallback chain (the old hardcoded Haiku/Sonnet chain), routing.
 
+### Jev decisions (platform)
+
+**Jev Question**:
+One fixed, typed question a Stage asks Jev (TypeSafe) about a subject: yes/no (noul), pick one
+label (choice), or a level on a scale (score). Its wording is data, versioned, and it carries its
+own Mode and Floors. See ADR 0007.
+_Avoid_: rule, check, gate (a Gate is a T10 check), judge (a Judge writes feedback; Jev never writes).
+
+**Verdict**:
+Jev's answer to one Jev Question about one subject: a probability (or a pick and its confidence)
+and the Zone it falls in. Every Verdict is kept, whatever its Zone.
+_Avoid_: answer, judgment, decision.
+
+**Zone**:
+Where a Verdict falls: accept (confident yes), reject (confident no), grey (not confident),
+error (Jev could not answer), skipped (not asked). Only accept and reject can change what a Stage
+does; grey and error keep the Stage's existing rule.
+_Avoid_: result, outcome.
+
+**Floor**:
+The two probability limits of a Jev Question — accept floor (≥ means confident yes) and reject
+ceiling (≤ means confident no). Set from a Calibration Record, placed on the side of the costlier
+mistake.
+_Avoid_: threshold, cut-off.
+
+**Mode**:
+Whether a Jev Question is asked and used: off (not asked), shadow (asked and kept, never acted on),
+enforce (acted on when the Verdict is in accept or reject).
+_Avoid_: status, enabled.
+
+**Calibration Record**:
+The written evidence for a Jev Question's Floors: a labelled sample of real subjects, reviewed by
+a person, with the precision at each Floor. A Jev Question cannot be set to enforce without one.
+_Avoid_: tuning, eval.
+
+**Act (on a Verdict)**:
+What an enforced, confident Verdict may change: exclude something from a purchase (DataForSEO) or
+from a count (Score, questions landed), or block or send content back for repair before it is
+published. It never deletes data and never unpublishes published content.
+_Avoid_: block (alone), delete, filter.
+
 ## Pipeline stages
 
 ### A-series (Admin, master content — computed once, shared by every tenant)

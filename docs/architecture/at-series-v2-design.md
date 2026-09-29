@@ -126,3 +126,18 @@ About 30 questions in §4 × 200 items is ~6,000 labels, too many at once. Calib
 ## 7. Still open
 
 - C2: who contacts TypeSafe for the DPA (needed before real tenants use T-series Jev).
+
+## 8. Decisions after the grilling round (Nghiệp, 30/09/2026)
+
+Terms: see `CONTEXT.md` → "Jev decisions". Policy: ADR 0007.
+
+| # | Question | Decision |
+|---|---|---|
+| Q1 | How far may a Verdict act? | Exclude from purchases and counts, and block or send back **unpublished** content for repair. Never delete data, never unpublish. |
+| Q2 | Keyword Floor | Keep reject ≤ 0.30. After the first 2 enforced research runs, read every rejected keyword; at the first false reject, move toward Ms. Thư's 0.15. |
+| Q3 | Generic PAA questions | Out, platform-wide: a question that names nowhere and fits any country does not count. |
+| Q4 | Country scope for "question is foreign" | The Segment's own tour countries, stored with the Verdict; re-asked when that set changes. |
+| Q5 | Landing question calibration | Same-entity-type pairs only (~200), label meaning written first, agent labels + Nghiệp review; shadow until a Calibration Record exists. |
+| Q6 | Tenant content / DPA | Nghiệp or Ms. Thư contacts TypeSafe; until then allow-list only (AA test tenants). |
+| Q7 | Terms | Jev Question, Verdict, Zone, Floor, Mode, Calibration Record, Act (CONTEXT.md). UI "Answers" → "Verdicts". |
+| Q8 | Master-content grounding (A1-1) | Required before the rerun: deterministic number check + Jev sentence check → flag_fix. Ask Ms. Thư how her write stage checks support. |
