@@ -96,8 +96,8 @@ async def test_success_parses_answers_prices_input_and_logs():
               "answers": {"kw_belongs": {"type": "noul", "noul": 0.1}, "idea_ok": {"type": "noul", "noul": 0.95}}}
     with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
          patch.object(d, "_price_in_per_mtok", return_value=0.042), \
-         patch.object(d, "record_call", new=AsyncMock()) as m_log:
-        dec = await d._decide(conn, None, "a3_research", "kw:US:peninsula", "peninsula",
+         patch.object(d, "record_call_with_pool", new=AsyncMock()) as m_log:
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:US:peninsula", "peninsula",
                               ["kw_belongs", "idea_ok"], None)
     assert dec.rejected("kw_belongs")                           # enforce + confident no
     assert not dec.accepted("idea_ok")                          # shadow never acts
@@ -114,8 +114,9 @@ async def test_success_parses_answers_prices_input_and_logs():
 @pytest.mark.asyncio
 async def test_non_allowlisted_tenant_is_skipped_without_calling_jev():
     conn = _conn([_q()], allowlist=[TEST_TENANT])
-    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, patch.object(d, "record_call", new=AsyncMock()):
-        dec = await d._decide(conn, None, "t3", "piece:1", "text", ["kw_belongs"], REAL_TENANT)
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "t3", "piece:1", "text", ["kw_belongs"], REAL_TENANT)
     m_call.assert_not_awaited()
     assert dec.verdicts["kw_belongs"].zone == "skipped" and not dec.rejected("kw_belongs")
     assert conn.executemany.await_args.args[1][0][6] == "skipped"   # still visible in the ledger
@@ -128,8 +129,9 @@ async def test_allowlisted_tenant_and_platform_are_asked():
         answer = {"model": "jev", "usage": {"input_tokens": 1},
                   "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
         with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
-             patch.object(d, "_price_in_per_mtok", return_value=0.042), patch.object(d, "record_call", new=AsyncMock()):
-            dec = await d._decide(conn, None, "t3", "piece:1", "text", ["kw_belongs"], tenant)
+             patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+             patch.object(d, "record_call_with_pool", new=AsyncMock()):
+            dec = await d._decide(d._SingleConn(conn), "t3", "piece:1", "text", ["kw_belongs"], tenant)
         m_call.assert_awaited_once()
         assert dec.accepted("kw_belongs")
 
@@ -138,8 +140,8 @@ async def test_allowlisted_tenant_and_platform_are_asked():
 async def test_jev_down_fails_open_as_error():
     conn = _conn([_q()])
     with patch.object(d, "_call_jev", new=AsyncMock(side_effect=RuntimeError("503"))), \
-         patch.object(d, "record_call", new=AsyncMock()) as m_log:
-        dec = await d._decide(conn, None, "a3_research", "kw:x", "x", ["kw_belongs"], None)
+         patch.object(d, "record_call_with_pool", new=AsyncMock()) as m_log:
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs"], None)
     v = dec.verdicts["kw_belongs"]
     assert v.zone == "error" and not dec.rejected("kw_belongs") and not dec.accepted("kw_belongs")
     m_log.assert_not_awaited()                                  # nothing billed
@@ -149,8 +151,9 @@ async def test_jev_down_fails_open_as_error():
 @pytest.mark.asyncio
 async def test_off_and_unknown_questions_are_not_sent():
     conn = _conn([_q(mode="off")])
-    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, patch.object(d, "record_call", new=AsyncMock()):
-        dec = await d._decide(conn, None, "a3_research", "kw:x", "x", ["kw_belongs", "nope"], None)
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs", "nope"], None)
     m_call.assert_not_awaited()
     assert dec.verdicts["kw_belongs"].zone == "skipped" and dec.verdicts["nope"].zone == "error"
 
@@ -159,8 +162,40 @@ async def test_off_and_unknown_questions_are_not_sent():
 async def test_config_unavailable_fails_open():
     conn = MagicMock()
     conn.fetch = AsyncMock(side_effect=Exception('relation "shared.decision_question" does not exist'))
-    dec = await d._decide(conn, None, "a3_research", "kw:x", "x", ["kw_belongs"], None)
+    dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs"], None)
     assert dec.verdicts["kw_belongs"].zone == "error"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_decides_on_a_tiny_pool_do_not_deadlock():
+    """S203 regression: holding a connection across the Jev call and then acquiring a second one for
+    llm_call_log deadlocked a small pool under concurrency. Now at most one is held, briefly."""
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    conn = _conn([_q()])
+    slots = asyncio.Semaphore(1)                       # a pool with ONE connection
+
+    class TinyPool:
+        @asynccontextmanager
+        async def acquire(self):
+            async with slots:
+                yield conn
+
+    async def slow_jev(state, questions):
+        await asyncio.sleep(0.05)
+        return {"model": "jev", "usage": {"input_tokens": 1}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+
+    async def fake_log(pool, **kw):
+        async with pool.acquire():                   # the real helper acquires from the same pool
+            pass
+
+    with patch.object(d, "_call_jev", new=slow_jev), patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=fake_log):
+        results = await asyncio.wait_for(asyncio.gather(*[
+            d.decide("a3_research", f"kw:{i}", "x", ["kw_belongs"], pool=TinyPool()) for i in range(4)
+        ]), timeout=5)
+    assert all(r.accepted("kw_belongs") for r in results)
 
 
 # ── only the gateway may talk to TypeSafe ─────────────────────────────────────────────────────
