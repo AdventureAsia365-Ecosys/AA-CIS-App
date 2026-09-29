@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
+import asyncpg
+
 TERMINAL = ("succeeded", "failed", "stopped_budget", "cancelled")
 
 # Serialises claims across processes so the per-kind concurrency cap is exact (two API tasks
@@ -329,3 +331,140 @@ async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
         kind, list(statuses),
     )
     return _row_dict(rows[0]) if rows else None
+
+
+# ── worker liveness (AA-687, migration 178) ─────────────────────────────────────────────────────
+# Read by the Jobs page only; the queue functions above never depend on it.
+
+WORKER_ALIVE_SECONDS = 60  # a worker writes about every 15 s; silent for 60 s = gone
+
+
+async def worker_register(pool, worker_id: str, host: str, max_parallel: int, caps: dict) -> None:
+    """A worker's start: its row, plus pruning rows of workers stopped/silent for 7 days."""
+    await pool.execute(
+        """
+        INSERT INTO shared.job_worker (worker_id, host, max_parallel, caps)
+        VALUES ($1, $2, $3, $4::jsonb)
+        ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = now(), stopped_at = NULL,
+            max_parallel = excluded.max_parallel, caps = excluded.caps
+        """,
+        worker_id, host, max_parallel, json.dumps(caps),
+    )
+    await pool.execute("DELETE FROM shared.job_worker WHERE last_seen_at < now() - interval '7 days'")
+
+
+async def worker_beat(pool, worker_id: str, running_jobs: int,
+                      reaped: Optional[dict] = None) -> None:
+    """Liveness + running count; `reaped` (from reap()) is added to the totals when non-empty."""
+    requeued = len((reaped or {}).get("requeued", []))
+    failed = len((reaped or {}).get("failed", []))
+    await pool.execute(
+        """
+        UPDATE shared.job_worker SET last_seen_at = now(), running_jobs = $2,
+            reaped_requeued = reaped_requeued + $3, reaped_failed = reaped_failed + $4,
+            last_reap_at = CASE WHEN $3 + $4 > 0 THEN now() ELSE last_reap_at END,
+            last_reaped = CASE WHEN $3 + $4 > 0 THEN $5::jsonb ELSE last_reaped END
+        WHERE worker_id = $1
+        """,
+        worker_id, running_jobs, requeued, failed, json.dumps(reaped or {}),
+    )
+
+
+async def worker_stopped(pool, worker_id: str) -> None:
+    await pool.execute(
+        "UPDATE shared.job_worker SET stopped_at = now(), last_seen_at = now(), running_jobs = 0 "
+        "WHERE worker_id = $1",
+        worker_id,
+    )
+
+
+async def worker_health(pool) -> dict:
+    """Workers seen in the last 7 days, running jobs per worker and kind, and queue depth."""
+    workers = await pool.fetch(
+        f"""
+        SELECT worker_id, host, started_at, last_seen_at, stopped_at, max_parallel, caps,
+               running_jobs, reaped_requeued, reaped_failed, last_reap_at, last_reaped,
+               (stopped_at IS NULL AND last_seen_at > now() - interval '{WORKER_ALIVE_SECONDS} seconds')
+                   AS alive
+        FROM shared.job_worker ORDER BY last_seen_at DESC LIMIT 20
+        """
+    )
+    running = await pool.fetch(
+        """
+        SELECT locked_by AS worker_id, kind, count(*)::int AS n,
+               min(started_at) AS oldest_started_at
+        FROM shared.job WHERE status = 'running' GROUP BY locked_by, kind
+        """
+    )
+    queued = await pool.fetch(
+        """
+        SELECT kind, count(*)::int AS n,
+               count(*) FILTER (WHERE run_after <= now())::int AS ready,
+               min(created_at) AS oldest_created_at
+        FROM shared.job WHERE status = 'queued' GROUP BY kind
+        """
+    )
+    out = []
+    for w in workers:
+        d = dict(w)
+        for k in ("caps", "last_reaped"):
+            d[k] = _json(d[k]) if d[k] is not None else None
+        out.append(d)
+    return {"workers": out, "running": [dict(r) for r in running],
+            "queued": [dict(r) for r in queued], "alive_seconds": WORKER_ALIVE_SECONDS}
+
+
+async def llm_calls(pool, job_id: str, limit: int = 500) -> dict:
+    """The shared.llm_call_log rows tagged with this job (AA-652 follow-up, migration 177)."""
+    rows = await pool.fetch(
+        """
+        SELECT created_at, stage, role, model, account, provider, fallback_used,
+               tokens_in, tokens_out, cost_usd::float AS cost_usd,
+               (quality_signal->>'texts')::int AS texts
+        FROM shared.llm_call_log WHERE job_id = $1::uuid
+        ORDER BY created_at DESC LIMIT $2
+        """,
+        job_id, limit,
+    )
+    totals = await pool.fetchrow(
+        """
+        SELECT count(*)::int AS calls, coalesce(sum(cost_usd), 0)::float AS cost_usd,
+               coalesce(sum(tokens_in), 0)::bigint AS tokens_in,
+               coalesce(sum(tokens_out), 0)::bigint AS tokens_out,
+               min(created_at) AS first_at, max(created_at) AS last_at
+        FROM shared.llm_call_log WHERE job_id = $1::uuid
+        """,
+        job_id,
+    )
+    by_stage = await pool.fetch(
+        """
+        SELECT stage, model, count(*)::int AS calls, coalesce(sum(cost_usd), 0)::float AS cost_usd
+        FROM shared.llm_call_log WHERE job_id = $1::uuid
+        GROUP BY stage, model ORDER BY cost_usd DESC
+        """,
+        job_id,
+    )
+    return {"calls": [dict(r) for r in rows], "totals": dict(totals),
+            "by_stage": [dict(r) for r in by_stage], "truncated": totals["calls"] > limit}
+
+
+async def domain_links(pool, job_id: str, payload: Optional[dict]) -> dict:
+    """What the job wrote: tenant tour versions and content pieces tagged with its id (migrations
+    175/176), plus the tour it atomized/researched when the payload names one. A table that does
+    not exist (a fresh test database) gives an empty list, not an error."""
+    async def _rows(sql: str) -> list[dict]:
+        try:
+            return [dict(r) for r in await pool.fetch(sql, job_id)]
+        except asyncpg.UndefinedTableError:
+            return []
+
+    versions = await _rows(
+        "SELECT id::text AS version_id, published_tour_id::text AS published_tour_id, "
+        "tenant_id::text AS tenant_id, version_number, status "
+        "FROM gold_aa_internal.tenant_tour_versions WHERE job_id = $1::uuid LIMIT 20")
+    pieces = await _rows(
+        "SELECT piece_id::text AS piece_id, tenant_id::text AS tenant_id, status "
+        "FROM acp_shared.content_piece WHERE job_id = $1::uuid LIMIT 20")
+    p = payload or {}
+    return {"tour_versions": versions, "content_pieces": pieces,
+            "tour_id": p.get("tour_id"), "version_id": p.get("version_id")}

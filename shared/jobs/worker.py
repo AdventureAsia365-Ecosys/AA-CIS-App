@@ -48,6 +48,8 @@ class Worker:
         self.max_parallel = max_parallel
         self._stopping = asyncio.Event()
         self._running: dict[str, asyncio.Task] = {}
+        # AA-687: how often this worker writes its shared.job_worker row (liveness for the Jobs page).
+        self.beat_every_seconds = 15.0
 
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
@@ -55,9 +57,12 @@ class Worker:
     # ── main loop ─────────────────────────────────────────────────────────────────────────────
     async def run(self) -> None:
         logger.info("job_worker_started", worker_id=self.worker_id, kinds=sorted(self.caps()))
-        last_reap = 0.0
+        await self._liveness(queue.worker_register, self.pool, self.worker_id, socket.gethostname(),
+                             self.max_parallel, self.caps())
+        last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
         while not self._stopping.is_set():
+            reaped = None
             try:
                 if loop.time() - last_reap >= self.reap_every_seconds:
                     reaped = await queue.reap(self.pool)
@@ -70,12 +75,24 @@ class Worker:
             except Exception as e:  # never let one bad cycle kill the loop
                 logger.warning("job_worker_cycle_failed", error=str(e)[:300])
                 claimed = 0
+            if loop.time() - last_beat >= self.beat_every_seconds or (
+                    reaped and (reaped["requeued"] or reaped["failed"])):
+                await self._liveness(queue.worker_beat, self.pool, self.worker_id,
+                                     len(self._running), reaped)
+                last_beat = loop.time()
             if not claimed:
                 try:
                     await asyncio.wait_for(self._stopping.wait(), timeout=self.poll_seconds)
                 except asyncio.TimeoutError:
                     pass
         logger.info("job_worker_loop_stopped", worker_id=self.worker_id)
+
+    async def _liveness(self, fn, *args) -> None:
+        """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""
+        try:
+            await fn(*args)
+        except Exception as e:
+            logger.warning("job_worker_liveness_write_failed", step=fn.__name__, error=str(e)[:200])
 
     async def _fill_slots(self) -> int:
         claimed = 0
@@ -128,7 +145,11 @@ class Worker:
             result = handler_task.result()
             await queue.complete(self.pool, job.id, self.worker_id, result or ctx.result,
                                  round(ctx.cost_usd, 6))
-            log.info("job_succeeded", cost_usd=round(ctx.cost_usd, 6))
+            # AA-687: ctx.cost_usd is only what the handler reported (non-LLM, e.g. DataForSEO);
+            # the LLM part is summed from llm_call_log, the same as the Jobs page shows.
+            llm_cost = await self._llm_cost(job.id)
+            log.info("job_succeeded", handler_cost_usd=round(ctx.cost_usd, 6), llm_cost_usd=llm_cost,
+                     cost_usd=round(ctx.cost_usd + (llm_cost or 0.0), 6))
         except asyncio.CancelledError:
             # Shutdown: this wrapper was cancelled after the grace period.
             if not handler_task.done():
@@ -154,12 +175,22 @@ class Worker:
             if status == "failed":
                 await run_terminal_hook(self.pool, job.id)
 
+    async def _llm_cost(self, job_id: str) -> Optional[float]:
+        try:
+            v = await self.pool.fetchval(
+                "SELECT coalesce(sum(cost_usd), 0)::float FROM shared.llm_call_log WHERE job_id = $1::uuid",
+                job_id)
+            return round(float(v or 0.0), 6)
+        except Exception:
+            return None
+
     # ── shutdown ──────────────────────────────────────────────────────────────────────────────
     async def shutdown(self) -> None:
         """Stop claiming, give running jobs `grace_seconds` to finish, release the rest."""
         self._stopping.set()
         tasks = list(self._running.values())
         if not tasks:
+            await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
             return
         logger.info("job_worker_draining", running=len(tasks), grace_seconds=self.grace_seconds)
         _, pending = await asyncio.wait(tasks, timeout=self.grace_seconds)
@@ -167,6 +198,7 @@ class Worker:
             t.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
 
 
 def in_api_enabled() -> bool:

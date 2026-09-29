@@ -41,7 +41,8 @@ def scope_kwargs(payload: dict) -> dict:
     return {k: payload.get(k) for k in _SCOPE_KEYS if k in payload}
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2)
+# Research runs up to 200 places in 5 phases (AA-648).
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=3600)
 async def run(ctx: JobContext) -> dict:
     from services.acp_contract.segment_research import run_segment_research
 

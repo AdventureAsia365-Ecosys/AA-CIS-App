@@ -104,6 +104,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     those log rows, computed on read (`queue.LLM_COST_SQL`).
   - Admin: `/admin/jobs` page, API `/admin/job-runner/*`. (`/admin/jobs/{id}` is still the older
     `shared.pipeline_jobs` poll for A1 run-tour.)
+  - Observability (AA-687, migration 178): each worker upserts its row in `shared.job_worker`
+    (start, ~every 15 s, `stopped_at` at shutdown; reaper totals + last reaped ids). Read-only for
+    the page (`GET /admin/job-runner/workers`); the queue never reads it. `GET /jobs/{id}` adds
+    `links` (tenant versions / pieces the job wrote, payload tour), `GET /jobs/{id}/llm-calls`
+    lists the job's `llm_call_log` rows. Each kind has `expected_seconds` (flag, never a stop);
+    long kinds report `progress.{step,done,total}` (a3_atomize since AA-688).
   - **T2 tenant rewrite is a job** (`t2_rewrite`, AA-652): `tenant_tour_versions.job_id`; a job
     that ends without success marks the version `status='failed'` (kind hook `on_terminal`), and
     the portal shows "Writing failed" + Retry (`POST /v1/tours/versions/{id}/retry`) instead of
