@@ -95,6 +95,13 @@ class RunBudget:
     alert_pct: int = 80
     day_spent_at_start: float = 0.0
     run_spent: float = 0.0
+    # KAN-90 (29/09/2026): the daily cap can be alert-only while the per-run cap still stops.
+    # `hard_stop` governs the per-run cap; `hard_stop_day` the daily cap (None = same as hard_stop).
+    hard_stop_day: Optional[bool] = None
+
+    @property
+    def day_is_hard(self) -> bool:
+        return self.hard_stop if self.hard_stop_day is None else self.hard_stop_day
 
     @property
     def day_spent(self) -> float:
@@ -103,22 +110,20 @@ class RunBudget:
     def remaining_usd(self) -> Optional[float]:
         """The most this run may still spend, or None when both axes are unlimited."""
         caps = []
-        if self.per_run_usd is not None:
+        if self.per_run_usd is not None and self.hard_stop:
             caps.append(self.per_run_usd - self.run_spent)
-        if self.per_day_usd is not None:
+        if self.per_day_usd is not None and self.day_is_hard:  # an alert-only cap never limits
             caps.append(self.per_day_usd - self.day_spent)
         return max(min(caps), 0.0) if caps else None
 
     def check(self, estimate_usd: float) -> None:
         """Raise BudgetExceeded when spending `estimate_usd` more would breach a hard limit."""
-        if not self.hard_stop:
-            return
-        if self.per_run_usd is not None and self.run_spent + estimate_usd > self.per_run_usd:
+        if self.hard_stop and self.per_run_usd is not None and self.run_spent + estimate_usd > self.per_run_usd:
             raise BudgetExceeded(
                 f"{self.provider} per-run budget ${self.per_run_usd:.2f} reached "
                 f"(spent ${self.run_spent:.4f}, next call ~${estimate_usd:.4f})",
                 self.provider, "per_run")
-        if self.per_day_usd is not None and self.day_spent + estimate_usd > self.per_day_usd:
+        if self.day_is_hard and self.per_day_usd is not None and self.day_spent + estimate_usd > self.per_day_usd:
             raise BudgetExceeded(
                 f"{self.provider} daily budget ${self.per_day_usd:.2f} reached "
                 f"(spent today ${self.day_spent:.4f}, next call ~${estimate_usd:.4f})",
@@ -136,7 +141,8 @@ class RunBudget:
         return {
             "provider": self.provider, "scope": self.scope,
             "per_run_usd": self.per_run_usd, "per_day_usd": self.per_day_usd,
-            "hard_stop": self.hard_stop, "run_spent_usd": round(self.run_spent, 4),
+            "hard_stop": self.hard_stop, "hard_stop_day": self.day_is_hard,
+            "run_spent_usd": round(self.run_spent, 4),
             "day_spent_usd": round(self.day_spent, 4), "remaining_usd": _round(self.remaining_usd()),
         }
 
@@ -178,19 +184,26 @@ async def day_spend(conn, provider: str) -> float:
 
 async def load_run_budget(pool, provider: str, job_kind: str) -> RunBudget:
     """Effective budget for one run of `job_kind`: per-run from the job row (else global), daily
-    cap = the smaller of the job and global daily caps, hard_stop if either row asks for it."""
+    cap = the smaller of the job and global daily caps. Each cap stops or only alerts according to
+    the row that sets it (KAN-90): the per-run cap follows the hard_stop of the row its value comes
+    from; the daily cap is hard if any row that sets a daily value is hard. So `global` with
+    hard_stop=false makes the daily DFS cap alert-only while `job:segment_research`'s $5 per run
+    still stops the run."""
     job_scope = f"job:{job_kind}"
     async with pool.acquire() as conn:
         rows = await _read_rows(conn, provider, job_scope)
         spent = await day_spend(conn, provider)
     job, glob = rows.get(job_scope, {}), rows.get("global", {})
-    per_run = job.get("per_run_usd") if job.get("per_run_usd") is not None else glob.get("per_run_usd")
-    hard_stop = any(r.get("hard_stop", True) for r in (job, glob) if r) if (job or glob) else True
+    run_row = job if job.get("per_run_usd") is not None else glob
+    per_run = run_row.get("per_run_usd")
+    hard_stop = bool(run_row.get("hard_stop", True)) if run_row else True
+    day_rows = [r for r in (job, glob) if r and r.get("per_day_usd") is not None]
+    hard_stop_day = any(r.get("hard_stop", True) for r in day_rows) if day_rows else True
     return RunBudget(
         provider=provider, scope=job_scope,
         per_run_usd=_min_cap(per_run),
         per_day_usd=_min_cap(job.get("per_day_usd"), glob.get("per_day_usd")),
-        hard_stop=hard_stop,
+        hard_stop=hard_stop, hard_stop_day=hard_stop_day,
         alert_pct=int(job.get("alert_pct") or glob.get("alert_pct") or 80),
         day_spent_at_start=spent,
     )

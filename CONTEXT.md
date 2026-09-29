@@ -86,6 +86,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     bill, splitting Bedrock from infrastructure per account, over any date range.
   - Rule for manual scripts that call an LLM: go through `LLMClient.generate()` and log to
     `llm_call_log` with `stage="adhoc_<issue>"` (steering rule, from AA-635).
+- **Cost guard (AA-649, migration 168)**: `shared/cost_guard.py` checks `shared.spend_budget`
+  (per provider: `global` + `job:<kind>` rows; per-run and per-day USD, `hard_stop`, `alert_pct`)
+  before every paid external call of a guarded job (today `segment_research`: DataForSEO + Bedrock).
+  Each cap stops or only alerts according to the row that sets it: the DFS daily cap (`global`) is
+  **alert-only** since 29/09/2026 (KAN-90: "control, not limit"), the per-run cap
+  (`job:segment_research`, $5 DFS / $2 Bedrock) still stops a run. Edited via
+  `PUT /admin/budgets/{provider}/{scope}` (no settings screen yet).
 - **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
   (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
   losing it.
