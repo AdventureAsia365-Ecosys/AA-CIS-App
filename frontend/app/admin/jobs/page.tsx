@@ -1,68 +1,46 @@
 "use client";
 // app/admin/jobs/page.tsx — AA-650 durable job queue (shared.job): what is queued/running, what
 // finished, what it cost, and cancel/retry. API: /admin/job-runner/* (not /admin/jobs, which is the
-// older AA-223 run-tour poll endpoint).
+// older AA-223 run-tour poll endpoint). AA-687: worker health panel, progress + ETA, long-running /
+// near-release flags, and a detail drawer (lifecycle, cost split, LLM calls, what the job wrote).
 
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, ListChecks, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ListChecks, RefreshCw } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import { A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import JobDrawer from "./JobDrawer";
+import WorkerHealth from "./WorkerHealth";
+import {
+  STATUSES, STATUS_COLOR, fmtSeconds, fmtTime, releases, runSeconds, stepProgress, usd,
+  type Count, type Job, type Kind, type WorkerHealthResp,
+} from "./jobsShared";
 
-interface Job {
-  id: string;
-  kind: string;
-  status: string;
-  attempt: number;
-  max_attempts: number;
-  payload: Record<string, unknown> | null;
-  progress: Record<string, unknown> | null;
-  result: Record<string, unknown> | null;
-  cost_usd: number;
-  error: string | null;
-  cancel_requested: boolean;
-  created_by: string | null;
-  run_after: string | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
-interface Count { kind: string; status: string; n: number; cost_usd: number }
-interface Kind { kind: string; concurrency: number; max_attempts: number }
-
-const STATUSES = ["queued", "running", "succeeded", "failed", "stopped_budget", "cancelled"] as const;
-const STATUS_COLOR: Record<string, "red" | "green" | "amber" | "gray" | "gold" | "blue" | "purple"> = {
-  queued: "gray", running: "blue", succeeded: "green", failed: "red", stopped_budget: "amber",
-  cancelled: "purple",
-};
 const REFRESH_MS = 10_000;
 
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** First sample seen per (job, step): the ETA is (total - done) / observed rate since then. */
+type Sample = { step: string; done: number; t: number };
+
+function etaFor(job: Job, first: Sample | undefined, now: number): string | null {
+  const p = stepProgress(job);
+  if (!p || !first || first.step !== p.step || p.done <= first.done) return null;
+  const rate = (p.done - first.done) / ((now - first.t) / 1000);
+  return rate > 0 ? fmtSeconds((p.total - p.done) / rate) : null;
 }
 
-function duration(job: Job): string {
-  if (!job.started_at) return "—";
-  const end = job.finished_at ? new Date(job.finished_at).getTime() : Date.now();
-  const s = Math.max(0, Math.round((end - new Date(job.started_at).getTime()) / 1000));
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function progressText(p: Record<string, unknown> | null): string {
-  if (!p) return "";
-  const phase = typeof p.phase === "string" ? p.phase : "";
-  const extra = Object.entries(p).filter(([k]) => k !== "phase" && k !== "released").length;
-  return [phase, p.released ? "released once" : "", extra ? `+${extra} fields` : ""].filter(Boolean).join(" · ");
-}
-
-function Json({ label, value }: { label: string; value: unknown }) {
-  if (value == null || (typeof value === "object" && Object.keys(value as object).length === 0)) return null;
+function progressCell(job: Job, eta: string | null) {
+  const p = stepProgress(job);
+  const phase = typeof job.progress?.phase === "string" ? job.progress.phase : "";
+  if (!p) return <span>{phase}</span>;
+  const pct = Math.min(100, (p.done / p.total) * 100);
   return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 10.5, color: A.muted2, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{label}</div>
-      <pre style={{ margin: 0, fontFamily: mono, fontSize: 11, color: A.ink3, background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, padding: 10, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {JSON.stringify(value, null, 2)}
-      </pre>
+    <div style={{ minWidth: 160 }}>
+      <div style={{ fontSize: 11.5 }}>
+        {p.step || phase} · <span style={{ fontFamily: mono }}>{p.done}/{p.total}</span>
+        {job.status === "running" && eta && <span> · ETA {eta}</span>}
+      </div>
+      <div style={{ height: 4, background: A.line2, borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: A.accent }} />
+      </div>
     </div>
   );
 }
@@ -71,37 +49,77 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [counts, setCounts] = useState<Count[]>([]);
   const [kinds, setKinds] = useState<Kind[]>([]);
+  const [maxReleases, setMaxReleases] = useState(3);
+  const [health, setHealth] = useState<WorkerHealthResp | null>(null);
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
+  const [tourId, setTourId] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const samples = useRef<Map<string, Sample>>(new Map());
+  const [etas, setEtas] = useState<Record<string, string | null>>({});
+
+  // AA-687 deep links from domain pages: ?job=<id> opens its drawer; ?kind= / ?status= /
+  // ?tour_id= pre-filter the list. Read once on mount (no useSearchParams, same as review/page.tsx).
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    /* eslint-disable react-hooks/set-state-in-effect -- one-time read of the deep-link params */
+    setKind(q.get("kind") ?? "");
+    setStatus(q.get("status") ?? "");
+    setTourId(q.get("tour_id") ?? "");
+    setOpen(q.get("job"));
+    setReady(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ limit: "100" });
     if (kind) qs.set("kind", kind);
     if (status) qs.set("status", status);
+    if (tourId) qs.set("tour_id", tourId);
     try {
-      const [j, s] = await Promise.all([
+      const [j, s, w] = await Promise.all([
         fetch(`/api/admin/job-runner/jobs?${qs}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
         fetch(`/api/admin/job-runner/summary`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        // The health panel is optional: an older API (before AA-687) has no /workers.
+        fetch(`/api/admin/job-runner/workers`).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
+      const t = Date.now();
+      const nextEtas: Record<string, string | null> = {};
+      for (const job of (j.jobs ?? []) as Job[]) {
+        const p = stepProgress(job);
+        const prev = samples.current.get(job.id);
+        if (p && (!prev || prev.step !== p.step || p.done < prev.done)) {
+          samples.current.set(job.id, { step: p.step, done: p.done, t });
+        }
+        nextEtas[job.id] = etaFor(job, samples.current.get(job.id), t);
+      }
+      setEtas(nextEtas);
       setJobs(j.jobs ?? []);
       setCounts(s.counts ?? []);
       setKinds(s.kinds ?? []);
+      if (typeof s.max_releases === "number") setMaxReleases(s.max_releases);
+      setHealth(w);
+      setNow(t);
+      setTick(x => x + 1);
       setError(null);
     } catch (e) {
       setError(`Could not load jobs (${e})`);
       setJobs(prev => prev ?? []);
     }
-  }, [kind, status]);
+  }, [kind, status, tourId]);
 
   useEffect(() => {
+    if (!ready) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial + filter-change fetch, same pattern as every admin page
     load();
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, ready]);
 
   async function act(job: Job, action: "cancel" | "retry") {
     const verb = action === "cancel" ? "Cancel" : "Retry";
@@ -119,11 +137,13 @@ export default function JobsPage() {
     }
   }
 
+  const expected = (k: string) => kinds.find(x => x.kind === k)?.expected_seconds;
   const byStatus = STATUSES.map(s => ({
     status: s,
     n: counts.filter(c => c.status === s && (!kind || c.kind === kind)).reduce((a, c) => a + c.n, 0),
   }));
   const cost30d = counts.filter(c => !kind || c.kind === kind).reduce((a, c) => a + c.cost_usd, 0);
+  const openJob = jobs?.find(j => j.id === open);
 
   if (jobs === null) return <LoadingScreen msg="Loading jobs..." />;
 
@@ -152,6 +172,12 @@ export default function JobsPage() {
               <option value="">All statuses</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+            {tourId && (
+              <button onClick={() => setTourId("")} title="Clear the tour filter"
+                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
+                tour {tourId.slice(0, 8)} ×
+              </button>
+            )}
             <Btn size="sm" onClick={load}><RefreshCw size={12} style={{ marginRight: 4 }} />Refresh</Btn>
           </div>
         </div>
@@ -161,6 +187,8 @@ export default function JobsPage() {
             {error}
           </div>
         )}
+
+        <WorkerHealth health={health} kinds={kinds} now={now} />
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {byStatus.map(s => (
@@ -185,7 +213,6 @@ export default function JobsPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr>
-                    <th style={TH} />
                     <th style={TH}>Created</th>
                     <th style={TH}>Kind</th>
                     <th style={TH}>Status</th>
@@ -198,22 +225,32 @@ export default function JobsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {jobs.map(j => (
-                    <Fragment key={j.id}>
-                      <tr style={{ cursor: "pointer" }} onClick={() => setOpen(open === j.id ? null : j.id)}>
-                        <td style={{ ...TD, width: 24, color: A.muted }}>{open === j.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                  {jobs.map(j => {
+                    const secs = runSeconds(j, now);
+                    const exp = expected(j.kind);
+                    const slow = j.status === "running" && exp != null && secs != null && secs > exp;
+                    const rel = releases(j);
+                    const eta = etas[j.id] ?? null;
+                    return (
+                      <tr key={j.id} style={{ cursor: "pointer", background: open === j.id ? A.accentTint : undefined }} onClick={() => setOpen(j.id)}>
                         <td style={{ ...TD, whiteSpace: "nowrap" }}>{fmtTime(j.created_at)}</td>
                         <td style={{ ...TD, fontFamily: mono }}>{j.kind}</td>
-                        <td style={TD}>
+                        <td style={{ ...TD, whiteSpace: "nowrap" }}>
                           <Badge color={STATUS_COLOR[j.status] ?? "gray"}>{j.status}</Badge>
                           {j.cancel_requested && j.status === "running" && <span style={{ marginLeft: 6, fontSize: 11, color: A.muted }}>cancelling…</span>}
+                          {slow && <span title={`Expected under ${fmtSeconds(exp!)}`} style={{ marginLeft: 6 }}><Badge color="amber">slow</Badge></span>}
+                          {rel > 0 && (j.status === "running" || j.status === "queued") && (
+                            <span title="Handed back to the queue by a deploy/restart" style={{ marginLeft: 6 }}>
+                              <Badge color={rel >= maxReleases - 1 ? "red" : "gray"}>released {rel}/{maxReleases}</Badge>
+                            </span>
+                          )}
                         </td>
                         <td style={{ ...TD, fontFamily: mono }}>{j.attempt}/{j.max_attempts}</td>
-                        <td style={{ ...TD, color: A.muted, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {j.error && j.status !== "succeeded" ? <span style={{ color: A.red }}>{j.error}</span> : progressText(j.progress)}
+                        <td style={{ ...TD, color: A.muted, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {j.error && j.status !== "succeeded" ? <span style={{ color: A.red }}>{j.error}</span> : progressCell(j, eta)}
                         </td>
-                        <td style={{ ...TD, fontFamily: mono }}>{duration(j)}</td>
-                        <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>${(j.cost_usd ?? 0).toFixed(4)}</td>
+                        <td style={{ ...TD, fontFamily: mono, color: slow ? A.amber : undefined }}>{secs == null ? "—" : fmtSeconds(secs)}</td>
+                        <td style={{ ...TD, fontFamily: mono, textAlign: "right" }}>{usd(j.cost_usd)}</td>
                         <td style={{ ...TD, color: A.muted }}>{j.created_by ?? "—"}</td>
                         <td style={{ ...TD, whiteSpace: "nowrap" }} onClick={e => e.stopPropagation()}>
                           {(j.status === "queued" || (j.status === "running" && !j.cancel_requested)) && (
@@ -224,24 +261,8 @@ export default function JobsPage() {
                           )}
                         </td>
                       </tr>
-                      {open === j.id && (
-                        <tr>
-                          <td colSpan={10} style={{ ...TD, background: A.card }}>
-                            <div style={{ fontSize: 11, color: A.muted, marginBottom: 8, fontFamily: mono }}>
-                              {j.id} · started {fmtTime(j.started_at)} · finished {fmtTime(j.finished_at)}
-                              {j.status === "queued" && j.run_after ? ` · runs after ${fmtTime(j.run_after)}` : ""}
-                            </div>
-                            {j.error && <div style={{ fontSize: 12, color: A.red, marginBottom: 8, whiteSpace: "pre-wrap" }}>{j.error}</div>}
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
-                              <Json label="Payload" value={j.payload} />
-                              <Json label="Progress" value={j.progress} />
-                              <Json label="Result" value={j.result} />
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -253,10 +274,26 @@ export default function JobsPage() {
             <SLabel>Registered kinds</SLabel>
             <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 16, flexWrap: "wrap" }}>
               {kinds.map(k => (
-                <span key={k.kind}><span style={{ fontFamily: mono, color: A.ink3 }}>{k.kind}</span> · max {k.concurrency} at a time · {k.max_attempts} attempts</span>
+                <span key={k.kind}>
+                  <span style={{ fontFamily: mono, color: A.ink3 }}>{k.kind}</span> · max {k.concurrency} at a time · {k.max_attempts} attempts
+                  {k.expected_seconds ? ` · slow after ${fmtSeconds(k.expected_seconds)}` : ""}
+                </span>
               ))}
             </div>
           </div>
+        )}
+
+        {open && (
+          <JobDrawer
+            jobId={open}
+            tick={tick}
+            expectedSeconds={openJob ? expected(openJob.kind) : undefined}
+            maxReleases={maxReleases}
+            eta={open ? etas[open] ?? null : null}
+            onClose={() => setOpen(null)}
+            onAct={act}
+            busy={busy === open}
+          />
         )}
       </main>
     </div>

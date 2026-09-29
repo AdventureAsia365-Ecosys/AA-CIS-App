@@ -309,14 +309,17 @@ async def get(pool, job_id: str) -> Optional[dict]:
 
 
 async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
-                    limit: int = 50) -> list[dict]:
+                    limit: int = 50, tour_id: Optional[str] = None) -> list[dict]:
+    """`tour_id` (AA-687) matches the payload's tour: a3_atomize / segment work (`tour_id`) and
+    tenant rewrites of it (t2_rewrite's `published_tour_id`)."""
     rows = await pool.fetch(
         f"""
         SELECT {_LIST_COLUMNS} FROM shared.job j
         WHERE ($1::text IS NULL OR kind = $1) AND ($2::text IS NULL OR status = $2)
+          AND ($4::text IS NULL OR payload->>'tour_id' = $4 OR payload->>'published_tour_id' = $4)
         ORDER BY created_at DESC LIMIT $3
         """,
-        kind, status, limit,
+        kind, status, limit, tour_id,
     )
     return [_row_dict(r) for r in rows]
 

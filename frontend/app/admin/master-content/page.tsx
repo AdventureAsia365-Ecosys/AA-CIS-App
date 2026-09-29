@@ -1360,6 +1360,14 @@ export default function MasterContentPage() {
                         {isExpanded && (
                           <tr style={{ background: `${A.gold}08` }}>
                             <td colSpan={9} style={{ padding: "0 0 0 48px", borderBottom: `1px solid ${A.line}` }}>
+                              {/* AA-687 — the background jobs for this tour (atomize, tenant rewrites). */}
+                              {t.tour_id && (
+                                <div style={{ padding: "8px 16px 0", fontSize: 12 }}>
+                                  <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
+                                    Jobs for this tour (atomize, tenant rewrites) →
+                                  </a>
+                                </div>
+                              )}
                               {vLoading ? (
                                 <div style={{ padding: "12px 16px", fontSize: 12, color: A.muted }}>Loading versions…</div>
                               ) : versions.length === 0 ? (

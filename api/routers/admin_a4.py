@@ -344,6 +344,7 @@ async def get_content_log(
                 COALESCE(cp.channel, agr.channel) AS channel,
                 cp.status, cp.held_reason, cp.gate_ledger, cp.repair_log, cp.attempt_number,
                 cp.content_text, cp.created_at,
+                cp.job_id::text AS job_id,  -- AA-687: the t9_write job that wrote this piece
                 -- AA-561 3a — lineage: subject (Slate proposal) -> Segment OR Route it came from.
                 -- subject_id is nullable (the pre-existing atom-picker entry point, AA-449, still
                 -- creates a request with no Subject at all — NOT retired by this build, per its
@@ -495,6 +496,7 @@ async def get_content_log(
             "publish_id": r["publish_id"],
             "publish_external_url": r["publish_external_url"],
             "publish_published_at": r["publish_published_at"].isoformat() if r["publish_published_at"] else None,
+            "job_id": r.get("job_id"),
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
     logger.info(
