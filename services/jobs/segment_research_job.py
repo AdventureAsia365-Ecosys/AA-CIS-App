@@ -65,7 +65,9 @@ async def run(ctx: JobContext) -> dict:
                        max_spend_usd={"dfs": needed, "bedrock": llm_budget.remaining_usd()})
     result = await run_segment_research({"countries": markets}, ctx.pool, dfs_budget=dfs_budget,
                                         llm_budget=llm_budget, **scope_kwargs(ctx.payload))
-    ctx.add_cost(dfs_budget.run_spent + llm_budget.run_spent)
+    # LLM spend is already attributed through llm_call_log.job_id (read-side sum, queue.py);
+    # only the non-LLM DataForSEO spend is reported here, so nothing is counted twice.
+    ctx.add_cost(dfs_budget.run_spent)
     ctx.set_result(result)
     await ctx.progress(phase="done")
 

@@ -98,6 +98,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     separate ECS service is AA-651 (deferred).
   - A graceful shutdown releases running jobs (attempt not counted); a crash is caught by the
     reaper after the 90 s lease.
+  - Job cost (AA-652 follow-up, migration 177): the worker binds the job id around each handler
+    (`call_log.bind_job`), so every `llm_call_log` row the job causes carries `job_id`. Shown cost
+    = `shared.job.cost_usd` (non-LLM spend the handler reports, e.g. DataForSEO) + the sum of
+    those log rows, computed on read (`queue.LLM_COST_SQL`).
   - Admin: `/admin/jobs` page, API `/admin/job-runner/*`. (`/admin/jobs/{id}` is still the older
     `shared.pipeline_jobs` poll for A1 run-tour.)
   - **T2 tenant rewrite is a job** (`t2_rewrite`, AA-652): `tenant_tour_versions.job_id`; a job

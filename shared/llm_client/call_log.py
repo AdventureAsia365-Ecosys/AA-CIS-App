@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator, Optional
 
 import asyncpg
 import structlog
@@ -26,9 +28,30 @@ logger = structlog.get_logger()
 _INSERT_SQL = """
     INSERT INTO shared.llm_call_log
         (tenant_id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
-         content_piece_id, angle_gate_request_id, stop_reason, account, fallback_used, provider)
-    VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid, $11, $12, $13, $14)
+         content_piece_id, angle_gate_request_id, stop_reason, account, fallback_used, provider,
+         job_id)
+    VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::uuid, $10::uuid, $11, $12, $13, $14,
+            $15::uuid)
 """
+
+# AA-652 follow-up — the durable job (shared.job) whose handler is running, bound by the job
+# worker around each handler. Same propagation as stream_sink.py: asyncio tasks,
+# `asyncio.to_thread()` and LangGraph's `run_in_executor` all copy the context, so every
+# record_call*() below the handler writes the job id without any call site knowing about jobs.
+_current_job_id: ContextVar[Optional[str]] = ContextVar("llm_call_log_job_id", default=None)
+
+
+def current_job_id() -> Optional[str]:
+    return _current_job_id.get()
+
+
+@contextmanager
+def bind_job(job_id: Optional[str]) -> Iterator[None]:
+    token = _current_job_id.set(job_id)
+    try:
+        yield
+    finally:
+        _current_job_id.reset(token)
 
 
 def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str, Optional[str]]:
@@ -88,7 +111,7 @@ async def record_call(
             await conn.execute(
                 _INSERT_SQL, tenant_id, stage, role, clean_model, tokens_in, tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
-                account, fallback_used, provider,
+                account, fallback_used, provider, current_job_id(),
             )
         finally:
             await conn.close()
@@ -113,7 +136,7 @@ async def record_call_with_pool(
             await conn.execute(
                 _INSERT_SQL, tenant_id, stage, role, clean_model, tokens_in, tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
-                account, fallback_used, provider,
+                account, fallback_used, provider, current_job_id(),
             )
     except Exception as e:
         logger.warning("llm_call_log_write_failed", stage=stage, role=role, error=str(e))

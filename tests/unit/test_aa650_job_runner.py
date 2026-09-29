@@ -73,7 +73,8 @@ async def test_handler_returns_result_and_records_cost():
     ctx = _ctx()
     out = await _run(ctx)
     assert out["places_selected"] == 5
-    assert ctx.cost_usd == pytest.approx(0.32)
+    # Only the DFS spend (0.3): the 0.02 Bedrock spend reaches the job via llm_call_log.job_id.
+    assert ctx.cost_usd == pytest.approx(0.3)
 
 
 @pytest.mark.asyncio

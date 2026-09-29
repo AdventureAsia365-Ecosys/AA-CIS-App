@@ -41,11 +41,11 @@ async def test_record_call_forwards_account_fallback_provider():
             stop_reason="end_turn", account="acc3", fallback_used=False,
         )
     args = fake_conn.execute.call_args.args
-    # bind order tail: …, stop_reason, account, fallback_used, provider
-    assert args[-4] == "end_turn"
-    assert args[-3] == "acc3"
-    assert args[-2] is False
-    assert args[-1] == "bedrock-satellite"   # derived from the "satellite-" prefix
+    # bind order tail: …, stop_reason, account, fallback_used, provider, job_id
+    assert args[-5] == "end_turn"
+    assert args[-4] == "acc3"
+    assert args[-3] is False
+    assert args[-2] == "bedrock-satellite"   # derived from the "satellite-" prefix
     # bind order: args[0]=SQL, then tenant_id, stage, role, model → model is args[4], stored
     # WITHOUT the "satellite-" prefix.
     assert args[4] == "haiku-4-5"
@@ -64,6 +64,6 @@ async def test_record_call_openai_account_none_provider_openai():
             stop_reason="stop",
         )
     args = fake_conn.execute.call_args.args
-    assert args[-3] is None            # account: OpenAI has none
-    assert args[-1] == "openai"        # provider derived from "gpt" prefix
+    assert args[-4] is None            # account: OpenAI has none
+    assert args[-2] == "openai"        # provider derived from "gpt" prefix
     assert args[4] == "gpt-4.1"        # model is args[4] (args[0] is the SQL string)

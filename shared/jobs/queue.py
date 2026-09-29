@@ -278,9 +278,18 @@ async def retry(pool, job_id: str) -> bool:
     return row is not None
 
 
+# Read-side job cost (AA-652 follow-up): `shared.job.cost_usd` holds what the handler reported
+# itself (non-LLM spend such as DataForSEO, via ctx.add_cost); LLM spend is summed from
+# shared.llm_call_log rows the worker tagged with the job id. Summing on read keeps it exact across
+# retries and late fire-and-forget log writes, with nothing to double count.
+LLM_COST_SQL = (
+    "(SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l WHERE l.job_id = j.id)"
+)
+
 _LIST_COLUMNS = (
-    "id::text AS id, kind, status, attempt, max_attempts, payload, progress, result, "
-    "cost_usd::float AS cost_usd, error, cancel_requested, created_by, parent_job_id::text AS "
+    "j.id::text AS id, kind, status, attempt, max_attempts, payload, progress, result, "
+    f"(j.cost_usd + {LLM_COST_SQL})::float AS cost_usd, {LLM_COST_SQL}::float AS llm_cost_usd, "
+    "error, cancel_requested, created_by, parent_job_id::text AS "
     "parent_job_id, locked_by, locked_until, run_after, created_at, started_at, finished_at"
 )
 
@@ -293,7 +302,7 @@ def _row_dict(row) -> dict:
 
 
 async def get(pool, job_id: str) -> Optional[dict]:
-    row = await pool.fetchrow(f"SELECT {_LIST_COLUMNS} FROM shared.job WHERE id = $1::uuid", job_id)
+    row = await pool.fetchrow(f"SELECT {_LIST_COLUMNS} FROM shared.job j WHERE j.id = $1::uuid", job_id)
     return _row_dict(row) if row else None
 
 
@@ -301,7 +310,7 @@ async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] =
                     limit: int = 50) -> list[dict]:
     rows = await pool.fetch(
         f"""
-        SELECT {_LIST_COLUMNS} FROM shared.job
+        SELECT {_LIST_COLUMNS} FROM shared.job j
         WHERE ($1::text IS NULL OR kind = $1) AND ($2::text IS NULL OR status = $2)
         ORDER BY created_at DESC LIMIT $3
         """,
@@ -313,7 +322,7 @@ async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] =
 async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
     rows = await pool.fetch(
         f"""
-        SELECT {_LIST_COLUMNS} FROM shared.job
+        SELECT {_LIST_COLUMNS} FROM shared.job j
         WHERE kind = $1 AND (cardinality($2::text[]) = 0 OR status = ANY($2::text[]))
         ORDER BY created_at DESC LIMIT 1
         """,
