@@ -43,6 +43,7 @@ from shared.cost_guard import DFS_CALL_ESTIMATE_USD, BudgetExceeded, RunBudget
 from shared.dfs_client.call_log import record_dfs_call_with_pool
 from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.client import LLMClient
+from shared.llm_client.decide import decide
 from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
@@ -55,6 +56,13 @@ IDEAS_SEEDS_PER_TASK = 20
 # ideas, at full task price (1, 2 and 4 seeds on 28–29/09/2026: 0 ideas each; 8 seeds: 22 with
 # volume). Below this many seeds the task is not bought.
 IDEAS_MIN_SEEDS = 5
+# AA-693 — Jev gates (docs/architecture/at-series-v2-design.md §4.2 A3-3/A3-4). Questions live in
+# shared.decision_question (migration 182); they only drop anything once set to `enforce` with
+# calibrated floors (AA-661). Until then every verdict is logged as calibration data.
+JEV_STAGE = "a3_research"
+JEV_KEYWORD_Q = "a3_keyword_belongs"
+JEV_IDEA_Q = "a3_idea_traveller"
+JEV_CONCURRENCY = 8
 SERP_KEYWORDS_PER_PLACE = 1
 SERP_CONCURRENCY = 4
 # One batched Haiku call (~15 places): ~2k input + ~1k output tokens ≈ $0.007 at Haiku 4.5 prices.
@@ -203,6 +211,46 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
     return {"llm_calls": calls, "llm_usd": round(cost, 5)}
 
 
+async def _gate_keywords(places: list[_Place], pool) -> dict:
+    """AA-693 (A3-3): before any DFS purchase, ask Jev whether each proposed keyword is about this
+    particular place rather than the kind of thing it is (Ms. Thư's ticket 03: "Nyuto Hot Spring" →
+    "hot springs" 368k/mo). The plain place name is never asked — it is the place by definition.
+    A keyword is dropped only on an enforced, confident reject; grey/error/shadow keep it."""
+    pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != _tidy(p.name)]
+    if not pairs:
+        return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
+    sem = asyncio.Semaphore(JEV_CONCURRENCY)
+
+    async def _one(p: _Place, kw: str):
+        async with sem:
+            return p, kw, await decide(JEV_STAGE, f"kw:{p.name}:{kw}", {"place": p.name, "keyword": kw},
+                                       [JEV_KEYWORD_Q], pool=pool)
+
+    rejected = 0
+    for p, kw, dec in await asyncio.gather(*[_one(p, kw) for p, kw in pairs]):
+        if dec.rejected(JEV_KEYWORD_Q):
+            p.keywords = [k for k in p.keywords if k != kw]
+            rejected += 1
+    return {"jev_keywords_checked": len(pairs), "jev_keywords_rejected": rejected}
+
+
+async def _gate_ideas(rows: list[tuple[str, str, int]], seeds: list[str], pool) -> list[tuple[str, str, int]]:
+    """AA-693 (A3-4): keep only keyword ideas a traveller would search to experience a destination —
+    not hotel/resort/homestay or booking searches (S203 probe: `rkpo green resort phobjikha`). Same
+    enforce-only rule as `_gate_keywords`."""
+    if not rows:
+        return rows
+    sem = asyncio.Semaphore(JEV_CONCURRENCY)
+    context = ", ".join(seeds[:5])
+
+    async def _one(row):
+        async with sem:
+            return row, await decide(JEV_STAGE, f"idea:{row[1]}:{row[0]}",
+                                     {"keyword": row[0], "seed_places": context}, [JEV_IDEA_Q], pool=pool)
+
+    return [row for row, dec in await asyncio.gather(*[_one(r) for r in rows]) if not dec.rejected(JEV_IDEA_Q)]
+
+
 async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]], client: DataForSEOClient,
                        pool, guard: _RunGuard) -> dict:
     stats = {"volume_tasks": 0, "keywords_bought": 0, "keywords_cached": 0}
@@ -334,6 +382,9 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
         stats["ideas_returned"] = stats.get("ideas_returned", 0) + len(ideas)
         rows = [(_tidy(i["keyword"]), market, i.get("search_volume"))
                 for i in ideas if i.get("keyword") and i.get("search_volume")]
+        kept = await _gate_ideas(rows, seeds, pool)
+        stats["jev_ideas_rejected"] = stats.get("jev_ideas_rejected", 0) + len(rows) - len(kept)
+        rows = kept
         logger.info("segment_research_ideas_task", seeds=len(seeds), ideas_returned=len(ideas),
                     ideas_with_volume=len(rows), seed_sample=seeds[:5], sample=[r[0] for r in rows[:5]])
         if rows:
@@ -353,6 +404,7 @@ async def research_batch(
     """Research `stale` = [(place, actions, stale_markets)] in phases (module docstring)."""
     places = [_Place(name, actions, list(mkts)) for name, actions, mkts in stale]
     llm_stats = await _propose(places, pool, guard, llm_budget)
+    jev_stats = await _gate_keywords(places, pool)
     volume_stats = await _buy_volumes(places, markets, client, pool, guard)
     serp_calls = await _buy_serps(places, markets, client, pool, guard)
     idea_stats = (await _buy_suggestions(places, markets, client, pool, guard)
@@ -364,7 +416,8 @@ async def research_batch(
         async with pool.acquire() as conn:
             await conn.executemany(_LOG_RESEARCHED_SQL, [(p.name, m) for p in done for m in p.markets])
     logger.info("segment_research_batch_done", places=len(places), researched=len(done),
-                aborted=guard.aborted, **llm_stats, **volume_stats, **idea_stats, serp_calls=serp_calls)
+                aborted=guard.aborted, **llm_stats, **jev_stats, **volume_stats, **idea_stats,
+                serp_calls=serp_calls)
     return {
         "places_researched": len(done),
         "places_failed": len(places) - len(done),
@@ -375,6 +428,9 @@ async def research_batch(
         "idea_tasks": idea_stats["idea_tasks"],
         "ideas_stored": idea_stats["ideas_stored"],
         "ideas_returned": idea_stats["ideas_returned"],
+        "jev_keywords_checked": jev_stats["jev_keywords_checked"],
+        "jev_keywords_rejected": jev_stats["jev_keywords_rejected"],
+        "jev_ideas_rejected": idea_stats.get("jev_ideas_rejected", 0),
         "llm_calls": llm_stats["llm_calls"],
         "cost_usd": llm_stats["llm_usd"],
     }
