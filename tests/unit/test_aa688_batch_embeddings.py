@@ -278,3 +278,26 @@ async def test_a3_job_forwards_thread_progress_to_job_context():
     fields = [c.kwargs for c in ctx.progress.await_args_list]
     assert {"step": "embedding_atoms", "done": 96, "total": 200} in fields
     assert {"phase": "done"} in fields
+
+
+@pytest.mark.asyncio
+async def test_recompute_reports_ranking_and_route_steps():
+    """AA-687 — after the landing, ranking (one pass per market) and route detection report their
+    own steps, so the Jobs page does not sit on "landing_questions · n/n · ETA 0s"."""
+    from services.export import handler
+    from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
+
+    conn = AsyncMock()
+    conn.fetch = AsyncMock(return_value=[])
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    seen = []
+    with patch("services.acp_contract.segment_matching.run_segment_matching", AsyncMock(return_value={})), \
+         patch("services.acp_contract.atom_ranking.precompute_question_landings", AsyncMock(return_value={})), \
+         patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
+         patch("services.acp_contract.route_detection.run_route_detection", AsyncMock(return_value={})):
+        await handler.recompute_segment_score_route("tour-1", pool, progress=seen.append)
+    n = len(DFS_LOCATION_MAP)
+    assert [s for s in seen if s["step"] == "ranking_markets"][-1] == {"step": "ranking_markets", "done": n, "total": n}
+    assert seen[-1] == {"step": "route_detection", "done": 1, "total": 1}
