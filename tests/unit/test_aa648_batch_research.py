@@ -79,7 +79,8 @@ async def test_batch_buys_one_volume_task_for_all_places_and_logs_researched():
     with patch.object(rb, "LLMClient", return_value=_llm(PROPOSALS)), \
          patch.object(rb, "record_call_with_pool", new=AsyncMock()), \
          patch.object(rb, "record_dfs_call_with_pool", new=AsyncMock()) as m_cache_log, \
-         patch.object(rb, "_serp_tool", new=AsyncMock(return_value=["q"])) as m_serp:
+         patch.object(rb, "_serp_tool", new=AsyncMock(return_value=["q"])) as m_serp, \
+         patch.object(rb, "IDEAS_MIN_SEEDS", 1):
         result = await rb.research_batch(stale, US, pool, client, guard)
 
     # one paid volume task carrying every uncached keyword (the cached "paro" is not re-bought)
@@ -119,12 +120,25 @@ async def test_suggestion_seeds_use_place_country_not_the_zero_volume_keyword():
         {"keyword": "mongar bhutan", "search_volume": 40},
         {"keyword": "hotels in mongar", "search_volume": 10},
         {"keyword": "ura valley bhutan", "search_volume": None}])
-    stats = await rb._buy_suggestions(places, US, client, pool, sr._RunGuard())
+    with patch.object(rb, "IDEAS_MIN_SEEDS", 1):
+        stats = await rb._buy_suggestions(places, US, client, pool, sr._RunGuard())
     assert client.fetch_keyword_ideas_multi.await_args.args[0] == [
         "mongar bhutan", "ura valley bhutan", "somewhere"]
     stored = [c.args[1] for c in conn.executemany.await_args_list if "search_demand" in c.args[0]][0]
     assert stored == [("mongar bhutan", "US", 40), ("hotels in mongar", "US", 10)]
     assert stats["idea_tasks"] == 1 and stats["ideas_stored"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ideas_task_skipped_below_min_seeds():
+    pool, conn = _pool(countries={"Robluthang": "Bhutan"})
+    client = MagicMock()
+    client.fetch_keyword_ideas_multi = AsyncMock()
+    places = [rb._Place("Robluthang", [], ["US"])]
+    stats = await rb._buy_suggestions(places, US, client, pool, sr._RunGuard())
+    client.fetch_keyword_ideas_multi.assert_not_awaited()
+    assert stats == {"idea_tasks": 0, "ideas_stored": 0, "idea_tasks_skipped": 1}
+    assert not places[0].failed          # skipping is not a purchase failure
 
 
 @pytest.mark.asyncio
