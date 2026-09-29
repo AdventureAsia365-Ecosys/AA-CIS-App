@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -51,6 +51,8 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     // AA-622 — LLM + DataForSEO spend and budgets; route kept as /admin/llm-usage.
     { href: "/admin/llm-usage", icon: <Wallet size={15} />,     label: "External Spend", adminOnly: true },
     { href: "/admin/jobs",      icon: <ListChecks size={15} />, label: "Jobs",           adminOnly: true },
+    // AA-660 — Jev (TypeSafe) questions per stage: mode, floors, verdicts, cost.
+    { href: "/admin/decisions", icon: <Scale size={15} />,      label: "Jev Decisions",  adminOnly: true },
   ] },
 ];
 

@@ -36,11 +36,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     view with a Dismiss action, AA-626), `master-content`, `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
-    `jobs`, `settings` (pipeline gates, **Brand Identity** editor, SEO config, LLM model per
-    stage). `run-health` was removed with N7/N8 (AA-603).
+    `jobs`, `decisions` (**Jev Decisions**, AA-660), `settings` (pipeline gates, **Brand
+    Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
   - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
     Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
-    **Operations** (External Spend, Jobs) · **Settings**. Admin-only items are hidden for other
+    **Operations** (External Spend, Jobs, Jev Decisions) · **Settings**. Admin-only items are hidden for other
     roles (same list as `middleware.ts` PROTECTED_ROUTES). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
@@ -80,6 +80,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Judge = GPT-4.1 on the OpenAI API (a deliberately different vendor from the writer).
   - Tour writer output ceiling is `GENERATE_MAX_TOKENS=8192` (AA-639); at 4096 long tours were
     truncated and rewritten.
+- **Jev decision layer (AA-660, design `docs/architecture/at-series-v2-design.md`)**: stages ask
+  Jev (TypeSafe System One) typed questions through `shared/llm_client/decide.py` —
+  `decide(stage, subject_key, state, question_keys, tenant_id=)`, plain HTTP, never raises.
+  - Questions are rows in `shared.decision_question` (wording, `off`/`shadow`/`enforce`,
+    `accept_floor`/`reject_ceiling`, `calibration_ref`). A DB CHECK refuses `enforce` without a
+    calibration record.
+  - Each verdict lands in a zone (accept / grey / reject / error / skipped). Only an enforce-mode,
+    confident verdict changes what a stage does; grey and error keep the stage's existing rule
+    (fail-open).
+  - Tenant content goes to TypeSafe only for tenants in `shared.jev_tenant_allowlist` (the AA test
+    tenants) until the DPA/ZDR is confirmed.
+  - Every verdict is logged in `shared.decision_log`, and each call in `llm_call_log` (provider
+    `typesafe`, role `validate`), so Jev shows in External Spend. Admin page: `/admin/decisions`.
+    Key: secret `aa-cis/dev/typesafe`. Migration 181.
 - **Cost observability (epic AA-616)**:
   - `shared.llm_call_log` records account (acc1/acc3), provider and `fallback_used` per call
     (AA-617), with correct Haiku 4.5 pricing and cache tokens (AA-635).
