@@ -85,12 +85,14 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 }
 
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
-const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "unknown"] as const;
+const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "typesafe", "unknown"] as const;
 const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
   acc3:    { label: "acc3 · 786888028788 (Bedrock)", short: "acc3",   color: A.slate },
   acc1:    { label: "acc1 · 867490540162 (Bedrock)", short: "acc1",   color: A.gold },
   acc2:    { label: "acc2 · 005097885195 (Bedrock)", short: "acc2",   color: A.green },
   openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
+  // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
+  typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev",   color: A.accent },
   unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
 };
 // AA-623 — AWS account ID -> the same acc1/acc2/acc3 keys ACCOUNT_META uses, so Cost Explorer
@@ -112,7 +114,11 @@ const CE_ACCOUNT_LABEL: Record<string, string> = {
 // truly-unknown legacy rows, we key the account dimension off `provider` when account is unknown:
 // provider="openai" -> "openai" bucket, otherwise "unknown". Real Bedrock rows carry acc1/2/3.
 function acctKey(b: { account: string; provider: string }): string {
-  if (b.account === "unknown") return b.provider === "openai" ? "openai" : "unknown";
+  if (b.account === "unknown") {
+    if (b.provider === "openai") return "openai";
+    if (b.provider === "typesafe") return "typesafe";   // AA-660 — Jev
+    return "unknown";
+  }
   return b.account;
 }
 
@@ -425,7 +431,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
                     <td style={{ ...TD, fontSize: 12, color: A.muted }}>{c.created_at ? new Date(c.created_at).toLocaleString() : "—"}</td>
                     <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.stage}</td>
                     <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.model}</td>
-                    <td style={{ ...TD }}><AcctDot account={c.account ?? "unknown"} /></td>
+                    <td style={{ ...TD }}><AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" })} /></td>
                     <td style={{ ...TD, textAlign: "right", fontFamily: mono }}>{fmtUsd(c.cost_usd)}</td>
                     <td style={{ ...TD, fontSize: 12, color: A.muted2 }}>{c.stop_reason ?? "—"}</td>
                   </tr>

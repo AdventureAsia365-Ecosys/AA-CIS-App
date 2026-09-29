@@ -18,6 +18,7 @@ const NAV: { label: string; path: string }[] = [
   { label: 'Tenants', path: '/admin/tenants' },
   { label: 'External Spend', path: '/admin/llm-usage' },
   { label: 'Jobs', path: '/admin/jobs' },
+  { label: 'Jev Decisions', path: '/admin/decisions' },
   { label: 'Settings', path: '/admin/settings' },
 ];
 

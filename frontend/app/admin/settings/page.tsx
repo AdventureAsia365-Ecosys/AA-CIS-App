@@ -503,7 +503,57 @@ function ModelsTab() {
           </div>
         </Card>
       ))}
+      <JevStagesCard />
     </div>
+  );
+}
+
+// AA-660 — the Jev (TypeSafe) side of "which model does each stage use": read-only here, edited on
+// /admin/decisions where the verdicts and calibration live.
+interface JevQuestionRow {
+  question_key: string; stage: string; kind: string; mode: "off" | "shadow" | "enforce";
+  accept_floor: number | null; reject_ceiling: number | null; calibration_ref: string | null;
+  verdicts: number; acted: number; cost_usd: number;
+}
+
+function JevStagesCard() {
+  const [rows, setRows] = useState<JevQuestionRow[] | null>(null);
+  useEffect(() => {
+    fetch("/api/admin/decisions/summary?days=7")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setRows(d?.questions ?? []))
+      .catch(() => setRows([]));
+  }, []);
+  const modeColor = { off: "gray", shadow: "blue", enforce: "gold" } as const;
+  return (
+    <Card>
+      <SLabel>Jev decisions per stage (TypeSafe · jev-latest)</SLabel>
+      <p style={{ fontSize: 12, color: A.muted2, margin: "0 0 10px" }}>
+        Stages that ask Jev typed questions. Only <b>enforce</b> questions with a confident verdict change
+        what a stage does. Edit modes and floors on <a href="/admin/decisions" style={{ color: A.gold }}>Jev Decisions</a>.
+      </p>
+      {rows === null ? <Spinner /> : rows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: A.muted }}>No Jev questions configured yet.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <tbody>
+            {rows.map(q => (
+              <tr key={q.question_key} style={{ borderTop: `1px solid ${A.line}` }}>
+                <td style={{ padding: "6px 0", fontFamily: mono }}>{q.stage}</td>
+                <td style={{ padding: "6px 8px", fontFamily: mono }}>{q.question_key}</td>
+                <td style={{ padding: "6px 8px" }}><Badge color={modeColor[q.mode]}>{q.mode}</Badge></td>
+                <td style={{ padding: "6px 8px", fontFamily: mono }}>
+                  {q.accept_floor ?? "—"} / {q.reject_ceiling ?? "—"}
+                </td>
+                <td style={{ padding: "6px 8px", color: A.muted }}>{q.calibration_ref ? "calibrated" : "not calibrated"}</td>
+                <td style={{ padding: "6px 8px", fontFamily: mono }}>{q.verdicts} verdicts · {q.acted} acted · 7d</td>
+                <td style={{ padding: "6px 0", fontFamily: mono, textAlign: "right" }}>${q.cost_usd.toFixed(5)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }
 
