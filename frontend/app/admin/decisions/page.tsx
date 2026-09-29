@@ -256,6 +256,7 @@ export default function DecisionsPage() {
   useEffect(() => { if (tab === "verdicts") loadLog(); }, [tab, loadLog]);
 
   const qs = useMemo(() => data?.questions ?? [], [data]);
+  const openQ = qs.find(q => q.question_key === open) ?? null;
   const stagesAll = useMemo(() => Array.from(new Set([...(data?.stages ?? []).map(s => s.stage), ...qs.map(q => q.stage)])).sort(), [data, qs]);
   const totals = useMemo(() => {
     const t = { accept: 0, grey: 0, reject: 0, error: 0, skipped: 0 } as Record<Zone, number>;
@@ -410,7 +411,7 @@ export default function DecisionsPage() {
                 <input value={qSearch} onChange={e => setQSearch(e.target.value)} placeholder="Search question…" style={{ ...input, width: 220 }} />
                 <select value={qStage} onChange={e => setQStage(e.target.value)} style={input}><option value="">All stages</option>{stagesAll.map(s => <option key={s} value={s}>{s}</option>)}</select>
                 <select value={qMode} onChange={e => setQMode(e.target.value)} style={input}><option value="">All modes</option><option value="off">Off</option><option value="shadow">Shadow</option><option value="enforce">Enforce</option></select>
-                <span style={{ fontSize: 12, color: A.muted, alignSelf: "center" }}>{filteredQs.length} of {qs.length} · click a row for details and settings</span>
+                <span style={{ fontSize: 12, color: A.muted, alignSelf: "center" }}>{filteredQs.length} of {qs.length} · click a row — details and settings open below the table</span>
               </div>
               <div style={TABLE_BOX}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -438,7 +439,7 @@ export default function DecisionsPage() {
                   <tbody>
                     {filteredQs.map(q => {
                       const isOpen = open === q.question_key;
-                      return [
+                      return (
                         <tr key={q.question_key} onClick={() => setOpen(isOpen ? null : q.question_key)} style={{ cursor: "pointer", background: isOpen ? A.accentTint : undefined }}>
                           <td style={TD}>{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{q.stage}</td>
@@ -459,10 +460,21 @@ export default function DecisionsPage() {
                           <td style={{ ...TD, fontFamily: mono, whiteSpace: "nowrap" }}>{q.p50_latency_ms != null ? `${Math.round(q.p50_latency_ms)} / ${Math.round(q.p95_latency_ms ?? 0)} ms` : "—"}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{usd(q.cost_usd)}</td>
                           <td style={{ ...TD, whiteSpace: "nowrap" }}>{when(q.last_used_at)}</td>
-                        </tr>,
-                        isOpen && (
-                          <tr key={`${q.question_key}-d`}><td colSpan={19} style={{ ...TD, background: "#FBFAF7" }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr)", gap: 18 }}>
+                        </tr>
+                      );
+                    })}
+                    {!filteredQs.length && <tr><td style={TD} colSpan={19}>No questions match.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {openQ && (() => { const q = openQ; return (
+                <Card style={{ marginTop: 14, borderLeft: `4px solid ${A.accent}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14 }}>{q.question_key}</span>
+                    <ModePill m={q.mode} /><span style={{ fontSize: 12, color: A.muted }}>stage {q.stage}</span>
+                    <span style={{ flex: 1 }} /><Btn size="sm" onClick={() => setOpen(null)}>Close</Btn>
+                  </div>
+<div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(260px, 1fr)", gap: 18 }}>
                               <div>
                                 <SLabel>Question asked</SLabel>
                                 <div style={{ fontSize: 13.5, fontWeight: 600, color: A.ink }}>{q.instructions}</div>
@@ -488,14 +500,8 @@ export default function DecisionsPage() {
                               </div>
                             </div>
                             <div style={{ marginTop: 16 }}><SLabel>Settings</SLabel><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
-                          </td></tr>
-                        ),
-                      ];
-                    })}
-                    {!filteredQs.length && <tr><td style={TD} colSpan={19}>No questions match.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+                                          </Card>
+              ); })()}
             </>
           )}
 
