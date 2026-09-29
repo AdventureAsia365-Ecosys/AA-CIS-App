@@ -39,6 +39,12 @@ _SUMMARY_SQL = """
            count(l.id) FILTER (WHERE l.zone IN ('accept', 'reject') AND l.mode = 'enforce')::int AS acted,
            coalesce(sum(l.cost_usd), 0)::float AS cost_usd,
            avg(l.latency_ms) FILTER (WHERE l.zone NOT IN ('skipped', 'error'))::float AS avg_latency_ms,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY l.latency_ms)
+               FILTER (WHERE l.zone NOT IN ('skipped', 'error'))::float AS p50_latency_ms,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY l.latency_ms)
+               FILTER (WHERE l.zone NOT IN ('skipped', 'error'))::float AS p95_latency_ms,
+           avg(l.probability) FILTER (WHERE l.probability IS NOT NULL)::float AS avg_probability,
+           min(l.created_at) AS first_used_at,
            max(l.created_at) AS last_used_at
     FROM shared.decision_question q
     LEFT JOIN shared.decision_log l
@@ -56,6 +62,34 @@ _ORPHAN_SQL = """
     WHERE l.created_at >= now() - make_interval(days => $1) AND q.question_key IS NULL
     GROUP BY l.stage, l.question_key
     ORDER BY cost_usd DESC
+"""
+
+# One row per day: verdict counts per zone, and cost (for the trend chart).
+_DAILY_SQL = """
+    SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS verdicts,
+           count(*) FILTER (WHERE zone = 'accept')::int AS accept,
+           count(*) FILTER (WHERE zone = 'grey')::int AS grey,
+           count(*) FILTER (WHERE zone = 'reject')::int AS reject,
+           count(*) FILTER (WHERE zone = 'error')::int AS error,
+           count(*) FILTER (WHERE zone = 'skipped')::int AS skipped,
+           coalesce(sum(cost_usd), 0)::float AS cost_usd
+    FROM shared.decision_log
+    WHERE created_at >= now() - make_interval(days => $1)
+    GROUP BY 1 ORDER BY 1
+"""
+
+# Per stage, from the ledger (what was asked and how it fell), joined to the billed calls below.
+_STAGE_SQL = """
+    SELECT stage, count(DISTINCT question_key)::int AS questions, count(*)::int AS verdicts,
+           count(*) FILTER (WHERE zone IN ('accept', 'reject') AND mode = 'enforce')::int AS acted,
+           count(*) FILTER (WHERE zone = 'error')::int AS errors,
+           count(*) FILTER (WHERE zone = 'skipped')::int AS skipped,
+           coalesce(sum(cost_usd), 0)::float AS cost_usd,
+           avg(latency_ms) FILTER (WHERE zone NOT IN ('skipped', 'error'))::float AS avg_latency_ms,
+           max(created_at) AS last_used_at
+    FROM shared.decision_log
+    WHERE created_at >= now() - make_interval(days => $1)
+    GROUP BY stage ORDER BY stage
 """
 
 # The exact billed amount per stage (one llm_call_log row per Jev call).
@@ -81,12 +115,14 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
     pool = request.app.state.pool
     questions = []
     for r in await pool.fetch(_SUMMARY_SQL, days):
-        d = _iso(dict(r), "updated_at", "last_used_at")
+        d = _iso(dict(r), "updated_at", "last_used_at", "first_used_at")
         if isinstance(d.get("criteria"), str):
             d["criteria"] = json.loads(d["criteria"])
         questions.append(d)
     orphans = [_iso(dict(r), "last_used_at") for r in await pool.fetch(_ORPHAN_SQL, days)]
     calls = [dict(r) for r in await pool.fetch(_CALLS_SQL, days)]
+    daily = [{**dict(r), "day": r["day"].isoformat()} for r in await pool.fetch(_DAILY_SQL, days)]
+    stages = [_iso(dict(r), "last_used_at") for r in await pool.fetch(_STAGE_SQL, days)]
     allowlist = [dict(r) for r in await pool.fetch(
         "SELECT a.tenant_id::text, t.slug, t.name, a.reason FROM shared.jev_tenant_allowlist a "
         "JOIN shared.tenants t USING (tenant_id) ORDER BY t.slug")]
@@ -95,21 +131,48 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
         "questions": questions,
         "unregistered": orphans,
         "calls_by_stage": calls,
+        "daily": daily,
+        "stages": stages,
         "total_cost_usd": sum(c["cost_usd"] for c in calls),
         "total_calls": sum(c["calls"] for c in calls),
         "tenant_allowlist": allowlist,
     }
 
 
-@router.get("/log", summary="AA-660 — recent Jev verdicts")
+_SORTS = {"created_at": "l.created_at", "probability": "l.probability", "latency_ms": "l.latency_ms",
+          "cost_usd": "l.cost_usd"}
+_LOG_WHERE = """
+        WHERE ($1::text IS NULL OR l.stage = $1)
+          AND ($2::text IS NULL OR l.question_key = $2)
+          AND ($3::text IS NULL OR l.zone = $3)
+          AND ($4::text IS NULL OR l.subject_key ILIKE '%' || $4 || '%')
+          AND ($5::text IS NULL OR l.mode = $5)
+          AND ($6::text IS NULL OR coalesce(t.slug, 'platform') = $6)
+          AND l.created_at >= now() - make_interval(days => $7)
+"""
+
+
+@router.get("/log", summary="AA-660 — Jev verdicts: filter, sort, page")
 async def log(request: Request, stage: Optional[str] = None, question_key: Optional[str] = None,
               zone: Optional[str] = Query(None, description="|".join(_ZONES)),
               subject: Optional[str] = Query(None, description="substring of subject_key"),
-              limit: int = Query(100, ge=1, le=500), x_admin_secret: str = Header(None)):
+              mode: Optional[Literal["off", "shadow", "enforce"]] = None,
+              tenant: Optional[str] = Query(None, description="tenant slug, or 'platform'"),
+              days: int = Query(30, ge=1, le=365),
+              sort: Literal["created_at", "probability", "latency_ms", "cost_usd"] = "created_at",
+              direction: Literal["asc", "desc"] = "desc",
+              limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+              x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     if zone is not None and zone not in _ZONES:
         raise HTTPException(status_code=422, detail=f"zone must be one of {_ZONES}")
-    rows = await request.app.state.pool.fetch(
+    args = (stage, question_key, zone, subject, mode, tenant, days)
+    pool = request.app.state.pool
+    total = await pool.fetchval(
+        "SELECT count(*) FROM shared.decision_log l LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id"
+        + _LOG_WHERE, *args)
+    order = f"{_SORTS[sort]} {'ASC' if direction == 'asc' else 'DESC'} NULLS LAST, l.id DESC"
+    rows = await pool.fetch(
         """
         SELECT l.id, l.created_at, l.stage, l.question_key, l.subject_key, l.tenant_id::text AS tenant_id,
                t.slug AS tenant_slug, l.job_id::text AS job_id, l.mode, l.zone,
@@ -117,14 +180,8 @@ async def log(request: Request, stage: Optional[str] = None, question_key: Optio
                l.model, l.latency_ms, l.cost_usd::float AS cost_usd, l.error, l.outcome
         FROM shared.decision_log l
         LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id
-        WHERE ($1::text IS NULL OR l.stage = $1)
-          AND ($2::text IS NULL OR l.question_key = $2)
-          AND ($3::text IS NULL OR l.zone = $3)
-          AND ($4::text IS NULL OR l.subject_key ILIKE '%' || $4 || '%')
-        ORDER BY l.created_at DESC
-        LIMIT $5
-        """,
-        stage, question_key, zone, subject, limit,
+        """ + _LOG_WHERE + f" ORDER BY {order} LIMIT $8 OFFSET $9",
+        *args, limit, offset,
     )
     out = []
     for r in rows:
@@ -132,7 +189,7 @@ async def log(request: Request, stage: Optional[str] = None, question_key: Optio
         if isinstance(d.get("probabilities"), str):
             d["probabilities"] = json.loads(d["probabilities"])
         out.append(d)
-    return {"decisions": out}
+    return {"decisions": out, "total": total, "limit": limit, "offset": offset}
 
 
 class QuestionUpdate(BaseModel):
