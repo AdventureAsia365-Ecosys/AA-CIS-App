@@ -14,7 +14,7 @@ whole selection, so each paid task carries as much as it can:
                    it has volume (PAA + organic domains, one call serves both — AA-631).
   D. suggestions — places with no volume anywhere: "<place> <country>" seeds go
                    IDEAS_SEEDS_PER_TASK per keywords_for_keywords task (primary market); ideas
-                   with volume are cached.
+                   with volume are cached. A task with fewer than IDEAS_MIN_SEEDS seeds is skipped.
   E. log         — `segment_research_log` is written only for places whose purchases all succeeded.
 
 Every paid call goes through the cost guard (AA-649) and the run-level circuit breaker (AA-647): a
@@ -51,6 +51,10 @@ PROPOSE_CHUNK = 15
 KEYWORDS_PER_PLACE = 4
 VOLUME_TASK_MAX = 1000
 IDEAS_SEEDS_PER_TASK = 20
+# A keywords_for_keywords task with only a few obscure seeds returns the seeds themselves and no
+# ideas, at full task price (1, 2 and 4 seeds on 28–29/09/2026: 0 ideas each; 8 seeds: 22 with
+# volume). Below this many seeds the task is not bought.
+IDEAS_MIN_SEEDS = 5
 SERP_KEYWORDS_PER_PLACE = 1
 SERP_CONCURRENCY = 4
 # One batched Haiku call (~15 places): ~2k input + ~1k output tokens ≈ $0.007 at Haiku 4.5 prices.
@@ -314,6 +318,11 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
                 p.failed = True
             continue
         seeds = list(dict.fromkeys(_idea_seed(p, countries.get(p.name)) for p in chunk))
+        if len(seeds) < IDEAS_MIN_SEEDS:
+            stats["idea_tasks_skipped"] = stats.get("idea_tasks_skipped", 0) + 1
+            logger.info("segment_research_ideas_skipped", seeds=len(seeds), min_seeds=IDEAS_MIN_SEEDS,
+                        seed_sample=seeds[:5])
+            continue
         try:
             ideas = await client.fetch_keyword_ideas_multi(seeds, loc, lang)
         except Exception as exc:
