@@ -33,7 +33,7 @@ import structlog
 
 from shared.secrets import get_database_url, get_typesafe_api_key
 
-from .call_log import current_job_id, record_call, record_call_with_pool
+from .call_log import current_job_id, record_call_with_pool
 from .catalog import get_model_sync
 
 logger = structlog.get_logger()
@@ -210,11 +210,33 @@ _LOG_SQL = """
 """
 
 
-async def _decide(conn, pool, stage: str, subject_key: str, state: Any, question_keys: list[str],
+class _SingleConn:
+    """A one-connection stand-in for an asyncpg.Pool (the no-pool path): `acquire()` yields the same
+    connection every time. `_decide()` only ever holds one acquisition at a time, so this is safe."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return self
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: list[str],
                   tenant_id: Optional[str]) -> Decision:
+    """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while
+    writing logs — never across the Jev HTTP call and never two at once. Holding one across the
+    whole call and then acquiring a second for llm_call_log deadlocked a pool under concurrent
+    decides (S203: 8 parallel calls on a 4-connection pool hung until timeout)."""
     decision = Decision()
     try:
-        await _load_config(conn)
+        async with db.acquire() as conn:
+            await _load_config(conn)
     except Exception as exc:                      # tables missing / DB error → fail open
         logger.warning("decide_config_unavailable", stage=stage, error=str(exc))
         decision.verdicts = {k: Verdict(k, "off", "error", error=f"config: {exc}") for k in question_keys}
@@ -251,11 +273,11 @@ async def _decide(conn, pool, stage: str, subject_key: str, state: Any, question
             for key, q in asked.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=str(exc)[:500])
 
-    await _write_logs(conn, pool, stage, subject_key, tenant_id, decision, asked)
+    await _write_logs(db, stage, subject_key, tenant_id, decision, asked)
     return decision
 
 
-async def _write_logs(conn, pool, stage, subject_key, tenant_id, decision: Decision, asked) -> None:
+async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, asked) -> None:
     job_id = current_job_id()
     per_q_cost = decision.cost_usd / len(asked) if asked else 0.0
     rows = []
@@ -269,7 +291,8 @@ async def _write_logs(conn, pool, stage, subject_key, tenant_id, decision: Decis
             per_q_cost if key in asked else 0.0, v.error,
         ))
     try:
-        await conn.executemany(_LOG_SQL, rows)
+        async with db.acquire() as conn:
+            await conn.executemany(_LOG_SQL, rows)
     except Exception as exc:
         logger.warning("decision_log_write_failed", stage=stage, error=str(exc))
     if asked and decision.model:
@@ -280,10 +303,7 @@ async def _write_logs(conn, pool, stage, subject_key, tenant_id, decision: Decis
                       tokens_out=0, cost_usd=decision.cost_usd, provider="typesafe",
                       quality_signal={"source": "decide", "questions": len(asked), "zones": zones},
                       tenant_id=str(tenant_id) if tenant_id else None)
-        if pool is not None:
-            await record_call_with_pool(pool, **kwargs)
-        else:
-            await record_call(**kwargs)
+        await record_call_with_pool(db, **kwargs)       # its own, separate acquisition
 
 
 async def decide(stage: str, subject_key: str, state: Any, question_keys: list[str], *,
@@ -295,11 +315,10 @@ async def decide(stage: str, subject_key: str, state: Any, question_keys: list[s
     (None or aa_internal = platform content)."""
     try:
         if pool is not None:
-            async with pool.acquire() as conn:
-                return await _decide(conn, pool, stage, subject_key, state, question_keys, tenant_id)
+            return await _decide(pool, stage, subject_key, state, question_keys, tenant_id)
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
-            return await _decide(conn, None, stage, subject_key, state, question_keys, tenant_id)
+            return await _decide(_SingleConn(conn), stage, subject_key, state, question_keys, tenant_id)
         finally:
             await conn.close()
     except Exception as exc:                      # never break the calling stage
