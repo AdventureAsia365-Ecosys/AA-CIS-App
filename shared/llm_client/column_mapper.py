@@ -7,6 +7,7 @@ AA-685: the call goes through LLMClient with stage "a0_column_map" (model from t
 seeded to Haiku — the model this file hardcoded before) and writes a shared.llm_call_log row.
 """
 import json
+import re
 import structlog
 
 from .call_log import record_call_sync
@@ -121,6 +122,13 @@ def _log_call(resp, *, json_parsed: bool, mapped: int) -> None:
     )
 
 
+def normalize_header(name: str) -> str:
+    """'PRICE (USD)' → 'price', 'best_time_to_go' → 'best time to go', 'Group-Size' → 'group size'."""
+    n = re.sub(r"\([^)]*\)", " ", str(name).lower())
+    n = re.sub(r"[_\-/.:]+", " ", n)
+    return " ".join(n.split())
+
+
 def build_dynamic_column_map(
     excel_columns: list[str],
     static_map: dict[str, str],
@@ -131,9 +139,14 @@ def build_dynamic_column_map(
     final_map: {excel_col_lower: db_field}
     """
     lower_cols = [c.strip().lower() for c in excel_columns]
+    # AA-690 A0-5 (S206): match on a normalised name, so "group_size" / "Group-Size" / "PRICE (USD)" hit the
+    # "group size" / "price" entries. Measured on the uploaded files: group_size and best_time_to_go were
+    # silently dropped in 6 of 12 supplier files, and the LLM fallback below had never been triggered.
+    norm_static = {normalize_header(k): v for k, v in static_map.items()}
+    matched = {c: norm_static[normalize_header(c)] for c in lower_cols if normalize_header(c) in norm_static}
 
     # Count static hits
-    hits = sum(1 for c in lower_cols if c in static_map)
+    hits = len(matched)
     hit_rate = hits / len(lower_cols) if lower_cols else 0
 
     logger.info("column_map_check",
@@ -143,8 +156,11 @@ def build_dynamic_column_map(
 
     if hit_rate >= 0.3:
         # Static map sufficient — build lower→field map
-        final = {c: static_map[c] for c in lower_cols if c in static_map}
-        return final, False
+        unmatched = [c for c in excel_columns if c.strip().lower() not in matched
+                     and not c.strip().lower().startswith("unnamed")]
+        if unmatched:
+            logger.info("column_map_unmatched", columns=unmatched)
+        return matched, False
 
     # LLM fallback
     logger.info("llm_fallback_triggered", hit_rate=hit_rate)
