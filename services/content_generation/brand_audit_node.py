@@ -53,7 +53,35 @@ ITIN_DAY_TITLE_GENERIC = re.compile(
 )
 
 
-def pre_audit_checks(generated: dict) -> list[str]:
+def _norm_clock(text: str) -> str:
+    return re.sub(r"\s+", "", text.lower())
+
+
+def meal_time_claims_supported(itin_text: str, tour: dict) -> bool:
+    """AA-692 A1-3: True when every meal/clock-time hit in the rewrite is backed by the raw source.
+
+    S205 measure: the regex fired on 41/125 master tours, and most hits were the source's own
+    logistics (14/17 clock times appear verbatim in the source; 26/34 tours' sources state meals too).
+    - clock time: supported when the same time is in the source (deterministic);
+    - meal claim: the sentence is sent to the same enforced Jev Question grounding uses
+      (a1_claim_supported, same source text and subject key, so it is normally a cache hit);
+      supported only on a confident, enforced accept. Grey/shadow/error keep the code (fail-closed)."""
+    from services.content_generation import grounding as g
+    source = g.source_text(tour)
+    src_clocks = {_norm_clock(m.group(0)) for m in ITIN_CLOCK_TIME.finditer(source)}
+    if any(_norm_clock(m.group(0)) not in src_clocks for m in ITIN_CLOCK_TIME.finditer(itin_text)):
+        return False
+    if not ITIN_MEAL_INVENTED.search(itin_text):
+        return True
+    units = [u for u in g.sentence_units({"itineraries": itin_text}) if ITIN_MEAL_INVENTED.search(u["sentence"])]
+    if not units:
+        return False
+    verdicts = g.judge_units(units, source)
+    return all(getattr(verdicts.get(i), "enforced", False) and getattr(verdicts.get(i), "zone", None) == "accept"
+               for i in range(len(units)))
+
+
+def pre_audit_checks(generated: dict, tour: dict | None = None) -> list[str]:
     codes = []
     name = (generated.get("name") or "")
     subtitle = (generated.get("subtitle") or "")
@@ -91,7 +119,9 @@ def pre_audit_checks(generated: dict) -> list[str]:
         itineraries = json.dumps(itineraries)
     itin_text = str(itineraries)
     if ITIN_MEAL_INVENTED.search(itin_text) or ITIN_CLOCK_TIME.search(itin_text):
-        codes.append("ITINERARY_MEAL_TIME_INVENTED")
+        # AA-692 A1-3: no code when the source itself states these logistics (needs the source tour).
+        if not (tour and meal_time_claims_supported(itin_text, tour)):
+            codes.append("ITINERARY_MEAL_TIME_INVENTED")
     if ITIN_DAY_TITLE_GENERIC.search(itin_text):
         codes.append("ITINERARY_DAY_TITLE_GENERIC")
 
@@ -159,7 +189,7 @@ def _audit_from_judge(state: dict, generated: dict) -> dict:
     """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
     call. Deterministic pre-audit codes still fire (they drive flag_fix's field targeting) and the
     judge's feedback is surfaced as an issue so flag_fix has context for the repair pass."""
-    pre_codes = pre_audit_checks(generated)
+    pre_codes = pre_audit_checks(generated, state.get("tour"))
     judge_feedback = (state.get("judge_feedback") or "").strip()
     issues = [judge_feedback] if judge_feedback else []
     status = "flagged" if pre_codes else "pass"
@@ -199,7 +229,7 @@ def brand_audit_node(state: dict) -> dict:
         return _audit_from_judge(state, generated)
 
     try:
-        pre_codes = pre_audit_checks(generated)
+        pre_codes = pre_audit_checks(generated, state.get("tour"))
 
         system_prompt = AA_BRAND_IDENTITY_PROMPT + "\n\n" + AA_COWORK_STRUCTURE_PROMPT
 
