@@ -683,7 +683,8 @@ async def precompute_question_landings(
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
                    asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids,
-                   array_remove(array_agg(DISTINCT rt.country), NULL) AS countries
+                   array_remove(array_agg(DISTINCT rt.country), NULL) AS countries,
+                   array_agg(ta.activity_type) AS activity_types
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
@@ -706,9 +707,9 @@ async def precompute_question_landings(
 
         counts: dict[str, int] = {}
         in_scope_rows = []
+        exclusions = await resolve_exclusions(pool, segment_rows)   # AA-694 A3-2
         for row in segment_rows:
-            place, action = row["canonical_place"], row["canonical_action"]
-            if classify_exclusion(place, action):
+            if exclusions[row["segment_id"]]:
                 continue
             segment_id = row["segment_id"]
             cached = row["questions_count"]
@@ -780,6 +781,63 @@ def classify_exclusion(place: str, action: str) -> str | None:
     return None
 
 
+# AA-694 A3-2 — two independent opinions on "is this moment transit": the verb rule above and the
+# `activity_type` atomize gave the Segment's atoms. Where they disagree (192 transit-typed atoms the
+# rule misses, S204), Jev picks; the pick is used only when enforced and confident (ADR 0007).
+TYPE_STAGE = "a3_segment_type"
+TYPE_Q = "a3_activity_type"
+TYPE_CONCURRENCY = 8
+
+
+def atoms_say_transit(activity_types) -> bool:
+    """True when most of the Segment's typed atoms are `transit` (untyped atoms do not vote)."""
+    typed = [t for t in (activity_types or []) if t]
+    return bool(typed) and sum(t == "transit" for t in typed) * 2 > len(typed)
+
+
+def exclusion_after_pick(place: str, rule_reason: str | None, pick: str | None) -> str | None:
+    """classify_exclusion()'s answer with Jev's transit/experience pick applied (None pick = keep it)."""
+    if pick == "transit":
+        return "transit"
+    if pick == "experience" and rule_reason == "transit":
+        return None if names_somewhere(place) else "unnamed_place"
+    return rule_reason
+
+
+async def resolve_exclusions(pool, rows) -> dict[str, str | None]:
+    """segment_id -> exclusion reason, for rows with segment_id/canonical_place/canonical_action and
+    `activity_types` (the member atoms' types). Jev is asked only where the rule and the atoms
+    disagree (a Segment with no typed atom has no second opinion); one Verdict per distinct moment,
+    cached by decide()."""
+    out: dict[str, str | None] = {}
+    disputed: dict[str, list[str]] = {}
+    for row in rows:
+        place, action = row["canonical_place"] or "", row["canonical_action"] or ""
+        reason = classify_exclusion(place, action)
+        out[row["segment_id"]] = reason
+        types = [t for t in (row.get("activity_types") or []) if t]
+        if types and reason != "unnamed_place" and (reason == "transit") != atoms_say_transit(types):
+            disputed.setdefault(landing_moment(place, action), []).append(row["segment_id"])
+    if not disputed:
+        return out
+    sem = asyncio.Semaphore(TYPE_CONCURRENCY)
+
+    async def _one(moment: str):
+        async with sem:
+            dec = await decide(TYPE_STAGE, f"type:{moment[:300]}", {"moment": moment}, [TYPE_Q], pool=pool)
+        return moment, dec.choice(TYPE_Q)
+
+    changed = 0
+    by_id = {r["segment_id"]: r for r in rows}
+    for moment, pick in await asyncio.gather(*[_one(m) for m in disputed]):
+        for segment_id in disputed[moment]:
+            new = exclusion_after_pick(by_id[segment_id]["canonical_place"] or "", out[segment_id], pick)
+            changed += new != out[segment_id]
+            out[segment_id] = new
+    logger.info("segment_activity_type", disputed_moments=len(disputed), changed=changed)
+    return out
+
+
 # ── DB-facing wrapper (impure) ──────────────────────────────────────────────────────────────
 
 async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -> dict:
@@ -808,7 +866,8 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
                    array_agg(DISTINCT ta.tour_id) AS tour_ids,
-                   COALESCE(SUM(LENGTH(COALESCE(ta.evidence, ta.text, ''))), 0) AS said
+                   COALESCE(SUM(LENGTH(COALESCE(ta.evidence, ta.text, ''))), 0) AS said,
+                   array_agg(ta.activity_type) AS activity_types
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
@@ -826,8 +885,9 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
 
     # AA-694 A3-6 — demand per Segment for this market, through the ownership gate (no connection held
     # across the Jev calls).
+    exclusions = await resolve_exclusions(pool, segment_rows)   # AA-694 A3-2
     rankable = [(r["segment_id"], r["canonical_place"], r["canonical_action"]) for r in segment_rows
-                if not classify_exclusion(r["canonical_place"], r["canonical_action"])]
+                if not exclusions[r["segment_id"]]]
     demand_by_segment = await resolve_demand(pool, rankable, demand_tuples, market)
 
     included: list[Candidate] = []
@@ -835,7 +895,7 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
     for row in segment_rows:
         place, action = row["canonical_place"], row["canonical_action"]
         tour_ids = tuple(str(t) for t in row["tour_ids"])
-        reason = classify_exclusion(place, action)
+        reason = exclusions[row["segment_id"]]
         if reason:
             excluded.append(ExcludedSegment(row["segment_id"], tour_ids, reason))
             continue
@@ -891,6 +951,6 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
 __all__ = [
     "Candidate", "RankedSegment", "ExcludedSegment",
     "rank_segments", "compute_demand", "demand_candidates", "resolve_demand", "land_questions_for_segment",
-    "classify_exclusion",
+    "classify_exclusion", "resolve_exclusions",
     "run_atom_ranking",
 ]
