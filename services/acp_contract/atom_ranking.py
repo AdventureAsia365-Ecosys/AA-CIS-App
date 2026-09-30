@@ -421,6 +421,7 @@ def _capped_candidates(
 async def land_questions_for_segment(
     conn, place: str, action: str, atom_ids: list[str], paa_rows: list[tuple[str, str, list[str]]],
     question_vectors: dict[str, list[float]] | None = None, atoms_embedded: bool = False,
+    candidates: set[str] | None = None,
 ) -> int:
     """AA-610 (Sub 2) — how many distinct PAA questions this Segment claims, now by
     embedding-match (`services/acp_contract/atom_matching.py`) instead of claim-by-name alone.
@@ -441,7 +442,11 @@ async def land_questions_for_segment(
     passes `question_vectors` + `atoms_embedded=True`; a direct caller that passes neither gets
     the same batching for this one Segment. A question absent from `question_vectors` (its
     embedding call failed) goes straight to claim-by-name."""
-    candidates = _capped_candidates(place, action, paa_rows)
+    # AA-694 — `candidates`, when given, is the shortlist already filtered by the Jev gates (country
+    # scope, landing); recomputing it here let a dropped question count again through the
+    # claim-by-name fallback (it has no vector, so it fell straight to that path).
+    if candidates is None:
+        candidates = _capped_candidates(place, action, paa_rows)
     if not candidates or not atom_ids:
         return 0
 
@@ -536,6 +541,51 @@ async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dic
     return {"scope_pairs": len(pairs), "scope_dropped": len(dropped)}
 
 
+# AA-694 (A3-5) — the landing Jev Question (migration 187). Every atom of a Segment shares its
+# canonical place + action, so "would the asker be served by an article about this moment" is asked
+# once per (moment, question) before landing, like the country scope above. Only an enforce-mode,
+# confident no removes the question (ADR 0007); Q5: shadow until a Calibration Record exists.
+LANDING_STAGE = "a3_question_landing"
+LANDING_Q = "a3_landing_belongs"
+LANDING_CONCURRENCY = 8
+
+
+def landing_moment(place: str, action: str) -> str:
+    return f"{place} — {action}" if action else place
+
+
+async def filter_candidates_by_landing(pool, rows, segment_candidates: dict[str, set[str]]) -> dict:
+    """Removes questions Jev confidently says do not belong to the Segment's moment, in place. One
+    Verdict per distinct (moment, question) — Segments sharing a moment share it, and the decide()
+    cache makes a repeat pair free. Returns counts for the log."""
+    pairs: dict[tuple[str, str], None] = {}
+    seg_moment: dict[str, str] = {}
+    for row in rows:
+        moment = landing_moment(row["canonical_place"] or "", row["canonical_action"] or "")
+        seg_moment[row["segment_id"]] = moment
+        for q in segment_candidates.get(row["segment_id"], ()):
+            pairs[(moment, q)] = None
+    if not pairs:
+        return {"landing_pairs": 0, "landing_rejected": 0}
+    sem = asyncio.Semaphore(LANDING_CONCURRENCY)
+
+    async def _one(moment: str, q: str):
+        async with sem:
+            dec = await decide(LANDING_STAGE, f"land:{moment[:200]}:{q[:300]}", {"query": q, "moment": moment},
+                               [LANDING_Q], pool=pool)
+        return moment, q, dec.rejected(LANDING_Q)
+
+    rejected = {(m, q) for m, q, rej in await asyncio.gather(*[_one(*p) for p in pairs]) if rej}
+    removed = 0
+    for segment_id, moment in seg_moment.items():
+        before = segment_candidates.get(segment_id, set())
+        after = {q for q in before if (moment, q) not in rejected}
+        removed += len(before) - len(after)
+        segment_candidates[segment_id] = after
+    logger.info("question_landing_belongs", pairs=len(pairs), rejected_pairs=len(rejected), removed=removed)
+    return {"landing_pairs": len(pairs), "landing_rejected": len(rejected)}
+
+
 async def precompute_question_landings(
     pool, segment_ids: set[str] | None = None,
     progress: Callable[[dict], None] | None = None,
@@ -624,6 +674,8 @@ async def precompute_question_landings(
         # AA-694 — drop questions about another country, or about no country in particular, before
         # they can land and count (Ms. Thư's ticket 04; decisions Q3/Q4 of 30/09/2026).
         await filter_candidates_by_country_scope(pool, in_scope_rows, segment_candidates)
+        # AA-694 A3-5 — then drop questions that do not belong to the Segment's moment (ticket 05).
+        await filter_candidates_by_landing(pool, in_scope_rows, segment_candidates)
         landing_rows = [r for r in in_scope_rows if segment_candidates[r["segment_id"]]]
         atom_ids_needed = sorted({str(a) for r in landing_rows for a in r["atom_ids"]})
         question_vectors: dict[str, list[float]] = {}
@@ -647,6 +699,7 @@ async def precompute_question_landings(
             counts[segment_id] = await land_questions_for_segment(
                 conn, row["canonical_place"], row["canonical_action"], atom_ids, paa_tuples,
                 question_vectors=question_vectors, atoms_embedded=True,
+                candidates=segment_candidates[segment_id],
             )
             recomputed_ids.append(segment_id)
             if progress and (done % 100 == 0 or done == len(in_scope_rows)):
