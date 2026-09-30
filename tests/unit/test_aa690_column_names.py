@@ -24,3 +24,14 @@ def test_real_supplier_headers_all_map():
 def test_price_with_unit_and_keys_stay_lowercased_originals():
     final, _ = build_dynamic_column_map(["Name", "Itinerary", "PRICE (USD)", "Mystery col"], COLUMN_MAP)
     assert final == {"name": "src_name", "itinerary": "src_itineraries", "price (usd)": "price_raw"}
+
+
+def test_group_size_excel_date_becomes_the_range():
+    from datetime import datetime
+
+    import pandas as pd
+
+    from services.ingestion.excel_parser import group_size_from_cell
+    assert group_size_from_cell(datetime(2026, 2, 10)) == "2-10"
+    assert group_size_from_cell(pd.Timestamp("2026-12-01")) == "1-12"
+    assert group_size_from_cell("4-16") == "4-16" and group_size_from_cell("MIN. 6") == "MIN. 6"
