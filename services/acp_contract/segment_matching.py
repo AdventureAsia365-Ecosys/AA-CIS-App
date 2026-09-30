@@ -102,6 +102,9 @@ class SegmentAtom:
     day: int | None
     place: str
     action: str
+    # AA-695 — the tour's country. A real place is in one country, so atoms of different countries
+    # never share a Segment. Empty = unknown (joins anything, as before).
+    country: str = ""
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,45 @@ class Segment:
     atom_ids: tuple[str, ...]
 
 
-def derive_segments(atoms: list[SegmentAtom]) -> list[Segment]:
+def place_norm(place: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (place or "").lower()))
+
+
+def place_pair(left: str, right: str) -> frozenset:
+    return frozenset((place_norm(left), place_norm(right)))
+
+
+def may_join(left: SegmentAtom, right: SegmentAtom, apart: frozenset = frozenset()) -> bool:
+    """AA-695 — two Atoms the moment rule matches may still not share a Segment: different
+    countries (deterministic), or a place pair Jev confidently said are different places."""
+    if left.country and right.country and left.country != right.country:
+        return False
+    return place_pair(left.place, right.place) not in apart
+
+
+def pairs_to_ask(atoms: list[SegmentAtom], new_ids: set[str]) -> dict[frozenset, tuple[str, str, str]]:
+    """AA-695 — the place pairs the moment rule would join although their places are written
+    differently, involving at least one new Atom: {pair: (place_a, place_b, country)}. Same-country
+    (or unknown) only — a country mismatch is already kept apart without asking."""
+    keys = {atom.atom_id: _key(atom) for atom in atoms}
+    new = [a for a in atoms if a.atom_id in new_ids]
+    out: dict[frozenset, tuple[str, str, str]] = {}
+    for a in new:
+        for b in atoms:
+            if a.atom_id == b.atom_id or keys[a.atom_id].place == keys[b.atom_id].place:
+                continue
+            if a.country and b.country and a.country != b.country:
+                continue
+            pair = place_pair(a.place, b.place)
+            if len(pair) < 2 or pair in out:
+                continue
+            if _looks_like_one_moment(keys[a.atom_id], keys[b.atom_id]):
+                first, second = sorted((a.place, b.place), key=place_norm)
+                out[pair] = (first, second, a.country or b.country)
+    return out
+
+
+def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset()) -> list[Segment]:
     """Sort Atoms into Segments. Same Atoms in, same Segments out.
 
     Quadratic in the number of Atoms given — the DB-facing wrapper below keeps this pool small
@@ -122,7 +163,9 @@ def derive_segments(atoms: list[SegmentAtom]) -> list[Segment]:
     not the whole catalog's atoms every run.
     """
     keys = {atom.atom_id: _key(atom) for atom in atoms}
-    memberships = _connected(sorted(keys.items()))
+    by_id = {atom.atom_id: atom for atom in atoms}
+    memberships = _connected(sorted(keys.items()),
+                             lambda a, b: may_join(by_id[a], by_id[b], apart))
 
     segments = []
     for members in memberships:
@@ -136,7 +179,7 @@ def derive_segments(atoms: list[SegmentAtom]) -> list[Segment]:
         )
         segments.append(
             Segment(
-                id=_mint(canonical),
+                id=_mint(canonical, label.country),
                 place=label.place,
                 action=label.action,
                 atom_ids=tuple(sorted(members)),
@@ -170,7 +213,7 @@ def _canonical(keys: Iterable[Key]) -> Key:
     )
 
 
-def _mint(canonical: Key) -> str:
+def _mint(canonical: Key, country: str = "") -> str:
     """A new Segment's identity, derived from what its members are — `sha256(place|verb)`, the
     exact origin (Ms. Thư) formula, no `tenant_id`/`tour_id` folded in (AA-545 — see this
     module's own docstring for why: a platform-wide Segment WANTS 2 tours/tenants describing the
@@ -178,10 +221,13 @@ def _mint(canonical: Key) -> str:
 
     Only ever used for a Segment nothing platform-wide has seen before. Once minted, an id is
     held: see `reconcile_ids`.
+
+    AA-695 — with a known country it is folded in (`place|verb|country`): the same generic moment
+    ("local restaurant — eat lunch") in two countries is now two Segments and needs two ids.
+    Without a country the origin formula is unchanged.
     """
-    return hashlib.sha256(
-        f"{' '.join(canonical.place)}|{canonical.verb}".encode()
-    ).hexdigest()[:16]
+    base = f"{' '.join(canonical.place)}|{canonical.verb}"
+    return hashlib.sha256((f"{base}|{country}" if country else base).encode()).hexdigest()[:16]
 
 
 def reconcile_ids(
@@ -361,8 +407,9 @@ def _about_the_same_thing(left: Key, right: Key) -> bool:
     return bool(left.about & right.about)
 
 
-def _connected(keyed: list[tuple[str, Key]]) -> list[set[str]]:
-    """Connected components over `_looks_like_one_moment`, independent of order."""
+def _connected(keyed: list[tuple[str, Key]], allowed=None) -> list[set[str]]:
+    """Connected components over `_looks_like_one_moment`, independent of order. `allowed(a, b)`
+    (AA-695) can veto a pair the moment rule would join."""
     parent = {atom_id: atom_id for atom_id, _ in keyed}
 
     def find(node: str) -> str:
@@ -373,7 +420,7 @@ def _connected(keyed: list[tuple[str, Key]]) -> list[set[str]]:
 
     for index, (atom_id, key) in enumerate(keyed):
         for other_id, other_key in keyed[index + 1:]:
-            if _looks_like_one_moment(key, other_key):
+            if _looks_like_one_moment(key, other_key) and (allowed is None or allowed(atom_id, other_id)):
                 left, right = find(atom_id), find(other_id)
                 if left != right:
                     parent[max(left, right)] = min(left, right)
@@ -387,6 +434,34 @@ def _connected(keyed: list[tuple[str, Key]]) -> list[set[str]]:
 # ── DB-facing wrapper (impure) — everything above this line is a pure function ─────────────
 
 _PSEUDO_PREFIX = "__existing_segment__"
+
+# AA-695 A3-7 — "same real-world place?" for place pairs the moment rule would join although they are
+# written differently (Bukchon vs Jeonju Hanok Village, Wat Saket vs Wat Si Saket). Only an enforced,
+# confident no keeps them apart (ADR 0007); the Verdict is cached per wording + pair, so reruns
+# regroup the same way (ADR 0002).
+SAME_STAGE = "a3_segment_match"
+SAME_Q = "a3_same_place"
+SAME_CONCURRENCY = 8
+
+
+async def _apart_pairs(atoms: list[SegmentAtom], new_ids: set[str], pool) -> tuple[frozenset, int]:
+    import asyncio
+
+    from shared.llm_client.decide import decide
+    pairs = pairs_to_ask(atoms, new_ids)
+    if not pairs:
+        return frozenset(), 0
+    sem = asyncio.Semaphore(SAME_CONCURRENCY)
+
+    async def one(pair, spec):
+        place_a, place_b, country = spec
+        async with sem:
+            dec = await decide(SAME_STAGE, f"same:{country}:{place_norm(place_a)[:150]}|{place_norm(place_b)[:150]}",
+                               {"place_a": place_a, "place_b": place_b, "country": country}, [SAME_Q], pool=pool)
+        return pair, dec.rejected(SAME_Q)
+
+    results = await asyncio.gather(*[one(p, spec) for p, spec in pairs.items()])
+    return frozenset(p for p, rejected in results if rejected), len(pairs)
 
 
 async def run_segment_matching(tour_id: str, pool) -> dict:
@@ -411,8 +486,10 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     """
     async with pool.acquire() as conn:
         atom_rows = await conn.fetch("""
-            SELECT ta.atom_id, ta.tour_id, ta.itinerary_day, ta.place, ta.action
+            SELECT ta.atom_id, ta.tour_id, ta.itinerary_day, ta.place, ta.action,
+                   coalesce(rt.country, '') AS country
             FROM acp_contract.tour_atoms ta
+            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
             WHERE ta.tour_id = $1::uuid
               AND NOT ta.deleted AND NOT ta.is_empty_marker
               AND ta.place IS NOT NULL AND ta.action IS NOT NULL
@@ -420,9 +497,16 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         if not atom_rows:
             return {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0}
 
-        existing_rows = await conn.fetch(
-            "SELECT segment_id, canonical_place, canonical_action FROM acp_contract.atom_segment"
-        )
+        # AA-695 — each existing Segment's country = its member tours' most common country.
+        existing_rows = await conn.fetch("""
+            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+                   coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') AS country
+            FROM acp_contract.atom_segment asg
+            LEFT JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+            LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+        """)
         atom_ids = [r["atom_id"] for r in atom_rows]
         assigned_rows = await conn.fetch("""
             SELECT atom_id, segment_id FROM acp_contract.atom_segment_member
@@ -430,19 +514,22 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         """, atom_ids)
 
     new_atoms = [
-        SegmentAtom(r["atom_id"], str(r["tour_id"]), r["itinerary_day"], r["place"], r["action"])
+        SegmentAtom(r["atom_id"], str(r["tour_id"]), r["itinerary_day"], r["place"], r["action"],
+                    r["country"])
         for r in atom_rows
     ]
     pseudo_atoms = [
         SegmentAtom(f"{_PSEUDO_PREFIX}{r['segment_id']}", "", None,
-                    r["canonical_place"], r["canonical_action"])
+                    r["canonical_place"], r["canonical_action"], r["country"])
         for r in existing_rows
     ]
     assigned = {r["atom_id"]: r["segment_id"] for r in assigned_rows}
     for r in existing_rows:
         assigned[f"{_PSEUDO_PREFIX}{r['segment_id']}"] = r["segment_id"]
 
-    derived = derive_segments(new_atoms + pseudo_atoms)
+    pool_atoms = new_atoms + pseudo_atoms
+    apart, asked = await _apart_pairs(pool_atoms, {a.atom_id for a in new_atoms}, pool)   # AA-695
+    derived = derive_segments(pool_atoms, apart)
     segments, aliases = reconcile_ids(derived, assigned)
 
     # Strip pseudo membership before persisting, and drop any resulting segment whose ONLY
@@ -515,5 +602,5 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
 
     return {
         "segments_written": len(to_write), "atoms": len(new_atoms), "aliases": len(alias_rows),
-        "existing_segments": len(existing_rows),
+        "existing_segments": len(existing_rows), "same_place_asked": asked, "kept_apart": len(apart),
     }
