@@ -1056,8 +1056,9 @@
 "sentence": "The entire journey spans approximately 31 hours, crossing the high-altitude Changtang Plateau.",
 "numeric_hit": false,
 "p": 0.37,
-"label": 1,
-"note": ""
+"label": 0,
+"note": "",
+"review": "nghiep: 1->0"
 },
 {
 "id": 106,
@@ -1286,8 +1287,9 @@
 "sentence": "Hotel checkout and airport transfer.",
 "numeric_hit": false,
 "p": 0.24,
-"label": 1,
-"note": ""
+"label": 0,
+"note": "",
+"review": "nghiep: 1->0"
 },
 {
 "id": 129,
@@ -1356,8 +1358,9 @@
 "sentence": "The itinerary moves north from Leh through the Indus Valley, crosses Warila Top at 17,400 feet, reaches Siachen Base Camp on day six, and returns southward via Khardung La.",
 "numeric_hit": false,
 "p": 0.28,
-"label": 1,
-"note": ""
+"label": 0,
+"note": "",
+"review": "nghiep: 1->0"
 },
 {
 "id": 136,
@@ -1516,8 +1519,9 @@
 "sentence": "The afternoon continues over mountain passes into Bumthang's valleys.",
 "numeric_hit": false,
 "p": 0.37,
-"label": 1,
-"note": ""
+"label": 0,
+"note": "",
+"review": "nghiep: 1->0"
 },
 {
 "id": 152,
@@ -1746,8 +1750,9 @@
 "sentence": "Check-in at your accommodation and acclimatize to the altitude.",
 "numeric_hit": false,
 "p": 0.26,
-"label": 1,
-"note": ""
+"label": 0,
+"note": "",
+"review": "nghiep: 1->0"
 },
 {
 "id": 175,

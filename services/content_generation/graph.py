@@ -14,7 +14,7 @@ from .batch_prompt import (
 )
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
-from .grounding import grounding_node, regrounding
+from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
 from .seo_meta_utils import SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words
@@ -805,6 +805,16 @@ def _apply_grounding_recheck(state: ContentState) -> ContentState:
         res = regrounding(state)
         if res is not None:
             violations = res["violations"]
+        if violations:
+            # flag_fix (e.g. the per-day itinerary nudge) can re-introduce a figure the grounding node
+            # had removed — one more sentence repair before escalating to HITL (S204 smoke, Bhutan).
+            rr = repair_and_recheck(state.get("generated", {}), violations, state.get("tour", {}),
+                                    model_tier=state.get("model_tier"),
+                                    brand_forbidden_words=state.get("brand_forbidden_words"))
+            violations = rr["violations"]
+            state = {**state, "generated": rr["generated"], "cost_usd": state.get("cost_usd", 0) + rr["cost_usd"],
+                     "grounding_repaired_fields": sorted(set(state.get("grounding_repaired_fields") or [])
+                                                         | set(rr["fields"]))}
     if not violations:
         return {**state, "grounding_violations": []}
     codes = list(dict.fromkeys(v["code"] for v in violations))
