@@ -29,6 +29,9 @@ by Humayun's Tomb, Devon's Falls and a Himalayan aid post; "ger camp Mongolia" b
 Lowest-p good claim: 0.51 (#61 downtown Jeju night out ↔ "night life in Jeju"). Proposed floor **0.40**.
 Known accept-side misses (irrelevant to a reject-only gate): #130 Dochu La ↔ "dolma la pass" 0.77.
 
-## Decision (pending Nghiệp's review)
-- [ ] Nghiệp reviews 70 rows in the Google Sheet "Jev calibration — demand ownership A3-6 (2026-09-30)".
-- [ ] If < 10% overturned: enforce with **reject_ceiling 0.40**, no accept floor.
+## Decision
+- [x] Nghiệp reviewed all 70 rows of the Google Sheet "Jev calibration — demand ownership A3-6 (2026-09-30)":
+  **overturned 0 / 70**. Two borderline rows annotated, labels kept: #65 Angkor small circuit ↔ "angkor wat
+  ticket" stays 1 (Angkor Wat is on the circuit); #5 Phuket free time ↔ "Phuket hotels" stays 0 (lodging intent).
+- [x] **Enforce `a3_demand_belongs`: reject_ceiling 0.40**, no accept floor (Dev, S205, 30/09/2026).
+  Reject ≤ 0.40: 88 / 88 correct; catches 88 of 137 bad claims (64%).

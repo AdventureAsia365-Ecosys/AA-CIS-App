@@ -40,6 +40,14 @@ src/aa_social/stages/atoms.py):
   they are part of the record; `activity_type` below is what later separates transit/logistics
   from what gets ranked, not this extraction step.
 
+AA-694 A3-1 — which text atoms come from:
+- When the input has a TOUR CONTEXT section and a DAY section, extract atoms ONLY from the DAY
+  section. TOUR CONTEXT (tour name, summary, highlights of the whole trip) is background for
+  reading the day, nothing more: a place or activity that appears only there belongs to some
+  other day and must not be returned, even if it fits this day's theme.
+- Every atom's `evidence` must be quoted from the DAY section. If you cannot quote the DAY
+  section for a pair, that pair is not an atom of this day.
+
 AA-610 — `evidence` (adapted from Ms. Thư's `Atom.evidence`, aa-social-media models.py/
 stages/atoms.py):
 - `evidence` is the exact span of THIS day's source text the place/action pair came from —
@@ -111,14 +119,20 @@ def build_day_user_prompt(row: dict, day_number: int, day_title: str, day_body: 
     context, but ITINERARY is scoped to this one day instead of the whole trip, so run_t5_atomize()
     can call the model (and fingerprint/cache the result) per day instead of once for the whole
     tour. SYSTEM_PROMPT (what counts as an atom, how decompose works) is untouched by this — only
-    what the model is shown changes, never what it's asked to do with it."""
-    parts = _preamble_parts(row)
-    parts.append(f"ITINERARY:\nDay {day_number} — {day_title}\n{day_body}")
-    if row.get("inclusions"):
-        parts.append(f"INCLUSIONS:\n{row['inclusions']}")
-    if row.get("exclusions"):
-        parts.append(f"EXCLUSIONS:\n{row['exclusions']}")
-    return "\n\n".join(parts)
+    what the model is shown changes, never what it's asked to do with it.
+
+    AA-694 A3-1 — the preamble is fenced off as TOUR CONTEXT and the day as the only section to
+    extract from (SYSTEM_PROMPT says so too). Before this, 63% of platform atoms were not in their
+    own day's text: the model was mining the whole-tour summary/highlights on every day.
+    INCLUSIONS/EXCLUSIONS are no longer sent per day — they are trip-wide, so any atom taken from
+    them could not belong to one day either."""
+    context = "\n\n".join(_preamble_parts(row))
+    return (
+        "TOUR CONTEXT (background only — do not extract atoms from this section):\n"
+        f"{context}\n\n"
+        f"DAY {day_number} (extract atoms only from this section):\n"
+        f"Day {day_number} — {day_title}\n{day_body}"
+    )
 
 
 def source_hash(row: dict) -> str:
