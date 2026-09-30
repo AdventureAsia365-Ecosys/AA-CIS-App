@@ -63,9 +63,12 @@ own docstring), not hidden entirely.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+import structlog
 
 from services.acp_contract.atom_matching import (
     claim_by_name_fallback,
@@ -80,6 +83,7 @@ from services.acp_contract.ranking_reference import (
     keyword_words,
     names_somewhere,
 )
+from shared.llm_client.decide import decide
 
 
 @dataclass(frozen=True)
@@ -478,6 +482,60 @@ async def land_questions_for_segment(
     return len(claimed)
 
 
+# AA-694 — the two country-scope Jev Questions (migration 185). Both are asked in one call about one
+# state; a question stops counting when it confidently names somewhere outside the Segment's tour
+# countries, or confidently names nothing particular to them ("What do Buddhists eat?"). The scope is
+# the Segment's own tour countries (Q4), stored in the subject key, so a Segment that gains a country
+# is asked again. Only enforce-mode, confident Verdicts drop anything (ADR 0007).
+SCOPE_STAGE = "a3_question_scope"
+SCOPE_FOREIGN_Q = "a3_question_foreign"
+SCOPE_HERE_Q = "a3_question_about_here"
+SCOPE_CONCURRENCY = 4
+
+
+def scope_dropped(decision) -> bool:
+    """True when the question must stop counting for this country set."""
+    return decision.accepted(SCOPE_FOREIGN_Q) or decision.rejected(SCOPE_HERE_Q)
+
+
+logger = structlog.get_logger()
+
+
+async def filter_candidates_by_country_scope(pool, rows, segment_candidates: dict[str, set[str]]) -> dict:
+    """Removes out-of-scope questions from `segment_candidates` in place. One Verdict per distinct
+    (country set, question) — the decide() cache makes a repeat pair free. Segments with no known
+    country are left alone. Returns counts for the log."""
+    pairs: dict[tuple[str, str], None] = {}
+    seg_scope: dict[str, str] = {}
+    for row in rows:
+        countries = sorted({c for c in (row.get("countries") or []) if c})
+        if not countries:
+            continue
+        scope = ", ".join(countries)
+        seg_scope[row["segment_id"]] = scope
+        for q in segment_candidates.get(row["segment_id"], ()):
+            pairs[(scope, q)] = None
+    if not pairs:
+        return {"scope_pairs": 0, "scope_dropped": 0}
+    sem = asyncio.Semaphore(SCOPE_CONCURRENCY)
+
+    async def _one(scope: str, q: str):
+        async with sem:
+            dec = await decide(SCOPE_STAGE, f"paa:{scope}:{q[:300]}", {"question": q, "countries": scope},
+                               [SCOPE_FOREIGN_Q, SCOPE_HERE_Q], pool=pool)
+        return scope, q, scope_dropped(dec)
+
+    dropped = {(scope, q) for scope, q, drop in await asyncio.gather(*[_one(*p) for p in pairs]) if drop}
+    removed = 0
+    for segment_id, scope in seg_scope.items():
+        before = segment_candidates.get(segment_id, set())
+        after = {q for q in before if (scope, q) not in dropped}
+        removed += len(before) - len(after)
+        segment_candidates[segment_id] = after
+    logger.info("question_country_scope", pairs=len(pairs), dropped_pairs=len(dropped), removed=removed)
+    return {"scope_pairs": len(pairs), "scope_dropped": len(dropped)}
+
+
 async def precompute_question_landings(
     pool, segment_ids: set[str] | None = None,
     progress: Callable[[dict], None] | None = None,
@@ -522,10 +580,12 @@ async def precompute_question_landings(
     async with pool.acquire() as conn:
         segment_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids
+                   asg.questions_count, array_agg(DISTINCT ta.atom_id) AS atom_ids,
+                   array_remove(array_agg(DISTINCT rt.country), NULL) AS countries
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
             WHERE NOT ta.deleted AND NOT ta.is_empty_marker
             GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action,
                      asg.questions_count
@@ -561,6 +621,9 @@ async def precompute_question_landings(
                                                   paa_tuples)
             for row in in_scope_rows
         }
+        # AA-694 — drop questions about another country, or about no country in particular, before
+        # they can land and count (Ms. Thư's ticket 04; decisions Q3/Q4 of 30/09/2026).
+        await filter_candidates_by_country_scope(pool, in_scope_rows, segment_candidates)
         landing_rows = [r for r in in_scope_rows if segment_candidates[r["segment_id"]]]
         atom_ids_needed = sorted({str(a) for r in landing_rows for a in r["atom_ids"]})
         question_vectors: dict[str, list[float]] = {}
