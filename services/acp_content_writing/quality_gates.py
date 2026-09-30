@@ -356,7 +356,21 @@ def gate_promises_an_option(
     here — flagged as a real, narrow false-positive surface for a future refinement, not a
     silent gap.
     """
-    violations: list[str] = []
+    violations = [
+        (f"{', '.join(ids)} is offered rather than included, and this states it as done: '{sent[:120]}'"
+         if ids else f"content seed is offered rather than included, and this states it as done: '{sent[:120]}'")
+        for sent, ids, _ in promised_sentences(content_text, atom_text, route_segments)
+    ]
+    return _result("promises_an_option", violations, repairable=False, blocking=False)
+
+
+def promised_sentences(
+    content_text: str, atom_text: str, route_segments: Optional[list[tuple[str, str]]] = None,
+) -> list[tuple[str, list[str], str]]:
+    """The sentences gate_promises_an_option() flags: (sentence without tags, offered Segment ids
+    — [] on the single-atom branch —, the offered source text). Shared with the AA-701 Jev observer
+    so both read the same detection."""
+    out: list[tuple[str, list[str], str]] = []
     if route_segments and len(route_segments) > 1:
         text_by_id = {aid: text for aid, text in route_segments}
         for sent in _SENT_SPLIT_RE.split(content_text or ""):
@@ -367,10 +381,8 @@ def gate_promises_an_option(
             plain = strip_citation_tags(sent).lower()
             if any(h in plain for h in _HEDGE_PHRASES):
                 continue
-            violations.append(
-                f"{', '.join(sorted(set(offered_ids)))} is offered rather than included, and "
-                f"this states it as done: '{strip_citation_tags(sent.strip())[:120]}'"
-            )
+            ids = sorted(set(offered_ids))
+            out.append((strip_citation_tags(sent.strip()), ids, "\n".join(text_by_id[i] for i in ids)))
     elif _is_offered(atom_text):
         for sent in _SENT_SPLIT_RE.split(content_text or ""):
             plain = strip_citation_tags(sent).lower()
@@ -378,11 +390,8 @@ def gate_promises_an_option(
                 continue
             if any(h in plain for h in _HEDGE_PHRASES):
                 continue
-            violations.append(
-                f"content seed is offered rather than included, and this states it as done: "
-                f"'{strip_citation_tags(sent.strip())[:120]}'"
-            )
-    return _result("promises_an_option", violations, repairable=False, blocking=False)
+            out.append((strip_citation_tags(sent.strip()), [], atom_text))
+    return out
 
 
 def _is_offered(text: str) -> bool:

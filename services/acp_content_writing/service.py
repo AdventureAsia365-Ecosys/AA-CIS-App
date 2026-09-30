@@ -41,6 +41,7 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing.generate import rewrite_with_feedback, write_content
+from services.acp_content_writing.jev_observe import observe_t10
 from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, run_quality_gates,
                                                           strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -490,6 +491,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # cannibalization_match — never itself a reason to hold.
             embedding = None
             cannibalization_match: dict | None = None
+            nearest_other: dict | None = None     # AA-701: closest other-tenant piece, any similarity
             if tenant_id:
                 embed_text = strip_citation_tags(content_text)
                 embedding = await asyncio.to_thread(compute_embedding, embed_text)
@@ -498,6 +500,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         embedding, pool, cross_tenant=True,
                         exclude_tenant_id=UUID(tenant_id), limit=1,
                     )
+                    if cross_matches:
+                        nearest_other = {"piece_id": cross_matches[0].piece_id,
+                                         "tenant_id": cross_matches[0].tenant_id,
+                                         "similarity": cross_matches[0].similarity}
                     if cross_matches and cross_matches[0].similarity >= _REUSE_SIMILARITY_THRESHOLD:
                         top = cross_matches[0]
                         # AA-484's own issue text (STEP0, citing AA-425's real finding): the
@@ -522,6 +528,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
+            # AA-701 — Jev questions next to this attempt's gates (allow-listed tenants, observe only).
+            await observe_t10(
+                tenant_id=tenant_id, attempt_key=f"{request_id}:{attempt}", content_text=content_text,
+                atom_text=grounding_text, goal_key=goal["key"], cta=cta, brand_rubric_text=brand_rubric_text,
+                channel=channel, route_segments=route_segments, nearest_other=nearest_other, pool=pool,
+            )
 
             if outcome["passed"]:
                 status, held_reason = "approved", None

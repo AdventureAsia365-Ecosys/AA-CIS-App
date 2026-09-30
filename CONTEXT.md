@@ -505,6 +505,9 @@ _Avoid_: block (alone), delete, filter.
   text streams live to the tenant (AA-637). Each Facts Entry is asked `t9_fact_relevant` before
   it enters the writer prompt (AA-700, shadow). T-series Jev runs only for allow-listed tenants.
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
+  After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
+  F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,
+  observe only: no gate outcome changes).
   `/portal/t10-review` is now **My Content** (AA-614): a flat list of the tenant's pieces with
   no gate/held details, displayed text is copy-locked (select/copy/right-click blocked, with a
   "Use Export" hint; the edit textarea stays editable).
