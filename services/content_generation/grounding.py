@@ -52,6 +52,38 @@ def _as_text(value: Any) -> str:
     return str(value)
 
 
+_GLUED_RE = re.compile(r"(?<=[A-Za-z])(?=\d)")
+_DURATION_RE = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b\.?(?:\s*(\d{1,2})\s*(?:m|min|mins|minutes)\b)?",
+    re.IGNORECASE)
+_MINUTES_RE = re.compile(r"(?<![\w.])(\d+)\s*(?:m|min|mins|minutes)\b", re.IGNORECASE)
+_CLOCK_RE = re.compile(r"(?<![\w.])(\d{1,2})[.:](\d{2})(?!\d)")
+
+
+def _fmt(x: float) -> str:
+    return f"{x:g}"
+
+
+def source_number_parts(tour: dict) -> list[str]:
+    """What the numeric check compares against: the raw source fields, with numbers glued to letters
+    split off ("3h260km" → "3h 260km", which the check's regex otherwise cannot see), plus the
+    figures a faithful rewrite derives from them — a travel time in other units ("1h30m" → 90
+    minutes / 1.5 hours; "90 min" → 1.5 hours) and a clock time's parts ("12.30" → 12, 30).
+    Measured in the S204 calibration: these formats were 5 of the 7 false numeric hits in 60."""
+    parts = [_GLUED_RE.sub(" ", _as_text(tour.get(f))) for f in SOURCE_FIELDS]
+    text = "\n".join(parts)
+    derived: set[str] = set()
+    for m in _DURATION_RE.finditer(text):
+        hours = float(m.group(1)) + (int(m.group(2)) / 60 if m.group(2) else 0)
+        derived.update({_fmt(hours), _fmt(hours * 60)})
+    for m in _MINUTES_RE.finditer(text):
+        minutes = int(m.group(1))
+        derived.add(_fmt(minutes / 60))
+    for m in _CLOCK_RE.finditer(text):
+        derived.update({str(int(m.group(1))), m.group(2)})
+    return parts + [" ".join(sorted(derived))]
+
+
 def source_text(tour: dict) -> str:
     """The raw source the writer was given, as one labelled text (what Jev reads)."""
     parts = []
@@ -175,7 +207,7 @@ def check_grounding(generated: dict, tour: dict, *, use_jev: bool = True) -> dic
     """Run both signals over `generated`. Returns {violations, notes, units, jev_asked}."""
     units = sentence_units(generated or {})
     source = source_text(tour or {})
-    source_parts = [_as_text((tour or {}).get(f)) for f in SOURCE_FIELDS]
+    source_parts = source_number_parts(tour or {})
     numeric = {i: n for i, u in enumerate(units) if (n := find_novel_numeric_claims(u["sentence"], source_parts))}
     verdicts = judge_units(units, source) if (use_jev and source) else {}
     out = classify(units, numeric, verdicts)
@@ -248,7 +280,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     from shared.llm_client.models import LLMRequest
 
     source = source_text(tour)
-    parts = [_as_text(tour.get(f)) for f in SOURCE_FIELDS]
+    parts = source_number_parts(tour)
     try:
         resp = LLMClient().generate(LLMRequest(
             system_prompt=REPAIR_SYSTEM, user_prompt=_repair_prompt(violations, source, forbidden),

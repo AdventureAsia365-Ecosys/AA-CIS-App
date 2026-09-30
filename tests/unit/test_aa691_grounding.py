@@ -174,3 +174,16 @@ def test_judge_units_fails_open_on_event_loop():
         return gr.judge_units([{"field": "summary", "sentence": "one two three four"}], "src")
 
     assert asyncio.run(inner()) == {}
+
+
+def test_source_number_parts_derive_conversions_and_split_glued_numbers():
+    tour = {"itineraries": "Auto Rickshaw Jhansi - Orchha 1h30m\nLocal Bus Jeonju - Busan 3h260km\n"
+                           "Train at 12.30 PM. Drive (2hr to 2hr 30min). Walk 90 min."}
+    parts = gr.source_number_parts(tour)
+    for sentence in ("A 90-minute auto rickshaw ride to Orchha.",
+                     "A three-hour journey of 260 kilometers.",
+                     "Depart at 12:30 PM toward Bandarawela.",
+                     "A 2- to 2.5-hour drive to Ho Chi Minh City.",
+                     "A 1.5-hour walk through the village."):
+        assert gr.find_novel_numeric_claims(sentence, parts) == [], sentence
+    assert gr.find_novel_numeric_claims("The fort covers 40 hectares.", parts) == ["40"]
