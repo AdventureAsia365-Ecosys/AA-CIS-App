@@ -182,6 +182,10 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
         jev_idx = [i for i, r in enumerate(records) if (r.get("src_itineraries") or "").strip()]
         jev_list = await assess_rows_standalone([records[i] for i in jev_idx], filename)
         jev_by_row = dict(zip(jev_idx, jev_list))
+        # AA-690 A0-2 — same provider + country + name + itinerary as an existing (or earlier
+        # in-file) tour → skipped, not staged (Nghiệp S206: no manual review for this case).
+        from services.ingestion.near_duplicate import Checker as _NearDupChecker
+        near_dups = _NearDupChecker(conn, tenant_uuid)
 
         for idx, r in enumerate(records):
             jev = jev_by_row.get(idx)
@@ -236,6 +240,11 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                     str(existing["source_group_id"]) if existing["source_group_id"] else None,
                 )
                 staged_ids.append(staging_id)
+            elif (near := await near_dups.check(r)).duplicate is not None:
+                in_file_drops.append({
+                    "identifier": r.get("src_name") or "unknown",
+                    "reason": "duplicate_of_existing",
+                })
             elif jev is not None and jev.drop_reason:
                 # AA-690: not_a_tour | thin_itinerary — new rows only; a row matching an existing
                 # tour still goes to upload_staging for the human decision above.
@@ -244,6 +253,7 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                     "reason": jev.drop_reason,
                 })
             else:
+                near_dups.accept(r)
                 seen_keys.add((nname, nprov))
                 r["source_group_id"] = str(uuid.uuid4())
                 r["source_version"]  = 1

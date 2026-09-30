@@ -1297,6 +1297,9 @@ async def ingest_s3(
             jev_idx = [i for i, r in enumerate(candidates) if (r.get("src_itineraries") or "").strip()]
             jev_list = await _jev_assess([candidates[i] for i in jev_idx], pool, _clean_filename(req.s3_key))
             jev_by_row = dict(zip(jev_idx, jev_list))
+            # AA-690 A0-2 — the same near-duplicate rule the Commit path applies.
+            from services.ingestion.near_duplicate import Checker as _NearDupChecker
+            near_dups = _NearDupChecker(conn, "00000000-0000-0000-0000-000000000001")
 
             ready_tours = []
             blocked_tours = []
@@ -1320,6 +1323,12 @@ async def ingest_s3(
                     blocked_tours.append({
                         "src_name": src_name, "country": r.get("country"),
                         "reason": "duplicate_tour", "message": "This tour already exists in the system.",
+                    })
+                elif (r.get("src_itineraries") or "").strip() and \
+                        (near := await near_dups.check(r)).duplicate is not None:
+                    blocked_tours.append({
+                        "src_name": src_name, "country": r.get("country"),
+                        "reason": "duplicate_of_existing", "message": near.message(),
                     })
                 elif missing:
                     blocked_tours.append({
@@ -1350,8 +1359,11 @@ async def ingest_s3(
                     })
                 else:
                     seen_keys.add((nname, nprov))
+                    near = await near_dups.check(r)
+                    near_dups.accept(r)
+                    notes = (jev.notes if jev is not None else []) + ([near.note()] if near.note() else [])
                     ready_tours.append({
-                        "jev_notes":       jev.notes if jev is not None else [],
+                        "jev_notes":       notes,
                         "tour_id":         str(_uuid.uuid4()),
                         "src_name":        src_name,
                         "country":         r.get("country"),
