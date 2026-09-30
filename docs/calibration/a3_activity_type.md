@@ -43,6 +43,11 @@ keeps confusing free time and plain meals/overnights with experiences.
 `attend`/`board`/`ride`/`receive` openers catch them), and 51 rule-missed logistics Segments are excluded
 ("check out and depart", border crossings, "begin journey").
 
-## Decision (pending Nghiệp's review)
-- [ ] Nghiệp reviews 160 rows in the Google Sheet "Jev calibration — activity type A3-2 (2026-09-30)".
-- [ ] If < 10% overturned: enforce with **accept_floor 0.95**.
+## Decision
+- [x] Nghiệp reviewed all 160 rows of the Google Sheet "Jev calibration — activity type A3-2 (2026-09-30)":
+  **overturned 0 / 160**. Four borderline rows annotated, agent labels kept: #35 Kaichu Road causeway (a known
+  sight, but the atom is only the crossing → transit), #50 Phobjikha "pass through" (no activity → transit),
+  #122 Nine Arches Bridge on the train (a sight on the way → experience), #153 forest soba restaurant lunch
+  (treated as a plain meal → transit).
+- [x] **Enforce `a3_activity_type`: accept_floor 0.95**, no reject ceiling (choice question), Dev, S205
+  (30/09/2026). At ≥ 0.95: 81/81 correct; decides 217 of 400 disputed moments, the rest keep the rule.
