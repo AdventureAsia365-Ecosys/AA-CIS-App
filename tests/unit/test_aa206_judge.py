@@ -164,9 +164,9 @@ def test_a1_judge_gates_on_brand_fit_not_distinct():
     assert result["judge_cross_brand_distinct"] == 3.0          # still logged
 
 
-def test_a1_judge_keeps_mission_cap_and_t2_keeps_distinct_gate():
+def test_a1_judge_ignores_mission_and_t2_keeps_both_gates():
     judge_json = json.dumps({"brand_fit_score": 8, "cross_brand_distinct": 3, "mission_present": False, "feedback": "x"})
-    for tenant, expected in ((False, 6.0), (True, 3.0)):
+    for tenant, expected in ((False, 8.0), (True, 3.0)):
         state = _branded_state(quality_score=9.75, feedback="", is_tenant_rewrite=tenant)
         with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
             MockClient.return_value.generate.return_value = _resp(judge_json)
