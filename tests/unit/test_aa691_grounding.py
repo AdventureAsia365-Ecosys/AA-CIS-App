@@ -144,6 +144,8 @@ def test_revalidate_rechecks_after_flag_fix(monkeypatch):
     monkeypatch.setattr(g, "judge_node", lambda st: {**st, "quality_score": 9.0})
     monkeypatch.setattr(g, "regrounding", lambda st: {"violations": [{"code": "UNSUPPORTED_CLAIM", "field": "summary",
                                                                       "sentence": "s"}], "notes": []})
+    monkeypatch.setattr(g, "repair_and_recheck", lambda gen, v, tour, **kw: {
+        "generated": gen, "violations": v, "notes": None, "fields": [], "cost_usd": 0.0})
     out = g.revalidate_node({"grounding_ran": True, "fix_pass_applied": True, "brand_audit_status": "flagged",
                              "grounding_violations": [], "failure_codes": []})
     assert out["revalidate_passed"] is False
@@ -187,3 +189,25 @@ def test_source_number_parts_derive_conversions_and_split_glued_numbers():
                      "A 1.5-hour walk through the village."):
         assert gr.find_novel_numeric_claims(sentence, parts) == [], sentence
     assert gr.find_novel_numeric_claims("The fort covers 40 hectares.", parts) == ["40"]
+
+
+def test_revalidate_second_repair_clears_figures_reintroduced_by_flag_fix(monkeypatch):
+    monkeypatch.setattr(g, "validate_node", lambda st: {**st, "quality_score": 9.0, "failure_codes": []})
+    monkeypatch.setattr(g, "judge_node", lambda st: {**st, "quality_score": 9.0})
+    v = [{"code": "UNSUPPORTED_NUMBER", "field": "itineraries", "sentence": "Drive 75 kilometers."}]
+    monkeypatch.setattr(g, "regrounding", lambda st: {"violations": v, "notes": []})
+    calls = []
+
+    def fake(gen, violations, tour, **kw):
+        calls.append(len(violations))
+        return {"generated": {**gen, "itineraries": "Drive to Punakha."}, "violations": [], "notes": [],
+                "fields": ["itineraries"], "cost_usd": 0.002}
+
+    monkeypatch.setattr(g, "repair_and_recheck", fake)
+    out = g.revalidate_node({"grounding_ran": True, "fix_pass_applied": True, "brand_audit_status": "flagged",
+                             "grounding_violations": [], "failure_codes": [], "cost_usd": 0.01,
+                             "generated": {"itineraries": "Drive 75 kilometers."}, "tour": {}})
+    assert calls == [1]
+    assert out["brand_audit_status"] == "fixed" and out["grounding_violations"] == []
+    assert out["generated"]["itineraries"] == "Drive to Punakha."
+    assert abs(out["cost_usd"] - 0.012) < 1e-9

@@ -41,8 +41,33 @@ times in other units (`1h30m` = 90-minute, `2hr 30min` = 2.5-hour), clock format
 `12:30`). The remaining 2: a typo in the source (`1. 5 hours`) and "14th century" inferred from
 "Ming dynasty" (both have Jev p ≥ 0.60; one ≥ 0.90).
 
-## Decision (pending Nghiệp's review of the 59 rows)
-- [ ] Review overturns < 10% → set `a1_claim_supported` to **enforce, accept_floor 0.90,
-  reject_ceiling NULL** (clears numeric hits only; never raises UNSUPPORTED_CLAIM).
-- [ ] Reject side: collect more non-numeric low-p sentences from the rerun's decision_log; re-pose
-  the question with the table-format lesson before any reject floor.
+## Review result (Nghiệp, 30/09/2026)
+- Reviewed **59 rows** (40 random + 23 disagreements, 4 in both) in the Google Sheet
+  "Jev calibration — master content grounding (2026-09-30)" (AdventureAsia Drive folder).
+- **54 agree, 5 overturned (8.5%)**, below the 10% re-pose limit. All 5 were agent label 1 → **0**,
+  i.e. Nghiệp sided with Jev (p 0.24–0.37):
+  - #105 "The entire journey spans approximately 31 hours…": the source ties 31 h to the train from Xi'an, not "the entire journey";
+  - #128 "Hotel checkout and airport transfer.": the source says "departure", not an airport transfer;
+  - #135 "…reaches Siachen Base Camp on day six, and returns southward via Khardung La.": route details not in the quoted source;
+  - #151 "The afternoon continues over mountain passes into Bumthang's valleys.": the source only says "drive to Tang valley";
+  - #174 "Check-in … and acclimatize to the altitude.": the source says nothing about acclimatising.
+- Borderline notes confirmed: #43 (4 passes "each above 4,900m" → 0), #75 (Sekong River → 0),
+  #34 ("Elevation Gain + 500 m" → 1, Jev wrong), #191 (22 towers → 1, Jev wrong).
+- Labels in `data/…json` carry the 5 corrections (`review`).
+
+## Result after review
+| Zone | n | Correct |
+|---|---|---|
+| accept p ≥ 0.90, all | 50 | **50 (1.000)** |
+| accept p ≥ 0.85, all | 62 | 60 |
+| reject p ≤ 0.30, non-numeric | 21 | 19 (0.905) — misses #62, #144, both table-shaped sources |
+| reject p ≤ 0.20, non-numeric | 13 | 11 (0.846) |
+
+## Decision
+- [x] Nghiệp overturned 5 / 59 (8.5% < 10%).
+- [x] **Enforce `a1_claim_supported`: accept_floor 0.90, reject_ceiling NULL**, threshold v1,
+  `calibration_ref docs/calibration/a1_claim_supported.md` (Dev, 30/09/2026). Effect: a confident
+  "supported" clears a deterministic numeric hit; `UNSUPPORTED_CLAIM` is never raised.
+- [ ] Reject side: below 95% on non-numeric sentences (both misses are table-shaped sources). Collect
+  low-p non-numeric sentences from the rerun's decision_log and re-pose with the table lesson before
+  any reject floor.

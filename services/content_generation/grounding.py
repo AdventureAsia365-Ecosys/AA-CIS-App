@@ -315,6 +315,22 @@ def _codes(violations: list[dict]) -> list[str]:
     return list(dict.fromkeys(v["code"] for v in violations))
 
 
+def repair_and_recheck(generated: dict, violations: list[dict], tour: dict, *, model_tier=None,
+                       brand_forbidden_words=None) -> dict:
+    """One sentence repair against the source, then a re-check. Returns {generated, violations,
+    notes, fields, cost_usd}; `generated` is unchanged when the repair changed nothing."""
+    from .forbidden_words import all_forbidden
+
+    fixed = repair(generated, violations, tour, model_tier=model_tier,
+                   forbidden=all_forbidden(brand_forbidden_words))
+    if not fixed["fields"]:
+        return {"generated": generated, "violations": violations, "notes": None, "fields": [],
+                "cost_usd": fixed["cost_usd"]}
+    res = check_grounding(fixed["generated"], tour)
+    return {"generated": fixed["generated"], "violations": res["violations"], "notes": res["notes"],
+            "fields": fixed["fields"], "cost_usd": fixed["cost_usd"]}
+
+
 def grounding_node(state: dict) -> dict:
     """S1 graph node between brand_audit and flag_fix (A1 only): check, repair the violating
     sentences once, re-check. What is still unsupported stays in `grounding_violations` (and its
@@ -322,34 +338,30 @@ def grounding_node(state: dict) -> dict:
     if state.get("is_tenant_rewrite"):
         return {**state, "grounding_ran": False}
     try:
-        from .forbidden_words import all_forbidden
-
         generated, tour = state.get("generated", {}), state.get("tour", {})
         first = check_grounding(generated, tour)
         found = first["violations"]
-        cost, fields, res = 0.0, [], first
+        cost, fields, violations, notes = 0.0, [], found, first["notes"]
         if found:
-            fixed = repair(generated, found, tour, model_tier=state.get("model_tier"),
-                           forbidden=all_forbidden(state.get("brand_forbidden_words")))
-            cost, fields = fixed["cost_usd"], fixed["fields"]
-            if fields:
-                generated = fixed["generated"]
-                res = check_grounding(generated, tour)
+            rr = repair_and_recheck(generated, found, tour, model_tier=state.get("model_tier"),
+                                    brand_forbidden_words=state.get("brand_forbidden_words"))
+            generated, violations, fields, cost = rr["generated"], rr["violations"], rr["fields"], rr["cost_usd"]
+            notes = rr["notes"] if rr["notes"] is not None else notes
     except Exception as exc:                       # never break the rewrite
         logger.warning("grounding_node_failed", error=str(exc)[:200])
         return {**state, "grounding_ran": False}
-    logger.info("grounding_done", units=res["units"], jev_asked=first["jev_asked"], found=len(found),
-                repaired_fields=fields, remaining=len(res["violations"]), notes=len(res["notes"]))
+    logger.info("grounding_done", units=first["units"], jev_asked=first["jev_asked"], found=len(found),
+                repaired_fields=fields, remaining=len(violations), notes=len(notes))
     return {
         **state,
         "generated": generated,
         "cost_usd": state.get("cost_usd", 0) + cost,
-        "failure_codes": list(dict.fromkeys((state.get("failure_codes") or []) + _codes(res["violations"]))),
+        "failure_codes": list(dict.fromkeys((state.get("failure_codes") or []) + _codes(violations))),
         "grounding_ran": True,
         "grounding_found": found,
         "grounding_repaired_fields": fields,
-        "grounding_violations": res["violations"],
-        "grounding_notes": res["notes"],
+        "grounding_violations": violations,
+        "grounding_notes": notes,
     }
 
 
