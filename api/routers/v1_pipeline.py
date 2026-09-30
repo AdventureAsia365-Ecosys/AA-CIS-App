@@ -220,6 +220,12 @@ async def _rewrite_tour(
             # AA-353: same strip class as judge_*/fallback_used above — propagate the itinerary
             # per-day ratio records so _build_generated_metadata can persist metadata.itinerary_compression.
             "itinerary_day_ratios": result.get("itinerary_day_ratios", []),
+            # AA-691: same strip class — A1 grounding outcome for metadata.grounding.
+            "grounding_ran":             result.get("grounding_ran", False),
+            "grounding_found":           result.get("grounding_found", []),
+            "grounding_repaired_fields": result.get("grounding_repaired_fields", []),
+            "grounding_violations":      result.get("grounding_violations", []),
+            "grounding_notes":           result.get("grounding_notes", []),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 
