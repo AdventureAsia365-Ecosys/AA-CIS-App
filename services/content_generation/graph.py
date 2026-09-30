@@ -14,6 +14,7 @@ from .batch_prompt import (
 )
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
+from .grounding import grounding_node, regrounding
 from .judge_node import judge_node
 from .seo_meta_utils import SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words
@@ -215,6 +216,12 @@ class ContentState(TypedDict):
     # (T2) rewrite, "s1_generate" for A1 admin. Only the generate node reads it; s1_flag_fix /
     # s1_itinerary_nudge stay shared (not split — see AA-620). None -> falls back to s1_generate.
     generate_stage:         Optional[str]
+    # AA-691: A1 grounding against the raw source (grounding.py). Declared so LangGraph keeps them.
+    grounding_ran:              bool
+    grounding_found:            list   # violations before the sentence repair
+    grounding_repaired_fields:  list
+    grounding_violations:       list   # still unsupported after repair (→ manual_check in revalidate)
+    grounding_notes:            list   # low-probability shadow/grey Jev verdicts, for the reviewer
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -786,6 +793,33 @@ def should_retry(state: ContentState) -> str:
 def increment_retry(state: ContentState) -> ContentState:
     return {**state, "retry_count": state.get("retry_count", 0) + 1}
 
+def _apply_grounding_recheck(state: ContentState) -> ContentState:
+    """AA-691: after flag_fix, re-check grounding on the final content (numbers are free, unchanged
+    sentences hit the Jev Verdict cache). Anything still unsupported → manual_check (HITL), its codes
+    back on failure_codes (validate_node rebuilt them without grounding). ADR 0007: never publish an
+    unsupported claim, never delete."""
+    if not state.get("grounding_ran"):
+        return state
+    violations = state.get("grounding_violations") or []
+    if state.get("fix_pass_applied"):
+        res = regrounding(state)
+        if res is not None:
+            violations = res["violations"]
+    if not violations:
+        return {**state, "grounding_violations": []}
+    codes = list(dict.fromkeys(v["code"] for v in violations))
+    logger.info("grounding_still_unsupported", violations=len(violations), codes=codes)
+    out = {
+        **state,
+        "grounding_violations": violations,
+        "failure_codes": list(dict.fromkeys((state.get("failure_codes") or []) + codes)),
+        "brand_audit_status": "manual_check",
+    }
+    if state.get("revalidate_ran"):
+        out["revalidate_passed"] = False
+    return out
+
+
 def revalidate_node(state: ContentState) -> ContentState:
     """AA-215: verify the fix pass actually worked before publish.
 
@@ -799,7 +833,7 @@ def revalidate_node(state: ContentState) -> ContentState:
     and _enqueue_review routes it to HITL.
     """
     if not state.get("fix_pass_applied"):
-        return {**state, "revalidate_ran": False}
+        return _apply_grounding_recheck({**state, "revalidate_ran": False})
 
     # Re-run in the same order as the main graph: validate sets quality_score that judge then
     # min()'s against. Calling judge alone would min against the stale pre-fix validate score.
@@ -816,12 +850,12 @@ def revalidate_node(state: ContentState) -> ContentState:
     logger.info("revalidate_done", passed=passed, post_fix_score=score,
                 new_brand_audit_status=new_status,
                 fix_fields=state.get("fix_pass_fields", []))
-    return {
+    return _apply_grounding_recheck({
         **s,
         "brand_audit_status": new_status,
         "revalidate_ran":     True,
         "revalidate_passed":  passed,
-    }
+    })
 
 def human_edit_gate_node(state: ContentState) -> ContentState:
     """AA-234: gate node for the re-validation graph (human-edited content).
@@ -881,6 +915,7 @@ def build_graph() -> StateGraph:
     graph.add_node("llm_judge", judge_node)
     graph.add_node("increment_retry", increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
+    graph.add_node("grounding", grounding_node)  # AA-691
     graph.add_node("flag_fix", flag_fix_node)
     graph.add_node("revalidate", revalidate_node)
 
@@ -894,7 +929,8 @@ def build_graph() -> StateGraph:
         "retry": "increment_retry",
         "hitl":  END,
     })
-    graph.add_edge("brand_audit", "flag_fix")
+    graph.add_edge("brand_audit", "grounding")
+    graph.add_edge("grounding", "flag_fix")
     graph.add_edge("flag_fix", "revalidate")
     graph.add_edge("revalidate", END)
     graph.add_edge("increment_retry", "generate")
@@ -917,6 +953,7 @@ def build_graph_from_generated() -> StateGraph:
     graph.add_node("llm_judge", judge_node)
     graph.add_node("increment_retry", increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
+    graph.add_node("grounding", grounding_node)  # AA-691
     graph.add_node("flag_fix", flag_fix_node)
     graph.add_node("revalidate", revalidate_node)
 
@@ -928,7 +965,8 @@ def build_graph_from_generated() -> StateGraph:
         "retry": "increment_retry",
         "hitl":  END,
     })
-    graph.add_edge("brand_audit", "flag_fix")
+    graph.add_edge("brand_audit", "grounding")
+    graph.add_edge("grounding", "flag_fix")
     graph.add_edge("flag_fix", "revalidate")
     graph.add_edge("revalidate", END)
     graph.add_edge("increment_retry", "generate")

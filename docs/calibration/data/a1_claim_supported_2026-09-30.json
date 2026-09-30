@@ -1,0 +1,2002 @@
+[
+{
+"id": 0,
+"tour_id": "154b9f6c-2cf7-4437-bbde-b9f4c34833f0",
+"field": "itineraries",
+"sentence": "Later, tour the Puducherry Museum and then Auroville, an experimental township established in 1968 as a center for meditation and cross-cultural learning, named after the spiritual philosopher Sri Aurobindo.",
+"numeric_hit": true,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 1,
+"tour_id": "1b618cd3-e3ec-4c50-848c-ccb6e513df20",
+"field": "itineraries",
+"sentence": "The route passes through tea estates and rolling hills at elevations between 1,000 and 1,900 meters.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 2,
+"tour_id": "52d03b6b-d7f6-4f7c-a78e-82301a134925",
+"field": "itineraries",
+"sentence": "From Jhansi station, a 90-minute auto rickshaw ride delivers you to Orchha, a town positioned on the Betwa River.",
+"numeric_hit": true,
+"p": 0.94,
+"label": 1,
+"note": "90-minute = source 1h30m (conversion)"
+},
+{
+"id": 3,
+"tour_id": "4b3a5775-6eb5-4c35-8a74-1ae42f2ebb0d",
+"field": "highlights",
+"sentence": "Climb Sigiriya Rock Fortress, a fifth-century palace fortress rising 200 meters above the plain, with frescoes and panoramic views from the summit.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 4,
+"tour_id": "efb52e00-fef9-4630-967b-64950f417514",
+"field": "itineraries",
+"sentence": "Total elevation gain today is approximately 420 meters.",
+"numeric_hit": true,
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 5,
+"tour_id": "cef01b6f-7cd7-4a59-b2e9-5656076ad71c",
+"field": "itineraries",
+"sentence": "In the afternoon, visit Kandy's Temple of the Tooth Relic (a major Buddhist pilgrimage site), the Royal Botanical Garden at Peradeniya (126 hectares of tropical plants and water features), and a live Kandyan cultural dance performance.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 6,
+"tour_id": "fbadec01-765a-46fc-96ce-c92a9db823e8",
+"field": "itineraries",
+"sentence": "Private vehicle to the rural town of Abhaneri (approximately 95 km, 2-2.5 hours), a quieter detour from Rajasthan's major cities.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 7,
+"tour_id": "0f610826-2cea-4321-8190-ae397754e9bd",
+"field": "subtitle",
+"sentence": "Round-trip guided day tour from Taipei with six hiking trails, heritage train rides, and temperate rainforest immersion at 2,000+ meters elevation.",
+"numeric_hit": true,
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 8,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "The walk covers approximately 2 kilometres and takes 45–60 minutes at a leisurely pace.",
+"numeric_hit": true,
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 9,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "Allow 1.5–2 hours for exploration.",
+"numeric_hit": true,
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 10,
+"tour_id": "08960b8d-c453-4a61-9c2f-b3e4e8d99ff9",
+"field": "highlights",
+"sentence": "Ascend Sigiriya Rock Fortress, a fifth-century palace site rising 200 meters above surrounding terrain",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 11,
+"tour_id": "3619af76-3bde-4343-a6c6-25a961fc69c9",
+"field": "itineraries",
+"sentence": "The ascent reaches 182 meters and delivers views across the eastern ocean and back toward the main island.",
+"numeric_hit": true,
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 12,
+"tour_id": "c87812bd-98d1-449e-8901-0bfd63510289",
+"field": "itineraries",
+"sentence": "The drive to Orchha spans 96 kilometers over 2.5–3 hours by private vehicle through shifting landscapes.",
+"numeric_hit": true,
+"p": 0.44,
+"label": 1,
+"note": "source '2h30m-3h96km' (number glued to letters)"
+},
+{
+"id": 13,
+"tour_id": "c410a272-cac2-486d-9911-a5a73f5365d2",
+"field": "itineraries",
+"sentence": "Board the narrow-gauge train at Nanu Oya station for descent toward the coast, winding through tea estates and mountain passes on the route known as \"the train on clouds.\" Arrive in Ella, a village nestled between two ridges at 1,000 meters.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 14,
+"tour_id": "01510b0f-4340-4d65-9f5f-cd5b48f45d16",
+"field": "itineraries",
+"sentence": "En route, cross Lake Yamdok at 4,441 meters, an alpine body of water reflecting the surrounding peaks.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 15,
+"tour_id": "1a36b1c1-f4de-46c9-9f74-0de8d102ac9c",
+"field": "itineraries",
+"sentence": "Hike to Paro Taktsang monastery at 3,120 meters, clinging to a cliff face.",
+"numeric_hit": true,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 16,
+"tour_id": "c71bf458-2f8a-4f35-a24d-29af44e10aeb",
+"field": "itineraries",
+"sentence": "After lunch, you rejoin the bus for a 2- to 2.5-hour drive to Ho Chi Minh City, a dense, chaotic metropolis where scooters fill the streets and temples stand alongside modern developments.",
+"numeric_hit": true,
+"p": 0.89,
+"label": 1,
+"note": "2-2.5h = source 2hr to 2hr 30min"
+},
+{
+"id": 17,
+"tour_id": "00dd2fe6-4e2a-499c-b0a8-2ff3eef27a36",
+"field": "summary",
+"sentence": "Total trekking distance across five days is approximately 29 kilometers, with significant elevation gain concentrated on the approach to and descent from the pass itself.",
+"numeric_hit": true,
+"p": 0.31,
+"label": 0,
+"note": ""
+},
+{
+"id": 18,
+"tour_id": "ca893afe-27e2-431b-9596-b92514e7f98c",
+"field": "itineraries",
+"sentence": "Begin with an early ascent of Inwangsan Mountain, a 358-meter peak that rises from the city's edge.",
+"numeric_hit": true,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 19,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "By private vehicle, you'll travel approximately 16 kilometres to Bulguksa Temple, situated on the slopes of Mount Toham.",
+"numeric_hit": true,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 20,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "The DMZ is located approximately 50 kilometres north of Seoul; the journey takes 1–1.5 hours by private vehicle.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": "1-1.5h in source but 50 km not"
+},
+{
+"id": 21,
+"tour_id": "e716b1eb-daa3-46b3-abf2-e8a6f4da4fcf",
+"field": "highlights",
+"sentence": "Mehrangarh Fort, Jodhpur — 5,000-foot hilltop citadel",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 22,
+"tour_id": "00f15c2d-e48b-4ebe-b0cf-d097b4ea54b3",
+"field": "summary",
+"sentence": "General Xu Da oversaw the reconstruction of much of the present wall beginning in the 14th century; a pass was completed in 1404, and the wall was substantially rebuilt in 1569.",
+"numeric_hit": true,
+"p": 0.6,
+"label": 1,
+"note": "14th century implied by Ming dynasty; 1404/1569 in source (borderline)"
+},
+{
+"id": 23,
+"tour_id": "4b3a5775-6eb5-4c35-8a74-1ae42f2ebb0d",
+"field": "itineraries",
+"sentence": "Depart Nuwara Eliya and descend toward the coast and Colombo, about 180 kilometers to the west.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 24,
+"tour_id": "3f51129e-d73d-4a19-ba09-1cbb877dff46",
+"field": "itineraries",
+"sentence": "The central monument honors King Ramkhamhaeng, whose reign (1279–1298) marked Sukhothai's height.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 25,
+"tour_id": "01510b0f-4340-4d65-9f5f-cd5b48f45d16",
+"field": "subtitle",
+"sentence": "From Lhasa's monastic centers to Mount Kailash's 53-kilometer kora, via Shigatse and Lake Mansarovar",
+"numeric_hit": true,
+"p": 0.24,
+"label": 0,
+"note": ""
+},
+{
+"id": 26,
+"tour_id": "efb52e00-fef9-4630-967b-64950f417514",
+"field": "itineraries",
+"sentence": "Upon entry into Nepal, a long day's drive on deteriorating roads (approximately 120 kilometers, 6–8 hours) leads to Kathmandu.",
+"numeric_hit": true,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 27,
+"tour_id": "3f51129e-d73d-4a19-ba09-1cbb877dff46",
+"field": "highlights",
+"sentence": "Reclining Buddha at Wat Pho — 46 meters long, the largest in Thailand",
+"numeric_hit": true,
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 28,
+"tour_id": "ba1b5a08-1ccc-4e26-97ea-d7494fb9e5e1",
+"field": "highlights",
+"sentence": "Kuenselphodrang Buddha statue (51.5 meters) overlooking Thimphu, completed 2015",
+"numeric_hit": true,
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 29,
+"tour_id": "da3ca995-471f-4178-9619-bd84c5342ae7",
+"field": "itineraries",
+"sentence": "Visit Abhaneri to see Chand Baoli, Rajasthan's most famous stepwell, an 11-story structure descending 30 meters into the earth to access groundwater.",
+"numeric_hit": true,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 30,
+"tour_id": "cc2eca43-5422-4783-8a60-53cf0aef3003",
+"field": "itineraries",
+"sentence": "Visit Peradeniya Botanical Gardens, a 147-acre estate on the Mahaweli River with orchid houses, spice trees, and sweeping lawns.",
+"numeric_hit": true,
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 31,
+"tour_id": "1b618cd3-e3ec-4c50-848c-ccb6e513df20",
+"field": "highlights",
+"sentence": "Royal Botanical Garden in Peradeniya, spanning 147 acres with tropical flora and walking trails",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 32,
+"tour_id": "ca893afe-27e2-431b-9596-b92514e7f98c",
+"field": "itineraries",
+"sentence": "Choose your preferred route: the moderate Jujeongol Valley hike for easier forest walking, or the more demanding 15-kilometer trek to Daecheongbong Peak at 1,708 meters, which rewards climbers with expansive views of the ridge line and surrounding Taebaek range.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 33,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "Plan for 1.5–2 hours of walking to explore the village thoroughly.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 34,
+"tour_id": "b8d4fea9-2ceb-4e47-bc4a-f9fb76ca6e4f",
+"field": "itineraries",
+"sentence": "View the 36-foot standing Buddha at Aukana, carved from granite.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 35,
+"tour_id": "c410a272-cac2-486d-9911-a5a73f5365d2",
+"field": "itineraries",
+"sentence": "Descend toward the coast, stopping at Ravana Falls, a 25-meter cascade fed by monsoon rains.",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 36,
+"tour_id": "e716b1eb-daa3-46b3-abf2-e8a6f4da4fcf",
+"field": "itineraries",
+"sentence": "En route, visit Ranakpur, home to an ornate marble Jain temple complex with 1,444 intricately carved pillars.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 37,
+"tour_id": "6bf91a8b-aa6d-415a-8a70-70d46e5410b1",
+"field": "summary",
+"sentence": "This 900-kilometer cycling tour traces a path similar to the one Matsuo Basho documented in his 17th-century journal, beginning at Nasu, a mountain resort town 70 minutes north of Tokyo by bullet train, and ending at Aomori City on the Sea of Japan.",
+"numeric_hit": true,
+"p": 0.36,
+"label": 0,
+"note": "900 km in source; '17th-century journal' not"
+},
+{
+"id": 38,
+"tour_id": "12217a01-bdc9-47f0-a2ab-87067fa8fcd1",
+"field": "highlights",
+"sentence": "Tiger's Nest Monastery (Taktsang) at 3,120 meters—full-day hike from Paro",
+"numeric_hit": true,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 39,
+"tour_id": "13ce928c-12ed-46c7-82db-78bb8a12af13",
+"field": "itineraries",
+"sentence": "Climb Pidurangala Rock, a nearby ridge, for frontal views of Sigiriya Rock Fortress—a 5th-century royal palace perched 200 meters above the surrounding plains.",
+"numeric_hit": true,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 40,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "Allow 1–1.5 hours to explore.",
+"numeric_hit": true,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 41,
+"tour_id": "01510b0f-4340-4d65-9f5f-cd5b48f45d16",
+"field": "highlights",
+"sentence": "Lake Yamdok: turquoise alpine lake at 4,441 meters en route to Shigatse",
+"numeric_hit": true,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 42,
+"tour_id": "b8d4fea9-2ceb-4e47-bc4a-f9fb76ca6e4f",
+"field": "highlights",
+"sentence": "Aukana Buddha — a 36-foot stone statue carved from a single rock face",
+"numeric_hit": true,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 43,
+"tour_id": "0338c948-e77b-43b1-b1c4-93dd443459b9",
+"field": "highlights",
+"sentence": "Cross four mountain passes during the approach trek: Poze La, Chagtsang La, Lhalung La, and Kongmaru La, each above 4,900m",
+"numeric_hit": true,
+"p": 0.88,
+"label": 0,
+"note": "passes 'each above 4,900m': only 2 of 4 given (borderline)"
+},
+{
+"id": 44,
+"tour_id": "770a38dd-4e7b-4b55-9ded-0e9ced757301",
+"field": "highlights",
+"sentence": "Taktshang Monastery (Tiger's Nest), perched at 3,120 metres on a cliff above Paro Valley",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 45,
+"tour_id": "296abe67-80e6-43c8-81af-2088b111d31f",
+"field": "highlights",
+"sentence": "Rhododendron and conifer forests between 3,500 and 2,500 meters elevation",
+"numeric_hit": true,
+"p": 0.02,
+"label": 0,
+"note": ""
+},
+{
+"id": 46,
+"tour_id": "44281611-10a6-43f2-8e17-4090812cb7ae",
+"field": "itineraries",
+"sentence": "Travel by bus from Jeonju to Busan, a three-hour journey of 260 kilometers.",
+"numeric_hit": true,
+"p": 0.87,
+"label": 1,
+"note": "source '3h260km' (glued)"
+},
+{
+"id": 47,
+"tour_id": "10a1b613-0102-4f73-b4fb-b53943d684d6",
+"field": "itineraries",
+"sentence": "You fly to Phuket (approximately 1.5 hours) and transfer to your hotel for check-in.",
+"numeric_hit": true,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 48,
+"tour_id": "52d03b6b-d7f6-4f7c-a78e-82301a134925",
+"field": "itineraries",
+"sentence": "Alternatively, a guided tour to Sarnath—located roughly 20 minutes north—focuses on Buddhist history.",
+"numeric_hit": true,
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 49,
+"tour_id": "600cf86d-c678-4393-b18a-c0988a54404c",
+"field": "subtitle",
+"sentence": "Five days cycling 162 kilometers through the Nasu highlands and rural Shirakawa region, visiting Matsuo Basho's Yugyo willow, Japan's oldest public park, and a 12th-century border checkpoint.",
+"numeric_hit": true,
+"p": 0.18,
+"label": 0,
+"note": "12th-century not in source (Nara/Heian periods)"
+},
+{
+"id": 50,
+"tour_id": "c9fb02ef-8db5-4849-a12e-e9718935039e",
+"field": "itineraries",
+"sentence": "The route (roughly 45 minutes on flat roads) passes Cheonmachong Ancient Tomb, part of the Daereungwon Tomb Complex in Tumuli Park—royal burial mounds from the Silla Kingdom (57 BCE–935 CE) that still rise prominently in the city center.",
+"numeric_hit": true,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 51,
+"tour_id": "30d181f5-baa3-4f8d-bf97-8565837c3378",
+"field": "highlights",
+"sentence": "Full-day hike to Tigers Nest Monastery from Paro, perched on a cliff 3,120 meters above sea level",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 52,
+"tour_id": "1b618cd3-e3ec-4c50-848c-ccb6e513df20",
+"field": "itineraries",
+"sentence": "The train journey from Ella to Nanuoya covers approximately 40 kilometers through the central highlands via narrow-gauge track.",
+"numeric_hit": true,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 53,
+"tour_id": "01510b0f-4340-4d65-9f5f-cd5b48f45d16",
+"field": "itineraries",
+"sentence": "Spend the morning at Lake Mansarovar at 4,592 meters.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 54,
+"tour_id": "00f15c2d-e48b-4ebe-b0cf-d097b4ea54b3",
+"field": "itineraries",
+"sentence": "Your guide meets you at your Beijing hotel at 08:00 for a 90-minute private transfer to Mutianyu.",
+"numeric_hit": true,
+"p": 0.96,
+"label": 1,
+"note": "source '1. 5 hours' (typo) = 90-minute"
+},
+{
+"id": 55,
+"tour_id": "387f2590-c0dc-46c3-94b6-c8e2105e1cca",
+"field": "itineraries",
+"sentence": "A guided cycle around Vientiane's central monuments takes in Patuxay, the massive Victory Monument at the city's heart, and That Luang, the city's most revered stupa—a cone-shaped temple whose origins trace to the 16th century.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 56,
+"tour_id": "cef01b6f-7cd7-4a59-b2e9-5656076ad71c",
+"field": "itineraries",
+"sentence": "Sigiriya itself is a fifth-century rock fortress rising 200 meters above the surrounding plain—an ancient royal residence and Buddhist monastery whose stone stairways, mirror walls, and panoramic views from the summit remain largely intact.",
+"numeric_hit": true,
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 57,
+"tour_id": "12217a01-bdc9-47f0-a2ab-87067fa8fcd1",
+"field": "itineraries",
+"sentence": "Complete the full-day hike to Tiger's Nest Monastery (Taktsang, 3,120 meters), ascending through forest and switchback trails to the temple complex perched on a cliff face.",
+"numeric_hit": true,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 58,
+"tour_id": "f1b72498-9ee2-4fa6-8835-18076f87b38d",
+"field": "summary",
+"sentence": "The journey begins in Luang Prabang, descends to Muang Khua via the Nong Khiaw ridge, then crosses into Vietnam at Dien Bien Phu — site of the 1954 French-Indochina War siege — before cycling south through Tai and Hmong settlements toward the Red River Delta.",
+"numeric_hit": true,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 59,
+"tour_id": "15b02210-7782-4bb1-aa2b-f18af98ef8d1",
+"field": "itineraries",
+"sentence": "Depart Peradeniya Railway Station at 12:30 PM, riding the central highlands route toward Bandarawela.",
+"numeric_hit": true,
+"p": 0.49,
+"label": 1,
+"note": "'12:30 PM' = source '12.30 PM' (time format)"
+},
+{
+"id": 60,
+"tour_id": "0b6e28fb-1f90-42a0-868f-cd916ab064ac",
+"field": "itineraries",
+"sentence": "After breakfast and check-out, meet your guide and transfer to Chiang Mai Airport for your flight to Phuket.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 61,
+"tour_id": "48dd72a1-6326-4bf4-8a25-0de8b8cc02a4",
+"field": "itineraries",
+"sentence": "The trail covers 6.3 km, gaining elevation to 3,560 meters.",
+"numeric_hit": false,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 62,
+"tour_id": "c87812bd-98d1-449e-8901-0bfd63510289",
+"field": "itineraries",
+"sentence": "Accommodation: Ganpati Palace or similar | Meals: Breakfast included",
+"numeric_hit": false,
+"p": 0.1,
+"label": 1,
+"note": "accommodation + meals line matches source"
+},
+{
+"id": 63,
+"tour_id": "d7e44900-1499-4a9b-9052-465249ac16ec",
+"field": "itineraries",
+"sentence": "Thakhek, a modest riverside town, embodies the region's characteristic unhurried rhythm.",
+"numeric_hit": false,
+"p": 0.49,
+"label": 1,
+"note": "mood; 'riverside' implied (borderline)"
+},
+{
+"id": 64,
+"tour_id": "0b6e28fb-1f90-42a0-868f-cd916ab064ac",
+"field": "itineraries",
+"sentence": "Spend the afternoon exploring the nearby Lisu village, local temples, vegetable plantations, and the Himmapaan Nursery.",
+"numeric_hit": false,
+"p": 0.74,
+"label": 1,
+"note": ""
+},
+{
+"id": 65,
+"tour_id": "1389665f-de5d-4f22-a1ba-7aa7fa6f4a25",
+"field": "itineraries",
+"sentence": "Muang Fuang sits on the Nam Lik River.",
+"numeric_hit": false,
+"p": 0.5,
+"label": 1,
+"note": ""
+},
+{
+"id": 66,
+"tour_id": "599809ba-4007-4b2a-bdca-6d903e9d1ed5",
+"field": "itineraries",
+"sentence": "A 130-kilometer drive reaches Chittaurgarh.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 67,
+"tour_id": "fbadec01-765a-46fc-96ce-c92a9db823e8",
+"field": "itineraries",
+"sentence": "A free day in Agra before your evening departure.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 68,
+"tour_id": "51a87f41-bafa-4777-8687-a05271410f3e",
+"field": "itineraries",
+"sentence": "Arrive in Seoul and enjoy your morning and afternoon at leisure to explore the city as you wish.",
+"numeric_hit": false,
+"p": 0.48,
+"label": 1,
+"note": ""
+},
+{
+"id": 69,
+"tour_id": "da3ca995-471f-4178-9619-bd84c5342ae7",
+"field": "itineraries",
+"sentence": "Travel to Kishangarh with lunch at Pachewargarh Fort, a 300-year-old fortification in the village of Pachewar.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 70,
+"tour_id": "b3dc7165-f46d-4627-ab41-24749b4981d0",
+"field": "itineraries",
+"sentence": "Travel 210 kilometers north, passing through Moron, capital of Khuvsgul province, before arriving at your camp on the shores of Lake Khuvsgul.",
+"numeric_hit": false,
+"p": 0.5,
+"label": 1,
+"note": ""
+},
+{
+"id": 71,
+"tour_id": "d36e2fc1-2557-40e8-b399-c5c7d3e8fd93",
+"field": "itineraries",
+"sentence": "Afternoon catch-and-release fishing targets endemic Mahseer species in this transboundary protected area.",
+"numeric_hit": false,
+"p": 0.33,
+"label": 0,
+"note": "'transboundary protected area' not in source"
+},
+{
+"id": 72,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "The memorial building serves as both museum and monument, documenting Korea's military history and preserving materials related to the Korean War.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 73,
+"tour_id": "44281611-10a6-43f2-8e17-4090812cb7ae",
+"field": "itineraries",
+"sentence": "The trail rises one to two kilometers and takes one to two hours to complete.",
+"numeric_hit": false,
+"p": 0.77,
+"label": 0,
+"note": "'rises one to two kilometers' not in source"
+},
+{
+"id": 74,
+"tour_id": "16548cba-a702-483d-bbe5-33349c77fdfe",
+"field": "itineraries",
+"sentence": "The ritual involves tying white cotton strings around the wrists of departing guests while the community offers words and wishes for safe travel.",
+"numeric_hit": false,
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 75,
+"tour_id": "608c5083-1b88-4851-8e62-3d93b966373c",
+"field": "highlights",
+"sentence": "Boat journey spotting endangered Irrawaddy dolphins in the Sekong River rapids near Stung Treng",
+"numeric_hit": false,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 76,
+"tour_id": "0f15a492-d645-457a-8a7b-f2eaa9ae5810",
+"field": "summary",
+"sentence": "This journey moves from Kathmandu's Buddhist temples across the Himalayan plateau to Lhasa, the administrative center of the Tibet Autonomous Region at 3,700 meters.",
+"numeric_hit": false,
+"p": 0.74,
+"label": 1,
+"note": ""
+},
+{
+"id": 77,
+"tour_id": "69f731ca-a77d-4fb1-87b2-9d98c6ad010f",
+"field": "itineraries",
+"sentence": "The cycling route crosses the Demilitarized Zone (DMZ) at the 17th Parallel toward Cam Lo, passing the Truong Son Cemetery.",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 78,
+"tour_id": "f69990c1-bbbc-4303-b38f-83484d8e00e4",
+"field": "highlights",
+"sentence": "Traverse the Mera Glacier and cross Mera La Pass on the ascent to High Camp",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 79,
+"tour_id": "770a38dd-4e7b-4b55-9ded-0e9ced757301",
+"field": "itineraries",
+"sentence": "The return westward passes through Wangdi, where Wangdi Dzong sits prominently on a promontory.",
+"numeric_hit": false,
+"p": 0.23,
+"label": 0,
+"note": "'on a promontory' not in source (borderline)"
+},
+{
+"id": 80,
+"tour_id": "a349bf09-a5da-4571-8567-7013d3216ecc",
+"field": "itineraries",
+"sentence": "Beyond Monjo lies the entrance to Sagarmatha National Park, established to protect the fragile mountain environment.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 81,
+"tour_id": "80172001-d04a-4244-8b02-006f2d990675",
+"field": "itineraries",
+"sentence": "Evening is unscheduled; Foreigner Street offers handicrafts and local foods, or you can choose a restaurant for traditional regional cuisine.",
+"numeric_hit": false,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 82,
+"tour_id": "59ee3686-8f69-434a-a99b-1e1dc12520b5",
+"field": "highlights",
+"sentence": "Temple and garden exploration in Kyoto, including Kiyomizu-dera and Fushimi Inari's torii gates",
+"numeric_hit": false,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 83,
+"tour_id": "1393d856-d792-4acb-942e-0e325e207deb",
+"field": "itineraries",
+"sentence": "The landscape progressively opens as trees thin.",
+"numeric_hit": false,
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 84,
+"tour_id": "e0a577a9-9bd1-4db8-9448-59af8032912b",
+"field": "itineraries",
+"sentence": "Stop in Mandalgobi for lunch before arriving at Tsagaan Suvarga — a name referring to the white-colored cliff formations that dominate the landscape.",
+"numeric_hit": false,
+"p": 0.85,
+"label": 0,
+"note": "name meaning differs: source says 'White Stupa'"
+},
+{
+"id": 85,
+"tour_id": "8e679429-8be9-4d05-8888-98494ffd7a94",
+"field": "itineraries",
+"sentence": "Transfer inland for approximately five hours to Thanamalwila and a rural farm stay.",
+"numeric_hit": false,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 86,
+"tour_id": "a6254fcf-e1bb-4caa-bad7-867fc80e5792",
+"field": "itineraries",
+"sentence": "Travel from Muang Haim to a small Khmu village, gateway to the Nam Nern Night Safari.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 87,
+"tour_id": "b3dc7165-f46d-4627-ab41-24749b4981d0",
+"field": "highlights",
+"sentence": "Naadam Festival in Khatgal: horse racing, archery, and wrestling matches during Mongolia's national celebration on July 11th",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 88,
+"tour_id": "9783b9ac-3d2d-4832-9948-c15041daa728",
+"field": "itineraries",
+"sentence": "This region, once an opium-producing area, now cultivates Thailand's premier Oolong tea.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 89,
+"tour_id": "34c82aa1-c369-40cc-9c91-8db3cb93def9",
+"field": "itineraries",
+"sentence": "A short walk leads to the cable car station for the ascent to the Golden Summit at 3,077 meters.",
+"numeric_hit": false,
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 90,
+"tour_id": "080bc9e9-5804-4f5b-9b41-b0f1794c24f7",
+"field": "itineraries",
+"sentence": "In the evening, observe the arati ceremony at Pashupatinath Temple, followed by a Nepali meal with your guide covering essential journey information and gear preparation.",
+"numeric_hit": false,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 91,
+"tour_id": "51a87f41-bafa-4777-8687-a05271410f3e",
+"field": "highlights",
+"sentence": "Boseong Green Tea Field: hillside cultivation visible from walking routes, with on-site museum and tea tasting",
+"numeric_hit": false,
+"p": 0.84,
+"label": 1,
+"note": ""
+},
+{
+"id": 92,
+"tour_id": "b3dc7165-f46d-4627-ab41-24749b4981d0",
+"field": "itineraries",
+"sentence": "Beginning in the 1990s, Dutch-led conservation efforts brought small populations back from zoos; the herds have grown steadily since.",
+"numeric_hit": false,
+"p": 0.31,
+"label": 0,
+"note": "'from zoos' not in source"
+},
+{
+"id": 93,
+"tour_id": "866abe1f-5dcf-4ab5-8971-f5b1bbac263b",
+"field": "itineraries",
+"sentence": "Transfer in the evening to Shaxi Old Town for overnight accommodation.",
+"numeric_hit": false,
+"p": 0.74,
+"label": 1,
+"note": ""
+},
+{
+"id": 94,
+"tour_id": "031145c9-f2d3-48f9-b1fd-6b50354380a1",
+"field": "itineraries",
+"sentence": "Approximately 2,000 of the estimated 6,000 warriors are on display across three main pits—each individually sculpted from clay, each bearing distinct costumes, heights, and facial expressions, arranged in battle formation.",
+"numeric_hit": false,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 95,
+"tour_id": "3f51129e-d73d-4a19-ba09-1cbb877dff46",
+"field": "itineraries",
+"sentence": "You'll gain insight into elephant behavior and history while spending time with these animals in a sustainable, animal-centered environment.",
+"numeric_hit": false,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 96,
+"tour_id": "387f2590-c0dc-46c3-94b6-c8e2105e1cca",
+"field": "itineraries",
+"sentence": "Today climbs into the highlands.",
+"numeric_hit": false,
+"p": 0.88,
+"label": 1,
+"note": ""
+},
+{
+"id": 97,
+"tour_id": "080bc9e9-5804-4f5b-9b41-b0f1794c24f7",
+"field": "highlights",
+"sentence": "Darshan at Pashupatinath Temple on the Bagmati River, Kathmandu's oldest and most important Hindu shrine",
+"numeric_hit": false,
+"p": 0.18,
+"label": 0,
+"note": "'oldest' not in source"
+},
+{
+"id": 98,
+"tour_id": "154b9f6c-2cf7-4437-bbde-b9f4c34833f0",
+"field": "itineraries",
+"sentence": "Drive south to Mahabalipuram, known for its stone carvings and rock temples.",
+"numeric_hit": false,
+"p": 0.73,
+"label": 1,
+"note": ""
+},
+{
+"id": 99,
+"tour_id": "080bc9e9-5804-4f5b-9b41-b0f1794c24f7",
+"field": "itineraries",
+"sentence": "Return to the hotel for the night.",
+"numeric_hit": false,
+"p": 0.87,
+"label": 1,
+"note": ""
+},
+{
+"id": 100,
+"tour_id": "b0e111a9-aa18-4293-99dd-e2ee5b7820a3",
+"field": "itineraries",
+"sentence": "Known officially as Pha Chedi Lokajulamani—the World Precious Sacred Stupa—it is Laos's most important Buddhist monument.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 101,
+"tour_id": "1389665f-de5d-4f22-a1ba-7aa7fa6f4a25",
+"field": "summary",
+"sentence": "Support vehicles carry bags and offer water at stops.",
+"numeric_hit": false,
+"p": 0.75,
+"label": 1,
+"note": ""
+},
+{
+"id": 102,
+"tour_id": "6e14e193-9c92-47ad-b9db-33284ba8bbdf",
+"field": "itineraries",
+"sentence": "The trek crosses the Khumbu Glacier for several hours along a trail weaving past translucent ice pinnacles and crevasses.",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 103,
+"tour_id": "51a87f41-bafa-4777-8687-a05271410f3e",
+"field": "itineraries",
+"sentence": "Walk through traditional homes, examine the distinctive harubang stone statues, study the lava walls that define the settlement's boundaries, and learn how the island's people historically lived and adapted to their volcanic environment.",
+"numeric_hit": false,
+"p": 0.72,
+"label": 1,
+"note": ""
+},
+{
+"id": 104,
+"tour_id": "296abe67-80e6-43c8-81af-2088b111d31f",
+"field": "summary",
+"sentence": "The Yaksa Trek traverses one of Bhutan's least-visited mountain corridors, moving between high passes and river valleys in the country's central range.",
+"numeric_hit": false,
+"p": 0.02,
+"label": 0,
+"note": "'least-visited ... central range' not in source"
+},
+{
+"id": 105,
+"tour_id": "efb52e00-fef9-4630-967b-64950f417514",
+"field": "itineraries",
+"sentence": "The entire journey spans approximately 31 hours, crossing the high-altitude Changtang Plateau.",
+"numeric_hit": false,
+"p": 0.37,
+"label": 1,
+"note": ""
+},
+{
+"id": 106,
+"tour_id": "080bc9e9-5804-4f5b-9b41-b0f1794c24f7",
+"field": "itineraries",
+"sentence": "Hotel transfer to Kathmandu airport is arranged according to your flight departure time.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 107,
+"tour_id": "078edffc-0192-4176-b589-7647cab2e11e",
+"field": "highlights",
+"sentence": "Boat ride through a cave system in the Jiulong and Mingjing region",
+"numeric_hit": false,
+"p": 0.75,
+"label": 1,
+"note": ""
+},
+{
+"id": 108,
+"tour_id": "c87812bd-98d1-449e-8901-0bfd63510289",
+"field": "highlights",
+"sentence": "Youth-led walking tour of Old Delhi, including Jama Masjid, Gurdwara Sis Ganj, and Chandni Chowk market",
+"numeric_hit": false,
+"p": 0.84,
+"label": 0,
+"note": "'Gurdwara Sis Ganj' named, source says 'Gurduwara' (borderline)"
+},
+{
+"id": 109,
+"tour_id": "955b704b-f70b-47f5-9bd9-c5826f50b640",
+"field": "itineraries",
+"sentence": "From there, a three-hour trek leads to Kagbeni village, marked by its oldest monasteries and traditional Tibetan-style houses.",
+"numeric_hit": false,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 110,
+"tour_id": "031145c9-f2d3-48f9-b1fd-6b50354380a1",
+"field": "itineraries",
+"sentence": "After the palace complex, walk through Hutong—the network of traditional courtyard neighborhoods—to experience the daily life of old Beijing.",
+"numeric_hit": false,
+"p": 0.51,
+"label": 1,
+"note": ""
+},
+{
+"id": 111,
+"tour_id": "af0ded16-120f-458f-97b9-8e22c239fa3a",
+"field": "highlights",
+"sentence": "Tour Burana Tower, a tenth- to eleventh-century minaret standing near Bishkek",
+"numeric_hit": false,
+"p": 0.71,
+"label": 1,
+"note": ""
+},
+{
+"id": 112,
+"tour_id": "f1b72498-9ee2-4fa6-8835-18076f87b38d",
+"field": "itineraries",
+"sentence": "After lunch, continue through terraced rice paddies positioned against jagged cliff backdrops.",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 113,
+"tour_id": "8db3b1ca-45e0-42e5-a90a-bf579eeebd56",
+"field": "itineraries",
+"sentence": "After checking into your hotel and a lunch at a restaurant in the village, there is free time to explore the main pier and nearby landmarks, including a popular swing photo spot.",
+"numeric_hit": false,
+"p": 0.36,
+"label": 0,
+"note": "'main pier' not in this context (borderline)"
+},
+{
+"id": 114,
+"tour_id": "b6411364-6e02-4d8b-aa58-fb7bb46a69a5",
+"field": "itineraries",
+"sentence": "Climb the steep stone staircase to Kamikura Shrine, where Kumano deities are said to have first descended to earth.",
+"numeric_hit": false,
+"p": 0.58,
+"label": 1,
+"note": ""
+},
+{
+"id": 115,
+"tour_id": "599809ba-4007-4b2a-bdca-6d903e9d1ed5",
+"field": "itineraries",
+"sentence": "A 170-kilometer drive reaches Jaipur.",
+"numeric_hit": false,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 116,
+"tour_id": "e59d497b-1336-4296-8826-1d556a2db3cb",
+"field": "itineraries",
+"sentence": "The shortest trekking day.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 117,
+"tour_id": "b0e111a9-aa18-4293-99dd-e2ee5b7820a3",
+"field": "highlights",
+"sentence": "Nam Ou River boat journey from Nong Khiaw to Muang Khua, passing remote villages and limestone cliffs",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 118,
+"tour_id": "031145c9-f2d3-48f9-b1fd-6b50354380a1",
+"field": "itineraries",
+"sentence": "Spend the day exploring the fortifications and learning the history of the wall's construction and role in imperial defense.",
+"numeric_hit": false,
+"p": 0.49,
+"label": 1,
+"note": ""
+},
+{
+"id": 119,
+"tour_id": "3f51129e-d73d-4a19-ba09-1cbb877dff46",
+"field": "itineraries",
+"sentence": "Lunch is provided en route, and you return to Chiang Rai for the night.",
+"numeric_hit": false,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 120,
+"tour_id": "15b02210-7782-4bb1-aa2b-f18af98ef8d1",
+"field": "itineraries",
+"sentence": "The route passes through small tea-plucking villages before reaching a simple homestay in the mountains near Ohiya.",
+"numeric_hit": false,
+"p": 0.25,
+"label": 0,
+"note": "'tea-plucking villages' not in source (borderline)"
+},
+{
+"id": 121,
+"tour_id": "fbadec01-765a-46fc-96ce-c92a9db823e8",
+"field": "itineraries",
+"sentence": "Auto-rickshaw to hotel, then guided walk to explore the city's markets and Hawa Mahal (Palace of the Winds), built in 1799 so royal women could observe street festivals from behind screens without being seen by the public.",
+"numeric_hit": false,
+"p": 0.44,
+"label": 1,
+"note": ""
+},
+{
+"id": 122,
+"tour_id": "c71bf458-2f8a-4f35-a24d-29af44e10aeb",
+"field": "itineraries",
+"sentence": "A short cyclo (cycle taxi) ride takes you to the War Remnants Museum, which houses a detailed photographic record of the Vietnam War.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 123,
+"tour_id": "2bc45c55-fb32-4ca1-818a-62c3353ec556",
+"field": "itineraries",
+"sentence": "Travel distance is approximately 220 kilometers over five hours.",
+"numeric_hit": false,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 124,
+"tour_id": "c71bf458-2f8a-4f35-a24d-29af44e10aeb",
+"field": "itineraries",
+"sentence": "After about three hours, you stop at Sambor Prei Kuk, the most impressive group of pre-Angkorian monuments in Cambodia and home to some of the country's oldest structures.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 125,
+"tour_id": "0f610826-2cea-4321-8190-ae397754e9bd",
+"field": "summary",
+"sentence": "This day tour includes bilingual guide services and private round-trip transportation from central Taipei, freeing you to choose among six maintained trails of varying length and difficulty, or to board the Bong Bong heritage train, a restored narrow-gauge line that once ferried timber and now accesses the park's remote northern sections.",
+"numeric_hit": false,
+"p": 0.3,
+"label": 0,
+"note": "'restored narrow-gauge line' not in source (borderline)"
+},
+{
+"id": 126,
+"tour_id": "b0e111a9-aa18-4293-99dd-e2ee5b7820a3",
+"field": "itineraries",
+"sentence": "That Luang Stupa commands the skyline with its golden presence.",
+"numeric_hit": false,
+"p": 0.54,
+"label": 1,
+"note": ""
+},
+{
+"id": 127,
+"tour_id": "efb52e00-fef9-4630-967b-64950f417514",
+"field": "itineraries",
+"sentence": "An easy walk back to Darchen completes the kora circuit (approximately 3–4 hours, 12 kilometers, mostly downhill).",
+"numeric_hit": false,
+"p": 0.11,
+"label": 0,
+"note": "3-4 h / 12 km / downhill not in source"
+},
+{
+"id": 128,
+"tour_id": "ba1b5a08-1ccc-4e26-97ea-d7494fb9e5e1",
+"field": "itineraries",
+"sentence": "Hotel checkout and airport transfer.",
+"numeric_hit": false,
+"p": 0.24,
+"label": 1,
+"note": ""
+},
+{
+"id": 129,
+"tour_id": "fbadec01-765a-46fc-96ce-c92a9db823e8",
+"field": "itineraries",
+"sentence": "The fort's courtyards, balconies, and window carvings reflect the opulence of its era.",
+"numeric_hit": false,
+"p": 0.63,
+"label": 1,
+"note": "fort features = colour (borderline)"
+},
+{
+"id": 130,
+"tour_id": "f69990c1-bbbc-4303-b38f-83484d8e00e4",
+"field": "itineraries",
+"sentence": "The trail crosses a wooden bridge over the Dudh Koshi River before climbing to the Kar La Pass.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 131,
+"tour_id": "52d03b6b-d7f6-4f7c-a78e-82301a134925",
+"field": "highlights",
+"sentence": "Overnight train travel through rural India, Jhānsi to Varanasi",
+"numeric_hit": false,
+"p": 0.66,
+"label": 1,
+"note": ""
+},
+{
+"id": 132,
+"tour_id": "b3dc7165-f46d-4627-ab41-24749b4981d0",
+"field": "itineraries",
+"sentence": "After lunch, travel south to Bogd Khan's Winter Palace Museum, the former winter residence of Mongolia's last aristocratic ruler, Bogd Jabzandamba VIII.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 133,
+"tour_id": "6e14e193-9c92-47ad-b9db-33284ba8bbdf",
+"field": "itineraries",
+"sentence": "The return route gains elevation to provide a spectacular perspective of the Khumbu Icefall and the route to the South Col—views worth the extra effort.",
+"numeric_hit": false,
+"p": 0.76,
+"label": 1,
+"note": ""
+},
+{
+"id": 134,
+"tour_id": "c9fb02ef-8db5-4849-a12e-e9718935039e",
+"field": "itineraries",
+"sentence": "From the cable car's final station, a 20-minute walk brings you to N Seoul Tower, where the city's highest views await.",
+"numeric_hit": false,
+"p": 0.59,
+"label": 1,
+"note": ""
+},
+{
+"id": 135,
+"tour_id": "05cb2c55-ebec-443c-9229-323b20c3ddf4",
+"field": "summary",
+"sentence": "The itinerary moves north from Leh through the Indus Valley, crosses Warila Top at 17,400 feet, reaches Siachen Base Camp on day six, and returns southward via Khardung La.",
+"numeric_hit": false,
+"p": 0.28,
+"label": 1,
+"note": ""
+},
+{
+"id": 136,
+"tour_id": "770a38dd-4e7b-4b55-9ded-0e9ced757301",
+"field": "itineraries",
+"sentence": "Optional stops include Bumthang's Swiss cheese factory and the Red Panda Brewery, both enterprises that reflect the valley's agricultural character and contemporary Bhutanese entrepreneurship.",
+"numeric_hit": false,
+"p": 0.31,
+"label": 1,
+"note": ""
+},
+{
+"id": 137,
+"tour_id": "b0e111a9-aa18-4293-99dd-e2ee5b7820a3",
+"field": "itineraries",
+"sentence": "Then travel by vehicle to Tad Kuang Si Waterfall, the biggest waterfall in the Luang Prabang area.",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 138,
+"tour_id": "52d03b6b-d7f6-4f7c-a78e-82301a134925",
+"field": "itineraries",
+"sentence": "A walk to the World Peace Pagoda, constructed by Buddhist monks, offers panoramic views and takes 2–3 hours (1000–1500 NPR per group).",
+"numeric_hit": false,
+"p": 0.53,
+"label": 1,
+"note": ""
+},
+{
+"id": 139,
+"tour_id": "5c7f8b13-dc00-43eb-adc0-538d6071a84f",
+"field": "highlights",
+"sentence": "Cycle through cherry blossom corridors in Nasu, Ishikawa, and along the Azuma mountain range foothills",
+"numeric_hit": false,
+"p": 0.78,
+"label": 0,
+"note": "'Azuma mountain range' not in source"
+},
+{
+"id": 140,
+"tour_id": "f1b72498-9ee2-4fa6-8835-18076f87b38d",
+"field": "itineraries",
+"sentence": "In the late afternoon, transfer to Cuc Phuong National Park, one of Vietnam's oldest nature reserves, preserving the country's largest expanse of primary tropical forest.",
+"numeric_hit": false,
+"p": 0.15,
+"label": 0,
+"note": "'one of the oldest' vs source 'most important'"
+},
+{
+"id": 141,
+"tour_id": "c47ea6d3-7e25-45a1-a510-3b38e783ae02",
+"field": "itineraries",
+"sentence": "Dinner and overnight accommodation.",
+"numeric_hit": false,
+"p": 0.81,
+"label": 1,
+"note": ""
+},
+{
+"id": 142,
+"tour_id": "a349bf09-a5da-4571-8567-7013d3216ecc",
+"field": "summary",
+"sentence": "The Island Peak summit (6,189 meters) involves fixed-line climbing through moraine, scree, and snowfield terrain.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 143,
+"tour_id": "a6254fcf-e1bb-4caa-bad7-867fc80e5792",
+"field": "itineraries",
+"sentence": "Cycling approximately 40 kilometres through mountainous terrain delivers you to a lodge in Pu Luong for the night.",
+"numeric_hit": false,
+"p": 0.62,
+"label": 1,
+"note": ""
+},
+{
+"id": 144,
+"tour_id": "042cc47b-909c-4c7b-af86-5acb992d00e2",
+"field": "itineraries",
+"sentence": "Total elevation gain: 500 meters.",
+"numeric_hit": false,
+"p": 0.06,
+"label": 1,
+"note": "source 'Elevation Gain + 500 m' — Jev wrong"
+},
+{
+"id": 145,
+"tour_id": "6aa2af80-65ab-4ca0-a1a1-72359511d6f5",
+"field": "highlights",
+"sentence": "Katsuren Castle ruins, a World Heritage fortress site with gracefully curved stone walls and sacred Utaki worship spaces",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 146,
+"tour_id": "b0e111a9-aa18-4293-99dd-e2ee5b7820a3",
+"field": "itineraries",
+"sentence": "The next several hours wind through cascades and jungle, with inviting pools scattered throughout.",
+"numeric_hit": false,
+"p": 0.89,
+"label": 1,
+"note": ""
+},
+{
+"id": 147,
+"tour_id": "6bf91a8b-aa6d-415a-8a70-70d46e5410b1",
+"field": "itineraries",
+"sentence": "Road surface: paved mountain road and city approach roads.",
+"numeric_hit": false,
+"p": 0.21,
+"label": 0,
+"note": "'paved' not in source (borderline)"
+},
+{
+"id": 148,
+"tour_id": "031145c9-f2d3-48f9-b1fd-6b50354380a1",
+"field": "itineraries",
+"sentence": "Later in the afternoon, visit the Emin Minaret, a tower adjoining a Uyghur mosque.",
+"numeric_hit": false,
+"p": 0.89,
+"label": 1,
+"note": ""
+},
+{
+"id": 149,
+"tour_id": "4e35f6b4-fe5f-4c2f-945c-b44b6e21b99b",
+"field": "itineraries",
+"sentence": "After lunch at camp, trek the monastic grounds, which are undergoing gradual restoration, to learn more of its history.",
+"numeric_hit": false,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 150,
+"tour_id": "cef01b6f-7cd7-4a59-b2e9-5656076ad71c",
+"field": "itineraries",
+"sentence": "Amenities include spa services, guided walks through the surrounding estates, and time among the tea gardens.",
+"numeric_hit": false,
+"p": 0.08,
+"label": 0,
+"note": "estate walks / tea gardens not in source"
+},
+{
+"id": 151,
+"tour_id": "b4b52285-9767-4235-982c-7fa8a02efb6b",
+"field": "itineraries",
+"sentence": "The afternoon continues over mountain passes into Bumthang's valleys.",
+"numeric_hit": false,
+"p": 0.37,
+"label": 1,
+"note": ""
+},
+{
+"id": 152,
+"tour_id": "a6254fcf-e1bb-4caa-bad7-867fc80e5792",
+"field": "itineraries",
+"sentence": "Early risers are invited to join a Tai Chi session on the sun deck.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 153,
+"tour_id": "6e14e193-9c92-47ad-b9db-33284ba8bbdf",
+"field": "itineraries",
+"sentence": "Lodge overnight at 3,440 meters with full board.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 154,
+"tour_id": "da3ca995-471f-4178-9619-bd84c5342ae7",
+"field": "itineraries",
+"sentence": "Travel to Bundi en route visiting Mendalgarh Fort and the temples of Bijalyan and Menal.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 155,
+"tour_id": "c410a272-cac2-486d-9911-a5a73f5365d2",
+"field": "summary",
+"sentence": "Weather patterns make this routing feasible year-round with minimal rain concerns.",
+"numeric_hit": false,
+"p": 0.44,
+"label": 0,
+"note": "'year-round' not in source"
+},
+{
+"id": 156,
+"tour_id": "44281611-10a6-43f2-8e17-4090812cb7ae",
+"field": "itineraries",
+"sentence": "Trails range from easy to moderate, winding through lush vegetation with diverse wildlife, each hike offering distinct views of the surrounding terrain.",
+"numeric_hit": false,
+"p": 0.79,
+"label": 1,
+"note": ""
+},
+{
+"id": 157,
+"tour_id": "44281611-10a6-43f2-8e17-4090812cb7ae",
+"field": "itineraries",
+"sentence": "The island offers enough variety that whether you want to move or rest, there's something to match your mood.",
+"numeric_hit": false,
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 158,
+"tour_id": "fa0112cf-cdca-4138-bf70-50b45f6052d0",
+"field": "itineraries",
+"sentence": "Take a guided tour of spice plantations growing cardamom, black pepper, cinnamon, and nutmeg.",
+"numeric_hit": false,
+"p": 0.14,
+"label": 0,
+"note": "spice list not in source"
+},
+{
+"id": 159,
+"tour_id": "51a87f41-bafa-4777-8687-a05271410f3e",
+"field": "itineraries",
+"sentence": "The narrow lanes and restored courtyards reflect centuries of Korean domestic architecture and urban planning.",
+"numeric_hit": false,
+"p": 0.53,
+"label": 1,
+"note": ""
+},
+{
+"id": 160,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "The evening begins with an introduction to temple etiquette, followed by a temple-style dinner.",
+"numeric_hit": false,
+"p": 0.63,
+"label": 1,
+"note": ""
+},
+{
+"id": 161,
+"tour_id": "608c5083-1b88-4851-8e62-3d93b966373c",
+"field": "itineraries",
+"sentence": "Mekong sunsets and genuine relaxation define the final night.",
+"numeric_hit": false,
+"p": 0.79,
+"label": 1,
+"note": ""
+},
+{
+"id": 162,
+"tour_id": "fa5165dd-36f7-46f0-bece-d6906d612084",
+"field": "itineraries",
+"sentence": "Stop at Fengdu for a shore excursion.",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 163,
+"tour_id": "c71bf458-2f8a-4f35-a24d-29af44e10aeb",
+"field": "itineraries",
+"sentence": "The terrain is mostly flat with some easy rolling hills.",
+"numeric_hit": false,
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 164,
+"tour_id": "10a1b613-0102-4f73-b4fb-b53943d684d6",
+"field": "itineraries",
+"sentence": "You return to the hotel in the afternoon.",
+"numeric_hit": false,
+"p": 0.76,
+"label": 1,
+"note": ""
+},
+{
+"id": 165,
+"tour_id": "c47ea6d3-7e25-45a1-a510-3b38e783ae02",
+"field": "itineraries",
+"sentence": "After lunch, travel west to Hustai National Park, situated approximately 120 kilometers from Ulaanbaatar.",
+"numeric_hit": false,
+"p": 0.88,
+"label": 1,
+"note": ""
+},
+{
+"id": 166,
+"tour_id": "387f2590-c0dc-46c3-94b6-c8e2105e1cca",
+"field": "itineraries",
+"sentence": "The surrounding jungle is dense and the water remarkably clear.",
+"numeric_hit": false,
+"p": 0.32,
+"label": 1,
+"note": ""
+},
+{
+"id": 167,
+"tour_id": "1ff2935f-bcd3-4103-bd5e-05246eaf3490",
+"field": "itineraries",
+"sentence": "The day ends at Tilije, marking a transition into lower altitude terrain.",
+"numeric_hit": false,
+"p": 0.78,
+"label": 1,
+"note": ""
+},
+{
+"id": 168,
+"tour_id": "5c7f8b13-dc00-43eb-adc0-538d6071a84f",
+"field": "itineraries",
+"sentence": "The destination is Miharu Takizakura—an enormous cherry tree over 1,000 years old.",
+"numeric_hit": false,
+"p": 0.6,
+"label": 1,
+"note": ""
+},
+{
+"id": 169,
+"tour_id": "cdba0881-e9e6-45dd-8089-e020d1153dd1",
+"field": "itineraries",
+"sentence": "Cross through Juwangsan National Park, a UNESCO Global Geopark where granite cliffs rise sharply from valleys.",
+"numeric_hit": false,
+"p": 0.32,
+"label": 0,
+"note": "'granite' not in source (borderline)"
+},
+{
+"id": 170,
+"tour_id": "a349bf09-a5da-4571-8567-7013d3216ecc",
+"field": "highlights",
+"sentence": "Comprehensive pre-climb training at Island Peak Base Camp covering fixed-line techniques and expedition strategy",
+"numeric_hit": false,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 171,
+"tour_id": "0b6e28fb-1f90-42a0-868f-cd916ab064ac",
+"field": "itineraries",
+"sentence": "Visit a wooden toy manufacturer and a silk weaver to witness the craftsmanship that defines the region's cultural identity.",
+"numeric_hit": false,
+"p": 0.65,
+"label": 1,
+"note": ""
+},
+{
+"id": 172,
+"tour_id": "9183cc8a-81d3-4ad0-8231-e8838f6eb1b9",
+"field": "itineraries",
+"sentence": "Visit Wat Pho and the Grand Palace, examining the complex of golden stupas and richly decorated temple interiors.",
+"numeric_hit": false,
+"p": 0.56,
+"label": 1,
+"note": ""
+},
+{
+"id": 173,
+"tour_id": "b4b52285-9767-4235-982c-7fa8a02efb6b",
+"field": "itineraries",
+"sentence": "A walk leads to Ugyencholing Palace, now a museum offering insight into aristocratic life in the last century.",
+"numeric_hit": false,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 174,
+"tour_id": "00dd2fe6-4e2a-499c-b0a8-2ff3eef27a36",
+"field": "itineraries",
+"sentence": "Check-in at your accommodation and acclimatize to the altitude.",
+"numeric_hit": false,
+"p": 0.26,
+"label": 1,
+"note": ""
+},
+{
+"id": 175,
+"tour_id": "cdba0881-e9e6-45dd-8089-e020d1153dd1",
+"field": "itineraries",
+"sentence": "Meals included: breakfast, lunch, and farewell dinner.",
+"numeric_hit": false,
+"p": 0.63,
+"label": 1,
+"note": ""
+},
+{
+"id": 176,
+"tour_id": "13ce928c-12ed-46c7-82db-78bb8a12af13",
+"field": "itineraries",
+"sentence": "The retreat sits on one of Sri Lanka's quieter southern beaches and emphasizes environmental stewardship; regular beach cleanups are part of the group's routine.",
+"numeric_hit": false,
+"p": 0.76,
+"label": 1,
+"note": ""
+},
+{
+"id": 177,
+"tour_id": "af05d068-f133-4630-96c4-8e451380ca81",
+"field": "itineraries",
+"sentence": "Check in and settle for the first night in one of the property's restored rooms.",
+"numeric_hit": false,
+"p": 0.27,
+"label": 0,
+"note": "'restored rooms' not in source (borderline)"
+},
+{
+"id": 178,
+"tour_id": "01510b0f-4340-4d65-9f5f-cd5b48f45d16",
+"field": "summary",
+"sentence": "The route opens with 3 days in Lhasa exploring Potala Palace, Jokhang Temple, and Sera Monastery—sites built between the 7th and 15th centuries—before a southern drive through Gyantse and Shigatse introduces Tashilhunpo Monastery and the turquoise expanse of Lake Yamdok.",
+"numeric_hit": false,
+"p": 0.11,
+"label": 0,
+"note": "7th-century dates not in source"
+},
+{
+"id": 179,
+"tour_id": "387f2590-c0dc-46c3-94b6-c8e2105e1cca",
+"field": "itineraries",
+"sentence": "You stay in a hotel in Luang Prabang.",
+"numeric_hit": false,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 180,
+"tour_id": "cdba0881-e9e6-45dd-8089-e020d1153dd1",
+"field": "itineraries",
+"sentence": "Arrive in Chungju, known for lakeside recreation and historical sites from Korea's post-Three Kingdoms era.",
+"numeric_hit": false,
+"p": 0.14,
+"label": 0,
+"note": "'post-Three Kingdoms era' not in source"
+},
+{
+"id": 181,
+"tour_id": "c839bb1c-24e6-40c1-bce6-9a578c05f7fb",
+"field": "itineraries",
+"sentence": "Ascend Ambuluwawa Tower for extended views across the city and surrounding hills.",
+"numeric_hit": false,
+"p": 0.57,
+"label": 1,
+"note": ""
+},
+{
+"id": 182,
+"tour_id": "0b6e28fb-1f90-42a0-868f-cd916ab064ac",
+"field": "itineraries",
+"sentence": "The remainder of the day is free for self-guided exploration.",
+"numeric_hit": false,
+"p": 0.82,
+"label": 1,
+"note": ""
+},
+{
+"id": 183,
+"tour_id": "eabff259-d69e-411d-8cd2-d09a24a1ab7c",
+"field": "itineraries",
+"sentence": "Watch as locals engage in spirited haggling and fishmongers hawk their catch—the market remains a sensory immersion into the rhythms of a working fishing port.",
+"numeric_hit": false,
+"p": 0.74,
+"label": 1,
+"note": ""
+},
+{
+"id": 184,
+"tour_id": "6e14e193-9c92-47ad-b9db-33284ba8bbdf",
+"field": "itineraries",
+"sentence": "We complete our Everest Base Camp trek with a 35-minute flight back to Kathmandu.",
+"numeric_hit": false,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 185,
+"tour_id": "efb52e00-fef9-4630-967b-64950f417514",
+"field": "itineraries",
+"sentence": "The return to Beijing allows time for an acrobatic show in the evening.",
+"numeric_hit": false,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 186,
+"tour_id": "c9fb02ef-8db5-4849-a12e-e9718935039e",
+"field": "highlights",
+"sentence": "Take a Taekwondo class in an authentic Seoul studio",
+"numeric_hit": false,
+"p": 0.65,
+"label": 1,
+"note": ""
+},
+{
+"id": 187,
+"tour_id": "387f2590-c0dc-46c3-94b6-c8e2105e1cca",
+"field": "itineraries",
+"sentence": "The journey emphasizes the role of water—rivers and now a lake—in shaping both the landscape and your route through it.",
+"numeric_hit": false,
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 188,
+"tour_id": "c9fb02ef-8db5-4849-a12e-e9718935039e",
+"field": "itineraries",
+"sentence": "Dinner is a traditional Buddhist vegetarian meal of vegetables, rice, and fresh fruit served communally.",
+"numeric_hit": false,
+"p": 0.81,
+"label": 0,
+"note": "menu details not in source (borderline)"
+},
+{
+"id": 189,
+"tour_id": "a6254fcf-e1bb-4caa-bad7-867fc80e5792",
+"field": "highlights",
+"sentence": "Kuang Si Falls multi-tiered limestone waterfalls (via cycling through Pu Luong reserve's water-wheel system and bamboo raft section)",
+"numeric_hit": false,
+"p": 0.08,
+"label": 0,
+"note": "mixes Kuang Si (Laos) with Pu Luong (Vietnam)"
+},
+{
+"id": 190,
+"tour_id": "cdba0881-e9e6-45dd-8089-e020d1153dd1",
+"field": "itineraries",
+"sentence": "A shorter riding day through Jeju's southwestern quadrant with rolling hills and basalt ridges.",
+"numeric_hit": false,
+"p": 0.41,
+"label": 0,
+"note": "'southwestern quadrant, basalt ridges' not in source (borderline)"
+},
+{
+"id": 191,
+"tour_id": "031145c9-f2d3-48f9-b1fd-6b50354380a1",
+"field": "itineraries",
+"sentence": "After breakfast, travel approximately two hours north by private vehicle to the Mutianyu section of the Great Wall, one of the best-preserved stretches with 22 towers winding along mountain ridges in Huairou County.",
+"numeric_hit": false,
+"p": 0.34,
+"label": 1,
+"note": "source says it all — Jev wrong"
+},
+{
+"id": 192,
+"tour_id": "ca893afe-27e2-431b-9596-b92514e7f98c",
+"field": "itineraries",
+"sentence": "Spend time at Haeundae Beach, one of Busan's main stretches of sand.",
+"numeric_hit": false,
+"p": 0.47,
+"label": 1,
+"note": ""
+},
+{
+"id": 193,
+"tour_id": "b1214f62-8c80-454b-8e93-439a718f93ef",
+"field": "itineraries",
+"sentence": "Group meeting and dinner.",
+"numeric_hit": false,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 194,
+"tour_id": "b1214f62-8c80-454b-8e93-439a718f93ef",
+"field": "itineraries",
+"sentence": "Overnight in local guest house (basic).",
+"numeric_hit": false,
+"p": 0.97,
+"label": 1,
+"note": ""
+},
+{
+"id": 195,
+"tour_id": "d7e44900-1499-4a9b-9052-465249ac16ec",
+"field": "itineraries",
+"sentence": "Overnight remains in Luang Prabang.",
+"numeric_hit": false,
+"p": 0.75,
+"label": 1,
+"note": ""
+},
+{
+"id": 196,
+"tour_id": "80172001-d04a-4244-8b02-006f2d990675",
+"field": "itineraries",
+"sentence": "Your guide can arrange any activity or suggest others based on your interests.",
+"numeric_hit": false,
+"p": 0.8,
+"label": 1,
+"note": ""
+},
+{
+"id": 197,
+"tour_id": "078edffc-0192-4176-b589-7647cab2e11e",
+"field": "itineraries",
+"sentence": "Many villages along the route have been left largely abandoned as younger residents move to cities; those who remain are predominantly elderly.",
+"numeric_hit": false,
+"p": 0.74,
+"label": 1,
+"note": ""
+},
+{
+"id": 198,
+"tour_id": "2bc45c55-fb32-4ca1-818a-62c3353ec556",
+"field": "itineraries",
+"sentence": "Overnight in Vang Vieng.",
+"numeric_hit": false,
+"p": 0.98,
+"label": 1,
+"note": ""
+},
+{
+"id": 199,
+"tour_id": "6aa2af80-65ab-4ca0-a1a1-72359511d6f5",
+"field": "highlights",
+"sentence": "Kunigami Village with traditional red-tiled houses, Fukugi windbreak trees, and sanshin musical performances",
+"numeric_hit": false,
+"p": 0.83,
+"label": 1,
+"note": ""
+}
+]

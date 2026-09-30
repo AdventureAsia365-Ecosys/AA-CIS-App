@@ -19,7 +19,7 @@ PIPELINE_GATES = {
     # (flag_fix->revalidate->END) — real edge order per services/content_generation/graph.py
     # ::build_graph(). increment_retry/hitl aren't included: they're retry-loop control nodes,
     # not part of the linear happy-path sequence this chip displays.
-    "pipeline_flow": ["generate", "validate", "llm_judge", "brand_audit", "flag_fix", "revalidate"],
+    "pipeline_flow": ["generate", "validate", "llm_judge", "brand_audit", "grounding", "flag_fix", "revalidate"],
 }
 
 

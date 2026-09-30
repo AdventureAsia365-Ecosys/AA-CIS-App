@@ -202,6 +202,16 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
             "feedback":        result.get("judge_feedback"),
             "judge_score":     result.get("judge_score"),
         }
+    # AA-691: A1 grounding — what was found, what the sentence repair changed, what is still
+    # unsupported (those sent the tour to manual_check) and the reviewer's soft notes. Omitted when
+    # grounding did not run (T2, HITL branch, older rows) — same guard style as ``judge``.
+    if result.get("grounding_ran"):
+        metadata["grounding"] = {
+            "found":           len(result.get("grounding_found") or []),
+            "repaired_fields": result.get("grounding_repaired_fields") or [],
+            "violations":      result.get("grounding_violations") or [],
+            "notes":           result.get("grounding_notes") or [],
+        }
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:
         from services.content_generation.graph import ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX

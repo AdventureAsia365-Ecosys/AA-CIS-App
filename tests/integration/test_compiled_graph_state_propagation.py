@@ -154,6 +154,14 @@ def patch_llm_client(monkeypatch):
         monkeypatch.setattr("services.content_generation.graph.LLMClient", mock_client_cls)
         monkeypatch.setattr("services.content_generation.brand_fit.LLMClient", mock_client_cls)
         monkeypatch.setattr("services.content_generation.brand_audit_node.LLMClient", mock_client_cls)
+        # AA-691: the grounding node asks Jev (DB + HTTP) and repairs via its own LLMClient import —
+        # keep both offline here; the numeric check itself stays real.
+        monkeypatch.setattr("services.content_generation.grounding.judge_units", lambda units, source: {})
+        monkeypatch.setattr(
+            "services.content_generation.grounding.repair",
+            lambda generated, violations, tour, **kw: {"generated": generated, "fields": [], "cost_usd": 0.0,
+                                                      "error": ""},
+        )
         return mock_client
 
     return _install

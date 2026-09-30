@@ -1,0 +1,48 @@
+# Calibration — `a1_claim_supported` (AA-661 / AA-691, S204, 30/09/2026)
+
+Question (stage `s1_grounding`, migration 186), asked per sentence of the S1 master rewrite:
+> *A travel writer rewrote a tour from the source text. Is every fact in this sentence stated or
+> clearly implied by the source?* — state = `{source, sentence}`
+
+## Sample
+- The 121 published master tours → 7,911 sentence units (subtitle, summary, highlights, itinerary
+  bodies). The deterministic numeric check hit **337** (302 after the source-number normalisation
+  below) in 90 → 87 tours.
+- **200 sentences** (seed 691): 60 numeric hits + 140 others. Shadow pass through the deployed
+  `decide()` (stage `adhoc_aa691`): 0 errors, ~224 ms mean, sources up to 29k chars, cost ≈ $0.
+- Raw data: `data/a1_claim_supported_2026-09-30.json` (sentence, p, numeric_hit, label, note).
+
+## Labels — agent-proposed (not independent human labels)
+**1** = every fact is in the source (paraphrase, unit conversion, sums allowed; mood/colour about
+something the source names counts). **0** = the sentence states a fact the source does not give:
+place, activity, number, meal, service, timing, record, history. Balance: 120 × 1, 80 × 0.
+Review: Nghiệp checks 59 rows (40 random + 23 agent-vs-Jev disagreements, 4 in both) in the Google
+Sheet "Jev calibration — master content grounding (2026-09-30)", AdventureAsia Drive folder.
+
+## Result (agent labels)
+| Zone | n | Correct | Note |
+|---|---|---|---|
+| reject p ≤ 0.20, all | 62 | 60 (0.968) | |
+| reject p ≤ 0.20, **non-numeric only** | 13 | 11 (**0.85**) | both misses are table-shaped sources (`Meals included: Breakfast`, `Elevation Gain + 500 m`) |
+| reject p ≤ 0.10, non-numeric only | 5 | 3 | |
+| **accept p ≥ 0.90**, all | 50 | **50 (1.000)** | |
+| accept p ≥ 0.85, all | 62 | 60 | |
+
+The reject side only matters for sentences without a number (numbers are caught deterministically),
+and there it is **below 95%** → `UNSUPPORTED_CLAIM` stays **shadow** (notes for the reviewer only).
+
+The accept side is clean at 0.90 → Jev may **clear a deterministic numeric hit** (unit conversion,
+sum, odd source format) when it confidently says the sentence is supported.
+
+## Deterministic numeric check — false hits
+7 of the 60 numeric hits (12%) were supported. 5 were source formats, now handled in code
+(`grounding.source_number_parts`): numbers glued to letters (`3h260km`, `2h30m-3h96km`), travel
+times in other units (`1h30m` = 90-minute, `2hr 30min` = 2.5-hour), clock formats (`12.30` =
+`12:30`). The remaining 2: a typo in the source (`1. 5 hours`) and "14th century" inferred from
+"Ming dynasty" (both have Jev p ≥ 0.60; one ≥ 0.90).
+
+## Decision (pending Nghiệp's review of the 59 rows)
+- [ ] Review overturns < 10% → set `a1_claim_supported` to **enforce, accept_floor 0.90,
+  reject_ceiling NULL** (clears numeric hits only; never raises UNSUPPORTED_CLAIM).
+- [ ] Reject side: collect more non-numeric low-p sentences from the rerun's decision_log; re-pose
+  the question with the table-format lesson before any reject floor.
