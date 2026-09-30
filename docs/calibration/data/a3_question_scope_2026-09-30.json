@@ -1,0 +1,1803 @@
+[
+{
+"countries": "Thailand",
+"question": "How long does it take to walk up Doi Suthep?",
+"place": "Doi Mae Salong",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 0,
+"label": 1
+},
+{
+"countries": "Thailand",
+"question": "Do Ger camps in Mongolia have electricity?",
+"place": "Chiang Dao Elephant Camp",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 1,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the most famous cave in Vietnam?",
+"place": "Sung Sot and Luon Caves",
+"p_foreign": 0.97,
+"p_here": 0.06,
+"id": 2,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Why was the Potala Palace destroyed?",
+"place": "Wangduechoing Palace",
+"p_foreign": 0.89,
+"p_here": 0.16,
+"id": 3,
+"label": 0
+},
+{
+"countries": "China",
+"question": "Where is the Gobi Desert in Mongolia?",
+"place": "Dirapuk Monastery",
+"p_foreign": 0.91,
+"p_here": 0.48,
+"id": 4,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Can you see tigers in Chitwan?",
+"place": "Polonnaruwa",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 5,
+"label": 0
+},
+{
+"countries": "Japan",
+"question": "What is a famous monument in Bhutan?",
+"place": "Peace Memorial Park",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 6,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Are Korean Buddhist monks celibate?",
+"place": "Golgulsa Temple",
+"p_foreign": 0.14,
+"p_here": 0.76,
+"id": 7,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "What airports in the UK fly to Sri Lanka?",
+"place": "Tuan Chau International Marina to Hanoi",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 8,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "What is the most famous cave in Thailand?",
+"place": "Dambulla Cave Temple",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 9,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Where did bazaar originate?",
+"place": "Namche Bazaar",
+"p_foreign": 0.31,
+"p_here": 0.12,
+"id": 10,
+"label": 0
+},
+{
+"countries": "Laos, Thailand",
+"question": "What is a Buddhist stupa used for?",
+"place": "That Chomphet Stupa",
+"p_foreign": 0.1,
+"p_here": 0.33,
+"id": 11,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Why is Potala Palace famous?",
+"place": "Rana Kumbha Palace",
+"p_foreign": 0.97,
+"p_here": 0.06,
+"id": 12,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Is there an overnight train from Beijing to Hong Kong?",
+"place": "Haedong Yonggungsa Temple",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 13,
+"label": 0
+},
+{
+"countries": "Bhutan, Mongolia",
+"question": "Is there a hot spring in Arunachal Pradesh?",
+"place": "Gasa hot springs",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 14,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Where is the Mutianyu section of the Great Wall?",
+"place": "Gunsan sea wall",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 15,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "What are the controversies surrounding the film \"The bridge on the River Kwai\"?",
+"place": "suspension bridge over the Mo Chhu River",
+"p_foreign": 0.82,
+"p_here": 0.07,
+"id": 16,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the oldest temple in Bhutan?",
+"place": "Ribung Gompa",
+"p_foreign": 0.98,
+"p_here": 0.07,
+"id": 17,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "What is the story behind Buli Tsho?",
+"place": "Mebar Tsho Lake",
+"p_foreign": 0.09,
+"p_here": 0.94,
+"id": 18,
+"label": 1
+},
+{
+"countries": "China",
+"question": "What flights are leaving Colombo today?",
+"place": "International Grand Bazaar",
+"p_foreign": 0.97,
+"p_here": 0.04,
+"id": 19,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Is Bhutan more Indian or Chinese?",
+"place": "Mebar Tsho Lake",
+"p_foreign": 0.31,
+"p_here": 0.5,
+"id": 20,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "Can you swim in the Kuang Si Falls?",
+"place": "Tad Fane",
+"p_foreign": 0.04,
+"p_here": 0.97,
+"id": 21,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "What is the mystery behind the Ajanta Caves?",
+"place": "Sung Sot and Luon Caves",
+"p_foreign": 0.97,
+"p_here": 0.03,
+"id": 22,
+"label": 0
+},
+{
+"countries": "China, Nepal",
+"question": "How much does a Ger cost in Mongolia?",
+"place": "Everest Base Camp",
+"p_foreign": 0.96,
+"p_here": 0.15,
+"id": 23,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Is Haa Valley worth visiting?",
+"place": "Mount Kailash",
+"p_foreign": 0.28,
+"p_here": 0.76,
+"id": 24,
+"label": 0
+},
+{
+"countries": "Japan",
+"question": "Are there hot spring resorts in the US?",
+"place": "resort hotel in Ashino",
+"p_foreign": 0.97,
+"p_here": 0.15,
+"id": 25,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Is the Big Buddha temple in Phuket open in 2026?",
+"place": "Sarnath",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 26,
+"label": 0
+},
+{
+"countries": "India",
+"question": "What is the most famous pass in Bhutan?",
+"place": "Chagtsang La",
+"p_foreign": 0.98,
+"p_here": 0.09,
+"id": 27,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What was Turpan called in ancient times?",
+"place": "Emin Minaret",
+"p_foreign": 0.07,
+"p_here": 0.96,
+"id": 28,
+"label": 1
+},
+{
+"countries": "India",
+"question": "What is the story behind Tiger's Nest monastery?",
+"place": "Sonar Kila",
+"p_foreign": 0.94,
+"p_here": 0.14,
+"id": 29,
+"label": 0
+},
+{
+"countries": "India",
+"question": "What are the best places to eat in Daylesford and Hepburn Springs?",
+"place": "Varanasi's ghats",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 30,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What are the best hot springs in Victoria?",
+"place": "Nam Pien Yorla Pa eco-resort",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 31,
+"label": 0
+},
+{
+"countries": "India, Nepal",
+"question": "What flights are leaving Colombo today?",
+"place": "Pokhara",
+"p_foreign": 0.96,
+"p_here": 0.08,
+"id": 32,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What is Turpan famous for?",
+"place": "Emin Minaret",
+"p_foreign": 0.03,
+"p_here": 0.97,
+"id": 33,
+"label": 1
+},
+{
+"countries": "Mongolia",
+"question": "Why do I feel sick after drinking Vietnamese coffee?",
+"place": "Baga Gazariyn Chuluu plateau",
+"p_foreign": 0.94,
+"p_here": 0.09,
+"id": 34,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What craft shows are happening in Lehigh Valley, PA?",
+"place": "Kashgar Sunday Bazaar",
+"p_foreign": 0.98,
+"p_here": 0.02,
+"id": 35,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What are the top 5 cities in Laos?",
+"place": "Hor Phra Keo",
+"p_foreign": 0.06,
+"p_here": 0.51,
+"id": 36,
+"label": 1
+},
+{
+"countries": "Japan",
+"question": "Where do locals eat in St. Pete Beach?",
+"place": "Japan's oldest public park",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 37,
+"label": 0
+},
+{
+"countries": "Bhutan, India",
+"question": "What craft shows are happening in Lehigh Valley, PA?",
+"place": "Craft Bazaar",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 38,
+"label": 0
+},
+{
+"countries": "Laos, Thailand",
+"question": "Which cave in Halong Bay is considered the best?",
+"place": "Pak Ou Caves",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 39,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "What is Laos most famous for?",
+"place": "Cheonjiyeon Waterfalls",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 40,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Is 4 days in Phuket too much?",
+"place": "Phuket",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 41,
+"label": 1
+},
+{
+"countries": "Nepal",
+"question": "What is a Ger camp in Mongolia?",
+"place": "Island Peak Base Camp",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 42,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "How much gold is in the Potala Palace?",
+"place": "Polonnaruwa",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 43,
+"label": 0
+},
+{
+"countries": "India, Nepal",
+"question": "Is Kerung in China or Nepal?",
+"place": "Kathmandu",
+"p_foreign": 0.94,
+"p_here": 0.56,
+"id": 44,
+"label": 1
+},
+{
+"countries": "India",
+"question": "Where is the Gobi Desert in Mongolia?",
+"place": "Thiksay monastery",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 45,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Where do locals eat in St. Pete Beach?",
+"place": "Bumthang's Swiss cheese factory",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 46,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "How many people live in Pakse?",
+"place": "Paksong to Pakse",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 47,
+"label": 1
+},
+{
+"countries": "India",
+"question": "Is camp camp LGBTQ?",
+"place": "camp above Nimaling",
+"p_foreign": 0.21,
+"p_here": 0.14,
+"id": 48,
+"label": 0
+},
+{
+"countries": "India, Sri Lanka",
+"question": "What are the chances of seeing a leopard in Yala National Park?",
+"place": "Yala",
+"p_foreign": 0.1,
+"p_here": 0.97,
+"id": 49,
+"label": 1
+},
+{
+"countries": "Laos, Thailand",
+"question": "What is the mystery behind the Ajanta Caves?",
+"place": "Pak Ou Caves",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 50,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What is the best overnight train in the world?",
+"place": "Torugart Pass",
+"p_foreign": 0.17,
+"p_here": 0.23,
+"id": 51,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Can I stay overnight in Colombo Airport?",
+"place": "Tuan Chau International Marina to Hanoi",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 52,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the significance of the Ajanta Caves?",
+"place": "Sung Sot and Luon Caves",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 53,
+"label": 0
+},
+{
+"countries": "India, Sri Lanka",
+"question": "Where did Dua Lipa eat in Melbourne?",
+"place": "Little Adam's Peak",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 54,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the biggest cave in Laos?",
+"place": "Bat cave",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 55,
+"label": 0
+},
+{
+"countries": "Mongolia",
+"question": "Does anyone live in the Potala Palace?",
+"place": "Bogd Khan's Winter Palace Museum",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 56,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Are there direct flights to Sri Lanka from the US?",
+"place": "Tuan Chau International Marina to Hanoi",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 57,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the most famous cave in Thailand?",
+"place": "Milarepa's Cave",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 58,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Does Laos have good coffee?",
+"place": "Bolaven Plateau",
+"p_foreign": 0.04,
+"p_here": 0.58,
+"id": 59,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "Where is the Love Bridge located?",
+"place": "Dali's old streets",
+"p_foreign": 0.26,
+"p_here": 0.6,
+"id": 60,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "How much does it cost to visit the Korean Folk Village?",
+"place": "Andong Hahoe",
+"p_foreign": 0.06,
+"p_here": 0.97,
+"id": 61,
+"label": 1
+},
+{
+"countries": "Bhutan",
+"question": "What restaurant does Ed Sheeran own?",
+"place": "Bumthang's Swiss cheese factory",
+"p_foreign": 0.31,
+"p_here": 0.05,
+"id": 62,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the altitude of Dolma La pass?",
+"place": "Pha Din Pass",
+"p_foreign": 0.49,
+"p_here": 0.52,
+"id": 63,
+"label": 0
+},
+{
+"countries": "China",
+"question": "Can you cross the border from India to Bhutan?",
+"place": "Nepal border crossing",
+"p_foreign": 0.96,
+"p_here": 0.15,
+"id": 64,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Which cave in Halong Bay is considered the best?",
+"place": "Gupteshwor, Bat, and Mahendra caves",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 65,
+"label": 0
+},
+{
+"countries": "India",
+"question": "How do I get from Taipei Main Station to Taichung via HSR?",
+"place": "high, wide meadows above Nimaling",
+"p_foreign": 0.99,
+"p_here": 0.04,
+"id": 66,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "How far is Chitwan National Park from Kathmandu?",
+"place": "Gyeongbokgung Palace",
+"p_foreign": 0.99,
+"p_here": 0.04,
+"id": 67,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Are Ajanta and Ellora Caves together?",
+"place": "Sung Sot and Luon Caves",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 68,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Is there an overnight train from Beijing to Harbin?",
+"place": "Haedong Yonggungsa Temple",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 69,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Can you still put locks on the Love Lock Bridge?",
+"place": "Tiger's Nest Monastery (Taktsang)",
+"p_foreign": 0.67,
+"p_here": 0.37,
+"id": 70,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Is the Big Buddha temple in Phuket open in 2026?",
+"place": "Aukana Buddha",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 71,
+"label": 0
+},
+{
+"countries": "Bhutan, Nepal",
+"question": "Is Kailash harder than Everest?",
+"place": "Takhung La",
+"p_foreign": 0.56,
+"p_here": 0.73,
+"id": 72,
+"label": 1
+},
+{
+"countries": "Laos, Thailand",
+"question": "Is the giant Buddha in Bangkok real gold?",
+"place": "Angkor",
+"p_foreign": 0.1,
+"p_here": 0.96,
+"id": 73,
+"label": 1
+},
+{
+"countries": "China",
+"question": "Who founded the Tara Buddhist Centre?",
+"place": "Dirapuk Monastery",
+"p_foreign": 0.35,
+"p_here": 0.31,
+"id": 74,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Where does the HSR stop in Taichung?",
+"place": "high, wide meadows above Nimaling",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 75,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Why is Potala Palace famous?",
+"place": "Polonnaruwa",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 76,
+"label": 0
+},
+{
+"countries": "Laos, Thailand",
+"question": "Who built Ellora and Ajanta Caves?",
+"place": "Pak Ou Caves",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 77,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Who is the highest ranked Buddhist monk in Bhutan?",
+"place": "Chimi Lhakhang",
+"p_foreign": 0.04,
+"p_here": 0.84,
+"id": 78,
+"label": 1
+},
+{
+"countries": "Bhutan, Sri Lanka",
+"question": "What is the hottest selling craft right now?",
+"place": "Bazaar",
+"p_foreign": 0.08,
+"p_here": 0.1,
+"id": 79,
+"label": 0
+},
+{
+"countries": "Mongolia",
+"question": "What is the best time to visit Terelj?",
+"place": "Ulaanbaatar to Terelj",
+"p_foreign": 0.06,
+"p_here": 0.97,
+"id": 80,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "Where is the giant Buddha located?",
+"place": "Buddha Park",
+"p_foreign": 0.33,
+"p_here": 0.37,
+"id": 81,
+"label": 0
+},
+{
+"countries": "India",
+"question": "What is a famous monument in Bhutan?",
+"place": "Pratap Memorial",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 82,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Which is safer, Laos or Vietnam?",
+"place": "Koh Phi Phi Don village",
+"p_foreign": 0.93,
+"p_here": 0.17,
+"id": 83,
+"label": 0
+},
+{
+"countries": "Taiwan",
+"question": "Where is Lovers Bridge?",
+"place": "Yilan County's coast",
+"p_foreign": 0.22,
+"p_here": 0.73,
+"id": 84,
+"label": 1,
+"review": "nghiep: 0->1 (Lovers Bridge, Tamsui, Taiwan)"
+},
+{
+"countries": "Nepal",
+"question": "What are the best places to eat in Daylesford and Hepburn Springs?",
+"place": "Milarepa's Cave",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 85,
+"label": 0
+},
+{
+"countries": "Laos, Thailand",
+"question": "Where is the Sleeping Buddha in Thailand?",
+"place": "Angkor",
+"p_foreign": 0.1,
+"p_here": 0.89,
+"id": 86,
+"label": 1
+},
+{
+"countries": "South Korea",
+"question": "What is the biggest craft shop in the UK?",
+"place": "Hanok Village Craft Museum",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 87,
+"label": 0
+},
+{
+"countries": "China",
+"question": "How many days do I need to see Beijing?",
+"place": "unrestored sections of the Great Wall near Beijing",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 88,
+"label": 1
+},
+{
+"countries": "India",
+"question": "Is it worth visiting Big Buddha Phuket?",
+"place": "Sarnath",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 89,
+"label": 0
+},
+{
+"countries": "China, Nepal",
+"question": "Where are the best places for river camping in Florida?",
+"place": "Everest Base Camp",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 90,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "What is Paro, Bhutan famous for?",
+"place": "Jakar Dzong",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 91,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "What is the most famous Buddha temple in Bangkok?",
+"place": "Wat Visounnalath",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 92,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "How much is a temple stay in Korea?",
+"place": "rural farm stay near Thanamalwila",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 93,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Is Paro in Bhutan worth visiting?",
+"place": "Chagtsang La",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 94,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Does Scoot fly to Chiang Rai?",
+"place": "Chiang Dao Elephant Camp",
+"p_foreign": 0.17,
+"p_here": 0.97,
+"id": 95,
+"label": 1
+},
+{
+"countries": "India",
+"question": "How long is the HSR train ride from Taipei to Taichung?",
+"place": "high, wide meadows above Nimaling",
+"p_foreign": 0.99,
+"p_here": 0.04,
+"id": 96,
+"label": 0
+},
+{
+"countries": "Bhutan, India",
+"question": "What sells best at craft fairs UK?",
+"place": "Craft Bazaar",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 97,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the tallest monastery in the world?",
+"place": "Tengboche Monastery",
+"p_foreign": 0.16,
+"p_here": 0.38,
+"id": 98,
+"label": 0
+},
+{
+"countries": "Mongolia",
+"question": "What is Guilin famous for?",
+"place": "Zaisan Memorial Hill",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 99,
+"label": 0
+},
+{
+"countries": "India",
+"question": "What is the story behind the Love Bridge in Cyprus?",
+"place": "Varanasi's ghats",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 100,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the tastiest coffee in the world?",
+"place": "Bolaven Plateau",
+"p_foreign": 0.13,
+"p_here": 0.2,
+"id": 101,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Can you cross the border from India to Bhutan?",
+"place": "Thai-Myanmar border road",
+"p_foreign": 0.97,
+"p_here": 0.07,
+"id": 102,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Is it safe to visit Mongolia right now?",
+"place": "Thai-Myanmar border road",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 103,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Is Thailand geographically close to Laos?",
+"place": "Don Khone",
+"p_foreign": 0.92,
+"p_here": 0.35,
+"id": 104,
+"label": 1
+},
+{
+"countries": "Bhutan",
+"question": "Where is Laya located?",
+"place": "Laya village",
+"p_foreign": 0.1,
+"p_here": 0.89,
+"id": 105,
+"label": 1
+},
+{
+"countries": "Mongolia",
+"question": "What is Bill Clinton's favorite restaurant in Washington DC?",
+"place": "Bogd Khan's Winter Palace Museum",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 106,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "What is the hardest restaurant to get into in Melbourne?",
+"place": "Tiger's Nest Monastery (Taktsang)",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 107,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Is there an entry fee for Big Buddha Phuket?",
+"place": "Buddha Dordenma statue",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 108,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Where did Dua Lipa eat in Melbourne?",
+"place": "Milarepa's Cave",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 109,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Is Delhi has two airports?",
+"place": "Jama Masjid minaret",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 110,
+"label": 1
+},
+{
+"countries": "Bhutan",
+"question": "Where is the Genghis Khan Equestrian Statue located?",
+"place": "Buddha Dordenma statue",
+"p_foreign": 0.76,
+"p_here": 0.14,
+"id": 111,
+"label": 0
+},
+{
+"countries": "India, Sri Lanka",
+"question": "Which Yala safari is best?",
+"place": "Yala",
+"p_foreign": 0.1,
+"p_here": 0.96,
+"id": 112,
+"label": 1
+},
+{
+"countries": "China",
+"question": "Is Kailash harder than Everest?",
+"place": "Mount Kailash",
+"p_foreign": 0.68,
+"p_here": 0.9,
+"id": 113,
+"label": 1
+},
+{
+"countries": "Nepal",
+"question": "What is the most famous cave in Halong Bay?",
+"place": "Milarepa's Cave",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 114,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the largest gold object in the world?",
+"place": "sacred Buddhist cave",
+"p_foreign": 0.17,
+"p_here": 0.08,
+"id": 115,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "How much gold is in the Potala Palace?",
+"place": "Bang Pa-In Royal Summer Palace",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 116,
+"label": 0
+},
+{
+"countries": "India",
+"question": "How far is Dochula Pass from Paro?",
+"place": "Chagtsang La",
+"p_foreign": 0.93,
+"p_here": 0.13,
+"id": 117,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "How high is the Dochula Pass?",
+"place": "Thombu La",
+"p_foreign": 0.04,
+"p_here": 0.97,
+"id": 118,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "What is Luang Prabang famous for?",
+"place": "That Luang",
+"p_foreign": 0.04,
+"p_here": 0.97,
+"id": 119,
+"label": 1
+},
+{
+"countries": "China",
+"question": "What are the best places to eat in Daylesford and Hepburn Springs?",
+"place": "local farmer Kurban Kasim's courtyard",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 120,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "What is the biggest craft shop in the UK?",
+"place": "Craft Bazaar",
+"p_foreign": 0.98,
+"p_here": 0.02,
+"id": 121,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Where is Jomolhari Mountain located?",
+"place": "Jangothang",
+"p_foreign": 0.36,
+"p_here": 0.86,
+"id": 122,
+"label": 1
+},
+{
+"countries": "India, Nepal",
+"question": "Which Chinese city is closest to Nepal?",
+"place": "Kathmandu",
+"p_foreign": 0.91,
+"p_here": 0.3,
+"id": 123,
+"label": 1
+},
+{
+"countries": "Sri Lanka",
+"question": "What does Farmer's Daughters in Melbourne have on their menu?",
+"place": "Devon's Falls",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 124,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Which flower market in Bangkok is considered the best?",
+"place": "Talat Warorod",
+"p_foreign": 0.06,
+"p_here": 0.95,
+"id": 125,
+"label": 1
+},
+{
+"countries": "India, Nepal",
+"question": "How much does a bus ticket to Manakamana cost?",
+"place": "Pokhara",
+"p_foreign": 0.09,
+"p_here": 0.96,
+"id": 126,
+"label": 1
+},
+{
+"countries": "Sri Lanka",
+"question": "What are the best places to eat in Daylesford and Hepburn Springs?",
+"place": "Devon's Falls",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 127,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "What to do in Yangshuo for a day?",
+"place": "Akha hill-tribe village",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 128,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "What are some fun things to do on Don Det, Laos?",
+"place": "Koh Phi Phi Don village",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 129,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "How can I get from Taichung HSR Station to the city center?",
+"place": "Island Peak high camp",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 130,
+"label": 0
+},
+{
+"countries": "Bhutan, Nepal",
+"question": "What is the most challenging trek in Bhutan?",
+"place": "Chele La Pass",
+"p_foreign": 0.07,
+"p_here": 0.86,
+"id": 131,
+"label": 1
+},
+{
+"countries": "Bhutan",
+"question": "What are the two main rivers of Assam?",
+"place": "Manas River",
+"p_foreign": 0.92,
+"p_here": 0.07,
+"id": 132,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Are there monks in Mongolia?",
+"place": "Tengboche Monastery",
+"p_foreign": 0.98,
+"p_here": 0.09,
+"id": 133,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Why is travel to Laos banned?",
+"place": "4,000 Islands",
+"p_foreign": 0.05,
+"p_here": 0.57,
+"id": 134,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "What do Buddhists do before bed?",
+"place": "That Foun",
+"p_foreign": 0.09,
+"p_here": 0.35,
+"id": 135,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Why does Mongolia have a statue of Genghis Khan?",
+"place": "Neelagiri Buddha Statue",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 136,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the best time of year to visit hot springs?",
+"place": "Nam Pien Yorla Pa eco-resort",
+"p_foreign": 0.1,
+"p_here": 0.21,
+"id": 137,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "How far is Manakamana from Pokhara by road?",
+"place": "return bus to Seoul",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 138,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "What is Bhutanese wheat beer?",
+"place": "Dongmun Market",
+"p_foreign": 0.97,
+"p_here": 0.04,
+"id": 139,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the story behind Buli Tsho?",
+"place": "Tshola Tsho lake",
+"p_foreign": 0.13,
+"p_here": 0.91,
+"id": 140,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Is it possible to stay in a Buddhist temple in Japan?",
+"place": "rural farm stay near Thanamalwila",
+"p_foreign": 0.98,
+"p_here": 0.07,
+"id": 141,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the situation of Tibetan Buddhism in Mongolia?",
+"place": "Tengboche Monastery",
+"p_foreign": 0.98,
+"p_here": 0.1,
+"id": 142,
+"label": 0
+},
+{
+"countries": "Bhutan, Mongolia",
+"question": "Are there hot spring resorts in the US?",
+"place": "Gasa hot springs",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 143,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the most famous monastery in Bhutan?",
+"place": "Ribung Gompa",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 144,
+"label": 0
+},
+{
+"countries": "Mongolia",
+"question": "What is a GER camp in Mongolia?",
+"place": "Ulziit Khishig Camp",
+"p_foreign": 0.05,
+"p_here": 0.79,
+"id": 145,
+"label": 1
+},
+{
+"countries": "Bhutan, Sri Lanka",
+"question": "What is Manas National Park famous for?",
+"place": "Manas National Park",
+"p_foreign": 0.96,
+"p_here": 0.09,
+"id": 146,
+"label": 1
+},
+{
+"countries": "Bhutan",
+"question": "Where did Dua Lipa eat in Melbourne?",
+"place": "Bumthang's Swiss cheese factory",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 147,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "What is a Ger camp in Mongolia?",
+"place": "Chiang Dao Elephant Camp",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 148,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Is there a love lock bridge in the US?",
+"place": "Varanasi's ghats",
+"p_foreign": 0.96,
+"p_here": 0.11,
+"id": 149,
+"label": 0
+},
+{
+"countries": "Japan",
+"question": "Does the UK have any hot springs?",
+"place": "Okinawan hot spring",
+"p_foreign": 0.97,
+"p_here": 0.09,
+"id": 150,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What is the story behind the Love Bridge in Cyprus?",
+"place": "local farmer Kurban Kasim's courtyard",
+"p_foreign": 0.99,
+"p_here": 0.04,
+"id": 151,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Where do locals eat in St. Pete Beach?",
+"place": "Patong's Bangla Road",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 152,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Can you visit the monks in Tibet?",
+"place": "Kudumbigala ancient monastery",
+"p_foreign": 0.98,
+"p_here": 0.06,
+"id": 153,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "How many steps to climb the giant Buddha?",
+"place": "Buddha Park",
+"p_foreign": 0.25,
+"p_here": 0.6,
+"id": 154,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "What is the border line between India and Bhutan?",
+"place": "Thai-Myanmar border road",
+"p_foreign": 0.93,
+"p_here": 0.06,
+"id": 155,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is the story behind Tiger's Nest monastery?",
+"place": "Ribung Gompa",
+"p_foreign": 0.9,
+"p_here": 0.23,
+"id": 156,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "Why is Phewa Lake famous?",
+"place": "Pokhara",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 157,
+"label": 1
+},
+{
+"countries": "Thailand",
+"question": "What are the floating bungalows available on Cheow Lan Lake?",
+"place": "Cheow Lan Lake",
+"p_foreign": 0.06,
+"p_here": 0.96,
+"id": 158,
+"label": 1
+},
+{
+"countries": "South Korea",
+"question": "Can foreigners visit Potala Palace?",
+"place": "Gyeongbokgung Palace",
+"p_foreign": 0.98,
+"p_here": 0.1,
+"id": 159,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Where is the best climbing in China?",
+"place": "Akha hill-tribe village",
+"p_foreign": 0.97,
+"p_here": 0.06,
+"id": 160,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "How do I get to Mutianyu Great Wall from Beijing city?",
+"place": "Gunsan sea wall",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 161,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "How likely are you to see a leopard in Yala?",
+"place": "Yala",
+"p_foreign": 0.06,
+"p_here": 0.97,
+"id": 162,
+"label": 1
+},
+{
+"countries": "South Korea",
+"question": "How many steps to climb the giant Buddha?",
+"place": "Seongbo Museum",
+"p_foreign": 0.24,
+"p_here": 0.63,
+"id": 163,
+"label": 0
+},
+{
+"countries": "Mongolia",
+"question": "Can Americans go to Lake Baikal?",
+"place": "Listvyanka",
+"p_foreign": 0.96,
+"p_here": 0.1,
+"id": 164,
+"label": 0
+},
+{
+"countries": "India",
+"question": "What is Yangshuo famous for?",
+"place": "Coconut Tree Hill",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 165,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "What is Bill Clinton's favorite restaurant in Washington DC?",
+"place": "Patong's Bangla Road",
+"p_foreign": 0.97,
+"p_here": 0.04,
+"id": 166,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Where do locals eat in St. Pete Beach?",
+"place": "Varanasi's ghats",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 167,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Do Mongolians still live in Gers?",
+"place": "Chiang Dao Elephant Camp",
+"p_foreign": 0.94,
+"p_here": 0.04,
+"id": 168,
+"label": 0
+},
+{
+"countries": "Bhutan, Nepal",
+"question": "What is the significance of the Dochula Pass?",
+"place": "Takhung La",
+"p_foreign": 0.06,
+"p_here": 0.96,
+"id": 169,
+"label": 1
+},
+{
+"countries": "China",
+"question": "What is the most famous cave in Vietnam?",
+"place": "Mogao Caves",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 170,
+"label": 0
+},
+{
+"countries": "Bhutan, Mongolia",
+"question": "How much does it cost to soak in the hot springs in hot springs, Arkansas?",
+"place": "Gasa hot springs",
+"p_foreign": 0.99,
+"p_here": 0.03,
+"id": 171,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Is Yangshuo a tourist trap?",
+"place": "Akha hill-tribe village",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 172,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Why is Paro Taktsang famous?",
+"place": "Taktsang",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 173,
+"label": 1
+},
+{
+"countries": "Nepal",
+"question": "Where are the best places for river camping in Florida?",
+"place": "Island Peak Base Camp",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 174,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What is the biggest waterfall in Indonesia?",
+"place": "Paksong to Pakse",
+"p_foreign": 0.97,
+"p_here": 0.05,
+"id": 175,
+"label": 0
+},
+{
+"countries": "Taiwan",
+"question": "What is the hardest restaurant to get into in Melbourne?",
+"place": "Yilan County's coast",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 176,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Why is the Leshan Giant Buddha so popular?",
+"place": "Buddha Park",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 177,
+"label": 0
+},
+{
+"countries": "Bhutan",
+"question": "Is there an entry fee to visit Rinpung Dzong?",
+"place": "Jakar Dzong",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 178,
+"label": 1
+},
+{
+"countries": "Taiwan",
+"question": "What are the train times from Bangalore to Hospet?",
+"place": "Bong Bong Train",
+"p_foreign": 0.99,
+"p_here": 0.02,
+"id": 179,
+"label": 0
+},
+{
+"countries": "China",
+"question": "Does Vivian Howard still have a restaurant in Kinston, NC?",
+"place": "local farmer Kurban Kasim's courtyard",
+"p_foreign": 0.98,
+"p_here": 0.02,
+"id": 180,
+"label": 0
+},
+{
+"countries": "Nepal",
+"question": "What is Sri Lanka's main airport?",
+"place": "Tribhuwan International Airport",
+"p_foreign": 0.98,
+"p_here": 0.05,
+"id": 181,
+"label": 0
+},
+{
+"countries": "Japan",
+"question": "Is Kakunodate worth visiting?",
+"place": "Samurai-era castle",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 182,
+"label": 1
+},
+{
+"countries": "Japan",
+"question": "What is the entry fee for the National Memorial Chorten in Thimphu?",
+"place": "Peace Memorial Park",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 183,
+"label": 0
+},
+{
+"countries": "Thailand",
+"question": "Does Vivian Howard still have a restaurant in Kinston, NC?",
+"place": "Patong's Bangla Road",
+"p_foreign": 0.98,
+"p_here": 0.02,
+"id": 184,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "Which is the widest waterfall in Asia?",
+"place": "Don Khone",
+"p_foreign": 0.43,
+"p_here": 0.61,
+"id": 185,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Does Jeju Island have good beaches?",
+"place": "Jeju Island",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 186,
+"label": 1
+},
+{
+"countries": "Japan",
+"question": "What does Farmer's Daughters in Melbourne have on their menu?",
+"place": "Japan's oldest public park",
+"p_foreign": 0.97,
+"p_here": 0.06,
+"id": 187,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "Can I rent a car on Udo Island?",
+"place": "Udo Island",
+"p_foreign": 0.06,
+"p_here": 0.96,
+"id": 188,
+"label": 1
+},
+{
+"countries": "Thailand",
+"question": "How many steps are there at Doi Suthep?",
+"place": "Doi Mae Salong",
+"p_foreign": 0.05,
+"p_here": 0.98,
+"id": 189,
+"label": 1
+},
+{
+"countries": "Laos",
+"question": "In which country is the Bolaven Plateau located?",
+"place": "Bolaven Plateau",
+"p_foreign": 0.07,
+"p_here": 0.92,
+"id": 190,
+"label": 1
+},
+{
+"countries": "Thailand",
+"question": "What is Yangshuo famous for?",
+"place": "Akha hill-tribe village",
+"p_foreign": 0.98,
+"p_here": 0.04,
+"id": 191,
+"label": 0
+},
+{
+"countries": "Sri Lanka",
+"question": "Why is Polonnaruwa famous?",
+"place": "Polonnaruwa",
+"p_foreign": 0.04,
+"p_here": 0.98,
+"id": 192,
+"label": 1
+},
+{
+"countries": "Taiwan",
+"question": "Why is Train to Busan so famous?",
+"place": "Bong Bong Train",
+"p_foreign": 0.93,
+"p_here": 0.09,
+"id": 193,
+"label": 0
+},
+{
+"countries": "China",
+"question": "What to do in Gangtey?",
+"place": "Sakya Gompa",
+"p_foreign": 0.96,
+"p_here": 0.11,
+"id": 194,
+"label": 0
+},
+{
+"countries": "Laos",
+"question": "What flights are leaving Colombo today?",
+"place": "Tuan Chau International Marina to Hanoi",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 195,
+"label": 0
+},
+{
+"countries": "South Korea",
+"question": "How many days are needed to see Angkor Wat?",
+"place": "Bukchon Hanok Village",
+"p_foreign": 0.98,
+"p_here": 0.03,
+"id": 196,
+"label": 0
+},
+{
+"countries": "India",
+"question": "Are there monks in Mongolia?",
+"place": "Thiksay monastery",
+"p_foreign": 0.98,
+"p_here": 0.1,
+"id": 197,
+"label": 0
+},
+{
+"countries": "Japan",
+"question": "What is a female samurai called?",
+"place": "Samurai-era castle",
+"p_foreign": 0.04,
+"p_here": 0.87,
+"id": 198,
+"label": 1
+},
+{
+"countries": "Mongolia",
+"question": "What is the largest island owned by Russia?",
+"place": "Olkhon Island",
+"p_foreign": 0.97,
+"p_here": 0.03,
+"id": 199,
+"label": 0
+}
+]
