@@ -1788,7 +1788,9 @@ async def get_tours_ready(request: Request, x_admin_secret: str = Header(None)):
             FROM silver_aa_internal.raw_tours t
             LEFT JOIN silver_aa_internal.raw_sources rs ON rs.id = t.source_id
             WHERE t.pipeline_status = 'ingested'
-              AND (t.source_status IS NULL OR t.source_status::text != 'trashed')
+              -- AA-702: only the active version of a source group is rewritable; superseded
+              -- rows (older re-uploads, S206 near-duplicates) are handled in Dup Review only.
+              AND t.source_status = 'active'
               -- AA-604: apply the SAME itinerary floor as S1 get_all_tours (and
               -- acp_contract.v_trip_registry / AA-345) so "Tours Ready for Rewrite"
               -- matches the S1 count. A row with no itinerary body cannot be rewritten,
@@ -1880,7 +1882,9 @@ async def get_all_tours(request: Request, x_admin_secret: str = Header(None)):
             FROM silver_aa_internal.raw_tours rt
             LEFT JOIN silver_aa_internal.raw_sources rs ON rs.id = rt.source_id
             LEFT JOIN silver_aa_internal.generated_content gc ON gc.tour_id = rt.tour_id
-            WHERE (rt.source_status IS NULL OR rt.source_status::text <> 'trashed'::text)
+            -- AA-702: active only (was: not trashed) — superseded duplicates were offered for
+            -- rewrite (S1 showed 761 = 736 active + 25 superseded).
+            WHERE rt.source_status = 'active'
               AND rt.deleted_at IS NULL
               AND rt.src_itineraries IS NOT NULL
               AND TRIM(BOTH FROM rt.src_itineraries) <> ''::text
@@ -3475,57 +3479,18 @@ async def get_pipeline_metrics(
             ORDER BY day ASC
         """, str(days))
 
-        # AA-348: the 'sonnet' label below is deliberately version-NEUTRAL ('claude-sonnet', not
-        # 'claude-sonnet-4-5') — llm_model here can be the acc2-native model id (really 4-5) OR
-        # a satellite audit label like "satellite-sonnet-4-6" (really 4-6, the common path in
-        # practice — see shared/llm_client/pricing.py's BEDROCK_SONNET comment), and this LIKE
-        # '%sonnet%' match can't tell which. A hardcoded '-4-5' suffix here would silently
-        # mislabel every satellite-Sonnet row (confirmed reachable: this column is written from
-        # LLMResponse.model_used, which IS the real per-call label, at
-        # services/content_generation/graph.py:442 -> api/routers/admin_pipeline.py's own INSERT
-        # further up in this file). Haiku is unaffected (both tiers really are 4-5-20251001).
-        cost_by_model = await conn.fetch("""
-            SELECT
-                CASE
-                    WHEN COALESCE(llm_model,'') LIKE '%haiku%'  THEN 'claude-haiku-4-5'
-                    WHEN COALESCE(llm_model,'') LIKE '%sonnet%' THEN 'claude-sonnet'
-                    WHEN COALESCE(llm_model,'') LIKE '%gpt-4%'  THEN 'gpt-4.1'
-                    ELSE 'claude-haiku-4-5'
-                END                              AS model,
-                COUNT(*)                         AS batches,
-                COALESCE(SUM(cost_usd), 0)       AS total_cost
-            FROM shared.pipeline_runs
-            WHERE cost_usd > 0 AND status != 'ingesting'
-            GROUP BY 1 ORDER BY total_cost DESC
-        """)
-
-        # AA-476 (STEP0, AA-438-05 bug #11): this counts generated_content ROWS (1 per tour
-        # version), NOT real LLM invocations. A version can involve multiple actual calls
-        # (retries, judge, brand_audit, flag_fix/repair) that aren't reliably reconstructable
-        # from persisted columns — checked brand_audit_status specifically and confirmed it's
-        # set to 'pass' on 3 separate no-LLM-call skip branches in brand_audit_node (missing
-        # `generated`, AA-206 judge-result reuse, missing OPENAI_API_KEY — the last of which is
-        # effectively 100% of rows right now, see AA-351 zero-credit finding), so it cannot be
-        # used to detect "a real call happened" either. An accurate count needs new
-        # instrumentation in services/content_generation/graph.py (out of scope here — dashboard-
-        # only fix). Frontend labels this "Versions", not "Calls", to match reality.
-        # AA-348: same version-neutral 'claude-sonnet' label as cost_by_model above, same reason
-        # — gc.model_editorial can be the real satellite audit label ("satellite-sonnet-4-6"),
-        # not the acc2-native 4-5 id, and this LIKE match can't distinguish the two.
-        models = await conn.fetch(f"""
-            SELECT
-                CASE
-                    WHEN COALESCE(gc.model_editorial,'') LIKE '%haiku%'  THEN 'claude-haiku-4-5'
-                    WHEN COALESCE(gc.model_editorial,'') LIKE '%sonnet%' THEN 'claude-sonnet'
-                    WHEN COALESCE(gc.model_editorial,'') LIKE '%gpt-4%'  THEN 'gpt-4.1'
-                    ELSE 'claude-haiku-4-5'
-                END                                          AS model,
-                COUNT(*)                                     AS calls,
-                ROUND(AVG(qs.score_overall)::numeric, 1)     AS avg_score
-            FROM silver_{tenant_slug}.generated_content gc
-            LEFT JOIN silver_{tenant_slug}.quality_scores qs
-                ON qs.generated_content_id = gc.id
-            GROUP BY 1 ORDER BY calls DESC
+        # AA-702: model usage now comes from shared.llm_call_log (real calls + real cost, every
+        # tenant and stage, same source as External Spend). The old version counted
+        # generated_content rows and priced them from pipeline_runs.cost_usd, which only the
+        # legacy S1 batch path writes — it showed one model at $0.0000 while the log had $40+.
+        model_usage_rows = await conn.fetch("""
+            SELECT model,
+                   COUNT(*)                          AS calls,
+                   COALESCE(SUM(cost_usd), 0)::float AS total_cost
+            FROM shared.llm_call_log
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY model
+            ORDER BY total_cost DESC, calls DESC
         """)
 
         avg_cost_per_run = await conn.fetchval("""
@@ -3622,28 +3587,15 @@ async def get_pipeline_metrics(
             pipeline_health.append({"name": svc, "status": "idle",
                                     "latency": "—", "errors": 0, "calls": 0})
 
-    cost_map = {r["model"]: float(r["total_cost"]) for r in cost_by_model}
-    seen_models: set = set()
-    model_usage = []
-    for r in models:
-        model      = r["model"]
-        calls      = int(r["calls"])
-        total_cost = cost_map.get(model, 0.0)
-        model_usage.append({
-            "model":         model,
-            "calls":         calls,
-            "avg_score":     float(r["avg_score"]) if r["avg_score"] else None,
-            "total_cost":    round(total_cost, 4),
-            "cost_per_call": round(total_cost / calls, 6) if calls > 0 else 0.0,
-        })
-        seen_models.add(model)
-    for r in cost_by_model:
-        if r["model"] not in seen_models:
-            total_cost = float(r["total_cost"])
-            model_usage.append({
-                "model": r["model"], "calls": int(r["batches"]),
-                "avg_score": None, "total_cost": round(total_cost, 4), "cost_per_call": 0.0,
-            })
+    model_usage = [
+        {
+            "model":         r["model"],
+            "calls":         int(r["calls"]),
+            "total_cost":    round(float(r["total_cost"]), 4),
+            "cost_per_call": round(float(r["total_cost"]) / int(r["calls"]), 6) if r["calls"] else 0.0,
+        }
+        for r in model_usage_rows
+    ]
 
     rewrite_by_day = {str(r["day"]): int(r["rewrites"]) for r in daily_rewrites}
     return {
@@ -3691,10 +3643,24 @@ async def get_seo_metrics(request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        # AA-702: keywords with a real DataForSEO search volume, across published masters. The old
+        # list took the first items of top_keywords, which for S1 is the tour-name seed itself
+        # (AA-251) — so it listed tour names with count 1.
         top_keywords = await conn.fetch("""
-            SELECT keyword_search, top_keywords, fetched_at
-            FROM silver_aa_internal.seo_context
-            ORDER BY fetched_at DESC LIMIT 20
+            SELECT lower(ki->>'keyword')                   AS keyword,
+                   MAX((ki->>'search_volume')::bigint)    AS search_volume,
+                   COUNT(DISTINCT sc.tour_id)              AS tours
+            FROM silver_aa_internal.seo_context sc
+            JOIN gold_aa_internal.published_tours pt
+              ON pt.tour_id = sc.tour_id AND pt.master_status <> 'trashed'
+             AND pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(sc.keyword_ideas) = 'array' THEN sc.keyword_ideas ELSE '[]'::jsonb END
+            ) ki
+            WHERE (ki->>'search_volume') ~ '^[0-9]+$' AND (ki->>'search_volume')::bigint > 0
+            GROUP BY 1
+            ORDER BY search_volume DESC, tours DESC
+            LIMIT 15
         """)
         total_tours = await conn.fetchval(
             "SELECT COUNT(*) FROM gold_aa_internal.published_tours "
@@ -3711,11 +3677,16 @@ async def get_seo_metrics(request: Request, x_admin_secret: str = Header(None)):
                   SELECT 1 FROM silver_aa_internal.seo_context sc WHERE sc.tour_id = rt.tour_id
               )
         """)
+        # AA-702: published masters with SEO data per country (was: every seo_context row for any
+        # raw tour, which summed to 256 against 119 published).
         countries = await conn.fetch("""
-            SELECT rt.country, COUNT(sc.id) as count
-            FROM silver_aa_internal.seo_context sc
-            JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = sc.tour_id
-            WHERE rt.country IS NOT NULL
+            SELECT rt.country, COUNT(DISTINCT pt.tour_id) AS count
+            FROM gold_aa_internal.published_tours pt
+            JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+            WHERE pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
+              AND pt.master_status <> 'trashed'
+              AND rt.country IS NOT NULL
+              AND EXISTS (SELECT 1 FROM silver_aa_internal.seo_context sc WHERE sc.tour_id = pt.tour_id)
             GROUP BY rt.country ORDER BY count DESC
         """)
 
@@ -3737,31 +3708,15 @@ async def get_seo_metrics(request: Request, x_admin_secret: str = Header(None)):
     except Exception:
         pass
 
-    import json as _j
-    keyword_counts: dict = {}
-    for row in top_keywords:
-        try:
-            kw_data = row["top_keywords"]
-            if isinstance(kw_data, str):
-                kw_data = _j.loads(kw_data)
-            items = (
-                kw_data if isinstance(kw_data, list)
-                else (kw_data.get("top_keywords") or [] if isinstance(kw_data, dict) else [])
-            )
-            for item in items[:5]:
-                kw = item.get("keyword") if isinstance(item, dict) else str(item)
-                if kw:
-                    keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
-        except Exception:
-            pass
-
-    top_kw = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     return {
         "total_tours":  total_tours,
         "seo_covered":  seo_covered,
         "coverage_pct": round(seo_covered / total_tours * 100, 1) if total_tours else 0,
         "countries":    [{"country": dict(r)["country"], "count": dict(r)["count"]} for r in countries],
-        "top_keywords": [{"keyword": k, "count": v} for k, v in top_kw],
+        "top_keywords": [
+            {"keyword": r["keyword"], "search_volume": int(r["search_volume"]), "tours": int(r["tours"])}
+            for r in top_keywords
+        ],
         "cache":        cache_stats,
     }
 

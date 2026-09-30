@@ -105,6 +105,11 @@ interface DashboardSummary {
 // AA-575 — guards the `?section=` deep-link param (see AtomCurationDashboard below): an
 // unrecognized/typo'd value falls back to "atomize" instead of matching none of the
 // `activeSection === "..."` checks and rendering a blank content column.
+// AA-702 — Route scores are averages of Segment total ranks (1392.3333333333333 on screen).
+function fmtScore(n: number | null | undefined): string {
+  return n == null ? "—" : Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
 const VALID_SECTIONS: Set<string> = new Set(["atomize", "segment", "score", "route_hub", "slate"]);
 
 const LIFECYCLE_COLOR: Record<string, "green" | "amber" | "gray"> = {
@@ -535,7 +540,7 @@ function SegmentGroup({ place, action, atoms, score, routeHubName, showTour, col
         </span>
         {score != null && (
           <span style={{ fontFamily: mono, fontSize: 11, color: A.ink3, background: A.card, border: `1px solid ${A.line}`, borderRadius: 6, padding: "2px 7px" }} title="Rank-sum — lower is better">
-            Score {score}
+            Score {fmtScore(score)}
           </span>
         )}
         {routeHubName && (
@@ -965,7 +970,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
               },
               sortValue: r => (r.ordered_segment_ids || []).length,
             },
-            { key: "score", label: "Score", render: r => r.score ?? "—", sortValue: r => r.score },
+            { key: "score", label: "Score", render: r => fmtScore(r.score), sortValue: r => r.score },
             { key: "created", label: "Created", render: r => new Date(r.created_at).toLocaleString(), sortValue: r => r.created_at },
           ] as Col<RouteRow>[]} />
           {expandedRouteId && <RouteDayBreakdown routeId={expandedRouteId} />}
@@ -1204,7 +1209,7 @@ function SlateSection() {
           ),
           sortValue: r => r.state, filterValue: r => r.state,
         },
-        { key: "score", label: "Score", render: r => r.score ?? "—", sortValue: r => r.score },
+        { key: "score", label: "Score", render: r => fmtScore(r.score), sortValue: r => r.score },
         {
           key: "kind", label: "Kind", render: r => (
             <span title={r.route_id

@@ -715,9 +715,10 @@ function TenantDetail({ tenantId, planTier }: {
       <div style={{ display: "flex", gap: 20, marginBottom: 14, flexWrap: "wrap" }}>
         {([
           ["Total Rewrites", String(s.total_rewrites),              A.gold],
-          ["LLM Cost",       `$${s.total_llm_cost_usd.toFixed(3)}`, A.body],
+          ["LLM Cost (all time)", `$${s.total_llm_cost_usd.toFixed(3)}`, A.body],
           ["API Calls (Mo)", s.api_calls_this_month.toLocaleString(), A.body],
-          ["Quota",          `${s.quota_pct}%`,                     s.quota_pct > 80 ? A.red : A.body],
+          // AA-702: this is the API-call quota; the list row shows the tour quota — label both.
+          ["API Quota",      `${s.quota_pct}%`,                     s.quota_pct > 80 ? A.red : A.body],
           // AA-557 I.19 — real data, already fetched (`shared.tenants.rate_limit_rpm` via
           // `api_usage.rate_limit_per_min`, same value the API Usage tab below already showed) —
           // just also surfaced at header level so an admin doesn't need to open that tab for it.
@@ -836,7 +837,7 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
 
         {/* Quota */}
         <td style={{ ...TD, textAlign: "right", fontSize: 12, color: A.muted }}>
-          {tenant.this_month.quota_tours_pct}% quota
+          {tenant.this_month.quota_tours_pct}% tour quota
         </td>
 
         {/* Status toggle */}

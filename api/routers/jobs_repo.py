@@ -151,7 +151,7 @@ async def get_job(job_id: str) -> dict | None:
 async def find_active_duplicate(request: dict) -> str | None:
     """Job-tier idempotency guard: an in-flight job for the same
     (tour_id, model_tier, batch_id) triple. request->> returns text, so compare
-    against text params directly. IS NOT DISTINCT FROM makes NULL batch_id match.
+    against text params directly. IS NOT DISTINCT FROM makes NULL batch_id/model_tier match.
     Returns str(id) of the newest active match, or None.
     """
     conn = await asyncpg.connect(os.environ["DATABASE_URL"])
@@ -160,7 +160,9 @@ async def find_active_duplicate(request: dict) -> str | None:
             "SELECT id FROM shared.pipeline_jobs "
             "WHERE status IN ('queued', 'running') "
             "  AND request->>'tour_id'    = $1 "
-            "  AND request->>'model_tier' = $2 "
+            # AA-702: the S1 page now sends model_tier=null (use Settings) by default; a plain
+            # "=" never matches NULL, which would let a double-click queue the same tour twice.
+            "  AND request->>'model_tier' IS NOT DISTINCT FROM $2 "
             "  AND request->>'batch_id'   IS NOT DISTINCT FROM $3 "
             "ORDER BY created_at DESC LIMIT 1",
             request.get("tour_id"),

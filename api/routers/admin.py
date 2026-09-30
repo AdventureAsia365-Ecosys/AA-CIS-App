@@ -449,10 +449,14 @@ async def get_tenant_details(
                 WHERE tenant_id = $1
             """, tenant_id)
 
+        # AA-702: real LLM spend from shared.llm_call_log (same source as External Spend). The old
+        # pipeline_runs sum only saw the legacy S1 batch path, so tenants showed $0.000. Internal
+        # work is logged both as NULL and as the aa_internal UUID.
         total_cost = await conn.fetchval("""
             SELECT COALESCE(SUM(cost_usd), 0)
-            FROM shared.pipeline_runs WHERE tenant_id = $1
-        """, tenant_id)
+            FROM shared.llm_call_log
+            WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
+        """, tenant_id, is_internal)
 
         # v_tenant_monthly_usage has one row per tenant per billing_month;
         # ORDER BY DESC so we always get the current/most-recent month.
@@ -1488,7 +1492,10 @@ async def list_notifications(
     for r in rows:
         item = dict(r)
         item["id"] = int(item["id"])
-        payload = dict(item["payload"]) if item["payload"] else {}
+        # AA-702: the pool has no jsonb codec, so payload arrives as a JSON string — dict() on it
+        # raised and the whole list 500'd while the unread count still showed on the bell.
+        raw = item["payload"]
+        payload = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
         item["payload"] = payload
         item["target_roles"] = list(item["target_roles"]) if item["target_roles"] else []
         item["dispatched_at"] = item["dispatched_at"].isoformat()
