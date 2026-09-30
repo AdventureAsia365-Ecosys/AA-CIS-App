@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import math
+from datetime import date, datetime
 import structlog
 from typing import Any
 from shared.llm_client.column_mapper import build_dynamic_column_map
@@ -63,6 +64,18 @@ _AA_ALIAS_COLUMNS = {"aa_name", "aa_subtitle", "aa_summary", "aa_highlights", "a
 # combination, whereas the priority fix alone already fully closes the corruption vector).
 _EXPORT_FILE_MARKERS = {"audit_status", "publish_ready", "fields_updated"}
 _EXPORT_FILE_PREFIX = "dfs_"
+
+
+def group_size_from_cell(value: Any) -> Any:
+    """AA-690 (S206): Excel turns a group-size range typed as "2-10" into a date (2026-02-10), and the
+    cell then reaches us as a datetime. Measured: 87 of 177 group_size values in 6 supplier files were
+    dates. Both parts of such a range are <= 12 (else Excel keeps it as text), so the range is the
+    month and the day, smaller first: 2026-02-10 → "2-10", 2026-12-01 → "1-12". Anything else is
+    returned unchanged."""
+    if isinstance(value, (datetime, date)):
+        low, high = sorted((value.month, value.day))
+        return f"{low}-{high}"
+    return value
 
 
 class ExcelParser:
@@ -133,7 +146,10 @@ class ExcelParser:
                 for excel_col, db_field in col_lookup.items():
                     if str(excel_col).strip().lower() in _AA_ALIAS_COLUMNS:
                         continue
-                    current[db_field] = self._clean(row.get(excel_col))
+                    value = row.get(excel_col)
+                    if db_field == "group_size":
+                        value = group_size_from_cell(value)
+                    current[db_field] = self._clean(value)
                 # AA_* columns never seed src_* fields, even when they're the only column
                 # present for that field — flag it instead of silently borrowing AI output.
                 for excel_col, db_field in col_lookup.items():
