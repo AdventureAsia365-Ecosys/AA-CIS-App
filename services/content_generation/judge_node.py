@@ -39,14 +39,12 @@ __all__ = ["judge_node", "_JUDGE_SEED", "_JUDGE_TEMPERATURE"]
 
 def a1_judge_score(result) -> float:
     """AA-698: the A1 master rewrite is brand-neutral by design (AA-535) — distinctiveness from
-    other brands is T2's job, not A1's. So for A1 the gate is brand fit alone (still capped when the
-    mission is absent); cross_brand_distinct is logged, not gated. Measured S204 on identical inputs:
-    GPT-5.6 Luna scored cross_brand_distinct 2–6 where GPT-4.1 gave 8–9, sending every A1 tour to
-    HITL, while Luna's brand_fit (7–8) agreed with the content passing validate at 9.75."""
-    score = result.brand_fit_score
-    if not result.mission_present:
-        score = min(score, _MISSION_ABSENT_CAP)
-    return score
+    other brands and a brand's mission-hook are T2's job, not A1's. So for A1 the gate is brand fit
+    alone; cross_brand_distinct and mission_present are logged, not gated. Measured S204 on identical
+    inputs: GPT-5.6 Luna scored cross_brand_distinct 2–6 where GPT-4.1 gave 8–9, and after that fix
+    still returned mission_present=False on 2 of 3 smoke tours (it sees only the first 600 chars of
+    the itinerary) — each sent the tour to HITL at 6.0 while validate scored 9.6–9.9."""
+    return result.brand_fit_score
 
 
 def judge_node(state: dict) -> dict:
