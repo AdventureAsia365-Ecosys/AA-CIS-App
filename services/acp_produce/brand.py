@@ -81,7 +81,10 @@ async def fetch_brand_rubric_text(db: asyncpg.Connection, tenant_id: str) -> str
         """
         SELECT system_prompt, style_guide, forbidden_words, good_examples
         FROM shared.tenant_brand_rules
-        WHERE tenant_id = $1::uuid AND brand_name = 'default' AND is_active = true
+        WHERE tenant_id = $1::uuid AND is_active = true
+        -- AA-700: the tenant portal saves the brand under the tenant's own brand_name (not
+        -- 'default'); prefer 'default', else the tenant's newest active row.
+        ORDER BY (brand_name = 'default') DESC, version DESC
         LIMIT 1
         """,
         tenant_id,
@@ -90,7 +93,7 @@ async def fetch_brand_rubric_text(db: asyncpg.Connection, tenant_id: str) -> str
     if not system_prompt.strip():
         logger.warning(
             "brand_rubric_fallback_generic", tenant_id=tenant_id,
-            reason="no active 'default' shared.tenant_brand_rules row, or system_prompt empty",
+            reason="no active shared.tenant_brand_rules row, or system_prompt empty",
         )
         return AA_BRAND_IDENTITY_PROMPT
 

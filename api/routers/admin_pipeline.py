@@ -349,9 +349,13 @@ async def _resolve_brand_rule(conn, tenant_uuid, brand_identity_id, brand_name):
             " ORDER BY version DESC LIMIT 1",
             tenant_uuid, brand_name,
         )
+    # AA-700: prefer the 'default' row; a tenant who named their brand in the portal
+    # (POST /admin/brand-identity keeps one active row per tenant under that name) has no
+    # 'default' row, so fall back to the tenant's newest active row instead of None.
     return await conn.fetchrow(
         f"SELECT {_BRAND_RULE_COLS} FROM shared.tenant_brand_rules"
-        " WHERE tenant_id = $1::uuid AND brand_name = 'default' AND is_active = true"
+        " WHERE tenant_id = $1::uuid AND is_active = true"
+        " ORDER BY (brand_name = 'default') DESC, version DESC"
         " LIMIT 1",
         tenant_uuid,
     )
