@@ -241,7 +241,9 @@ async def test_precompute_embeds_all_segments_up_front_once():
          patch("services.acp_contract.atom_ranking.embed_questions_cached",
                AsyncMock(return_value=vectors)) as m_q, \
          patch("services.acp_contract.atom_ranking.land_questions_for_segment",
-               AsyncMock(return_value=1)) as m_land:
+               AsyncMock(return_value=1)) as m_land, \
+         patch("services.acp_contract.atom_ranking.filter_candidates_by_landing",   # AA-694: Jev gate
+               AsyncMock(return_value={})):
         counts = await precompute_question_landings(pool, progress=progress.append)
 
     m_atoms.assert_awaited_once()
@@ -252,6 +254,7 @@ async def test_precompute_embeds_all_segments_up_front_once():
     for call in m_land.call_args_list:
         assert call.kwargs["question_vectors"] is vectors
         assert call.kwargs["atoms_embedded"] is True
+        assert call.kwargs["candidates"]          # AA-694: the filtered shortlist is passed through
     assert counts == {"seg-1": 1, "seg-2": 1}
     assert progress[-1] == {"step": "landing_questions", "done": 2, "total": 2}
 

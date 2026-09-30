@@ -1,0 +1,1602 @@
+[
+{
+"id": 0,
+"moment": "Bolaven Plateau — cycle through coffee plantations and ethnic Laven communities in cooler climate",
+"question": "Why do I feel sick after drinking Vietnamese coffee?",
+"p": 0.18,
+"label": 0,
+"note": ""
+},
+{
+"id": 1,
+"moment": "Khorgo Volcano — trek into a 600-meter-wide dormant volcano with panoramic views of Terkhiin Tsagaan Lake",
+"question": "What is the deepest lake in Mongolia?",
+"p": 0.31,
+"label": 0,
+"note": ""
+},
+{
+"id": 2,
+"moment": "Delhi — flight to Sri Lanka",
+"question": "What are the latest news on Delhi Airport?",
+"p": 0.32,
+"label": 0,
+"note": ""
+},
+{
+"id": 3,
+"moment": "Khamsum Yulley Namgyel ridge — practice morning yoga overlooking Punakha Valley",
+"question": "What is the population of Punakha?",
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 4,
+"moment": "Railway Market at Ratchaburi — visit and haggle for local goods",
+"question": "Is the Burma-Thailand Railway still in use?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 5,
+"moment": "Seogwipo — explore Jeju's second city with a UNESCO-designated historical legacy",
+"question": "Does Jeju have a nightlife?",
+"p": 0.3,
+"label": 0,
+"note": ""
+},
+{
+"id": 6,
+"moment": "Li Phi Waterfall — relax by the falls, enjoy the scenery, watch local fishermen at work, and sample freshly caught Mekong fish",
+"question": "What is the best month to do a Mekong River cruise?",
+"p": 0.24,
+"label": 0,
+"note": ""
+},
+{
+"id": 7,
+"moment": "Dirapuk Monastery — overnight on the kora",
+"question": "What is the history of the Tashiding monastery?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 8,
+"moment": "Khorgo Volcano — trek into a 600-meter-wide dormant volcano with panoramic views of Terkhiin Tsagaan Lake",
+"question": "Can you swim in Lake Khuvsgul?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 9,
+"moment": "Seoul — explore K-pop cultural immersion at HiKR Ground",
+"question": "How can I get from Seoul airport to my hotel?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 10,
+"moment": "Jangothang — explore the glacial terminus above camp",
+"question": "What is the altitude of Jomolhari Base Camp?",
+"p": 0.41,
+"label": 1,
+"note": "Jangothang is Jomolhari base camp"
+},
+{
+"id": 11,
+"moment": "Braga Gompa — pass gompa dating back some 900 years",
+"question": "What is the story behind Tiger's Nest monastery?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 12,
+"moment": "Haa valley — spend rest day in one of Bhutan's most isolated settlements",
+"question": "What is the history of the Gangtey Monastery?",
+"p": 0.27,
+"label": 0,
+"note": ""
+},
+{
+"id": 13,
+"moment": "Sotikhola — reach trailhead by vehicle from Kathmandu",
+"question": "Is there Uber or Grab in Nepal?",
+"p": 0.25,
+"label": 0,
+"note": ""
+},
+{
+"id": 14,
+"moment": "Thai Buddhist vihara, Sarnath — view the 80-foot-tall standing Buddha statue",
+"question": "How many steps to climb the giant Buddha?",
+"p": 0.45,
+"label": 0,
+"note": "generic 'giant Buddha'"
+},
+{
+"id": 15,
+"moment": "Babesa village — eat traditional lunch",
+"question": "Does Bhutan have Indian food?",
+"p": 0.4,
+"label": 0,
+"note": ""
+},
+{
+"id": 16,
+"moment": "Khardung to Leh via Khardung La — cycle",
+"question": "Is Chele La Pass worth visiting?",
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 17,
+"moment": "Champasak to Don Khong — cycle southward along the Mekong toward the 4,000 Islands region",
+"question": "What are some fun things to do on Don Det, Laos?",
+"p": 0.26,
+"label": 0,
+"note": ""
+},
+{
+"id": 18,
+"moment": "Kurje Lhakhang — meditate",
+"question": "What is the significance of Chimi Lhakhang?",
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 19,
+"moment": "Chinggis Khaan Equestrian Statue complex at Tsonjin Boldog — tour the grounds of the statue complex",
+"question": "How much DNA does Genghis Khan have?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 20,
+"moment": "Paro Rinpung Dzong — witness the thongdrel ceremony — the unfurling of a massive embroidered thangka at dawn",
+"question": "What is the altitude of Trongsa, Bhutan?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 21,
+"moment": "Wat Pho — see the reclining Buddha",
+"question": "How long does it take to walk up Doi Suthep?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 22,
+"moment": "Tamchhog Lhakhang — pass temple historically significant as the hereditary place of worship for Bhutan's iron bridge builder",
+"question": "What is the story behind Tiger's Nest monastery?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 23,
+"moment": "Wat Mai — tour temple complex by tuk-tuk",
+"question": "How long does it take to walk up Doi Suthep?",
+"p": 0.27,
+"label": 0,
+"note": ""
+},
+{
+"id": 24,
+"moment": "Old Delhi — ride cycle-rickshaw through Old Delhi and the Jama Masjid marketplace",
+"question": "What is Delhi known for food?",
+"p": 0.71,
+"label": 0,
+"note": "Old Delhi food vs rickshaw ride (borderline)"
+},
+{
+"id": 25,
+"moment": "Gasa Dzong — visit",
+"question": "Is there an entry fee to visit Rinpung Dzong?",
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 26,
+"moment": "Nyili La Pass — descend into Lingshi basin with views of Lingshi Dzong and Tserim Kang glacier",
+"question": "Why was Zhabdrung's death kept secret?",
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 27,
+"moment": "Daxueshan Visitor Center — complete thru-hike and depart by return transportation",
+"question": "Is there a Snow Mountain in Taiwan?",
+"p": 0.5,
+"label": 1,
+"note": "Daxueshan = Snow Mountain"
+},
+{
+"id": 28,
+"moment": "Kurje Lhakhang — meditate",
+"question": "Which is the oldest lhakhang in Bhutan?",
+"p": 0.5,
+"label": 0,
+"note": ""
+},
+{
+"id": 29,
+"moment": "Mebar Tsho Lake — stop en route to Bumthang",
+"question": "Why is Bhutan so famous?",
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 30,
+"moment": "Khorgo Volcano — trek into a 600-meter-wide dormant volcano with panoramic views of Terkhiin Tsagaan Lake",
+"question": "How many volcanoes does Mongolia have?",
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 31,
+"moment": "Chiang Rai — explore night market and local dining options",
+"question": "How much does Doi Suthep cost?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 32,
+"moment": "Tamchhog Lhakhang — pass temple historically significant as the hereditary place of worship for Bhutan's iron bridge builder",
+"question": "What is the story behind Tiger's Nest Monastery?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 33,
+"moment": "Khao Sok Lake — kayak, swim, or spend time in floating bungalow",
+"question": "How much does a Khao Sok Lake one-day tour cost?",
+"p": 0.78,
+"label": 1,
+"note": ""
+},
+{
+"id": 34,
+"moment": "Mutianyu — visit the Great Wall",
+"question": "How much of Mutianyu can you walk?",
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 35,
+"moment": "unrestored sections of the Great Wall near Beijing — hike and camp overnight on a deserted section",
+"question": "Is Mutianyu or Badaling better?",
+"p": 0.33,
+"label": 0,
+"note": ""
+},
+{
+"id": 36,
+"moment": "Laos — arrange onward transport and international flights",
+"question": "Why is travel to Laos banned?",
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 37,
+"moment": "Cho La Pass to Dzongla — descend across a small glacier to high pastures",
+"question": "What is the altitude of Dolma La pass?",
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 38,
+"moment": "Seogwipo — explore Jeju's second city with a UNESCO-designated historical legacy",
+"question": "What is Seogwipo famous for?",
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 39,
+"moment": "Paro — browse local handicraft shops for textiles, wooden masks, and other items crafted by regional artisans",
+"question": "What is the history of Paro Ta Dzong?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 40,
+"moment": "Gal Vihara — see four Buddha statues carved from single stone outcrops",
+"question": "How many steps to climb the giant Buddha?",
+"p": 0.27,
+"label": 0,
+"note": ""
+},
+{
+"id": 41,
+"moment": "Mutianyu — visit the Great Wall",
+"question": "Is the Mutianyu Great Wall the same as the Great Wall of China?",
+"p": 0.66,
+"label": 1,
+"note": ""
+},
+{
+"id": 42,
+"moment": "Tsagaan Suvarga — check in at the local camp",
+"question": "What is the largest lake in Mongolia?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 43,
+"moment": "Chiang Mai Canyon recreation area — paddleboard",
+"question": "What is the must-see temple in Chiang Mai?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 44,
+"moment": "Lhalung La — trek to the pass",
+"question": "Is Haa Valley worth visiting?",
+"p": 0.71,
+"label": 0,
+"note": ""
+},
+{
+"id": 45,
+"moment": "Neelagiri Buddha Statue — explore with a local guide",
+"question": "Where is the giant Buddha located?",
+"p": 0.67,
+"label": 0,
+"note": "generic 'giant Buddha'"
+},
+{
+"id": 46,
+"moment": "Chele La Pass — hike for acclimatisation with views toward Mount Jomolhari",
+"question": "What is the significance of the Dochula Pass?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 47,
+"moment": "Si Phan Don — watch for rare Irrawaddy dolphins",
+"question": "What is special about Kuang Si Falls?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 48,
+"moment": "Jeju — watch a live Haenyeo women divers demonstration of traditional breath-hold diving for abalone and seafood",
+"question": "Does Jeju have a nightlife?",
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 49,
+"moment": "Tamchhog Lhakhang — stop and visit 15th-century temple",
+"question": "What is the history of Dechenphu lhakhang?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 50,
+"moment": "Phuket — spend time at the hotel pool and beach",
+"question": "Which month not to visit Phuket?",
+"p": 0.49,
+"label": 0,
+"note": ""
+},
+{
+"id": 51,
+"moment": "Thimphu — spend free day",
+"question": "How tall is the Memorial Chorten in Thimphu, Bhutan?",
+"p": 0.74,
+"label": 0,
+"note": ""
+},
+{
+"id": 52,
+"moment": "Khao Sok Lake — do dawn lake safari",
+"question": "Is Khao Sok closer to Krabi or Phuket?",
+"p": 0.38,
+"label": 0,
+"note": "Khao Sok logistics vs dawn safari (borderline)"
+},
+{
+"id": 53,
+"moment": "Chiang Saen — visit Golden Triangle viewpoint where Thailand, Laos, and Burma converge",
+"question": "How early should I get to Chiang Rai Airport?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 54,
+"moment": "Gangnam district — explore Seoul's busiest subway station and underground shopping complex",
+"question": "How do I get from Seoul airport to the city center?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 55,
+"moment": "Wat Xieng Thong — tour temple complex by tuk-tuk",
+"question": "What is the entrance fee for Wat Mahathat?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 56,
+"moment": "Koh Samui — arrange a Thai massage",
+"question": "Is the Death Railway worth it?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 57,
+"moment": "Chimmi Lhakhang — visit",
+"question": "Which is the most famous monastery in Bhutan?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 58,
+"moment": "Jakar Dzong — visit",
+"question": "What are the 20 Dzongs in Bhutan?",
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 59,
+"moment": "Delhi — join a youth-led city walk",
+"question": "What is the current situation at Delhi Airport?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 60,
+"moment": "Ulaanbaatar — visit the Chinggis Khan statue",
+"question": "What was Genghis Khan's horse?",
+"p": 0.27,
+"label": 0,
+"note": ""
+},
+{
+"id": 61,
+"moment": "Larkya Glacier — cross glacial moraines during final approach to Larkya La",
+"question": "Is Haa Valley worth visiting?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 62,
+"moment": "Pak Ou Caves — journey upstream on the Mekong by slow-boat",
+"question": "Which country is the Mekong River in?",
+"p": 0.36,
+"label": 0,
+"note": ""
+},
+{
+"id": 63,
+"moment": "Bangla Road — bar crawl along Phuket's main entertainment strip",
+"question": "Is there an entry fee for Big Buddha Phuket?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 64,
+"moment": "Beijing — eat Beijing Duck dinner",
+"question": "What is the best tour of Beijing?",
+"p": 0.59,
+"label": 0,
+"note": ""
+},
+{
+"id": 65,
+"moment": "Chiang Mai — visit market and take Thai cooking class selecting ingredients and preparing traditional dishes",
+"question": "How many Australians died on the Thai-Burma Railway?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 66,
+"moment": "Wangduephodrang Dzong — visit",
+"question": "Is there an entry fee to visit Rinpung Dzong?",
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 67,
+"moment": "Lisu Lodge — have Thai lunch on the lodge balcony",
+"question": "Was Bridge Over River Kwai a true story?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 68,
+"moment": "Wat Yai Chaimongkol — visit temple ruins",
+"question": "Is the giant Buddha in Bangkok real gold?",
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 69,
+"moment": "Jiayuguan Pass — visit the Ming Dynasty fortress",
+"question": "Is Jiayuguan the end of the Great Wall?",
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 70,
+"moment": "Wat Phanan Choeng — visit temple ruins",
+"question": "What is the most beautiful temple in Thailand?",
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 71,
+"moment": "Kanchanaburi — cruise the River Kwai ending at the Bridge Over the River Kwai at sunset",
+"question": "What is the true story of the bridge over the river Kwai?",
+"p": 0.46,
+"label": 1,
+"note": ""
+},
+{
+"id": 72,
+"moment": "Mutianyu Great Wall — walk the wall",
+"question": "Is the Mutianyu Great Wall worth visiting?",
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 73,
+"moment": "Kuang Si Falls to Luang Prabang — bike back on winding paths that occasionally break through jungle to reveal glimpses of the Mekong",
+"question": "What is Laos most famous for?",
+"p": 0.42,
+"label": 0,
+"note": ""
+},
+{
+"id": 74,
+"moment": "Jhari La Pass — climb to pass and descend through forest into Tsharithang valley",
+"question": "Which is the 3 highest pass in the world?",
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 75,
+"moment": "Beijing — take an orientation walk around the hotel area",
+"question": "What are 10 must-see things in Beijing?",
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 76,
+"moment": "return bus to Seoul — hear firsthand accounts from a North Korean defector",
+"question": "How can I get from Seoul airport to my hotel?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 77,
+"moment": "Chinggis Khaan Equestrian Statue complex at Tsonjin Boldog — tour the grounds of the statue complex",
+"question": "Why does Mongolia have a statue of Genghis Khan?",
+"p": 0.8,
+"label": 1,
+"note": ""
+},
+{
+"id": 78,
+"moment": "Yol Valley — trek",
+"question": "Has it ever snowed in the Gobi Desert?",
+"p": 0.33,
+"label": 0,
+"note": ""
+},
+{
+"id": 79,
+"moment": "Paro Valley — acclimatise and hike",
+"question": "What is the history of Paro Ta Dzong?",
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 80,
+"moment": "Wat Athvea — ride past a modern temple built within the ruins of an Angkorian temple",
+"question": "Is the giant Buddha in Bangkok real gold?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 81,
+"moment": "Mutianyu section of the Great Wall — camp overnight on a deserted section",
+"question": "Do you need to pre-book Mutianyu Great Wall?",
+"p": 0.58,
+"label": 1,
+"note": ""
+},
+{
+"id": 82,
+"moment": "Li River near Yangshuo — river cruise",
+"question": "What to do in Yangshuo for a day?",
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 83,
+"moment": "Shinge La Pass to Laya District — descend through a winding river valley",
+"question": "How far is Dochula Pass from Paro?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 84,
+"moment": "Bangla Road — bar crawl along Phuket's main entertainment strip",
+"question": "What is the best side of Phuket to stay on?",
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 85,
+"moment": "Mekong River — boat journey from Luang Prabang to Pakbeng among limestone cliffs and remote villages",
+"question": "Is it safe to swim in the Mekong River?",
+"p": 0.61,
+"label": 1,
+"note": ""
+},
+{
+"id": 86,
+"moment": "Chele La Pass — hike for acclimatisation with views toward Mount Jomolhari",
+"question": "Is Paro in Bhutan worth visiting?",
+"p": 0.72,
+"label": 0,
+"note": ""
+},
+{
+"id": 87,
+"moment": "Seogwipo — explore Jeju's second city with a UNESCO-designated historical legacy",
+"question": "Which month to avoid Jeju?",
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 88,
+"moment": "Angkor — cycle the Small Circuit visiting Ta Prohm, Bayon, Angkor Thom, and Angkor Wat",
+"question": "What is the most famous 4-face Buddha in Bangkok?",
+"p": 0.02,
+"label": 0,
+"note": ""
+},
+{
+"id": 89,
+"moment": "Thimphu — begin day with ceremonial worship, breathing exercises, and meditation before breakfast",
+"question": "What is the entry fee for the National Memorial Chorten in Thimphu?",
+"p": 0.36,
+"label": 0,
+"note": ""
+},
+{
+"id": 90,
+"moment": "Seoul — join First Night Out at local bars or noraebang karaoke venues",
+"question": "Do I need to go through immigration for a connecting flight in Seoul?",
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 91,
+"moment": "Nam Ou valley — trek through streams and jungle to cascades",
+"question": "What to wear to Pak Ou Caves?",
+"p": 0.57,
+"label": 0,
+"note": ""
+},
+{
+"id": 92,
+"moment": "Don Khone — explore proximity to multiple waterfalls and a swimmable beach area",
+"question": "Which is the first highest waterfall in Asia?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 93,
+"moment": "Preah Ang Thom — visit a sixteenth-century reclining Buddha carved into sandstone",
+"question": "Is Buddha Park free?",
+"p": 0.2,
+"label": 0,
+"note": ""
+},
+{
+"id": 94,
+"moment": "Lungsumga Gompa — explore a 200-year-old monastery with views of Mera North",
+"question": "What is the story behind Tiger's Nest monastery?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 95,
+"moment": "Li River near Yangshuo — river cruise",
+"question": "Is Yangshuo a tourist trap?",
+"p": 0.8,
+"label": 1,
+"note": ""
+},
+{
+"id": 96,
+"moment": "Wat Saket — take in panoramic viewpoint",
+"question": "How many steps at Wat Phra That Doi Suthep?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 97,
+"moment": "Jeju City to Seogwipo — ride 67-kilometer route south along beach roads through lava structures, tuff formations, and volcanic cliffs",
+"question": "When to avoid Jeju?",
+"p": 0.42,
+"label": 0,
+"note": ""
+},
+{
+"id": 98,
+"moment": "Big Pha Ngern — climb to Big Pha Ngern above Vang Vieng with views of the Nam Song River and karst peaks",
+"question": "What is the best time to visit Vang Vieng?",
+"p": 0.4,
+"label": 0,
+"note": "best time for Vang Vieng vs one climb (borderline)"
+},
+{
+"id": 99,
+"moment": "Amarbayasgalant monastery — explore the monastic grounds and nearby hills",
+"question": "What are the 21 forms of Tara?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 100,
+"moment": "Tad Fane — visit",
+"question": "Can you swim in the Kuang Si Falls?",
+"p": 0.18,
+"label": 0,
+"note": ""
+},
+{
+"id": 101,
+"moment": "Larkya La — ascend pass with panoramic views of Himlung Himal, Cheo Himal, Annapurna II, and Manaslu",
+"question": "What is the significance of the Dochula Pass?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 102,
+"moment": "Trongsa Dzong — visit",
+"question": "What are the 20 dzongs in Bhutan?",
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 103,
+"moment": "Kuenselphodrang — practice yoga at site of Bhutan's largest Buddha statue",
+"question": "How many steps to climb the giant Buddha?",
+"p": 0.68,
+"label": 0,
+"note": ""
+},
+{
+"id": 104,
+"moment": "Mongar Dzong — explore",
+"question": "Is there an entry fee to visit Rinpung Dzong?",
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 105,
+"moment": "Mutianyu section of the Great Wall — hike",
+"question": "How much does a ticket to the Mutianyu Great Wall cost?",
+"p": 0.73,
+"label": 1,
+"note": ""
+},
+{
+"id": 106,
+"moment": "Gandan Monastery — tour",
+"question": "What is the main religion in Mongolia?",
+"p": 0.39,
+"label": 0,
+"note": ""
+},
+{
+"id": 107,
+"moment": "Bangla Road — bar crawl along Phuket's main entertainment strip",
+"question": "Is the Big Buddha in Phuket reopening?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 108,
+"moment": "Jama Masjid minaret — climb the minaret for a bird's eye view of Old Delhi",
+"question": "What are the 10 most popular street foods in India?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 109,
+"moment": "women's cooperative, Kerala — encounter a women's cooperative",
+"question": "What is Love Lock Bridge?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 110,
+"moment": "Mutianyu — visit the Great Wall",
+"question": "How much does a ticket to the Mutianyu Great Wall cost?",
+"p": 0.69,
+"label": 1,
+"note": ""
+},
+{
+"id": 111,
+"moment": "Eidgah Mosque — visit",
+"question": "What country has zero mosques?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 112,
+"moment": "Jeju Brewery — drink local craft ale at happy hour",
+"question": "Which city in Korea has the best nightlife?",
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 113,
+"moment": "Khao Sok Lake — do dawn lake safari",
+"question": "How many days do you need in Khao Sok National Park?",
+"p": 0.63,
+"label": 1,
+"note": "days needed in Khao Sok vs lake safari (borderline)"
+},
+{
+"id": 114,
+"moment": "Summer Palace — explore the imperial garden",
+"question": "How much gold is in the Potala Palace?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 115,
+"moment": "Cho La Pass to Dzongla — descend across a small glacier to high pastures",
+"question": "What is the oxygen level at Dolma La pass?",
+"p": 0.2,
+"label": 0,
+"note": ""
+},
+{
+"id": 116,
+"moment": "Mount Phousi — ascend to the summit for a 360-degree view across the city and toward the Mekong River",
+"question": "What lives in the Mekong River?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 117,
+"moment": "Yol Valley — trek",
+"question": "Is it safe to visit Mongolia right now?",
+"p": 0.38,
+"label": 0,
+"note": ""
+},
+{
+"id": 118,
+"moment": "Buddha Dordenma statue — make butterlamp offerings and mantra recitation",
+"question": "What is the statue of Genghis Khan made of?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 119,
+"moment": "Wat Saket — take in panoramic viewpoint",
+"question": "Can I wear shorts to Wat Phra That Doi Suthep?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 120,
+"moment": "Great Wall at Mutianyu — full-day visit",
+"question": "Do you need to pre-book Mutianyu Great Wall?",
+"p": 0.84,
+"label": 1,
+"note": ""
+},
+{
+"id": 121,
+"moment": "Paro — take herbal hot stone bath",
+"question": "What is Paro, Bhutan known for?",
+"p": 0.7,
+"label": 0,
+"note": "'what is Paro known for' vs hot stone bath (borderline)"
+},
+{
+"id": 122,
+"moment": "Wat Saket — visit panoramic viewpoint",
+"question": "How long does it take to walk up Doi Suthep?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 123,
+"moment": "Lipton's Seat — take in the viewpoint overlooking Tissamaharama valley from 2,000 meters",
+"question": "Where is Lovers bridge?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 124,
+"moment": "Jeju — watch a live Haenyeo women divers demonstration of traditional breath-hold diving for abalone and seafood",
+"question": "Does Jeju Island have good beaches?",
+"p": 0.2,
+"label": 0,
+"note": ""
+},
+{
+"id": 125,
+"moment": "ancient City Wall — cycle around the ancient City Wall",
+"question": "Is Mutianyu or Badaling better?",
+"p": 0.2,
+"label": 0,
+"note": ""
+},
+{
+"id": 126,
+"moment": "Angkor — cycle the Small Circuit visiting Ta Prohm, Bayon, Angkor Thom, and Angkor Wat",
+"question": "How long does it take to walk up Doi Suthep?",
+"p": 0.02,
+"label": 0,
+"note": ""
+},
+{
+"id": 127,
+"moment": "Taktsang monastery — eat lunch midway",
+"question": "Who founded the Tara Buddhist Centre?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 128,
+"moment": "Jingshan Park — climb for views across Beijing's landmarks",
+"question": "What are 10 must-see things in Beijing?",
+"p": 0.65,
+"label": 0,
+"note": ""
+},
+{
+"id": 129,
+"moment": "Wat Pho — see the reclining Buddha",
+"question": "What is the most beautiful temple in Thailand?",
+"p": 0.61,
+"label": 0,
+"note": ""
+},
+{
+"id": 130,
+"moment": "Hor Phra Keo — explore one of Laos's most venerated temples, now preserved as a museum",
+"question": "Which is better, Luang Prabang or Vientiane?",
+"p": 0.38,
+"label": 0,
+"note": ""
+},
+{
+"id": 131,
+"moment": "Larkya La — ascend and cross",
+"question": "How many people died in Kailash Mansarovar Yatra?",
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 132,
+"moment": "Phuket — spend time at the hotel pool and beach",
+"question": "Why is Phuket famous for?",
+"p": 0.34,
+"label": 0,
+"note": ""
+},
+{
+"id": 133,
+"moment": "Gangtey Gompa — visit",
+"question": "What is the history of the Gangtey Monastery?",
+"p": 0.67,
+"label": 1,
+"note": ""
+},
+{
+"id": 134,
+"moment": "Bongeunsa — visit a Buddhist temple situated centrally in Gangnam",
+"question": "Does Buddhism accept astrology?",
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 135,
+"moment": "Phuket — swim, explore local restaurants, or rest",
+"question": "What's the best place to stay in Phuket?",
+"p": 0.51,
+"label": 0,
+"note": ""
+},
+{
+"id": 136,
+"moment": "Khamsum Yulley Namgyel temple — hike to temple with valley views",
+"question": "Why was Khamsum Yulley Namgyal chorten built?",
+"p": 0.6,
+"label": 1,
+"note": ""
+},
+{
+"id": 137,
+"moment": "Jeju Island — explore waterfalls and walk lava-cave systems",
+"question": "Can foreigners go to Jeju Island?",
+"p": 0.3,
+"label": 0,
+"note": ""
+},
+{
+"id": 138,
+"moment": "Doi Mae Salong — participate in a tea tasting",
+"question": "Do you need tickets for Doi Suthep?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 139,
+"moment": "Wat Saket — visit panoramic viewpoint",
+"question": "How many steps at Wat Phra That Doi Suthep?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 140,
+"moment": "Jeju Olle Trail — trek a section of the coastal and countryside footpaths",
+"question": "What can you do in Jeju City?",
+"p": 0.8,
+"label": 0,
+"note": "'what to do in Jeju City' vs Olle trail (borderline)"
+},
+{
+"id": 141,
+"moment": "Punakha riverside — eat lunch featuring Bhutanese-style river trout and red and white rice from the valley",
+"question": "How much does it cost to go river rafting in Punakha Valley, Bhutan?",
+"p": 0.49,
+"label": 0,
+"note": ""
+},
+{
+"id": 142,
+"moment": "Wat Phanan Choeng — explore temple ruins",
+"question": "How do you get to Wat Phra That Doi Suthep?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 143,
+"moment": "Wat Bo Phuttharam — visit and view two-tiered statue of Luang Phor Thuad overlooking a man-made lake",
+"question": "What is the most beautiful temple in Thailand?",
+"p": 0.3,
+"label": 0,
+"note": ""
+},
+{
+"id": 144,
+"moment": "Chiang Rai — explore night market and local dining options",
+"question": "Can you fly between Chiang Mai and Chiang Rai?",
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 145,
+"moment": "Khao Sok River — paddle by bamboo raft, spotting kingfishers, monitor lizards, and wild monkeys beneath limestone cliffs",
+"question": "Is Khao Sok really worth it?",
+"p": 0.89,
+"label": 1,
+"note": ""
+},
+{
+"id": 146,
+"moment": "Lingshi basin — descend from Nyili La Pass with views of Lingshi Dzong and Tserim Kang glacier",
+"question": "Why was Zhabdrung's death kept secret?",
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 147,
+"moment": "Kumarakom backwater resort — explore the property including water sports and traditional Ayurvedic treatments",
+"question": "Is the springs resort all inclusive?",
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 148,
+"moment": "Seogwipo Maritime Park — walk coastal walking paths",
+"question": "Is it worth staying in Seogwipo?",
+"p": 0.72,
+"label": 0,
+"note": ""
+},
+{
+"id": 149,
+"moment": "Phuket — spend time at the hotel pool and beach",
+"question": "Why is Big Buddha Phuket closed?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 150,
+"moment": "Milarepa's Cave — pass cave associated with Milarepa, the 11th-century yogi",
+"question": "Does Love Lock Bridge still exist?",
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 151,
+"moment": "Tsharithang valley — cross Jhari La Pass and encounter takin herds",
+"question": "What is the most famous pass in Bhutan?",
+"p": 0.51,
+"label": 0,
+"note": ""
+},
+{
+"id": 152,
+"moment": "Jambay Lhakhang — participate in full-day sesshin-style practice with local monks",
+"question": "Who is the highest ranked Buddhist monk in Bhutan?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 153,
+"moment": "Kathmandu — check in and settle in for the evening",
+"question": "Is there Uber or Grab in Nepal?",
+"p": 0.38,
+"label": 0,
+"note": ""
+},
+{
+"id": 154,
+"moment": "Champasak — pause for lunch over coffee and conversation",
+"question": "Is Laos considered Thailand?",
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 155,
+"moment": "Li River — take a river cruise near Yangshuo",
+"question": "Where is the best climbing in China?",
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 156,
+"moment": "Jangothang — encounter yak herders and view Mount Jomolhari",
+"question": "Where is Jomolhari Mountain located?",
+"p": 0.66,
+"label": 1,
+"note": ""
+},
+{
+"id": 157,
+"moment": "Phuket — swim, explore local restaurants, or rest",
+"question": "Is the Big Buddha temple in Phuket open in 2026?",
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 158,
+"moment": "Laos Water Buffalo Dairy — visit community project near Luang Prabang",
+"question": "What are some of the most famous waterfalls in Laos?",
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 159,
+"moment": "Ongi Monastery — explore ruins",
+"question": "Are there monks in Mongolia?",
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 160,
+"moment": "Jeju City — settle into accommodation",
+"question": "Can US citizens go to Jeju Island?",
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 161,
+"moment": "Changangkha Temple, Thimphu — visit Changangkha Temple",
+"question": "Is there a Pennis temple in Bhutan?",
+"p": 0.64,
+"label": 0,
+"note": "'Pennis temple' is Chimi Lhakhang, not Changangkha"
+},
+{
+"id": 162,
+"moment": "City Wall — walk the ancient City Wall",
+"question": "How much time do you need at Mutianyu Great Wall?",
+"p": 0.87,
+"label": 0,
+"note": "Mutianyu question on Xi'an City Wall — Jev 0.87 wrong"
+},
+{
+"id": 163,
+"moment": "That Ing Hang Stupa — visit a 16th-century monument reported to house a relic of Buddha's spine",
+"question": "How many steps to climb the giant Buddha?",
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 164,
+"moment": "Laos Water Buffalo Dairy — visit community project near Luang Prabang",
+"question": "What is Kong Lor Cave?",
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 165,
+"moment": "Taa Dzong watchtower museum — visit the watchtower museum",
+"question": "Who built it, Trongsa Dzong?",
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 166,
+"moment": "Ongi Monastery — explore ruins",
+"question": "What does Tara mean spiritually?",
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 167,
+"moment": "Chorten Kora — visit",
+"question": "What is a famous monument in Bhutan?",
+"p": 0.54,
+"label": 0,
+"note": ""
+},
+{
+"id": 168,
+"moment": "Wat Phanan Choeng — visit temple ruins",
+"question": "What is Wat Muang in Ang Thong known for?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 169,
+"moment": "Han River — cycle along dedicated bike paths through Yeouido and Banpo Hangang Parks",
+"question": "What is a famous hotel in Korea?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 170,
+"moment": "Kuang Si Falls — ride to and swim in travertine-lined pools",
+"question": "Is Don Det worth visiting?",
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 171,
+"moment": "Dolma La — cross the pass at 18,600 feet during the Kailash Kora",
+"question": "Which is the highest pass in Bhutan?",
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 172,
+"moment": "Gandan Monastery — tour",
+"question": "Which monastery does Dalai Lama live in?",
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 173,
+"moment": "Manas National Park — early-morning wildlife drive searching for Asian elephants, Royal Bengal tigers, and takin",
+"question": "Is Manas a tributary of Brahmaputra?",
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 174,
+"moment": "Paro town — stroll through town",
+"question": "Where is the city of Paro?",
+"p": 0.5,
+"label": 1,
+"note": ""
+},
+{
+"id": 175,
+"moment": "Namgyal Gompa — view centuries-old Buddhist paintings",
+"question": "What do Buddhists do before bed?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 176,
+"moment": "Jambay Lhakhang temple — make butterlamp offerings, circumambulate, and recite mantras",
+"question": "What is the story behind Tiger's Nest Monastery?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 177,
+"moment": "Seoul — join First Night Out at local bars or noraebang karaoke venues",
+"question": "How do I get from Seoul airport to the city center?",
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 178,
+"moment": "Kanchanaburi — visit floating markets and cruise the River Kwai",
+"question": "Who won an Oscar for Bridge on the River Kwai?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 179,
+"moment": "Trongsa Dzong — stop for lunch",
+"question": "Is there an entry fee to visit Rinpung Dzong?",
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 180,
+"moment": "Kurje Lhakhang — recite mantra",
+"question": "Which is the oldest lhakhang in Bhutan?",
+"p": 0.43,
+"label": 0,
+"note": ""
+},
+{
+"id": 181,
+"moment": "Pokhara — sightsee at the International Mountain Museum",
+"question": "Why is Pokhara so famous?",
+"p": 0.59,
+"label": 0,
+"note": ""
+},
+{
+"id": 182,
+"moment": "Delhi — spend evening at leisure",
+"question": "What is special about Delhi Airport?",
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 183,
+"moment": "Terelj — visit nomadic family",
+"question": "What is the entrance fee for Terelj National Park?",
+"p": 0.42,
+"label": 1,
+"note": "Terelj entrance fee vs visit in Terelj (borderline)"
+},
+{
+"id": 184,
+"moment": "Chimmi Lhakhang — stop at fertility temple en route",
+"question": "What is the significance of Chimi lhakhang in Bhutan?",
+"p": 0.85,
+"label": 1,
+"note": ""
+},
+{
+"id": 185,
+"moment": "Samurai-era castle — visit a Samurai-era castle in an old town",
+"question": "Do any samurai clans still exist today?",
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 186,
+"moment": "Longji Dragon's Backbone Rice Terraces — view terraced agriculture from Ping'an Village",
+"question": "What is the bridge of love?",
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 187,
+"moment": "Big Buddha — visit elevated landmark with views across the Andaman Sea",
+"question": "How many steps to climb the giant Buddha?",
+"p": 0.83,
+"label": 1,
+"note": "'giant Buddha' likely Phuket's Big Buddha (borderline)"
+},
+{
+"id": 188,
+"moment": "Phobjikha Valley — visit",
+"question": "What is happening in Phobjikha Valley in December?",
+"p": 0.81,
+"label": 1,
+"note": ""
+},
+{
+"id": 189,
+"moment": "Weligalpoththa Buddhist Monastery — trek to pilgrimage site set in the interior",
+"question": "What is Tara's significance in Buddhism?",
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 190,
+"moment": "Drukgyel Dzong — see the ruin built in 1644 to commemorate victory over Tibetan invaders and destroyed by fire from a butter lamp in 1951",
+"question": "How many Gewogs are there in Trongsa?",
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 191,
+"moment": "Andong Hahoe Village — stay at a UNESCO World Heritage site and Joseon Dynasty settlement",
+"question": "How do I get from Andong to Hahoe Folk Village?",
+"p": 0.58,
+"label": 1,
+"note": ""
+},
+{
+"id": 192,
+"moment": "Mekong River — cross into the Chomphet district",
+"question": "Which country is the Mekong River in?",
+"p": 0.29,
+"label": 0,
+"note": ""
+},
+{
+"id": 193,
+"moment": "Mongar dzong — visit dzong overlooking the eastern foothills",
+"question": "What is Paro, Bhutan famous for?",
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 194,
+"moment": "Beijing — arrange own transfer to the airport",
+"question": "What is the best tour of Beijing?",
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 195,
+"moment": "Khorgo volcano — visit",
+"question": "What volcano is waking up after 700000 years?",
+"p": 0.66,
+"label": 0,
+"note": "volcano waking after 700,000 years is not Khorgo"
+},
+{
+"id": 196,
+"moment": "Jeju Island — trek a section of the Jeju Olle Trail",
+"question": "Why is Jeju Island so famous?",
+"p": 0.59,
+"label": 0,
+"note": ""
+},
+{
+"id": 197,
+"moment": "Jeju — rest, beach time, or further exploration",
+"question": "Do they speak English in Jeju Island?",
+"p": 0.53,
+"label": 0,
+"note": ""
+},
+{
+"id": 198,
+"moment": "Colombo International Airport — arrange transfer for departure flight",
+"question": "Are there direct flights to Sri Lanka from the US?",
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 199,
+"moment": "4000 Islands (Si Phan Don) — explore by boat",
+"question": "Which is safer, Laos or Vietnam?",
+"p": 0.35,
+"label": 0,
+"note": ""
+}
+]
