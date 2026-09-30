@@ -18,11 +18,11 @@ interface Question {
   accept_floor: number | null; reject_ceiling: number | null; threshold_version: number;
   calibration_ref: string | null; notes: string | null; updated_at: string; updated_by: string;
   verdicts: number; accept: number; grey: number; reject: number; error: number; skipped: number;
-  acted: number; cost_usd: number; avg_latency_ms: number | null; p50_latency_ms: number | null;
+  acted: number; cached: number; cost_usd: number; avg_latency_ms: number | null; p50_latency_ms: number | null;
   p95_latency_ms: number | null; avg_probability: number | null; first_used_at: string | null; last_used_at: string | null;
 }
 interface StageRow {
-  stage: string; questions: number; verdicts: number; acted: number; errors: number; skipped: number;
+  stage: string; questions: number; verdicts: number; acted: number; errors: number; skipped: number; cached: number;
   cost_usd: number; avg_latency_ms: number | null; last_used_at: string | null;
 }
 interface DayRow { day: string; verdicts: number; accept: number; grey: number; reject: number; error: number; skipped: number; cost_usd: number }
@@ -37,7 +37,7 @@ interface Verdict {
   id: number; created_at: string; stage: string; question_key: string; subject_key: string;
   tenant_slug: string | null; job_id: string | null; mode: Mode; zone: Zone; probability: number | null;
   choice: string | null; threshold_version: number | null; latency_ms: number | null; cost_usd: number;
-  error: string | null; outcome: string | null;
+  error: string | null; outcome: string | null; cached?: boolean;
 }
 
 // ── meaning of every status, shown in the Guide and as tooltips ────────────────────────────────
@@ -140,7 +140,7 @@ function Guide() {
           <b>Jev</b> (TypeSafe) is a small, cheap model that only answers typed questions (yes/no, pick one) — it never
           writes text. Pipeline stages ask it questions such as <i>&quot;is this keyword about this place?&quot;</i> before spending money
           or storing data. This page shows <b>which stage asks which question</b>, whether the answer is <b>used</b>, how
-          the answers fall, and what it costs.
+          the verdicts fall, and what it costs.
         </p>
         <SLabel style={{ marginTop: 14 }}>How an answer becomes an action</SLabel>
         <ol style={{ fontSize: 12.5, lineHeight: 1.7, margin: 0, paddingLeft: 18 }}>
@@ -161,7 +161,9 @@ function Guide() {
         {ZONES.map(z => <div key={z} style={{ padding: "6px 0" }}><ZonePill z={z} /> <span style={{ fontSize: 12.5 }}>{ZONE_META[z].help}</span></div>)}
         {term("Accept floor / Reject ceiling", "The two probability limits that define the zones. They come from calibration: we label ~200 real examples and pick limits where Jev is right ≥ 95% of the time.")}
         {term("Calibration", "The record (docs/calibration/<question>.md) proving the floors. A question cannot be set to Enforce without one.")}
-        {term("Acted", "How many answers actually changed what the stage did (Enforce + Accept/Reject).")}
+        {term("Verdict", "Jev's answer to one question about one subject (a keyword, a row, a sentence). Every Verdict is kept.")}
+        {term("Cached", "A Verdict reused from an earlier answer to the same question wording and subject — no new Jev call, no cost. The zone is recomputed with today's floors. Changing a question's wording starts fresh.")}
+        {term("Acted", "How many Verdicts actually changed what the stage did (Enforce + Accept/Reject).")}
         {term("Cost", "TypeSafe charges $0.042 per 1M input tokens (output free). Every call is also in External Spend under “Jev · TypeSafe”.")}
       </Card>
     </div>
@@ -332,8 +334,8 @@ export default function DecisionsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 18 }}>
                 <Kpi label={`Jev calls · ${data.days}d`} value={data.total_calls.toLocaleString()} sub="billed API calls" />
                 <Kpi label={`Cost · ${data.days}d`} value={usd(data.total_cost_usd)} sub="also in External Spend" />
-                <Kpi label="Answers" value={verdictTotal.toLocaleString()} sub="one per question asked" />
-                <Kpi label="Acted on" value={acted.toLocaleString()} sub={`${pct(acted, verdictTotal)} of answers changed a stage`} color={acted ? MODE_META.enforce.color : A.ink} />
+                <Kpi label="Verdicts" value={verdictTotal.toLocaleString()} sub={`one per question asked · ${(data.stages ?? []).reduce((n, s) => n + (s.cached ?? 0), 0)} from cache`} />
+                <Kpi label="Acted on" value={acted.toLocaleString()} sub={`${pct(acted, verdictTotal)} of verdicts changed a stage`} color={acted ? MODE_META.enforce.color : A.ink} />
                 <Kpi label="Errors" value={totals.error.toLocaleString()} sub={`${pct(totals.error, verdictTotal)} — fail-open`} color={totals.error ? ZONE_META.error.color : A.ink} />
                 <Kpi label="Avg latency" value={avgLatency != null ? `${Math.round(avgLatency)} ms` : "—"} sub="per call" />
                 <Kpi label="Questions" value={`${qs.length}`} sub={`${qs.filter(q => q.mode === "enforce").length} enforce · ${qs.filter(q => q.mode === "shadow").length} shadow · ${qs.filter(q => q.mode === "off").length} off`} />
@@ -341,13 +343,13 @@ export default function DecisionsPage() {
               </div>
 
               <Card style={{ marginBottom: 18 }}>
-                <SLabel>How the answers fell ({data.days} days)</SLabel>
+                <SLabel>How the verdicts fell ({data.days} days)</SLabel>
                 <ZoneBar counts={totals} />
               </Card>
 
               <Card style={{ marginBottom: 18 }}>
-                <SLabel>Answers per day, by zone</SLabel>
-                {(data.daily ?? []).length === 0 ? <div style={{ fontSize: 12.5, color: A.muted }}>No answers in this window.</div> : (
+                <SLabel>Verdicts per day, by zone</SLabel>
+                {(data.daily ?? []).length === 0 ? <div style={{ fontSize: 12.5, color: A.muted }}>No verdicts in this window.</div> : (
                   <div style={{ height: 240 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={data.daily ?? []}>
@@ -368,8 +370,8 @@ export default function DecisionsPage() {
                   <thead><tr>
                     <SortTh label="Stage" k="stage" sort={sSort} setSort={setSSort} title="Pipeline step that asks Jev" />
                     <th style={STICKY_TH} title="Distinct questions asked by this stage">Questions</th>
-                    <SortTh label="Answers" k="verdicts" sort={sSort} setSort={setSSort} />
-                    <SortTh label="Acted" k="acted" sort={sSort} setSort={setSSort} title="Answers that changed what the stage did" />
+                    <SortTh label="Verdicts" k="verdicts" sort={sSort} setSort={setSSort} />
+                    <SortTh label="Acted" k="acted" sort={sSort} setSort={setSSort} title="Verdicts that changed what the stage did" />
                     <SortTh label="Errors" k="errors" sort={sSort} setSort={setSSort} />
                     <th style={STICKY_TH}>Skipped</th>
                     <th style={STICKY_TH} title="Billed calls in llm_call_log">Calls</th>
@@ -424,7 +426,8 @@ export default function DecisionsPage() {
                     <th style={STICKY_TH} title="Probability at or above which Jev's YES is trusted">Accept ≥</th>
                     <th style={STICKY_TH} title="Probability at or below which Jev's NO is trusted">Reject ≤</th>
                     <th style={STICKY_TH}>Calibrated</th>
-                    <SortTh label="Answers" k="verdicts" sort={qSort} setSort={setQSort} />
+                    <SortTh label="Verdicts" k="verdicts" sort={qSort} setSort={setQSort} />
+                    <th style={STICKY_TH} title="Verdicts reused from an earlier answer to the same wording and subject (no Jev call, no cost)">Cached</th>
                     <th style={{ ...STICKY_TH, color: ZONE_META.accept.color }}>Accept</th>
                     <th style={STICKY_TH}>Grey</th>
                     <SortTh label="Reject" k="reject" sort={qSort} setSort={setQSort} />
@@ -450,6 +453,7 @@ export default function DecisionsPage() {
                           <td style={{ ...TD, fontFamily: mono }}>{num(q.reject_ceiling)}</td>
                           <td style={TD}>{q.calibration_ref ? <Pill color="#047857">Yes</Pill> : <Pill color="#9CA3AF">No</Pill>}</td>
                           <td style={{ ...TD, fontWeight: 700 }}>{q.verdicts}</td>
+                          <td style={TD}>{q.cached ?? 0}</td>
                           <td style={{ ...TD, color: ZONE_META.accept.color, fontWeight: 600 }}>{q.accept}</td>
                           <td style={TD}>{q.grey}</td>
                           <td style={{ ...TD, color: ZONE_META.reject.color, fontWeight: 600 }}>{q.reject}</td>
@@ -463,7 +467,7 @@ export default function DecisionsPage() {
                         </tr>
                       );
                     })}
-                    {!filteredQs.length && <tr><td style={TD} colSpan={19}>No questions match.</td></tr>}
+                    {!filteredQs.length && <tr><td style={TD} colSpan={20}>No questions match.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -490,13 +494,13 @@ export default function DecisionsPage() {
                                 {q.notes && <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>{q.notes}</div>}
                               </div>
                               <div>
-                                <SLabel>Answers ({data.days} days)</SLabel>
+                                <SLabel>Verdicts ({data.days} days)</SLabel>
                                 <ZoneBar counts={{ accept: q.accept, grey: q.grey, reject: q.reject, error: q.error, skipped: q.skipped }} />
                                 <div style={{ fontSize: 12, color: A.muted, marginTop: 10 }}>
                                   Floors v{q.threshold_version} · calibration: {q.calibration_ref ?? "none yet (cannot enforce)"} ·
                                   first used {when(q.first_used_at)} · updated {when(q.updated_at)} by {q.updated_by}
                                 </div>
-                                <Btn size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>See its answers →</Btn>
+                                <Btn size="sm" style={{ marginTop: 10 }} onClick={() => { setVQuestion(q.question_key); setVPage(0); setTab("verdicts"); }}>See its verdicts →</Btn>
                               </div>
                             </div>
                             <div style={{ marginTop: 16 }}><SLabel>Settings</SLabel><QuestionEditor q={q} onSaved={() => { setOpen(null); loadSummary(); }} /></div>
@@ -554,13 +558,13 @@ export default function DecisionsPage() {
                         </tr>
                       );
                     })}
-                    {!log.rows.length && <tr><td style={TD} colSpan={12}>No answers match these filters.</td></tr>}
+                    {!log.rows.length && <tr><td style={TD} colSpan={12}>No verdicts match these filters.</td></tr>}
                   </tbody>
                 </table>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, fontSize: 12.5 }}>
                 <span style={{ color: A.muted }}>
-                  {log.total ? `${vPage * PAGE + 1}–${Math.min((vPage + 1) * PAGE, log.total)} of ${log.total.toLocaleString()}` : "0 answers"}
+                  {log.total ? `${vPage * PAGE + 1}–${Math.min((vPage + 1) * PAGE, log.total)} of ${log.total.toLocaleString()}` : "0 verdicts"}
                 </span>
                 <Btn size="sm" disabled={vPage === 0} onClick={() => setVPage(p => p - 1)}>← Prev</Btn>
                 <Btn size="sm" disabled={(vPage + 1) * PAGE >= log.total} onClick={() => setVPage(p => p + 1)}>Next →</Btn>

@@ -59,6 +59,7 @@ class Question:
     accept_floor: Optional[float]
     reject_ceiling: Optional[float]
     threshold_version: int
+    question_hash: Optional[str] = None      # md5 of the wording (DB-generated, migration 184)
 
 
 @dataclass
@@ -70,6 +71,7 @@ class Verdict:
     choice: Optional[str] = None
     probabilities: Optional[dict] = None
     error: Optional[str] = None
+    cached: bool = False                     # served from an earlier Verdict of the same wording
 
     @property
     def enforced(self) -> bool:
@@ -150,7 +152,7 @@ async def _load_config(conn) -> None:
     if now - _questions_loaded_at > _CONFIG_TTL_S:
         rows = await conn.fetch(
             "SELECT question_key, stage, kind, instructions, criteria, mode, accept_floor, "
-            "reject_ceiling, threshold_version FROM shared.decision_question"
+            "reject_ceiling, threshold_version, question_hash FROM shared.decision_question"
         )
         _questions = {
             r["question_key"]: Question(
@@ -160,6 +162,7 @@ async def _load_config(conn) -> None:
                 accept_floor=float(r["accept_floor"]) if r["accept_floor"] is not None else None,
                 reject_ceiling=float(r["reject_ceiling"]) if r["reject_ceiling"] is not None else None,
                 threshold_version=r["threshold_version"],
+                question_hash=r["question_hash"],
             )
             for r in rows
         }
@@ -202,11 +205,42 @@ def _price_in_per_mtok() -> float:
         else _FALLBACK_PRICE_IN_PER_MTOK
 
 
+# A Verdict is a fact about (wording, subject): reuse it instead of asking Jev again (Ms. Thư's
+# "judge once, store beside the subject"). The Zone is recomputed with today's Floors, so moving a
+# Floor never needs a new call. Errors and skips are never reused.
+CACHE_MAX_AGE_DAYS = 180
+_CACHE_SQL = """
+    SELECT DISTINCT ON (l.question_key) l.question_key, l.probability::float AS probability, l.choice,
+           l.probabilities
+    FROM shared.decision_log l
+    JOIN unnest($2::text[], $3::text[]) AS w(question_key, question_hash)
+      ON w.question_key = l.question_key AND w.question_hash = l.question_hash
+    WHERE l.subject_key = $1
+      AND l.tenant_id IS NOT DISTINCT FROM $4::uuid
+      AND l.zone IN ('accept', 'grey', 'reject')
+      AND l.created_at > now() - make_interval(days => $5)
+    ORDER BY l.question_key, l.created_at DESC
+"""
+
+
+def cached_answer(q: Question, row: dict) -> Optional[dict]:
+    """Rebuild a TypeSafe-shaped answer from a stored Verdict, so zone_for() applies today's Floors."""
+    if row.get("probability") is None:
+        return None
+    if q.kind == "noul":
+        return {"type": "noul", "noul": row["probability"]}
+    probs = row.get("probabilities")
+    if isinstance(probs, str):
+        probs = json.loads(probs)
+    return {"type": q.kind, "choice": row.get("choice"), "confidence": row["probability"],
+            "probabilities": probs or {}}
+
+
 _LOG_SQL = """
     INSERT INTO shared.decision_log
         (stage, question_key, subject_key, tenant_id, job_id, mode, zone, probability, choice,
-         probabilities, threshold_version, model, latency_ms, cost_usd, error)
-    VALUES ($1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)
+         probabilities, threshold_version, model, latency_ms, cost_usd, error, question_hash, cached)
+    VALUES ($1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)
 """
 
 
@@ -228,7 +262,7 @@ class _SingleConn:
 
 
 async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: list[str],
-                  tenant_id: Optional[str]) -> Decision:
+                  tenant_id: Optional[str], use_cache: bool = True) -> Decision:
     """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while
     writing logs — never across the Jev HTTP call and never two at once. Holding one across the
     whole call and then acquiring a second for llm_call_log deadlocked a pool under concurrent
@@ -254,26 +288,45 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         else:
             asked[key] = q
 
-    if asked:
+    to_ask = dict(asked)
+    if asked and use_cache:
+        try:
+            async with db.acquire() as conn:
+                rows = await conn.fetch(
+                    _CACHE_SQL, subject_key, list(asked), [q.question_hash or "" for q in asked.values()],
+                    str(tenant_id) if tenant_id else None, CACHE_MAX_AGE_DAYS,
+                )
+            for r in rows:
+                q = asked[r["question_key"]]
+                answer = cached_answer(q, dict(r))
+                if answer is not None:
+                    v = zone_for(q, answer)
+                    v.cached = True
+                    decision.verdicts[q.key] = v
+                    to_ask.pop(q.key, None)
+        except Exception as exc:                  # a cache miss is never an error
+            logger.warning("decide_cache_read_failed", stage=stage, error=str(exc)[:200])
+
+    if to_ask:
         started = time.perf_counter()
         try:
-            data = await _call_jev(state, {k: wire_question(q) for k, q in asked.items()})
+            data = await _call_jev(state, {k: wire_question(q) for k, q in to_ask.items()})
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             decision.model = data.get("model", JEV_MODEL)
             decision.input_tokens = int((data.get("usage") or {}).get("input_tokens") or 0)
             decision.cost_usd = decision.input_tokens * _price_in_per_mtok() / 1_000_000
             answers = data.get("answers") or {}
-            for key, q in asked.items():
+            for key, q in to_ask.items():
                 answer = answers.get(key)
                 decision.verdicts[key] = zone_for(q, answer) if answer else \
                     Verdict(key, q.mode, "error", error="no answer returned")
         except Exception as exc:
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=str(exc)[:200])
-            for key, q in asked.items():
+            for key, q in to_ask.items():
                 decision.verdicts[key] = Verdict(key, q.mode, "error", error=str(exc)[:500])
 
-    await _write_logs(db, stage, subject_key, tenant_id, decision, asked)
+    await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask)
     return decision
 
 
@@ -288,7 +341,7 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
             v.zone, v.probability, v.choice,
             json.dumps(v.probabilities) if v.probabilities is not None else None,
             q.threshold_version if q else None, decision.model, decision.latency_ms,
-            per_q_cost if key in asked else 0.0, v.error,
+            per_q_cost if key in asked else 0.0, v.error, q.question_hash if q else None, v.cached,
         ))
     try:
         async with db.acquire() as conn:
@@ -307,7 +360,7 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
 
 
 async def decide(stage: str, subject_key: str, state: Any, question_keys: list[str], *,
-                 tenant_id: Optional[str] = None, pool=None) -> Decision:
+                 tenant_id: Optional[str] = None, pool=None, use_cache: bool = True) -> Decision:
     """Ask Jev `question_keys` about `state` (text or a JSON object). Never raises.
 
     `subject_key` identifies what was judged (e.g. "kw:US:mongar bhutan", "atom:atom_1a2b") so the
@@ -315,10 +368,11 @@ async def decide(stage: str, subject_key: str, state: Any, question_keys: list[s
     (None or aa_internal = platform content)."""
     try:
         if pool is not None:
-            return await _decide(pool, stage, subject_key, state, question_keys, tenant_id)
+            return await _decide(pool, stage, subject_key, state, question_keys, tenant_id, use_cache)
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
-            return await _decide(_SingleConn(conn), stage, subject_key, state, question_keys, tenant_id)
+            return await _decide(_SingleConn(conn), stage, subject_key, state, question_keys, tenant_id,
+                                 use_cache)
         finally:
             await conn.close()
     except Exception as exc:                      # never break the calling stage

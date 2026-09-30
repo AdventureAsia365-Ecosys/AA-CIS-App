@@ -66,15 +66,18 @@ def test_wire_question_shape():
 
 # ── the call, with a fake connection ──────────────────────────────────────────────────────────
 
-def _conn(questions, allowlist=()):
+def _conn(questions, allowlist=(), cached=()):
     conn = MagicMock()
 
     async def fetch(sql, *args):
         if "decision_question" in sql:
             return [{"question_key": q.key, "stage": q.stage, "kind": q.kind, "instructions": q.instructions,
                      "criteria": q.criteria, "mode": q.mode, "accept_floor": q.accept_floor,
-                     "reject_ceiling": q.reject_ceiling, "threshold_version": q.threshold_version}
+                     "reject_ceiling": q.reject_ceiling, "threshold_version": q.threshold_version,
+                     "question_hash": "h-" + q.key}
                     for q in questions]
+        if "FROM shared.decision_log" in sql:          # verdict cache lookup
+            return list(cached)
         return [{"t": t} for t in allowlist]
 
     conn.fetch = AsyncMock(side_effect=fetch)
@@ -196,6 +199,43 @@ async def test_concurrent_decides_on_a_tiny_pool_do_not_deadlock():
             d.decide("a3_research", f"kw:{i}", "x", ["kw_belongs"], pool=TinyPool()) for i in range(4)
         ]), timeout=5)
     assert all(r.accepted("kw_belongs") for r in results)
+
+
+@pytest.mark.asyncio
+async def test_cached_verdict_is_reused_with_todays_floors_and_no_call():
+    # stored p=0.25; today's reject ceiling 0.30 → reject, without asking Jev again
+    conn = _conn([_q(accept=0.95, reject=0.30)],
+                 cached=[{"question_key": "kw_belongs", "probability": 0.25, "choice": None, "probabilities": None}])
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()) as m_log:
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs"], None)
+    m_call.assert_not_awaited()
+    m_log.assert_not_awaited()                                  # nothing billed
+    v = dec.verdicts["kw_belongs"]
+    assert v.cached and v.zone == "reject" and dec.rejected("kw_belongs")
+    row = conn.executemany.await_args.args[1][0]
+    assert row[13] == 0.0 and row[15] == "h-kw_belongs" and row[16] is True   # cost, hash, cached
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_asks_jev_and_logs_the_wording_hash():
+    conn = _conn([_q()])
+    answer = {"model": "jev", "usage": {"input_tokens": 10}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:x", "x", ["kw_belongs"], None)
+    m_call.assert_awaited_once()
+    assert not dec.verdicts["kw_belongs"].cached
+    row = conn.executemany.await_args.args[1][0]
+    assert row[15] == "h-kw_belongs" and row[16] is False
+
+
+def test_cached_choice_answer_keeps_pick_and_confidence():
+    q = _q(key="row_kind", kind="choice", accept=0.9, reject=None)
+    ans = d.cached_answer(q, {"probability": 0.95, "choice": "poi", "probabilities": '{"poi": 0.95}'})
+    v = d.zone_for(q, ans)
+    assert (v.zone, v.choice) == ("accept", "poi")
 
 
 # ── only the gateway may talk to TypeSafe ─────────────────────────────────────────────────────

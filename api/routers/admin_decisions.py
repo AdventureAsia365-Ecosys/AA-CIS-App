@@ -37,6 +37,7 @@ _SUMMARY_SQL = """
            count(l.id) FILTER (WHERE l.zone = 'error')::int   AS error,
            count(l.id) FILTER (WHERE l.zone = 'skipped')::int AS skipped,
            count(l.id) FILTER (WHERE l.zone IN ('accept', 'reject') AND l.mode = 'enforce')::int AS acted,
+           count(l.id) FILTER (WHERE l.cached)::int AS cached,
            coalesce(sum(l.cost_usd), 0)::float AS cost_usd,
            avg(l.latency_ms) FILTER (WHERE l.zone NOT IN ('skipped', 'error'))::float AS avg_latency_ms,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY l.latency_ms)
@@ -84,8 +85,9 @@ _STAGE_SQL = """
            count(*) FILTER (WHERE zone IN ('accept', 'reject') AND mode = 'enforce')::int AS acted,
            count(*) FILTER (WHERE zone = 'error')::int AS errors,
            count(*) FILTER (WHERE zone = 'skipped')::int AS skipped,
+           count(*) FILTER (WHERE cached)::int AS cached,
            coalesce(sum(cost_usd), 0)::float AS cost_usd,
-           avg(latency_ms) FILTER (WHERE zone NOT IN ('skipped', 'error'))::float AS avg_latency_ms,
+           avg(latency_ms) FILTER (WHERE zone NOT IN ('skipped', 'error') AND NOT cached)::float AS avg_latency_ms,
            max(created_at) AS last_used_at
     FROM shared.decision_log
     WHERE created_at >= now() - make_interval(days => $1)
@@ -177,7 +179,7 @@ async def log(request: Request, stage: Optional[str] = None, question_key: Optio
         SELECT l.id, l.created_at, l.stage, l.question_key, l.subject_key, l.tenant_id::text AS tenant_id,
                t.slug AS tenant_slug, l.job_id::text AS job_id, l.mode, l.zone,
                l.probability::float AS probability, l.choice, l.probabilities, l.threshold_version,
-               l.model, l.latency_ms, l.cost_usd::float AS cost_usd, l.error, l.outcome
+               l.model, l.latency_ms, l.cost_usd::float AS cost_usd, l.error, l.outcome, l.cached
         FROM shared.decision_log l
         LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id
         """ + _LOG_WHERE + f" ORDER BY {order} LIMIT $8 OFFSET $9",
