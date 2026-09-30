@@ -1,0 +1,1602 @@
+[
+{
+"id": 0,
+"atom_id": "8ebc876d7ff7a79a",
+"atom": "Tharulengala Cave — explore with a local guide",
+"day_text": "Arrival in Colombo and Transfer to Negombo\nMeet your representative upon arrival at Colombo International Airport. A 20-minute transfer takes you to Negombo, a coastal town on the west coast, where you will stay for the night at Goldi Sands Hotel.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 1,
+"atom_id": "b202369e6044ea56",
+"atom": "airport-accessible hotel — transfer to",
+"day_text": "Fly to Delhi with Optional City Sightseeing\nAn early start takes you to the airport for your flight to Delhi. Upon arrival, you'll transfer to an airport-accessible hotel conveniently located near the terminal. Depending on your flight timing, there may be an opportunity for a short sightseeing tour of Delhi's principal monuments. If time allows, you could visit the Qutab Minar, Humayun's Tomb, India Gate, Lutyens Delhi, and Raj Ghat—a selection of sites spanning centuries of the city's history. Alternatively, if you prefer to settle in after travel, the afternoon remains free to rest at the hotel and acclimatize at your own pace.",
+"p": 0.96,
+"label": 1
+},
+{
+"id": 2,
+"atom_id": "cc94673a26954ae7",
+"atom": "Pokhara to Muktinath Temple — fly by chartered helicopter",
+"day_text": "Helicopter Flights to Muktinath and Damodar Kunda\nA chartered helicopter departs Pokhara for Muktinath Temple (3,800m), where you spend approximately one hour in ritual bathing at the sacred taps. The flight then proceeds to Damodar Kunda (4,890m) before returning directly to Pokhara for overnight. Altitude acclimatization considerations and weather-dependent scheduling are factored into flight operations. Total flight time is approximately two hours.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 3,
+"atom_id": "7908ad368e3c189c",
+"atom": "Lo-Manthang — explore the walled capital of Upper Mustang's ancient kingdom",
+"day_text": "Return to Pokhara and Sightseeing\nAn early morning flight returns you to Pokhara. After checking in and resting, the afternoon includes sightseeing at the International Mountain Museum, David Fall, Gupteswor Mahadev cave, and boating on Fewa Lake.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 4,
+"atom_id": "e857cc875ee1d997",
+"atom": "Thotupola Residence — participate in a cooking demonstration and stay overnight",
+"day_text": "Return to Bentota\nAfter breakfast at the village house, return by road to Bentota, where the tour ends.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 5,
+"atom_id": "deaaf990c81bd1ca",
+"atom": "Dragon's Backbone rice terraces near Longji — walk alongside bamboo groves and chestnut forests",
+"day_text": "Shaxi Old Town: Tea Horse Trail Heritage\nAfter breakfast, your guide and driver will meet you at your hotel to explore Shaxi Old Town, an important historical stop on the ancient Tea Horse Trail. Walk the narrow, cobblestone alleyways where Yi and Bai ethnic minorities continue to maintain their traditions alongside residents who have preserved the town's character for centuries. Observe intricately carved wooden entrances and glimpse the well-fenced, attractive courtyards hidden behind many of the homes. Siding Square forms the center of the old town, established as a Tea Horse route hub during the Tang dynasty in 618. UNESCO recognizes Shaxi as one of the most intact tea-trading towns remaining in China—a place where history remains tangible in every corner. Return to your hotel in Shaxi for the evening.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 6,
+"atom_id": "ca7d45979c7fe393",
+"atom": "Khaling National Handloom — visit handloom centre near Tashigang",
+"day_text": "Mongar: Dzong, Farmhouse Ara, and Corn-Liquor Tradition\nA 90-kilometre, three-hour drive to Mongar brings you to the dzong overlooking the eastern foothills. The afternoon centres on a farmhouse visit where you'll see ara — the eastern region's signature spirit — being brewed from corn, and where a traditional lunch introduces the flavour profile of eastern Bhutanese cooking.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 7,
+"atom_id": "6e6da493e16c3036",
+"atom": "Lo-Manthang — visit the walled capital of Upper Mustang's ancient kingdom",
+"day_text": "Trek through Tibetan Plateau Landscape to Charang\nThis five-hour trek offers sweeping views of northern curves and irregular east-west mountain gorges. Charang is a substantial settlement of Tibetan-origin inhabitants with an adjacent Gompa and aged monastery estimated at 500 years old, containing regional religious wall paintings.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 8,
+"atom_id": "301ff695f266cbd3",
+"atom": "Lijiang to Shangri-la — cycle daily stages of 144–180 km",
+"day_text": "Tongmai to Lulang — 61 km\nCycle 61 km to Lulang (3,700 m). Overnight in local hotel.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 9,
+"atom_id": "b3ded4b626fa0829",
+"atom": "Seongsan Ilchulbong — hike a volcanic tuff cone",
+"day_text": "Seongsan to Jeju City: Return Through the North\nThe final day cycles northward and westward from Seongsan back to Jeju City. The morning ride covers 2.5 hours on the Jeju Bike Trail. After a lunch break, the afternoon leg is approximately 1.5 hours, completing the journey back to Jeju City where the tour concludes. Support vehicle available throughout for luggage transport and assistance.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 10,
+"atom_id": "cd6d27423e9048f2",
+"atom": "organic sake brewery in Bato — visit a 100-year-old producer growing its own rice and attend tastings",
+"day_text": "Departure from Mashiko\nAfter breakfast and checkout, the tour concludes. Train and bus service from Mashiko station connect to regional and Tokyo destinations.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 11,
+"atom_id": "e09e0dddaf88b7be",
+"atom": "Big Pha Ngern — climb above Vang Vieng with views of the Nam Song River and karst peaks",
+"day_text": "Muang Fuang to Vientiane via Muang Mon — 65 km Cycle\nQuiet gravel roads run southward along the Nam Lik valley. Traditional villages appear at intervals; the landscape remains rural and river-oriented. Between Muang Fuang and Muang Mon, you visit a temple completed in the past decade and decorated with 1,000 gilded Buddha statues—a modern work of considerable scale. After lunch in Muang Mon you transfer by vehicle to Vientiane, arriving on the Mekong riverbank as afternoon light softens. Sunset drinks on the water mark the day's end.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 12,
+"atom_id": "5070f8818465a972",
+"atom": "Leh — acclimatisation walk",
+"day_text": "Acclimatisation Walk near Leh\nToday is dedicated to acclimatisation at Leh's altitude of 3524m. Your guide will lead an appropriate route tailored to the group's fitness level and local conditions, carefully balancing cardiovascular work without overtaxing the body. This measured approach helps your system adjust to the elevation. The walk typically lasts two to three hours. Return to Leh for the remainder of the day.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 13,
+"atom_id": "2fd6dac68e665621",
+"atom": "Phobjikha Valley — walk nature trail and forest bathe",
+"day_text": "Koma Tsachu Hot Spring & Evening Yoga\nDrive to Koma Tsachu's mineral-rich hot springs. Pack lunch on site, then return for evening yoga and free time to rest.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 14,
+"atom_id": "9c098d61e8dfce65",
+"atom": "Chorten Kora — visit temple near Tashigang",
+"day_text": "Paro: Ancient Temple, Museum, and Local Brewery\nVisit Kyichu Lhakhang, a seventh-century temple, and Ta Dzong National Museum. Lunch features rice pizza and buckwheat dumplings with dried spinach. Afternoon: local brewery tour and a stroll through Paro town.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 15,
+"atom_id": "e35368da17dba948",
+"atom": "Murasaki Mura — try hands-on pottery, bingata dye, and ryukyu glasswork",
+"day_text": "Naha: Markets, Tunnels & Izakaya Night\nBegin in Naha's old town, where covered arcades display neon kanji and hanging lanterns. Walk through the Public Markets, stopping at stalls to observe seafood grilled, steamed, or cut to order—sata andagi (Okinawan fried pastries), umibudo (sea-grapes), and shikuwasa juice are available. Below street level, WWII tunnel sites run beneath the city; short walks here provide historical context. Late afternoon, visit coastal cliff viewpoints where turquoise water meets white reef. Back in town at dusk, head to Heiwa-dori for an izakaya dinner: highballs, sizzling yakitori, island music, and local awamori. Try rafute (soy-braised pork) and toast \"karii\" with your group. Sleep at a centrally located hostel with social lounge and clean rooms—easy walking distance to bars, late-night ramen, and convenience stores.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 16,
+"atom_id": "134fed2e77c83d42",
+"atom": "Namtso Lake — visit on the final day before departure",
+"day_text": "Lijiang to Shangri-la — 144 km\nCycle 144 km to Shangri-la (3,280 m). Overnight in local hotel.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 17,
+"atom_id": "ded7818fd4f412f8",
+"atom": "Lukla — fly out on return flight",
+"day_text": "Crossing Cho La Pass to Dzongla\nThe route ascends the valley, crosses a ridge and old lateral moraine, then scrambles rockily to the Cho La Pass (5,420m). From the pass, views extend west across the Rolwaling Valley and southeast to Ama Dablam. The descent involves crossing a small glacier, then follows pastures with excellent views of Ama Dablam and the north face of Cholatse. Dzongla (4,830m) is reached after 7–8 hours. Overnight in a lodge on full board.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 18,
+"atom_id": "4bd104ef3696825c",
+"atom": "Mount Huashan West Peak — view the distinctive silhouette of the five peaks",
+"day_text": "Mount Huashan: North Peak Cable Car & West Peak Traverse\nYour guide and driver will collect you after breakfast and transfer you to the foot of Mount Huashan's north peak. A cable car ascends to the North Peak, where your hike begins across to the West Peak. The mountain lives up to its reputation: steep and narrow paths wind between precipitous crags across a dramatic high range. The five peaks, when viewed together, form the shape of a flower—a natural formation that has captivated visitors for centuries. The West Peak offers the clearest vistas of this distinctive silhouette. After reaching the summit, descend via gondola and return to Xi'an for a late dinner. You'll check in to your hotel for the evening.",
+"p": 0.95,
+"label": 1
+},
+{
+"id": 19,
+"atom_id": "9cc58d95e5abb3de",
+"atom": "Railway Track Market — visit vendors set up beside an active train line",
+"day_text": "Floating Markets & Overnight Train to Chiang Mai\nVisit Damnoen Saduak Floating Market and the Railway Track Market, where vendors set up stalls directly beside an active train line. In the afternoon, board the overnight sleeper train north to Chiang Mai.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 20,
+"atom_id": "29c17d96d0b8e36a",
+"atom": "Chomphet Loop — ride dirt and gravel tracks through rustic villages, forest patches, and rice paddies",
+"day_text": "Luang Prabang to Kiao Niao Farmstead via Chomphet Loop\nThe route begins by crossing the Mekong into the quieter Chomphet side of Luang Prabang, immediately stepping away from the town's main tourist areas. Dirt and gravel tracks weave through rustic villages, forest patches, and rice paddies where local life moves at its own pace. The ride covers 55 kilometers with terrain that varies but includes no major climbs. By late afternoon, you arrive at Kiao Niao Farmstead, an eco-retreat set among gardens and open countryside. Dinner is served at the farmstead, and the night is spent here.",
+"p": 0.96,
+"label": 1
+},
+{
+"id": 21,
+"atom_id": "9da6a548c8d4b797",
+"atom": "Chiang Rai — explore night market and local dining options",
+"day_text": "Chiang Rai Cycling and Elephant Peace Project\nA twenty-kilometer morning ride carries you through farmland, villages, and valleys on paved and dirt roads with modest elevation changes. After lunch, you visit the Elephant Peace Project, a sanctuary offering guided walks with elephants through bamboo groves, forest, and grasslands. In the evening, you explore Chiang Rai's night market and local dining options.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 22,
+"atom_id": "c6aea51b214d7f4a",
+"atom": "Nepal border crossing — cross the border into Nepal",
+"day_text": "The Qinghai-Tibet Railway to Lhasa\nDepart Xi'an on the Qinghai-Tibet Railway, one of China's greatest engineering achievements and the world's highest railway line. The route travels northeast from Xi'an to Xining (approximately 12 hours), then west to Golmud, before turning south toward Lhasa. The entire journey spans approximately 31 hours, crossing the high-altitude Changtang Plateau. The highest pass reaches 5,069 meters. Sleep in an overnight soft-sleeper cabin as the landscape gradually shifts from populated lowlands to vast, sparse terrain. Passengers commonly experience mild altitude effects during this transition.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 23,
+"atom_id": "ea0113827ddbde52",
+"atom": "Minneriya National Park — jeep safari for wild Asian elephants",
+"day_text": "Anuradhapura, Mihintale, Aukana & Habarana\nAfter breakfast, explore Anuradhapura's Sacred Bo Tree, Sri Lanka's ancient Buddhist capital. Visit Mihintale, the world's first declared sanctuary, then proceed to Aukana to view a colossal Buddha statue carved from a single rock. End the day in Habarana.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 24,
+"atom_id": "f259d4f61f7e970a",
+"atom": "National Park Museum — visit",
+"day_text": "Trek to Everest Base Camp and Return to Pheriche\nA very early start sets the tone for this demanding day. The trek crosses the Khumbu Glacier for several hours along a trail weaving past translucent ice pinnacles and crevasses. At Everest Base Camp (5,364 meters), you'll stand at the staging point for Everest ascents, with views up into the Khumbu Icefall where climbing activity is often visible. If an expedition is in residence, the sense of scale becomes immediate.\n\nThe return route gains elevation to provide a spectacular perspective of the Khumbu Icefall and the route to the South Col—views worth the extra effort. From there, the descent is mostly downhill: past Gorak Shep, Lobuche, Duglha, and finally to Pheriche at 4,320 meters. The Himalayan Rescue Association maintains a trekkers' aid post here, worth a visit to understand the medical support systems that serve the region's high-altitude trekking community.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 25,
+"atom_id": "98de39e145d3ec34",
+"atom": "Ura village — watch masked dances performing the thunderbolt step",
+"day_text": "Ura Festival: Masked Dances, Spiritual Ceremonies & Purification Rites\nDrive to Ura village for the festival. Locals walk from surrounding valleys dressed in their finest clothes to attend the three-day celebrations. Masked dances dominate: dancers perform the thunderbolt step, their robes of coloured brocade spinning as they move. The masks themselves — glorious demonic and animal forms — invoke festival deities and enact purification rites. Watch for the Atsara, the festival clown, who mimics dancers and entertains spectators. The dances function as spiritual theatre, telling stories where good triumphs over evil and depicting historical events, particularly those surrounding Padmasambhava (Guru Rinpoche), Bhutan's patron saint. Underlying purpose is spiritual; luck is increased and misfortune dissipated through the ceremony.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 26,
+"atom_id": "6b01bd3a8ba3f15a",
+"atom": "Khuvsgul Lake — visit with a Tsaatan family and their reindeer herd",
+"day_text": "Khuvsgul Lake Arrival\nTravel northward to Khuvsgul Lake on a full day of driving (approximately 400km from Sod Camp). Stop for lunch near Moron, capital of Khuvsgul province, then continue to camp on the lake's shore. Khuvsgul is Asia's second-largest freshwater lake, covering 2,760 square kilometers and formed approximately 2 million years ago. It sits on the boundary between Central Asian steppes and Siberian taiga forest and is home to the Tsaatan people, also known as Dukha, who sustain themselves primarily through reindeer herding. Overnight at a standard ger camp (upgrade available).",
+"p": 0.09,
+"label": 0
+},
+{
+"id": 27,
+"atom_id": "2be06b730fa5b8bc",
+"atom": "Lijiang — begin cycling expedition",
+"day_text": "Mangkang to Zhuka — 50 km\nCycle 50 km to Zhuka (3,206 m). Overnight in local hotel.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 28,
+"atom_id": "4ccd4dbd2d51b95f",
+"atom": "Lukla — fly in from Kathmandu on a mountain flight",
+"day_text": "Machhermo to Gokyo: Trek Along the Ngozumpa Glacier\nThe trek begins with a scenic path toward Pangka before descending slightly to follow a river flowing down the west side of the Ngozumpa Glacier. A steep rocky incline leads into the glacier valley, passing the first of the holy lakes. Continuing onward, the second lake appears, where the path that crosses the glacier to Cho La branches off. The centerpiece is the third lake, Dudh Pokhari, on whose eastern shore sits Gokyo settlement at 4,750 meters. The summits of Cho Oyu and Gyachung Kang are reflected in the lake's emerald green waters. The trek takes approximately 4–5 hours. Overnight at a lodge in Gokyo on full board.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 29,
+"atom_id": "2e1bead6d87c9658",
+"atom": "Koh Phi Phi Don village — eat lunch at a restaurant",
+"day_text": "Ferry to Koh Phi Phi & Island Settlement\nA short ferry ride takes you from Phuket to Koh Phi Phi Don, the larger of two main islands in the Phi Phi group. The island's village is tightly built along a central isthmus between two bays, with accommodation, restaurants, and bars concentrated in a small area. After checking into your hotel and a lunch at a restaurant in the village, there is free time to explore the main pier and nearby landmarks, including a popular swing photo spot.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 30,
+"atom_id": "4be812445ee5b6b3",
+"atom": "Angkor's Small Circuit — cycle 40-kilometre route",
+"day_text": "Angkor's Small Circuit by Bicycle\nA 40-kilometre cycle explores Angkor's Small Circuit. The route includes Takeo (a pyramid temple), Ta Prohm (jungle-clad and famous from film), and Sras Srang, known as the King's bathing pond. The main focus is Angkor Thom, the vast walled royal city, where Bayon—a temple famed for its many large carved smiling stone faces—stands at the centre. Other sites within Angkor Thom include Baphuon pyramid, Phimeanakas, and the Terrace of the Elephants and Terrace of the Leper King, both serving historical ceremonial functions. After lunch, Angkor Wat itself is visited. In the late afternoon, cyclists reach an excellent vantage point for a sunset view of the temple complex.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 31,
+"atom_id": "231402735dd5edac",
+"atom": "Karkyra — drive to, eat dinner, and overnight at base camp",
+"day_text": "Cholpon-Ata Petroglyphs and Karkyra Base Camp\nAfter breakfast, meet your guide to explore the open-air museum of petroglyphs at Cholpon-Ata. An optional boat cruise on Issyk-Kul Lake is available. Drive to Karkyra for dinner and overnight at base camp.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 32,
+"atom_id": "c0fc5c0f96ea8ceb",
+"atom": "Dragon's Backbone rice terraces near Longji — walk alongside bamboo groves and chestnut forests",
+"day_text": "Tiger Leaping Gorge: First Day of Trekking\nTravel early to Qiaotou, the starting point for trekking Tiger Leaping Gorge. The gorge cuts through the Yunnan highlands where the Yangtze River runs a thousand meters below, flanked by snow-shrouded peaks. The trail is swept with loose scree; you may encounter a local herding a donkey along the path. The experience—exhausted, resting atop a rock, watching fading sunlight dance between distant peaks and then dance on the river far below—sums up the trek's singular character. This is counted among southwest China's most significant trekking routes. Stay overnight at a guesthouse in the gorge.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 33,
+"atom_id": "e006016c72541d77",
+"atom": "Xi'an to Beijing — travel by overnight train",
+"day_text": "Guangning to Jiulong to Mingjing: 70-Kilometer Cycle with Cave Boat Ride\nA 70-kilometer cycle carries you through rural countryside to Jiulong and Mingjing. Midway through the day, you board a boat to explore a cave system in the region. Overnight accommodation is at Huang Hua Gu Guest House.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 34,
+"atom_id": "ce0101fe8efd50f3",
+"atom": "monasteries in the Indus Valley region — view across the Indus toward the Zanskar Ranges",
+"day_text": "Indus Valley Monasteries and Sightseeing\nA full day's tour visits several monasteries in the Indus Valley region, notably Alchi, where you may meet resident monks. These sites occupy elevated positions with views across the Indus toward the Zanskar Ranges. The walking to and from the monasteries—climbing steps and pathways—serves the acclimatization process while providing context for Ladakh's spiritual history.",
+"p": 0.93,
+"label": 1
+},
+{
+"id": 35,
+"atom_id": "0fd8ebfc0c6281b3",
+"atom": "Phonsavan — transfer into Phonsavan as base for exploration of the Plain of Jars",
+"day_text": "Riding to Phonsavan: Limestone Peaks and Xiang Khouang Plateau\nThis day includes significant climbing on challenging mountain roads. The landscape shifts as the route climbs into limestone karst peaks and enters Xiang Khouang Province's high plateau. A van transfer begins the day and a short transfer into Phonsavan closes it, allowing an 80-kilometer cycling segment. Phonsavan serves as the base for exploration of the Plain of Jars.",
+"p": 0.95,
+"label": 1
+},
+{
+"id": 36,
+"atom_id": "e2c6feb06b733b22",
+"atom": "Punakha Dzong — visit at the confluence of Po Chu and Mo Chu rivers",
+"day_text": "Thimphu\nFree day in Thimphu.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 37,
+"atom_id": "598453932c3d7ca8",
+"atom": "Kawayu — soak in onsen where hot springs emerge from the riverbank itself",
+"day_text": "Departure from Kushimoto\nAfter breakfast at the hotel and checking out, your tour concludes. A shuttle bus from the hotel connects to Kushimoto Station, the nearest JR station on the Kisei Main Line. From there, non-stop express trains depart toward both Shin-Osaka and Kyoto, allowing you to continue onward at your own pace.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 38,
+"atom_id": "a4c4621365f7381c",
+"atom": "Ringmo village — visit home of the Bon religion",
+"day_text": "Dho Tarap to Numa La Base Camp Trek\nA four-hour trek covering 8 kilometers through rugged terrain brings you to Numa La Base Camp at 4,350 meters. The landscape shifts as elevation increases, offering views across the high country. You'll settle into the tented camp for the night, resting before the challenges ahead.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 39,
+"atom_id": "232f469d77bb4e60",
+"atom": "Imjingak — have breakfast",
+"day_text": "Korean Demilitarized Zone & K-pop Dance Class\nAn hour-long bus ride north from Seoul takes you to Imjingak, where breakfast is available before continuing to Dorasan Station, the northernmost train stop in South Korea. Built decades ago with the intention of eventually connecting Seoul and Pyongyang, the station remains a striking reminder of divided history. Walk the platform and pick up a souvenir train ticket (1000 KRW) as a tangible piece of this unique site.\n\nFrom Dora Observatory, binoculars bring the nearest North Korean villages into focus across the border. The 3rd Tunnel, excavated by North Korean forces during the Cold War, descends approximately 170 meters toward the DMZ—a sobering proximity that brings the division into stark relief. On the return bus to Seoul, there's an opportunity to hear firsthand accounts from a North Korean defector.\n\nBack in the city, an included K-pop dance class introduces you to the choreography of international K-pop songs. The 90-minute session requires no prior dance experience, just willingness to learn from professional instructors.\n\nIf dance isn't your preference, alternatives include Myeongdong Cathedral or a quirky cat café. For the evening, consider the Nanta Show, a comedic cooking performance that relies on physical humor rather than language. Or venture into Itaewon's eclectic mix of international restaurants and bars, or head to the upscale clubs and lounges of Gangnam. The choice shapes how your day concludes—whether you're still processing the weight of the DMZ or fully immersed in Seoul's energy.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 40,
+"atom_id": "aff2546bbc4ba013",
+"atom": "Wat Phou — visit Hindu temple",
+"day_text": "Siem Reap Departure\nAfter breakfast, you'll transfer to the airport for your onward flight, departing with memories of Vietnam and Cambodia's temples and cycling adventures.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 41,
+"atom_id": "55f374e978c1f3c8",
+"atom": "Manikarnika Ghat — visit Varanasi's principal cremation site",
+"day_text": "Jaipur to Agra: The Taj Mahal at Sunset\nThe 240 km journey by private vehicle (6 hours) passes through arid terrain and small towns toward Agra. On arrival, proceed directly to the Taj Mahal for a sunset visit. The white marble mausoleum was built by Mughal Emperor Shah Jahan. It is approached through formal gardens and a gateway that frames the structure against the late-afternoon light.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 42,
+"atom_id": "b86309667e3b2792",
+"atom": "Khongor Sand Dunes — visit",
+"day_text": "Return to Ulaanbaatar\n220km drive south.",
+"p": 0.05,
+"label": 0
+},
+{
+"id": 43,
+"atom_id": "66dc05723eff18cb",
+"atom": "Shaxi — explore",
+"day_text": "Shanghai Departure\nEnjoy leisure time in Shanghai after breakfast. Your driver will meet you at the hotel and transfer you to the airport for your onward journey.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 44,
+"atom_id": "5f31eb47eb81f6aa",
+"atom": "Hampi bazaar — explore bazaar and Vijayanagara temple complexes",
+"day_text": "Thekkady: Elephant Trek and Spice Plantation Tour\nEarly morning elephant ride through the jungle periphery, followed by a guided walk through spice plantations where cardamom, pepper, nutmeg, and cinnamon grow under the shade of taller trees. The day remains open for optional activities: bamboo rafting, trekking through forest trails, jeep safaris, or visits to local tribal settlements. An evening jungle patrol is available if you wish to extend your time in the sanctuary.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 45,
+"atom_id": "1e57ecd4b41dd515",
+"atom": "Zuthulpuk cave — visit",
+"day_text": "Kailash Parikrama: Zuthulpuk to Darchen, Drive to Saga\nA final three-hour walk completes the Kailash circuit, descending from Zuthulpuk to Darchen, where your support team awaits. By late afternoon, you drive back to Saga, where you spend the night.",
+"p": 0.06,
+"label": 0
+},
+{
+"id": 46,
+"atom_id": "33ab4ce9dd5862e1",
+"atom": "Kailash Parikrama — walk three-day circumambulation",
+"day_text": "Kathmandu's Sacred Temples and Stupas\nAfter breakfast, visit Pashupatinath, Gujeswori Temple, Jal Narayan, Bouddhanath Stupa, and Swayambhunath Stupa. Lunch is taken en route.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 47,
+"atom_id": "73e638dc90abf29a",
+"atom": "Mutianyu Great Wall — eat picnic lunch on the wall",
+"day_text": "Mutianyu Great Wall and Acrobatic Performance\nA two-hour drive northwest from Beijing reaches the Mutianyu section of the Great Wall, one of the best-preserved and most-restored stretches. The restored state makes it accessible for walking without sacrificing the sense of the wall's physical difficulty. A picnic lunch is provided on the wall itself. The return to Beijing allows time for an acrobatic show in the evening.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 48,
+"atom_id": "8472cfe677516295",
+"atom": "Beijing to Xi'an — board overnight hard-sleeper train",
+"day_text": "Great Wall at Mutianyu & Overnight Train to Xi'an\nTravel two hours northeast of Beijing to Mutianyu, one of the best-preserved restored sections of the Great Wall. The restored state makes climbing accessible while the scale and engineering remain apparent. Return to Beijing in time to board an overnight hard-sleeper train bound for Xi'an.",
+"p": 0.91,
+"label": 1
+},
+{
+"id": 49,
+"atom_id": "cc52854aedb1904f",
+"atom": "Varanasi's ghats — watch sunrise and sunset along the Ganges",
+"day_text": "Arrival in Delhi\nWelcome meeting at 6 pm. If you arrive with time to spare beforehand, an optional walking tour of lesser-known Delhi neighbourhoods is available to orient yourself to the city's layout and rhythm before the group convenes.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 50,
+"atom_id": "4b1390d1ee398d9a",
+"atom": "rural lake — canoe and fish using traditional techniques",
+"day_text": "Arugam Bay: Surfing and Coastal Relaxation\nStart with breakfast at the hotel, then spend the day at leisure along the beach. Surf the Indian Ocean waves or simply relax by the shore. Dinner and overnight at Hideaway Lodge.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 51,
+"atom_id": "1063633c3c378c75",
+"atom": "elephant sanctuary — prepare food, hand-feed elephants, and learn about their history and conservation",
+"day_text": "Phuket Elephant Sanctuary Visit\nToday is devoted to Thailand's most adored animals. We visit a renowned elephant sanctuary where you'll spend hours preparing food, hand-feeding these gentle giants, and learning about their remarkable history and conservation in Thailand. The sanctuary provides insight into the elephants' stories and behaviour as you work alongside them. After lunch at the sanctuary, we return to the hotel, enriched by this extraordinary encounter with one of Southeast Asia's most iconic creatures.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 52,
+"atom_id": "386bba6de8738874",
+"atom": "Jeju Island — watch haenyeo women divers harvest seafood using traditional breath-hold methods",
+"day_text": "Arrival in Seoul: Cheonggyecheon Stream and Myeongdong Orientation\nArrive in Seoul throughout the day and check into Hotel Prince (or similar). As fellow travellers settle in at their own pace, there are no planned activities until the evening group meeting.\n\nAt 6 p.m., meet your CEO and fellow travellers for your Welcome Moment. This is your opportunity to connect with your group and learn what to expect from the tour ahead. Your CEO will brief you on the practicalities of travelling through South Korea—where to find supermarkets, main squares, ATMs, and other essentials—before heading out on an orientation walk.\n\nThe walk begins at Cheonggyecheon Stream, an 8.4-kilometre waterway restored as a public space that cuts through the heart of downtown Seoul. The walk covers approximately 2 kilometres and takes 45–60 minutes at a leisurely pace. As you walk, you'll pass small waterfalls and nearly two dozen overhead bridges, gaining a sense of the city's geography and character. This restored stream is both a functional transport corridor and a gathering place for locals, offering a calm counterpoint to Seoul's intensity.\n\nFrom there, you'll move into Myeongdong, a densely packed commercial district situated roughly 20 minutes' walk from the stream. The neighbourhood is a sensory experience—street food carts line the pavements, major shopping malls tower overhead, and entertainment venues draw crowds constantly. It's a quintessential Seoul experience and a good introduction to the city's commercial heart.\n\nAfter the orientation walk, you have the option to join your CEO and fellow travellers for a group dinner, or explore on your own. Check the notice board in your hotel lobby (or ask reception) for the official meeting time and place if you'd like to join the group.\n\nBefore you venture out, it's worth noting that South Korea's efficient train network will be your main transport method throughout this tour. You'll spend most days on foot and will need to carry your own luggage through busy train stations and crowded streets. Please ensure you are fit enough to manage this level of daily movement and comfortable carrying your belongings for extended periods.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 53,
+"atom_id": "2d5fac0f20ee9497",
+"atom": "guesthouse — eat home-cooked breakfast",
+"day_text": "Jinshanling to Simatai: Final Great Wall Day & Return to Beijing\nStarting with a home-cooked breakfast at the guesthouse, you hike 8 kilometers from Jinshanling to Simatai West over 4–5 hours. This section features both original and reconstructed wall segments, with watchtowers ranging from two to three stories—some with flat roofs, others with rounded or pitched and upturned eaves typical of Ming design. The path is mostly paved, though unrestored stretches include stairs and steep gradients. Views along the ridge remain visually striking throughout. After lunch at a local farmer's restaurant, a three-hour drive returns you to Beijing. Breakfast and lunch included. Accommodation at Chongwenmen Hotel.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 54,
+"atom_id": "760179b06970b4ed",
+"atom": "Li River — cruise through the limestone pinnacle landscape",
+"day_text": "Shaxi Old Town: Tea Horse Trail Heritage\nAfter breakfast, your guide and driver will meet you at your hotel to explore Shaxi Old Town, an important historical stop on the ancient Tea Horse Trail. Walk the narrow, cobblestone alleyways where Yi and Bai ethnic minorities continue to maintain their traditions alongside residents who have preserved the town's character for centuries. Observe intricately carved wooden entrances and glimpse the well-fenced, attractive courtyards hidden behind many of the homes. Siding Square forms the center of the old town, established as a Tea Horse route hub during the Tang dynasty in 618. UNESCO recognizes Shaxi as one of the most intact tea-trading towns remaining in China—a place where history remains tangible in every corner. Return to your hotel in Shaxi for the evening.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 55,
+"atom_id": "d4aec74eadef4cc2",
+"atom": "Uran Togoo volcano — trek into the crater",
+"day_text": "Return to Ulaanbaatar\n220km drive south.",
+"p": 0.05,
+"label": 0
+},
+{
+"id": 56,
+"atom_id": "9804cf7f40ae1162",
+"atom": "Chorten Kora — visit temple near Tashigang",
+"day_text": "Mongar: Dzong, Farmhouse Ara, and Corn-Liquor Tradition\nA 90-kilometre, three-hour drive to Mongar brings you to the dzong overlooking the eastern foothills. The afternoon centres on a farmhouse visit where you'll see ara — the eastern region's signature spirit — being brewed from corn, and where a traditional lunch introduces the flavour profile of eastern Bhutanese cooking.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 57,
+"atom_id": "b759d64087836d33",
+"atom": "Pokhara — share organic coffee and beekeeping experience with women farmers",
+"day_text": "Kathmandu Departure & Optional Everest Flight\nDepart Kathmandu at any time. An optional Everest Flight is available; do not book outgoing flights before noon if interested. This one-hour aerial tour offers views of Mount Everest, the world's highest mountain, without requiring climbing. You'll see the peak and surrounding Himalayan landscape from the air. Weather can occasionally obscure Everest itself, but the views of the surrounding range remain visible.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 58,
+"atom_id": "0bd122161ac50aa8",
+"atom": "Drukgyel Dzong — visit war trenches and fortification remains",
+"day_text": "Paro: Dzong Ruins, Ancient Temple & Museum\nVisit Drukgyel Dzong's war trenches and fortification remains. Then visit Kyichu Lhakhang, Bhutan's 7th-century temple. Explore the National Museum, which houses artifacts and history of Bhutanese culture. Afternoon: free time in Paro town.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 59,
+"atom_id": "1786db17b22ea105",
+"atom": "Embekke — visit medieval temple by trekking trail",
+"day_text": "Train Journey to Bandarawela\nDepart Peradeniya Railway Station at 12:30 PM, riding the central highlands route toward Bandarawela. The line climbs through tea estates and mist-covered valleys. Your driver collects you at Bandarawela station and transfers you to The Hideaway guest house.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 60,
+"atom_id": "51c8da3cf25e06bf",
+"atom": "Giant Panda Breeding Research Base — visit and observe conservation efforts",
+"day_text": "Arrive in Beijing\nYour guide and driver will meet you at Beijing airport and transfer you to your hotel in the city center. Allow time to check in and settle before the 6 p.m. group meeting at your hotel—look for details in the lobby or ask at reception. The meeting includes a full briefing on your itinerary, trip logistics, and what to expect in the days ahead. Afterward, your group will take an orientation walk through the surrounding neighborhood to get oriented to the area, followed by dinner at a local restaurant where you'll meet your fellow travelers and begin your Adventure Asia journey.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 61,
+"atom_id": "f75a7d92a35de22c",
+"atom": "Everest Base Camp — stand and witness active expedition camps and towering ice pinnacles",
+"day_text": "Crossing Cho La Pass to Dzongla\nThe route ascends the valley, crosses a ridge and old lateral moraine, then scrambles rockily to the Cho La Pass (5,420m). From the pass, views extend west across the Rolwaling Valley and southeast to Ama Dablam. The descent involves crossing a small glacier, then follows pastures with excellent views of Ama Dablam and the north face of Cholatse. Dzongla (4,830m) is reached after 7–8 hours. Overnight in a lodge on full board.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 62,
+"atom_id": "04ce04cfb8578122",
+"atom": "Punakha to Bumthang — drive eastward through high mountain landscapes",
+"day_text": "Trongsa Dzong & Drive to Bumthang\nLeave Punakha eastward through some of Bhutan's most layered terrain. Stop at Trongsa Dzong, which commands views from miles away and serves as gateway to central Bhutan. After visiting the fortress, continue through high mountain landscapes to Bumthang, the cultural heartland and home of Ura Festival.",
+"p": 0.94,
+"label": 1
+},
+{
+"id": 63,
+"atom_id": "59d757fc508f268a",
+"atom": "Pidurangala Rock — take in panoramic views",
+"day_text": "Colombo's Colonial and Urban Landscape — Departure\nDepending on your flight departure time, explore Colombo's urban mix of Victorian colonial buildings, modern commercial districts, and the Old Parliament Buildings. Visit the Kelaniya Temple, a major Buddhist shrine north of the city center, then proceed to the airport for departure. Alternatively, if your flight departs early morning, transfer directly to the airport for check-in.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 64,
+"atom_id": "d88b968a1c05b7af",
+"atom": "Ruluos town — visit the local market",
+"day_text": "Kompong Phluk: Rural Cycling, Floating Villages, and Sunset Hike\nYou bicycle on small back roads through rural landscapes and villages to the temple of Bakong, then continue to Ruluos town and its local market. Following the Ruluos River, you board small wooden boats to Kompong Phluk, a medieval floating village where houses stand on stilts. After exploring the local wat, you board a larger boat cruising through flooded forest and across the great lake to Chong Kneas, an expansive floating village. You then travel to Phnom Krom for a short hike and a sunset view before returning to Siem Reap. The twenty-kilometer biking distance includes varied terrain, and the evening is at leisure.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 65,
+"atom_id": "290e096ea591b5b1",
+"atom": "Angkor's Small Circuit — cycle Ta Prohm, Bayon, Angkor Thom, and Angkor Wat",
+"day_text": "Stung Treng to Preah Vihear: Rolling Hills and Clifftop Temple\nA morning transfer heads north toward Kulen Prum Tep Wildlife Sanctuary before cycling begins. The 70-kilometre route gradually changes from flat terrain to rolling hills as it approaches the Thai border. The destination is Preah Vihear, a Hindu temple complex from the Angkorian period, built atop the Poy Tady Cliff in the Dangrek Mountains at 525 metres elevation. The site is UNESCO-protected and renowned not only for its architecture but for its dramatic clifftop position with panoramic views of the surrounding landscape and into Thailand. A 4-wheel-drive vehicle ascends to the temple top for two hours of exploration. Most visitors are Khmer pilgrims who have travelled considerable distances to view the handiwork of their ancestors. Accommodation: Preah Vihear Jaya Hotel, Deluxe Room.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 66,
+"atom_id": "85f79f2c6ceecec6",
+"atom": "Iizaka Onsen — ride smooth riverside cycling road into town",
+"day_text": "Miharu to Iizaka: Mountain Views and Hanamiyama\nA 70-kilometer ride with 900 meters of elevation gain takes you through peaceful villages, steep climbs, and panoramic views of the Azuma mountain range. Along the way, a sakura tree decorated with a Jizo Buddha statue marks a quiet location. Hanamiyama hill—maintained by local residents and covered in blooming sakura alongside seasonal flowers—offers a short walk to survey the landscape. The day concludes on a smooth riverside cycling road into Iizaka Onsen. An onsen hotel with kaiseki-style dinner provides the evening's rest.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 67,
+"atom_id": "59ce4f70dc8b2710",
+"atom": "Hong Island — kayak lagoon and cave passages and visit panoramic coastal viewpoint",
+"day_text": "Bangkok Temples, Canals & Markets\nStart from your hotel and explore Bangkok's core by water and foot. Visit Wat Arun and Wat Pho, two major temple compounds that anchor the city's spiritual geography; the first sits directly on the Chao Phraya River, the second holds the reclining Buddha and a traditional Thai massage school. A canal cruise threads through historic waterways where residential life continues alongside the surrounding city. A tuk-tuk returns you toward the hotel district. The remainder of the day is unscheduled: wander the Khao San Road area, move through markets, or sample street food stalls that line the sois around your hotel.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 68,
+"atom_id": "e6dcdb45047e7fc2",
+"atom": "Mae Sai border market — browse Burmese goods and cross-border street commerce",
+"day_text": "Departure from Koh Samui\nAfter breakfast, you have free time until checkout before meeting your representative for transfer to Samui airport and your flight onward.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 69,
+"atom_id": "79952c8339fd918f",
+"atom": "Ngo Dong River — take a rowing boat trip passing through three water tunnels",
+"day_text": "Ninh Binh Exploration: Tam Coc and Mua Cave\nA rowing boat trip up the Ngo Dong River lasts about 90 minutes, passing through three water tunnels while viewing rice fields and local farmers working and fishing. The landscape of high green mountains creates a distinctive visual effect. Continue to Mua Cave, constructed with nearly 500 stone steps ascending the mountain peak to a viewpoint over the plateau.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 70,
+"atom_id": "b38b158a27520e65",
+"atom": "Shennv Valley — take an excursion to explore",
+"day_text": "Three Gorges: Qutang, Wu Gorge & Goddess Stream\nAfter breakfast, your guide meets you at the Yangtze deluxe Cruise. The ship sails through the Qutang Gorge and Wu Gorge, two of the Three Gorges of the Yangtze River, renowned for scenery designated the highest level by China's National Tourism Administration. You'll take an excursion to the Shennv Valley, known as the Goddess Stream, where thousands of cliffs hang vertically against the sky. Hundreds-of-meters-high blue peaks create narrow gaps between towering stone walls—a landscape that reveals why this place bears its evocative name. In the evening, join the captain's farewell banquet. You remain accommodated aboard the Yangtze deluxe Cruise.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 71,
+"atom_id": "54906ab6c9ac92ef",
+"atom": "Erdene Zuu Monastery — visit functioning temples",
+"day_text": "Departure\nTransfer to Chinggis Khaan International Airport for your international flight.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 72,
+"atom_id": "f53dba6f18d717a5",
+"atom": "Himlung Himal Base Camp — hike to base camp and glacier valley with close encounters with yak herds and herders",
+"day_text": "Trek from Phu to Nar: Narrow Canyon and Evening Monastery Prayers\nRetrace part of yesterday's route and cross a bridge spanning an 80-meter-deep narrow canyon before arriving at Nar (4,110m). In the evening, attend prayers with the nuns at Nar Monastery and share dinner prepared by the community. This offers an intimate glimpse into daily monastic life. Visitors are welcome to donate and light oil lamps. Overnight at Nar.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 73,
+"atom_id": "6b026960baed32cd",
+"atom": "Chinggis Khaan Equestrian Statue — stand atop and tour its museum complex",
+"day_text": "Departure\nDepart.",
+"p": 0.06,
+"label": 0
+},
+{
+"id": 74,
+"atom_id": "7c802cfc4f3c092f",
+"atom": "Trongsa Dzong — explore the ancient trade center",
+"day_text": "Trongsa: Dzong Architecture and Twin Waterfalls\nDrive north through Twin Waterfall to Trongsa (137km, 3h 45min). Explore Trongsa Dzong, the ancient trade center, and Taa Dzong watchtower museum.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 75,
+"atom_id": "dca1816387dd0c66",
+"atom": "Mt. Bandai — climb Mt. Bandai's panoramic pass with extensive views across Fukushima Prefecture",
+"day_text": "Kaminoyama Onsen to Hijiori Onsen: Deep Mountain Road\nCycle along the boundary between mountains and farmland through central Yamagata on typical Japanese countryside landscape. The day's route climbs a deep mountain road toward Hijiori Onsen, a small hot spring town tucked into a caldera at the foot of Mt. Gassan. The town is known for toji, a traditional long-term onsen stay meant to promote wellness. The following morning, a local farmers' market and narrow main street invite exploration. Breakfast and dinner included. Distance: 95 kilometers; elevation gain: 1,200 meters. Road surface: paved mountain roads with some forest roads.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 76,
+"atom_id": "389724216cbd3f6e",
+"atom": "Anoothi Project — attend a block printing workshop with local women",
+"day_text": "Kochi: Departure\nDepart at any time.",
+"p": 0.21,
+"label": 0
+},
+{
+"id": 77,
+"atom_id": "6b6ae0001b482f08",
+"atom": "Kardung La — drive to and view panoramic vistas",
+"day_text": "Kardung La Pass and the Nubra Valley Approach\nToday's acclimatisation continues with a jeep drive to the Kardung La (5,380m), one of the world's highest motor passes. The road climbs 2,000 meters north from Leh, leading toward the Nubra Valley—a region only recently opened to foreign visitors. The ascent rewards with panoramic views across the Indus Valley to the Zanskar Range, where Stok Kangri stands prominently among the higher peaks. At the pass itself, the thin atmosphere frames views of the lesser-known Eastern Karakoram peaks. After pausing for tea at altitude, we return by jeep to Leh, descending back to 3,524 meters and to the hotel for the evening.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 78,
+"atom_id": "eed9ebb09033588c",
+"atom": "Kathmandu international airport — transfer to hotel",
+"day_text": "Arrival in Kathmandu\nYou'll be met at the international airport and transferred to your hotel in Kathmandu. Check in and settle in for the night ahead.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 79,
+"atom_id": "c5bcd730ee27472e",
+"atom": "Western Hills — visit",
+"day_text": "Arrival in Kunming\nYou arrive at Kunming airport, where your guide meets you and transfers you to your hotel. In the evening, your guide will take you to a local dinner and walk through the itinerary. Kunming, capital of Yunnan Province, sits at a comfortable altitude with mild year-round climate. The city holds a centuries-long history layered with diverse ethnic communities, and if you arrive early, attractions including Western Hills, Haigeng Park on the banks of Dianchi Lake, and Guandu Ancient Town are accessible.",
+"p": 0.53,
+"label": 1
+},
+{
+"id": 80,
+"atom_id": "50f8c8c349ba2e08",
+"atom": "monastery — visit and cultural exchange with resident Buddhist monks and students",
+"day_text": "Ranthambore National Park & Fort\nDepart by car for Ranthambore, one of India's largest national parks, nestled within the Vindhya Mountains. After settling into your accommodation, rest and reorient. In the late afternoon, take a guided jeep expedition through the park to reach the 11th-century Ranthambore Fort. Walking through the jungle, you'll explore the fort's ramparts and historical chambers.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 81,
+"atom_id": "c5970dc6fe499249",
+"atom": "Samode — camel safari and watch desert sunset",
+"day_text": "Arrival at Delhi & Transfer to Neemrana\nArrival at Delhi International Airport and transfer to Neemrana, a heritage property located 50 kilometers south. Check-in and free time for rest and settling in.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 82,
+"atom_id": "ef8d5d949b3bc220",
+"atom": "Nagadeepa Temple to Trincomalee — travel southward",
+"day_text": "Nagadeepa Temple & Departure for Trincomalee\nVisit Nagadeepa Temple before beginning your journey southward to Trincomalee. Check into your accommodation as evening settles.",
+"p": 0.92,
+"label": 1
+},
+{
+"id": 83,
+"atom_id": "405432bfc2149221",
+"atom": "Dambulla Cave Temple — explore cave temple complex with Buddha statues carved into cliff faces",
+"day_text": "Arrival in Colombo\nBandaranaike International Airport staff will meet you on arrival. A driver and English-speaking guide transfer you to your accommodation in the capital, where the rest of the day is yours to rest after travel.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 84,
+"atom_id": "a7718c7a372dac2a",
+"atom": "village homestay on the backwaters — stay overnight",
+"day_text": "Thekkady to Kerala Backwaters: Village Homestay\nTravel to Allepey and board a private boat for the short ride to a village homestay on the backwaters. The backwaters are a network of lagoons and channels between the land and the Arabian Sea, lined with coconut palms and small fishing settlements. In the afternoon, explore the island with a local person, learning how residents live and work on the water. Before sunset, take a small country boat through the winding channels and lagoons as evening falls. Your main luggage will be transferred directly to your hotel in Kochi; bring only a small overnight bag.",
+"p": 0.92,
+"label": 1
+},
+{
+"id": 85,
+"atom_id": "d28539ff8f5f4161",
+"atom": "Wat Arun — visit temple",
+"day_text": "Phuket Sightseeing: Karon Viewpoint, Big Buddha & Old Town\nThe day opens at Karon Viewpoint, a hilltop outlook over three bays on Phuket's west coast. Next, travel to the Big Buddha, a large marble statue positioned on Nakkerd Hills above Phuket Town; a monk blessing is typically offered to visitors here. Descend into Phuket Old Town, a neighborhood of Sino-Portuguese shophouses, street markets, and small temples that reflect the Chinese merchant families who settled in Phuket during the tin-mining era. The day concludes with a group sunset on the beach.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 86,
+"atom_id": "26f25114241f56a5",
+"atom": "Institute of Traditional Medical Services — visit in the afternoon",
+"day_text": "Thimphu: Yoga at Dochu La & Traditional Medicine\nDrive back to Thimphu (131 kilometers, approximately three and a half hours), with a yoga session at Dochu La Pass (3,088 meters) before breakfast. In the afternoon, visit the Institute of Traditional Medical Services and the Traditional Arts and Crafts School.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 87,
+"atom_id": "1a5926f718c371c4",
+"atom": "Chorten Kora — visit",
+"day_text": "Tashigang: Bamboo Forests and Handloom Traditions\nA 180-kilometre drive through bamboo forests brings you to Tashigang. Stop at Dewathang, a historical battlefield, then visit Khaling National Handloom, Chorten Kora, and a local home.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 88,
+"atom_id": "67767b5c15f7974c",
+"atom": "Bunker des Lumières, Jeju — visit immersive art exhibition in a former military bunker",
+"day_text": "Jeju: Your Day to Explore\nThis day is unstructured. Available options include:\n\n- Geumneung Beach or Hyeopjae Beach: seaside relaxation\n- Olle Trail: 437-kilometre loop circumnavigating the island's edge; Routes 6 and 7 are popular sections (flexible half-day or full-day options available)\n- Volcanic oreums: small, dormant volcanic cones scattered across the island (Seongsan Ilchulbong and Darangshi Oreum are notable options; difficulty ranges from easy to moderate)\n- Bunker des Lumières: immersive art exhibition in a former military bunker featuring advanced projection technology\n- Independent exploration of Jeju City\n\nYour CEO can advise on logistics and help arrange transportation to and from trailheads.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 89,
+"atom_id": "39dcb57643e87c50",
+"atom": "Xixiangchi Temple — pass through as first major waypoint on descent",
+"day_text": "Mount Emei: Full-Day Descent Through Temples & Monasteries\nA demanding 8 to 9 hour hiking day requires an early start. You descend via cable car to Jieyin Hall, then walk to Leidongping before beginning the descent along old stone steps. Xixiangchi Temple, also known as Elephant Bathing Pool at 2,070 meters, marks the first major waypoint; legend holds that the white elephant of Samantabhadra Bodhisattva once bathed in the pool before the temple. The path continues to Zuantian Slope (Slope Drilling into Sky), a dramatically steep descent of 300 meters with 32 hairpin turns and over 1,500 steps. After resting at Jiuling Hill you hike onward to Yuxian Temple through a section of rolling terrain. Passing Xianfeng Temple, you enter the Ecological Monkey Zone, home to a large wild monkey population. From Wuxiangang parking lot, an eco-bus returns you to the tourist center and your guesthouse.",
+"p": 0.95,
+"label": 1
+},
+{
+"id": 90,
+"atom_id": "74b18bebb73a2c90",
+"atom": "Tangalle — stay four nights with optional water sports and Ayurvedic spa treatments",
+"day_text": "Arrival and Transfer to The Walawwa, Kotugoda\nAirport assistance and welcome on arrival. Transfer to The Walawwa, an 18th-century manor house set within century-old tropical gardens in Kotugoda. Check in and settle for the first night in one of the property's restored rooms.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 91,
+"atom_id": "e11881d99d71a7e4",
+"atom": "Nikko — arrange dinner independently at a restaurant in town",
+"day_text": "Shiobara to Nikko: The Cedar Avenue & Sacred Samurai Road — 70 kilometers\nDepart Shiobara and cycle through a short walk in Ryu-o-kyo Gorge, then continue via scenic countryside roads and historical sites southward. The day's highlight is the Nikko Cedar Avenue, an ancient samurai road enclosed by 400-year-old giant cedar trees. Arrive in Nikko and check into an elegant classic resort hotel. Dinner is independently arranged at a restaurant in town (not included). Overnight stay with breakfast and lunch provided.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 92,
+"atom_id": "1528599a29a866da",
+"atom": "Gokyo Lake (Dudh Pokhari) — view emerald waters reflecting Cho Oyu and Gyachung Kang",
+"day_text": "Trek Dole to Machhermo via Alpine Pastures\nA steady 4–5 hour climb along the valley's side as rhododendron forest transitions to scrub juniper with increasing altitude. The trail passes seasonal herding settlements, used when yaks are brought to these high pastures to graze during summer months. Excellent forward views of Cho Oyu dominate the landscape; behind, the peaks of Kantega and Thamserku frame the valley. We arrive at Machhermo—situated at 4,410 meters—in time for lunch. The day ends at a lodge in Machhermo with full board accommodation.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 93,
+"atom_id": "49ab55f9fcff239f",
+"atom": "Cheonjiyeon Waterfall — visit the three-tiered cascade",
+"day_text": "Jeongbang Waterfall, Jeju Olle Trail & Seongsan Ilchulbong\nBegin at Jeongbang Waterfall, the only waterfall in Asia that flows directly into the ocean. Trek a section of the Jeju Olle Trail, a network of coastal and countryside footpaths that circle Jeju Island. Continue to Seongsan Ilchulbong, also known as Sunrise Peak, a UNESCO World Heritage Site formed by hydrovolcanic eruptions over 5,000 years ago. The hike to the summit takes roughly an hour and rewards with panoramic views across the island and the surrounding sea. The rest of the day is free. Options include Jungmun Beach; Cheonjiyeon Waterfall, a three-tiered cascade in a forested valley; the Seogwipo Maritime Park with coastal walking paths; Saeyeongyo Bridge, a cable-stayed span over a deep ravine; or sunset drinks at The Cliff, a waterfront bar. Your guide provides information on all options.",
+"p": 0.77,
+"label": 1
+},
+{
+"id": 94,
+"atom_id": "f42af2a7a6ffcbc1",
+"atom": "Marine Drive — walk the seafront",
+"day_text": "Mumbai: Elephanta Caves and Colonial Districts\nMorning sightseeing tour takes you first by ferry to Elephanta Island to view the ancient cave sculptures. Return to the city for a guided walk through key landmarks: Dhobi Ghat's open-air laundry, the seafront sweep of Marine Drive, Crawford Market's crowded stalls, and the late-19th-century mansions dotting the Colaba neighborhood.",
+"p": 0.94,
+"label": 1
+},
+{
+"id": 95,
+"atom_id": "e3016877dce5cc7a",
+"atom": "Udawalawe National Park — go on a sunrise jeep safari to observe herds of wild elephants and crocodile populations",
+"day_text": "Talalla Eco-Retreat\nThis day is designed for you to set your own pace. The retreat offers multiple options: participate in an included yoga session, read on the pool loungers, book a massage appointment, walk on the beach, or rest under palm trees. The retreat sits on one of Sri Lanka's quieter southern beaches and emphasizes environmental stewardship; regular beach cleanups are part of the group's routine.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 96,
+"atom_id": "d3a104ebefc88c00",
+"atom": "Gyeongbokgung Palace — visit",
+"day_text": "Seoul to Yangpyeong: City Landmarks and Countryside Shift\nAssemble and adjust rental bikes. The morning includes Gyeongbokgung Palace, a UNESCO site, and Samcheongdong Street. The 75-kilometer ride follows the Han River south on flat, forested terrain. At Paldang Dam, the landscape transitions to mountains and river valleys. Arrive in Yangpyeong by evening. Dinner: ori bulgogi.",
+"p": 0.94,
+"label": 1
+},
+{
+"id": 97,
+"atom_id": "72d6f42728ecfb62",
+"atom": "Namche Bazaar — visit the Everest View Hotel, Khunde Hospital, and the National Park Museum on acclimatization day",
+"day_text": "Phakding to Namche Bazaar Through Sagarmatha National Park\nThe trek involves repeated crossings of the Dudh Kosi on high-suspension bridges. Beyond Monjo lies the entrance to Sagarmatha National Park, established to protect the fragile mountain environment. As the trail ascends toward Namche (3,440m), Mount Everest appears in the distance, weather permitting. Namche serves as the main trading hub of the Khumbu, hosting a Saturday market where Hindu traders from the lowlands meet Tibetan yak caravans that have crossed the glaciated Nangpa La. Overnight in a lodge on full board.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 98,
+"atom_id": "ad87bc70251f2149",
+"atom": "Thotupola Residence — participate in a cooking demonstration and stay overnight",
+"day_text": "Tea Estate Trails & Ella Rock\nAfter breakfast, walk through tea estates above Bandarawela and Haputale. The Ella Rock Trail offers moderate ridge walking with views across the plateau. Overnight at The Hideaway.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 99,
+"atom_id": "f21a62781aa00fa0",
+"atom": "Neelagiri Buddha Statue — explore with a local guide",
+"day_text": "Farm Stay: Curd-Making, Canoe Fishing & Afternoon Safari\nLearn to make curd, a traditional Sri Lankan dessert prepared from buffalo milk, with farm staff. In the afternoon, take a traditional canoe onto the lake, fish using centuries-old local methods, and bathe in the river. After lunch, join a safari targeting crocodiles and elephants in the surrounding wetlands.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 100,
+"atom_id": "1fc654e288766ef6",
+"atom": "Kouri Island — visit coastal viewpoint",
+"day_text": "Okinawa's Wartime Heritage and Royal Legacy\nA guided bus tour examines Okinawa's cultural history and World War II legacy. The day begins at Shuri Castle, the former palace of the Ryukyu Kingdom, whose architecture and grounds reflect centuries of the region's independent royal heritage. You then visit the Former Japanese Navy Underground Headquarters, a subterranean complex that provides historical context on the peninsula's wartime role. The Himeyuri Peace Museum follows—a deeply considered memorial to the young women who served as nurses during the final campaign of the Pacific War. At Peace Memorial Park, time is set aside for reflection and remembrance. The tour concludes at Road Station ITOMAN, where local artisans and food producers sell traditional crafts and Okinawan preserves, a practical point for gathering regional provisions.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 101,
+"atom_id": "a784c0ab474cf3d3",
+"atom": "Kagbeni — pass through Tibetan village",
+"day_text": "Ascent to Lo-Manthang, Upper Mustang's Capital\nA six-hour trek climbs to Lo-Manthang at 3,700 meters, the walled capital of Upper Mustang's ancient kingdom. En route, views emerge of Nilgiri, Tilicho, Annapurna I, and Bhrikuti Peak. The village's protective walls sit near Nepal's Tibetan border.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 102,
+"atom_id": "9c06dcdcab5c0336",
+"atom": "Gangtey Gompa — visit one of Bhutan's oldest monasteries",
+"day_text": "Trongsa Museum to Gangtey Gompa at 3,500 Metres\nDepart Bumthang via Trongsa, stopping at the museum housed in the Dzong's watchtower. The collection tells the history of Trongsa and features personal belongings of Bhutan's Kings and Queens. Continue eastward to the Phobjikha Valley, a remote and immense expanse ringed by black mountain ranges. Visit Gangtey Gompa, one of Bhutan's oldest monasteries, which underwent extensive renovation in recent years. The valley sits at 3,500 metres.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 103,
+"atom_id": "8ea8b69fd676d3e2",
+"atom": "tea estates above Bandarawela and Haputale — walk tea estate trails",
+"day_text": "Tea Estate Trails & Ella Rock\nAfter breakfast, walk through tea estates above Bandarawela and Haputale. The Ella Rock Trail offers moderate ridge walking with views across the plateau. Overnight at The Hideaway.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 104,
+"atom_id": "20642a9e0fba146b",
+"atom": "Emin Minaret — tour in Turpan",
+"day_text": "Altyn-Emel National Park\nAfter breakfast, depart for Altyn-Emel National Park, Central Asia's largest and most extensive protected area, spanning desert and mountain terrain across Almaty Province. Spend the day walking the park's varied landscapes. Overnight at a guesthouse within the park.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 105,
+"atom_id": "c696cc6747fe8e5f",
+"atom": "Koh Samui — return mid-to-late afternoon",
+"day_text": "Ang Thong Marine Park: Kayaking & Trekking\nA full-day excursion to Ang Thong Marine Park, a national marine reserve east of Koh Samui comprising dozens of small islands and shallow waters. The day combines kayaking through narrow passages and hidden coves, snorkeling in clear water over reef and sand, and trekking to a panoramic viewpoint on one of the larger islands. Lunch is included. The park receives fewer visitors than the Andaman destinations. The return to Koh Samui is mid-to-late afternoon.",
+"p": 0.82,
+"label": 1
+},
+{
+"id": 106,
+"atom_id": "23d391f5f29c1ce0",
+"atom": "Dolma-La pass — cross at 5,645 meters",
+"day_text": "Old Tingri to Saga\nYou begin with breakfast and a seven-hour drive westward to Saga, a staging town on the route to Kailash. Your support team from Kathmandu meets you here with fresh provisions. You stay overnight in a four-star hotel in Saga.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 107,
+"atom_id": "075f292253bb08d8",
+"atom": "Nam Lik River — stop for lunch beside the river",
+"day_text": "Lao Buffalo Dairy to Kasi — 60 km Cycle\nThe route begins at the Lao Buffalo Dairy north of town, a community project producing hand-made cheese. From there you cycle backroads eastward through traditional villages and low hills, generally following the Nam Lik River as it runs through bamboo groves and agricultural land. The terrain is mostly flat. You stop for lunch beside the river before transferring to Kasi, a modest town with several small guesthouses and local eateries.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 108,
+"atom_id": "343124dac621ee24",
+"atom": "Kuenselphodrang Buddha statue — visit statue overlooking Thimphu",
+"day_text": "Tiger's Nest Monastery Hike in Paro\nA full day hike to the cliffside Tiger's Nest Monastery at 3,120 meters.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 109,
+"atom_id": "315bc1d146259509",
+"atom": "Tsagaan Suvarga — check in at the local camp",
+"day_text": "Tsagaan Suvarga: White Stupa Cliffs\nDepart toward the Middle Gobi to visit Tsagaan Suvarga, a name that translates as White Stupa, derived from the appearance of the cliffs from a distance. Stop for lunch in the town of Mandalgobi on the way. Upon arrival, check in at the local camp. The cliffs can be visited in the late afternoon and the following morning; the natural color variations in the local soil composition create a distinctive geological landscape. Overnight in a standard ger camp.",
+"p": 0.95,
+"label": 1
+},
+{
+"id": 110,
+"atom_id": "63afdaf6ebc3a10b",
+"atom": "Weheragala National Park — safari searching for leopards and elephants",
+"day_text": "Arugam Bay: Coastal Rest and Ocean\nA day without scheduled activities. Spend time on the beach, swimming in the Indian Ocean or observing its conditions for surfers.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 111,
+"atom_id": "0bbc243b402c49d5",
+"atom": "Kala Patthar — ascend at sunset for direct close-range view of Mount Everest and the Khumbu Icefall",
+"day_text": "Departure from Nepal\nOur airport representative will assist with your checkout procedure and escort you to the airport for your final departure from Nepal and onward journey.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 112,
+"atom_id": "6286c12030f9ddec",
+"atom": "Akha hill-tribe village — visit village and taste green tea at plantation",
+"day_text": "Bangkok's Grand Temples and Royal Palace\nBegin your Bangkok exploration at Wat Traimit, the Temple of the Golden Buddha, where a 3-meter-high solid gold Buddha carved in Sukhothai style commands the sanctuary. This sculpture weighs 5.5 tons and represents one of Thailand's most significant religious artworks.\n\nContinue to Wat Pho, Bangkok's oldest and largest temple, which houses the largest Reclining Buddha in Thailand. Wat Pho also held historical significance as Thailand's first public education center, reflecting its role in Thai cultural and religious life.\n\nThe afternoon brings you to the Grand Palace, built by King Rama I in 1782 as the former residence of Thai monarchs. This sprawling complex remains the most prominent and important site in Bangkok. Within its walls lies Wat Phra Kaew, the Temple of the Emerald Buddha, home to a 48-centimeter jade Buddha sculpture carved in 15th-century southern China from a single piece of emerald-colored jade. The sculpture wears three ceremonial garments that are changed at different times throughout the year.\n\nThe palace grounds showcase nine towers and a Pantheon of the Kings, distinguished by golden domes, inspired capitals, decorative murals, and ceramic details. Interior rooms of note include the Throne Room, Official Reception Hall, and Coronation Hall, though the latter closes on Saturdays, Sundays, public holidays, and special occasions.\n\nBreakfast is served at your hotel before departure. The afternoon is left at leisure to rest or explore at your own pace before returning to your Bangkok hotel for the night.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 113,
+"atom_id": "9d85c3395e594d48",
+"atom": "Baisha village — cycle 30 km passing Naxi and Yi farmland",
+"day_text": "Nong Khiaw to Pak Ou: Valley Ride and Buddha Caves\nA scenic 80-kilometre day starts with a bike ride through the valley to Pakmong (30 km), followed by a one-hour transfer to Hadpang. From there, you continue to the Buddha caves of Pak Ou, where you can swim in the river and rest on the beach. You spend the night at a floating guesthouse.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 114,
+"atom_id": "c70b4e77e3351e45",
+"atom": "Takhung La Pass — cross pass above yak herder settlements",
+"day_text": "Departure from Paro\nDepart from Paro International Airport with a full heart.",
+"p": 0.05,
+"label": 0
+},
+{
+"id": 115,
+"atom_id": "3ee39a2350f902ff",
+"atom": "Basilica of Bom Jesus — visit UNESCO World Heritage Portuguese church",
+"day_text": "Thekkady: Elephant Trek and Spice Plantation Tour\nEarly morning elephant ride through the jungle periphery, followed by a guided walk through spice plantations where cardamom, pepper, nutmeg, and cinnamon grow under the shade of taller trees. The day remains open for optional activities: bamboo rafting, trekking through forest trails, jeep safaris, or visits to local tribal settlements. An evening jungle patrol is available if you wish to extend your time in the sanctuary.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 116,
+"atom_id": "e0207d3e161fe8f7",
+"atom": "Mon La — cross Mon La before descending to Phortse Tenga",
+"day_text": "Namche to Dole: Mon La Pass and Rhododendron Forest\nA spectacular day in terms of scenery. The fourth day follows the main trail north from Namche, climbing to a crest with wonderful views toward Everest and Lhotse. The route continues past traders selling Tibetan handicrafts to a high crossroads above the Dudh Kosi. Here the main trail drops toward Everest, but the trek turns off to cross Mon La before descending to Phortse Tenga. From Phortse Tenga, the trail climbs steeply through rhododendron and birch forest, the trees festooned with hanging mosses and lichens. The day ends at Dole, sitting at 4,084 meters. Overnight stay at the lodge on a full board basis.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 117,
+"atom_id": "2466d0bbc1343a09",
+"atom": "The Walawwa — return for overnight stay",
+"day_text": "Negombo City Tour and Muthurajawela Wetlands Boat Safari\nAfternoon guided tour of Negombo's colonial-era streets and fishing harbor. Evening boat safari through the Muthurajawela Wetlands, a lagoon system where wading birds congregate. Return to The Walawwa for overnight.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 118,
+"atom_id": "7e8b0a1cf008931b",
+"atom": "Bolaven Plateau — cycle through coffee plantations and ethnic Laven communities in cooler climate",
+"day_text": "Plain of Jars UNESCO Site — 1,000+ Meters Elevation\nRiding or rest day at the Plain of Jars, a UNESCO site over 1,000 meters above sea level. The stone formations — large ceramic jars of unknown origin — remain archaeologically mysterious. Purpose and age remain subjects of scholarly speculation.",
+"p": 0.05,
+"label": 0
+},
+{
+"id": 119,
+"atom_id": "e7c490f956af763a",
+"atom": "Mehrangarh Fort — visit one of India's largest forts",
+"day_text": "Delhi Departure\nYour North India adventure concludes today. With no activities scheduled, you are free to depart your accommodation at any time that suits your onward travel plans.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 120,
+"atom_id": "6d0d63993c4d2ff4",
+"atom": "Temple of the Tooth Relic — visit principal shrine overlooking an artificial lake",
+"day_text": "Dambulla Cave Temple and Kandy's Temple of the Tooth Relic\nExplore Dambulla's five cave temples with Buddha statuary and restored frescoes. Drive to Kandy. Visit the Temple of the Tooth Relic, the city's principal shrine overlooking an artificial lake.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 121,
+"atom_id": "9cb42fdde06339ec",
+"atom": "Sigiriya Rock Fortress — ascend the 5th-century palace complex",
+"day_text": "Village Trekking, Lake Fishing & Sigiriya Rock Fortress\nTrek through local villages and fish inland lakes. Ascend Sigiriya Rock Fortress, the 5th-century palace complex. Overnight at Kumbura Eco Lodge.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 122,
+"atom_id": "dc949a857aabcc21",
+"atom": "Mysore Palace — visit",
+"day_text": "Agra to Alipura: Train & Village Life\nBoard a morning train, then transfer by private vehicle across rough roads to Alipura, a small village that serves as your base for two days. Stay in a heritage property where you have time to wander the town and interact with local residents.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 123,
+"atom_id": "2e0357d519c4b46f",
+"atom": "Tamshing Lhakhang — visit sacred site",
+"day_text": "Bumthang Valley: Jakar Dzong, Sacred Sites & Membar Tsho\nStart with Jakar Dzong, Bhutan's largest fortress, which overlooks the Chokhor Valley from an elevated site. Your guide leads you through a sequence of sacred sites: Jamba Lhakhang, Kurjey Lhakhang, and Tamshing Lhakhang. Then visit Membar Tsho, the Flaming Lake, one of Bhutan's most important pilgrimage destinations. Optional visits include Bumthang's Swiss cheese factory and dairy farm or the Red Panda Brewery, both rooted in the valley's agricultural landscape.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 124,
+"atom_id": "8618abce3dec7efa",
+"atom": "Kagbeni — pass through Tibetan village",
+"day_text": "Return to Pokhara and Sightseeing\nAn early morning flight returns you to Pokhara. After checking in and resting, the afternoon includes sightseeing at the International Mountain Museum, David Fall, Gupteswor Mahadev cave, and boating on Fewa Lake.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 125,
+"atom_id": "b45e3fa0675fdd9b",
+"atom": "Ella Rock Trail — walk a moderate ridge with views across the plateau",
+"day_text": "Tea Estate Trails & Ella Rock\nAfter breakfast, walk through tea estates above Bandarawela and Haputale. The Ella Rock Trail offers moderate ridge walking with views across the plateau. Overnight at The Hideaway.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 126,
+"atom_id": "6e4e600eacf94c02",
+"atom": "the Bund — explore a sequence of Art Deco buildings lining what was once Asia's most important financial street",
+"day_text": "Flight to Shanghai: City God Temple, Yuyuan Garden & the Bund\nA morning flight from Guilin reaches Shanghai. Upon arrival, you visit the City God Temple area, which neighbors the Yuyuan Garden. The temple originated as the Jinshan God Temple—dedicated to the island spirit of Jinshan, or \"Gold Mountain,\" located off Shanghai's coast—and was converted to a City God Temple in 1403. Its popularity transformed the surrounding district into a large pedestrian zone hosting shops, restaurants, teahouses, and annual temple fairs. Yuyuan Garden spans extensive grounds and showcases Ming and Qing architectural styles. Later, you walk the narrow winding lanes (longtangs) of Old Shanghai, observing local daily life, before exploring the Bund—a spectacular sequence of Art Deco buildings lining what was once Asia's most important financial street. Breakfast included. Accommodation at Metropolo Jinjiang Classiq Shanghai Nanjing Road or similar.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 127,
+"atom_id": "7ad8648fc67decac",
+"atom": "guesthouse near Gubeikou — stay overnight",
+"day_text": "Great Wall at Gubeikou: Wohushan Section\nDepart Beijing early morning for Gubeikou, a mountain pass that guarded trade routes from the 16th century onward. The Gubeikou Great Wall system stretches more than 40 kilometers and comprises four distinct sections across steep terrain: Wohushan, Panlongshan, Jinshanling, and Simatai. Today's hike begins at Wohushan (665 meters elevation), where the Ming-dynasty wall—13.6 kilometers long—includes numerous watchtowers and served as a masterpiece of defensive architecture. The wall's steep grades and complete facilities remain largely intact. You'll hike with your guide, taking in the vistas and learning how the wall was built under general Xuda in 1378. Stay overnight at a guesthouse near Gubeikou.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 128,
+"atom_id": "4fc2dd1ab3a9b148",
+"atom": "Khustai National Park — witness Przewalsky horses roaming freely",
+"day_text": "Arrival in Ulaanbaatar\nMeet your local guide and driver at the airport. Transfer to your hotel and welcome dinner.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 129,
+"atom_id": "aac0e11a692de79c",
+"atom": "Mandovi River — take a sunset cruise",
+"day_text": "Houseboat Cruise Through the Backwaters\nA traditional houseboat (kettuvallam) arrives at your resort for a multi-day journey through the backwater canal system. These narrow waterways wind through coconut palms, small villages, and open lagoons; the boat moves at the pace of the landscape. You stay overnight aboard, sleeping in cabins built into the vessel's wooden hull. The cruise is unhurried, allowing for observation of daily life on the banks—fishermen, farmers, small temples—without the compression of a day trip.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 130,
+"atom_id": "df0dbd0c1a121cea",
+"atom": "Paro Rinpung Dzong — witness the thongdrel ceremony — the unfurling of a massive embroidered thangka at dawn",
+"day_text": "Gangtey Valley to Paro\nDrive northwestward to Paro.",
+"p": 0.07,
+"label": 0
+},
+{
+"id": 131,
+"atom_id": "d3d47a8232ad795e",
+"atom": "Kyichu Lhakhang — visit a seventh-century temple",
+"day_text": "Bumthang Valley: Ura Village, Puta Noodles, and Sacred Temples\nThe five-hour drive to Bumthang passes Mebar Tsho Lake and reaches Ura Village for lunch — try puta, local buckwheat noodles. Afternoon visits Kurje Lhakhang and Jambay Lhakhang, two of Bhutan's oldest temples.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 132,
+"atom_id": "fdb24659c180b971",
+"atom": "Taj Mahal — visit pre-dawn",
+"day_text": "Taj Mahal, Mathura & Vrindavan Temples\nPre-dawn visit to the Taj Mahal. Travel to Mathura, birthplace of Krishna and a major pilgrimage center. Continue to Vrindavan, Krishna's childhood home, to visit temples including Govind Dev Temple, Rangaji Temple, Madan Mohan Temple, Glass Temple, and Bankey Bihari Temple, one of the oldest shrines in Vrindavan.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 133,
+"atom_id": "5860fa8f9f79a760",
+"atom": "Great Mosque and Muslim Quarter — explore in late afternoon or evening",
+"day_text": "Terracotta Warriors Near Xi'an\nMeet your Xi'an guide upon arrival and head directly to the Terracotta Warriors archaeological site. Buried for 2,000 years, the complex was discovered in 1976 by farmers digging a well. Three main excavation pits are open to view. Nearly 2,000 of the 6,000 total warriors stand in battle formation—each individually sculpted from clay, each with distinct costume, height, and facial expression—alongside horses and chariots. Return to Xi'an city. The remainder of the day is unscheduled; the Great Mosque and Muslim Quarter are available for late afternoon or evening exploration.",
+"p": 0.93,
+"label": 1
+},
+{
+"id": 134,
+"atom_id": "fb95060b9bce8954",
+"atom": "tree house lodge in Sigiriya — stay overnight",
+"day_text": "Early-Morning Monastery Trek and Temple Circuit from Arugam Bay\nBegin before dawn at 4:30 AM for a jeep excursion led by a local villager to Kudumbigala ancient monastery, a monastic complex built in 246 BC during the reign of King Devanampiyatissa as a sanctuary for Buddhist monks seeking solitude away from cities. The site contains over 200 rock caves, many still inhabited by meditating monks. Climb to the ruined pagoda at the summit to witness the sunrise from this vantage point. Proceed to the nearby Okanda Murugan Kovil, a significant Hindu temple, and the Crocodile Canal. A home-cooked breakfast at a village homestay concludes the excursion by mid-morning, leaving the afternoon free at your lodge.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 135,
+"atom_id": "a8819fd3d2cf0999",
+"atom": "100 Waterfalls — hike through small streams and rice paddies to the base of the 100 Waterfalls",
+"day_text": "Nam Ou River Cruise and 100 Waterfalls Trek\nBegin with a peaceful boat ride along the Nam Ou River, stopping to explore a small Lao village nestled along the riverbank. From here, a guided hike leads through small streams and rice paddies to reach the base of the 100 Waterfalls. Spend the following hours immersed in water and jungle, surrounded by the sound of clear waterfall cascades as your guide leads you through the system. A local-style lunch is prepared and served on the rocks in the midst of it all. The descent follows a small villagers' trail from the top of the falls, offering wide views across the Nam Ou valley landscapes. The hike back to the village provides additional time to observe daily life in the surrounding area. Overnight in Nong Khiaw.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 136,
+"atom_id": "2e036849b5ac26cb",
+"atom": "Taal Barahi Temple — visit",
+"day_text": "Return Flight to Kathmandu and Sightseeing\nMorning visits include Bindabasini Temple and Taal Barahi Temple in Pokhara. A scheduled flight departs late morning for Kathmandu (1,350m). On arrival, temple and stupa visits take place in the capital before overnight accommodation.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 137,
+"atom_id": "acdfa8a6dcb8da7f",
+"atom": "Elsen Tasarkhai — experience sand dunes with optional camel riding",
+"day_text": "Arrival in Ulaanbaatar\nMeet your local guide and driver at the airport. Transfer to your hotel and welcome dinner.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 138,
+"atom_id": "d8927e9450867e68",
+"atom": "Shaolin Temple — study kung fu with masters",
+"day_text": "Arrive in Beijing\nYour guide and driver will meet you at Beijing airport and transfer you to your hotel in the city center. Allow time to check in and settle before the 6 p.m. group meeting at your hotel—look for details in the lobby or ask at reception. The meeting includes a full briefing on your itinerary, trip logistics, and what to expect in the days ahead. Afterward, your group will take an orientation walk through the surrounding neighborhood to get oriented to the area, followed by dinner at a local restaurant where you'll meet your fellow travelers and begin your Adventure Asia journey.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 139,
+"atom_id": "170b5d3c57631508",
+"atom": "Insadong alley — explore the creative energy by bus tour",
+"day_text": "Seoul: A Day of Your Own Design\nSeoul is yours to shape today. The city presents multiple directions depending on your interests and energy.\n\nFor a glimpse into the peninsula's divided history, the Demilitarized Zone (DMZ) visit takes you to the de facto border between North and South Korea—the most heavily militarized border in the world, established in 1953. Those interested in contemporary culture might attend a K-pop dance class. Professional instructors teach the latest choreography at various skill levels, so beginners move comfortably alongside experienced dancers. Most classes culminate in a recording session, giving you a video of your performance.\n\nAlternatively, a Seoul City Tour by bus navigates the capital's layered character: the architectural grandeur of Gyeongbokgung Palace, the spiritual quietude of Jogyesa Temple, the traditional timber houses of Bukchon Hanok Village, and the creative energy of Insadong alley. The National Folklore Museum offers deeper context into Korean cultural heritage.\n\nIf you prefer to cook, a Korean cooking class teaches you to prepare authentic dishes with hands-on guidance. Or simply wander Seoul's neighborhoods at your own pace, stopping where curiosity leads.\n\nYour CEO can recommend operators for any organized activity or help you navigate independently. You're staying at Dream Guest House (or similar).",
+"p": 0.91,
+"label": 1
+},
+{
+"id": 140,
+"atom_id": "fe3a1979453bcb93",
+"atom": "Wat Rong Khun — visit the White Temple",
+"day_text": "Chiang Mai: Kanta Elephant Sanctuary\nAfter breakfast at the hotel, a half-day visit to Kanta Elephant Sanctuary offers direct contact with rescued elephants in their natural setting. You'll gain insight into elephant behavior and history while spending time with these animals in a sustainable, animal-centered environment. Return to Chiang Mai for the evening.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 141,
+"atom_id": "361411cec0bc59b1",
+"atom": "Chimmi Lhakhang — visit temple en route to Phobjikha",
+"day_text": "Thimphu: Yoga at Dochu La & Traditional Medicine\nDrive back to Thimphu (131 kilometers, approximately three and a half hours), with a yoga session at Dochu La Pass (3,088 meters) before breakfast. In the afternoon, visit the Institute of Traditional Medical Services and the Traditional Arts and Crafts School.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 142,
+"atom_id": "506c7377797b9091",
+"atom": "Muktinath Temple — worship at temple sacred to both Hindu and Buddhist traditions at 3,710 meters",
+"day_text": "Jomsom to Pokhara: Lake Temple and Cave Exploration\nFly back to Pokhara and transfer to your hotel. The afternoon is devoted to exploring the region's geological and spiritual sites. Visit Taal Barahi temple, situated on an island within Phewa Lake. Proceed to the cave network: Gupteshwor cave, Bat cave, and Mahendra cave. End the day at David's Fall, where a subterranean river emerges. Return to the hotel for the night.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 143,
+"atom_id": "1c31a81018370c81",
+"atom": "Taj Mahal — visit Shah Jahan's white-marble monument to his wife Mumtaz Mahal, inlaid with semi-precious stone",
+"day_text": "Agra: Taj Mahal and Mughal Strongholds\nDeparting Delhi after breakfast, the journey to Agra includes a stop at Sikandra, the mausoleum of Akbar. Upon arrival, the Taj Mahal occupies the afternoon—Shah Jahan's white-marble monument to his wife Mumtaz Mahal, inlaid with semi-precious stone. Evening visits encompass Agra Fort, which contains the Pearl Mosque and the Dewan-e-Khas (the public and private audience halls), as well as Itmad-ud-Daulah's tomb, commissioned by Nur Jahan in memory of her father.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 144,
+"atom_id": "00f6dc94dc6a4796",
+"atom": "Yongduam Rock — visit a volcanic formation shaped by coastal erosion",
+"day_text": "Jeju: Folk Village, Sunrise Peak & Haenyeo Divers\nStart your day with a guided tour of Seongeup Folk Village, a settlement preserving traditional Jeju culture. The tour includes traditional homes, harubang (stone statues), and lava walls.\n\nProceed to Seongsan Sunrise Peak (Seongsan Ilchulbong), a UNESCO World Heritage Site formed approximately 5,000 years ago by underwater volcanic eruption. The hiking trail is one to two kilometres with good maintenance and is suitable for various fitness levels.\n\nIn the mid-afternoon, head to Hamdeok Beach for rest and relaxation. Alternatively, walk a section of the Olle Trail, a network of coastal paths.\n\nThe highlight of your afternoon is a haenyeo performance. Haenyeo are female divers who use breath control and traditional techniques to harvest abalone, conch, sea cucumbers, and other seafood. After the performance, you will have time to interact with the divers directly, ask questions about their craft, examine their catch, and purchase fresh seafood if interested.\n\nIn the evening, join your CEO and fellow travellers for a Big Night Out in downtown Jeju. Options include local beverages, karaoke, or other evening activities.\n\nOptional activities include:\n\n- Yongduam Rock: volcanic formation shaped by coastal erosion\n- Yongyeon Cloud Bridge: suspension bridge spanning Yongyeon Valley with coastal views",
+"p": 0.82,
+"label": 1
+},
+{
+"id": 145,
+"atom_id": "c042f1e37357db36",
+"atom": "Damyang County — cycle through bamboo groves and rural farmland",
+"day_text": "Cycling to Siheung\nCycle toward the coast.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 146,
+"atom_id": "af8347c1ad846031",
+"atom": "Pak Ou Caves — explore limestone cliffs housing over 4,000 Buddhist sculptures",
+"day_text": "Vientiane to Kong Lor: Eastbound Journey\nDepart early for an overland journey east to Paksan, then continue to Bolikhamxay Province and Khoun Kham, the starting point for tours to Kong Lor Cave. Stop at Wat Phra Baht, located 70 kilometers east of Vientiane and known for its large Phabaht (Buddha footprint) shrine, an important pilgrimage site for lowland Lao. Also visit Wat Phonsan, situated on the Mekong riverside two kilometers from Wat Phra Baht. The two temples share a linked legend and are collectively known as Wat Phabatphonsan. Travel distance is approximately 320 kilometers over six hours.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 147,
+"atom_id": "6ba57d41a0e89a7a",
+"atom": "Luang Prabang — depart",
+"day_text": "Cycling Chomphet District & Farmstay Arrival\nDepart Luang Prabang and cycle into the Chomphet district, across the river from the main UNESCO zone. The route passes through villages that see few tourists, moving toward Pak Lueang near Green Jungle Park. Stop at the park's waterfall and flower garden before continuing on the riverbank toward the Nam Khan River. Cross by local ferry, then cycle to Kiao Niao Farmstay, situated in open paddy fields. Spend the evening with your host family learning about rice cultivation and the seasonal rhythms that structure rural life.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 148,
+"atom_id": "a23740f4ffb775e1",
+"atom": "Baker's Waterfall — continue trek to Baker's Waterfall",
+"day_text": "Horton Plains National Park Trek and Train Journey to Kandy\nTrek the World's End trail in Horton Plains National Park, arriving at the escarpment's cliff edge and continuing to Baker's Waterfall. Horton Plains was originally developed as a hunting ground for British colonial planters and settlers; trout were introduced to the mountain lakes for recreation and still inhabit them today. Picnic lunch is provided during the trek. In late afternoon, transfer to nearby Ohiya railway station to board a train to Kandy, traveling through the mountain terrain at a measured pace. Stay overnight at Kandyan Manor Home Stay in Kandy.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 149,
+"atom_id": "9154b97024884d22",
+"atom": "Dudh Kosi Valley — trek",
+"day_text": "Crossing Cho La Pass to Dzongla\nThe route ascends the valley, crosses a ridge and old lateral moraine, then scrambles rockily to the Cho La Pass (5,420m). From the pass, views extend west across the Rolwaling Valley and southeast to Ama Dablam. The descent involves crossing a small glacier, then follows pastures with excellent views of Ama Dablam and the north face of Cholatse. Dzongla (4,830m) is reached after 7–8 hours. Overnight in a lodge on full board.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 150,
+"atom_id": "43cfcf2c4755a6f8",
+"atom": "Gunsan to Byeonsanbando National Park — cycle through forested ridges to coastal peninsula",
+"day_text": "Gunsan to Byeonsanbando National Park by Bike\nCycle through forested ridges to coastal peninsula.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 151,
+"atom_id": "e3b9bf3db1f62be3",
+"atom": "active tea estates — trek through",
+"day_text": "Trekking Through Remote Tea Estates and Rain Forest\nBegin a full-day trek through the mountainous terrain surrounding Ohiya, Haputale, Idalgasinna, and Thangamalay. The route passes through active tea estates, abandoned and active railway tunnels, remote train stations, and patches of rain forest. This area is sparsely visited and offers views across the central highlands' tea-growing landscape. Picnic meals are provided during the trek. Overnight at Ohiya remote Trekker's Lodge.",
+"p": 0.96,
+"label": 1
+},
+{
+"id": 152,
+"atom_id": "32de25b1235ef23d",
+"atom": "That Luang stupa — visit That Luang stupa",
+"day_text": "Muang Fuang to Vientiane via Muang Mon — 65 km Cycle\nQuiet gravel roads run southward along the Nam Lik valley. Traditional villages appear at intervals; the landscape remains rural and river-oriented. Between Muang Fuang and Muang Mon, you visit a temple completed in the past decade and decorated with 1,000 gilded Buddha statues—a modern work of considerable scale. After lunch in Muang Mon you transfer by vehicle to Vientiane, arriving on the Mekong riverbank as afternoon light softens. Sunset drinks on the water mark the day's end.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 153,
+"atom_id": "fac6eaee718df58b",
+"atom": "Takin Zoo — visit",
+"day_text": "Paro: Ancient Temple, Museum, and Local Brewery\nVisit Kyichu Lhakhang, a seventh-century temple, and Ta Dzong National Museum. Lunch features rice pizza and buckwheat dumplings with dried spinach. Afternoon: local brewery tour and a stroll through Paro town.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 154,
+"atom_id": "0d02663018649be9",
+"atom": "Jiaohe Ruins — visit cliff-top ancient city relics",
+"day_text": "Departure from Kashgar\nYou may depart at any time. Flights from Kashgar connect to various regions of China, typically through Urumqi. Return options include Beijing, Shanghai, Chengdu, or Hong Kong, depending on your next destination.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 155,
+"atom_id": "4072dc4985c4f2c5",
+"atom": "minority villages — cycle through for 11 kilometers following a river",
+"day_text": "Cycling Begins: Longji Descent to Shiertan\nYour four-day cycling journey opens with a thrilling 6-kilometer downhill stretch featuring dozens of switchbacks. The route then continues descending and flattening to follow a river through minority villages for 11 kilometers. The morning section rolls on quiet sealed roads, climbing through pine and bamboo forests, tea plantations, and small rural communities. Guilin-style rice noodles provide lunch energy before an undulating 25-kilometer afternoon ride through Wantian village reaches your riverside hotel. The day concludes with dinner at an outdoor restaurant overlooking the river. Breakfast and lunch included. Accommodation at Shiertan Hotel or similar.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 156,
+"atom_id": "00d09c01713c2210",
+"atom": "Anuradhapura — tour sacred grounds",
+"day_text": "Train Journey to Ella and Transfer to Yala\nTake the narrow-gauge train from Nanuoya to Ella, crossing viaducts through tea plantations and forested ravines. Continue by road to Yala. Settle at your accommodation before the safari.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 157,
+"atom_id": "316212e709400ec6",
+"atom": "Nagarjuna — hike with panoramic views of Everest and Makalu",
+"day_text": "Lukla Trek Following the Approach Route\nThe final walking day retraces the first two days of the trek in reverse. From Namche Bazaar, the path descends past the Tenzing Hillary Suspension Bridge, then follows the Dudh Koshi River downstream to Lukla (2,804 meters), completing the six- to seven-hour trek. The return to Lukla marks the end of the trekking portion. Overnight in a teahouse in Lukla.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 158,
+"atom_id": "032af0c2692e11d8",
+"atom": "Sarnath — visit the temple and stupa",
+"day_text": "Flight to Varanasi & Sarnath Temple\nMorning flight to Varanasi, one of the world's oldest continuously inhabited cities and Hinduism's holiest site. Visit Sarnath, the Buddhist pilgrimage center where Buddha first taught, to see the temple and stupa. Evening boat ride on the Ganges to observe the Ganga Aarti ceremony, the ritual worship of the river performed by priests on the ghats.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 159,
+"atom_id": "f740908942c6de84",
+"atom": "Soi Yaksa — reach turquoise glacial lakes, ringed by 4,000m+ peaks",
+"day_text": "Arrival in Paro\nArrive at Paro International Airport. Transfer to hotel and settle in. Afternoon sightseeing in the Paro valley.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 160,
+"atom_id": "a5cf4108f9e03e95",
+"atom": "high passes above 5,100 meters — cross high passes on approach to Damodar Kunda",
+"day_text": "Return to Kathmandu\nDepart for Kathmandu by tourist bus, with the option to arrange private transportation or take a 25-minute flight from Pokhara instead. Upon arrival, transfer to your hotel.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 161,
+"atom_id": "d35016cccdb21d59",
+"atom": "Nar Monastery — attend evening prayers and share dinner with nuns",
+"day_text": "Trek from Phu to Nar: Narrow Canyon and Evening Monastery Prayers\nRetrace part of yesterday's route and cross a bridge spanning an 80-meter-deep narrow canyon before arriving at Nar (4,110m). In the evening, attend prayers with the nuns at Nar Monastery and share dinner prepared by the community. This offers an intimate glimpse into daily monastic life. Visitors are welcome to donate and light oil lamps. Overnight at Nar.",
+"p": 0.99,
+"label": 1
+},
+{
+"id": 162,
+"atom_id": "2f12add2e46bbaa8",
+"atom": "Jeju Island — explore waterfalls and walk lava-cave systems",
+"day_text": "Arrival in Seoul: Cheonggyecheon Stream and Myeongdong Orientation\nArrive in Seoul throughout the day and check into Hotel Prince (or similar). As fellow travellers settle in at their own pace, there are no planned activities until the evening group meeting.\n\nAt 6 p.m., meet your CEO and fellow travellers for your Welcome Moment. This is your opportunity to connect with your group and learn what to expect from the tour ahead. Your CEO will brief you on the practicalities of travelling through South Korea—where to find supermarkets, main squares, ATMs, and other essentials—before heading out on an orientation walk.\n\nThe walk begins at Cheonggyecheon Stream, an 8.4-kilometre waterway restored as a public space that cuts through the heart of downtown Seoul. The walk covers approximately 2 kilometres and takes 45–60 minutes at a leisurely pace. As you walk, you'll pass small waterfalls and nearly two dozen overhead bridges, gaining a sense of the city's geography and character. This restored stream is both a functional transport corridor and a gathering place for locals, offering a calm counterpoint to Seoul's intensity.\n\nFrom there, you'll move into Myeongdong, a densely packed commercial district situated roughly 20 minutes' walk from the stream. The neighbourhood is a sensory experience—street food carts line the pavements, major shopping malls tower overhead, and entertainment venues draw crowds constantly. It's a quintessential Seoul experience and a good introduction to the city's commercial heart.\n\nAfter the orientation walk, you have the option to join your CEO and fellow travellers for a group dinner, or explore on your own. Check the notice board in your hotel lobby (or ask reception) for the official meeting time and place if you'd like to join the group.\n\nBefore you venture out, it's worth noting that South Korea's efficient train network will be your main transport method throughout this tour. You'll spend most days on foot and will need to carry your own luggage through busy train stations and crowded streets. Please ensure you are fit enough to manage this level of daily movement and comfortable carrying your belongings for extended periods.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 163,
+"atom_id": "7a4bbd350b83493c",
+"atom": "Lion Hill Park — explore ancient buildings and take in elevated vistas across the entire Old Town",
+"day_text": "Lijiang Old Town Walking Tour: Black Dragon Pond & Museum of Naxi Culture\nYour guided walking tour begins at Black Dragon Pond, a water feature in Jade Spring Park built in 1737 during the Qing dynasty, positioned at the foot of Elephant Hill. Standing on the pond's white marble bridge offers a panoramic view of Jade Dragon Snow Mountain, the region's tallest peak. Next is Lion Hill Park, located in the Old Town's center and named for the hill's shape; its ancient buildings provide elevated vistas across the entire Old Town. The afternoon involves strolling through the Old Town itself, culminating in a visit to the Museum of Naxi Dongba Culture, which documents the Naxi people's pictographic language and animist Dongba religion.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 164,
+"atom_id": "21c513773af97eba",
+"atom": "Dashashwamedh Ghat — attend Ganga aarti fire ceremony performed by priests from the riverbank",
+"day_text": "Varanasi Old City and Ganges Ceremonies\nArrive in Varanasi this morning; transfer by auto-rickshaw to your hotel. Guided walk through the Old City's narrow alleyways with your leader. Rest of the day is free. Two evening options centre on the Ganges: a sunset river cruise to observe life from the water during fading light (approximately 1-1.5 hours), or attend a Ganga aarti (fire ceremony) performed by priests at the Dashashwamedh Ghat from the riverbank (approximately 1 hour).",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 165,
+"atom_id": "70560290fae25a0c",
+"atom": "Kala Patthar — ascend at sunset for a direct close-range view of Mount Everest and the Khumbu Icefall",
+"day_text": "Machhermo to Gokyo via Ngozumpa Glacier\nFrom Machhermo, the trek heads toward the Gokyo lakes on a scenic 4–5 hour route through high alpine terrain. The path follows Pangka before descending slightly to trace one of the rivers flowing down the west side of the Ngozumpa Glacier, Nepal's longest. A steep rocky incline climbs into the valley alongside the glacier, passing the first of the holy lakes. Soon the second lake appears, marked by the trail that crosses the glacier toward Cho La—the pass that will lead to Lobuche and Everest later in the trek. The third lake, Dudh Pokhari, sits at the heart of Gokyo settlement at 4,750 meters. Here, walking by the water's edge, the emerald surface reflects the dramatic summits of Cho Oyu and Gyachung Kang in sharp relief. The day ends with an overnight stay at a lodge in Gokyo, with full board provided.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 166,
+"atom_id": "a74b6cb299961f1a",
+"atom": "Twin Waterfall — drive through",
+"day_text": "Trongsa: Dzong Architecture and Twin Waterfalls\nDrive north through Twin Waterfall to Trongsa (137km, 3h 45min). Explore Trongsa Dzong, the ancient trade center, and Taa Dzong watchtower museum.",
+"p": 0.97,
+"label": 1
+},
+{
+"id": 167,
+"atom_id": "841435534c81d482",
+"atom": "Amber Fort — explore the hillside fortress",
+"day_text": "Jaipur: Amber Fort, Hawa Mahal, and Observatories\nMorning exploration of Amber Fort, a hillside fortress historically never taken in battle, built by Raja Man Singh. The fort overlooks Chota Jaipur, a defensive satellite city constructed miles away as a strategic buffer. Afternoon visits include Hawa Mahal (the Palace of Winds) and Jantar Mantar, an 18th-century astronomical observation site. The City Palace rounds out the day. Evening return to hotel.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 168,
+"atom_id": "2138241c83ea3ea8",
+"atom": "Seongsan Sunrise Peak — hike UNESCO site",
+"day_text": "Bus to Busan & Gamcheon Culture Village\nTravel three hours by local bus southward to Busan, covering 260 kilometres. Upon arrival, drop luggage at EZ Stay Guest House in Nampodong (downtown Busan's central district), then head to Gamcheon Culture Village. This neighbourhood features pastel-painted houses cascading down a mountainside, with murals, cafés, galleries, and shops lining narrow alleyways.\n\nYour evening is yours to spend as you wish. Options include:\n\n- Haeundae Beach: stroll or swim (bring swimwear)\n- Dongbaek Island: visit APEC House (built for the 2005 Asia-Pacific Economic Cooperation summit)\n- Jjimjilbang (traditional Korean spa bathhouse): featuring hot spring tubs\n- Independent exploration of downtown Busan",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 169,
+"atom_id": "72fb8dd53b2d32b3",
+"atom": "Amarbayasgalant Monastery — visit an 18th-century monastic center built without metal fasteners",
+"day_text": "Naadam Festival Opening in Khatgal — Three Manly Sports\nTravel to the nearby town of Khatgal to witness the opening ceremonies of the local Naadam festival on July 11th, Mongolia's National Independence Day. The celebration includes crowds in traditional Mongolian deel clothing. The three manly sports—horse racing, archery, and wrestling—unfold throughout the day, with spectator access to all events. Overnight at a standard ger camp.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 170,
+"atom_id": "ebbccdaf273b2b5f",
+"atom": "Lhasa — explore temples and Jokhang pilgrimage routes on foot",
+"day_text": "Deqin — Rest and Acclimatization\nRest day at Deqin (3,400 m). Alternative 110 km segment available. Overnight in local hotel.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 171,
+"atom_id": "6e2771a0030c77d4",
+"atom": "Kerala's backwaters — take an evening boat ride at sunset through the lagoons and channels",
+"day_text": "Varanasi to Delhi: Flight\nFree time in the morning to continue exploring. Fly back to Delhi in the afternoon.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 172,
+"atom_id": "e5f16e8e13ede8aa",
+"atom": "Barkhor Street — walk traditional Tibetan pilgrimage circumambulation",
+"day_text": "Shigatse to Saga\nAfter breakfast, depart Shigatse heading northwest toward Saga, a journey of approximately 7 hours. Your support crew will meet you along the route and prepare fresh meals. You will overnight at a 4-star hotel in Saga.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 173,
+"atom_id": "389715a7eb1b57b0",
+"atom": "Galle Fort — visit the coastal fortification",
+"day_text": "Tea Plantations and Nuwara Eliya\nDrive south through rolling tea estates toward Nuwara Eliya. Visit a tea factory to observe processing, then spend time in local villages experiencing daily life among the tea-growing highlands.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 174,
+"atom_id": "b35575704760a102",
+"atom": "Hahoe Folk Village — sleep in a traditional hanok house",
+"day_text": "Cycling Jeju's Northern Coastal Road\nBegin your Jeju exploration by cycling the island's northern coast on e-bikes. Depart from Gueom Port and follow quiet coastal roads toward Susanbong Peak, where a short hiking trail ascends roughly 100 meters for panoramic views of Jeju's lava plains and the sea beyond. Cycle through Hagari Village, where low stone walls and modest homes reflect the island's agricultural heritage, then continue toward Aewol Port. Stop at Aewol Café Street, a recently developed cluster of seaside cafés, and take a break for lunch. Continue to Gwakji Beach for a shoreline walk and wading before cycling back along the coast. The standard route covers approximately 22 kilometers of cycling and 3 kilometers of walking. For experienced cyclists, the route can extend to 60 kilometers roundtrip along the Sinchang Windmill Coastal Road, omitting the Susanbong hike and covering greater distance.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 175,
+"atom_id": "0c4cd088c1690e4c",
+"atom": "Kurje Lhakhang — visit temple",
+"day_text": "Departure from Paro\nCheck out and depart for airport.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 176,
+"atom_id": "9abc81c79578adea",
+"atom": "Cuc Phuong National Park — overnight within the park",
+"day_text": "Pu Luong to Cuc Phuong: Water Wheels, Bamboo Rafts, and Cycling\nAn early departure takes you to a suspension bridge over the Cham River, where your walk begins across rice fields toward the water wheels area. Observe the mechanics of these simple constructions that channel river water through handmade bamboo aqueducts to irrigate the paddies below. Rest at a local fisherman's house before boarding a handcrafted bamboo raft and floating downstream on calm waters. At the Tan Lap Bridge, disembark and continue by bike toward Cuc Phuong. The 50-kilometre cycling route covers terrain as you approach Vietnam's first and largest national park, arriving in the late afternoon. You'll overnight within Cuc Phuong National Park.",
+"p": 0.98,
+"label": 1
+},
+{
+"id": 177,
+"atom_id": "6887f05afe2c2e8f",
+"atom": "Yongyeon Cloud Bridge — cross a suspension bridge spanning Yongyeon Valley with coastal views",
+"day_text": "Jeju: Folk Village, Sunrise Peak & Haenyeo Divers\nStart your day with a guided tour of Seongeup Folk Village, a settlement preserving traditional Jeju culture. The tour includes traditional homes, harubang (stone statues), and lava walls.\n\nProceed to Seongsan Sunrise Peak (Seongsan Ilchulbong), a UNESCO World Heritage Site formed approximately 5,000 years ago by underwater volcanic eruption. The hiking trail is one to two kilometres with good maintenance and is suitable for various fitness levels.\n\nIn the mid-afternoon, head to Hamdeok Beach for rest and relaxation. Alternatively, walk a section of the Olle Trail, a network of coastal paths.\n\nThe highlight of your afternoon is a haenyeo performance. Haenyeo are female divers who use breath control and traditional techniques to harvest abalone, conch, sea cucumbers, and other seafood. After the performance, you will have time to interact with the divers directly, ask questions about their craft, examine their catch, and purchase fresh seafood if interested.\n\nIn the evening, join your CEO and fellow travellers for a Big Night Out in downtown Jeju. Options include local beverages, karaoke, or other evening activities.\n\nOptional activities include:\n\n- Yongduam Rock: volcanic formation shaped by coastal erosion\n- Yongyeon Cloud Bridge: suspension bridge spanning Yongyeon Valley with coastal views",
+"p": 0.81,
+"label": 1
+},
+{
+"id": 178,
+"atom_id": "263dd670324b6484",
+"atom": "Yala National Park — go on safari for leopard, sloth bear, and elephant sightings",
+"day_text": "Anuradhapura – Mihintale – Aukana\nExplore Anuradhapura, Sri Lanka's ancient Buddhist capital, visiting the Sacred Bo Tree among stupas and monastic ruins. Head to Mihintale, the world's first declared sanctuary, before stopping at Aukana to admire the colossal Buddha statue carved from a single rock. Overnight in Habarana.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 179,
+"atom_id": "51f55613ae5fec35",
+"atom": "Shore Temple — visit a stone temple complex set against the Bay of Bengal",
+"day_text": "Varanasi to Delhi: Flight\nFree time in the morning to continue exploring. Fly back to Delhi in the afternoon.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 180,
+"atom_id": "9c15f4bbf71b0f37",
+"atom": "Sigiriya — explore the rock fortress, stone stairways, mirror walls, and panoramic views from the summit",
+"day_text": "Colombo to Sigiriya: Lion's Rock\nAfter breakfast, drive north to Sigiriya. The route takes roughly four hours through central lowlands. Sigiriya itself is a fifth-century rock fortress rising 200 meters above the surrounding plain—an ancient royal residence and Buddhist monastery whose stone stairways, mirror walls, and panoramic views from the summit remain largely intact. You'll arrive at your hotel with time to rest before evening.",
+"p": 0.58,
+"label": 1
+},
+{
+"id": 181,
+"atom_id": "8a1ff5ef2376eff8",
+"atom": "Changkong Plank Trail — walk along a vertical cliff face",
+"day_text": "Beijing: Forbidden City, Hutongs, and Temple of Heaven\nThe day begins with a metro journey to Tiananmen Square, one of the world's largest public squares, then entry to the Forbidden City. Built between 1406 and 1420, it served as the ceremonial and political center of the Chinese government for more than 500 years and was declared a World Heritage Site in 1987. The complex is recognized by UNESCO as the most extensive collection of preserved ancient wooden structures in the world. After walking through the palace grounds, you move through the hutongs—traditional alleyways formed by lines of courtyard dwellings—where the daily rhythm of Old Beijing is visible. The day concludes with a metro ride to the Temple of Heaven before returning by subway to your hotel. Wear comfortable shoes for extensive walking.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 182,
+"atom_id": "f986d213697df606",
+"atom": "Sri Meenakshi Temple — visit",
+"day_text": "Agra to Alipura: Train & Village Life\nBoard a morning train, then transfer by private vehicle across rough roads to Alipura, a small village that serves as your base for two days. Stay in a heritage property where you have time to wander the town and interact with local residents.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 183,
+"atom_id": "970c4685fc455a57",
+"atom": "Mount Emei — overnight at a working monastery at 3,077 meters, waking to the sounds of drums and prayers",
+"day_text": "The Great Wall at Mutianyu\nAfter breakfast, your guide and driver will meet you at the hotel for the approximately two-hour journey to Mutianyu, one of the best-preserved sections of the Great Wall. The 22 towers wind along mountain ridges offering views across Huairou county's suburban landscape. Spend the day exploring the wall at a measured pace, learning its history and taking in the scenery. A picnic lunch at the top provides a natural rest break. The walk covers well-maintained sections suitable for the fairly easy pace of this day. In the late afternoon, return to downtown Beijing and check in at your hotel.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 184,
+"atom_id": "ecfce1d117a13cc6",
+"atom": "Taj Mahal — visit at sunrise, guided by a local historian",
+"day_text": "Spice Gardens & Kandy's Temple of the Tooth\nTravel south by car through rolling highlands past spice gardens—cardamom, cinnamon, and other plantations that form part of Sri Lanka's agricultural landscape. Arrive in Kandy, the country's cultural capital. Visit the Temple of the Tooth, one of Buddhism's holiest shrines, housing a tooth relic of the Buddha. The evening includes dinner and time in the town.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 185,
+"atom_id": "4daf9df809560a91",
+"atom": "4,000 Islands region — cycle paddy fields and visit waterfalls along the Mekong River",
+"day_text": "Plain of Jars UNESCO Site — 1,000+ Meters Elevation\nRiding or rest day at the Plain of Jars, a UNESCO site over 1,000 meters above sea level. The stone formations — large ceramic jars of unknown origin — remain archaeologically mysterious. Purpose and age remain subjects of scholarly speculation.",
+"p": 0.03,
+"label": 0
+},
+{
+"id": 186,
+"atom_id": "ca62e85f0c7d10d7",
+"atom": "Yala National Park — take early-morning game drive",
+"day_text": "Village Trekking, Lake Fishing & Sigiriya Rock Fortress\nTrek through local villages and fish inland lakes. Ascend Sigiriya Rock Fortress, the 5th-century palace complex. Overnight at Kumbura Eco Lodge.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 187,
+"atom_id": "78e6108cd57b0f18",
+"atom": "Kompong Phluk floating village — travel by boat to floating village and flooded forest",
+"day_text": "Stung Treng to Preah Vihear: Rolling Hills and Clifftop Temple\nA morning transfer heads north toward Kulen Prum Tep Wildlife Sanctuary before cycling begins. The 70-kilometre route gradually changes from flat terrain to rolling hills as it approaches the Thai border. The destination is Preah Vihear, a Hindu temple complex from the Angkorian period, built atop the Poy Tady Cliff in the Dangrek Mountains at 525 metres elevation. The site is UNESCO-protected and renowned not only for its architecture but for its dramatic clifftop position with panoramic views of the surrounding landscape and into Thailand. A 4-wheel-drive vehicle ascends to the temple top for two hours of exploration. Most visitors are Khmer pilgrims who have travelled considerable distances to view the handiwork of their ancestors. Accommodation: Preah Vihear Jaya Hotel, Deluxe Room.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 188,
+"atom_id": "b4fd58ad7a08d66d",
+"atom": "Bouddhanath Stupa — visit",
+"day_text": "Kailash Parikrama: Zuthulpuk to Darchen, Drive to Saga\nA final three-hour walk completes the Kailash circuit, descending from Zuthulpuk to Darchen, where your support team awaits. By late afternoon, you drive back to Saga, where you spend the night.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 189,
+"atom_id": "6e1e942e87636ace",
+"atom": "Kanchanaburi — cruise on the River Kwai",
+"day_text": "Departure from Chiang Mai\nBreakfast at hotel. Final morning for independent city exploration and shopping. Transfer to Chiang Mai airport for international departure.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 190,
+"atom_id": "57f5387435f53d30",
+"atom": "Sagarmatha National Park — pass through with first sighting of Mount Everest from the trail",
+"day_text": "Arrival in Kathmandu\nWe meet you at Kathmandu's international airport and arrange your transfer to the hotel. After check-in, settle in for your first night in Nepal's vibrant capital.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 191,
+"atom_id": "5edd543bbe176082",
+"atom": "Shinge La Pass — cross the trek's highest point",
+"day_text": "Arrival in Paro\nArrive at Paro International Airport.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 192,
+"atom_id": "80b5563f500969a6",
+"atom": "Cuc Phuong National Park's Endangered Primate Rescue Centre — visit primate rescue centre and explore canopied forest trails",
+"day_text": "Hanoi Departure\nYour Adventure Asia journey concludes with departure services.",
+"p": 0.04,
+"label": 0
+},
+{
+"id": 193,
+"atom_id": "c794d31b35bad671",
+"atom": "Dole and Machhermo — trek through rhododendron and birch forest",
+"day_text": "Departure from Nepal\nOur airport representative will assist with your checkout procedure and escort you to the airport for your final departure from Nepal and onward journey.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 194,
+"atom_id": "d7f8fbd9ad7c46d2",
+"atom": "Lad Koh viewpoint — overlook Chaweng Beach and the Gulf of Thailand",
+"day_text": "Arrival in Bangkok\nYou arrive at Bangkok's international airport and are met by a local guide for a private transfer to your hotel. The remainder of the day is free to rest or adjust to local time.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 195,
+"atom_id": "3de2d684bf9ba0fe",
+"atom": "Khunde Hospital — visit",
+"day_text": "Departure from Kathmandu\nThe airport representative assists with hotel checkout and escorts participants to the airport for final departure from Nepal.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 196,
+"atom_id": "680285718169a5b0",
+"atom": "Tashilhunpo Monastery — visit the seat of the Panchen Lama",
+"day_text": "Saga to Kyirong via the Brahmaputra Valley\nDrive approximately 210 kilometers eastward from Saga. The route crosses the Brahmaputra River and heads toward Kyirong, skirting the shores of Peiku Lake. This day marks the transition from the high plateau toward the Nepal border.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 197,
+"atom_id": "5d98fe4c3ec0cb7b",
+"atom": "Shey Phoksundo Lake — spend two days exploring surrounding areas and Phoksundo Waterfall",
+"day_text": "Departure from Kathmandu\nOur airport representative assists with your hotel checkout procedure, then escorts you to the airport for your final departure from Nepal and onward journey.",
+"p": 0.02,
+"label": 0
+},
+{
+"id": 198,
+"atom_id": "0395e97715adc5e7",
+"atom": "Taj Mahal — visit at sunset",
+"day_text": "Kathmandu Departure & Optional Everest Flight\nDepart Kathmandu at any time. An optional Everest Flight is available; do not book outgoing flights before noon if interested. This one-hour aerial tour offers views of Mount Everest, the world's highest mountain, without requiring climbing. You'll see the peak and surrounding Himalayan landscape from the air. Weather can occasionally obscure Everest itself, but the views of the surrounding range remain visible.",
+"p": 0.01,
+"label": 0
+},
+{
+"id": 199,
+"atom_id": "0b7ada4fa7ec5a64",
+"atom": "Yongdusan Park — visit the park and Busan Tower for views across the city and coast",
+"day_text": "Busan's Markets and Coastal Villages; Return to Seoul by Train\nThis full day bridges two cities, beginning in Busan's vibrant commercial and cultural quarters before an afternoon train journey to Seoul, where evening exploration awaits.\n\nStart your morning at Jagalchi Fish Market, Busan's major attraction situated at Nampo Port. The market sprawls across countless stalls brimming with fresh seafood, covering approximately 1 hectare with multiple levels. Allow 1–1.5 hours to explore. Watch as locals engage in spirited haggling and fishmongers hawk their catch—the market remains a sensory immersion into the rhythms of a working fishing port.\n\nNext, head to Gukje Market, positioned near BIFF Square, roughly 10 minutes' walk away, Busan's well-known modern movie district. This market carries historical weight: it emerged as a refuge for those seeking livelihood during the Korean War and has evolved into a bustling international marketplace. Today it stocks food, home goods, clothes, souvenirs, and more across its crowded lanes—a living record of Busan's postwar transformation.\n\nContinue to Yongdusan Park, approximately 1.5 kilometres away, a green space home to more than 70 different tree species. The park's distinctive shape is said to resemble a dragon's head. Here stands the 118-meter-high Busan Tower, offering a vantage point across the city and coast. The park provides both natural respite and architectural landmark in one visit.\n\nBefore departing Busan, explore Gamcheon Culture Village, situated uphill on a mountainside roughly 20 minutes' drive from the waterfront. The village features uniquely painted houses, vibrant murals, small cafes, and independent shops—a testament to grassroots urban creativity. Its narrow lanes and artistic atmosphere have made it one of Busan's most photographed quarters. Plan for 1.5–2 hours of walking through the village.\n\nBoard the high-speed train for your 2.5-hour journey to Seoul. The bullet train departs Busan Station and arrives at Seoul Central Station, departing mid-afternoon to allow evening exploration in Seoul. Transfers are by private vehicle or taxi from the station.\n\nUpon arrival in Seoul, visit Namdaemun Market, Korea's oldest traditional market, established in 1414. It remains the largest, with over 10,000 vendors distributed across several city blocks covering approximately 1.7 hectares. The scale and variety can overwhelm—prepare to navigate crowded aisles stocked with goods ranging from clothing and cosmetics to food and housewares. Allow 1–2 hours to move through the market. The market represents Seoul's commercial DNA and remains a vital gathering point.\n\nTake the cable car up Mount Namsan to reach N Seoul Tower, perched 480 metres above sea level. The cable car journey takes approximately 5–7 minutes and covers 750 metres. Originally built as a broadcasting station, it has evolved into Seoul's most iconic public landmark. The tower's clean lines and prominent hilltop position have made it a fixture in Korean film and television. The cable car journey itself offers views across the city as you ascend.\n\nEntry to the base of N Seoul Tower is included; however, ascending to the observation deck requires an additional fee of 16,000 KRW per person. The observatory provides 360-degree panoramic views of Seoul, encompassing the surrounding neighbourhoods, the Han River, and distant mountains on clear days. Many visitors find the vantage point essential to understanding Seoul's scale and layout.\n\nYour evening remains open for optional activities. The Banpo Bridge Rainbow Fountain, accessible by metro or taxi approximately 10 minutes from N Seoul Tower, offers free viewing and operates throughout the day and evening. The fountain is the world's longest bridge fountain, fitted with nearly 10,000 LED lights and 380 water-spraying nozzles synchronized to music. During daylight, the fountain displays varied configurations evoking willow branches. After sunset, LED illumination transforms it into a dancing rainbow spectacle—a technical achievement that has become a must-see for many visitors.\n\nAlternatively, spend your evening in the Gangnam district, historically rich and fast-developing. Gangnam Station, the busiest subway hub in Seoul, houses a sprawling underground shopping centre roughly 20 minutes from the tower. The district offers the option to visit Bongeunsa, a Buddhist temple situated centrally in Gangnam, or to experience the neighbourhood's restaurants and nightlife venues.\n\nA third option: visit the floating islands, a culture complex comprising three man-made islands near one end of the Banpo Bridge, approximately 10 minutes from N Seoul Tower by taxi or metro. LED lighting creates atmospheric night views, positioning them as a complementary evening destination to the bridge fountain nearby.\n\nBreakfast is included today. You will stay at Hotel Prince or a similar property.",
+"p": 0.99,
+"label": 1
+}
+]

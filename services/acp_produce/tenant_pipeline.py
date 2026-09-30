@@ -64,6 +64,7 @@ from shared.llm_client.bedrock_satellite import invoke_claude
 from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.pricing import calc_cost
+from shared.llm_client.decide import decide
 
 logger = structlog.get_logger()
 
@@ -530,6 +531,38 @@ async def _atomize_whole_tour_legacy(
     return {"status": "success", "atom_count": inserted}
 
 
+# AA-694 A3-1 — atoms are "verbatim-derived" by prompt only. The Jev Question a3_atom_in_text (migration
+# 188) checks each extracted atom against its day's text before it is stored; a confident no (enforce
+# only, ADR 0007) drops it. Tenant content reaches Jev only for allow-listed tenants (decide()'s guard).
+ATOM_STAGE = "a3_atomize"
+ATOM_Q = "a3_atom_in_text"
+
+
+async def ground_day_atoms(atoms: list[dict], day: dict, owner_scope: str, tour_id: str, day_num: int,
+                           pool) -> list[dict]:
+    """The atoms Jev does not confidently reject for this day's text (all of them in shadow)."""
+    if not atoms:
+        return atoms
+    import hashlib
+
+    day_text = f"{day.get('title') or ''}\n{day.get('body') or ''}".strip()
+    text_key = hashlib.md5(day_text.encode("utf-8")).hexdigest()[:10]
+    tenant = _llm_log_tenant_id(owner_scope)
+
+    async def _keep(atom: dict) -> bool:
+        label = _derive_atom_text(atom.get("place") or "", atom.get("action") or "")
+        dec = await decide(ATOM_STAGE, f"atom:{text_key}:{label[:200]}", {"day_text": day_text, "atom": label},
+                           [ATOM_Q], tenant_id=tenant, pool=pool)
+        return not dec.rejected(ATOM_Q)
+
+    keep = await asyncio.gather(*[_keep(a) for a in atoms])
+    kept = [a for a, k in zip(atoms, keep) if k]
+    if len(kept) < len(atoms):
+        logger.info("t5_atomize_atoms_dropped_by_jev", tour_id=tour_id, day_number=day_num,
+                    dropped=len(atoms) - len(kept), kept=len(kept))
+    return kept
+
+
 async def _atomize_per_day(
     tenant_id: str, tour_id: str, version_id: str, row: dict, days: dict,
     source_hash: str, pool, country: str,
@@ -617,6 +650,8 @@ async def _atomize_per_day(
                          day_number=day_num, error=str(e))
             days_failed.append(day_num)
             continue
+
+        atoms = await ground_day_atoms(atoms, day, tenant_id, tour_id, day_num, pool)   # AA-694 A3-1
 
         new_atom_ids = []
         async with pool.acquire() as conn:

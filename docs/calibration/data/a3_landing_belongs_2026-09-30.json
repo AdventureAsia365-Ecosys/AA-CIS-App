@@ -500,8 +500,9 @@
 "moment": "Pak Ou Caves — journey upstream on the Mekong by slow-boat",
 "question": "Which country is the Mekong River in?",
 "p": 0.36,
-"label": 0,
-"note": ""
+"label": 1,
+"note": "",
+"review": "nghiep: 0->1 (the Mekong is what the slow-boat moment is on)"
 },
 {
 "id": 63,

@@ -1,0 +1,2002 @@
+[
+{
+"id": 0,
+"moment": "Gangtey Monastery — access valley via monastery",
+"keyword": "gangtey monastery",
+"rank": 1,
+"volume": 390,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 1,
+"moment": "Jeju City to Seogwipo — ride 67-kilometer route south along beach roads through lava structures, tuff formations, and volcanic cliffs",
+"keyword": "Jeju City",
+"rank": 1,
+"volume": 2400,
+"p": 0.64,
+"label": 0,
+"note": "route start (Jeju City → Seogwipo)"
+},
+{
+"id": 2,
+"moment": "Nepal border crossing — cross the border into Nepal",
+"keyword": "samdrup jongkhar border crossing",
+"rank": 1,
+"volume": 0,
+"p": 0.46,
+"label": 0,
+"note": ""
+},
+{
+"id": 3,
+"moment": "Tina's Guesthouse — stop for lunch marking the end of the formal trek",
+"keyword": "Tina's Guesthouse",
+"rank": 1,
+"volume": 50,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 4,
+"moment": "Thombu La — traverse on descent, dropping from high alpine terrain to river valleys",
+"keyword": "dochu la pass",
+"rank": 1,
+"volume": 480,
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 5,
+"moment": "Phuket — swim, explore local restaurants, or rest",
+"keyword": "Phuket hotels",
+"rank": 1,
+"volume": 6600,
+"p": 0.79,
+"label": 0,
+"note": ""
+},
+{
+"id": 6,
+"moment": "Jhari La Pass — climb to pass and descend through forest into Tsharithang valley",
+"keyword": "dochu la pass",
+"rank": 1,
+"volume": 480,
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 7,
+"moment": "Koma Tsachu — have pack lunch on site",
+"keyword": "Koma Tsachu",
+"rank": 1,
+"volume": 0,
+"p": 0.87,
+"label": 1,
+"note": ""
+},
+{
+"id": 8,
+"moment": "Namrung to Samagaon — trek through forest and successive villages",
+"keyword": "Samagaon",
+"rank": 1,
+"volume": 10,
+"p": 0.92,
+"label": 0,
+"note": "route endpoint"
+},
+{
+"id": 9,
+"moment": "Gandan Monastery — tour",
+"keyword": "monastery",
+"rank": 1,
+"volume": 90500,
+"p": 0.29,
+"label": 0,
+"note": "generic 'monastery'"
+},
+{
+"id": 10,
+"moment": "Namche Bazaar — walk through the town's markets and shops",
+"keyword": "bazaar",
+"rank": 1,
+"volume": 49500,
+"p": 0.66,
+"label": 0,
+"note": "generic 'bazaar'"
+},
+{
+"id": 11,
+"moment": "Kyichu Lhakhang — offer butterlamps and reflect on the retreat",
+"keyword": "chimi lhakhang",
+"rank": 1,
+"volume": 140,
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 12,
+"moment": "Wat Mai — tour temple complex by tuk-tuk",
+"keyword": "angkor wat tour",
+"rank": 1,
+"volume": 18100,
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 13,
+"moment": "Laya village — descend into village and encounter local residents in distinctive regional dress",
+"keyword": "laya village",
+"rank": 1,
+"volume": 20,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 14,
+"moment": "Punakha riverside — eat lunch featuring Bhutanese-style river trout and red and white rice from the valley",
+"keyword": "Punakha",
+"rank": 1,
+"volume": 880,
+"p": 0.76,
+"label": 0,
+"note": "'Punakha' is the wider town"
+},
+{
+"id": 15,
+"moment": "100 Waterfalls — hike through small streams and rice paddies to the base of the 100 Waterfalls",
+"keyword": "Khone Phapheng waterfalls",
+"rank": 1,
+"volume": 70,
+"p": 0.64,
+"label": 0,
+"note": ""
+},
+{
+"id": 16,
+"moment": "Craft Bazaar — visit",
+"keyword": "craft bazaar",
+"rank": 1,
+"volume": 210,
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 17,
+"moment": "Cheow Lan Lake — explore by local long-tail boat",
+"keyword": "cheow lan lake",
+"rank": 1,
+"volume": 880,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 18,
+"moment": "Wat Arun — visit",
+"keyword": "Wat Phu",
+"rank": 1,
+"volume": 140,
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 19,
+"moment": "Namche Bazaar — explore lodges, tea shops, and craft stalls",
+"keyword": "bazaar",
+"rank": 1,
+"volume": 49500,
+"p": 0.68,
+"label": 0,
+"note": ""
+},
+{
+"id": 20,
+"moment": "Himalayan Rescue Association's trekkers' aid post — visit to learn about high-altitude medicine and rescue operations",
+"keyword": "fisherman's village",
+"rank": 1,
+"volume": 40500,
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 21,
+"moment": "Babesa village — eat traditional lunch",
+"keyword": "babesa village",
+"rank": 1,
+"volume": 10,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 22,
+"moment": "Manikarnika Ghat — visit Varanasi's principal cremation site where a sacred fire has burned continuously for centuries",
+"keyword": "varanasi ghats",
+"rank": 1,
+"volume": 1000,
+"p": 0.44,
+"label": 0,
+"note": "'varanasi ghats' wider than one ghat (borderline)"
+},
+{
+"id": 23,
+"moment": "Mebar Tsho Lake — stop en route to Bumthang",
+"keyword": "mebar tsho burning lake",
+"rank": 1,
+"volume": 10,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 24,
+"moment": "Beijing — arrange own transfer to the airport",
+"keyword": "Beijing city tour",
+"rank": 1,
+"volume": 1000,
+"p": 0.4,
+"label": 0,
+"note": ""
+},
+{
+"id": 25,
+"moment": "Thakhek to Savannakhet — cycle flat roads through rural Laotian villages",
+"keyword": "Thakhek",
+"rank": 1,
+"volume": 210,
+"p": 0.83,
+"label": 0,
+"note": ""
+},
+{
+"id": 26,
+"moment": "Himlung Himal Base Camp — hike to for acclimatization",
+"keyword": "ger camp Mongolia",
+"rank": 1,
+"volume": 70,
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 27,
+"moment": "Chinggis Khan equestrian statue — visit",
+"keyword": "genghis khan equestrian statue",
+"rank": 1,
+"volume": 6600,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 28,
+"moment": "Kathmandu — use contingency day for personal activities, shopping, or exploring Kathmandu Valley's religious monuments",
+"keyword": "Kathmandu airport",
+"rank": 1,
+"volume": 5400,
+"p": 0.5,
+"label": 0,
+"note": ""
+},
+{
+"id": 29,
+"moment": "Mungyeong to Andong — cycle from mountain valleys into Andong",
+"keyword": "andong folk village",
+"rank": 1,
+"volume": 1000,
+"p": 0.72,
+"label": 0,
+"note": ""
+},
+{
+"id": 30,
+"moment": "organic sake brewery in Bato — visit a 100-year-old producer growing its own rice and attend tastings",
+"keyword": "local brewery",
+"rank": 1,
+"volume": 2400,
+"p": 0.25,
+"label": 0,
+"note": ""
+},
+{
+"id": 31,
+"moment": "Kumano Kodo — hike sections of the ancient path",
+"keyword": "Kumano Hongu Grand Shrine",
+"rank": 1,
+"volume": 10,
+"p": 0.9,
+"label": 0,
+"note": "Hongu Grand Shrine is one stop, not the Kodo hike (borderline)"
+},
+{
+"id": 32,
+"moment": "Thai-Cambodian border — cross into Cambodia",
+"keyword": "Thai-Burma Railway Museum",
+"rank": 1,
+"volume": 110,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 33,
+"moment": "Luang Prabang — observe the Takbat alms-giving ceremony",
+"keyword": "Luang Prabang",
+"rank": 1,
+"volume": 8100,
+"p": 0.9,
+"label": 1,
+"note": "place is Luang Prabang itself"
+},
+{
+"id": 34,
+"moment": "Kashgar Sunday Bazaar — explore the Sunday Bazaar",
+"keyword": "bazaar",
+"rank": 1,
+"volume": 49500,
+"p": 0.55,
+"label": 0,
+"note": ""
+},
+{
+"id": 35,
+"moment": "Everest Base Camp — explore the site and absorb the landscape",
+"keyword": "river camp",
+"rank": 1,
+"volume": 3600,
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 36,
+"moment": "Olkhon Island — explore the northern route",
+"keyword": "Olkhon Island",
+"rank": 1,
+"volume": 590,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 37,
+"moment": "Mutianyu — journey to",
+"keyword": "Mutianyu Great Wall",
+"rank": 1,
+"volume": 18100,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 38,
+"moment": "Sung Sot Cave — walk 500-meter paved passageway through stalactites and stalagmites",
+"keyword": "Kong Lor Cave Laos",
+"rank": 1,
+"volume": 590,
+"p": 0.35,
+"label": 0,
+"note": ""
+},
+{
+"id": 39,
+"moment": "Mahendra cave — explore",
+"keyword": "Kong Lor Cave Laos",
+"rank": 1,
+"volume": 590,
+"p": 0.52,
+"label": 0,
+"note": ""
+},
+{
+"id": 40,
+"moment": "Khorgo volcano — visit",
+"keyword": "Khorgo volcano",
+"rank": 1,
+"volume": 50,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 41,
+"moment": "Royal Centre at Hampi — visit Lotus Mahal and Elephant Stables",
+"keyword": "royal chitwan national park",
+"rank": 1,
+"volume": 1900,
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 42,
+"moment": "Leshan Giant Buddha — view",
+"keyword": "giant Buddha",
+"rank": 1,
+"volume": 720,
+"p": 0.73,
+"label": 0,
+"note": "generic 'giant Buddha'"
+},
+{
+"id": 43,
+"moment": "Tengboche Monastery — descend via",
+"keyword": "monastery",
+"rank": 1,
+"volume": 90500,
+"p": 0.39,
+"label": 0,
+"note": ""
+},
+{
+"id": 44,
+"moment": "Royal Chitwan National Park — take 4x4 safari through grassland and forest habitat for rhinos, elephants, Bengal tigers, and leopards",
+"keyword": "royal chitwan national park",
+"rank": 1,
+"volume": 2900,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 45,
+"moment": "Tharulengala Cave — explore with a local guide",
+"keyword": "Kong Lor Cave Laos",
+"rank": 1,
+"volume": 590,
+"p": 0.26,
+"label": 0,
+"note": ""
+},
+{
+"id": 46,
+"moment": "Angkor — cycle the Small Circuit visiting Ta Prohm, Bayon, Angkor Thom, and Angkor Wat",
+"keyword": "angkor wat tour",
+"rank": 1,
+"volume": 18100,
+"p": 0.85,
+"label": 1,
+"note": ""
+},
+{
+"id": 47,
+"moment": "Ulziit Khishig Camp — overnight at a standard ger camp",
+"keyword": "ger camp Mongolia",
+"rank": 1,
+"volume": 70,
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 48,
+"moment": "An Binh Island — eat dinner at the homestay",
+"keyword": "xi'an city wall",
+"rank": 1,
+"volume": 1300,
+"p": 0.16,
+"label": 0,
+"note": ""
+},
+{
+"id": 49,
+"moment": "Mekong — cruise by motorboat to a Laotian trading port",
+"keyword": "Mekong river",
+"rank": 1,
+"volume": 18100,
+"p": 0.77,
+"label": 1,
+"note": ""
+},
+{
+"id": 50,
+"moment": "Pha Din Pass — descend from 1,450 meters elevation through Tai and Hmong settlements on 80-kilometer cycle from Tuan Giao to Son La",
+"keyword": "dochu la pass",
+"rank": 1,
+"volume": 480,
+"p": 0.19,
+"label": 0,
+"note": ""
+},
+{
+"id": 51,
+"moment": "Pangri Zampa — visit",
+"keyword": "pangri zampa",
+"rank": 1,
+"volume": 10,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 52,
+"moment": "old markets around the Clock Tower — walk",
+"keyword": "delhi markets shopping",
+"rank": 1,
+"volume": 90,
+"p": 0.37,
+"label": 0,
+"note": ""
+},
+{
+"id": 53,
+"moment": "ryokan in Nasu — eat kaiseki dinner built around seasonal vegetables, local fish, and regional ingredients",
+"keyword": "Nasu",
+"rank": 1,
+"volume": 5400,
+"p": 0.77,
+"label": 0,
+"note": "'Nasu' wider than the ryokan"
+},
+{
+"id": 54,
+"moment": "Everest Base Camp — trek across the Khumbu Glacier to Base Camp and witness active expedition camps and ice pinnacles",
+"keyword": "ger camp Mongolia",
+"rank": 1,
+"volume": 70,
+"p": 0.04,
+"label": 0,
+"note": ""
+},
+{
+"id": 55,
+"moment": "Namche Bazaar — acclimatize",
+"keyword": "bazaar",
+"rank": 1,
+"volume": 49500,
+"p": 0.58,
+"label": 0,
+"note": ""
+},
+{
+"id": 56,
+"moment": "Lisu Lodge — enjoy dinner accompanied by a hill tribe performance",
+"keyword": "Lisu Lodge",
+"rank": 1,
+"volume": 70,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 57,
+"moment": "rural farm stay near Thanamalwila — observe crocodiles and elephants on safari",
+"keyword": "Golgulsa Temple stay",
+"rank": 1,
+"volume": 110,
+"p": 0.34,
+"label": 0,
+"note": ""
+},
+{
+"id": 58,
+"moment": "Nam Ou River — cruise and multi-hour trek through cascading waterfalls and jungle to the 100 Waterfalls base",
+"keyword": "Nam Khan River",
+"rank": 1,
+"volume": 40,
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 59,
+"moment": "Jomsom to Muktinath — ascend by jeep",
+"keyword": "Pokhara Jomsom flight",
+"rank": 1,
+"volume": 50,
+"p": 0.36,
+"label": 0,
+"note": ""
+},
+{
+"id": 60,
+"moment": "Chiang Mai — visit market and take Thai cooking class selecting ingredients and preparing traditional dishes",
+"keyword": "chiang mai doi suthep",
+"rank": 1,
+"volume": 6600,
+"p": 0.4,
+"label": 0,
+"note": ""
+},
+{
+"id": 61,
+"moment": "downtown Jeju — join a Big Night Out with local beverages and karaoke",
+"keyword": "night life in Jeju",
+"rank": 1,
+"volume": 10,
+"p": 0.51,
+"label": 1,
+"note": ""
+},
+{
+"id": 62,
+"moment": "Angkor Wat — visit temple complex",
+"keyword": "angkor wat ticket",
+"rank": 1,
+"volume": 480,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 63,
+"moment": "Manas River — go catch-and-release fishing targeting endemic Mahseer species",
+"keyword": "manas river",
+"rank": 1,
+"volume": 40,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 64,
+"moment": "minority villages along the Mekong bank — visit small minority villages",
+"keyword": "mekong river boat tour",
+"rank": 1,
+"volume": 10,
+"p": 0.64,
+"label": 0,
+"note": "boat tour vs village visit (borderline)"
+},
+{
+"id": 65,
+"moment": "Angkor — cycle the Small Circuit visiting Ta Prohm, Bayon, Angkor Thom, and Angkor Wat",
+"keyword": "angkor wat ticket",
+"rank": 1,
+"volume": 480,
+"p": 0.86,
+"label": 1,
+"note": ""
+},
+{
+"id": 66,
+"moment": "Ura Village — eat puta (buckwheat noodle) lunch at the market",
+"keyword": "ura village",
+"rank": 1,
+"volume": 10,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 67,
+"moment": "Kumarakom backwaters — cruise on narrow emerald canals lined with coconut palms",
+"keyword": "Kerala backwaters",
+"rank": 1,
+"volume": 1900,
+"p": 0.43,
+"label": 0,
+"note": "'Kerala backwaters' wider"
+},
+{
+"id": 68,
+"moment": "Wat Phrathat Doi Suthep — ascend the 306-step Naga staircase",
+"keyword": "Wat Phu",
+"rank": 1,
+"volume": 140,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 69,
+"moment": "100 Waterfalls — eat a local-style lunch prepared at the falls",
+"keyword": "Khone Phapheng waterfalls",
+"rank": 1,
+"volume": 70,
+"p": 0.87,
+"label": 0,
+"note": ""
+},
+{
+"id": 70,
+"moment": "Dolma La — cross the pass at 18,600 feet during the Kailash Kora",
+"keyword": "dolma la pass",
+"rank": 1,
+"volume": 210,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 71,
+"moment": "Seongsan Ilchulbong — hike volcanic tuff cone",
+"keyword": "Seongsan",
+"rank": 1,
+"volume": 2400,
+"p": 0.87,
+"label": 1,
+"note": ""
+},
+{
+"id": 72,
+"moment": "Gompa of Godzo — pass gompa",
+"keyword": "gangtey gompa",
+"rank": 1,
+"volume": 390,
+"p": 0.73,
+"label": 0,
+"note": ""
+},
+{
+"id": 73,
+"moment": "Chiang Mai Canyon recreation area — paddleboard",
+"keyword": "chiang mai doi suthep",
+"rank": 1,
+"volume": 6600,
+"p": 0.24,
+"label": 0,
+"note": ""
+},
+{
+"id": 74,
+"moment": "Laos — arrange onward transport and international flights",
+"keyword": "four thousand islands laos",
+"rank": 1,
+"volume": 590,
+"p": 0.7,
+"label": 0,
+"note": ""
+},
+{
+"id": 75,
+"moment": "Pakse to Champasak — cycle along Route 14",
+"keyword": "Champasak",
+"rank": 1,
+"volume": 480,
+"p": 0.84,
+"label": 0,
+"note": ""
+},
+{
+"id": 76,
+"moment": "Meybar Tsho — stop at the lake",
+"keyword": "mebar tsho burning lake",
+"rank": 1,
+"volume": 10,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 77,
+"moment": "Jehangir Palace — tour",
+"keyword": "potala palace",
+"rank": 1,
+"volume": 9900,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 78,
+"moment": "Devon's Falls — photograph waterfalls cascading through forested valleys",
+"keyword": "fisherman's village",
+"rank": 1,
+"volume": 40500,
+"p": 0.11,
+"label": 0,
+"note": ""
+},
+{
+"id": 79,
+"moment": "Humayun's Tomb — visit",
+"keyword": "fisherman's village",
+"rank": 1,
+"volume": 40500,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 80,
+"moment": "Wat Phanan Choeng — visit temple ruins",
+"keyword": "Wat Phanan Choeng",
+"rank": 1,
+"volume": 50,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 81,
+"moment": "Jeju Island — explore waterfalls and walk lava-cave systems",
+"keyword": "jeju island",
+"rank": 1,
+"volume": 110000,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 82,
+"moment": "Ban Nahin — cycle through forested terrain and rural landscapes",
+"keyword": "Ban Muang",
+"rank": 1,
+"volume": 10,
+"p": 0.33,
+"label": 0,
+"note": ""
+},
+{
+"id": 83,
+"moment": "Amarbayasgalant monastery — explore the monastic grounds and nearby hills",
+"keyword": "gangtey monastery",
+"rank": 1,
+"volume": 110,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 84,
+"moment": "Khamsum Yulley Chorten — hike to and have picnic lunch",
+"keyword": "khamsum yulley chorten",
+"rank": 1,
+"volume": 70,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 85,
+"moment": "Low Camp — trek through moss-covered forest with views up Machapuchre valley",
+"keyword": "ger camp Mongolia",
+"rank": 1,
+"volume": 70,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 86,
+"moment": "Dolma-La pass — trek",
+"keyword": "dolma la pass",
+"rank": 1,
+"volume": 210,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 87,
+"moment": "Delhi — begin journey",
+"keyword": "delhi",
+"rank": 1,
+"volume": 74000,
+"p": 0.77,
+"label": 1,
+"note": ""
+},
+{
+"id": 88,
+"moment": "Mardi Himal Base Camp — watch sunrise over the mountains",
+"keyword": "river camp",
+"rank": 1,
+"volume": 3600,
+"p": 0.23,
+"label": 0,
+"note": ""
+},
+{
+"id": 89,
+"moment": "Lijiang to Deqin — cycle through Shangri-la across Naxi and Tibetan territories",
+"keyword": "lijiang",
+"rank": 1,
+"volume": 5400,
+"p": 0.82,
+"label": 0,
+"note": ""
+},
+{
+"id": 90,
+"moment": "Kanchanaburi — visit floating markets and cruise the River Kwai",
+"keyword": "Kanchanaburi River Kwai",
+"rank": 1,
+"volume": 30,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 91,
+"moment": "Golden Triangle — ride to where Thailand, Myanmar, and Laos meet",
+"keyword": "4000 islands laos",
+"rank": 1,
+"volume": 320,
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 92,
+"moment": "Xi'an — explore the city",
+"keyword": "xi'an city wall",
+"rank": 1,
+"volume": 1300,
+"p": 0.9,
+"label": 1,
+"note": "city wall is at Xi'an"
+},
+{
+"id": 93,
+"moment": "Yilan County's coast — descend to the coast with views of Taiwan's east coast",
+"keyword": "Yilan coast",
+"rank": 1,
+"volume": 10,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 94,
+"moment": "Gyeongju — stay overnight in a working Buddhist temple with morning meditation and monk rituals",
+"keyword": "buddhist astrology reading",
+"rank": 1,
+"volume": 10,
+"p": 0.29,
+"label": 0,
+"note": ""
+},
+{
+"id": 95,
+"moment": "Kyichu Lhakhang — participate in prayer and butterlamp offering alongside the monks",
+"keyword": "chimi lhakhang",
+"rank": 1,
+"volume": 140,
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 96,
+"moment": "Lobuche — follow the valley beside the Khumbu Glacier toward",
+"keyword": "glacier trekking",
+"rank": 1,
+"volume": 110,
+"p": 0.51,
+"label": 0,
+"note": ""
+},
+{
+"id": 97,
+"moment": "mountains near Muang Fuang — loop around the mountains and hike to a viewpoint overlooking the river",
+"keyword": "don muang airport",
+"rank": 1,
+"volume": 12100,
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 98,
+"moment": "Tai'an village to Shaxi Old Town — cycle 80 kilometres through the Tea Horse Route",
+"keyword": "xi'an city wall",
+"rank": 1,
+"volume": 1300,
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 99,
+"moment": "Wat Trak temple — visit",
+"keyword": "Wat Phu",
+"rank": 1,
+"volume": 140,
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 100,
+"moment": "Punakha River — go river rafting",
+"keyword": "punakha river rafting",
+"rank": 2,
+"volume": 10,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 101,
+"moment": "Nong Khiaw — stay at resort overlooking the Nam Ou River and encircling mountains",
+"keyword": "Pak Ou",
+"rank": 2,
+"volume": 320,
+"p": 0.57,
+"label": 0,
+"note": ""
+},
+{
+"id": 102,
+"moment": "Gobu La Pass to Shomuthang — descend to Shomuthang camp at 3,985 metres",
+"keyword": "dolma la pass",
+"rank": 2,
+"volume": 210,
+"p": 0.87,
+"label": 0,
+"note": ""
+},
+{
+"id": 103,
+"moment": "Bazaar — browse",
+"keyword": "International Grand Bazaar",
+"rank": 2,
+"volume": 10,
+"p": 0.91,
+"label": 0,
+"note": "generic 'Bazaar' place (borderline)"
+},
+{
+"id": 104,
+"moment": "Gandan Monastery — visit",
+"keyword": "tigers nest monastery",
+"rank": 2,
+"volume": 5400,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 105,
+"moment": "Aranyaprathet — cycle 82 kilometers through rural Thailand toward the Cambodian border",
+"keyword": "Thailand-Burma Railway Museum",
+"rank": 2,
+"volume": 140,
+"p": 0.44,
+"label": 0,
+"note": ""
+},
+{
+"id": 106,
+"moment": "Sod Camp in Bulgan Province — trek on available trekking routes opposite a mountain range",
+"keyword": "ger camp Mongolia",
+"rank": 2,
+"volume": 210,
+"p": 0.32,
+"label": 0,
+"note": ""
+},
+{
+"id": 107,
+"moment": "Taktsang monastery — eat lunch midway",
+"keyword": "tashilhunpo monastery",
+"rank": 2,
+"volume": 50,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 108,
+"moment": "Ritigala Heritage Monastery — visit 1st-century BC rock inscriptions",
+"keyword": "tiger s nest monastery",
+"rank": 2,
+"volume": 5400,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 109,
+"moment": "Chimmi Lhakhang — visit",
+"keyword": "chimi lhakhang",
+"rank": 2,
+"volume": 320,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 110,
+"moment": "Tham Pha Tok Cave — visit a World War-era shelter used by up to 2,000 people during the Indochina wars",
+"keyword": "Kong Lor Cave Laos",
+"rank": 2,
+"volume": 40,
+"p": 0.25,
+"label": 0,
+"note": ""
+},
+{
+"id": 111,
+"moment": "Seoul — explore K-pop cultural immersion at HiKR Ground",
+"keyword": "seoul airport luggage delivery",
+"rank": 2,
+"volume": 10,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 112,
+"moment": "Gangtey Gompa — visit",
+"keyword": "gangtey gompa bhutan",
+"rank": 2,
+"volume": 390,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 113,
+"moment": "Mutianyu — journey to",
+"keyword": "mutianyu",
+"rank": 2,
+"volume": 1300,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 114,
+"moment": "Genghis Khan statue — take elevator to the horse's head for prairie views",
+"keyword": "seated Buddha statue",
+"rank": 2,
+"volume": 390,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 115,
+"moment": "Delhi — revisit favourite sites, shop, or rest",
+"keyword": "kathmandu to delhi flight",
+"rank": 2,
+"volume": 170,
+"p": 0.46,
+"label": 0,
+"note": ""
+},
+{
+"id": 116,
+"moment": "Shinge La Pass to Laya District — descend through a winding river valley",
+"keyword": "chele la pass",
+"rank": 2,
+"volume": 70,
+"p": 0.35,
+"label": 0,
+"note": ""
+},
+{
+"id": 117,
+"moment": "Yangshuo — cycle through the karst limestone landscape passing Moon Hill's semicircular arch formation",
+"keyword": "yangshuo bike tour",
+"rank": 2,
+"volume": 10,
+"p": 0.91,
+"label": 1,
+"note": ""
+},
+{
+"id": 118,
+"moment": "Hahoe Folk Village — walk through village preserving Joseon-era domestic life",
+"keyword": "andong hahoe village",
+"rank": 2,
+"volume": 1000,
+"p": 0.95,
+"label": 1,
+"note": ""
+},
+{
+"id": 119,
+"moment": "Charan Sparsha — ascend to the footprint of Shiva on Kailash's lower slopes",
+"keyword": "mount kailash pilgrimage",
+"rank": 2,
+"volume": 110,
+"p": 0.73,
+"label": 1,
+"note": ""
+},
+{
+"id": 120,
+"moment": "Lake Baikal — take a one-hour hovercraft excursion",
+"keyword": "Lake Baikal activities",
+"rank": 2,
+"volume": 10,
+"p": 0.84,
+"label": 1,
+"note": ""
+},
+{
+"id": 121,
+"moment": "Nasu — soak in onsen and eat dinner",
+"keyword": "Nasu onsen",
+"rank": 2,
+"volume": 90,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 122,
+"moment": "return bus to Seoul — hear firsthand accounts from a North Korean defector",
+"keyword": "seoul airport transfer",
+"rank": 2,
+"volume": 90,
+"p": 0.4,
+"label": 0,
+"note": ""
+},
+{
+"id": 123,
+"moment": "Namche Bazaar — explore lodges, tea shops, and craft stalls",
+"keyword": "craft bazaar",
+"rank": 2,
+"volume": 210,
+"p": 0.56,
+"label": 0,
+"note": ""
+},
+{
+"id": 124,
+"moment": "Andong Hahoe — explore at your own pace using local buses",
+"keyword": "andong hahoe village",
+"rank": 2,
+"volume": 1000,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 125,
+"moment": "Tsharithang valley — cross Jhari La Pass and encounter takin herds",
+"keyword": "chele la pass",
+"rank": 2,
+"volume": 70,
+"p": 0.5,
+"label": 0,
+"note": ""
+},
+{
+"id": 126,
+"moment": "Delhi — explore the city's streets independently",
+"keyword": "delhi street food",
+"rank": 2,
+"volume": 390,
+"p": 0.88,
+"label": 1,
+"note": ""
+},
+{
+"id": 127,
+"moment": "Mardi Himal Base Camp — watch sunrise over the mountains",
+"keyword": "ger camp Mongolia",
+"rank": 2,
+"volume": 210,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 128,
+"moment": "Vientiane to Nam Pien Yorla Pa — cycle 55 km east through lush countryside",
+"keyword": "nam khan",
+"rank": 2,
+"volume": 40,
+"p": 0.58,
+"label": 0,
+"note": ""
+},
+{
+"id": 129,
+"moment": "Folk Heritage Museum — visit",
+"keyword": "andong hahoe folk village",
+"rank": 2,
+"volume": 1000,
+"p": 0.8,
+"label": 0,
+"note": "Folk Heritage Museum is not Andong Hahoe"
+},
+{
+"id": 130,
+"moment": "Dochu La Pass — take in views across the Eastern Himalayan range",
+"keyword": "dolma la pass",
+"rank": 2,
+"volume": 210,
+"p": 0.77,
+"label": 0,
+"note": "Dochu La ≠ Dolma La — Jev 0.77 wrong"
+},
+{
+"id": 131,
+"moment": "Punakha Valley — practice morning yoga",
+"keyword": "punakha valley",
+"rank": 2,
+"volume": 90,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 132,
+"moment": "Nam Ou River — take a peaceful boat ride and explore a small village along its banks",
+"keyword": "Pak Ou Caves",
+"rank": 2,
+"volume": 320,
+"p": 0.63,
+"label": 0,
+"note": ""
+},
+{
+"id": 133,
+"moment": "Chari Monastery — visit",
+"keyword": "tiger s nest monastery",
+"rank": 2,
+"volume": 5400,
+"p": 0.21,
+"label": 0,
+"note": ""
+},
+{
+"id": 134,
+"moment": "That Chomphet Stupa — visit a hilltop stupa overlooking Muang Khoun and the Nam Ngiap River Valley",
+"keyword": "That Chomphet",
+"rank": 2,
+"volume": 10,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 135,
+"moment": "Patong's Bangla Road — visit for optional evening outing",
+"keyword": "fisherman's village",
+"rank": 2,
+"volume": 480,
+"p": 0.2,
+"label": 0,
+"note": ""
+},
+{
+"id": 136,
+"moment": "Mon La — cross",
+"keyword": "chele la pass",
+"rank": 2,
+"volume": 70,
+"p": 0.73,
+"label": 0,
+"note": ""
+},
+{
+"id": 137,
+"moment": "Wangdi Dzong — visit",
+"keyword": "Trongsa Dzong",
+"rank": 2,
+"volume": 90,
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 138,
+"moment": "Jeju Island — explore waterfalls and walk lava-cave systems",
+"keyword": "jeju island korea",
+"rank": 2,
+"volume": 6600,
+"p": 0.83,
+"label": 1,
+"note": ""
+},
+{
+"id": 139,
+"moment": "resort hotel in Ashino — use the onsen after cycling",
+"keyword": "khao sok resort",
+"rank": 2,
+"volume": 70,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 140,
+"moment": "Nam Ou valley — trek through streams and jungle to cascades",
+"keyword": "Pak Ou Caves",
+"rank": 2,
+"volume": 320,
+"p": 0.77,
+"label": 0,
+"note": ""
+},
+{
+"id": 141,
+"moment": "Maya Devi Temple — visit Buddha's birthplace and UNESCO World Heritage Site",
+"keyword": "Big Buddha Thailand",
+"rank": 2,
+"volume": 260,
+"p": 0.13,
+"label": 0,
+"note": ""
+},
+{
+"id": 142,
+"moment": "Dolma La — cross the pass at 18,600 feet during the Kailash Kora",
+"keyword": "dolma la",
+"rank": 2,
+"volume": 10,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 143,
+"moment": "Numa La Base Camp — stay in tented camp",
+"keyword": "dochu la pass",
+"rank": 2,
+"volume": 480,
+"p": 0.23,
+"label": 0,
+"note": ""
+},
+{
+"id": 144,
+"moment": "Kumarakom backwater resort — explore the property including water sports and traditional Ayurvedic treatments",
+"keyword": "Khao Sok resort",
+"rank": 2,
+"volume": 70,
+"p": 0.05,
+"label": 0,
+"note": ""
+},
+{
+"id": 145,
+"moment": "Si Phan Don — watch for rare Irrawaddy dolphins",
+"keyword": "Don Daeng",
+"rank": 2,
+"volume": 10,
+"p": 0.7,
+"label": 0,
+"note": "Don Daeng is not Si Phan Don"
+},
+{
+"id": 146,
+"moment": "Wat Phrathat Doi Suthep — ascend the 306-step Naga staircase",
+"keyword": "Doi Suthep temple",
+"rank": 2,
+"volume": 720,
+"p": 0.93,
+"label": 1,
+"note": ""
+},
+{
+"id": 147,
+"moment": "Everest Base Camp — summit",
+"keyword": "ger camp Mongolia",
+"rank": 2,
+"volume": 210,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 148,
+"moment": "Dirapuk Monastery — overnight on the kora",
+"keyword": "tigers nest monastery",
+"rank": 2,
+"volume": 5400,
+"p": 0.53,
+"label": 0,
+"note": ""
+},
+{
+"id": 149,
+"moment": "Talo Monastery — visit for prayers with monks",
+"keyword": "monastery",
+"rank": 2,
+"volume": 90500,
+"p": 0.35,
+"label": 0,
+"note": ""
+},
+{
+"id": 150,
+"moment": "Peace Memorial Park — visit",
+"keyword": "memorial chorten bhutan",
+"rank": 2,
+"volume": 50,
+"p": 0.37,
+"label": 0,
+"note": ""
+},
+{
+"id": 151,
+"moment": "Kurje Lhakhang — visit",
+"keyword": "chimmi lhakhang",
+"rank": 2,
+"volume": 320,
+"p": 0.24,
+"label": 0,
+"note": ""
+},
+{
+"id": 152,
+"moment": "Mongar Dzong — explore",
+"keyword": "mongar",
+"rank": 2,
+"volume": 210,
+"p": 0.65,
+"label": 0,
+"note": "'mongar' is the town around the dzong"
+},
+{
+"id": 153,
+"moment": "Koh Phi Phi Don — explore the main pier and nearby landmarks, including a popular swing photo spot",
+"keyword": "si phan don",
+"rank": 2,
+"volume": 720,
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 154,
+"moment": "Lhalung La — trek to the pass",
+"keyword": "chele la pass",
+"rank": 2,
+"volume": 70,
+"p": 0.46,
+"label": 0,
+"note": ""
+},
+{
+"id": 155,
+"moment": "Nam Song River — explore cave complexes and swimming holes",
+"keyword": "nam khan",
+"rank": 2,
+"volume": 40,
+"p": 0.26,
+"label": 0,
+"note": ""
+},
+{
+"id": 156,
+"moment": "Chiang Saen — visit Golden Triangle viewpoint where Thailand, Laos, and Burma converge",
+"keyword": "chiang mai doi suthep",
+"rank": 2,
+"volume": 6600,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 157,
+"moment": "Railway Market at Ratchaburi — visit and haggle for local goods",
+"keyword": "death railway thailand",
+"rank": 2,
+"volume": 1900,
+"p": 0.14,
+"label": 0,
+"note": ""
+},
+{
+"id": 158,
+"moment": "Bridge Over the River Kwai — watch sunset",
+"keyword": "Kanchanaburi River Kwai",
+"rank": 2,
+"volume": 30,
+"p": 0.9,
+"label": 1,
+"note": ""
+},
+{
+"id": 159,
+"moment": "HiKR Ground, Seoul — immerse in K-pop culture",
+"keyword": "seoul airport luggage delivery",
+"rank": 2,
+"volume": 10,
+"p": 0.29,
+"label": 0,
+"note": ""
+},
+{
+"id": 160,
+"moment": "Textile Museum — visit",
+"keyword": "textile museum thimphu",
+"rank": 2,
+"volume": 10,
+"p": 0.96,
+"label": 1,
+"note": ""
+},
+{
+"id": 161,
+"moment": "Beijing's Hutong neighborhoods — cycle through",
+"keyword": "Beijing city tour",
+"rank": 2,
+"volume": 260,
+"p": 0.25,
+"label": 0,
+"note": "'Beijing city tour' wider"
+},
+{
+"id": 162,
+"moment": "Yangshuo — explore on final morning before departure",
+"keyword": "yangshuo cycling",
+"rank": 2,
+"volume": 20,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 163,
+"moment": "Thiksay monastery — pass by",
+"keyword": "tashilhunpo monastery tibet",
+"rank": 2,
+"volume": 50,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 164,
+"moment": "Namgyal Gompa — visit monastery with centuries-old Buddhist paintings",
+"keyword": "buddhist monastery bhutan",
+"rank": 2,
+"volume": 50,
+"p": 0.28,
+"label": 0,
+"note": ""
+},
+{
+"id": 165,
+"moment": "Pho Chau to Huong Khe — cycle through dense jungle and village settlements beneath the Truong Son mountain range",
+"keyword": "wat pho tour",
+"rank": 2,
+"volume": 20,
+"p": 0.47,
+"label": 0,
+"note": ""
+},
+{
+"id": 166,
+"moment": "Khamsum Yulley Namgyel ridge — practice morning yoga overlooking Punakha Valley",
+"keyword": "khamsum yuelley namgyel chorten",
+"rank": 2,
+"volume": 10,
+"p": 0.89,
+"label": 1,
+"note": ""
+},
+{
+"id": 167,
+"moment": "Wangdi Dzong — visit",
+"keyword": "Drukgyel Dzong",
+"rank": 2,
+"volume": 20,
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 168,
+"moment": "Tsagaan Suvarga (White Stupa) — observe and photograph naturally colorful cliffs",
+"keyword": "sarnath dhamek stupa",
+"rank": 2,
+"volume": 10,
+"p": 0.07,
+"label": 0,
+"note": ""
+},
+{
+"id": 169,
+"moment": "Phobjikha Valley — walk nature trail and birding walk through open grassland and forest margins",
+"keyword": "phobjikha",
+"rank": 2,
+"volume": 90,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 170,
+"moment": "Tashilhunpo Monastery — tour the main assembly hall and the temple housing the Maitreya Buddha statue",
+"keyword": "Big Buddha Phuket",
+"rank": 2,
+"volume": 1300,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 171,
+"moment": "Maya Devi Temple — visit Buddha's birthplace and UNESCO World Heritage Site",
+"keyword": "giant Buddha",
+"rank": 2,
+"volume": 720,
+"p": 0.26,
+"label": 0,
+"note": ""
+},
+{
+"id": 172,
+"moment": "small Lao village along the Nam Ou riverbank — explore a small Lao village",
+"keyword": "Pak Ou Caves",
+"rank": 2,
+"volume": 320,
+"p": 0.54,
+"label": 0,
+"note": ""
+},
+{
+"id": 173,
+"moment": "Ang Thong Marine Park — do full-day expedition including kayaking hidden coves, reef snorkeling, and island trekking",
+"keyword": "wat xieng thong luang prabang",
+"rank": 2,
+"volume": 1300,
+"p": 0.03,
+"label": 0,
+"note": ""
+},
+{
+"id": 174,
+"moment": "Hor Phra Keo — explore one of Laos's most venerated temples, now preserved as a museum",
+"keyword": "four thousand islands laos",
+"rank": 2,
+"volume": 720,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 175,
+"moment": "Tsagaan Suvarga (White Stupa) — photograph and observe naturally colorful cliffs",
+"keyword": "sarnath dhamek stupa",
+"rank": 2,
+"volume": 10,
+"p": 0.09,
+"label": 0,
+"note": ""
+},
+{
+"id": 176,
+"moment": "Lake Mansarovar — spend morning and bathe in the lake",
+"keyword": "mansarovar lake",
+"rank": 2,
+"volume": 4400,
+"p": 0.94,
+"label": 1,
+"note": ""
+},
+{
+"id": 177,
+"moment": "elephant sanctuary near Chiang Mai — walk with rescued elephants, learning their behaviour from experienced keepers",
+"keyword": "best elephant sanctuary chiang mai",
+"rank": 2,
+"volume": 210,
+"p": 0.66,
+"label": 1,
+"note": ""
+},
+{
+"id": 178,
+"moment": "Punakha Valley — go river rafting",
+"keyword": "punakha valley",
+"rank": 2,
+"volume": 90,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 179,
+"moment": "Kailash Parikrama — walk three-day circumambulation",
+"keyword": "mount kailash pilgrimage",
+"rank": 2,
+"volume": 110,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 180,
+"moment": "Wat Sensoukarahm — tour temple complex by tuk-tuk",
+"keyword": "Wat Phrathat Doi Suthep",
+"rank": 2,
+"volume": 6600,
+"p": 0.15,
+"label": 0,
+"note": ""
+},
+{
+"id": 181,
+"moment": "Chimmi Lhakhang — stop at fertility temple en route",
+"keyword": "dumtse lhakhang",
+"rank": 2,
+"volume": 10,
+"p": 0.26,
+"label": 0,
+"note": ""
+},
+{
+"id": 182,
+"moment": "Pre Rup — watch Angkor sunset",
+"keyword": "angkor wat tour",
+"rank": 2,
+"volume": 170,
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 183,
+"moment": "Tiger's Nest Monastery — hike to",
+"keyword": "gangtey monastery",
+"rank": 2,
+"volume": 110,
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 184,
+"moment": "Delhi — join a youth-led city walk",
+"keyword": "delhi street food",
+"rank": 2,
+"volume": 390,
+"p": 0.76,
+"label": 0,
+"note": ""
+},
+{
+"id": 185,
+"moment": "Kathmandu — check in and settle in for the evening",
+"keyword": "Thamel Kathmandu",
+"rank": 2,
+"volume": 1600,
+"p": 0.88,
+"label": 1,
+"note": "Thamel is in Kathmandu (borderline)"
+},
+{
+"id": 186,
+"moment": "Doi Mae Salong — trek through terraced Oolong tea plantations and hill tribe villages",
+"keyword": "chiang mai doi suthep",
+"rank": 2,
+"volume": 6600,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 187,
+"moment": "Baker's Waterfall — continue trek to Baker's Waterfall",
+"keyword": "fisherman's village",
+"rank": 2,
+"volume": 480,
+"p": 0.12,
+"label": 0,
+"note": ""
+},
+{
+"id": 188,
+"moment": "Wat Yai Chaimongkol — visit temple ruins",
+"keyword": "angkor wat tour",
+"rank": 2,
+"volume": 18100,
+"p": 0.06,
+"label": 0,
+"note": ""
+},
+{
+"id": 189,
+"moment": "Kuang Si Falls — visit multi-tiered limestone waterfalls",
+"keyword": "si phan don",
+"rank": 2,
+"volume": 720,
+"p": 0.17,
+"label": 0,
+"note": ""
+},
+{
+"id": 190,
+"moment": "Pakse to Champasak — cycle along Route 14",
+"keyword": "Champasak",
+"rank": 2,
+"volume": 110,
+"p": 0.84,
+"label": 0,
+"note": ""
+},
+{
+"id": 191,
+"moment": "Island Peak high camp — ascend to high camp via flat ground and steep ascent",
+"keyword": "taichung high speed rail station",
+"rank": 2,
+"volume": 320,
+"p": 0.02,
+"label": 0,
+"note": ""
+},
+{
+"id": 192,
+"moment": "Yala — settle at accommodation before the safari",
+"keyword": "Yala National Park",
+"rank": 2,
+"volume": 1900,
+"p": 0.89,
+"label": 1,
+"note": ""
+},
+{
+"id": 193,
+"moment": "Ulziit Khishig Camp — overnight at a standard ger camp",
+"keyword": "ger camp Mongolia",
+"rank": 2,
+"volume": 210,
+"p": 0.22,
+"label": 0,
+"note": ""
+},
+{
+"id": 194,
+"moment": "Li River — take a river cruise near Yangshuo",
+"keyword": "yangshuo hiking",
+"rank": 2,
+"volume": 30,
+"p": 0.25,
+"label": 0,
+"note": ""
+},
+{
+"id": 195,
+"moment": "Jangothang — camp with unobstructed views of Mount Jomolhari's north face",
+"keyword": "jangothang",
+"rank": 2,
+"volume": 10,
+"p": 0.92,
+"label": 1,
+"note": ""
+},
+{
+"id": 196,
+"moment": "Sera Monastery — witness philosophical debates among monks",
+"keyword": "tashilhunpo monastery tibet",
+"rank": 2,
+"volume": 50,
+"p": 0.08,
+"label": 0,
+"note": ""
+},
+{
+"id": 197,
+"moment": "Wat Mahathat — explore temple ruins",
+"keyword": "Wat Phrathat Doi Suthep",
+"rank": 2,
+"volume": 6600,
+"p": 0.1,
+"label": 0,
+"note": ""
+},
+{
+"id": 198,
+"moment": "Golgulsa Temple — eat a vegan breakfast",
+"keyword": "Golgulsa Temple stay",
+"rank": 2,
+"volume": 110,
+"p": 0.88,
+"label": 1,
+"note": ""
+},
+{
+"id": 199,
+"moment": "Japan's oldest public park — visit a lake and classical Japanese garden and be served matcha and traditional sweets",
+"keyword": "fisherman's village",
+"rank": 2,
+"volume": 480,
+"p": 0.19,
+"label": 0,
+"note": ""
+}
+]
