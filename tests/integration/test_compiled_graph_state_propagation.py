@@ -179,14 +179,15 @@ async def test_full_graph_run_returns_judge_fields_undropped(patch_llm_client):
     )
 
     assert result["status"] == "success", result.get("error")
-    # judge_score = min(brand_fit_score=9, cross_brand_distinct=8) from the mocked judge response.
+    # AA-698: an A1 rewrite gates on brand_fit_score (9) alone; cross_brand_distinct (8) is still
+    # propagated but does not gate (master content is brand-neutral — distinctiveness is T2's job).
     assert result["judge_score"] is not None
-    assert result["judge_score"] == pytest.approx(8.0)
+    assert result["judge_score"] == pytest.approx(9.0)
     assert result["judge_brand_fit"] == pytest.approx(9.0)
     assert result["judge_cross_brand_distinct"] == pytest.approx(8.0)
     assert result["judge_mission_present"] is True
-    # quality_score = min(validate's clean 10.0, judge_score 8.0) — graph.judge_node's stacked gate.
-    assert result["quality_score"] == pytest.approx(8.0)
+    # quality_score = min(validate's clean 10.0, judge_score 9.0) — graph.judge_node's stacked gate.
+    assert result["quality_score"] == pytest.approx(9.0)
 
 
 async def test_full_graph_run_propagates_model_tier_metadata(patch_llm_client):
