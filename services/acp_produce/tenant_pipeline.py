@@ -121,6 +121,53 @@ def _t3_grounding_check(rewritten: dict, source_texts: list[str]) -> list[dict]:
     return violations
 
 
+# AA-699 T3-1 — before a numeric hit costs a full rewrite, ask Jev whether the sentence is supported
+# by the master content (unit conversion, sum, rephrasing are not fabrications). Same Noul and state
+# shape as A1 (`a1_claim_supported`, docs/calibration/a1_claim_supported.md): enforced accept ≥ 0.90
+# clears the hit; there is no reject floor, so Jev never adds a violation. Tenant content → only for
+# allow-listed tenants (decide() returns `skipped` for the rest, and T3 behaves as before).
+T3_JEV_STAGE = "t3_grounding"
+T3_JEV_Q = "a1_claim_supported"
+_T3_JEV_CONCURRENCY = 4
+
+
+async def t3_jev_clear(grounding: list[dict], tour_dict: dict,
+                       tenant_id: str | None) -> tuple[list[dict], list[dict]]:
+    """Split T3 numeric hits into (kept, cleared). Cleared = Jev confidently (enforce, accept zone)
+    says the sentence is supported by the master content. Never raises; fails open to `kept`."""
+    if not grounding or not tenant_id:
+        return grounding, []
+    from services.content_generation.grounding import source_text, subject_key
+
+    source = source_text(tour_dict or {})
+    if not source:
+        return grounding, []
+
+    async def one(g: dict):
+        d = await decide(T3_JEV_STAGE, subject_key(source, g["sentence"]),
+                         {"source": source, "sentence": g["sentence"]}, [T3_JEV_Q], tenant_id=tenant_id)
+        return d.verdicts.get(T3_JEV_Q), d.accepted(T3_JEV_Q)
+
+    try:
+        first_v, first_ok = await one(grounding[0])
+        if first_v is not None and first_v.zone == "skipped":   # not allow-listed / mode off
+            return grounding, []
+        sem = asyncio.Semaphore(_T3_JEV_CONCURRENCY)
+
+        async def bounded(g: dict):
+            async with sem:
+                return await one(g)
+
+        rest = await asyncio.gather(*[bounded(g) for g in grounding[1:]])
+        oks = [first_ok] + [ok for _, ok in rest]
+    except Exception as exc:
+        logger.warning("t3_jev_clear_failed", error=str(exc)[:200])
+        return grounding, []
+    kept = [g for g, ok in zip(grounding, oks) if not ok]
+    cleared = [g for g, ok in zip(grounding, oks) if ok]
+    return kept, cleared
+
+
 def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -> list[str]:
     """T3 structural gate — reuse validate_node (graph.py:448) directly on the ACTUAL
     final content, rather than trusting `result["failure_codes"]` from T2's own graph
@@ -235,6 +282,7 @@ async def run_t3_qa_gate(
 
     result = initial_result
     attempt = 0
+    jev_cleared = 0
     while True:
         generated = result.get("generated") or {}
         # AA-639: an over-long SEO title is fixed deterministically here — live, a single
@@ -247,17 +295,22 @@ async def run_t3_qa_gate(
             generated["seo_meta"] = fit_seo_meta(generated["seo_meta"], brand_rules.get("forbidden_words"))
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         grounding = _t3_grounding_check(generated, source_texts)
+        grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id)   # AA-699 T3-1
+        if cleared:
+            jev_cleared += len(cleared)
+            logger.info("t3_jev_cleared", attempt=attempt, cleared=len(cleared), kept=len(grounding),
+                        tenant_id=tenant_id)
 
         if not structural and not grounding:
             return {
                 "passed": True, "result": result, "attempts": attempt,
-                "structural_issues": [], "grounding_issues": [],
+                "structural_issues": [], "grounding_issues": [], "jev_cleared": jev_cleared,
             }
 
         if attempt >= max_repairs:
             return {
                 "passed": False, "result": result, "attempts": attempt,
-                "structural_issues": structural, "grounding_issues": grounding,
+                "structural_issues": structural, "grounding_issues": grounding, "jev_cleared": jev_cleared,
             }
 
         attempt += 1

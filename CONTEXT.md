@@ -477,6 +477,10 @@ _Avoid_: block (alone), delete, filter.
   AA-639 T3 only blocks on `_HARD_BLOCK_CODES`, passes the specific failure feedback into the
   repair, and fixes an over-long SEO title deterministically (`fit_seo_title()`) instead of
   rewriting the tour. Typical long tour: 1-2 writer calls, ~$0.10-0.18 (was 4 calls, ~$0.31).
+  AA-699: for Jev allow-listed tenants, each numeric hit is first asked `a1_claim_supported`
+  against the master content (stage `t3_grounding`); a confident "supported" clears it without a
+  rewrite. The T2 judge's tie-break near the retry line asks `a1_brand_fit` (stage
+  `t2_judge_tiebreak`, shadow). Other tenants: `skipped`, T3 unchanged.
 - **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/t4-pool`) — a T3-approved tour
   here is what a tenant can build T7+ content from.
 
