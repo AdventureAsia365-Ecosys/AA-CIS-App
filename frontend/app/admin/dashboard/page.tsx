@@ -47,7 +47,8 @@ function OverviewTab({ data }: { data: any }) {
 
   const totalPassed = dailyAll.reduce((s: number, r: any) => s + (r.passed ?? 0), 0);
   const totalTours  = dailyAll.reduce((s: number, r: any) => s + (r.tours  ?? 0), 0);
-  const passRate    = totalTours > 0 ? Math.round(totalPassed / totalTours * 100) : 0;
+  // AA-702: no runs in the window is "no data", not a 0% pass rate.
+  const passRate    = totalTours > 0 ? `${Math.round(totalPassed / totalTours * 100)}%` : "—";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -74,7 +75,7 @@ function OverviewTab({ data }: { data: any }) {
         />
         <MetricCard
           label="Pass Rate"
-          value={`${passRate}%`}
+          value={passRate}
           src="↳ pipeline_runs · 7d window"
           color={A.green}
         />
@@ -165,34 +166,26 @@ function OverviewTab({ data }: { data: any }) {
         <Card>
           <SLabel>Model Usage</SLabel>
           <div style={{ fontSize: 11, color: A.muted2, marginBottom: 8 }}>
-            &ldquo;Versions&rdquo; = generated content rows per model, not individual LLM
-            invocations — one version can involve multiple real calls (retries, judge,
-            brand audit, repair).
+            Real LLM calls in the last 30 days, all tenants and stages — same source as{" "}
+            <a href="/admin/llm-usage" style={{ color: A.gold }}>External Spend</a> (shared.llm_call_log).
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {["Model", "Versions", "Avg Score", "Total Cost", "Cost/Version"].map((h, i) => (
+                {["Model", "Calls (30d)", "Total Cost", "Cost/Call"].map((h, i) => (
                   <th key={h} style={{ ...TH, textAlign: i > 0 ? "right" : "left" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {models.map((m: any, idx: number) => {
-                const score = m.avg_score != null ? parseFloat(m.avg_score) : null;
-                const sc    = score == null ? A.muted2 : score >= 9.5 ? A.green : score >= 8.0 ? A.gold : A.red;
-                return (
-                  <tr key={m.model} style={{ background: idx % 2 === 1 ? A.bg : "transparent" }}>
-                    <td style={TD}><code style={{ fontFamily: mono, fontSize: 12, color: A.gold }}>{m.model}</code></td>
-                    <td style={{ ...TD, textAlign: "right" }}>{m.calls}</td>
-                    <td style={{ ...TD, textAlign: "right" }}>
-                      <span style={{ color: sc, fontWeight: 700 }}>{score != null ? score.toFixed(1) : "—"}</span>
-                    </td>
-                    <td style={{ ...TD, textAlign: "right" }}>${Number(m.total_cost ?? 0).toFixed(4)}</td>
-                    <td style={{ ...TD, textAlign: "right", color: A.muted }}>${Number(m.cost_per_call ?? 0).toFixed(4)}</td>
-                  </tr>
-                );
-              })}
+              {models.map((m: any, idx: number) => (
+                <tr key={m.model} style={{ background: idx % 2 === 1 ? A.bg : "transparent" }}>
+                  <td style={TD}><code style={{ fontFamily: mono, fontSize: 12, color: A.gold }}>{m.model}</code></td>
+                  <td style={{ ...TD, textAlign: "right" }}>{Number(m.calls).toLocaleString()}</td>
+                  <td style={{ ...TD, textAlign: "right" }}>${Number(m.total_cost ?? 0).toFixed(4)}</td>
+                  <td style={{ ...TD, textAlign: "right", color: A.muted }}>${Number(m.cost_per_call ?? 0).toFixed(6)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </Card>
@@ -302,8 +295,11 @@ function SeoTab() {
       {/* Row 3 — Top Keywords */}
       <Card>
         <SLabel>Top Keywords</SLabel>
+        <div style={{ fontSize: 11, color: A.muted2, marginBottom: 8 }}>
+          DataForSEO keywords with a measured monthly search volume, across published master tours.
+        </div>
         {(data.top_keywords ?? []).length === 0 ? (
-          <div style={{ color: A.muted, fontSize: 13 }}>No keyword data yet</div>
+          <div style={{ color: A.muted, fontSize: 13 }}>No keyword with a measured search volume yet</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {(data.top_keywords ?? []).map((k: any, idx: number) => (
@@ -313,10 +309,13 @@ function SeoTab() {
                 borderBottom: idx < (data.top_keywords ?? []).length - 1 ? `1px solid ${A.line2}` : "none",
               }}>
                 <span style={{ color: A.ink }}>{k.keyword}</span>
-                <span style={{
-                  fontSize: 11, padding: "2px 8px", borderRadius: 20,
-                  background: A.goldTint, color: A.gold, fontWeight: 600,
-                }}>{k.count}</span>
+                <span style={{ fontSize: 12, color: A.muted }}>
+                  {k.tours} {k.tours === 1 ? "tour" : "tours"}
+                  <span style={{
+                    marginLeft: 10, fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                    background: A.goldTint, color: A.gold, fontWeight: 600,
+                  }}>{Number(k.search_volume).toLocaleString()}/mo</span>
+                </span>
               </div>
             ))}
           </div>

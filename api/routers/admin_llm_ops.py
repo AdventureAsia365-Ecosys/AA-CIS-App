@@ -194,7 +194,10 @@ def _window_meta(days: int, since: datetime, until: datetime) -> dict:
 
 _TREE_SQL = """
     SELECT
-        l.tenant_id::text AS tenant_id, COALESCE(t.slug, 'aa_internal') AS tenant_label,
+        -- AA-702: internal work is logged both as NULL and as the aa_internal UUID; fold them into
+        -- one NULL key so External Spend shows one "aa_internal" row, not two.
+        NULLIF(l.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)::text AS tenant_id,
+        COALESCE(t.slug, 'aa_internal') AS tenant_label,
         l.model, l.stage, l.role,
         -- AA-617: account (acc1/acc2/acc3, NULL for OpenAI/legacy) + provider so the tree can
         -- split acc3 vs acc1 satellite spend, which l.model alone can't (model no longer carries
@@ -240,9 +243,10 @@ _TREE_SQL = """
         COUNT(*) FILTER (WHERE l.stop_reason = 'max_tokens') AS truncated_count,
         MAX(l.created_at) AS last_call_at
     FROM shared.llm_call_log l
-    LEFT JOIN shared.tenants t ON t.tenant_id = l.tenant_id
+    LEFT JOIN shared.tenants t
+           ON t.tenant_id = NULLIF(l.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)
     WHERE l.created_at >= $1 AND l.created_at < $2
-    GROUP BY l.tenant_id, t.slug, l.model, l.stage, l.role, l.account, l.provider
+    GROUP BY 1, t.slug, l.model, l.stage, l.role, l.account, l.provider
     ORDER BY tenant_label, l.account, l.model, l.stage
 """
 
@@ -336,19 +340,23 @@ async def get_llm_usage_calls(
 
 _DFS_TREE_SQL = """
     SELECT
-        endpoint,
-        tenant_id::text                       AS tenant_id,
-        COALESCE(tenant_id::text, 'platform') AS tenant_label,
+        d.endpoint,
+        -- AA-702: same NULL/aa_internal fold as the LLM tree, and a slug label instead of a raw
+        -- UUID, so the same tenant carries the same key on every External Spend tab.
+        NULLIF(d.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)::text AS tenant_id,
+        COALESCE(t.slug, 'aa_internal')                                         AS tenant_label,
         COUNT(*)                                    AS call_count,
-        COUNT(*) FILTER (WHERE fetched_live)        AS live_count,
-        COUNT(*) FILTER (WHERE cache_hit)           AS cache_hit_count,
-        COALESCE(SUM(cost_usd), 0)::float           AS total_cost_usd,
-        COALESCE(SUM(keyword_count), 0)             AS keywords_total,
-        MAX(created_at)                             AS last_call_at
-    FROM shared.dfs_call_log
-    WHERE created_at >= $1 AND created_at < $2
-    GROUP BY endpoint, tenant_id
-    ORDER BY total_cost_usd DESC NULLS LAST, endpoint
+        COUNT(*) FILTER (WHERE d.fetched_live)      AS live_count,
+        COUNT(*) FILTER (WHERE d.cache_hit)         AS cache_hit_count,
+        COALESCE(SUM(d.cost_usd), 0)::float         AS total_cost_usd,
+        COALESCE(SUM(d.keyword_count), 0)           AS keywords_total,
+        MAX(d.created_at)                           AS last_call_at
+    FROM shared.dfs_call_log d
+    LEFT JOIN shared.tenants t
+           ON t.tenant_id = NULLIF(d.tenant_id, '00000000-0000-0000-0000-000000000001'::uuid)
+    WHERE d.created_at >= $1 AND d.created_at < $2
+    GROUP BY d.endpoint, 2, t.slug
+    ORDER BY total_cost_usd DESC NULLS LAST, d.endpoint
 """
 
 _DFS_SUMMARY_SQL = """

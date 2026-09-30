@@ -1097,7 +1097,7 @@ export default function MasterContentPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
             <StatCard icon={<BarChart2 size={16} />}    label="Total Tours"    value={String(tours.length)}       sub={`↳ ${summary?.tours_view ?? tours.length} visible`} />
             <StatCard icon={<Star size={16} />}          label="Avg Quality"   value={avgScore.toFixed(1)}        sub="↳ quality_score avg" accent={scoreColor(avgScore)} />
-            <StatCard icon={<DollarSign size={16} />}   label="Total LLM Cost" value={`$${(summary?.total_llm_cost_usd ?? 0).toFixed(4)}`} sub="↳ all pipeline runs" />
+            <StatCard icon={<DollarSign size={16} />}   label="Total LLM Cost" value={`$${(summary?.total_llm_cost_usd ?? 0).toFixed(4)}`} sub="↳ llm_call_log · internal work, all time" />
             <StatCard icon={<CalendarClock size={16} />} label="Pipeline Runs" value={String(runs.length)}        sub={`↳ ${summary?.pipeline_note ?? "pipeline_runs"}`} />
           </div>
         </div>

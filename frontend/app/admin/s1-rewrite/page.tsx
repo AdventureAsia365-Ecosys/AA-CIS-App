@@ -186,7 +186,12 @@ export default function S1RewritePage() {
   const [filterSearch, setFilterSearch]     = useState("");
   const [page, setPage]                     = useState(1);
   const [seoMode, setSeoMode]               = useState("standard");
-  const [modelTier, setModelTier]           = useState("haiku");
+  // AA-702: "" = no per-run override, so the s1_generate route in Settings -> LLM Models applies
+  // (an explicit model_tier always wins over it in LLMClient). Was hardcoded "haiku", which
+  // silently overrode whatever Settings said on every admin S1 run.
+  const [modelTier, setModelTier]           = useState("");
+  const [s1Models, setS1Models]             = useState<{ current: string; options: { model_id: string; label: string }[] }>(
+    { current: "", options: [] });
   const [brandList, setBrandList]           = useState<BrandSummary[]>([]);
   const [brandName, setBrandName]           = useState<string | null>(null);
   const [brandId, setBrandId]               = useState<string | null>(null);
@@ -232,6 +237,19 @@ export default function S1RewritePage() {
       resolve();
     }
   }
+
+  useEffect(() => {
+    fetch("/api/admin/llm-config")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        const row = (d?.stages ?? []).find((x: any) => x.stage === "s1_generate");
+        if (!row) return;
+        const options = (row.options ?? []).filter((o: any) => o.available);
+        const cur = options.find((o: any) => o.model_id === row.model_id);
+        setS1Models({ current: cur?.label ?? row.model_id, options });
+      })
+      .catch(() => {});
+  }, []);
 
   const loadTours = useCallback(async () => {
     setLoading(true);
@@ -318,7 +336,7 @@ export default function S1RewritePage() {
           batch_id:             tour.batch_id || TENANT_ID,
           tenant_id:            TENANT_ID,
           seo_mode:             seoMode,
-          model_tier:           modelTier,
+          model_tier:           modelTier || null,
           brand_identity_id:    brandId || undefined,
           brand_name:           brandName || undefined,
         }),
@@ -503,11 +521,9 @@ export default function S1RewritePage() {
     minimal:    "Minimal",
   }[m] ?? m);
 
-  const modelLabel = (m: string) => ({
-    haiku:  "Haiku 4.5",
-    sonnet: "Sonnet 4.5",
-    "gpt-4.1": "GPT-4.1",
-  }[m] ?? m);
+  const modelLabel = (m: string) => m
+    ? (s1Models.options.find(o => o.model_id === m)?.label ?? m)
+    : `the Settings default model${s1Models.current ? ` (${s1Models.current})` : ""}`;
 
   if (loading) {
     return (
@@ -576,9 +592,10 @@ export default function S1RewritePage() {
                 disabled={running}
                 style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff" }}
               >
-                <option value="haiku">Haiku 4.5 (~$0.002/tour)</option>
-                <option value="sonnet">Sonnet 4.5 (~$0.02/tour)</option>
-                <option value="gpt-4.1">GPT-4.1 (~$0.01/tour)</option>
+                <option value="">Settings default{s1Models.current ? ` — ${s1Models.current}` : ""}</option>
+                {s1Models.options.map(o => (
+                  <option key={o.model_id} value={o.model_id}>{o.label} (this run only)</option>
+                ))}
               </select>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
