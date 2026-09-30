@@ -502,6 +502,9 @@ _Avoid_: block (alone), delete, filter.
 - **T9 — Write**: Piece generation, fires automatically the instant an Angle is chosen; the
   text streams live to the tenant (AA-637).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
+  After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
+  F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,
+  observe only: no gate outcome changes).
   `/portal/t10-review` is now **My Content** (AA-614): a flat list of the tenant's pieces with
   no gate/held details, displayed text is copy-locked (select/copy/right-click blocked, with a
   "Use Export" hint; the edit textarea stays editable).
