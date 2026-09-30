@@ -139,8 +139,9 @@ async def test_suggestion_seeds_use_place_country_not_the_zero_volume_keyword():
     assert client.fetch_keyword_ideas_multi.await_args.args[0] == [
         "mongar bhutan", "ura valley bhutan", "somewhere"]
     stored = [c.args[1] for c in conn.executemany.await_args_list if "search_demand" in c.args[0]][0]
-    assert stored == [("mongar bhutan", "US", 40), ("hotels in mongar", "US", 10)]
-    assert stats["idea_tasks"] == 1 and stats["ideas_stored"] == 2
+    # AA-693 (S206): "hotels in mongar" is a lodging search and is no longer stored
+    assert stored == [("mongar bhutan", "US", 40)]
+    assert stats["idea_tasks"] == 1 and stats["ideas_stored"] == 1
 
 
 @pytest.mark.asyncio

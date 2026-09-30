@@ -21,3 +21,20 @@ stored; state = `{keyword, seed_places}`.
 ## Decision
 - [x] Nghiệp reviewed 132 rows: **0 labels overturned**; flagged #20 "hot springs resort" as a keyword the rule keeps.
 - [x] Enforce `a3_idea_traveller` reject 0.20 (Dev, S205).
+
+## After the first enforced run (S206, 30/09/2026)
+- Job `deaf3850` (Bhutan, US, 10 places): 300 ideas → 214 rejected (all lodging), 50 stored. The stored 50 were
+  almost all lodging: generic ("hotel bhutan", "druk hotel paro", "galing resort paro") at Jev p 0.2–0.9 (a
+  place name in the keyword makes Jev read it as a trip search), and brand-only ("amankora paro", "como punakha",
+  "six senses paro", "gangtey palace paro").
+- **Re-pose tried and not adopted:** "somewhere to stay … also when only the property or brand name is given
+  (Amankora, COMO Uma …)". It caught 19 more of the 50, but on this sample it rejected "Golgulsa Temple stay"
+  (0.10) and "flights to ulaanbaatar" (0.16): 20/22 = 91% at ≤ 0.20, below the 95% floor. The wording above
+  stays; the trial key `a3_idea_traveller_v2` (stage `adhoc_aa693`) was only for this test.
+- **Added instead (code, `segment_research_batch.is_lodging_search`):** a lodging word (hotel, resort, lodge,
+  residency, boutique, homestay, guesthouse, hostel, inn, villa, agoda, airbnb …) drops the idea before Jev, except
+  "<airport/station> to hotel". On this 132-row sample it matches the 20 lodging rows and nothing else; on the 50
+  stored Bhutan ideas it matches 17.
+- **Known gap:** brand-only lodging names (33 of the 50). They are not in any Bhutan tour text, so no list can be
+  built from our data. `a3_demand_belongs` (enforce ≤ 0.40) still has to attach such a keyword to a real moment
+  before it counts in a Score.
