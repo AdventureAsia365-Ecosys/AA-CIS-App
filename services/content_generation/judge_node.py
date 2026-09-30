@@ -52,6 +52,9 @@ def a1_judge_score(result) -> float:
 # the judge (not validate) is what decides, the Noul a1_brand_fit settles it; enforce + confident only
 # (ADR 0007). The judge still writes the feedback.
 TIE_STAGE = "s1_judge_tiebreak"
+# AA-699 T2-1 — the same Noul settles a tenant rewrite's tie (judge = combined brand score there),
+# logged under its own stage and the tenant's id so the allow-list guard applies (design C2).
+T2_TIE_STAGE = "t2_judge_tiebreak"
 TIE_Q = "a1_brand_fit"
 _TIE_BAND = 0.5
 _BELOW_LINE = _MIN_QUALITY - 0.1
@@ -94,7 +97,12 @@ def _tie_break(state: dict, generated: dict, judge_score: float) -> tuple[float,
     from shared.llm_client.decide import decide_sync
     tour_id = str((state.get("tour") or {}).get("tour_id") or "")
     attempt = state.get("retry_count", 0)
-    decision = decide_sync(TIE_STAGE, f"a1_judge:{tour_id}:{attempt}", _tie_state(state, generated), [TIE_Q])
+    if state.get("is_tenant_rewrite"):
+        tenant_id = state.get("tenant_id")
+        decision = decide_sync(T2_TIE_STAGE, f"t2_judge:{tenant_id}:{tour_id}:{attempt}",
+                               _tie_state(state, generated), [TIE_Q], tenant_id=tenant_id)
+    else:
+        decision = decide_sync(TIE_STAGE, f"a1_judge:{tour_id}:{attempt}", _tie_state(state, generated), [TIE_Q])
     v = decision.verdicts.get(TIE_Q)
     new_score = tie_break_score(judge_score, decision)
     info = {"zone": v and v.zone, "p": v and v.probability, "mode": v and v.mode,
@@ -123,8 +131,8 @@ def judge_node(state: dict) -> dict:
         result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP)
         judge_score = a1_judge_score(result) if not state.get("is_tenant_rewrite") else result.judge_score
         tiebreak = None
-        if not state.get("is_tenant_rewrite") and in_tie_band(judge_score, validate_score):
-            judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4
+        if in_tie_band(judge_score, validate_score):
+            judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
 
         # Stack the brand gate on top of validate's structural gate — never let high brand-fit mask a
         # structurally broken output, and vice-versa.
