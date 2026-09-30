@@ -19,3 +19,14 @@
   good landings.
 - `questions_count` of every Segment will drop at the next atom ranking once the landing gate is
   enforced — expected, it was inflated.
+
+## Round 2 — A3-6 demand ownership + A3-1 atom grounding (S204)
+- `a3_landing_belongs` reviewed (1/62 overturned) and **enforced, reject ≤ 0.30** on Dev.
+- **A3-6:** `demand_candidates()` + `resolve_demand()` in `run_atom_ranking()`: the best claimable keyword
+  per market is asked `a3_demand_belongs`; a confident no moves to the next (max 3). Verdict is
+  market-independent (subject key has no market), so the other markets hit the cache. Only 33% of rank-1
+  claims are right on the sample.
+- **A3-1:** `ground_day_atoms()` in `_atomize_per_day()`: every extracted atom is asked `a3_atom_in_text`
+  before it is stored. **63% of live platform atoms are not in their day's text** — the per-day prompt
+  carries the whole tour's summary/highlights. The legacy whole-tour atomize path is not gated.
+- Migration 188 (two shadow questions) applied on Dev before deploy. Both pending Nghiệp's review.

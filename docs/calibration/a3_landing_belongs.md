@@ -43,7 +43,14 @@ used — this question only removes.
 Known Jev misses on the accept side (do not matter for a reject-only gate): #162 Xi'an City Wall ↔
 "time needed at Mutianyu Great Wall" p=0.87; #140 Jeju Olle Trail ↔ "what can you do in Jeju City" 0.80.
 
-## Decision (pending Nghiệp's review)
-- [ ] Nghiệp reviews 62 rows (40 random + 26 disagreements, 4 in both) in the Google Sheet
-  "Jev calibration — PAA landing (2026-09-30)" (AdventureAsia Drive folder).
-- [ ] If < 10% overturned: enforce `a3_landing_belongs` with **reject_ceiling 0.35**, no accept floor.
+## Review result (Nghiệp, 30/09/2026)
+- Reviewed **62 rows** (40 random + 26 disagreements) in the Google Sheet "Jev calibration — PAA landing
+  (2026-09-30)". **61 agree, 1 overturned (1.6%)**: #62 Pak Ou Caves — slow-boat on the Mekong ↔ "Which
+  country is the Mekong River in?" 0 → **1** (p = 0.36).
+- That row is now the lowest-p good landing (0.36), so the proposed 0.35 floor would sit 0.01 below it.
+
+## Decision
+- [x] Overturned 1 / 62 (< 10%).
+- [x] **Enforce `a3_landing_belongs`: reject_ceiling 0.30**, no accept floor, threshold v1 (Dev, 30/09/2026).
+  Reject ≤ 0.30: 125 / 125 correct; catches 125 of 171 bad landings (73%). 0.30 keeps a margin below
+  the lowest good landing (0.36).

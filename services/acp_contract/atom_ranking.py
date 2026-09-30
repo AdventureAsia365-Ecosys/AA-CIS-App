@@ -211,6 +211,58 @@ def compute_demand(
     return {market: volume for market, (_fit, volume) in best.items()}
 
 
+def demand_candidates(
+    place: str, action: str, demand_rows: list[tuple[str, str, int]], market: str,
+) -> list[tuple[str, int]]:
+    """AA-694 A3-6 — every keyword this Segment could claim for one market, best first by the same
+    (fit, volume) order `compute_demand()` uses. `compute_demand()` returns the head of this list."""
+    claimable = claimable_words(place, action)
+    scored = []
+    for keyword, kw_market, volume in demand_rows:
+        if kw_market != market:
+            continue
+        shared = keyword_words(keyword) & claimable
+        if not shared - PLACE_KINDS:
+            continue
+        scored.append((len(shared), volume, keyword))
+    scored.sort(key=lambda t: (-t[0], -t[1], t[2]))
+    return [(keyword, volume) for _fit, volume, keyword in scored]
+
+
+# AA-694 A3-6 — the demand-ownership Jev Question (migration 188). One shared word lets a Segment claim
+# a keyword's whole volume ("Kyoto" 165k → "Kyoto incense-making"). Ask about the best candidate; a
+# confident no (enforce only) moves to the next one, up to DEMAND_MAX_TRIES. The Verdict does not depend
+# on the market, so the decide() cache makes the other markets free.
+DEMAND_STAGE = "a3_demand"
+DEMAND_Q = "a3_demand_belongs"
+DEMAND_MAX_TRIES = 3
+DEMAND_CONCURRENCY = 8
+
+
+async def resolve_demand(pool, segments: list[tuple[str, str, str]], demand_rows, market: str) -> dict[str, dict]:
+    """segment_id -> {market: volume} (empty when nothing is claimed or every tried keyword is
+    rejected). `segments` = (segment_id, place, action)."""
+    sem = asyncio.Semaphore(DEMAND_CONCURRENCY)
+    rejected_count = 0
+
+    async def _one(segment_id: str, place: str, action: str):
+        nonlocal rejected_count
+        moment = landing_moment(place, action)
+        for keyword, volume in demand_candidates(place, action, demand_rows, market)[:DEMAND_MAX_TRIES]:
+            async with sem:
+                dec = await decide(DEMAND_STAGE, f"demand:{moment[:200]}:{keyword[:200]}",
+                                   {"keyword": keyword, "moment": moment}, [DEMAND_Q], pool=pool)
+            if not dec.rejected(DEMAND_Q):
+                return segment_id, {market: volume}
+            rejected_count += 1
+        return segment_id, {}
+
+    out = dict(await asyncio.gather(*[_one(*s) for s in segments]))
+    logger.info("demand_ownership", market=market, segments=len(segments), rejected=rejected_count,
+                claimed=sum(1 for v in out.values() if v))
+    return out
+
+
 async def invalidate_questions_cache_for_keyword(conn, keyword: str) -> int:
     """AA-630 — the write-side half of the `questions_count` cache (migration 163, AA-610 Sub
     2) that never had one: this keyword's PAA just changed (`segment_research.py::_store_paa()`
@@ -772,22 +824,28 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
             (r["keyword"], r["market"], r["search_volume"]) for r in demand_rows
         ]
 
-        included: list[Candidate] = []
-        excluded: list[ExcludedSegment] = []
-        for row in segment_rows:
-            place, action = row["canonical_place"], row["canonical_action"]
-            tour_ids = tuple(str(t) for t in row["tour_ids"])
-            reason = classify_exclusion(place, action)
-            if reason:
-                excluded.append(ExcludedSegment(row["segment_id"], tour_ids, reason))
-                continue
-            included.append(Candidate(
-                segment_id=row["segment_id"], place=place, action=action, tour_ids=tour_ids,
-                recurrence=len(tour_ids),
-                questions=question_counts.get(row["segment_id"], 0),
-                said=row["said"],
-                demand=compute_demand(place, action, demand_tuples),
-            ))
+    # AA-694 A3-6 — demand per Segment for this market, through the ownership gate (no connection held
+    # across the Jev calls).
+    rankable = [(r["segment_id"], r["canonical_place"], r["canonical_action"]) for r in segment_rows
+                if not classify_exclusion(r["canonical_place"], r["canonical_action"])]
+    demand_by_segment = await resolve_demand(pool, rankable, demand_tuples, market)
+
+    included: list[Candidate] = []
+    excluded: list[ExcludedSegment] = []
+    for row in segment_rows:
+        place, action = row["canonical_place"], row["canonical_action"]
+        tour_ids = tuple(str(t) for t in row["tour_ids"])
+        reason = classify_exclusion(place, action)
+        if reason:
+            excluded.append(ExcludedSegment(row["segment_id"], tour_ids, reason))
+            continue
+        included.append(Candidate(
+            segment_id=row["segment_id"], place=place, action=action, tour_ids=tour_ids,
+            recurrence=len(tour_ids),
+            questions=question_counts.get(row["segment_id"], 0),
+            said=row["said"],
+            demand=demand_by_segment.get(row["segment_id"], {}),
+        ))
 
     ranked = rank_segments(included, market)
 
@@ -832,6 +890,7 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
 
 __all__ = [
     "Candidate", "RankedSegment", "ExcludedSegment",
-    "rank_segments", "compute_demand", "land_questions_for_segment", "classify_exclusion",
+    "rank_segments", "compute_demand", "demand_candidates", "resolve_demand", "land_questions_for_segment",
+    "classify_exclusion",
     "run_atom_ranking",
 ]
