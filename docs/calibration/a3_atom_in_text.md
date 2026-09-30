@@ -30,8 +30,11 @@ heuristic and Jev disagreed — **Jev was right in all 8** (e.g. a place only me
 
 Lowest-p good atom: 0.53; highest-p bad atom: 0.21. Proposed floor **0.30**.
 
-## Decision (pending Nghiệp's review)
-- [ ] Nghiệp reviews 47 rows in the Google Sheet "Jev calibration — atom in day text A3-1 (2026-09-30)".
-- [ ] If < 10% overturned: enforce with **reject_ceiling 0.30**.
-- [ ] Separately: fix the prompt so the tour preamble is context only (fewer wasted extractions); the gate
-  stays as the guard.
+## Decision
+- [x] Nghiệp reviewed all 47 rows of the Google Sheet "Jev calibration — atom in day text A3-1 (2026-09-30)":
+  **overturned 0 / 47**. Three rows (#79 Western Hills, #91 Nikko dinner, #107 Nam Lik lunch) are kept at 1
+  on trust: the Sheet showed truncated day text; all three sit at p ≥ 0.53, above the reject line.
+- [x] **Enforce `a3_atom_in_text`: reject_ceiling 0.30** (Dev, S205, 30/09/2026). Reject ≤ 0.30: 127 / 127.
+- [x] Prompt fix (S205): `build_day_user_prompt()` fences the tour preamble as TOUR CONTEXT and the day as the
+  only section to extract from; SYSTEM_PROMPT says the same. SYSTEM_PROMPT is in the day fingerprint, so the
+  next atomize run re-reads every day. The gate stays as the guard.
