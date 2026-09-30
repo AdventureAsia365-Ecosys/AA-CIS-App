@@ -33,6 +33,17 @@ def _no_jev_ingest_gates():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_near_duplicate_rule():
+    """AA-690 A0-2: the near-duplicate rule queries raw_tours per provider; these tests predate it."""
+    from services.ingestion import near_duplicate
+
+    async def none(self, row):
+        return near_duplicate.NearDup()
+    with patch.object(near_duplicate.Checker, "check", new=none):
+        yield
+
+
 def _make_request_and_pool(existing_hash_row=None, duplicate_names_rows=None, sources_rows=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=existing_hash_row)

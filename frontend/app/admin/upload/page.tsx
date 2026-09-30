@@ -63,7 +63,8 @@ interface BlockedTour {
   src_name: string;
   country: string | null;
   // AA-490, AA-604; AA-690 adds the Jev gates (only when their questions are enforced)
-  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file" | "empty_itinerary" | "not_a_tour" | "thin_itinerary";
+  reason: "duplicate_tour" | "missing_fields" | "duplicate_in_file" | "empty_itinerary" | "not_a_tour" | "thin_itinerary"
+    | "duplicate_of_existing";
   missing_fields?: string[];
   message: string;
 }
@@ -1446,6 +1447,7 @@ function TourContentTab() {
                                     preview before this fix. */}
                                 <Badge color={
                                   t.reason === "duplicate_tour"    ? "blue"  :
+                                  t.reason === "duplicate_of_existing" ? "blue" :
                                   t.reason === "empty_itinerary"   ? "red"   :
                                   t.reason === "duplicate_in_file" ? "amber" : "amber"
                                 }>
@@ -1454,6 +1456,9 @@ function TourContentTab() {
                                    /* AA-604: no itinerary body → cannot be rewritten (POI/activity
                                       or source file lacking itinerary content) */
                                    t.reason === "empty_itinerary"   ? "No Itinerary" :
+                                   t.reason === "duplicate_of_existing" ? "Near Duplicate" :
+                                   t.reason === "not_a_tour"        ? "Not a Tour" :
+                                   t.reason === "thin_itinerary"    ? "Thin Itinerary" :
                                                                        "Missing Fields"}
                                 </Badge>
                               </td>
