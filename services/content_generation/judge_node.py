@@ -47,6 +47,62 @@ def a1_judge_score(result) -> float:
     return result.brand_fit_score
 
 
+# AA-692 A1-4 — Jev tie-break near the retry line. Luna scores A1 brand fit 7–8 (S204), right on
+# _MIN_QUALITY, so a one-point wobble decides retry/HITL. Inside ±_TIE_BAND of the line, and only when
+# the judge (not validate) is what decides, the Noul a1_brand_fit settles it; enforce + confident only
+# (ADR 0007). The judge still writes the feedback.
+TIE_STAGE = "s1_judge_tiebreak"
+TIE_Q = "a1_brand_fit"
+_TIE_BAND = 0.5
+_BELOW_LINE = _MIN_QUALITY - 0.1
+
+
+def in_tie_band(judge_score: float, validate_score: float) -> bool:
+    return validate_score >= _MIN_QUALITY and abs(judge_score - _MIN_QUALITY) <= _TIE_BAND
+
+
+def tie_break_score(judge_score: float, decision) -> float:
+    """The judge score after Jev's verdict: accept lifts it to the line, reject drops it just below."""
+    if decision.accepted(TIE_Q):
+        return max(judge_score, _MIN_QUALITY)
+    if decision.rejected(TIE_Q):
+        return min(judge_score, _BELOW_LINE)
+    return judge_score
+
+
+def _tie_state(brand_profile: dict, generated: dict) -> dict:
+    highlights = generated.get("highlights") or []
+    if isinstance(highlights, str):
+        highlights = [highlights]
+    return {
+        "brand": {
+            "core_idea": brand_profile.get("brand_core_idea") or "",
+            "who_it_is_for": brand_profile.get("brand_customer_segment") or "",
+            "what_they_want": brand_profile.get("brand_customer_mindset") or "",
+            "voice_examples": [v for v in (brand_profile.get("brand_voice_examples") or []) if v][:3],
+        },
+        "content": {
+            "name": generated.get("name") or "",
+            "subtitle": generated.get("subtitle") or "",
+            "summary": str(generated.get("summary") or "")[:1200],
+            "highlights": [str(h) for h in highlights][:8],
+        },
+    }
+
+
+def _tie_break(state: dict, generated: dict, judge_score: float) -> tuple[float, dict | None]:
+    from shared.llm_client.decide import decide_sync
+    tour_id = str((state.get("tour") or {}).get("tour_id") or "")
+    attempt = state.get("retry_count", 0)
+    decision = decide_sync(TIE_STAGE, f"a1_judge:{tour_id}:{attempt}", _tie_state(state, generated), [TIE_Q])
+    v = decision.verdicts.get(TIE_Q)
+    new_score = tie_break_score(judge_score, decision)
+    info = {"zone": v and v.zone, "p": v and v.probability, "mode": v and v.mode,
+            "before": judge_score, "after": new_score}
+    logger.info("judge_tiebreak", tour_id=tour_id, **info)
+    return new_score, info
+
+
 def judge_node(state: dict) -> dict:
     """AA-206: GPT-4.1 brand-fit judge. Runs after validate, before should_retry.
 
@@ -66,6 +122,9 @@ def judge_node(state: dict) -> dict:
     try:
         result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP)
         judge_score = a1_judge_score(result) if not state.get("is_tenant_rewrite") else result.judge_score
+        tiebreak = None
+        if not state.get("is_tenant_rewrite") and in_tie_band(judge_score, validate_score):
+            judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4
 
         # Stack the brand gate on top of validate's structural gate — never let high brand-fit mask a
         # structurally broken output, and vice-versa.
@@ -108,6 +167,7 @@ def judge_node(state: dict) -> dict:
             # AA-209: expose the capped judge score (the value min()'d against validate) so the
             # persist path can record exactly what drove score_overall, not just the inputs.
             "judge_score": judge_score,
+            "judge_tiebreak": tiebreak,
             "cost_usd": state.get("cost_usd", 0) + result.cost_usd,
         }
 
