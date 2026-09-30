@@ -66,4 +66,41 @@ def format_facts_block(facts: list[dict]) -> str:
     )
 
 
-__all__ = ["fetch_facts_for_writing", "format_facts_block"]
+# AA-700 T9-1 — every platform fact + the tenant's own facts go into every writer prompt. Jev asks per
+# fact whether it belongs in *this* post; an enforced, confident no leaves it out. Shadow/grey/error
+# keep it. Tenant content → asked only for Jev allow-listed tenants (design C2).
+T9_STAGE = "t9_facts"
+T9_Q = "t9_fact_relevant"
+_T9_CONCURRENCY = 4
+
+
+async def select_relevant_facts(facts: list[dict], *, moment: str, angle: dict, trip: str | None,
+                                tenant_id) -> tuple[list[dict], int]:
+    """Returns (facts to inject, how many Jev left out). Never raises."""
+    if not facts:
+        return facts, 0
+    import asyncio
+    import hashlib
+
+    from shared.llm_client.decide import decide
+
+    angle_state = {"name": (angle or {}).get("name", ""), "why_it_works": (angle or {}).get("why_it_works", "")}
+    ctx = hashlib.md5(f"{moment}|{angle_state['name']}|{angle_state['why_it_works']}|{trip}".encode()).hexdigest()[:12]
+    sem = asyncio.Semaphore(_T9_CONCURRENCY)
+
+    async def one(f: dict):
+        state = {"moment": moment[:1500], "angle": angle_state, "trip": trip or "",
+                 "fact": {"title": f.get("title") or "", "body": f.get("body") or ""}}
+        async with sem:
+            d = await decide(T9_STAGE, f"t9:{f.get('fact_id')}:{ctx}", state, [T9_Q], tenant_id=str(tenant_id))
+        return d.rejected(T9_Q)
+
+    try:
+        rejected = await asyncio.gather(*[one(f) for f in facts])
+    except Exception:
+        return facts, 0
+    kept = [f for f, r in zip(facts, rejected) if not r]
+    return kept, len(facts) - len(kept)
+
+
+__all__ = ["fetch_facts_for_writing", "format_facts_block", "select_relevant_facts"]

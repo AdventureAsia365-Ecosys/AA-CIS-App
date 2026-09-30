@@ -496,11 +496,14 @@ _Avoid_: block (alone), delete, filter.
   the first time, which is why this glossary exists).
 - **T7 — Slate** (`/portal/t7-planning`, titled "Social Content"): the tenant's ranked,
   per-Channel list of Subjects to pick from, read from the platform-wide Score/Route data (see
-  Slate above). The older slot-grid UI on this page was removed (AA-519).
+  Slate above). The older slot-grid UI on this page was removed (AA-519). Debate's brand-fit cut
+  asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
 - **T8 — Angle Gate**: Goal + Angle selection (`/portal/t8-angle-gate`, one continuous wizard
-  covering T8 and T9 together — no separate T9 route).
+  covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
+  with `t8_angle_answers` before the ranking (AA-700, shadow).
 - **T9 — Write**: Piece generation, fires automatically the instant an Angle is chosen; the
-  text streams live to the tenant (AA-637).
+  text streams live to the tenant (AA-637). Each Facts Entry is asked `t9_fact_relevant` before
+  it enters the writer prompt (AA-700, shadow). T-series Jev runs only for allow-listed tenants.
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
   After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
   F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,

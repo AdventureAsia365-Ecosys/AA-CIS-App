@@ -35,6 +35,7 @@ import structlog
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
 from services.content_generation.brand_fit import has_brand_signals, score_candidate_fit
 from shared.llm_client.call_log import record_call
+from shared.llm_client.decide import decide
 
 if TYPE_CHECKING:
     from services.acp_shared.slate import Candidate
@@ -156,6 +157,38 @@ async def _store_brand_fit_cache(
 BRAND_FIT_CUT_THRESHOLD = 7.0
 
 
+# AA-700 T7-1 — Jev prefilter before the Luna brand-fit call (cache miss only). Enforced + confident:
+# accept passes without Luna, reject cuts without Luna; grey (and every shadow verdict) → Luna as
+# before. Tenant content → asked only for Jev allow-listed tenants (design C2).
+T7_STAGE = "t7_debate"
+T7_Q = "t7_topic_fits_brand"
+_T7_JEV_REJECT_SCORE = BRAND_FIT_CUT_THRESHOLD - 0.5   # cut, but ordered after Luna's clearly bad ones
+_T7_EVIDENCE_ITEMS = 8
+
+
+def t7_state(brand_profile: dict, topic: dict) -> dict:
+    return {
+        "brand": {
+            "core_idea": brand_profile.get("brand_core_idea") or "",
+            "who_it_is_for": brand_profile.get("brand_customer_segment") or "",
+            "what_they_want": brand_profile.get("brand_customer_mindset") or "",
+            "voice_examples": [v for v in (brand_profile.get("brand_voice_examples") or []) if v][:3],
+        },
+        "topic": {
+            "place": topic.get("place") or "",
+            "action": topic.get("action") or "",
+            "evidence": [str(e)[:600] for e in (topic.get("evidence") or [])][:_T7_EVIDENCE_ITEMS],
+        },
+    }
+
+
+async def t7_prefilter(tenant_id: UUID, candidate: "Candidate", brand_profile: dict, topic: dict):
+    """The Jev Decision for one candidate (never raises — decide() fails open)."""
+    key = candidate.segment_id or candidate.route_id or f"{candidate.place}|{candidate.action}"
+    return await decide(T7_STAGE, f"t7:{brand_profile.get('_version')}:{key}",
+                        t7_state(brand_profile, topic), [T7_Q], tenant_id=str(tenant_id))
+
+
 async def apply_debate(
     tenant_id: UUID, candidates: list["Candidate"], conn,
 ) -> list["Candidate"]:
@@ -207,10 +240,17 @@ async def apply_debate(
         if cut_score is None and run_brand_fit:
             try:
                 cached = await _cached_brand_fit(conn, tenant_id, candidate, brand_profile["_version"])
+                topic = jev = None
+                if cached is None:
+                    topic = await _fetch_candidate_text(conn, candidate)
+                    jev = await t7_prefilter(tenant_id, candidate, brand_profile, topic)   # AA-700 T7-1
                 if cached is not None:
                     judge_score = cached["judge_score"]
+                elif jev.accepted(T7_Q):
+                    judge_score = 10.0
+                elif jev.rejected(T7_Q):
+                    judge_score = _T7_JEV_REJECT_SCORE
                 else:
-                    topic = await _fetch_candidate_text(conn, candidate)
                     # NOTE: score_candidate_fit() is synchronous (same as judge_node.py's own call
                     # site in the T2 LangGraph) — a real LLM call here blocks this task's event
                     # loop for its duration. Same pre-existing characteristic every judge_node.py
