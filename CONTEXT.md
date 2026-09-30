@@ -440,8 +440,16 @@ _Avoid_: block (alone), delete, filter.
 - **A1 — Generic Rewrite (S1)**: the admin S1 pipeline rewrites A0's raw content into
   `generated_content` with a neutral, brand-agnostic voice (see AA-535) — the shared base every
   tenant later re-voices for their own brand. Flow: generate → validate → judge →
-  (retry ≤3 or HITL) → brand_audit → flag_fix → revalidate. Can run per tour or, once AWS
-  enables it, as a Bedrock Batch job (see Repo Context).
+  (retry ≤3 or HITL) → brand_audit → **grounding** → flag_fix → revalidate. Can run per tour or,
+  once AWS enables it, as a Bedrock Batch job (see Repo Context).
+- **A1 grounding** (AA-691, `services/content_generation/grounding.py`): every sentence of
+  subtitle / summary / highlights / itinerary bodies is checked against the **raw source**. A
+  number the source never states (after reading travel-time conversions, clock formats and glued
+  figures) is `UNSUPPORTED_NUMBER`; the Jev Question `a1_claim_supported` can clear it (accept
+  side) and, once calibrated on its reject side, raise `UNSUPPORTED_CLAIM`. Violations are
+  rewritten sentence by sentence against the source (one `s1_flag_fix` call); what is still
+  unsupported after revalidate → `manual_check` (A2). Master content is the one place this check
+  exists — T3 grounds tenant rewrites against master content, not the raw source.
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
