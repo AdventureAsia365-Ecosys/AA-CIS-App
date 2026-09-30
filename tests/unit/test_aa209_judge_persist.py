@@ -105,6 +105,7 @@ def test_judge_node_returns_judge_score():
         "mission_present": True, "feedback": "",
     })
     state = {
+        "is_tenant_rewrite": True,   # AA-698: T2 rule (min of brand fit and distinct)
         "brand_core_idea": "Discreet executive adventure",
         "brand_customer_mindset": "Wants privacy and effortless logistics",
         "brand_voice_examples": ["understated", "assured"],

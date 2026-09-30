@@ -37,6 +37,18 @@ _MISSION_ABSENT_CAP = 6.0
 __all__ = ["judge_node", "_JUDGE_SEED", "_JUDGE_TEMPERATURE"]
 
 
+def a1_judge_score(result) -> float:
+    """AA-698: the A1 master rewrite is brand-neutral by design (AA-535) — distinctiveness from
+    other brands is T2's job, not A1's. So for A1 the gate is brand fit alone (still capped when the
+    mission is absent); cross_brand_distinct is logged, not gated. Measured S204 on identical inputs:
+    GPT-5.6 Luna scored cross_brand_distinct 2–6 where GPT-4.1 gave 8–9, sending every A1 tour to
+    HITL, while Luna's brand_fit (7–8) agreed with the content passing validate at 9.75."""
+    score = result.brand_fit_score
+    if not result.mission_present:
+        score = min(score, _MISSION_ABSENT_CAP)
+    return score
+
+
 def judge_node(state: dict) -> dict:
     """AA-206: GPT-4.1 brand-fit judge. Runs after validate, before should_retry.
 
@@ -55,10 +67,11 @@ def judge_node(state: dict) -> dict:
 
     try:
         result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP)
+        judge_score = a1_judge_score(result) if not state.get("is_tenant_rewrite") else result.judge_score
 
         # Stack the brand gate on top of validate's structural gate — never let high brand-fit mask a
         # structurally broken output, and vice-versa.
-        new_score = min(validate_score, result.judge_score)
+        new_score = min(validate_score, judge_score)
 
         # Merge judge feedback into the retry feedback only when we're below threshold (a retry will
         # actually fire). Preserve validate's feedback so Bedrock sees both signals.
@@ -68,15 +81,16 @@ def judge_node(state: dict) -> dict:
 
         logger.info("judge_done", brand_fit=result.brand_fit_score,
                     cross_brand_distinct=result.cross_brand_distinct,
-                    mission_present=result.mission_present, judge_score=result.judge_score,
-                    validate_score=validate_score, new_score=new_score)
+                    mission_present=result.mission_present, judge_score=judge_score,
+                    validate_score=validate_score, new_score=new_score,
+                    distinct_gates=bool(state.get("is_tenant_rewrite")))
 
         record_call_sync(
             stage="s1_judge", role="judge", model=result.model_used,
             tokens_in=result.input_tokens, tokens_out=result.output_tokens,
             cost_usd=result.cost_usd, tenant_id=None,
             quality_signal={
-                "judge_score": result.judge_score, "brand_fit_score": result.brand_fit_score,
+                "judge_score": judge_score, "brand_fit_score": result.brand_fit_score,
                 "cross_brand_distinct": result.cross_brand_distinct,
                 "mission_present": result.mission_present,
                 "passed": new_score >= _MIN_QUALITY,
@@ -95,7 +109,7 @@ def judge_node(state: dict) -> dict:
             "judge_feedback": result.feedback,
             # AA-209: expose the capped judge score (the value min()'d against validate) so the
             # persist path can record exactly what drove score_overall, not just the inputs.
-            "judge_score": result.judge_score,
+            "judge_score": judge_score,
             "cost_usd": state.get("cost_usd", 0) + result.cost_usd,
         }
 
