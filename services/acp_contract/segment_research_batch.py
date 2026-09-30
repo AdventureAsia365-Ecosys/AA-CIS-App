@@ -234,10 +234,26 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
     return {"jev_keywords_checked": len(pairs), "jev_keywords_rejected": rejected}
 
 
+# AA-693 (S206) — a lodging word decides without Jev. The first enforced run (10 Bhutan places) stored
+# "hotel bhutan", "druk hotel paro", "galing resort paro"… at Jev p 0.2–0.9 (the keyword carries a
+# place name, so Jev reads it as a trip search). On the 132-row calibration sample this rule matches all
+# 20 lodging rows and nothing else once "<airport/station> to hotel" (getting there) is excepted.
+# Brand-only lodging names ("amankora", "como punakha") have no such word and are not caught here.
+_LODGING_WORD_RE = re.compile(
+    r"\b(hotels?|resorts?|lodges?|residenc[ey]|residences|boutique|homestays?|guest ?houses?|hostels?|"
+    r"inns?|motels?|ryokan|villas?|agoda|airbnb|booking\.com|accommodations?)\b", re.IGNORECASE)
+_TRANSFER_TO_LODGING_RE = re.compile(r"\b(airport|station|terminal)\b.*\bto\b.*\bhotel", re.IGNORECASE)
+
+
+def is_lodging_search(keyword: str) -> bool:
+    return bool(_LODGING_WORD_RE.search(keyword or "")) and not _TRANSFER_TO_LODGING_RE.search(keyword or "")
+
+
 async def _gate_ideas(rows: list[tuple[str, str, int]], seeds: list[str], pool) -> list[tuple[str, str, int]]:
     """AA-693 (A3-4): keep only keyword ideas a traveller would search to experience a destination —
-    not hotel/resort/homestay or booking searches (S203 probe: `rkpo green resort phobjikha`). Same
-    enforce-only rule as `_gate_keywords`."""
+    not hotel/resort/homestay or booking searches (S203 probe: `rkpo green resort phobjikha`). A lodging
+    word drops the idea outright; the rest go to Jev under the same enforce-only rule as `_gate_keywords`."""
+    rows = [r for r in rows if not is_lodging_search(r[0])]
     if not rows:
         return rows
     sem = asyncio.Semaphore(JEV_CONCURRENCY)
