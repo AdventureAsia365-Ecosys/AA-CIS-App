@@ -60,7 +60,8 @@ async def test_resolve_default_when_no_id_no_name():
     result = await _resolve_brand_rule(conn, TENANT, None, None)
 
     assert result is row
-    assert "brand_name = 'default' AND is_active = true" in conn.sql
+    # AA-700: 'default' first, else the tenant's newest active row (portal-named brand)
+    assert "is_active = true" in conn.sql and "ORDER BY (brand_name = 'default') DESC, version DESC" in conn.sql
     assert conn.params == (TENANT,)
 
 
