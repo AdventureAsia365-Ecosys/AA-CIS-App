@@ -31,7 +31,7 @@ from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.generate import generate_angles
 from services.acp_angle_gate.goals import get_goal
-from services.acp_angle_gate.ranking import rank_angles
+from services.acp_angle_gate.ranking import rank_angles, verify_answers
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_shared.dfs_relevance import fetch_search_demand_signal
 from services.acp_shared.piece_history import fetch_piece_history
@@ -173,9 +173,12 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
             angles, claimed_answers=[a.get("answers", []) for a in angles],
             asked_questions=asked_questions, avoid_text=avoid_text,
         )
+        ranking_evidence, recommended_index, jev_dropped = await verify_answers(   # AA-700 T8-1
+            angles, ranking_evidence, tenant_id,
+        )
         logger.info(
             "angle_gate_measurable_ranking", request_id=str(request_id),
-            recommended_index=recommended_index,
+            recommended_index=recommended_index, jev_dropped=jev_dropped,
             scores=[e.score for e in ranking_evidence],
         )
 

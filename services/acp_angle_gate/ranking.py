@@ -99,8 +99,55 @@ def rank_angles(
         text = f"{a.get('name', '')} {a.get('why_it_works', '')}"
         evidence.append(RankedAngle(idx=i, answers=real_answers, violations=_violations(text, banned)))
 
-    best_idx = min(range(len(evidence)), key=lambda i: (evidence[i].score, i))
-    return evidence, best_idx
+    return evidence, best_index(evidence)
 
 
-__all__ = ["RankedAngle", "rank_angles", "split_avoid_phrases"]
+def best_index(evidence: list[RankedAngle]) -> int:
+    """Best-scoring angle; ties go to the earlier idx (stable, no hidden tie-break)."""
+    return min(range(len(evidence)), key=lambda i: (evidence[i].score, i))
+
+
+# AA-700 T8-1 — a verbatim match only proves the angle *claims* the question. Jev checks the claim
+# per (angle, question); an enforced, confident no drops that answer before the ranking is final.
+# Tenant content → asked only for Jev allow-listed tenants (design C2).
+T8_STAGE = "t8_angle_rank"
+T8_Q = "t8_angle_answers"
+_T8_CONCURRENCY = 4
+
+
+async def verify_answers(angles: list[dict], evidence: list[RankedAngle],
+                         tenant_id) -> tuple[list[RankedAngle], int, int]:
+    """Returns (evidence with rejected answers removed, recomputed recommended idx, answers dropped).
+    Shadow/grey/error verdicts change nothing. Never raises."""
+    import asyncio
+    import hashlib
+
+    from shared.llm_client.decide import decide
+
+    pairs = [(e.idx, q) for e in evidence for q in e.answers]
+    if not pairs:
+        return evidence, best_index(evidence), 0
+    sem = asyncio.Semaphore(_T8_CONCURRENCY)
+
+    async def one(i: int, q: str):
+        a = angles[i]
+        angle = {"name": a.get("name", ""), "why_it_works": a.get("why_it_works", "")}
+        h = hashlib.md5(f"{angle['name']}|{angle['why_it_works']}|{q}".encode()).hexdigest()[:16]
+        async with sem:
+            d = await decide(T8_STAGE, f"t8:{h}", {"angle": angle, "question": q}, [T8_Q],
+                             tenant_id=str(tenant_id))
+        return i, q, d.rejected(T8_Q)
+
+    try:
+        results = await asyncio.gather(*[one(i, q) for i, q in pairs])
+    except Exception:
+        return evidence, best_index(evidence), 0
+    drop = {(i, q) for i, q, rejected in results if rejected}
+    if not drop:
+        return evidence, best_index(evidence), 0
+    for e in evidence:
+        e.answers = [q for q in e.answers if (e.idx, q) not in drop]
+    return evidence, best_index(evidence), len(drop)
+
+
+__all__ = ["RankedAngle", "best_index", "rank_angles", "split_avoid_phrases", "verify_answers"]

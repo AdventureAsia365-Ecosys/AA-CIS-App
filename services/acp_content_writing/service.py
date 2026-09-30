@@ -39,7 +39,7 @@ from services.acp_angle_gate import service as angle_gate_service
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
-from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
+from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing.generate import rewrite_with_feedback, write_content
 from services.acp_content_writing.jev_observe import observe_t10
 from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, run_quality_gates,
@@ -299,6 +299,11 @@ async def start_write(
     # module's own AA-529 comments below for why it's merged there rather than threaded as a
     # wholly separate pipeline.
     facts = await fetch_facts_for_writing(tenant_id, pool)
+    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
+        facts, moment=atom_text, angle=chosen, trip=trip_name or destination, tenant_id=tenant_id,
+    )
+    if facts_left_out:
+        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
     facts_text = format_facts_block(facts)
 
     context = {
