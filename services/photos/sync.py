@@ -64,11 +64,22 @@ def original_ext(file_name: str, mime_type: str) -> str:
 
 
 def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
-    """WebP renditions (1600w, 600w) of one image, EXIF rotation applied. Returns (sizes, w, h)."""
+    """WebP renditions (1600w, 600w) of one image, EXIF rotation applied. Returns (sizes, w, h) — w/h
+    of the ORIGINAL.
+
+    S207: decoding a full 8256x5504 original (45 MP, ~136 MB RGB, plus copies) inside the 1 GB API
+    task OOM-killed it. JPEGs are decoded at a reduced scale (`draft`, ≥ the largest rendition)
+    so memory stays ~30 MB per image; the original file itself is stored as raw bytes."""
     from PIL import Image, ImageOps
     with Image.open(io.BytesIO(data)) as im:
-        im = ImageOps.exif_transpose(im).convert("RGB")
         w, h = im.size
+        if im.format == "JPEG":
+            # draft() only scales down while BOTH sides stay ≥ the request — ask in the image's ratio.
+            target = max(SIZES.values())
+            im.draft("RGB", (target, max(1, target * h // w)) if w >= h else (max(1, target * w // h), target))
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        if (im.size[0] > im.size[1]) != (w > h):   # EXIF rotated: report the displayed orientation
+            w, h = h, w
         out: dict[str, bytes] = {}
         for name, width in SIZES.items():
             copy = im.copy()
@@ -76,6 +87,8 @@ def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
             buf = io.BytesIO()
             copy.save(buf, "WEBP", quality=85, method=4)
             out[name] = buf.getvalue()
+            copy.close()
+        im.close()
     return out, w, h
 
 
@@ -166,6 +179,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 sizes_meta = {"s3_key_original": orig_key,
                               "s3_key_large": keys["large"], "s3_key_small": keys["small"], "width": w,
                               "height": h, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                del data, sizes
                 c["downloaded"] += 1
                 consecutive_errors = 0
             except Exception as e:  # one bad file must not stop the folder
