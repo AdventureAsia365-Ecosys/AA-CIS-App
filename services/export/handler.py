@@ -323,6 +323,19 @@ async def process_export(version_id: str) -> dict:
         except Exception as exc:
             logger.error("a3_atomize_enqueue_failed", tour_id=str(tour_id), error=str(exc))
 
+        # 3c. AA-653 (S207) — the tour now has a live Master Content version, so any other
+        # version of it still waiting in the review queue is noise: dismiss (soft, row kept).
+        # Reviewers then only see tours with nothing published; improving a published tour is a
+        # Regenerate, not a manual fix. Best-effort like 3b — the publish is already done.
+        try:
+            await conn.execute(f"""
+                UPDATE {silver}.review_queue
+                SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW()
+                WHERE tour_id = $1::uuid AND review_status = 'pending'
+            """, tour_id)
+        except Exception as exc:
+            logger.error("review_dismiss_on_publish_failed", tour_id=str(tour_id), error=str(exc))
+
         # 4. Update tours_passed to exact published count (always, not just at end)
         # AA-492: this used to also gate a one-time "ACP-S1 manifest.json + EventBridge"
         # fanout on just_completed (AA-483's own atomic-race fix). That fanout was removed

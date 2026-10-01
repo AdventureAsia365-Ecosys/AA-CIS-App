@@ -506,10 +506,10 @@ function ReviewRow({ item, expanded, onToggle, onApprove, onReject, onDismiss, o
         {/* actions */}
         <td style={{ ...TD, whiteSpace: "nowrap" as const }} onClick={stop}>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button onClick={() => onRegenerate(item)} title="Regenerate (re-runs the full pipeline, real cost)"
-              style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
-              <RotateCcw size={13} />
-            </button>
+            {/* AA-653 (S207): Regenerate is the reviewer's main move — a labelled primary button. */}
+            <Btn variant="primary" size="sm" onClick={() => onRegenerate(item)}>
+              <RotateCcw size={12} /> Regenerate
+            </Btn>
             <button onClick={() => onDismiss(item.id)} title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
               style={{ padding: 7, border: `1px solid ${A.line}`, borderRadius: 8, background: "none", cursor: "pointer", color: A.muted, display: "flex" }}>
               <Ban size={13} />
@@ -591,26 +591,8 @@ function RegenerateModal({ item, onClose, onReload }: {
           : "Regeneration job failed. Try again." });
         return;
       }
-      // f. locate the freshly-created version: newest review row for the same tour_id
-      const qRes = await fetch(`/api/admin/review-queue`, { headers: authHeaders() });
-      if (!qRes.ok) throw new Error(`Regeneration finished but the queue could not be reloaded (${qRes.status})`);
-      const q = await qRes.json();
-      const sameTour = (q.data || []).filter((r: any) => String(r.tour_id) === String(item.raw.tour_id));
-      const newest = sameTour.reduce(
-        (a: any, b: any) => (!a || new Date(b.created_at) > new Date(a.created_at) ? b : a), null);
-      // g. publishable gate = gc.status === "approved" (backend _is_publishable), never a score guess
-      if (newest && newest.status === "approved") {
-        const sRes = await fetch(`/api/admin/review-queue/${item.id}/supersede`, {
-          method: "POST", headers: authHeaders(),
-        });
-        // 409 = already not pending (raced/closed) — treat as done, not an error
-        if (!sRes.ok && sRes.status !== 409) {
-          const e = await sRes.json().catch(() => ({}));
-          throw new Error(e.detail || `Could not close the old review row (${sRes.status})`);
-        }
-      }
-      // h. (approved) old row now superseded → drops from pending; new one shows.
-      // i. (hitl)     nothing superseded → both old + new stay for the reviewer.
+      // f. the backend closes the queue rows (AA-653): a publishable version publishes the tour
+      //    and dismisses its rows; a failed one supersedes this row with the new version.
       await onReload();
       onClose();
     } catch (err: any) {
@@ -640,12 +622,11 @@ function RegenerateModal({ item, onClose, onReload }: {
         </div>
         <p style={{ fontSize: 13, color: A.body, lineHeight: 1.6, margin: "0 0 8px" }}>
           This re-runs the <strong>full pipeline</strong> for <strong>{item.name}</strong> on real
-          models — it costs actual Bedrock spend. Prefer fixing the fields by hand (Edit) when you can;
-          only regenerate when the content is beyond a manual fix.
+          models — it costs actual Bedrock spend.
         </p>
         <p style={{ fontSize: 12, color: A.muted, lineHeight: 1.6, margin: "0 0 16px" }}>
-          If the new version comes back publishable, this review row is closed automatically as
-          <strong> superseded</strong>. If it doesn't, both versions stay in the queue for you to compare.
+          If the new version passes, the tour is published to Master Content and leaves this queue.
+          If it fails, the new version replaces this one here — only the latest attempt is kept.
         </p>
 
         {!presetTier ? (
