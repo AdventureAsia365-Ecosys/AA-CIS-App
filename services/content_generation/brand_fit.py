@@ -17,6 +17,7 @@ get a `BrandFitResult` back — same shape judge_node.py already built internall
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -77,6 +78,33 @@ def has_brand_signals(brand_profile: dict) -> bool:
     )
 
 
+_DAY_SPLIT = re.compile(r"\n\s*\n(?=\s*(?:\*\*)?\s*Day\s*\d)", re.IGNORECASE)
+
+
+def itinerary_digest(itineraries, per_day: int = 350, total: int = 6000) -> str:
+    """Every day of the itinerary, each cut to `per_day` characters (header kept).
+
+    S207 Korea wave: the judge got `itineraries[:600]` — only Day 1 of a 9-15 day tour — said
+    "only Day 1 is shown / Day 3 is cut off", set mission_present=false and the mission cap put 9 of
+    30 tours at 6.0 (HITL). Each day's framing is what `mission_present` asks about, so each day
+    must be visible; cutting per day keeps the prompt bounded."""
+    if isinstance(itineraries, str):
+        try:
+            parsed = json.loads(itineraries)
+            if isinstance(parsed, list):
+                itineraries = parsed
+        except ValueError:
+            pass
+    if isinstance(itineraries, list):
+        blocks = [f"Day {d.get('day')} — {d.get('title') or ''}\n{d.get('body') or d.get('description') or ''}".strip()
+                  if isinstance(d, dict) else str(d) for d in itineraries]
+    else:
+        blocks = [b.strip() for b in _DAY_SPLIT.split(str(itineraries or "")) if b.strip()]
+    cut = [b if len(b) <= per_day else b[:per_day].rstrip() + " …" for b in blocks]
+    out = "\n\n".join(cut)
+    return out if len(out) <= total else out[:total].rstrip() + " … [later days omitted for length]"
+
+
 def _build_judge_prompt(brand_profile: dict, generated: dict) -> str:
     """Assemble the judge user-prompt: this brand's profile + the content to score. Verbatim
     port of judge_node.py's own `_build_judge_prompt()` (same field names, same prompt text) —
@@ -104,7 +132,8 @@ SUBTITLE: {generated.get("subtitle")}
 SUMMARY: {generated.get("summary")}
 HIGHLIGHTS:
 {highlights_text}
-ITINERARIES: {str(generated.get("itineraries") or "")[:600]}
+ITINERARIES (every day, each shortened):
+{itinerary_digest(generated.get("itineraries"))}
 SEO_TITLE: {generated.get("seo_title")}
 SEO_META: {generated.get("seo_meta")}
 

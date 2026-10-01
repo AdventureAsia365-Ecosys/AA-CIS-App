@@ -7,6 +7,7 @@ import structlog
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
+from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
 
 logger = structlog.get_logger()
@@ -250,7 +251,7 @@ AA_SUBTITLE: {generated.get("subtitle")}
 AA_SUMMARY: {generated.get("summary")}
 AA_HIGHLIGHTS:
 {highlights_text}
-AA_ITINERARIES: {str(generated.get("itineraries") or "")[:300]}
+AA_ITINERARIES: {itinerary_digest(generated.get("itineraries"), per_day=200, total=3000)}
 SEO_TITLE: {generated.get("seo_title")}
 SEO_META: {generated.get("seo_meta")}
 
