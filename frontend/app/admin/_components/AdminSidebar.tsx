@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -38,6 +38,8 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     { href: "/admin/s1-rewrite",     icon: <Wand2 size={15} />,         label: "Rewrite (S1)" },
     { href: "/admin/review",         icon: <ClipboardList size={15} />, label: "Review Queue" },
     { href: "/admin/master-content", icon: <Library size={15} />,       label: "Master Content" },
+    // AA-708 — Drive photo sync: coverage, unmatched queue, manual assignment.
+    { href: "/admin/photos",         icon: <ImageIcon size={15} />,     label: "Photos", adminOnly: true },
   ] },
   // Atoms · Segments · Scores · Routes & Hubs · Slate are tabs inside this one page (AA-553/554).
   { label: "Intelligence", items: [

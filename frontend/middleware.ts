@@ -64,6 +64,8 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin/jobs", roles: ["admin"] },
   // AA-660 — Jev decision layer (question modes/floors can change pipeline behaviour). Admin-only.
   { prefix: "/admin/decisions", roles: ["admin"] },
+  // AA-708 — photo sync (enqueues jobs, assigns photos)
+  { prefix: "/admin/photos", roles: ["admin"] },
   // AA-527 — Atom Curation, replacing the removed tenant-facing T6 (AA-526): admin decides which
   // atoms are good to use, same admin-only tier as llm-usage above (Nghiệp's
   // explicit choice among 2 options presented, 05/09/2026), not the broader content-team tier.
