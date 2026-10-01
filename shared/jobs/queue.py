@@ -342,16 +342,18 @@ async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
 WORKER_ALIVE_SECONDS = 60  # a worker writes about every 15 s; silent for 60 s = gone
 
 
-async def worker_register(pool, worker_id: str, host: str, max_parallel: int, caps: dict) -> None:
+async def worker_register(pool, worker_id: str, host: str, max_parallel: int, caps: dict,
+                          task_revision: Optional[int] = None) -> None:
     """A worker's start: its row, plus pruning rows of workers stopped/silent for 7 days."""
     await pool.execute(
         """
-        INSERT INTO shared.job_worker (worker_id, host, max_parallel, caps)
-        VALUES ($1, $2, $3, $4::jsonb)
+        INSERT INTO shared.job_worker (worker_id, host, max_parallel, caps, task_revision)
+        VALUES ($1, $2, $3, $4::jsonb, $5)
         ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = now(), stopped_at = NULL,
-            max_parallel = excluded.max_parallel, caps = excluded.caps
+            max_parallel = excluded.max_parallel, caps = excluded.caps,
+            task_revision = excluded.task_revision
         """,
-        worker_id, host, max_parallel, json.dumps(caps),
+        worker_id, host, max_parallel, json.dumps(caps), task_revision,
     )
     await pool.execute("DELETE FROM shared.job_worker WHERE last_seen_at < now() - interval '7 days'")
 
@@ -373,6 +375,21 @@ async def worker_beat(pool, worker_id: str, running_jobs: int,
     )
 
 
+NEWER_WORKER_SECONDS = 45  # a newer worker must have written its row this recently to count
+
+
+async def newer_worker_alive(pool, task_revision: Optional[int]) -> bool:
+    """AA-711 — is a live worker of a newer ECS task-definition revision running? Then this one is
+    on a draining task after a deploy and must stop claiming. Unknown revision: never yields."""
+    if task_revision is None:
+        return False
+    return bool(await pool.fetchval(
+        f"""SELECT EXISTS (SELECT 1 FROM shared.job_worker
+                            WHERE stopped_at IS NULL AND task_revision > $1
+                              AND last_seen_at > now() - interval '{NEWER_WORKER_SECONDS} seconds')""",
+        task_revision))
+
+
 async def worker_stopped(pool, worker_id: str) -> None:
     await pool.execute(
         "UPDATE shared.job_worker SET stopped_at = now(), last_seen_at = now(), running_jobs = 0 "
@@ -385,7 +402,7 @@ async def worker_health(pool) -> dict:
     """Workers seen in the last 7 days, running jobs per worker and kind, and queue depth."""
     workers = await pool.fetch(
         f"""
-        SELECT worker_id, host, started_at, last_seen_at, stopped_at, max_parallel, caps,
+        SELECT worker_id, host, started_at, last_seen_at, stopped_at, max_parallel, caps, task_revision,
                running_jobs, reaped_requeued, reaped_failed, last_reap_at, last_reaped,
                (stopped_at IS NULL AND last_seen_at > now() - interval '{WORKER_ALIVE_SECONDS} seconds')
                    AS alive
