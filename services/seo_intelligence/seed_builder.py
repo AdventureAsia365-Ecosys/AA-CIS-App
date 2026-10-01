@@ -6,6 +6,7 @@ without DB or HTTP. The DFS client consumes the finished seed verbatim (no more 
 "tours" — that caused the `{country} tours tours` double-tours bug).
 """
 
+import json
 import re
 
 # Known dirty country-COLUMN values observed in silver_aa_internal.raw_tours. AA-571 migration
@@ -115,6 +116,13 @@ def normalize_country(raw: str, tour_name: str = "") -> str:
 
 def first_activity(activities) -> str:
     """First activity token from the jsonb value (single-elem array wrapping a delimited string)."""
+    if isinstance(activities, str):
+        # AA-702: no jsonb codec on the pool, so S1 passed the raw JSON text and this returned ""
+        # for every tour — the AA-197 activity seed never reached DataForSEO.
+        try:
+            activities = json.loads(activities)
+        except ValueError:
+            activities = [activities]
     if not activities or not isinstance(activities, list):
         return ""
     first = activities[0]
@@ -190,9 +198,9 @@ def idea_seeds(country_raw: str, activities, tour_name: str = "") -> list[str]:
 
     The single tour-name seed (AA-251) almost never has search volume: all 224 S1 seo_context rows
     had only the seed itself as "top keyword". Sending the specific seed plus the title's place
-    words, "country + activity" and "country tours" in the same task costs the same and returns
-    ideas with real volume; rank_keyword_ideas() then keeps tour-specific ones first so the generic
-    phrases only lead when nothing specific exists (the AA-251 false-positive concern)."""
+    words and "country + activity" in the same task costs the same; rank_keyword_ideas() then keeps
+    only ideas that name one of the tour's places or its activity (AA-251: generic country phrases
+    are not this tour's keywords)."""
     c = normalize_country(country_raw, tour_name)
     seeds = [build_seed(country_raw, activities, tour_name)]
     places = title_place_terms(tour_name, country_raw)
@@ -201,8 +209,8 @@ def idea_seeds(country_raw: str, activities, tour_name: str = "") -> list[str]:
     a = first_activity(activities)
     if a and c:
         seeds.append(f"{c} {a}")
-    if c:
-        seeds.append(f"{c} tours")
+    # No "{country} tours" seed: on Dev (Kang Yatse, Ladakh mountaineering) it pulled the whole
+    # idea list towards "golden triangle india" / "kerala trip package" — high volume, wrong tour.
     out: list[str] = []
     for sd in seeds:
         sd = (sd or "").strip()
@@ -211,23 +219,38 @@ def idea_seeds(country_raw: str, activities, tour_name: str = "") -> list[str]:
     return out[:20]
 
 
-def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25) -> list[dict]:
-    """AA-702 — ideas with a real search volume first; among those, ones naming a place from the
-    tour's title before generic ones; then by volume. Ideas without volume keep their order at the
-    end (still useful as phrasing). Pure; never drops below what DFS returned, only re-orders/caps."""
-    terms = [t for t in (place_terms or []) if t and t not in _WEAK_PLACE_WORDS]
+def activity_terms(activities) -> list[str]:
+    """Lowercase words of the tour's first activity ("Wildlife Safari" -> ["wildlife", "safari"]),
+    generic words removed. Used as relevance terms next to the title's place words."""
+    return [t for t in _TITLE_TOKEN.findall(first_activity(activities).lower())
+            if len(t) >= 4 and t not in _GENERIC_TITLE_WORDS]
+
+
+def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
+                       activity_words: list[str] | None = None) -> list[dict]:
+    """AA-702 — keep only ideas about THIS tour: the idea names a place from the title (weak geo
+    nouns like "valley"/"trek" don't count) or the tour's activity. Then real volume first, places
+    before activity-only, by volume. Ideas without volume stay (after) — they are still this tour's
+    phrasing. Generic country ideas ("india tour packages") are dropped even with high volume. Pure."""
+    places = [t for t in (place_terms or []) if t and t not in _WEAK_PLACE_WORDS]
+    acts = [t for t in (activity_words or []) if t]
 
     def _vol(i: dict) -> int:
         v = i.get("search_volume")
         return v if isinstance(v, int) and v > 0 else 0
 
-    def _specific(i: dict) -> bool:
-        kw = str(i.get("keyword", "")).lower()
-        return any(t in kw for t in terms)
+    def _kw(i: dict) -> str:
+        return str(i.get("keyword", "")).lower()
 
-    with_vol = [i for i in ideas if _vol(i) > 0]
-    without = [i for i in ideas if _vol(i) == 0]
-    with_vol.sort(key=lambda i: (not _specific(i), -_vol(i)))
+    def _place(i: dict) -> bool:
+        return any(t in _kw(i) for t in places)
+
+    def _activity(i: dict) -> bool:
+        return any(t in _kw(i) for t in acts)
+
+    relevant = [i for i in ideas if _place(i) or _activity(i)]
+    with_vol = sorted((i for i in relevant if _vol(i) > 0), key=lambda i: (not _place(i), -_vol(i)))
+    without = [i for i in relevant if _vol(i) == 0]
     return (with_vol + without)[:cap]
 
 

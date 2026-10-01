@@ -8,7 +8,7 @@ import pytest
 
 from services.seo_intelligence.dataforseo_client import DataForSEOClient
 from services.seo_intelligence.seed_builder import (
-    idea_seeds, rank_keyword_ideas, title_place_terms,
+    activity_terms, build_seed, first_activity, idea_seeds, rank_keyword_ideas, title_place_terms,
 )
 
 
@@ -19,32 +19,37 @@ def test_title_place_terms_strip_generic_words_numbers_and_country():
     assert title_place_terms("Classic Exploration", "Sri Lanka") == []
 
 
-def test_idea_seeds_specific_first_then_places_then_generic():
+def test_idea_seeds_specific_then_places_no_generic_country_seed():
     assert idea_seeds("India", None, "Kang Yatse 2 and the Lhato Valley") == [
-        "Kang Yatse 2 and the Lhato Valley India", "kang yatse lhato valley India", "India tours"]
-    # no place words in the title -> specific seed + generic only, no duplicates
-    assert idea_seeds("Sri Lanka", None, "Classic Exploration") == [
-        "Classic Exploration Sri Lanka", "Sri Lanka tours"]
+        "Kang Yatse 2 and the Lhato Valley India", "kang yatse lhato valley India"]
+    # no place words in the title and no activity -> only the specific seed
+    assert idea_seeds("Sri Lanka", None, "Classic Exploration") == ["Classic Exploration Sri Lanka"]
 
 
-def test_idea_seeds_adds_country_activity_when_known():
-    seeds = idea_seeds("Nepal", ["Trekking, Rafting"], "Manaslu Circuit")
-    assert seeds[0] == "Trekking in Nepal"
-    assert "Nepal Trekking" in seeds and "Nepal tours" in seeds
-    assert len(seeds) <= 20
+def test_activities_json_string_reaches_the_seed():
+    # S1 passes raw_tours.activities as JSON text (no jsonb codec on the pool)
+    assert first_activity('["Mountaineer"]') == "Mountaineer"
+    assert build_seed("India", '["Mountaineer"]', "Kang Yatse") == "Mountaineer in India"
+    assert activity_terms('["Wildlife Safari"]') == ["wildlife", "safari"]
+    assert idea_seeds("India", '["Mountaineer"]', "Kang Yatse 2 and the Lhato Valley") == [
+        "Mountaineer in India", "kang yatse lhato valley India", "India Mountaineer"]
 
 
-def test_rank_keyword_ideas_volume_then_specific_then_generic():
+def test_rank_keyword_ideas_drops_generic_country_ideas():
+    # real Dev result for Kang Yatse (Ladakh mountaineering) before the relevance filter
     ideas = [
-        {"keyword": "india tours", "search_volume": 9000},
-        {"keyword": "no volume idea", "search_volume": None},
-        {"keyword": "kathmandu valley tour", "search_volume": 5000},
-        {"keyword": "ladakh bike trip", "search_volume": 300},
-        {"keyword": "zero", "search_volume": 0},
+        {"keyword": "india tours", "search_volume": 1600},
+        {"keyword": "golden triangle india", "search_volume": 1600},
+        {"keyword": "kerala trip package", "search_volume": 720},
+        {"keyword": "mountaineering in india", "search_volume": 90},
+        {"keyword": "kang yatse peak", "search_volume": 40},
+        {"keyword": "kang yatse 2 climb", "search_volume": None},
+        {"keyword": "markha valley trek", "search_volume": 700},
     ]
-    ranked = [i["keyword"] for i in rank_keyword_ideas(ideas, ["ladakh", "valley"])]
-    # "valley" is a weak geo word: it must not make "kathmandu valley tour" look tour-specific
-    assert ranked == ["ladakh bike trip", "india tours", "kathmandu valley tour", "no volume idea", "zero"]
+    ranked = [i["keyword"] for i in rank_keyword_ideas(
+        ideas, ["kang", "yatse", "lhato", "valley"], activity_words=["mountaineer"])]
+    # place-named first, then activity-only; "valley" alone is too weak to keep "markha valley trek"
+    assert ranked == ["kang yatse peak", "mountaineering in india", "kang yatse 2 climb"]
 
 
 def test_parse_keywords_drops_volume_less_rows():
@@ -68,7 +73,7 @@ async def test_fetch_all_multi_seed_one_ideas_task_and_ranked_promotion():
     client.fetch_keyword_ideas_multi = AsyncMock(return_value=[
         {"keyword": "india tours", "search_volume": 9000},
         {"keyword": "ladakh cycling tour", "search_volume": 90},
-        {"keyword": "kang yatse", "search_volume": None},
+        {"keyword": "siachen glacier", "search_volume": None},
     ])
     out = await client.fetch_all("Ladakh Siachen India", 2840, "United States", "en",
                                  extra_seeds=["ladakh siachen India", "siachen India", "India tours"],
@@ -76,7 +81,8 @@ async def test_fetch_all_multi_seed_one_ideas_task_and_ranked_promotion():
     client.fetch_keyword_ideas_multi.assert_awaited_once()
     seeds = client.fetch_keyword_ideas_multi.await_args.args[0]
     assert seeds == ["Ladakh Siachen India", "siachen India", "India tours"]  # case-insensitive dedup
-    assert [i["keyword"] for i in out["keyword_ideas"]] == ["ladakh cycling tour", "india tours", "kang yatse"]
+    # generic "india tours" dropped; volume-less place idea kept after
+    assert [i["keyword"] for i in out["keyword_ideas"]] == ["ladakh cycling tour", "siachen glacier"]
     assert out["keywords"]["top_keywords"][0] == "ladakh cycling tour"
 
 
