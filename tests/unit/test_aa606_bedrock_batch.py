@@ -148,7 +148,9 @@ def test_system_prompt_includes_brand_and_forbidden_and_diff():
     system = build_s1_system_prompt(_BRANDED_STATE)
     assert "American English" in system
     assert "Boutique adventure operator." in system
-    assert "FORBIDDEN WORDS (never use): cheap, luxury" in system
+    # S207: the prompt lists the full validate list (AA core + brand), not only the brand's words
+    fw_line = system.split("FORBIDDEN WORDS (never use): ", 1)[1].splitlines()[0]
+    assert {"cheap", "luxury", "curated", "refined"} <= {w.strip() for w in fw_line.split(",")}
     assert "BRAND DIFFERENTIATION PROFILE" in system
     assert "Slow immersive highland travel" in system
 

@@ -42,9 +42,10 @@ def meta_has_forbidden(meta: str, forbidden) -> bool:
     if not forbidden:
         return False
     norm = _normalize_meta(meta)
+    from .forbidden_words import has_word
     for term in forbidden:
         nt = _normalize_meta(term)
-        if nt and nt in norm:
+        if nt and has_word(norm, nt):
             return True
     return False
 

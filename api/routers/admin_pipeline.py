@@ -2157,6 +2157,7 @@ def _derive_field_failures(gc: dict, codes: list) -> list:
     LangGraph/boto graph module into router import time.
     """
     import json as _json
+    from services.content_generation.forbidden_words import has_word
     from services.content_generation.graph import _CODE_FIELD_MAP, _VALIDATE_FORBIDDEN
     from services.content_generation.seo_meta_utils import (
         SEO_META_MIN, SEO_META_MAX, SEO_META_FORBIDDEN, meta_complete_sentence,
@@ -2216,7 +2217,7 @@ def _derive_field_failures(gc: dict, codes: list) -> list:
     if "FORBIDDEN_WORD" in seen:
         for col in ("aa_name", "aa_subtitle", "aa_summary", "seo_title", "seo_meta"):
             txt = (gc.get(col) or "").lower()
-            hit = next((w for w in _VALIDATE_FORBIDDEN if w in txt), None)
+            hit = next((w for w in _VALIDATE_FORBIDDEN if has_word(txt, w)), None)
             if hit:
                 add(col, "FORBIDDEN_WORD", f"contains a forbidden word: '{hit}'")
 
