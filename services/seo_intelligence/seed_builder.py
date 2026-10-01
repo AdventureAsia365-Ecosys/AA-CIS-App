@@ -248,10 +248,24 @@ def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
     def _activity(i: dict) -> bool:
         return any(t in _kw(i) for t in acts)
 
-    relevant = [i for i in ideas if _place(i) or _activity(i)]
+    relevant = [i for i in ideas if (_place(i) or _activity(i)) and not is_lodging_search(_kw(i))]
     with_vol = sorted((i for i in relevant if _vol(i) > 0), key=lambda i: (not _place(i), -_vol(i)))
     without = [i for i in relevant if _vol(i) == 0]
     return (with_vol + without)[:cap]
+
+
+# AA-693 (S206) — a lodging word decides without Jev (moved here from segment_research_batch in S207
+# so S1 keyword ideas use the same rule: the S1 pilot stored "druk hotel paro" for the Druk Path trek).
+# "<airport/station> to hotel" is getting there, not a lodging search. Brand-only lodging names
+# ("amankora", "como punakha") carry no such word and are not caught here.
+_LODGING_WORD_RE = re.compile(
+    r"\b(hotels?|resorts?|lodges?|residenc[ey]|residences|boutique|homestays?|guest ?houses?|hostels?|"
+    r"inns?|motels?|ryokan|villas?|agoda|airbnb|booking\.com|accommodations?)\b", re.IGNORECASE)
+_TRANSFER_TO_LODGING_RE = re.compile(r"\b(airport|station|terminal)\b.*\bto\b.*\bhotel", re.IGNORECASE)
+
+
+def is_lodging_search(keyword: str) -> bool:
+    return bool(_LODGING_WORD_RE.search(keyword or "")) and not _TRANSFER_TO_LODGING_RE.search(keyword or "")
 
 
 def unmatched_countries(target_market: dict) -> list[str]:

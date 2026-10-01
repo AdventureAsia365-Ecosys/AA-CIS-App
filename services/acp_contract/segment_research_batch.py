@@ -239,14 +239,7 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
 # place name, so Jev reads it as a trip search). On the 132-row calibration sample this rule matches all
 # 20 lodging rows and nothing else once "<airport/station> to hotel" (getting there) is excepted.
 # Brand-only lodging names ("amankora", "como punakha") have no such word and are not caught here.
-_LODGING_WORD_RE = re.compile(
-    r"\b(hotels?|resorts?|lodges?|residenc[ey]|residences|boutique|homestays?|guest ?houses?|hostels?|"
-    r"inns?|motels?|ryokan|villas?|agoda|airbnb|booking\.com|accommodations?)\b", re.IGNORECASE)
-_TRANSFER_TO_LODGING_RE = re.compile(r"\b(airport|station|terminal)\b.*\bto\b.*\bhotel", re.IGNORECASE)
-
-
-def is_lodging_search(keyword: str) -> bool:
-    return bool(_LODGING_WORD_RE.search(keyword or "")) and not _TRANSFER_TO_LODGING_RE.search(keyword or "")
+from services.seo_intelligence.seed_builder import is_lodging_search  # noqa: E402  (S207: shared rule)
 
 
 async def _gate_ideas(rows: list[tuple[str, str, int]], seeds: list[str], pool) -> list[tuple[str, str, int]]:

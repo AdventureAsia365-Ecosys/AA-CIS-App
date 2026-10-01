@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 import structlog
 
 from .seed_builder import (
-    LOCATION_CODE_TO_MARKET, _WEAK_PLACE_WORDS, activity_terms, build_seed, idea_seeds,
+    LOCATION_CODE_TO_MARKET, _WEAK_PLACE_WORDS, activity_terms, build_seed, idea_seeds, is_lodging_search,
     rank_keyword_ideas, title_place_terms,
 )
 
@@ -263,20 +263,23 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             logger.warning("s1_prefetch_ideas_failed", error=str(e)[:200], seeds=len(seeds))
             ideas = []
         for s in batch:
-            cands = candidates_for(batch, s, ideas)
-            kept = rank_keyword_ideas(cands, s["places"], activity_words=s["activity"])
-            bought[s["tour_id"]] = await jev_review(s, cands, kept, pool=pool) if jev else kept
+            bought[s["tour_id"]] = candidates_for(batch, s, ideas)
 
     done = 0
     for s in todo:
         ideas, paa = cached.get(s["tour_id"], ([], []))
+        candidates = list(ideas)
         if s["tour_id"] in bought:
-            seen = {i["keyword"].casefold() for i in ideas}
-            ideas = rank_keyword_ideas(
-                ideas + [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen],
-                s["places"], activity_words=s["activity"])
+            seen = {i["keyword"].casefold() for i in candidates}
+            candidates += [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen]
         else:
             summary["from_research_cache"] += 1
+        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"])
+        # AA-706: Jev sees every candidate — research-cache ideas too (the pilot's "druk hotel paro"
+        # came from search_demand and bypassed the question). Lodging searches never reach it.
+        if jev:
+            ideas = await jev_review(s, [i for i in candidates if not is_lodging_search(i["keyword"])],
+                                     ideas, pool=pool)
         related: list[str] = []
         if not paa:
             try:

@@ -349,7 +349,7 @@ class DataForSEOClient:
     ) -> dict:
         # AA-653: with extra_seeds the ideas task below returns volume for the seeds too, so the
         # separate search_volume task (a full $0.09 task for ONE keyword) is not bought.
-        if extra_seeds:
+        if extra_seeds is not None:
             keywords = {}
         else:
             try:
@@ -371,7 +371,7 @@ class DataForSEOClient:
         # AA-197: real keyword ideas (full dicts w/ volume/competition/cpc) — never raises.
         # AA-702: with extra_seeds, all seeds go in ONE keywords_for_keywords task (same price) and
         # the ideas are re-ranked: real volume first, tour-specific before generic.
-        if extra_seeds:
+        if extra_seeds is not None:
             seeds = [seed] + [x for x in extra_seeds if x and x.casefold() != seed.casefold()]
             try:
                 keyword_ideas = await self.fetch_keyword_ideas_multi(

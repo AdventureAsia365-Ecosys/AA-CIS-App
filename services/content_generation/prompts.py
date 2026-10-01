@@ -7,7 +7,23 @@ logger = structlog.get_logger()
 # AA-353: line-anchored so a day-count number mentioned mid-line never matches — e.g. "Easy Day 82
 # km Tarmac Road" as a day's OWN title text must not be misread as a "Day 82" marker (AA-346's own
 # regression case). Only a line that STARTS with "Day <n>" (optionally "Day #3", "Day3", etc.) counts.
-_DAY_MARKER_RE = re.compile(r"^\s*day\s*#?\s*(\d{1,3})\b[:\-–—]?\s*", re.IGNORECASE)
+# S207: also accept a leading bullet/symbol ("► Day 01:", "• Day 2", "**Day 3**"), spelled-out numbers
+# ("Day One:", "Day Twelve") and ranges ("Days 1–3:" → the range's first day). Measured on Dev
+# 01/10/2026: Taiwan "Day One" (34 tours) and Sri Lanka "► Day 01" (11) fell back to an even split,
+# which also handed the per-day nudge the WHOLE itinerary as "this day".
+_NUM_WORDS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four "
+    "twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty".split())}
+_DAY_MARKER_RE = re.compile(
+    r"^[\s►▶•*#>\-–—·|]*days?\s*#?\s*(\d{1,3}|" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
+    + r")\b(?:\s*[-–—]\s*\d{1,3}\b)?[*\s]*[:\-–—|.]?\s*",
+    re.IGNORECASE)
+
+
+def _day_num(token: str) -> int:
+    t = token.lower()
+    return int(t) if t.isdigit() else _NUM_WORDS.get(t, 0)
 
 
 def _estimate_day_count(duration_hint: str) -> int:
@@ -37,8 +53,8 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
     matches = []  # (day_num, line_idx)
     for idx, line in enumerate(lines):
         m = _DAY_MARKER_RE.match(line.strip())
-        if m:
-            matches.append((int(m.group(1)), idx))
+        if m and _day_num(m.group(1)) > 0:
+            matches.append((_day_num(m.group(1)), idx))
 
     if len(matches) < 2:
         total_words = len(text.split())
