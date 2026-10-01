@@ -104,7 +104,11 @@ def build_s1_system_prompt(state: dict) -> str:
     if brand_sp:
         system += f"\n\nCLIENT BRAND CONTEXT (append only — do not override the base rules above):\n{brand_sp}"
     system += build_brand_diff_block(state)
-    fw = [w for w in (state.get("brand_forbidden_words") or []) if w]
+    # S207: the writer is told the SAME list validate_node checks (AA core + brand). It used to see
+    # only the brand's words, so core words (curated, refined, tailored, deal…) were written and
+    # then fired FORBIDDEN_WORD → a flag_fix repair call for something the prompt never forbade.
+    from .forbidden_words import all_forbidden
+    fw = all_forbidden(state.get("brand_forbidden_words"))
     if fw:
         system += "\n\nFORBIDDEN WORDS (never use): " + ", ".join(fw)
     return system

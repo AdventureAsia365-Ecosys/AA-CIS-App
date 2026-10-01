@@ -17,7 +17,7 @@ from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
 from .seo_meta_utils import SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN
-from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words
+from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, has_word
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
     generated_day_word_counts,
@@ -608,7 +608,7 @@ def validate_node(state: ContentState) -> ContentState:
 
     content_text = json.dumps(generated).lower()
     for word in all_forbidden:
-        if word in content_text:
+        if has_word(content_text, word):
             issues.append(f"Forbidden word: '{word}'")
             fired.append("FORBIDDEN_WORD")
             score -= 0.5
@@ -629,7 +629,7 @@ def validate_node(state: ContentState) -> ContentState:
     _seo_meta_forbidden = SEO_META_FORBIDDEN  # AA-238/D4: canonical deny-list
     seo_meta_lower = (generated.get("seo_meta") or "").lower().replace("-", " ")  # AA-238: catch hyphen variants
     for term in _seo_meta_forbidden:
-        if term in seo_meta_lower:
+        if has_word(seo_meta_lower, term.replace("-", " ")):
             issues.append(f"Budget language in seo_meta: '{term}'")
             fired.append("BRAND_SEO_META_VIOLATION")
             score -= 1.5

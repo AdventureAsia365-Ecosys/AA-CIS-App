@@ -5,7 +5,7 @@ bills per task, up to 1,000 keywords), keywords_for_keywords ($0.09) and a SERP 
 736-tour rerun that is ~$130. Now:
 
 1. **Reuse** — a tour's own `seo_context` row in the current format is reused for
-   `S1_SEO_REUSE_DAYS` (default 365): a master tour is not rewritten often, and search demand for a
+   `S1_SEO_REUSE_DAYS` (default 180): a master tour is not rewritten often, and search demand for a
    trip changes slowly. Nothing is bought for a tour that already has one.
 2. **Research cache first** — `acp_contract.search_demand` (bought by Segment research) already
    holds volumes + PAA for many places; ideas naming the tour's places are taken from there free.
@@ -32,7 +32,14 @@ from .seed_builder import (
 logger = structlog.get_logger()
 
 SEO_FORMAT = "ideas_v3"          # marker in seo_context.cache_key for rows built this way
-REUSE_DAYS = int(os.environ.get("S1_SEO_REUSE_DAYS", "365"))
+# 180 days: Google Ads volumes are 12-month averages (seasonality already inside), but keyword
+# ideas and PAA drift with trends — two refreshes a year at most, and only when a tour is rewritten.
+REUSE_DAYS = int(os.environ.get("S1_SEO_REUSE_DAYS", "180"))
+# AA-706 — Jev judges each candidate idea (shadow until calibrated; see migration 196).
+JEV_STAGE = "a1_seo"
+JEV_Q = "a1_keyword_about_tour"
+JEV_PER_TOUR = 30
+JEV_CONCURRENCY = 8
 MAX_SEEDS_PER_TASK = 20           # DFS keywords_for_keywords limit, same price for 1 or 20
 MIN_CACHED_IDEAS = 5              # research cache alone is enough when it has this many
 
@@ -52,6 +59,7 @@ def tour_spec(row: dict) -> dict:
     seed = build_seed(row.get("country"), acts, row.get("src_name")) or row.get("src_name") or ""
     return {
         "tour_id": str(row["tour_id"]),
+        "name": row.get("src_name") or "",
         "country": row.get("country") or "",
         "seed": seed,
         "seeds": seeds or ([seed] if seed else []),
@@ -81,18 +89,60 @@ def plan_batches(specs: list[dict], max_seeds: int = MAX_SEEDS_PER_TASK) -> list
     return batches
 
 
+def candidates_for(batch: list[dict], spec: dict, ideas: list[dict]) -> list[dict]:
+    """Ideas of one shared task that may belong to `spec`: an idea naming a strong place of another
+    tour in the batch (and none of this tour's) is that tour's keyword, not this one's."""
+    own = set(strong_terms(spec["places"]))
+    others = {t for o in batch if o is not spec for t in strong_terms(o["places"])} - own
+    return [i for i in ideas
+            if not any(t in str(i.get("keyword", "")).lower() for t in others)
+            or any(t in str(i.get("keyword", "")).lower() for t in own)]
+
+
 def assign_ideas(batch: list[dict], ideas: list[dict]) -> dict[str, list[dict]]:
-    """Ideas from one shared task, split back per tour. An idea naming a strong place of another
-    tour in the batch (and none of this tour's) is not this tour's keyword."""
-    out: dict[str, list[dict]] = {}
-    for s in batch:
-        own = set(strong_terms(s["places"]))
-        others = {t for o in batch if o is not s for t in strong_terms(o["places"])} - own
-        mine = [i for i in ideas
-                if not any(t in str(i.get("keyword", "")).lower() for t in others)
-                or any(t in str(i.get("keyword", "")).lower() for t in own)]
-        out[s["tour_id"]] = rank_keyword_ideas(mine, s["places"], activity_words=s["activity"])
-    return out
+    """Ideas from one shared task, split back per tour with the substring relevance rule."""
+    return {s["tour_id"]: rank_keyword_ideas(candidates_for(batch, s, ideas), s["places"],
+                                             activity_words=s["activity"])
+            for s in batch}
+
+
+def _vol(i: dict) -> int:
+    v = i.get("search_volume")
+    return v if isinstance(v, int) and v > 0 else 0
+
+
+async def jev_review(spec: dict, candidates: list[dict], kept: list[dict], *, pool=None) -> list[dict]:
+    """AA-706 — ask Jev about up to JEV_PER_TOUR candidates (by volume). In shadow (the seeded mode)
+    verdicts are only logged and `kept` is returned unchanged; once enforced, a confident accept adds
+    an idea the substring rule missed (synonyms: "tiger's nest" for Taktsang) and a confident reject
+    drops one it kept."""
+    import asyncio
+
+    from shared.llm_client.decide import decide
+
+    ask = sorted(candidates, key=lambda i: -_vol(i))[:JEV_PER_TOUR]
+    if not ask:
+        return kept
+    sem = asyncio.Semaphore(JEV_CONCURRENCY)
+    state_base = {"tour": spec.get("name") or spec["seed"], "country": spec["country"],
+                  "title_places": spec["places"], "activity": spec["activity"]}
+
+    async def _one(idea):
+        async with sem:
+            return idea, await decide(JEV_STAGE, f"kw:{spec['tour_id']}:{idea['keyword'].lower()}",
+                                      {**state_base, "keyword": idea["keyword"]}, [JEV_Q], pool=pool)
+
+    results = await asyncio.gather(*[_one(i) for i in ask])
+    keep = {i["keyword"].casefold(): i for i in kept}
+    for idea, dec in results:
+        k = idea["keyword"].casefold()
+        if dec.rejected(JEV_Q):
+            keep.pop(k, None)
+        elif dec.accepted(JEV_Q):
+            keep.setdefault(k, idea)
+    if len(keep) == len(kept) and all(i["keyword"].casefold() in keep for i in kept):
+        return kept                                   # shadow / no enforced change: same order
+    return sorted(keep.values(), key=lambda i: (_vol(i) == 0, -_vol(i)))
 
 
 def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[str]]:
@@ -165,7 +215,7 @@ async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa:
 
 
 async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
-                   language_code: str, client=None, progress=None) -> dict:
+                   language_code: str, client=None, progress=None, pool=None, jev: bool = True) -> dict:
     """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary."""
     from .dataforseo_client import DataForSEOClient
 
@@ -212,7 +262,10 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 raise
             logger.warning("s1_prefetch_ideas_failed", error=str(e)[:200], seeds=len(seeds))
             ideas = []
-        bought.update(assign_ideas(batch, ideas))
+        for s in batch:
+            cands = candidates_for(batch, s, ideas)
+            kept = rank_keyword_ideas(cands, s["places"], activity_words=s["activity"])
+            bought[s["tour_id"]] = await jev_review(s, cands, kept, pool=pool) if jev else kept
 
     done = 0
     for s in todo:
@@ -242,3 +295,46 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             await progress(done=done, total=len(todo))
     logger.info("s1_prefetch_done", **summary)
     return summary
+
+
+async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, dict | None]:
+    """AA-707 — T2 keywords for the tenant's OWN buyer market, from the research cache only (a
+    tenant action never buys DataForSEO). Returns (market, seo_data | None when the cache has nothing
+    for this tour in that market)."""
+    from shared.services.tenant_config_service import TenantConfigService
+
+    from .seed_builder import resolve_buyer_market
+    try:
+        cfg = await TenantConfigService(conn).get_seo_config(tenant_id)
+        location_code, _name, _lang = resolve_buyer_market(cfg.target_market)
+    except Exception as e:
+        logger.warning("t2_market_resolve_failed", tenant_id=tenant_id, error=str(e)[:200])
+        return "US", None
+    market = LOCATION_CODE_TO_MARKET.get(location_code, "US")
+    row = await conn.fetchrow(
+        "SELECT tour_id, src_name, country, activities FROM silver_aa_internal.raw_tours "
+        "WHERE tour_id = $1::uuid", tour_id)
+    if not row:
+        return market, None
+    spec = tour_spec(dict(row))
+    terms = strong_terms(spec["places"]) + spec["activity"]
+    if not terms:
+        return market, None
+    demand = [dict(r) for r in await conn.fetch(
+        """SELECT keyword, search_volume, people_also_ask FROM acp_contract.search_demand
+            WHERE market = $1 AND search_volume > 0 AND keyword ILIKE ANY($2::text[])""",
+        market, [f"%{t}%" for t in terms])]
+    for d in demand:
+        if isinstance(d.get("people_also_ask"), str):
+            d["people_also_ask"] = json.loads(d["people_also_ask"])
+    ideas, paa = cached_ideas(spec, demand)
+    if not ideas:
+        # activity-only matches (cached_ideas needs a place) still count for the tenant's market
+        acts = spec["activity"]
+        ideas = rank_keyword_ideas([{"keyword": d["keyword"], "search_volume": d["search_volume"]}
+                                    for d in demand], spec["places"], activity_words=acts)
+    top = [i["keyword"] for i in ideas if _vol(i) > 0][:10]
+    if not top:
+        return market, None
+    return market, {"keywords": {"top_keywords": top}, "top_keywords": top,
+                    "people_also_ask": paa, "seo_market": market}

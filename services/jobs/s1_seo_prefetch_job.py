@@ -56,7 +56,8 @@ async def run(ctx: JobContext) -> dict:
             await ctx.progress(phase="fetching", **f)
         client = DataForSEOClient(tenant_id=tenant_id, budget=budget)
         summary = await prefetch(conn, rows, tenant_id=tenant_id, location_code=location_code,
-                                 language_code=language_code, client=client, progress=_progress)
+                                 language_code=language_code, client=client, progress=_progress,
+                                 pool=ctx.pool)
     finally:
         await conn.close()
     ctx.add_cost(budget.run_spent)

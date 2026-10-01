@@ -73,7 +73,7 @@ async def test_prefetch_reuses_buys_batched_and_skips_search_volume():
         {"keyword": "bumthang owl trek", "search_volume": 50}])
     client._serp_advanced = AsyncMock(return_value={})
     summary = await P.prefetch(conn, rows, tenant_id="t", location_code=2840, language_code="en",
-                               client=client)
+                               client=client, jev=False)
     assert summary == {"tours": 3, "reused": 1, "from_research_cache": 0, "ideas_tasks": 1, "serp_calls": 2}
     client.fetch_keyword_ideas_multi.assert_awaited_once()
     # two rows written (the reused one is untouched), each keyed with the v3 marker
@@ -95,7 +95,7 @@ async def test_prefetch_research_cache_alone_buys_nothing():
     client.fetch_keyword_ideas_multi = AsyncMock(side_effect=AssertionError("nothing to buy"))
     client._serp_advanced = AsyncMock(side_effect=AssertionError("PAA came from the cache"))
     summary = await P.prefetch(conn, rows, tenant_id="t", location_code=2840, language_code="en",
-                               client=client)
+                               client=client, jev=False)
     assert summary["from_research_cache"] == 1 and summary["ideas_tasks"] == 0
     assert summary["serp_calls"] == 0
 

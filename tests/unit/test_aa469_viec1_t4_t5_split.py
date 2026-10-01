@@ -95,7 +95,9 @@ async def _drive_trigger_rewrite(qa_result: dict):
          patch("services.acp_produce.tenant_pipeline.escalate_t3_failure", AsyncMock()) as m_escalate, \
          patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock()) as m_atomize, \
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock()) as m_ranking, \
-         patch("shared.jobs.registry.enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue:
+         patch("shared.jobs.registry.enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue, \
+         patch("services.seo_intelligence.s1_prefetch.tenant_market_seo",
+               AsyncMock(return_value=("US", None))):  # AA-707 market lookup: not under test here
 
         resp = await v1_tours.trigger_rewrite(PUBLISHED_TOUR_ID, body, request, tenant)
         m_enqueue.assert_awaited_once()

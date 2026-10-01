@@ -150,7 +150,21 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 "top_keywords": (_json_seo.loads(_tk) if isinstance(_tk, str) else _tk) or [],
             }
             seo_data["keywords"] = {"top_keywords": seo_data["top_keywords"]}
+            _paa = _existing["people_also_ask"]
+            seo_data["people_also_ask"] = (_json_seo.loads(_paa) if isinstance(_paa, str) else _paa) or []
+        # AA-707 — the admin row above is US-market. Prefer keywords + PAA for the tenant's own
+        # market from the research cache (search_demand); keep the admin row only as a fallback.
+        from services.seo_intelligence.s1_prefetch import tenant_market_seo
+        async with pool.acquire() as _conn_mkt:
+            _market, _mkt_seo = await tenant_market_seo(_conn_mkt, tenant_id, str(pt["tour_id"]))
+        if _mkt_seo:
+            seo_data = _mkt_seo
         else:
+            import structlog as _sl_mkt
+            _sl_mkt.get_logger().info("t2_market_seo_fallback", tour_id=pt["tour_id"],
+                                      tenant_id=tenant_id, market=_market,
+                                      admin_row=bool(_existing))
+        if not seo_data:
             import structlog as _sl_seo
             _sl_seo.get_logger().info("t2_seo_context_missing", tour_id=pt["tour_id"],
                                       tenant_id=tenant_id)
