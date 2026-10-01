@@ -89,6 +89,9 @@ class _Conn:
         self.existing, self.writes = list(existing), []
 
     async def fetch(self, sql, *a):
+        if "tripplanner" in sql:
+            return [{"tour_id": "11111111-1111-1111-1111-111111111111",
+                     "id": "22222222-2222-2222-2222-222222222222", "name": "Tango Monastery"}]
         if "raw_tours" in sql:
             return [{"tour_id": "11111111-1111-1111-1111-111111111111", "src_name": "THE DRUK PATH", "aa_name": None}]
         if "shared.destinations" in sql:
@@ -155,3 +158,22 @@ def test_migration_198_and_job_registered():
     import services.jobs  # noqa: F401
     from shared.jobs.registry import _KINDS
     assert "photo_sync" in _KINDS
+
+
+@pytest.mark.asyncio
+async def test_destination_only_from_the_tours_own_itinerary():
+    """A place on another tour's itinerary is not a candidate (S207: narrow by itinerary)."""
+    tree = {"root": [DriveFile("f1", "Unknown Folder", FOLDER_MIME, None, None)],
+            "f1": [_img("i1", "Tango Monastery1.jpg")]}
+    conn = _Conn()
+    res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), _S3(), country="Bhutan", root_id="root",
+                              match_destinations=True)
+    assert res["matched_tour"] == 0 and res["matched_destination"] == 0      # no tour -> no place
+
+
+def test_migration_200_read_views():
+    from pathlib import Path
+    sql = (Path(__file__).resolve().parents[2] / "api/migrations/200_photo_read_views.sql").read_text()
+    assert "CREATE OR REPLACE VIEW shared.v_tour_photos" in sql
+    assert "CREATE OR REPLACE VIEW shared.v_destination_photos" in sql
+    assert "p.status = 'matched'" in sql

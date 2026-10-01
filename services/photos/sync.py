@@ -65,6 +65,25 @@ def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
     return out, w, h
 
 
+async def itinerary_places(conn, country: str) -> dict[str, list[tuple[str, str]]]:
+    """tour_id → [(destination id, name)] of the places on that tour's itinerary, from the
+    TripPlanner extraction. Empty when the extraction tables are missing or not yet rebuilt."""
+    try:
+        rows = await conn.fetch(
+            """SELECT DISTINCT x.source_tour_id AS tour_id, d.id, d.name
+                 FROM (SELECT source_tour_id, destination_id FROM tripplanner.itinerary_components
+                       UNION SELECT source_tour_id, destination_id FROM tripplanner.tour_stop) x
+                 JOIN shared.destinations d ON d.id = x.destination_id
+                WHERE d.country = $1""", country)
+    except Exception as e:  # TripPlanner schema absent (local/test DB)
+        logger.warning("photo_sync_itinerary_places_unavailable", error=str(e)[:200])
+        return {}
+    out: dict[str, list[tuple[str, str]]] = {}
+    for r in rows:
+        out.setdefault(str(r["tour_id"]), []).append((str(r["id"]), r["name"]))
+    return out
+
+
 def _ts(value: Optional[str]) -> Optional[datetime]:
     return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
 
@@ -86,8 +105,9 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
     # Destinations are matched only on request: on 01/10/2026 shared.destinations still held the
     # places extracted from the tours published BEFORE the S207 reset. Match again (no re-download)
     # once the rerun tours are rewritten, atomized and re-extracted (Nghiệp, S207).
-    dests = [(str(r["id"]), r["name"]) for r in await conn.fetch(
-        "SELECT id, name FROM shared.destinations WHERE country = $1", country)] if match_destinations else []
+    # A photo is compared only with the places on ITS tour's itinerary (TripPlanner extraction:
+    # tripplanner.itinerary_components / tour_stop) — never with every place in the country.
+    tour_places = await itinerary_places(conn, country) if match_destinations else {}
     existing = {r["drive_file_id"]: r for r in await conn.fetch(
         """SELECT drive_file_id, drive_modified_at, s3_key_small, match_source, status
              FROM shared.place_photo WHERE drive_file_id = ANY($1::text[])""", [f.id for _, f in images])}
@@ -100,7 +120,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
         tour_folder = path[-1] if path else None
         label = place_label(f.name)
         tour_id = match_tour(tour_folder, tours)
-        dest_id = match_destination(label, dests)
+        dest_id = match_destination(label, tour_places.get(tour_id, [])) if tour_id else None
         status = "matched" if (tour_id or dest_id) else "unmatched"
         c["matched_tour"] += bool(tour_id)
         c["matched_destination"] += bool(dest_id)

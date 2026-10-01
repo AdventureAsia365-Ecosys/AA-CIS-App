@@ -201,8 +201,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 
 - It does not provision AWS resources or OIDC roles (that is AA-CIS-Infra).
 - It does not run the B2C map trip planner (that is AA-TripPlanner-Web).
-- It does not own `shared.destinations` mutations from the planner side; within CIS it owns its
-  own `*_aa_internal` / `acp_*` schemas.
+- **Only CIS writes content** (root ADR 0002, 01/10/2026): tours, atoms, places
+  (`shared.destinations`), itinerary places / tour graph, photos. Other apps read views and write
+  only their own schema (+ `shared.llm_call_log` telemetry); the `tripplanner` DB role is read-only on
+  `shared.destinations` (migration 201). The place pipeline (extraction, geocoding, tour graph) still
+  lives in the TripPlanner, frozen until it moves to CIS (AA-712).
 
 ---
 
