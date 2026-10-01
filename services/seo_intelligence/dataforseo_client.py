@@ -4,6 +4,8 @@ from shared.cost_guard import DFS_CALL_ESTIMATE_USD
 import httpx
 import structlog
 
+from .seed_builder import rank_keyword_ideas
+
 logger = structlog.get_logger()
 
 DATAFORSEO_BASE = "https://api.dataforseo.com/v3"
@@ -341,6 +343,8 @@ class DataForSEOClient:
         location_name: str = DEFAULT_LOCATION_NAME,
         language_code: str = DEFAULT_LANGUAGE_CODE,
         activity: str = None,
+        extra_seeds: list[str] | None = None,
+        place_terms: list[str] | None = None,
     ) -> dict:
         try:
             keywords = await self.fetch_keywords(seed, location_code, location_name, language_code)
@@ -359,7 +363,19 @@ class DataForSEOClient:
             logger.warning("dfs_serp_failed", error=str(e))
 
         # AA-197: real keyword ideas (full dicts w/ volume/competition/cpc) — never raises.
-        keyword_ideas = await self.fetch_keyword_ideas(seed, location_code, language_code)
+        # AA-702: with extra_seeds, all seeds go in ONE keywords_for_keywords task (same price) and
+        # the ideas are re-ranked: real volume first, tour-specific before generic.
+        if extra_seeds:
+            seeds = [seed] + [x for x in extra_seeds if x and x.casefold() != seed.casefold()]
+            try:
+                keyword_ideas = await self.fetch_keyword_ideas_multi(
+                    seeds, location_code, language_code, limit=100)
+            except Exception as e:
+                logger.warning("dfs_ideas_multi_failed", error=str(e))
+                keyword_ideas = []
+            keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [])
+        else:
+            keyword_ideas = await self.fetch_keyword_ideas(seed, location_code, language_code)
 
         keywords = keywords if isinstance(keywords, dict) else {}
         top_keywords = keywords.get("top_keywords", [])
@@ -368,6 +384,10 @@ class DataForSEOClient:
         if not top_keywords and keyword_ideas:
             top_keywords = [i["keyword"] for i in keyword_ideas[:10]]
             keywords = {**keywords, "top_keywords": top_keywords}
+        if not top_keywords:
+            # AA-702: _parse_keywords no longer returns a volume-less seed; keep the seed as the
+            # last-resort lead keyword so the prompt is never keyword-less.
+            keywords = {**keywords, "top_keywords": [seed]}
 
         return {
             "keywords":         keywords,
@@ -382,7 +402,11 @@ class DataForSEOClient:
         try:
             results = data["tasks"][0]["result"] or []
             # DataForSEO search_volume returns list of keyword objects directly
-            items = [r for r in results if isinstance(r, dict) and "keyword" in r]
+            # AA-702: a keyword DFS has no volume for is not a "top keyword" — for S1's tour-name
+            # seed it was the seed echoed back, which then blocked the ideas promotion below.
+            items = [r for r in results if isinstance(r, dict) and "keyword" in r
+                     and isinstance(r.get("search_volume"), int) and r["search_volume"] > 0]
+            items.sort(key=lambda r: -r["search_volume"])
             if not items:
                 return {}
             return {
