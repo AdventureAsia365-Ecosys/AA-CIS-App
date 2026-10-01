@@ -149,6 +149,88 @@ def build_seed(country_raw: str, activities, tour_name: str = "") -> str:
     return ""
 
 
+# AA-702 — words in tour titles that say nothing about WHERE the tour goes. Stripping them leaves
+# the place names ("Kang Yatse 2 and the Lhato Valley" -> "kang yatse lhato valley") that
+# DataForSEO actually has search volume for.
+_GENERIC_TITLE_WORDS = frozenset("""
+    a an and the of to in on for with by from at via & tour tours trip trips day days night nights
+    week weeks classic exploration explore explorer journey journeys adventure adventures discovery
+    discover highlights highlight best amazing express retreat odyssey delights delight experience
+    experiences escape grand ultimate essential essentials private small group luxury tailor made
+    tailormade package holiday holidays vacation vacations itinerary through across around north
+    south east west central northern southern eastern western exotic wonders wonder magic magical
+    hidden gems gem secret secrets unexplored epic blissful tranquil serenity serendipity lens time
+    embrace cultural culture wild nature one two three four five six seven eight nine ten eleven
+    twelve fourteen fifteen twenty
+""".split())
+# Geographic nouns that help a seed but are too common to prove an idea is about THIS tour
+# ("valley" matches every valley in the country) — kept in seeds, ignored when ranking.
+_WEAK_PLACE_WORDS = frozenset(
+    "valley lake lakes river rivers base camp island islands mountain mountains trek trekking hike "
+    "hiking temple temples beach beaches coast village villages city cities park national road "
+    "railway rail cycling bicycle e-bicycle bike biking safari wildlife pass peak".split())
+_TITLE_TOKEN = re.compile(r"[a-z][a-z'-]+")
+
+
+def title_place_terms(tour_name: str, country_raw: str = "") -> list[str]:
+    """Place-like words from the tour's own title: lowercase tokens minus generic travel words,
+    numbers and the country's own words. Order kept, deduped. Pure."""
+    country_words = set(normalize_country(country_raw).lower().replace(",", " ").split())
+    out: list[str] = []
+    for tok in _TITLE_TOKEN.findall((tour_name or "").lower()):
+        tok = tok.strip("'-")
+        if len(tok) < 3 or tok in _GENERIC_TITLE_WORDS or tok in country_words or tok in out:
+            continue
+        out.append(tok)
+    return out
+
+
+def idea_seeds(country_raw: str, activities, tour_name: str = "") -> list[str]:
+    """AA-702 — seeds for ONE keywords_for_keywords task (DFS prices per task, up to 20 keywords).
+
+    The single tour-name seed (AA-251) almost never has search volume: all 224 S1 seo_context rows
+    had only the seed itself as "top keyword". Sending the specific seed plus the title's place
+    words, "country + activity" and "country tours" in the same task costs the same and returns
+    ideas with real volume; rank_keyword_ideas() then keeps tour-specific ones first so the generic
+    phrases only lead when nothing specific exists (the AA-251 false-positive concern)."""
+    c = normalize_country(country_raw, tour_name)
+    seeds = [build_seed(country_raw, activities, tour_name)]
+    places = title_place_terms(tour_name, country_raw)
+    if places:
+        seeds.append(f"{' '.join(places[:4])} {c}".strip())
+    a = first_activity(activities)
+    if a and c:
+        seeds.append(f"{c} {a}")
+    if c:
+        seeds.append(f"{c} tours")
+    out: list[str] = []
+    for sd in seeds:
+        sd = (sd or "").strip()
+        if sd and sd.casefold() not in {x.casefold() for x in out}:
+            out.append(sd)
+    return out[:20]
+
+
+def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25) -> list[dict]:
+    """AA-702 — ideas with a real search volume first; among those, ones naming a place from the
+    tour's title before generic ones; then by volume. Ideas without volume keep their order at the
+    end (still useful as phrasing). Pure; never drops below what DFS returned, only re-orders/caps."""
+    terms = [t for t in (place_terms or []) if t and t not in _WEAK_PLACE_WORDS]
+
+    def _vol(i: dict) -> int:
+        v = i.get("search_volume")
+        return v if isinstance(v, int) and v > 0 else 0
+
+    def _specific(i: dict) -> bool:
+        kw = str(i.get("keyword", "")).lower()
+        return any(t in kw for t in terms)
+
+    with_vol = [i for i in ideas if _vol(i) > 0]
+    without = [i for i in ideas if _vol(i) == 0]
+    with_vol.sort(key=lambda i: (not _specific(i), -_vol(i)))
+    return (with_vol + without)[:cap]
+
+
 def unmatched_countries(target_market: dict) -> list[str]:
     """AA-629 — countries the tenant actually declared that DFS_LOCATION_MAP does NOT know.
 

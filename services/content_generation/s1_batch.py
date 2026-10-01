@@ -60,6 +60,9 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     if row.get("source_status") and str(row["source_status"]) == "trashed":
         logger.info("s1_batch_tour_trashed_skip", tour_id=tour_id)
         return None
+    if row.get("source_status") and str(row["source_status"]) == "superseded":
+        logger.info("s1_batch_tour_superseded_skip", tour_id=tour_id)  # AA-702
+        return None
 
     src_highlights = row["src_highlights"]
     if not isinstance(src_highlights, list):
@@ -123,12 +126,15 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     effective_seo_mode = _SEO_MODE_MAP.get(seo_mode, seo_mode)
     try:
         from services.seo_intelligence.handler import process_seo
-        from services.seo_intelligence.seed_builder import build_seed
+        from services.seo_intelligence.seed_builder import build_seed, idea_seeds, title_place_terms
         seed = build_seed(row.get("country"), row.get("activities"), row.get("src_name")) or row.get("src_name", "")
         if seed:
             seo_result = await process_seo(
                 tour_id=tour_id, destination=seed, seed=seed,
                 tenant_id=tenant_uuid, seo_mode=effective_seo_mode,
+                # AA-702 — same multi-seed keyword ideas as the single-tour S1 path.
+                extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
+                place_terms=title_place_terms(row.get("src_name"), row.get("country")),
             )
             seo_data = seo_result.get("data", {})
             if "keywords" in seo_data and "top_keywords" not in seo_data:

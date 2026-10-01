@@ -406,6 +406,13 @@ async def _execute_run_tour(
                 status_code=400,
                 detail="Tour is trashed. Restore before rewriting.",
             )
+        if row.get("source_status") and str(row["source_status"]) == "superseded":
+            # AA-702: a superseded source is an older/duplicate version of another tour.
+            raise HTTPException(
+                status_code=400,
+                detail=("Tour is superseded by another version. Rewrite the active version "
+                        "or promote this one in Dup Review."),
+            )
 
         # AA-314: no jsonb codec is registered on this asyncpg connection (or anywhere in
         # this app) — src_highlights arrives as a JSON-encoded str, not a list. Feeding it
@@ -498,7 +505,7 @@ async def _execute_run_tour(
         effective_seo_mode = _SEO_MODE_MAP.get(req.seo_mode, req.seo_mode)
         try:
             from services.seo_intelligence.handler import process_seo
-            from services.seo_intelligence.seed_builder import build_seed
+            from services.seo_intelligence.seed_builder import build_seed, idea_seeds, title_place_terms
             # AA-197: build a complete seed (no double-"tours"); fall back to src_name.
             # AA-251 (ADR-2026-021): pass src_name through so the seed falls back to
             # tour-specific text instead of the generic "{country} tours" phrase.
@@ -512,9 +519,13 @@ async def _execute_run_tour(
                 # function also runs from the background 3-worker job queue (AA-223)
                 # with no Request in scope, so request.app.state.redis isn't reachable
                 # here anyway.
+                # AA-702: extra seeds + the title's place words go into the same paid
+                # keyword-ideas task so S1 gets keywords with real search volume.
                 seo_result = await process_seo(
                     tour_id=req.tour_id, destination=seed, seed=seed,
                     tenant_id=tenant_uuid, seo_mode=effective_seo_mode,
+                    extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
+                    place_terms=title_place_terms(row.get("src_name"), row.get("country")),
                 )
                 seo_data = seo_result.get("data", {})
                 dataforseo_used = seo_result.get("status") == "fetched"
