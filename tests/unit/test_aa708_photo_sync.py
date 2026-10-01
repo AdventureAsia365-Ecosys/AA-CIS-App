@@ -257,3 +257,22 @@ async def test_row_without_original_is_downloaded_again():
 def test_original_ext():
     assert S.original_ext("A.JPEG", "image/jpeg") == "jpeg"
     assert S.original_ext("noext", "image/png") == "png"
+
+
+def test_large_jpeg_decoded_at_reduced_scale(monkeypatch):
+    """S207: an 8256x5504 original OOM-killed the 1 GB API task — JPEGs are drafted, not fully decoded."""
+    import io as _io
+    from PIL import Image
+    buf = _io.BytesIO()
+    Image.new("RGB", (8000, 5000), (10, 20, 30)).save(buf, "JPEG", quality=70)
+    from PIL import JpegImagePlugin
+    seen = {}
+    real_draft = JpegImagePlugin.JpegImageFile.draft
+
+    def spy(self, mode, size):
+        seen.setdefault("size", size)
+        return real_draft(self, mode, size)
+    monkeypatch.setattr(JpegImagePlugin.JpegImageFile, "draft", spy)
+    sizes, w, h = S.make_sizes(buf.getvalue())
+    assert (w, h) == (8000, 5000) and seen["size"] == (1600, 1000)
+    assert Image.open(_io.BytesIO(sizes["large"])).size[0] == 1600
