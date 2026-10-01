@@ -3,3 +3,4 @@ from . import segment_research_job  # noqa: F401
 from . import t2_rewrite_job  # noqa: F401
 from . import t9_write_job  # noqa: F401
 from . import a3_atomize_job  # noqa: F401
+from . import s1_seo_prefetch_job  # noqa: F401

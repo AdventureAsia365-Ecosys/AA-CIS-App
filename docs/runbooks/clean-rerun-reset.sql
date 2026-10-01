@@ -42,7 +42,7 @@ UNION ALL SELECT 'acp_contract.s1_from_atom_runs', count(*) FROM acp_contract.s1
 UNION ALL SELECT 'acp_contract.tour_atoms', count(*) FROM acp_contract.tour_atoms
 UNION ALL SELECT 'silver_aa_internal.review_queue', count(*) FROM silver_aa_internal.review_queue
 UNION ALL SELECT 'silver_aa_internal.quality_scores', count(*) FROM silver_aa_internal.quality_scores
-UNION ALL SELECT 'silver_aa_internal.seo_context', count(*) FROM silver_aa_internal.seo_context
+UNION ALL SELECT 'silver_aa_internal.seo_context (old format only)', count(*) FROM silver_aa_internal.seo_context WHERE cache_key IS NULL OR cache_key NOT LIKE '%:ideas_v3'
 UNION ALL SELECT 'gold_aa_internal.tenant_tour_versions', count(*) FROM gold_aa_internal.tenant_tour_versions
 UNION ALL SELECT 'gold_aa_internal.published_tours', count(*) FROM gold_aa_internal.published_tours
 UNION ALL SELECT 'silver_aa_internal.generated_content', count(*) FROM silver_aa_internal.generated_content
@@ -77,7 +77,8 @@ UNION ALL SELECT 'raw_tours (UPDATE pipeline_status, NOT deleted)', count(*)
 -- -- Master content (review_queue before tenant_tour_versions — FK)
 -- DELETE FROM silver_aa_internal.review_queue;
 -- DELETE FROM silver_aa_internal.quality_scores;
--- DELETE FROM silver_aa_internal.seo_context;
+-- -- keep the S1 long-term SEO cache (AA-653): rows in the current format are reused for a year
+-- DELETE FROM silver_aa_internal.seo_context WHERE cache_key IS NULL OR cache_key NOT LIKE '%:ideas_v3';
 -- DELETE FROM gold_aa_internal.tenant_tour_versions;
 -- DELETE FROM gold_aa_internal.published_tours;
 -- DELETE FROM silver_aa_internal.generated_content;

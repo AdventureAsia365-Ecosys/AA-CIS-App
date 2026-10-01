@@ -57,6 +57,24 @@ async def process_seo(
     # AA-197: caller passes a pre-built seed; fall back to destination for old callers.
     effective_seed = seed or destination
 
+    # AA-653: S1 (the only caller passing extra_seeds) reuses the tour's own seo_context row for
+    # S1_SEO_REUSE_DAYS — filled by an earlier run or by the batched S1 prefetch job — instead of
+    # buying DataForSEO again for a tour that is already in Master Content.
+    if extra_seeds and tour_id and seo_mode == "dataforseo":
+        from .s1_prefetch import load_fresh
+        try:
+            reuse_conn = await asyncpg.connect(get_database_url())
+            try:
+                fresh = await load_fresh(reuse_conn, tour_id)
+            finally:
+                await reuse_conn.close()
+        except Exception as _reuse_err:
+            logger.warning("seo_reuse_lookup_failed", tour_id=tour_id, error=str(_reuse_err))
+            fresh = None
+        if fresh:
+            logger.info("seo_reused", tour_id=tour_id)
+            return {"status": "reused", "data": fresh}
+
     # AA-197: resolve buyer market from tenant target_market (UNWIRED before).
     location_code, location_name, language_code = (
         DEFAULT_LOCATION_CODE, DEFAULT_LOCATION_NAME, DEFAULT_LANGUAGE_CODE,
