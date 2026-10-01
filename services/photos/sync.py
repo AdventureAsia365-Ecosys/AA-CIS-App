@@ -22,6 +22,11 @@ from services.photos.match import match_destination, match_tour, place_label
 logger = structlog.get_logger()
 
 SIZES = {"large": 1600, "small": 600}
+MAX_CONSECUTIVE_ERRORS = 10   # Drive quota reached: stop the job, the next sync resumes
+
+
+class DriveQuotaStop(RuntimeError):
+    pass
 MAX_BYTES = 40 * 1024 * 1024
 
 # Jira CON board, PHOTOS column (01/10/2026). Laos (CON-31) has no folder link yet.
@@ -114,6 +119,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
     c = {"country": country, "images": len(images), "downloaded": 0, "unchanged": 0, "matched_tour": 0,
          "matched_destination": 0, "unmatched": 0, "errors": 0, "tour_folders": len({p[-1] for p, _ in images if p})}
     bucket = photo_bucket()
+    consecutive_errors = 0
 
     for n, (path, f) in enumerate(images, 1):
         # The folder holding the image is the tour (Bhutan has a supplier level above it).
@@ -145,9 +151,11 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 sizes_meta = {"s3_key_large": keys["large"], "s3_key_small": keys["small"], "width": w,
                               "height": h, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
                 c["downloaded"] += 1
+                consecutive_errors = 0
             except Exception as e:  # one bad file must not stop the folder
-                error = str(e)[:500]
+                error = re.sub(r"key=[^&\s'\"]+", "key=***", str(e))[:500]
                 c["errors"] += 1
+                consecutive_errors += 1
                 logger.warning("photo_sync_file_failed", file_id=f.id, name=f.name, error=error)
         if dry_run:
             continue
@@ -186,6 +194,9 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             modified, error, keep_match, match_destinations)
         if progress and (n % 10 == 0 or n == len(images)):
             await progress(step=country, done=n, total=len(images))
+        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+            raise DriveQuotaStop(f"{consecutive_errors} downloads failed in a row in {country} (last: {error}); "
+                                 "stopped — the next sync resumes where this one stopped")
     return c
 
 

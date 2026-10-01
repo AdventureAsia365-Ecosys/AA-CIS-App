@@ -177,3 +177,45 @@ def test_migration_200_read_views():
     assert "CREATE OR REPLACE VIEW shared.v_tour_photos" in sql
     assert "CREATE OR REPLACE VIEW shared.v_destination_photos" in sql
     assert "p.status = 'matched'" in sql
+
+
+@pytest.mark.asyncio
+async def test_api_key_goes_in_header_never_in_url_or_error():
+    import httpx
+    from services.photos import drive as Dr
+    seen = {}
+
+    def handler(request):
+        seen["url"], seen["key"] = str(request.url), request.headers.get("X-Goog-Api-Key")
+        return httpx.Response(403, json={"error": {"message": "nope key=SECRET123",
+                                                   "errors": [{"reason": "forbidden"}]}})
+    c = Dr.DriveClient({"api_key": "SECRET123"}, http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(Dr.DriveError) as ei:
+        await c.download("f1")
+    assert seen["key"] == "SECRET123" and "SECRET123" not in seen["url"]
+    assert "SECRET123" not in str(ei.value) and "forbidden" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_retried(monkeypatch):
+    import httpx
+    from services.photos import drive as Dr
+    monkeypatch.setattr(Dr, "RETRY_DELAYS", (0, 0))
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return httpx.Response(403, json={"error": {"errors": [{"reason": "userRateLimitExceeded"}]}})
+        return httpx.Response(200, content=b"img")
+    c = Dr.DriveClient({"api_key": "k"}, http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    c._last_download = -100
+    monkeypatch.setattr(Dr, "MIN_DOWNLOAD_INTERVAL", 0)
+    assert await c.download("f1") == b"img" and calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_sync_stops_after_consecutive_failures():
+    tree = {"root": [_img(f"i{n}", f"p{n}.jpg") for n in range(12)]}
+    with pytest.raises(S.DriveQuotaStop):
+        await S.sync_folder(_Conn(), _FakeDrive(tree, {}), _S3(), country="Bhutan", root_id="root")

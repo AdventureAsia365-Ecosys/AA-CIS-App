@@ -55,6 +55,9 @@ def _uuid(value: Optional[str], field: str) -> Optional[str]:
 
 def _photo(row) -> dict:
     d = dict(row)
+    if d.get("error"):   # rows written before the key moved to a header carried `?key=...`
+        import re
+        d["error"] = re.sub(r"key=[^&\s'\"]+", "key=***", d["error"])
     for k in ("id", "tour_id", "destination_id"):
         d[k] = str(d[k]) if d.get(k) else None
     for k in ("synced_at", "drive_modified_at", "updated_at"):
