@@ -178,6 +178,7 @@ _GENERIC_TITLE_WORDS = frozenset("""
     hidden gems gem secret secrets unexplored epic blissful tranquil serenity serendipity lens time
     embrace cultural culture wild nature one two three four five six seven eight nine ten eleven
     twelve fourteen fifteen twenty
+    life departure departures monday tuesday wednesday thursday friday saturday sunday
 """.split())
 # Geographic nouns that help a seed but are too common to prove an idea is about THIS tour
 # ("valley" matches every valley in the country) — kept in seeds, ignored when ranking.
@@ -194,8 +195,14 @@ def title_place_terms(tour_name: str, country_raw: str = "") -> list[str]:
     """Place-like words from the tour's own title: lowercase tokens minus generic travel words,
     numbers and the country's own words. Order kept, deduped. Pure."""
     country_words = set(normalize_country(country_raw).lower().replace(",", " ").split())
+    title = (tour_name or "").lower()
+    # S207: "3D2N Gangwon Biking, Hiking & Surfing Tour from Seoul" — Seoul is where it starts, not
+    # where it goes; it brought "jeju island from seoul" / "seoul airport transfer".
+    head = re.split(r"\bfrom\b", title, maxsplit=1)[0]
+    if any(t not in _GENERIC_TITLE_WORDS and len(t) >= 3 for t in _TITLE_TOKEN.findall(head)):
+        title = head
     out: list[str] = []
-    for tok in _TITLE_TOKEN.findall((tour_name or "").lower()):
+    for tok in _TITLE_TOKEN.findall(title):
         tok = tok.strip("'-")
         if len(tok) < 3 or tok in _GENERIC_TITLE_WORDS or tok in country_words or tok in out:
             continue
@@ -238,8 +245,45 @@ def activity_terms(activities) -> list[str]:
             if len(t) >= 4 and t not in _GENERIC_TITLE_WORDS]
 
 
+def _country_words() -> dict[str, str]:
+    """Lowercase country names/aliases (≥ 4 letters) → canonical country, from COUNTRY_MASTER."""
+    from shared.country_resolver import COUNTRY_MASTER
+    out: dict[str, str] = {}
+    for canonical, aliases in COUNTRY_MASTER.items():
+        for w in [canonical, *aliases]:
+            w = w.lower().replace("-", " ")
+            if len(w) >= 4:
+                out[w] = canonical
+    return out
+
+
+def has_word(term: str, text: str) -> bool:
+    """Whole-word match (plural / -ing / -er forms allowed) — "life" must not match "wildlife" or "nightlife"."""
+    return re.search(rf"(?<![a-z]){re.escape(term)}(?:s|es|ing|ers?)?(?![a-z])", text) is not None
+
+
+def foreign_country(keyword: str, country: str, place_terms: list[str] | None = None) -> str | None:
+    """The other country a keyword names ("village life bhutan" for a Korea tour), else None.
+    Countries the tour's own title names ("Nepal and Bhutan Tour") are allowed."""
+    if not country:
+        return None
+    words = _country_words()
+    allowed = {normalize_country(country)}
+    for t in place_terms or []:
+        if t in words:
+            allowed.add(words[t])
+    kw = keyword.lower()
+    for w, canonical in words.items():
+        if canonical not in allowed and has_word(w, kw):
+            return canonical
+    return None
+
+
+_TRANSFER_RE = re.compile(r"\b(transfers?|airport)\b", re.IGNORECASE)
+
+
 def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
-                       activity_words: list[str] | None = None) -> list[dict]:
+                       activity_words: list[str] | None = None, country: str = "") -> list[dict]:
     """AA-702 — keep only ideas about THIS tour: the idea names a place from the title (weak geo
     nouns like "valley"/"trek" don't count) or the tour's activity. Then real volume first, places
     before activity-only, by volume. Ideas without volume stay (after) — they are still this tour's
@@ -255,12 +299,15 @@ def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
         return str(i.get("keyword", "")).lower()
 
     def _place(i: dict) -> bool:
-        return any(t in _kw(i) for t in places)
+        return any(has_word(t, _kw(i)) for t in places)
 
     def _activity(i: dict) -> bool:
-        return any(t in _kw(i) for t in acts)
+        return any(has_word(t, _kw(i)) for t in acts)
 
-    relevant = [i for i in ideas if (_place(i) or _activity(i)) and not is_lodging_search(_kw(i))]
+    # S207 (Korea trial): whole words only, no other country (search_demand holds every country's
+    # research keywords), no airport transfers.
+    relevant = [i for i in ideas if (_place(i) or _activity(i)) and not is_lodging_search(_kw(i))
+                and not _TRANSFER_RE.search(_kw(i)) and not foreign_country(_kw(i), country, place_terms)]
     with_vol = sorted((i for i in relevant if _vol(i) > 0), key=lambda i: (not _place(i), -_vol(i)))
     without = [i for i in relevant if _vol(i) == 0]
     return (with_vol + without)[:cap]

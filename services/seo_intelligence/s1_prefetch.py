@@ -102,7 +102,7 @@ def candidates_for(batch: list[dict], spec: dict, ideas: list[dict]) -> list[dic
 def assign_ideas(batch: list[dict], ideas: list[dict]) -> dict[str, list[dict]]:
     """Ideas from one shared task, split back per tour with the substring relevance rule."""
     return {s["tour_id"]: rank_keyword_ideas(candidates_for(batch, s, ideas), s["places"],
-                                             activity_words=s["activity"])
+                                             activity_words=s["activity"], country=s["country"])
             for s in batch}
 
 
@@ -159,7 +159,8 @@ def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[
             q = q if isinstance(q, str) else (q.get("question") or q.get("title") or "")
             if q and q not in paa:
                 paa.append(q)
-    return rank_keyword_ideas(ideas, spec["places"], activity_words=spec["activity"]), paa[:10]
+    return rank_keyword_ideas(ideas, spec["places"], activity_words=spec["activity"],
+                              country=spec["country"]), paa[:10]
 
 
 async def fresh_tour_ids(conn, tour_ids: list[str]) -> set[str]:
@@ -274,7 +275,7 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             candidates += [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen]
         else:
             summary["from_research_cache"] += 1
-        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"])
+        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"], country=s["country"])
         # AA-706: Jev sees every candidate — research-cache ideas too (the pilot's "druk hotel paro"
         # came from search_demand and bypassed the question). Lodging searches never reach it.
         if jev:
@@ -335,7 +336,8 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
         # activity-only matches (cached_ideas needs a place) still count for the tenant's market
         acts = spec["activity"]
         ideas = rank_keyword_ideas([{"keyword": d["keyword"], "search_volume": d["search_volume"]}
-                                    for d in demand], spec["places"], activity_words=acts)
+                                    for d in demand], spec["places"], activity_words=acts,
+                                   country=spec["country"])
     top = [i["keyword"] for i in ideas if _vol(i) > 0][:10]
     if not top:
         return market, None

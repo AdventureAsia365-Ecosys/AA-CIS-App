@@ -346,6 +346,7 @@ class DataForSEOClient:
         extra_seeds: list[str] | None = None,
         place_terms: list[str] | None = None,
         activity_words: list[str] | None = None,
+        country: str = "",
     ) -> dict:
         # AA-653: with extra_seeds the ideas task below returns volume for the seeds too, so the
         # separate search_volume task (a full $0.09 task for ONE keyword) is not bought.
@@ -379,7 +380,8 @@ class DataForSEOClient:
             except Exception as e:
                 logger.warning("dfs_ideas_multi_failed", error=str(e))
                 keyword_ideas = []
-            keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [], activity_words=activity_words)
+            keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [], activity_words=activity_words,
+                                               country=country)
         else:
             keyword_ideas = await self.fetch_keyword_ideas(seed, location_code, language_code)
 

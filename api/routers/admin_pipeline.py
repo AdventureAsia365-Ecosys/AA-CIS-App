@@ -527,6 +527,7 @@ async def _execute_run_tour(
                     extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
                     place_terms=title_place_terms(row.get("src_name"), row.get("country")),
                     activity_words=activity_terms(row.get("activities")),
+                    country=row.get("country") or "",
                 )
                 seo_data = seo_result.get("data", {})
                 dataforseo_used = seo_result.get("status") == "fetched"
