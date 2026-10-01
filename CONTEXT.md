@@ -36,7 +36,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     view with a Dismiss action, AA-626), `master-content`, `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
-    `jobs`, `decisions` (**Jev Decisions**, AA-660), `settings` (pipeline gates, **Brand
+    `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `settings` (pipeline gates, **Brand
     Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
   - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
     Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
@@ -120,7 +120,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `shared/jobs/`: `queue.py` (enqueue with idempotency key, claim `FOR UPDATE SKIP LOCKED` under
     an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
     (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
-  - Job kinds live in `services/jobs/` (today: `segment_research`, concurrency 1).
+  - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
+    `s1_seo_prefetch`, `photo_sync`).
   - The worker loop runs **inside the API process** (lifespan, `JOB_WORKER_IN_API`, default on),
     Nghiệp's choice for low Dev traffic. `python -m shared.jobs.worker` runs it standalone; a
     separate ECS service is AA-651 (deferred).
@@ -168,6 +169,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
   any of these.
+
+- **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
+  Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
+  (`photos/<country>/<file id>-{1600,600}.webp`) and records `shared.place_photo`, matched to a tour
+  (folder name) and, on request, to a `shared.destinations` place (file name). Images are public via
+  `GET /content/photos/{id}?size=` (302 to presigned S3). With `match_destinations` it fills empty
+  `shared.destinations.cover_image_url` (read by the TripPlanner) — off until the destinations are
+  re-extracted from the rerun tours.
 
 ## Deploy & CI
 
