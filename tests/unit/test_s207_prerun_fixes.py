@@ -131,3 +131,45 @@ def test_departure_city_and_transfers_are_not_the_tour():
 def test_activity_matches_inflected_form():
     kept = _kept("Kang Yatse", "India", ["mountaineering in india"], acts='["Mountaineer"]')
     assert kept == ["mountaineering in india"]
+
+
+# ── S207 Taiwan trial: other countries' places from the research cache, seed tails ──
+
+def test_foreign_place_keywords_dropped():
+    from services.seo_intelligence import s1_prefetch as P
+    from services.seo_intelligence.seed_builder import rank_keyword_ideas
+    s = P.tour_spec({"tour_id": "x", "src_name": "Ancient Trails & Hot Springs", "country": "Taiwan",
+                     "activities": None})
+    ideas = [{"keyword": k, "search_volume": 100} for k in
+             ("ancient city of polonnaruwa", "paro hot stone bath", "gasa hot springs", "beitou hot springs")]
+    kept = rank_keyword_ideas(ideas, s["places"] + ["beitou"], country="Taiwan",
+                              foreign_places=frozenset({"polonnaruwa", "paro", "gasa"}))
+    assert [i["keyword"] for i in kept] == ["beitou hot springs"]
+
+
+def test_generic_title_words_alone_do_not_make_a_keyword_relevant():
+    from services.seo_intelligence import s1_prefetch as P
+    from services.seo_intelligence.seed_builder import rank_keyword_ideas
+    s = P.tour_spec({"tour_id": "x", "src_name": "Ancient Trails & Hot Springs", "country": "Taiwan",
+                     "activities": None})
+    assert rank_keyword_ideas([{"keyword": "ancient city wall", "search_volume": 50}], s["places"],
+                              country="Taiwan") == []
+
+
+def test_seed_drops_duration_and_guided_tail():
+    from services.seo_intelligence.seed_builder import build_seed
+    name = "Alishan Indigenous Culture and Tea Experiential Tour – 3-Days / 2-Nights (Guided)"
+    seed = build_seed("Taiwan", None, name)
+    assert seed == "Alishan Indigenous Culture and Tea Experiential Tour Taiwan"
+
+
+@pytest.mark.asyncio
+async def test_foreign_places_excludes_own_country_names():
+    from services.seo_intelligence import s1_prefetch as P
+
+    class C:
+        async def fetch(self, sql, *a):
+            return [{"n": "paro", "country": "Bhutan"}, {"n": "taipei", "country": "Taiwan"},
+                    {"n": "jiufen", "country": "Taiwan"}, {"n": "temple", "country": "Bhutan"}]
+    fp = await P.foreign_places(C(), "Taiwan")
+    assert fp == frozenset({"paro"})

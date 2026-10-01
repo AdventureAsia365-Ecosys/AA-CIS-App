@@ -102,7 +102,8 @@ def candidates_for(batch: list[dict], spec: dict, ideas: list[dict]) -> list[dic
 def assign_ideas(batch: list[dict], ideas: list[dict]) -> dict[str, list[dict]]:
     """Ideas from one shared task, split back per tour with the substring relevance rule."""
     return {s["tour_id"]: rank_keyword_ideas(candidates_for(batch, s, ideas), s["places"],
-                                             activity_words=s["activity"], country=s["country"])
+                                             activity_words=s["activity"], country=s["country"],
+                                             foreign_places=s.get("foreign"))
             for s in batch}
 
 
@@ -160,7 +161,7 @@ def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[
             if q and q not in paa:
                 paa.append(q)
     return rank_keyword_ideas(ideas, spec["places"], activity_words=spec["activity"],
-                              country=spec["country"]), paa[:10]
+                              country=spec["country"], foreign_places=spec.get("foreign")), paa[:10]
 
 
 async def fresh_tour_ids(conn, tour_ids: list[str]) -> set[str]:
@@ -215,6 +216,21 @@ async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa:
     })
 
 
+async def foreign_places(conn, country: str) -> frozenset[str]:
+    """Lowercase names of places in OTHER countries (shared.destinations, read only), minus names
+    that also exist in `country` and generic words. Empty on any error."""
+    from .seed_builder import _GENERIC_TITLE_WORDS, _WEAK_PLACE_WORDS
+    skip = _GENERIC_TITLE_WORDS | _WEAK_PLACE_WORDS
+    try:
+        rows = await conn.fetch("SELECT lower(name) AS n, country FROM shared.destinations")
+        own = {r["n"] for r in rows if r["country"] == country}
+        return frozenset(r["n"] for r in rows if r["country"] != country and r["n"] not in own
+                         and len(r["n"]) >= 4 and r["n"] not in skip)
+    except Exception as e:
+        logger.warning("foreign_places_unavailable", error=str(e)[:200])
+        return frozenset()
+
+
 async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
                    language_code: str, client=None, progress=None, pool=None, jev: bool = True) -> dict:
     """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary."""
@@ -222,6 +238,9 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
 
     specs = [tour_spec(r) for r in rows]
     specs = [s for s in specs if s["seed"]]
+    fp_by_country = {c: await foreign_places(conn, c) for c in {s["country"] for s in specs}}
+    for s in specs:
+        s["foreign"] = fp_by_country[s["country"]]
     fresh = await fresh_tour_ids(conn, [s["tour_id"] for s in specs])
     todo = [s for s in specs if s["tour_id"] not in fresh]
     market = LOCATION_CODE_TO_MARKET.get(location_code, "US")
@@ -275,7 +294,8 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             candidates += [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen]
         else:
             summary["from_research_cache"] += 1
-        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"], country=s["country"])
+        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"], country=s["country"],
+                                             foreign_places=s.get("foreign"))
         # AA-706: Jev sees every candidate — research-cache ideas too (the pilot's "druk hotel paro"
         # came from search_demand and bypassed the question). Lodging searches never reach it.
         if jev:
@@ -321,6 +341,7 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
     if not row:
         return market, None
     spec = tour_spec(dict(row))
+    spec["foreign"] = await foreign_places(conn, spec["country"])
     terms = strong_terms(spec["places"]) + spec["activity"]
     if not terms:
         return market, None
@@ -337,7 +358,7 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
         acts = spec["activity"]
         ideas = rank_keyword_ideas([{"keyword": d["keyword"], "search_volume": d["search_volume"]}
                                     for d in demand], spec["places"], activity_words=acts,
-                                   country=spec["country"])
+                                   country=spec["country"], foreign_places=spec.get("foreign"))
     top = [i["keyword"] for i in ideas if _vol(i) > 0][:10]
     if not top:
         return market, None
