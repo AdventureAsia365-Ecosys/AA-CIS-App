@@ -137,8 +137,10 @@ def first_activity(activities) -> str:
 
 def _seed_name(tour_name: str) -> str:
     """Tour title as a search phrase. An all-caps title ("LAYA-GASA TREK") is lowercased: nobody
-    searches in capitals and the S1 writer was handed "LAYA-GASA TREK Bhutan" as its keyword."""
-    n = " ".join((tour_name or "").split())
+    searches in capitals and the S1 writer was handed "LAYA-GASA TREK Bhutan" as its keyword. A code,
+    "(Guided)" and a duration tail ("– 3-Days / 2-Nights") are dropped (S207 Taiwan trial)."""
+    from services.photos.match import tour_title
+    n = " ".join(tour_title(tour_name or "").split())
     return n.lower() if n.isupper() else n
 
 
@@ -185,7 +187,9 @@ _GENERIC_TITLE_WORDS = frozenset("""
 _WEAK_PLACE_WORDS = frozenset(
     "valley lake lakes river rivers base camp island islands mountain mountains trek trekking hike "
     "hiking temple temples beach beaches coast village villages city cities park national road "
-    "railway rail cycling bicycle e-bicycle bike biking safari wildlife pass peak".split())
+    "railway rail cycling bicycle e-bicycle bike biking safari wildlife pass peak "
+    # S207 Taiwan trial: "Ancient Trails & Hot Springs" kept "ancient city of polonnaruwa" (Sri Lanka)
+    "ancient old hot spring springs trail trails tea culture heritage".split())
 # S207: no hyphen inside a token. "laya-gasa" stayed one term, so DataForSEO's "laya gasa trek"
 # never matched it and the Laya-Gasa trek kept no keyword idea at all.
 _TITLE_TOKEN = re.compile(r"[a-z][a-z']+")
@@ -282,8 +286,21 @@ def foreign_country(keyword: str, country: str, place_terms: list[str] | None = 
 _TRANSFER_RE = re.compile(r"\b(transfers?|airport)\b", re.IGNORECASE)
 
 
+def names_foreign_place(keyword: str, foreign_places) -> bool:
+    """Does the keyword name a place of another country (whole words)? `foreign_places` = lowercase
+    place names (shared.destinations of every other country). S207 Taiwan trial: "paro hot stone
+    bath", "gasa hot springs" (Bhutan) and "ancient city of polonnaruwa" (Sri Lanka) for a Taiwan tour —
+    no country word, so foreign_country() could not see them."""
+    if not foreign_places:
+        return False
+    text = f" {re.sub(r'[^a-z0-9]+', ' ', keyword.lower()).strip()} "
+    words = set(text.split())
+    return any((f" {p} " in text) if " " in p else (p in words) for p in foreign_places)
+
+
 def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
-                       activity_words: list[str] | None = None, country: str = "") -> list[dict]:
+                       activity_words: list[str] | None = None, country: str = "",
+                       foreign_places=None) -> list[dict]:
     """AA-702 — keep only ideas about THIS tour: the idea names a place from the title (weak geo
     nouns like "valley"/"trek" don't count) or the tour's activity. Then real volume first, places
     before activity-only, by volume. Ideas without volume stay (after) — they are still this tour's
@@ -307,7 +324,8 @@ def rank_keyword_ideas(ideas: list[dict], place_terms: list[str], cap: int = 25,
     # S207 (Korea trial): whole words only, no other country (search_demand holds every country's
     # research keywords), no airport transfers.
     relevant = [i for i in ideas if (_place(i) or _activity(i)) and not is_lodging_search(_kw(i))
-                and not _TRANSFER_RE.search(_kw(i)) and not foreign_country(_kw(i), country, place_terms)]
+                and not _TRANSFER_RE.search(_kw(i)) and not foreign_country(_kw(i), country, place_terms)
+                and not names_foreign_place(_kw(i), foreign_places)]
     with_vol = sorted((i for i in relevant if _vol(i) > 0), key=lambda i: (not _place(i), -_vol(i)))
     without = [i for i in relevant if _vol(i) == 0]
     return (with_vol + without)[:cap]

@@ -51,7 +51,7 @@ class _FakeDrive:
     async def list_children(self, folder_id):
         return self.tree.get(folder_id, [])
 
-    async def download(self, file_id):
+    async def download(self, file_id, thumbnail_link=None):
         return self.blobs[file_id]
 
 
@@ -219,3 +219,22 @@ async def test_sync_stops_after_consecutive_failures():
     tree = {"root": [_img(f"i{n}", f"p{n}.jpg") for n in range(12)]}
     with pytest.raises(S.DriveQuotaStop):
         await S.sync_folder(_Conn(), _FakeDrive(tree, {}), _S3(), country="Bhutan", root_id="root")
+
+
+@pytest.mark.asyncio
+async def test_download_prefers_thumbnail_link_then_media(monkeypatch):
+    import httpx
+    from services.photos import drive as Dr
+    monkeypatch.setattr(Dr, "MIN_DOWNLOAD_INTERVAL", 0)
+    hits = []
+
+    def handler(request):
+        hits.append(request.url.host)
+        if request.url.host == "lh3.googleusercontent.com":
+            assert str(request.url).endswith("=s2000")
+            return httpx.Response(200, content=b"thumb", headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, content=b"media")
+    c = Dr.DriveClient({"api_key": "k"}, http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert await c.download("f1", "https://lh3.googleusercontent.com/drive-storage/abc=s220") == b"thumb"
+    assert await c.download("f2") == b"media"
+    assert hits == ["lh3.googleusercontent.com", "www.googleapis.com"]

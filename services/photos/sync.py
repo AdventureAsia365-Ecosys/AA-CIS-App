@@ -142,7 +142,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             try:
                 if f.size and f.size > MAX_BYTES:
                     raise ValueError(f"file is {f.size} bytes (max {MAX_BYTES})")
-                data = await client.download(f.id)
+                data = await client.download(f.id, f.thumbnail_link)
                 sizes, w, h = await asyncio.to_thread(make_sizes, data)
                 keys = {name: s3_key(country, f.id, name) for name in SIZES}
                 for name, body in sizes.items():

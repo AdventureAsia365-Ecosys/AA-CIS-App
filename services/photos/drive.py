@@ -22,7 +22,8 @@ API = "https://www.googleapis.com/drive/v3"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 FOLDER_MIME = "application/vnd.google-apps.folder"
-_FIELDS = "nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)"
+_FIELDS = "nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,thumbnailLink)"
+THUMB_SIZE = 2000   # longest side requested from the image host (we store 1600w / 600w)
 # S207 first full sync: after ~100 downloads in a row Drive answered 403 for every file. Pace the
 # downloads and back off on rate-limit answers.
 MIN_DOWNLOAD_INTERVAL = 0.5
@@ -63,6 +64,7 @@ class DriveFile:
     mime_type: str
     modified_time: Optional[str]
     size: Optional[int]
+    thumbnail_link: Optional[str] = None
 
     @property
     def is_folder(self) -> bool:
@@ -127,7 +129,7 @@ class DriveClient:
             body = r.json()
             for f in body.get("files", []):
                 out.append(DriveFile(f["id"], f["name"], f.get("mimeType", ""), f.get("modifiedTime"),
-                                     int(f["size"]) if f.get("size") else None))
+                                     int(f["size"]) if f.get("size") else None, f.get("thumbnailLink")))
             page = body.get("nextPageToken")
             if not page:
                 return out
@@ -150,11 +152,23 @@ class DriveClient:
             await asyncio.sleep(delay)
         raise AssertionError("unreachable")
 
-    async def download(self, file_id: str) -> bytes:
+    async def download(self, file_id: str, thumbnail_link: Optional[str] = None) -> bytes:
+        """The image bytes. S207: Drive blocks `alt=media` from the ECS NAT IP for a while after ~100
+        downloads in a row (403, every file). The listing's thumbnailLink is served by the image host
+        (lh3.googleusercontent.com, not the Drive API quota) and takes a size suffix — use it first,
+        `alt=media` only when there is no link or the image host fails."""
         wait = self._last_download + MIN_DOWNLOAD_INTERVAL - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
         self._last_download = time.monotonic()
+        if thumbnail_link:
+            url = re.sub(r"=s\d+(-c)?$", "", thumbnail_link) + f"=s{THUMB_SIZE}"
+            try:
+                r = await self.http.get(url)
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                    return r.content
+            except httpx.HTTPError:
+                pass
         params, headers = await self._auth()
         params["alt"] = "media"
         return (await self._get(f"{API}/files/{file_id}", params, headers)).content
