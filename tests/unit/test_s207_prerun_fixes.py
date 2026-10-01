@@ -100,3 +100,34 @@ def test_mixed_case_title_unchanged():
     from services.seo_intelligence.seed_builder import build_seed
     assert build_seed("South Korea", None, "Korea's Coast-to-Coast Ride") == \
         "Korea's Coast-to-Coast Ride South Korea"
+
+
+# ── S207 Korea trial: wrong keywords that reached S1 ──
+
+def _kept(name, country, kws, acts=None):
+    from services.seo_intelligence import s1_prefetch as P
+    from services.seo_intelligence.seed_builder import rank_keyword_ideas
+    s = P.tour_spec({"tour_id": "x", "src_name": name, "country": country, "activities": acts})
+    return [i["keyword"] for i in rank_keyword_ideas([{"keyword": k, "search_volume": 100} for k in kws],
+                                                     s["places"], activity_words=s["activity"], country=country)]
+
+
+def test_life_is_generic_and_whole_words_only():
+    assert _kept("12 Day Life & Culture Of South Korea - Wednesday Departure", "South Korea",
+                 ["wildlife rescue center", "Jeju island nightlife", "night life in Jeju"]) == []
+
+
+def test_other_country_keyword_dropped_unless_title_names_it():
+    assert _kept("Bukchon Hanok Village Walk", "South Korea",
+                 ["bukchon hanok village", "village life bhutan bukchon"]) == ["bukchon hanok village"]
+    assert _kept("Nepal Tibet Bhutan Tour", "Nepal", ["tibet tour", "india tour packages"]) == ["tibet tour"]
+
+
+def test_departure_city_and_transfers_are_not_the_tour():
+    assert _kept("3D2N Gangwon Biking, Hiking & Surfing Tour from Seoul", "South Korea",
+                 ["jeju island from seoul", "seoul airport transfer", "surfing in gangwon"]) == ["surfing in gangwon"]
+
+
+def test_activity_matches_inflected_form():
+    kept = _kept("Kang Yatse", "India", ["mountaineering in india"], acts='["Mountaineer"]')
+    assert kept == ["mountaineering in india"]

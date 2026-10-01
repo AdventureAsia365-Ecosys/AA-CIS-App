@@ -48,6 +48,7 @@ async def process_seo(
     extra_seeds: list[str] | None = None,
     place_terms: list[str] | None = None,
     activity_words: list[str] | None = None,
+    country: str = "",
 ) -> dict:
     # "disabled" — skip SEO step entirely
     if seo_mode == "disabled":
@@ -171,6 +172,7 @@ async def process_seo(
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
             extra_seeds=extra_seeds, place_terms=place_terms, activity_words=activity_words,
+            country=country,
         )
         try:
             await cache.set(redis_seed_key, seo_data, ttl_seconds=_SEO_CACHE_TTL_SECONDS)
