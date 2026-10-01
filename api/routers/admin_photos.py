@@ -3,7 +3,8 @@
 Admin (`/admin/photos`, behind the admin BFF):
   - GET  /summary                 — per country: photos, matched to a tour / destination, unmatched,
                                      rejected, errors; destinations with a cover; the last sync job.
-  - GET  ""                       — photos, filter by country / status / tour folder.
+  - GET  ""                       — photos, filter by country / status / Drive folder.
+  - GET  /folders?country=        — Drive folders with photo / unmatched counts and matched tour.
   - GET  /destinations?country=   — destination names for the manual assign picker.
   - GET  /tours?country=          — active tours for the manual assign picker.
   - POST /sync                    — enqueue a `photo_sync` job (admin secret).
@@ -109,7 +110,7 @@ async def summary(request: Request):
 
 @router.get("", summary="AA-708 — list synced photos")
 async def list_photos(request: Request, country: Optional[str] = None, status: Optional[str] = None,
-                      tour_folder: Optional[str] = None, limit: int = Query(120, ge=1, le=500),
+                      folder_path: Optional[str] = None, limit: int = Query(120, ge=1, le=500),
                       offset: int = Query(0, ge=0)):
     if status and status not in STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {STATUSES}")
@@ -125,11 +126,24 @@ async def list_photos(request: Request, country: Optional[str] = None, status: O
               LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = p.tour_id
               LEFT JOIN shared.destinations d ON d.id = p.destination_id
              WHERE ($1::text IS NULL OR p.country = $1) AND ($2::text IS NULL OR p.status = $2)
-               AND ($3::text IS NULL OR p.tour_folder = $3)
+               AND ($3::text IS NULL OR p.folder_path = $3)
              ORDER BY p.country, p.tour_folder NULLS FIRST, p.file_name
-             LIMIT $4 OFFSET $5""", country, status, tour_folder, limit, offset)
+             LIMIT $4 OFFSET $5""", country, status, folder_path, limit, offset)
     total = rows[0]["total"] if rows else 0
     return {"total": total, "photos": [_photo(r) for r in rows]}
+
+
+@router.get("/folders", summary="AA-708 — Drive folders of a country with their match")
+async def folders(request: Request, country: str):
+    rows = await request.app.state.pool.fetch(
+        """SELECT p.folder_path, count(*) AS photos,
+                  count(*) FILTER (WHERE p.status = 'unmatched') AS unmatched,
+                  min(rt.src_name) FILTER (WHERE p.tour_id IS NOT NULL) AS tour_name,
+                  count(DISTINCT p.tour_id) AS tours
+             FROM shared.place_photo p
+             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = p.tour_id
+            WHERE p.country = $1 GROUP BY p.folder_path ORDER BY unmatched DESC, p.folder_path""", country)
+    return {"folders": [dict(r) for r in rows]}
 
 
 @router.get("/destinations", summary="AA-708 — destinations of a country (assign picker)")
@@ -177,6 +191,7 @@ class AssignRequest(BaseModel):
     tour_id: Optional[str] = None
     destination_id: Optional[str] = None
     reject: bool = False
+    whole_folder: bool = True   # a tour assignment applies to every photo in the same Drive folder
 
 
 @router.post("/{photo_id}/assign", summary="AA-708 — manual tour/destination assignment or reject")
@@ -189,7 +204,8 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
         raise HTTPException(status_code=422, detail="give tour_id and/or destination_id, or reject")
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        photo = await conn.fetchrow("SELECT country FROM shared.place_photo WHERE id = $1::uuid", pid)
+        photo = await conn.fetchrow(
+            "SELECT country, folder_path FROM shared.place_photo WHERE id = $1::uuid", pid)
         if not photo:
             raise HTTPException(status_code=404, detail="photo not found")
         if tour_id and not await conn.fetchval(
@@ -204,11 +220,21 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
             """UPDATE shared.place_photo SET tour_id = $2::uuid, destination_id = $3::uuid, status = $4,
                       match_source = 'manual', updated_at = now() WHERE id = $1::uuid""",
             pid, None if body.reject else tour_id, None if body.reject else dest_id, status)
+        folder_count = 1
+        if tour_id and not body.reject and body.whole_folder:
+            # Same tour for the rest of the folder; their own destination and rejections are kept.
+            res = await conn.execute(
+                """UPDATE shared.place_photo SET tour_id = $3::uuid, status = 'matched', match_source = 'manual',
+                          updated_at = now()
+                    WHERE country = $1 AND folder_path = $2 AND status <> 'rejected' AND id <> $4::uuid""",
+                photo["country"], photo["folder_path"], tour_id, pid)
+            folder_count += int(res.split()[-1])
         covers = 0
         if not body.reject and dest_id:
             from services.photos.sync import fill_destination_covers
             covers = await fill_destination_covers(conn)
-    return {"id": pid, "status": status, "tour_id": tour_id, "destination_id": dest_id, "covers_set": covers}
+    return {"id": pid, "status": status, "tour_id": tour_id, "destination_id": dest_id,
+            "photos_updated": folder_count if not body.reject else 1, "covers_set": covers}
 
 
 @public_router.get("/{photo_id}", summary="AA-708 — photo image (redirect to S3)", include_in_schema=False)

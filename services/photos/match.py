@@ -14,6 +14,14 @@ _EXT = re.compile(r"\.[a-z0-9]{2,5}$", re.IGNORECASE)
 _TRAILING = re.compile(r"(?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$", re.IGNORECASE)
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 TOUR_RATIO = 0.85
+TOKEN_SHARE = 0.9
+# Real CON folder names (01/10/2026): "Best of Bhutan - 9 days", "Dabajianshan Trek 3 Day / 2 Night
+# (Guided)", "GB-01 MANILA and SUBURBS - 4 hours", "Beijing, Xi'an and Shanghai — Nine Days".
+_CODE = re.compile(r"^\s*[A-Z]{2,4}\s*[-–]\s*\d+\s*")
+_PAREN = re.compile(r"\((?:guided|private|small group|self[- ]guided)[^)]*\)", re.IGNORECASE)
+_DURATION = re.compile(
+    r"\s*[-–—:|,]?\s*\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen)\s*-?\s*(?:days?|nights?|hours?|hrs?)\b.*$", re.IGNORECASE)
 
 
 def norm(text: str) -> str:
@@ -27,20 +35,40 @@ def place_label(file_name: str) -> str:
     return " ".join(re.sub(r"[_\-]+", " ", base).split())
 
 
-def match_tour(folder: Optional[str], tours: Iterable[tuple[str, str]]) -> Optional[str]:
-    """tour_id whose src_name is the folder name (exact after normalising, else one clear fuzzy best)."""
-    f = norm(folder or "")
+def tour_title(name: str) -> str:
+    """A folder or tour name without its code, "(Guided)" and duration tail."""
+    n = _PAREN.sub("", _CODE.sub("", (name or "").strip()))
+    short = _DURATION.sub("", n)
+    return (short if len(norm(short)) >= 4 else n).strip(" -–—:,")
+
+
+def _token_share(a: str, b: str) -> float:
+    ta, tb = set(a.split()), set(b.split())
+    return len(ta & tb) / max(1, min(len(ta), len(tb)))
+
+
+def match_tour(folder: Optional[str], tours: Iterable[tuple[str, ...]]) -> Optional[str]:
+    """tour_id named by the folder. `tours` rows are (tour_id, name, *other names) — the raw name and,
+    once written, the rewritten aa_name. Exact title wins; else one clear best by similarity, or all
+    words of the shorter title shared (≥ 3 words)."""
+    f = norm(tour_title(folder or ""))
     if len(f) < 4:
         return None
-    scored: list[tuple[float, str]] = []
-    for tid, name in tours:
-        n = norm(name)
-        if n == f:
-            return tid
-        scored.append((SequenceMatcher(None, f, n).ratio(), tid))
-    scored.sort(reverse=True)
-    if scored and scored[0][0] >= TOUR_RATIO and (len(scored) == 1 or scored[1][0] < scored[0][0] - 0.05):
-        return scored[0][1]
+    best: dict[str, float] = {}
+    for tid, *names in tours:
+        for name in names:
+            n = norm(tour_title(name or ""))
+            if not n:
+                continue
+            if n == f:
+                return tid
+            score = SequenceMatcher(None, f, n).ratio()
+            if min(len(f.split()), len(n.split())) >= 3 and _token_share(f, n) >= TOKEN_SHARE:
+                score = max(score, TOUR_RATIO)
+            best[tid] = max(best.get(tid, 0.0), score)
+    ranked = sorted(best.items(), key=lambda kv: -kv[1])
+    if ranked and ranked[0][1] >= TOUR_RATIO and (len(ranked) == 1 or ranked[1][1] < ranked[0][1] - 0.05):
+        return ranked[0][0]
     return None
 
 

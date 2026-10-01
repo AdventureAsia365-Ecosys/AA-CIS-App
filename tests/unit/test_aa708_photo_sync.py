@@ -22,6 +22,20 @@ def test_match_tour_exact_fuzzy_and_ambiguous():
     assert M.match_tour(None, tours) is None
 
 
+def test_tour_title_strips_real_folder_suffixes():
+    assert M.tour_title("Best of Bhutan - 9 days") == "Best of Bhutan"
+    assert M.tour_title("Dabajianshan Trek 3 Day / 2 Night (Guided)") == "Dabajianshan Trek"
+    assert M.tour_title("GB-01 MANILA and SUBURBS - 4 hours") == "MANILA and SUBURBS"
+    assert M.tour_title("Beijing, Xi'an and Shanghai — Nine Days") == "Beijing, Xi'an and Shanghai"
+
+
+def test_match_tour_uses_rewritten_name_and_word_share():
+    tours = [("k1", "Guided Seoul to Busan Bike Tour", "Seoul to Busan: Eight Days by Bicycle"),
+             ("b1", "BEST OF BHUTAN", None)]
+    assert M.match_tour("Seoul to Busan: Eight Days by Bicycle - 8 DAYS", tours) == "k1"
+    assert M.match_tour("Best of Bhutan - 9 days", tours) == "b1"
+
+
 def test_match_destination_longest_whole_word_unique():
     dests = [("d1", "Olkhon Island"), ("d2", "Olkhon"), ("d3", "Lake Baikal")]
     assert M.match_destination("Olkhon Island sunset", dests) == "d1"
@@ -76,7 +90,7 @@ class _Conn:
 
     async def fetch(self, sql, *a):
         if "raw_tours" in sql:
-            return [{"tour_id": "11111111-1111-1111-1111-111111111111", "src_name": "THE DRUK PATH"}]
+            return [{"tour_id": "11111111-1111-1111-1111-111111111111", "src_name": "THE DRUK PATH", "aa_name": None}]
         if "shared.destinations" in sql:
             return [{"id": "22222222-2222-2222-2222-222222222222", "name": "Tango Monastery"}]
         if "place_photo" in sql:
@@ -97,13 +111,15 @@ class _S3:
 
 @pytest.mark.asyncio
 async def test_sync_matches_tour_only_by_default_and_uploads_two_sizes():
-    tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
+    tree = {"root": [DriveFile("sup", "Wangchuk Tour&Trek", FOLDER_MIME, None, None)],
+            "sup": [DriveFile("f1", "The Druk Path - 8 days", FOLDER_MIME, None, None)],
             "f1": [_img("i1", "Tango Monastery1.jpg")]}
     conn, s3 = _Conn(), _S3()
     res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), s3, country="Bhutan", root_id="root")
     assert res["matched_tour"] == 1 and res["matched_destination"] == 0 and res["downloaded"] == 1
     assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp"]
     a = conn.writes[0]
+    assert a[4] == "The Druk Path - 8 days" and a[2] == "Wangchuk Tour&Trek › The Druk Path - 8 days"
     assert a[7] == "11111111-1111-1111-1111-111111111111" and a[8] is None and a[9] == "matched"
     assert a[-1] is False                                   # match_destinations off
 
