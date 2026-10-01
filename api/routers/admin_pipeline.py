@@ -1037,6 +1037,27 @@ async def run_tour(req: TourRunRequest, x_admin_secret: str = Header(None)):
     return await _execute_run_tour(req)
 
 
+class S1SeoPrefetchRequest(BaseModel):
+    tour_ids: list[str]
+    tenant_id: str = "00000000-0000-0000-0000-000000000001"
+
+
+@router.post("/s1/seo-prefetch")
+async def s1_seo_prefetch(req: S1SeoPrefetchRequest, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None)):
+    """AA-653: enqueue one `s1_seo_prefetch` job for the tours about to be rewritten, so their
+    DataForSEO data is bought in shared tasks (and reused for a year) instead of per tour."""
+    verify_admin_secret(x_admin_secret)
+    from shared.jobs.registry import enqueue
+    if not req.tour_ids:
+        raise HTTPException(status_code=422, detail="tour_ids is empty")
+    job_id, created = await enqueue(
+        request.app.state.pool, "s1_seo_prefetch",
+        {"tour_ids": req.tour_ids[:1000], "tenant_id": req.tenant_id},
+        created_by=f"admin:{x_admin_user_id or 'unknown'}")
+    return {"job_id": job_id, "created": created}
+
+
 @router.post("/run-tour-async")
 async def run_tour_async(req: TourRunRequest, x_admin_secret: str = Header(None)):
     """AA-223: 202 + job poll. Returns immediately; _run_tour_job runs the existing

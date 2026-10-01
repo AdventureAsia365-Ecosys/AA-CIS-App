@@ -347,11 +347,16 @@ class DataForSEOClient:
         place_terms: list[str] | None = None,
         activity_words: list[str] | None = None,
     ) -> dict:
-        try:
-            keywords = await self.fetch_keywords(seed, location_code, location_name, language_code)
-        except Exception as e:
-            logger.warning("dfs_keywords_failed", error=str(e))
+        # AA-653: with extra_seeds the ideas task below returns volume for the seeds too, so the
+        # separate search_volume task (a full $0.09 task for ONE keyword) is not bought.
+        if extra_seeds:
             keywords = {}
+        else:
+            try:
+                keywords = await self.fetch_keywords(seed, location_code, location_name, language_code)
+            except Exception as e:
+                logger.warning("dfs_keywords_failed", error=str(e))
+                keywords = {}
 
         paa: list[str] = []
         related: list[str] = []

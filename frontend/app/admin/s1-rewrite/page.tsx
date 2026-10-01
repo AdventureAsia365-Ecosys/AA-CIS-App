@@ -190,6 +190,7 @@ export default function S1RewritePage() {
   // (an explicit model_tier always wins over it in LLMClient). Was hardcoded "haiku", which
   // silently overrode whatever Settings said on every admin S1 run.
   const [modelTier, setModelTier]           = useState("");
+  const [seoPrefetch, setSeoPrefetch]       = useState<{ state: "running" | "done" | "failed"; text: string } | null>(null);
   const [s1Models, setS1Models]             = useState<{ current: string; options: { model_id: string; label: string }[] }>(
     { current: "", options: [] });
   const [brandList, setBrandList]           = useState<BrandSummary[]>([]);
@@ -378,6 +379,35 @@ export default function S1RewritePage() {
     }
   }
 
+  async function prefetchSeo(tourIds: string[]): Promise<void> {
+    setSeoPrefetch({ state: "running", text: `Fetching SEO data for ${tourIds.length} tours…` });
+    try {
+      const res = await fetch("/api/admin/s1/seo-prefetch", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tour_ids: tourIds, tenant_id: TENANT_ID }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { job_id } = await res.json();
+      const deadline = Date.now() + 15 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 4000));
+        const j = await (await fetch(`/api/admin/job-runner/jobs/${job_id}`)).json();
+        const st = j.status ?? j.job?.status;
+        if (["succeeded", "failed", "stopped_budget", "cancelled"].includes(st)) {
+          const r = j.result ?? j.job?.result ?? {};
+          setSeoPrefetch({ state: st === "succeeded" ? "done" : "failed",
+            text: st === "succeeded"
+              ? `SEO data ready — ${r.reused ?? 0} reused, ${r.from_research_cache ?? 0} from research cache, ${r.ideas_tasks ?? 0} paid keyword tasks, ${r.serp_calls ?? 0} SERP calls`
+              : `SEO prefetch ${st} — rewrites will fetch SEO per tour` });
+          return;
+        }
+      }
+      setSeoPrefetch({ state: "failed", text: "SEO prefetch still running — rewrites start anyway" });
+    } catch (e) {
+      setSeoPrefetch({ state: "failed", text: `SEO prefetch could not start — rewrites will fetch per tour (${String(e).slice(0, 80)})` });
+    }
+  }
+
   async function startRun() {
     setShowConfirm(false);
     setRunning(true);
@@ -393,6 +423,11 @@ export default function S1RewritePage() {
 
     queueRef.current = [...selectedTours];
     runTourIdsRef.current = selectedTours.map(t => t.tour_id);
+
+    // AA-653 — buy the selected tours' DataForSEO data in shared tasks first (reused for a year),
+    // so each rewrite below finds it and buys nothing. A failed prefetch only means the rewrites
+    // fetch per tour as before.
+    if (seoMode !== "minimal") await prefetchSeo(selectedTours.map(t => t.tour_id));
 
     const workerCount = Math.min(3, queueRef.current.length);
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
@@ -642,6 +677,12 @@ export default function S1RewritePage() {
               <div style={{ fontSize: 13, color: A.muted, marginTop: 4 }}>
                 {tours.length} tours total — select to rewrite with AI
               </div>
+              {seoPrefetch && (
+                <div style={{ fontSize: 12, marginTop: 6,
+                  color: seoPrefetch.state === "failed" ? A.red : seoPrefetch.state === "done" ? A.green : A.gold }}>
+                  {seoPrefetch.text}
+                </div>
+              )}
             </div>
             <Btn size="sm" variant="ghost" onClick={handleRefresh} style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <RefreshCw size={13} /> Refresh

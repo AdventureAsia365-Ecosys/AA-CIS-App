@@ -1,0 +1,244 @@
+"""AA-653 — S1 DataForSEO spend: long reuse + batched keyword ideas.
+
+Per tour, S1 used to buy three live DataForSEO tasks: search_volume for ONE keyword ($0.09 — DFS
+bills per task, up to 1,000 keywords), keywords_for_keywords ($0.09) and a SERP ($0.002). For the
+736-tour rerun that is ~$130. Now:
+
+1. **Reuse** — a tour's own `seo_context` row in the current format is reused for
+   `S1_SEO_REUSE_DAYS` (default 365): a master tour is not rewritten often, and search demand for a
+   trip changes slowly. Nothing is bought for a tour that already has one.
+2. **Research cache first** — `acp_contract.search_demand` (bought by Segment research) already
+   holds volumes + PAA for many places; ideas naming the tour's places are taken from there free.
+3. **Batch** — the remaining tours share keywords_for_keywords tasks (≤20 seeds per task, same
+   country together). Ideas are assigned back per tour with the same relevance rule as before
+   (title place / activity), and an idea naming another tour's place in the batch is not taken.
+4. **No separate search_volume task** — the ideas task returns volume for the seeds themselves.
+5. SERP stays per tour ($0.002) for People-Also-Ask, skipped when the research cache already has
+   PAA for the tour's places.
+"""
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timedelta
+
+import structlog
+
+from .seed_builder import (
+    LOCATION_CODE_TO_MARKET, _WEAK_PLACE_WORDS, activity_terms, build_seed, idea_seeds,
+    rank_keyword_ideas, title_place_terms,
+)
+
+logger = structlog.get_logger()
+
+SEO_FORMAT = "ideas_v3"          # marker in seo_context.cache_key for rows built this way
+REUSE_DAYS = int(os.environ.get("S1_SEO_REUSE_DAYS", "365"))
+MAX_SEEDS_PER_TASK = 20           # DFS keywords_for_keywords limit, same price for 1 or 20
+MIN_CACHED_IDEAS = 5              # research cache alone is enough when it has this many
+
+
+def cache_key(seed: str, location_code: int) -> str:
+    return f"seo:{seed.lower().replace(' ', '_')}:{location_code}:{SEO_FORMAT}"
+
+
+def strong_terms(places: list[str]) -> list[str]:
+    return [p for p in places if p and p not in _WEAK_PLACE_WORDS]
+
+
+def tour_spec(row: dict) -> dict:
+    """Seeds and relevance terms for one raw_tours row (pure)."""
+    acts = row.get("activities")
+    seeds = idea_seeds(row.get("country"), acts, row.get("src_name"))
+    seed = build_seed(row.get("country"), acts, row.get("src_name")) or row.get("src_name") or ""
+    return {
+        "tour_id": str(row["tour_id"]),
+        "country": row.get("country") or "",
+        "seed": seed,
+        "seeds": seeds or ([seed] if seed else []),
+        "places": title_place_terms(row.get("src_name"), row.get("country")),
+        "activity": activity_terms(acts),
+    }
+
+
+def plan_batches(specs: list[dict], max_seeds: int = MAX_SEEDS_PER_TASK) -> list[list[dict]]:
+    """Group tours into keywords_for_keywords tasks: same country together, ≤max_seeds seeds."""
+    batches: list[list[dict]] = []
+    by_country: dict[str, list[dict]] = {}
+    for s in specs:
+        by_country.setdefault(s["country"], []).append(s)
+    for country in sorted(by_country):
+        cur: list[dict] = []
+        n = 0
+        for s in by_country[country]:
+            k = len(s["seeds"][:max_seeds])
+            if cur and n + k > max_seeds:
+                batches.append(cur)
+                cur, n = [], 0
+            cur.append(s)
+            n += k
+        if cur:
+            batches.append(cur)
+    return batches
+
+
+def assign_ideas(batch: list[dict], ideas: list[dict]) -> dict[str, list[dict]]:
+    """Ideas from one shared task, split back per tour. An idea naming a strong place of another
+    tour in the batch (and none of this tour's) is not this tour's keyword."""
+    out: dict[str, list[dict]] = {}
+    for s in batch:
+        own = set(strong_terms(s["places"]))
+        others = {t for o in batch if o is not s for t in strong_terms(o["places"])} - own
+        mine = [i for i in ideas
+                if not any(t in str(i.get("keyword", "")).lower() for t in others)
+                or any(t in str(i.get("keyword", "")).lower() for t in own)]
+        out[s["tour_id"]] = rank_keyword_ideas(mine, s["places"], activity_words=s["activity"])
+    return out
+
+
+def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """(ideas, paa) for one tour from search_demand rows naming one of its strong places."""
+    terms = strong_terms(spec["places"])
+    if not terms:
+        return [], []
+    hits = [r for r in demand_rows if any(t in r["keyword"].lower() for t in terms)]
+    ideas = [{"keyword": r["keyword"], "search_volume": r["search_volume"], "competition": None,
+              "competition_index": None, "cpc": None, "source": "search_demand"} for r in hits]
+    paa: list[str] = []
+    for r in hits:
+        for q in (r.get("people_also_ask") or [])[:5]:
+            q = q if isinstance(q, str) else (q.get("question") or q.get("title") or "")
+            if q and q not in paa:
+                paa.append(q)
+    return rank_keyword_ideas(ideas, spec["places"], activity_words=spec["activity"]), paa[:10]
+
+
+async def fresh_tour_ids(conn, tour_ids: list[str]) -> set[str]:
+    """Tours whose seo_context is already in this format and younger than REUSE_DAYS."""
+    rows = await conn.fetch(
+        """SELECT tour_id::text FROM silver_aa_internal.seo_context
+            WHERE tour_id = ANY($1::uuid[]) AND cache_key LIKE $2
+              AND fetched_at > now() - make_interval(days => $3)""",
+        tour_ids, f"%:{SEO_FORMAT}", REUSE_DAYS)
+    return {r["tour_id"] for r in rows}
+
+
+async def load_fresh(conn, tour_id: str) -> dict | None:
+    """seo_data shaped like DataForSEOClient.fetch_all() from a reusable row, else None."""
+    row = await conn.fetchrow(
+        """SELECT keyword_search, keyword_ideas, top_keywords, people_also_ask, related_keywords
+             FROM silver_aa_internal.seo_context
+            WHERE tour_id = $1::uuid AND cache_key LIKE $2
+              AND fetched_at > now() - make_interval(days => $3)""",
+        tour_id, f"%:{SEO_FORMAT}", REUSE_DAYS)
+    if not row:
+        return None
+
+    def _j(v, default):
+        if v is None:
+            return default
+        return json.loads(v) if isinstance(v, str) else v
+    top = _j(row["top_keywords"], [])
+    return {
+        "keywords": {"top_keywords": top},
+        "keyword_ideas": _j(row["keyword_ideas"], []),
+        "people_also_ask": _j(row["people_also_ask"], []),
+        "related_keywords": _j(row["related_keywords"], []),
+        "destination": row["keyword_search"],
+    }
+
+
+async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa: list[str],
+                   related: list[str], tenant_id: str) -> None:
+    from shared.repository.seo_context_repository import SeoContextRepository
+    top = [i["keyword"] for i in ideas if (i.get("search_volume") or 0) > 0][:10] or [spec["seed"]]
+    await SeoContextRepository(conn).insert({
+        "tour_id": spec["tour_id"],
+        "tenant_id": tenant_id,
+        "keyword_search": spec["seed"],
+        "keyword_ideas": json.dumps(ideas, default=str),
+        "top_keywords": json.dumps(top),
+        "people_also_ask": json.dumps(paa, default=str),
+        "related_keywords": json.dumps(related, default=str),
+        "cache_key": cache_key(spec["seed"], location_code),
+        "expires_at": datetime.utcnow() + timedelta(days=REUSE_DAYS),
+    })
+
+
+async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
+                   language_code: str, client=None, progress=None) -> dict:
+    """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary."""
+    from .dataforseo_client import DataForSEOClient
+
+    specs = [tour_spec(r) for r in rows]
+    specs = [s for s in specs if s["seed"]]
+    fresh = await fresh_tour_ids(conn, [s["tour_id"] for s in specs])
+    todo = [s for s in specs if s["tour_id"] not in fresh]
+    market = LOCATION_CODE_TO_MARKET.get(location_code, "US")
+    demand = [dict(r) for r in await conn.fetch(
+        """SELECT keyword, search_volume, people_also_ask FROM acp_contract.search_demand
+            WHERE market = $1 AND search_volume > 0""", market)]
+    for d in demand:
+        if isinstance(d.get("people_also_ask"), str):
+            d["people_also_ask"] = json.loads(d["people_also_ask"])
+
+    summary = {"tours": len(specs), "reused": len(fresh), "from_research_cache": 0,
+               "ideas_tasks": 0, "serp_calls": 0}
+    cached: dict[str, tuple[list[dict], list[str]]] = {}
+    buy: list[dict] = []
+    for s in todo:
+        ideas, paa = cached_ideas(s, demand)
+        if len([i for i in ideas if (i.get("search_volume") or 0) > 0]) >= MIN_CACHED_IDEAS:
+            cached[s["tour_id"]] = (ideas, paa)
+        else:
+            buy.append(s)
+            if ideas:
+                cached[s["tour_id"]] = (ideas, paa)  # merged with bought ideas below
+
+    client = client or DataForSEOClient(tenant_id=tenant_id)
+    bought: dict[str, list[dict]] = {}
+    for batch in plan_batches(buy):
+        seeds: list[str] = []
+        for s in batch:
+            for sd in s["seeds"]:
+                if sd.casefold() not in {x.casefold() for x in seeds}:
+                    seeds.append(sd)
+        try:
+            ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
+                                                           language_code, limit=300)
+            summary["ideas_tasks"] += 1
+        except Exception as e:  # BudgetExceeded included: stop buying, keep what we have
+            from shared.cost_guard import BudgetExceeded
+            if isinstance(e, BudgetExceeded):
+                raise
+            logger.warning("s1_prefetch_ideas_failed", error=str(e)[:200], seeds=len(seeds))
+            ideas = []
+        bought.update(assign_ideas(batch, ideas))
+
+    done = 0
+    for s in todo:
+        ideas, paa = cached.get(s["tour_id"], ([], []))
+        if s["tour_id"] in bought:
+            seen = {i["keyword"].casefold() for i in ideas}
+            ideas = rank_keyword_ideas(
+                ideas + [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen],
+                s["places"], activity_words=s["activity"])
+        else:
+            summary["from_research_cache"] += 1
+        related: list[str] = []
+        if not paa:
+            try:
+                client.tour_id = s["tour_id"]
+                serp = await client._serp_advanced(s["seed"], location_code, language_code)
+                paa, related = client._parse_paa(serp), client._parse_related(serp)
+                summary["serp_calls"] += 1
+            except Exception as e:
+                from shared.cost_guard import BudgetExceeded
+                if isinstance(e, BudgetExceeded):
+                    raise
+                logger.warning("s1_prefetch_serp_failed", tour_id=s["tour_id"], error=str(e)[:200])
+        await _persist(conn, s, location_code, ideas[:25], paa, related, tenant_id)
+        done += 1
+        if progress is not None and done % 5 == 0:
+            await progress(done=done, total=len(todo))
+    logger.info("s1_prefetch_done", **summary)
+    return summary

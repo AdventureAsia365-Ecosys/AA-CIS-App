@@ -17,7 +17,7 @@ deletes in one transaction, child → parent, and only commits when every delete
 
 | | Tables |
 |---|---|
-| **Delete** | publish_log, content_piece, angle_gate_option/request, subject, debate_brand_fit_cache, tenant_atom_state, route_pick · atom_ranking, atom_embedding, atom_matches, atom_segment_member/alias, route, hub, atom_segment, atomize_day_fingerprint, s1_from_atom_runs, tour_atoms · review_queue, quality_scores, seo_context, tenant_tour_versions, published_tours, generated_content |
+| **Delete** | publish_log, content_piece, angle_gate_option/request, subject, debate_brand_fit_cache, tenant_atom_state, route_pick · atom_ranking, atom_embedding, atom_matches, atom_segment_member/alias, route, hub, atom_segment, atomize_day_fingerprint, s1_from_atom_runs, tour_atoms · review_queue, quality_scores, seo_context (old format only — `:ideas_v3` rows are the S1 SEO cache), tenant_tour_versions, published_tours, generated_content |
 | **Reset** | `raw_tours.pipeline_status → 'ingested'` (rows, `source_status`, `lifecycle_stage` untouched) |
 | **Keep** | raw_tours/raw_sources/upload_staging · tenants, brand rules, tenant config, competitor cache, facts, destinations · **search_demand, segment_research_log, question_embedding** (paid research cache) · all logs (llm_call_log, dfs_call_log, decision_log, job, pipeline_runs, notifications, audit_log) · Jev + model config · all `tripplanner.*` (no FK into CIS tours) |
 
@@ -44,16 +44,20 @@ Each wave:
 - UI: Dashboard, Master Content, Social Content 01–05, Jobs, Jev Decisions load without errors.
 
 ## 3. Cost estimate (from llm_call_log / dfs_call_log, 01/10/2026)
+S1 DataForSEO after AA-653 (S1 Rewrite runs an `s1_seo_prefetch` job first):
+- a tour with an `:ideas_v3` seo_context row younger than `S1_SEO_REUSE_DAYS` (365) buys nothing;
+- places already in `search_demand` (Segment research cache) are used free, PAA included;
+- the rest share `keywords_for_keywords` tasks (≤20 seeds, ~6–10 tours per $0.09 task); no separate
+  `search_volume` task; SERP $0.002 per tour for PAA.
+
 | Per tour | LLM | DataForSEO |
 |---|---|---|
-| S1 (generate + judge + fix + nudge + audit) | ~$0.07 | **~$0.18** (search volume + one ideas task + SERP) |
+| S1 (generate + judge + fix + nudge + audit) | ~$0.07 | ~$0.01–0.02 (was $0.18) |
 | A3 atomize | ~$0.05 | — |
 | Segment research | small | mostly cached (search_demand kept) |
 
-- **Bhutan wave:** ≈ $2.4 LLM + $6 DFS + $1.7 atomize ≈ **$10**.
-- **Full catalog (736):** ≈ $90 LLM + **≈ $130 DFS for S1 SEO** + research.
-- DFS balance is **$48** — the full rerun needs a top-up, or S1 SEO mode "Minimal" for part of the
-  catalog (decision for Nghiệp before wave 2).
+- **Bhutan wave:** ≈ $2.4 LLM + ≤ $0.7 DFS + $1.7 atomize ≈ **$5** — measure and update this table.
+- **Full catalog (736):** ≈ $90 LLM + ≈ $10–15 DFS for S1 + research. DFS balance $48 covers it.
 
 ## 4. Rollback
 Restore the pre-rerun snapshot to a new instance and swap the secret, or re-run S1 from raw — no
