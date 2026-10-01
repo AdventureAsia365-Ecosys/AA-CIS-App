@@ -135,6 +135,13 @@ def first_activity(activities) -> str:
     return ""
 
 
+def _seed_name(tour_name: str) -> str:
+    """Tour title as a search phrase. An all-caps title ("LAYA-GASA TREK") is lowercased: nobody
+    searches in capitals and the S1 writer was handed "LAYA-GASA TREK Bhutan" as its keyword."""
+    n = " ".join((tour_name or "").split())
+    return n.lower() if n.isupper() else n
+
+
 def build_seed(country_raw: str, activities, tour_name: str = "") -> str:
     """Complete DFS seed. Never produces a double 'tours'.
 
@@ -149,9 +156,10 @@ def build_seed(country_raw: str, activities, tour_name: str = "") -> str:
     a = first_activity(activities)
     if a and c:
         return f"{a} in {c}"
-    n = (tour_name or "").strip()
+    n = _seed_name(tour_name)
     if n:
-        return f"{n} {c}".strip() if c else n
+        # S207: "CULINARY GEMS OF BHUTAN" + "Bhutan" doubled the country in the seed.
+        return f"{n} {c}".strip() if c and c.casefold() not in n.casefold() else n
     if c:
         return f"{c} tours"
     return ""
@@ -177,7 +185,9 @@ _WEAK_PLACE_WORDS = frozenset(
     "valley lake lakes river rivers base camp island islands mountain mountains trek trekking hike "
     "hiking temple temples beach beaches coast village villages city cities park national road "
     "railway rail cycling bicycle e-bicycle bike biking safari wildlife pass peak".split())
-_TITLE_TOKEN = re.compile(r"[a-z][a-z'-]+")
+# S207: no hyphen inside a token. "laya-gasa" stayed one term, so DataForSEO's "laya gasa trek"
+# never matched it and the Laya-Gasa trek kept no keyword idea at all.
+_TITLE_TOKEN = re.compile(r"[a-z][a-z']+")
 
 
 def title_place_terms(tour_name: str, country_raw: str = "") -> list[str]:
@@ -206,6 +216,8 @@ def idea_seeds(country_raw: str, activities, tour_name: str = "") -> list[str]:
     places = title_place_terms(tour_name, country_raw)
     if places:
         seeds.append(f"{' '.join(places[:4])} {c}".strip())
+        if len(places) > 1:
+            seeds.append(" ".join(places[:4]))
     a = first_activity(activities)
     if a and c:
         seeds.append(f"{c} {a}")
