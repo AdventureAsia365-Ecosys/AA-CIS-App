@@ -32,6 +32,25 @@ from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
 logger = structlog.get_logger()
 
 
+def ecs_task_revision() -> Optional[int]:
+    """AA-711 — this task's ECS task-definition revision, from the task metadata endpoint v4
+    (`JOB_WORKER_TASK_REVISION` overrides it, for tests/local). None outside ECS."""
+    forced = os.environ.get("JOB_WORKER_TASK_REVISION")
+    if forced:
+        return int(forced)
+    uri = os.environ.get("ECS_CONTAINER_METADATA_URI_V4")
+    if not uri:
+        return None
+    try:
+        import json
+        import urllib.request
+        with urllib.request.urlopen(f"{uri}/task", timeout=2) as r:
+            return int(json.load(r).get("Revision"))
+    except Exception as e:
+        logger.warning("job_worker_revision_unknown", error=str(e)[:200])
+        return None
+
+
 class Worker:
     def __init__(self, pool, *, worker_id: Optional[str] = None, poll_seconds: float = 5.0,
                  lease_seconds: int = 90, heartbeat_seconds: float = 20.0,
@@ -50,6 +69,9 @@ class Worker:
         self._running: dict[str, asyncio.Task] = {}
         # AA-687: how often this worker writes its shared.job_worker row (liveness for the Jobs page).
         self.beat_every_seconds = 15.0
+        # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
+        self.task_revision = ecs_task_revision()
+        self.yielding = False
 
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
@@ -58,7 +80,7 @@ class Worker:
     async def run(self) -> None:
         logger.info("job_worker_started", worker_id=self.worker_id, kinds=sorted(self.caps()))
         await self._liveness(queue.worker_register, self.pool, self.worker_id, socket.gethostname(),
-                             self.max_parallel, self.caps())
+                             self.max_parallel, self.caps(), self.task_revision)
         last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
         while not self._stopping.is_set():
@@ -96,6 +118,12 @@ class Worker:
 
     async def _fill_slots(self) -> int:
         claimed = 0
+        if await queue.newer_worker_alive(self.pool, self.task_revision):
+            if not self.yielding:
+                logger.info("job_worker_yielding", worker_id=self.worker_id, task_revision=self.task_revision)
+                self.yielding = True
+            return 0
+        self.yielding = False
         while len(self._running) < self.max_parallel and not self._stopping.is_set():
             job = await queue.claim(self.pool, self.worker_id, self.caps(), self.lease_seconds)
             if job is None:
