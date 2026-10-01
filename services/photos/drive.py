@@ -23,7 +23,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 _FIELDS = "nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,thumbnailLink)"
-THUMB_SIZE = 2000   # longest side requested from the image host (we store 1600w / 600w)
+THUMB_SIZE = 0   # "=s0" = the original file, byte for byte (checked: 8256x5504, 14.26 MB both ways)
 # S207 first full sync: after ~100 downloads in a row Drive answered 403 for every file. Pace the
 # downloads and back off on rate-limit answers.
 MIN_DOWNLOAD_INTERVAL = 0.5
@@ -155,8 +155,9 @@ class DriveClient:
     async def download(self, file_id: str, thumbnail_link: Optional[str] = None) -> bytes:
         """The image bytes. S207: Drive blocks `alt=media` from the ECS NAT IP for a while after ~100
         downloads in a row (403, every file). The listing's thumbnailLink is served by the image host
-        (lh3.googleusercontent.com, not the Drive API quota) and takes a size suffix — use it first,
-        `alt=media` only when there is no link or the image host fails."""
+        (lh3.googleusercontent.com, not the Drive API quota); "=s0" returns the ORIGINAL file (same
+        size and bytes as alt=media) — use it first, `alt=media` only when there is no link or the
+        image host fails."""
         wait = self._last_download + MIN_DOWNLOAD_INTERVAL - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
