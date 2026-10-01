@@ -295,11 +295,13 @@ async def assign(photo_id: str, body: AssignRequest, request: Request, x_admin_s
 
 
 @public_router.get("/{photo_id}", summary="AA-708 — photo image (redirect to S3)", include_in_schema=False)
-async def photo_image(photo_id: str, request: Request, size: str = Query("large", pattern="^(large|small)$")):
+async def photo_image(photo_id: str, request: Request,
+                      size: str = Query("large", pattern="^(large|small|original)$")):
     pid = _uuid(photo_id, "photo_id")
     row = await request.app.state.pool.fetchrow(
-        "SELECT s3_key_large, s3_key_small FROM shared.place_photo WHERE id = $1::uuid AND status <> 'rejected'", pid)
-    key = row and row["s3_key_large" if size == "large" else "s3_key_small"]
+        """SELECT s3_key_large, s3_key_small, s3_key_original FROM shared.place_photo
+            WHERE id = $1::uuid AND status <> 'rejected'""", pid)
+    key = row and row[f"s3_key_{size}"]
     if not key:
         raise HTTPException(status_code=404, detail="photo not found")
     from services.photos.sync import photo_bucket

@@ -120,11 +120,12 @@ async def test_sync_matches_tour_only_by_default_and_uploads_two_sizes():
     conn, s3 = _Conn(), _S3()
     res = await S.sync_folder(conn, _FakeDrive(tree, {"i1": _jpeg()}), s3, country="Bhutan", root_id="root")
     assert res["matched_tour"] == 1 and res["matched_destination"] == 0 and res["downloaded"] == 1
-    assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp"]
+    assert sorted(s3.keys) == ["photos/bhutan/i1-1600.webp", "photos/bhutan/i1-600.webp", "photos/bhutan/i1-orig.jpg"]
     a = conn.writes[0]
     assert a[4] == "The Druk Path - 8 days" and a[2] == "Wangchuk Tour&Trek › The Druk Path - 8 days"
     assert a[7] == "11111111-1111-1111-1111-111111111111" and a[8] is None and a[9] == "matched"
-    assert a[-1] is False                                   # match_destinations off
+    assert a[-2] is False                                   # match_destinations off
+    assert a[-1] == "photos/bhutan/i1-orig.jpg"             # original kept (migration 202)
 
 
 @pytest.mark.asyncio
@@ -133,7 +134,8 @@ async def test_sync_matches_destination_when_asked_and_skips_unchanged_download(
     tree = {"root": [DriveFile("f1", "THE DRUK PATH", FOLDER_MIME, None, None)],
             "f1": [_img("i1", "Tango Monastery1.jpg")]}
     existing = [{"drive_file_id": "i1", "drive_modified_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
-                 "s3_key_small": "photos/bhutan/i1-600.webp", "match_source": "auto", "status": "matched"}]
+                 "s3_key_small": "photos/bhutan/i1-600.webp", "s3_key_original": "photos/bhutan/i1-orig.jpg",
+                 "match_source": "auto", "status": "matched"}]
     conn, s3 = _Conn(existing), _S3()
     res = await S.sync_folder(conn, _FakeDrive(tree, {}), s3, country="Bhutan", root_id="root",
                               match_destinations=True)
@@ -231,10 +233,27 @@ async def test_download_prefers_thumbnail_link_then_media(monkeypatch):
     def handler(request):
         hits.append(request.url.host)
         if request.url.host == "lh3.googleusercontent.com":
-            assert str(request.url).endswith("=s2000")
+            assert str(request.url).endswith("=s0")      # original file, no resize
             return httpx.Response(200, content=b"thumb", headers={"content-type": "image/jpeg"})
         return httpx.Response(200, content=b"media")
     c = Dr.DriveClient({"api_key": "k"}, http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     assert await c.download("f1", "https://lh3.googleusercontent.com/drive-storage/abc=s220") == b"thumb"
     assert await c.download("f2") == b"media"
     assert hits == ["lh3.googleusercontent.com", "www.googleapis.com"]
+
+
+@pytest.mark.asyncio
+async def test_row_without_original_is_downloaded_again():
+    from datetime import datetime, timezone
+    tree = {"root": [_img("i1", "Tango Monastery1.jpg")]}
+    existing = [{"drive_file_id": "i1", "drive_modified_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+                 "s3_key_small": "photos/bhutan/i1-600.webp", "s3_key_original": None,
+                 "match_source": "auto", "status": "unmatched"}]
+    s3 = _S3()
+    res = await S.sync_folder(_Conn(existing), _FakeDrive(tree, {"i1": _jpeg()}), s3, country="Bhutan", root_id="root")
+    assert res["downloaded"] == 1 and "photos/bhutan/i1-orig.jpg" in s3.keys
+
+
+def test_original_ext():
+    assert S.original_ext("A.JPEG", "image/jpeg") == "jpeg"
+    assert S.original_ext("noext", "image/png") == "png"

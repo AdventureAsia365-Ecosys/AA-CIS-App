@@ -49,9 +49,18 @@ def photo_bucket() -> str:
     return os.environ.get("PHOTO_BUCKET") or os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-005097885195")
 
 
-def s3_key(country: str, file_id: str, size: str) -> str:
+def s3_key(country: str, file_id: str, size: str, ext: str = "jpg") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", country.lower()).strip("-")
+    if size == "original":
+        return f"photos/{slug}/{file_id}-orig.{ext}"
     return f"photos/{slug}/{file_id}-{SIZES[size]}.webp"
+
+
+def original_ext(file_name: str, mime_type: str) -> str:
+    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "").lower()
+    if ext in ("jpg", "jpeg", "png", "webp", "gif", "heic", "tif", "tiff"):
+        return ext
+    return {"image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(mime_type, "jpg")
 
 
 def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
@@ -65,7 +74,7 @@ def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
             copy = im.copy()
             copy.thumbnail((width, width * 4))
             buf = io.BytesIO()
-            copy.save(buf, "WEBP", quality=82, method=4)
+            copy.save(buf, "WEBP", quality=85, method=4)
             out[name] = buf.getvalue()
     return out, w, h
 
@@ -114,7 +123,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
     # tripplanner.itinerary_components / tour_stop) — never with every place in the country.
     tour_places = await itinerary_places(conn, country) if match_destinations else {}
     existing = {r["drive_file_id"]: r for r in await conn.fetch(
-        """SELECT drive_file_id, drive_modified_at, s3_key_small, match_source, status
+        """SELECT drive_file_id, drive_modified_at, s3_key_small, s3_key_original, match_source, status
              FROM shared.place_photo WHERE drive_file_id = ANY($1::text[])""", [f.id for _, f in images])}
     c = {"country": country, "images": len(images), "downloaded": 0, "unchanged": 0, "matched_tour": 0,
          "matched_destination": 0, "unmatched": 0, "errors": 0, "tour_folders": len({p[-1] for p, _ in images if p})}
@@ -133,7 +142,9 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
         c["unmatched"] += status == "unmatched"
         old = existing.get(f.id)
         modified = _ts(f.modified_time)
-        fresh = bool(old and old["s3_key_small"] and old["drive_modified_at"] == modified)
+        # A row without the original (synced before migration 202) is downloaded once more.
+        fresh = bool(old and old["s3_key_small"] and old.get("s3_key_original")
+                     and old["drive_modified_at"] == modified)
         sizes_meta: dict = {}
         error = None
         if fresh:
@@ -148,7 +159,12 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                 for name, body in sizes.items():
                     await asyncio.to_thread(s3.put_object, Bucket=bucket, Key=keys[name], Body=body,
                                             ContentType="image/webp", CacheControl="public, max-age=31536000")
-                sizes_meta = {"s3_key_large": keys["large"], "s3_key_small": keys["small"], "width": w,
+                orig_key = s3_key(country, f.id, "original", original_ext(f.name, f.mime_type))
+                await asyncio.to_thread(s3.put_object, Bucket=bucket, Key=orig_key, Body=data,
+                                        ContentType=f.mime_type or "image/jpeg",
+                                        CacheControl="public, max-age=31536000")
+                sizes_meta = {"s3_key_original": orig_key,
+                              "s3_key_large": keys["large"], "s3_key_small": keys["small"], "width": w,
                               "height": h, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
                 c["downloaded"] += 1
                 consecutive_errors = 0
@@ -164,10 +180,10 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             """
             INSERT INTO shared.place_photo (drive_file_id, drive_root_id, folder_path, country, tour_folder,
                 file_name, place_label, tour_id, destination_id, status, s3_key_large, s3_key_small, width,
-                height, bytes, sha256, drive_modified_at, error, synced_at)
+                height, bytes, sha256, drive_modified_at, error, synced_at, s3_key_original)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid,
                     CASE WHEN $18::text IS NOT NULL AND $11::text IS NULL THEN 'error' ELSE $10 END,
-                    $11, $12, $13, $14, $15, $16, $17, $18, now())
+                    $11, $12, $13, $14, $15, $16, $17, $18, now(), $21)
             ON CONFLICT (drive_file_id) DO UPDATE SET
                 folder_path = EXCLUDED.folder_path, tour_folder = EXCLUDED.tour_folder,
                 file_name = EXCLUDED.file_name, place_label = EXCLUDED.place_label,
@@ -182,6 +198,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                               ELSE EXCLUDED.status END,
                 s3_key_large = coalesce($11, place_photo.s3_key_large),
                 s3_key_small = coalesce($12, place_photo.s3_key_small),
+                s3_key_original = coalesce($21, place_photo.s3_key_original),
                 width = coalesce($13, place_photo.width), height = coalesce($14, place_photo.height),
                 bytes = coalesce($15, place_photo.bytes), sha256 = coalesce($16, place_photo.sha256),
                 drive_modified_at = CASE WHEN $18::text IS NULL THEN EXCLUDED.drive_modified_at
@@ -191,7 +208,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
             f.id, root_id, " › ".join(path), country, tour_folder, f.name, label, tour_id, dest_id, status,
             sizes_meta.get("s3_key_large"), sizes_meta.get("s3_key_small"), sizes_meta.get("width"),
             sizes_meta.get("height"), sizes_meta.get("bytes"), sizes_meta.get("sha256"),
-            modified, error, keep_match, match_destinations)
+            modified, error, keep_match, match_destinations, sizes_meta.get("s3_key_original"))
         if progress and (n % 10 == 0 or n == len(images)):
             await progress(step=country, done=n, total=len(images))
         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
