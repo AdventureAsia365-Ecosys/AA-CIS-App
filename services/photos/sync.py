@@ -76,9 +76,13 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
     images = await walk(client, root_id)
     if limit:
         images = images[:limit]
-    tours = [(str(r["tour_id"]), r["src_name"]) for r in await conn.fetch(
-        """SELECT tour_id, src_name FROM silver_aa_internal.raw_tours
-            WHERE country = $1 AND source_status = 'active' AND deleted_at IS NULL""", country)]
+    # Folder names are often the rewritten (aa_name) title, so the latest written name counts too.
+    tours = [(str(r["tour_id"]), r["src_name"], r["aa_name"]) for r in await conn.fetch(
+        """SELECT rt.tour_id, rt.src_name,
+                  (SELECT gc.aa_name FROM silver_aa_internal.generated_content gc
+                    WHERE gc.tour_id = rt.tour_id ORDER BY gc.created_at DESC LIMIT 1) AS aa_name
+             FROM silver_aa_internal.raw_tours rt
+            WHERE rt.country = $1 AND rt.source_status = 'active' AND rt.deleted_at IS NULL""", country)]
     # Destinations are matched only on request: on 01/10/2026 shared.destinations still held the
     # places extracted from the tours published BEFORE the S207 reset. Match again (no re-download)
     # once the rerun tours are rewritten, atomized and re-extracted (Nghiệp, S207).
@@ -88,11 +92,12 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
         """SELECT drive_file_id, drive_modified_at, s3_key_small, match_source, status
              FROM shared.place_photo WHERE drive_file_id = ANY($1::text[])""", [f.id for _, f in images])}
     c = {"country": country, "images": len(images), "downloaded": 0, "unchanged": 0, "matched_tour": 0,
-         "matched_destination": 0, "unmatched": 0, "errors": 0, "tour_folders": len({p[0] for p, _ in images if p})}
+         "matched_destination": 0, "unmatched": 0, "errors": 0, "tour_folders": len({p[-1] for p, _ in images if p})}
     bucket = photo_bucket()
 
     for n, (path, f) in enumerate(images, 1):
-        tour_folder = path[0] if path else None
+        # The folder holding the image is the tour (Bhutan has a supplier level above it).
+        tour_folder = path[-1] if path else None
         label = place_label(f.name)
         tour_id = match_tour(tour_folder, tours)
         dest_id = match_destination(label, dests)
@@ -155,7 +160,7 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
                                          ELSE place_photo.drive_modified_at END,
                 error = $18, synced_at = now(), updated_at = now()
             """,
-            f.id, root_id, "/".join(path), country, tour_folder, f.name, label, tour_id, dest_id, status,
+            f.id, root_id, " › ".join(path), country, tour_folder, f.name, label, tour_id, dest_id, status,
             sizes_meta.get("s3_key_large"), sizes_meta.get("s3_key_small"), sizes_meta.get("width"),
             sizes_meta.get("height"), sizes_meta.get("bytes"), sizes_meta.get("sha256"),
             modified, error, keep_match, match_destinations)

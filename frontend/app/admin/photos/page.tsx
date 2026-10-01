@@ -23,6 +23,7 @@ type Photo = {
   height: number | null; error: string | null; url_small: string | null; url_large: string | null;
 };
 type Option = { id: string; name: string };
+type Folder = { folder_path: string; photos: number; unmatched: number; tour_name: string | null; tours: number };
 
 const STATUS_COLOR: Record<string, "green" | "amber" | "gray" | "red"> = {
   matched: "green", unmatched: "amber", rejected: "gray", error: "red",
@@ -40,6 +41,8 @@ export default function PhotosPage() {
   const [total, setTotal] = useState(0);
   const [country, setCountry] = useState("");
   const [status, setStatus] = useState("unmatched");
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [folder, setFolder] = useState("");
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -59,15 +62,23 @@ export default function PhotosPage() {
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
     if (country) qs.set("country", country);
     if (status) qs.set("status", status);
+    if (folder) qs.set("folder_path", folder);
     const r = await fetch(`/api/admin/photos?${qs}`);
     if (!r.ok) { setError(`Photos failed (${r.status})`); return; }
     const body = await r.json();
     setPhotos(body.photos);
     setTotal(body.total);
-  }, [country, status, offset]);
+  }, [country, status, folder, offset]);
+
+  const loadFolders = useCallback(async () => {
+    if (!country) { setFolders([]); return; }
+    const r = await fetch(`/api/admin/photos/folders?country=${encodeURIComponent(country)}`);
+    setFolders(r.ok ? (await r.json()).folders : []);
+  }, [country]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadPhotos(); }, [loadPhotos]);
+  useEffect(() => { loadFolders(); }, [loadFolders]);
 
   async function syncNow() {
     if (!window.confirm("Sync all CON photo folders from Google Drive now?")) return;
@@ -94,12 +105,12 @@ export default function PhotosPage() {
     try {
       const r = await fetch(`/api/admin/photos/${p.id}/assign`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reject ? { reject: true } : { tour_id: pickTour || null }),
+        body: JSON.stringify(reject ? { reject: true } : { tour_id: pickTour || null, whole_folder: true }),
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) { setError(`Assign failed: ${body.detail ?? r.status}`); return; }
       setAssigning(null);
-      await Promise.all([loadPhotos(), loadSummary()]);
+      await Promise.all([loadPhotos(), loadSummary(), loadFolders()]);
     } finally { setBusy(null); }
   }
 
@@ -145,6 +156,7 @@ export default function PhotosPage() {
           ) : <div style={{ fontSize: 13, color: A.muted }}>No sync yet.</div>}
           <div style={{ fontSize: 12, color: A.muted, marginTop: 8 }}>
             Destination matching and TripPlanner cover images are off until the rerun tours are re-extracted.
+            Assigning a tour applies to every photo in the same Drive folder.
           </div>
         </Card>
 
@@ -158,7 +170,7 @@ export default function PhotosPage() {
             <tbody>
               {countries.length === 0 && <tr><td style={TD} colSpan={9}>No photos synced yet.</td></tr>}
               {countries.map(c => (
-                <tr key={c.country} onClick={() => { setCountry(c.country); setOffset(0); }} style={{ cursor: "pointer", background: c.country === country ? A.accentTint : undefined }}>
+                <tr key={c.country} onClick={() => { setCountry(c.country); setFolder(""); setOffset(0); }} style={{ cursor: "pointer", background: c.country === country ? A.accentTint : undefined }}>
                   <td style={{ ...TD, fontWeight: 600 }}>{c.country}</td>
                   <td style={{ ...TD, fontFamily: mono }}>{c.photos}</td>
                   <td style={{ ...TD, fontFamily: mono }}>{c.tour_folders}</td>
@@ -175,7 +187,7 @@ export default function PhotosPage() {
         </Card>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-          <select value={country} onChange={e => { setCountry(e.target.value); setOffset(0); }} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}` }}>
+          <select value={country} onChange={e => { setCountry(e.target.value); setFolder(""); setOffset(0); }} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}` }}>
             <option value="">All countries</option>
             {countries.map(c => <option key={c.country} value={c.country}>{c.country}</option>)}
           </select>
@@ -183,6 +195,16 @@ export default function PhotosPage() {
             <option value="">All statuses</option>
             {Object.keys(STATUS_COLOR).map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          {country && (
+            <select value={folder} onChange={e => { setFolder(e.target.value); setOffset(0); }} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${A.line}`, maxWidth: 420 }}>
+              <option value="">All folders ({folders.length})</option>
+              {folders.map(f => (
+                <option key={f.folder_path} value={f.folder_path}>
+                  {f.folder_path} — {f.photos} photos{f.unmatched ? `, ${f.unmatched} unmatched` : ""}{f.tour_name ? ` → ${f.tour_name}` : ""}
+                </option>
+              ))}
+            </select>
+          )}
           <span style={{ fontSize: 12.5, color: A.muted }}>{total} photos</span>
           <div style={{ flex: 1 }} />
           <Btn size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>Prev</Btn>
@@ -218,7 +240,7 @@ export default function PhotosPage() {
                   </div>
                 ) : (
                   <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                    <Btn size="sm" onClick={() => openAssign(p)}>Assign tour</Btn>
+                    <Btn size="sm" onClick={() => openAssign(p)}>Assign folder to tour</Btn>
                     {p.status !== "rejected" && <Btn size="sm" variant="ghost" disabled={busy === p.id} onClick={() => assign(p, true)}>Reject</Btn>}
                   </div>
                 )}
