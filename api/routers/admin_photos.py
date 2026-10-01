@@ -84,6 +84,9 @@ async def summary(request: Request):
                    count(*) FILTER (WHERE status = 'error') AS errors,
                    count(DISTINCT tour_folder) AS tour_folders,
                    count(DISTINCT tour_id) FILTER (WHERE status = 'matched') AS tours_covered,
+                   count(*) FILTER (WHERE s3_key_small IS NOT NULL) AS with_file,
+                   coalesce(sum(bytes) FILTER (WHERE s3_key_small IS NOT NULL), 0) AS source_bytes,
+                   count(*) FILTER (WHERE match_source = 'manual') AS manual,
                    max(synced_at) AS last_synced
               FROM shared.place_photo GROUP BY country ORDER BY country""")
         covers = {r["country"]: (r["n"], r["with_cover"]) for r in await conn.fetch(
@@ -95,20 +98,31 @@ async def summary(request: Request):
         job = await conn.fetchrow(
             """SELECT id, status, created_at, finished_at, result, error FROM shared.job
                 WHERE kind = 'photo_sync' ORDER BY created_at DESC LIMIT 1""")
+    # S207 redesign: every country with active tours is listed, with or without photos yet.
+    by_country = {r["country"]: dict(r) for r in rows}
+    empty = {"photos": 0, "with_tour": 0, "with_destination": 0, "unmatched": 0, "rejected": 0, "errors": 0,
+             "tour_folders": 0, "tours_covered": 0, "with_file": 0, "source_bytes": 0, "manual": 0,
+             "last_synced": None}
+    from services.photos.sync import CON_FOLDERS
     countries = []
-    for r in rows:
-        d = dict(r)
+    for c in sorted(set(by_country) | set(tours)):
+        d = by_country.get(c) or {"country": c, **empty}
         d["last_synced"] = d["last_synced"].isoformat() if d["last_synced"] else None
-        d["destinations"], d["destinations_with_cover"] = covers.get(r["country"], (0, 0))
-        d["active_tours"] = tours.get(r["country"], 0)
+        d["source_bytes"] = int(d["source_bytes"] or 0)
+        d["destinations"], d["destinations_with_cover"] = covers.get(c, (0, 0))
+        d["active_tours"] = tours.get(c, 0)
+        d["has_drive_folder"] = any(f["country"] == c for f in CON_FOLDERS)
         countries.append(d)
+    keys = ("photos", "with_file", "with_tour", "unmatched", "rejected", "errors", "tours_covered",
+            "active_tours", "source_bytes", "destinations", "destinations_with_cover", "manual", "tour_folders")
+    totals = {k: sum(int(d[k] or 0) for d in countries) for k in keys}
     last_job = None
     if job:
         last_job = {"id": str(job["id"]), "status": job["status"], "error": job["error"],
                     "created_at": job["created_at"].isoformat() if job["created_at"] else None,
                     "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
                     "result": job["result"]}
-    return {"countries": countries, "last_job": last_job}
+    return {"countries": countries, "totals": totals, "last_job": last_job}
 
 
 @router.get("", summary="AA-708 — list synced photos")
@@ -136,17 +150,57 @@ async def list_photos(request: Request, country: Optional[str] = None, status: O
     return {"total": total, "photos": [_photo(r) for r in rows]}
 
 
-@router.get("/folders", summary="AA-708 — Drive folders of a country with their match")
-async def folders(request: Request, country: str):
+def _url(photo_id, size: str = "small") -> str:
+    from services.photos.sync import public_base
+    return f"{public_base()}/content/photos/{photo_id}?size={size}"
+
+
+@router.get("/folders", summary="AA-708 — Drive folders with their match and sample photos")
+async def folders(request: Request, country: Optional[str] = None):
     rows = await request.app.state.pool.fetch(
-        """SELECT p.folder_path, count(*) AS photos,
+        """SELECT p.country, p.folder_path, max(p.tour_folder) AS tour_folder, count(*) AS photos,
                   count(*) FILTER (WHERE p.status = 'unmatched') AS unmatched,
+                  count(*) FILTER (WHERE p.status = 'error') AS errors,
+                  count(*) FILTER (WHERE p.status = 'matched') AS matched,
                   min(rt.src_name) FILTER (WHERE p.tour_id IS NOT NULL) AS tour_name,
-                  count(DISTINCT p.tour_id) AS tours
+                  min(p.tour_id::text) FILTER (WHERE p.tour_id IS NOT NULL) AS tour_id,
+                  count(DISTINCT p.tour_id) AS tours,
+                  bool_or(p.match_source = 'manual') AS manual,
+                  (array_agg(p.id::text ORDER BY p.file_name) FILTER (WHERE p.s3_key_small IS NOT NULL))[1:4] AS sample
              FROM shared.place_photo p
              LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = p.tour_id
-            WHERE p.country = $1 GROUP BY p.folder_path ORDER BY unmatched DESC, p.folder_path""", country)
-    return {"folders": [dict(r) for r in rows]}
+            WHERE ($1::text IS NULL OR p.country = $1)
+            GROUP BY p.country, p.folder_path ORDER BY p.country, unmatched DESC, p.folder_path""", country)
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["sample"] = [_url(i) for i in (d["sample"] or [])]
+        out.append(d)
+    return {"folders": out}
+
+
+@router.get("/tour-coverage", summary="AA-708 — photos per active tour (gaps first)")
+async def tour_coverage(request: Request, country: Optional[str] = None, only_missing: bool = False):
+    rows = await request.app.state.pool.fetch(
+        """SELECT rt.tour_id::text AS tour_id, rt.src_name, rt.country, rt.duration,
+                  EXISTS (SELECT 1 FROM gold_aa_internal.published_tours pt WHERE pt.tour_id = rt.tour_id) AS published,
+                  count(p.id) AS photos,
+                  (array_agg(p.id::text ORDER BY (p.match_source = 'manual') DESC, p.file_name)
+                     FILTER (WHERE p.id IS NOT NULL))[1:4] AS sample
+             FROM silver_aa_internal.raw_tours rt
+             LEFT JOIN shared.place_photo p
+                    ON p.tour_id = rt.tour_id AND p.status = 'matched' AND p.s3_key_small IS NOT NULL
+            WHERE rt.source_status = 'active' AND rt.deleted_at IS NULL
+              AND ($1::text IS NULL OR rt.country = $1)
+            GROUP BY rt.tour_id, rt.src_name, rt.country, rt.duration
+           HAVING NOT $2 OR count(p.id) = 0
+            ORDER BY rt.country, count(p.id), rt.src_name""", country, only_missing)
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["sample"] = [_url(i) for i in (d["sample"] or [])]
+        out.append(d)
+    return {"tours": out, "with_photos": sum(1 for d in out if d["photos"]), "total": len(out)}
 
 
 @router.get("/destinations", summary="AA-708 — destinations of a country (assign picker)")
