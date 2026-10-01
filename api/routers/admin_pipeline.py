@@ -107,17 +107,28 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
     Idempotent: the NOT EXISTS guard skips re-insert when a pending row already exists for this
     generated_content_id (guards pipeline re-runs against double-enqueue). SF columns are left
     NULL — that NULL is what marks the admin/direct-export path picked up by approve_review.
+
+    AA-653 (S207): a tour that already has a live version in Master Content enters the queue
+    'dismissed', not 'pending'. Reviewers only work on tours with nothing published; a better
+    version of a published tour comes from Regenerate, not from hand-editing a failed one. The
+    row is still written (soft) so the failed attempt stays traceable.
     """
     await conn.execute("""
         INSERT INTO silver_aa_internal.review_queue (
             tour_id, generated_content_id, tenant_id,
-            failure_summary, score_overall, review_status
+            failure_summary, score_overall, review_status, reviewed_at
         )
-        SELECT $1::uuid, $2::uuid, $3::uuid, $4, $5, 'pending'
+        SELECT $1::uuid, $2::uuid, $3::uuid, $4, $5,
+               (CASE WHEN pub.live THEN 'dismissed' ELSE 'pending' END)::review_status_enum,
+               CASE WHEN pub.live THEN NOW() END
+        FROM (SELECT EXISTS (
+                SELECT 1 FROM gold_aa_internal.published_tours pt
+                WHERE pt.tour_id = $1::uuid AND pt.master_status <> 'trashed'
+             ) AS live) pub
         WHERE NOT EXISTS (
             SELECT 1 FROM silver_aa_internal.review_queue
             WHERE generated_content_id = $2::uuid
-              AND review_status = 'pending'
+              AND review_status IN ('pending', 'dismissed')
         )
     """,
         tour_id,
