@@ -21,7 +21,8 @@ def test_title_place_terms_strip_generic_words_numbers_and_country():
 
 def test_idea_seeds_specific_then_places_no_generic_country_seed():
     assert idea_seeds("India", None, "Kang Yatse 2 and the Lhato Valley") == [
-        "Kang Yatse 2 and the Lhato Valley India", "kang yatse lhato valley India"]
+        "Kang Yatse 2 and the Lhato Valley India", "kang yatse lhato valley India",
+        "kang yatse lhato valley"]  # S207: the place phrase without the country as well
     # no place words in the title and no activity -> only the specific seed
     assert idea_seeds("Sri Lanka", None, "Classic Exploration") == ["Classic Exploration Sri Lanka"]
 
@@ -32,7 +33,8 @@ def test_activities_json_string_reaches_the_seed():
     assert build_seed("India", '["Mountaineer"]', "Kang Yatse") == "Mountaineer in India"
     assert activity_terms('["Wildlife Safari"]') == ["wildlife", "safari"]
     assert idea_seeds("India", '["Mountaineer"]', "Kang Yatse 2 and the Lhato Valley") == [
-        "Mountaineer in India", "kang yatse lhato valley India", "India Mountaineer"]
+        "Mountaineer in India", "kang yatse lhato valley India", "kang yatse lhato valley",
+        "India Mountaineer"]
 
 
 def test_rank_keyword_ideas_drops_generic_country_ideas():

@@ -76,3 +76,27 @@ async def test_single_seed_title_uses_multi_path_without_search_volume():
     out = await client.fetch_all("LAYA-GASA TREK Bhutan", extra_seeds=[], place_terms=["laya-gasa"])
     assert out["keywords"]["top_keywords"] == ["LAYA-GASA TREK Bhutan"]
     client.fetch_keyword_ideas_multi.assert_awaited_once()
+
+
+# ── S207 pilot 2: seeds for hyphenated / all-caps / country-in-title tour names ──
+
+def test_hyphenated_title_splits_into_place_terms_and_matches_spaced_ideas():
+    from services.seo_intelligence.seed_builder import rank_keyword_ideas, title_place_terms
+    places = title_place_terms("LAYA-GASA TREK", "Bhutan")
+    assert places[:2] == ["laya", "gasa"]
+    kept = rank_keyword_ideas([{"keyword": "laya gasa trek", "search_volume": 90},
+                               {"keyword": "bhutan trek", "search_volume": 900}], places)
+    assert [i["keyword"] for i in kept] == ["laya gasa trek"]
+
+
+def test_all_caps_title_is_lowercased_and_country_not_doubled():
+    from services.seo_intelligence.seed_builder import build_seed, idea_seeds
+    assert build_seed("Bhutan", None, "CULINARY GEMS OF BHUTAN") == "culinary gems of bhutan"
+    assert build_seed("Bhutan", None, "LAYA-GASA TREK") == "laya-gasa trek Bhutan"
+    assert "laya gasa trek" in idea_seeds("Bhutan", None, "LAYA-GASA TREK")
+
+
+def test_mixed_case_title_unchanged():
+    from services.seo_intelligence.seed_builder import build_seed
+    assert build_seed("South Korea", None, "Korea's Coast-to-Coast Ride") == \
+        "Korea's Coast-to-Coast Ride South Korea"
