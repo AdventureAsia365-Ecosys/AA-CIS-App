@@ -49,6 +49,7 @@ export default function PhotosPage() {
   const [assigning, setAssigning] = useState<Photo | null>(null);
   const [tourOpts, setTourOpts] = useState<Option[]>([]);
   const [pickTour, setPickTour] = useState("");
+  const [matchPlaces, setMatchPlaces] = useState(false);
 
   const loadSummary = useCallback(async () => {
     const r = await fetch("/api/admin/photos/summary");
@@ -81,11 +82,14 @@ export default function PhotosPage() {
   useEffect(() => { loadFolders(); }, [loadFolders]);
 
   async function syncNow() {
-    if (!window.confirm("Sync all CON photo folders from Google Drive now?")) return;
+    const scope = country || "all CON photo folders";
+    const extra = matchPlaces ? " and match photos to places on each tour's itinerary (sets TripPlanner covers)" : "";
+    if (!window.confirm(`Sync ${scope} from Google Drive${extra}?`)) return;
     setBusy("sync");
     try {
       const r = await fetch("/api/admin/photos/sync", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ countries: country ? [country] : null, match_destinations: matchPlaces }),
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) setError(`Sync failed: ${body.detail ?? r.status}`);
@@ -132,8 +136,13 @@ export default function PhotosPage() {
             </div>
           </div>
           <Btn onClick={() => { loadSummary(); loadPhotos(); }} size="sm"><RefreshCw size={13} /> Refresh</Btn>
+          <label style={{ fontSize: 12.5, color: A.body, display: "flex", gap: 6, alignItems: "center" }}
+                 title="Only after this country's tours are rewritten, atomized and re-extracted by the TripPlanner">
+            <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
+            Match places + covers
+          </label>
           <Btn onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
-            {jobRunning ? "Sync running…" : "Sync now"}
+            {jobRunning ? "Sync running…" : country ? `Sync ${country}` : "Sync all"}
           </Btn>
         </div>
 
@@ -155,7 +164,8 @@ export default function PhotosPage() {
             </div>
           ) : <div style={{ fontSize: 13, color: A.muted }}>No sync yet.</div>}
           <div style={{ fontSize: 12, color: A.muted, marginTop: 8 }}>
-            Destination matching and TripPlanner cover images are off until the rerun tours are re-extracted.
+            Places (destinations) are matched only with "Match places + covers", per country, after its rerun tours are
+            re-extracted; a photo is compared only with the places on its own tour&apos;s itinerary.
             Assigning a tour applies to every photo in the same Drive folder.
           </div>
         </Card>
