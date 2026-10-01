@@ -345,6 +345,7 @@ class DataForSEOClient:
         activity: str = None,
         extra_seeds: list[str] | None = None,
         place_terms: list[str] | None = None,
+        activity_words: list[str] | None = None,
     ) -> dict:
         try:
             keywords = await self.fetch_keywords(seed, location_code, location_name, language_code)
@@ -373,7 +374,7 @@ class DataForSEOClient:
             except Exception as e:
                 logger.warning("dfs_ideas_multi_failed", error=str(e))
                 keyword_ideas = []
-            keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [])
+            keyword_ideas = rank_keyword_ideas(keyword_ideas, place_terms or [], activity_words=activity_words)
         else:
             keyword_ideas = await self.fetch_keyword_ideas(seed, location_code, language_code)
 

@@ -126,7 +126,7 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     effective_seo_mode = _SEO_MODE_MAP.get(seo_mode, seo_mode)
     try:
         from services.seo_intelligence.handler import process_seo
-        from services.seo_intelligence.seed_builder import build_seed, idea_seeds, title_place_terms
+        from services.seo_intelligence.seed_builder import activity_terms, build_seed, idea_seeds, title_place_terms
         seed = build_seed(row.get("country"), row.get("activities"), row.get("src_name")) or row.get("src_name", "")
         if seed:
             seo_result = await process_seo(
@@ -135,6 +135,7 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
                 # AA-702 — same multi-seed keyword ideas as the single-tour S1 path.
                 extra_seeds=idea_seeds(row.get("country"), row.get("activities"), row.get("src_name"))[1:],
                 place_terms=title_place_terms(row.get("src_name"), row.get("country")),
+                activity_words=activity_terms(row.get("activities")),
             )
             seo_data = seo_result.get("data", {})
             if "keywords" in seo_data and "top_keywords" not in seo_data:

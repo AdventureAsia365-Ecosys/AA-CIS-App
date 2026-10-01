@@ -47,6 +47,7 @@ async def process_seo(
     tenant_id: str = None,
     extra_seeds: list[str] | None = None,
     place_terms: list[str] | None = None,
+    activity_words: list[str] | None = None,
 ) -> dict:
     # "disabled" — skip SEO step entirely
     if seo_mode == "disabled":
@@ -81,7 +82,7 @@ async def process_seo(
     if extra_seeds:
         # AA-702: multi-seed ideas are a different (richer) result for the same seed — own key, so
         # 7-day-old single-seed entries are not served back.
-        redis_seed_key += ":ideas_v2"
+        redis_seed_key += ":ideas_v3"
 
     try:
         cached = await cache.get(redis_seed_key)
@@ -149,7 +150,7 @@ async def process_seo(
         client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id)
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
-            extra_seeds=extra_seeds, place_terms=place_terms,
+            extra_seeds=extra_seeds, place_terms=place_terms, activity_words=activity_words,
         )
         try:
             await cache.set(redis_seed_key, seo_data, ttl_seconds=_SEO_CACHE_TTL_SECONDS)
