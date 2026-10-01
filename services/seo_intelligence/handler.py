@@ -60,7 +60,9 @@ async def process_seo(
     # AA-653: S1 (the only caller passing extra_seeds) reuses the tour's own seo_context row for
     # S1_SEO_REUSE_DAYS — filled by an earlier run or by the batched S1 prefetch job — instead of
     # buying DataForSEO again for a tour that is already in Master Content.
-    if extra_seeds and tour_id and seo_mode == "dataforseo":
+    # extra_seeds is a list (possibly EMPTY: a one-seed title like "LAYA-GASA TREK") for every S1
+    # call, None for other callers — the S1 pilot's Laya-Gasa skipped reuse on `[]` and re-bought.
+    if extra_seeds is not None and tour_id and seo_mode == "dataforseo":
         from .s1_prefetch import load_fresh
         try:
             reuse_conn = await asyncpg.connect(get_database_url())
@@ -97,7 +99,7 @@ async def process_seo(
     # cache_key DB column (persist layer, per-tour, trace-only since migration 075).
     # Cache per (seed, buyer market) — same tour for a different market is a distinct entry.
     redis_seed_key = RedisCache.make_key(effective_seed, str(location_code))
-    if extra_seeds:
+    if extra_seeds is not None:
         # AA-702: multi-seed ideas are a different (richer) result for the same seed — own key, so
         # 7-day-old single-seed entries are not served back.
         redis_seed_key += ":ideas_v3"
