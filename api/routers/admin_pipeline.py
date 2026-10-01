@@ -137,6 +137,14 @@ async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
         _build_failure_summary(result),
         float(result.get("quality_score") or 0.0),
     )
+    # AA-653 (S207): one failed version per tour is enough — the reviewer's move is Regenerate,
+    # not comparing attempts. A newer version replaces older pending rows of the same tour.
+    await conn.execute("""
+        UPDATE silver_aa_internal.review_queue
+        SET review_status = 'superseded'::review_status_enum, reviewed_at = NOW()
+        WHERE tour_id = $1::uuid AND review_status = 'pending'
+          AND generated_content_id <> $2::uuid
+    """, tour_id, generated_content_id)
 
 
 def _trim_to_word_boundary(text, limit, sentence=False):

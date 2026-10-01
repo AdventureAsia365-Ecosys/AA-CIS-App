@@ -61,10 +61,22 @@ async def test_publish_survives_a_failed_dismiss(monkeypatch):
 async def test_enqueue_marks_a_published_tour_dismissed_not_pending():
     conn = AsyncMock()
     await _enqueue_review(conn, "t-1", "gc-2", {"quality_score": 6.0})
-    sql = conn.execute.call_args.args[0]
+    sql = next(c.args[0] for c in conn.execute.call_args_list if "INSERT INTO" in c.args[0])
     # status is decided in SQL from the tour's live Master Content row
     assert "gold_aa_internal.published_tours" in sql
     assert "master_status <> 'trashed'" in sql
     assert "THEN 'dismissed' ELSE 'pending'" in sql
     # a repeat run must not add a second row for the same version, pending or dismissed
     assert "review_status IN ('pending', 'dismissed')" in sql
+
+
+@pytest.mark.asyncio
+async def test_enqueue_supersedes_older_pending_versions_of_the_tour():
+    """One failed version per tour: the newest replaces older pending rows (soft)."""
+    conn = AsyncMock()
+    await _enqueue_review(conn, "t-1", "gc-2", {"quality_score": 5.0})
+    upd = [c for c in conn.execute.call_args_list if "'superseded'" in c.args[0]]
+    assert len(upd) == 1
+    sql, *args = upd[0].args
+    assert "review_status = 'pending'" in sql and "generated_content_id <> $2" in sql
+    assert args == ["t-1", "gc-2"]
