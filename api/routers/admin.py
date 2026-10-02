@@ -23,8 +23,27 @@ from services.acp_planning.tenant_config import (
     save_tenant_planning_config,
 )
 
+import asyncio
+import structlog
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
+_log = structlog.get_logger()
+
+
+def _recompute_after_status_change(pool, tour_id: str, new_status: str) -> None:
+    """AA-713 — when a master tour leaves (inactive/trashed) or re-enters (active) the active set,
+    its atoms must leave/re-enter the Score + Route caches the tenant Slate reads. Score and Route
+    read atoms through `v_active_tour_atoms` (migration 203), so a platform-wide recompute is what
+    actually evicts (or restores) them. Fire-and-forget — the admin status response is immediate;
+    the recompute (~1-2 min, 6 markets + routes) runs in the background, same pattern as atomize."""
+    async def _run():
+        try:
+            from services.export.handler import recompute_rankings_and_routes
+            await recompute_rankings_and_routes(pool, log_reason=f"master_status={new_status}:{tour_id}")
+        except Exception:
+            _log.warning("aa713_recompute_after_status_failed", tour_id=tour_id, exc_info=True)
+    asyncio.create_task(_run())
 
 PLAN_LIMITS = {
     # AA-640: tours per month now live ONLY in shared.membership_plans (what tenants see and are
@@ -1050,6 +1069,7 @@ async def toggle_master_status(
                 actor_type="admin",
             )
 
+    _recompute_after_status_change(pool, tour_id, status)   # AA-713
     return {"tour_id": tour_id, "master_status": status}
 
 
@@ -1265,6 +1285,7 @@ async def trash_master_tour(
                 actor_type="admin",
             )
 
+    _recompute_after_status_change(pool, tour_id, "trashed")   # AA-713
     return {
         "tour_id": tour_id,
         "master_status": "trashed",
@@ -1320,6 +1341,7 @@ async def restore_master_tour(
                 actor_type="admin",
             )
 
+    _recompute_after_status_change(pool, tour_id, "inactive")   # AA-713 (restore -> inactive)
     return {"tour_id": tour_id, "master_status": "inactive"}
 
 
@@ -1365,6 +1387,7 @@ async def activate_master_tour(
                 actor_type="admin",
             )
 
+    _recompute_after_status_change(pool, tour_id, "active")   # AA-713
     return {"tour_id": tour_id, "master_status": "active"}
 
 
@@ -1410,6 +1433,7 @@ async def deactivate_master_tour(
                 actor_type="admin",
             )
 
+    _recompute_after_status_change(pool, tour_id, "inactive")   # AA-713 (deactivate)
     return {"tour_id": tour_id, "master_status": "inactive"}
 
 

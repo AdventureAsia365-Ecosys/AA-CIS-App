@@ -36,6 +36,28 @@ class _SingleConnAsPool:
         return False
 
 
+async def recompute_rankings_and_routes(pool, *, log_reason: str = "") -> dict:
+    """AA-713 — re-run platform-wide Score + Route only (no per-tour segment matching).
+
+    Called when a tour's master_status changes (active <-> inactive/trashed). Segments are an
+    UPSERT-only, platform-wide set — an inactivated tour's atoms stay in atom_segment_member — but
+    ranking (DELETE+INSERT per market) and route detection both read atoms through
+    `v_active_tour_atoms` now (migration 203), so re-running them drops the inactive tour's atoms
+    from `atom_ranking` and `route`, which is what the tenant Slate reads. No atomize, no
+    segment_matching: deactivating a tour never adds atoms, only removes them from the caches."""
+    from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
+    from services.acp_contract.route_detection import run_route_detection
+    from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
+
+    question_counts = await precompute_question_landings(pool, None)   # all segments
+    ranking_results = {}
+    for market_code in DFS_LOCATION_MAP:
+        ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
+    route_result = await run_route_detection(pool)
+    logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=route_result)
+    return {"ranking": ranking_results, "route": route_result}
+
+
 async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None,
                                        progress=None) -> dict:
     """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below (which still calls this

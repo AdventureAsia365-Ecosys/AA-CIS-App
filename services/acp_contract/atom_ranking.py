@@ -687,9 +687,8 @@ async def precompute_question_landings(
                    array_agg(ta.activity_type) AS activity_types
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
-            JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = asm.atom_id
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
-            WHERE NOT ta.deleted AND NOT ta.is_empty_marker
             GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action,
                      asg.questions_count
         """)
@@ -870,8 +869,7 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
                    array_agg(ta.activity_type) AS activity_types
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
-            JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
-            WHERE NOT ta.deleted AND NOT ta.is_empty_marker
+            JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = asm.atom_id
             GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
         """)
 
