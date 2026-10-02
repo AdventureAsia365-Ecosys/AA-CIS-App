@@ -186,6 +186,9 @@ BRAND_AUDIT_SCHEMA = {
 
 # ── Node ──────────────────────────────────────────────────────────────────────
 
+# AA-714: set when the audit model call fails, so the reviewer sees why the tour is held.
+BRAND_AUDIT_UNAVAILABLE = "BRAND_AUDIT_UNAVAILABLE"
+
 def _audit_from_judge(state: dict, generated: dict) -> dict:
     """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
     call. Deterministic pre-audit codes still fire (they drive flag_fix's field targeting) and the
@@ -313,12 +316,15 @@ Return JSON only per schema."""
         }
 
     except Exception as e:
-        logger.warning("brand_audit_failed_graceful", error=str(e))
+        # AA-714: fail closed. A model/schema error used to return "pass", so a tour the audit
+        # never saw could publish (S200: Luna dropped `status`; S207: OpenAI out of credit).
+        # manual_check blocks publish (_is_publishable) and sends the tour to the Review Queue.
+        logger.warning("brand_audit_failed_manual_check", error=str(e)[:500])
         return {
             **state,
-            "brand_audit_status": "pass",
-            "brand_audit_codes":  [],
-            "brand_audit_issues": [],
+            "brand_audit_status": "manual_check",
+            "brand_audit_codes":  [BRAND_AUDIT_UNAVAILABLE],
+            "brand_audit_issues": [f"Brand audit could not run ({str(e)[:200]}). Check by hand or Regenerate."],
             "brand_audit_fields": [],
             "lessons_extracted":  [],
         }
