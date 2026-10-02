@@ -174,25 +174,42 @@ def test_brand_audit_node_fails_closed_on_model_error():
     assert "all judge models down" in result["brand_audit_issues"][0]
 
 
-def test_brand_audit_node_fails_closed_on_schema_miss():
-    """AA-714 A/B: Luna on Bedrock sometimes drops the required `status` key. The gateway's schema
-    check raises; the node must hold the tour, and the publish gate must refuse it."""
-    from api.routers.admin_pipeline import _is_publishable
+def test_brand_audit_node_derives_status_when_model_omits_it():
+    """AA-714 cách C: Luna may drop `status` (Bedrock Converse does not enforce the tool schema).
+    The node no longer needs it — status is derived from failure_codes/publish_ready. A clean audit
+    with no `status` key is a `pass`, not a hold."""
+    from shared.llm_client.models import LLMResponse
     state = {
-        "generated": {"name": "Seoul Walk", "subtitle": "City days", "summary": "Calm days.",
-                      "highlights": ["Bukchon lanes"], "itineraries": "Day 1 — Arrive Seoul.",
-                      "seo_title": "Seoul Walking Tour", "seo_meta": "A calm walking tour of Seoul."},
-        "tour": {"duration": "3 days", "country": "South Korea"},
-        "seo": {}, "cost_usd": 0.0,
+        "generated": {"name": "Seoul Walk", "subtitle": "Quiet city days", "summary": "Calm days.",
+                      "highlights": ["Bukchon lanes", "Seochon alleys", "Namsan dusk", "Hanok tea"],
+                      "itineraries": "Day 1 — Arrive Seoul.", "seo_title": "Seoul Walking Tour",
+                      "seo_meta": "A calm walking tour of Seoul."},
+        "tour": {"duration": "3 days", "country": "South Korea"}, "seo": {}, "cost_usd": 0.0,
     }
+    # Model omits "status" but returns everything else, no failure codes.
+    payload = {"brand_audit": {"publish_ready": True, "fields_to_fix": [], "failure_codes": [],
+                               "issues": [], "scores": {}, "notes": "", "lessons_extracted": []}}
     fake = MagicMock()
-    fake.generate.side_effect = RuntimeError(
-        "gpt-5.6-luna output does not match schema 'brand_audit_result': $.brand_audit: missing required key 'status'")
-    with patch("services.content_generation.brand_audit_node.LLMClient", return_value=fake):
+    fake.generate.return_value = LLMResponse(content=json.dumps(payload), model_used="satellite-gpt-5.6-luna",
+                                             provider="bedrock-satellite", cost_usd=0.001)
+    with patch("services.content_generation.brand_audit_node.LLMClient", return_value=fake), \
+            patch("services.content_generation.brand_audit_node.record_call_sync"):
         result = brand_audit_node(state)
+    assert result["brand_audit_status"] == "pass"
+    assert "BRAND_AUDIT_UNAVAILABLE" not in result["brand_audit_codes"]
 
-    assert result["brand_audit_status"] == "manual_check"
-    assert not _is_publishable({**result, "quality_score": 9.5})
+
+def test_derive_status():
+    from services.content_generation.brand_audit_node import derive_status
+    assert derive_status([], True, None) == "pass"
+    assert derive_status([], None, None) == "pass"
+    assert derive_status(["SUBTITLE_WAYPOINT_FORMAT"], True, None) == "flagged"
+    assert derive_status([], False, None) == "flagged"           # publish_ready False
+    assert derive_status(["FACT_CHECK_MANUAL_CHECK"], True, None) == "manual_check"
+    assert derive_status(["PRODUCT_TRUTH_RISK", "SEO_TITLE_WEAK"], True, None) == "manual_check"
+    # model_status only pushes toward the safer side, never downgrades
+    assert derive_status([], True, "manual_check") == "manual_check"
+    assert derive_status(["X"], True, "pass") == "flagged"
 
 
 def test_brand_audit_node_skips_empty_generated():
