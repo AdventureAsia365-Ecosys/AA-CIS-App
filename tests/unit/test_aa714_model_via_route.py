@@ -24,7 +24,13 @@ def test_same_model_name_on_two_providers_is_told_apart():
 
 
 def test_bedrock_accounts_listed_in_try_order():
-    assert model_via(HAIKU) == "Bedrock acc3 → acc1"
+    sonnet5 = _m("sonnet-5", "Claude Sonnet 5", "bedrock", profiles={"acc1": "p1", "acc3": "p3"}, vendor="anthropic")
+    assert model_via(sonnet5) == "Bedrock acc3 → acc1"
+
+
+def test_legacy_claude_keys_show_the_legacy_chain_order():
+    # haiku/sonnet go through LLMClient._legacy_chain: acc2 native, then acc3, then acc1.
+    assert model_via(HAIKU) == "Bedrock acc2 → acc3 → acc1"
 
 
 def test_judge_options_carry_via():
