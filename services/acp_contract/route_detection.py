@@ -276,9 +276,9 @@ async def run_route_detection(pool) -> dict:
             ) ar
             JOIN acp_contract.atom_segment asg ON asg.segment_id = ar.segment_id
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = ar.segment_id
-            JOIN acp_contract.tour_atoms ta
+            JOIN acp_contract.v_active_tour_atoms ta
                 ON ta.atom_id = asm.atom_id AND ta.tour_id = ar.tour_id
-            WHERE ta.itinerary_day IS NOT NULL AND NOT ta.deleted AND NOT ta.is_empty_marker
+            WHERE ta.itinerary_day IS NOT NULL
             GROUP BY ar.segment_id, ar.tour_id, asg.canonical_place, asg.canonical_action
         """)
 

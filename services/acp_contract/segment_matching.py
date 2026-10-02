@@ -488,10 +488,9 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         atom_rows = await conn.fetch("""
             SELECT ta.atom_id, ta.tour_id, ta.itinerary_day, ta.place, ta.action,
                    coalesce(rt.country, '') AS country
-            FROM acp_contract.tour_atoms ta
+            FROM acp_contract.v_active_tour_atoms ta
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
             WHERE ta.tour_id = $1::uuid
-              AND NOT ta.deleted AND NOT ta.is_empty_marker
               AND ta.place IS NOT NULL AND ta.action IS NOT NULL
         """, tour_id)
         if not atom_rows:
