@@ -139,8 +139,12 @@ BRAND_AUDIT_SCHEMA = {
         "brand_audit": {
             "type": "object",
             "additionalProperties": False,
+            # AA-714: `status` is NOT required. Luna on Bedrock Converse drops it ~15% of the time
+            # (Converse does not enforce the tool schema), and status is fully derivable from
+            # failure_codes + publish_ready (derive_status). The model may still send it; we trust
+            # our own derivation either way, so the audit no longer depends on the model emitting it.
             "required": [
-                "status", "publish_ready", "fields_to_fix",
+                "publish_ready", "fields_to_fix",
                 "failure_codes", "issues", "scores", "notes",
                 "lessons_extracted"
             ],
@@ -188,6 +192,27 @@ BRAND_AUDIT_SCHEMA = {
 
 # AA-714: set when the audit model call fails, so the reviewer sees why the tour is held.
 BRAND_AUDIT_UNAVAILABLE = "BRAND_AUDIT_UNAVAILABLE"
+
+# A code that always means "a human must look", regardless of how many codes there are.
+_MANUAL_CHECK_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK"}
+
+
+def derive_status(failure_codes: list[str], publish_ready, model_status=None) -> str:
+    """AA-714: compute brand_audit status from the evidence, not from a key the model may omit.
+
+    Luna on Bedrock Converse drops the `status` key ~15% of the time, which used to fail the audit
+    open. Status is deterministic from what the audit already produces:
+      - any manual-check code (fact/product-truth)         -> manual_check (strongest, wins)
+      - else any failure code, or publish_ready == False    -> flagged
+      - else                                                -> pass
+    `model_status` (when present) only breaks a tie toward the safer side — it never downgrades a
+    status our codes imply."""
+    codes = set(failure_codes or [])
+    if codes & _MANUAL_CHECK_CODES or model_status == "manual_check":
+        return "manual_check"
+    if codes or publish_ready is False or model_status == "flagged":
+        return "flagged"
+    return "pass"
 
 def _audit_from_judge(state: dict, generated: dict) -> dict:
     """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
@@ -288,6 +313,9 @@ Return JSON only per schema."""
         # Merge deterministic pre-codes into LLM codes
         all_codes = list(dict.fromkeys(result["failure_codes"] + pre_codes))
         result["failure_codes"] = all_codes
+        # AA-714: derive status ourselves (do not depend on the model emitting it — Luna drops it).
+        status = derive_status(all_codes, result.get("publish_ready"), result.get("status"))
+        result["status"] = status
 
         in_tok, out_tok = resp.input_tokens, resp.output_tokens
         cost = resp.cost_usd

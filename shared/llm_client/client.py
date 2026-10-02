@@ -42,6 +42,14 @@ def _checked_json(model_label: str, value, schema: dict) -> str:
         raise RuntimeError(f"{model_label} output does not match schema {schema['name']!r}: {e}") from e
 
 
+def _first_tool_input(blocks: list, schema: dict, model) -> dict:
+    """AA-714 — the forced-tool input from a Converse response, or raise if the model skipped it."""
+    tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
+    if not tool_inputs:
+        raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
+    return tool_inputs[0]
+
+
 class LLMClient:
     """
     Fallback chain (AA-397/398 — acc3 satellite thêm vào làm satellite chính,
@@ -443,10 +451,26 @@ class LLMClient:
             resp = rt.converse(**kwargs)
             blocks = resp["output"]["message"]["content"]
             if schema:
-                tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
-                if not tool_inputs:
-                    raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
-                content = _checked_json(model.model_key, tool_inputs[0], schema)
+                # AA-714: Converse does not enforce the tool schema, so a model may omit a required
+                # key. Retry ONCE with an explicit instruction before giving up — far cheaper and
+                # more accurate than failing over to the next (pricier, different-vendor) model.
+                try:
+                    content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model), schema)
+                except RuntimeError as e:
+                    logger.warning("converse_schema_retry", model=model.model_key, stage=request.stage,
+                                   error=str(e)[:200])
+                    retry = dict(kwargs)
+                    retry["messages"] = [
+                        kwargs["messages"][0],
+                        {"role": "assistant", "content": [{"text": "(previous answer was missing a "
+                                                                   "required field)"}]},
+                        {"role": "user", "content": [{"text":
+                            f"Call the tool {schema['name']!r} again and include EVERY required key: "
+                            f"{', '.join(schema['schema'].get('required', []))}. Return the full object."}]},
+                    ]
+                    resp = rt.converse(**retry)
+                    blocks = resp["output"]["message"]["content"]
+                    content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model), schema)
             else:
                 content = "".join(block.get("text", "") for block in blocks)
             usage = resp.get("usage", {})

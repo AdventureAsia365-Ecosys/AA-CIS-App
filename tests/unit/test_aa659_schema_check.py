@@ -67,12 +67,35 @@ def _converse_with_tool_input(tool_input):
     return rt
 
 
-def test_converse_bad_tool_input_raises():
-    rt = _converse_with_tool_input({"brand_audit": {"status": "pass"}})
+def _converse_returning(*tool_inputs):
+    """A Converse mock that returns each tool_input in turn across successive calls (last repeats)."""
+    rt = MagicMock()
+
+    def _resp(ti):
+        return {"output": {"message": {"content": [{"toolUse": {"name": "brand_audit_result", "input": ti}}]}},
+                "usage": {"inputTokens": 10, "outputTokens": 5}, "stopReason": "tool_use"}
+    rt.converse.side_effect = [_resp(ti) for ti in tool_inputs]
+    return rt
+
+
+def test_converse_bad_tool_input_raises_after_one_retry():
+    # AA-714: both the first and the retry drop a key -> still raises (route then tries next model).
+    rt = _converse_returning({"brand_audit": {"status": "pass"}}, {"brand_audit": {"status": "pass"}})
     with patch("shared.llm_client.bedrock_satellite.get_satellite_client", return_value=rt), \
             pytest.raises(RuntimeError, match="does not match schema"):
         _client()._call_bedrock_converse(
             LLMRequest(system_prompt="s", user_prompt="u", json_schema=SCHEMA), LUNA, "acc3")
+    assert rt.converse.call_count == 2
+
+
+def test_converse_schema_retry_recovers():
+    # AA-714: first answer drops keys, the retry returns a full object -> succeeds, no model failover.
+    rt = _converse_returning({"brand_audit": {"status": "pass"}}, GOOD_AUDIT)
+    with patch("shared.llm_client.bedrock_satellite.get_satellite_client", return_value=rt):
+        resp = _client()._call_bedrock_converse(
+            LLMRequest(system_prompt="s", user_prompt="u", json_schema=SCHEMA), LUNA, "acc3")
+    assert json.loads(resp.content) == GOOD_AUDIT
+    assert rt.converse.call_count == 2
 
 
 def test_converse_string_encoded_tool_input_is_repaired():
