@@ -62,8 +62,16 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   are called with the Bedrock Converse API on the acc3 satellite.
 - **Stage Route** (AA-659, ADR 0006): each stage has a model plus an ordered fallback list and an
   optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
-  tried. The four judge stages run GPT-5.6 Luna (Bedrock) → GPT-6 Luna (OpenAI API), with GPT-4.1
-  as the shadow; no judge has its own hardcoded model path any more.
+  tried. No judge has its own hardcoded model path any more. Routes on Dev (S208, 02/10/2026, AA-714):
+  - `s1_judge`, `t10_judge`, `n7_judge`: GPT-5.6 Luna (Bedrock acc3) → GPT-6 Luna (Bedrock acc3) →
+    GPT-6 Luna (OpenAI API); shadow GPT-6 Luna 100% (was GPT-4.1, which scored every tour 9).
+  - `s1_brand_audit`: GPT-4.1 (OpenAI API) → GPT-5.6 Luna → GPT-6 Luna; shadow GPT-5.6 Luna. Kept on
+    GPT-4.1 because Luna returns `manual_check` on most tours and drops the `status` key on ~15%.
+  - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
+    `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`.
+  - **Where a GPT model runs**: on Bedrock only on acc3 (acc1/acc2 have no OpenAI models), or on the
+    OpenAI platform API (separate account and credit; `gpt-6-luna-openai`, `gpt-4.1`). Admin Settings
+    › LLM Models shows this per model and the full route per stage.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). The caller writes the `llm_call_log` row.
@@ -77,7 +85,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     noticeably better, at ~11-13x Haiku's cost per call.
   - `t5_atomize` (A3 atomize, AA-619) = Haiku — same atom count and grounding as Sonnet at ~1/4
     the cost; Sonnet atomize had been ~82% of the acc3 bill.
-  - Judge = GPT-4.1 on the OpenAI API (a deliberately different vendor from the writer).
+  - Judges = OpenAI models (a deliberately different vendor from the Anthropic writer): GPT-5.6 Luna
+    on Bedrock acc3 for the judges, GPT-4.1 on the OpenAI API for brand audit (see Stage Route).
   - Tour writer output ceiling is `GENERATE_MAX_TOKENS=8192` (AA-639); at 4096 long tours were
     truncated and rewritten.
 - **Jev decision layer (AA-660, design `docs/architecture/at-series-v2-design.md`)**: stages ask
