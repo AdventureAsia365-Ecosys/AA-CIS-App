@@ -28,9 +28,22 @@ from shared.llm_client.models import LLMRequest
 
 logger = structlog.get_logger()
 
-# AA-209: fixed seed + low temperature make the judge reproducible.
+# AA-209: fixed seed + low temperature make the judge reproducible. A reasoning model (Luna) ignores
+# both, so AA-714 adds a repeat-and-take-the-median layer for it instead (see score_brand_fit).
 _JUDGE_TEMPERATURE = 0.1
 _JUDGE_SEED = 42
+
+# AA-714 layer 2 — a reasoning judge (no seed) wobbles ±1 around MIN_QUALITY=7; a lone call then
+# decides retry/HITL on noise. When the first score lands in this band AND the model does not take a
+# seed, score two more times and keep the median. A model that honours the seed (GPT-4.1) is already
+# reproducible, so it is scored once. Layer 1 = the single call; layer 3 = the Jev tie-break in
+# judge_node, which only fires when a score is still exactly on the line after this.
+_REPEAT_BAND = (6.0, 8.0)          # inclusive; MIN_QUALITY (7.0) sits in the middle
+_REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
+
+
+def _median3(values: list[float]) -> float:
+    return sorted(values)[len(values) // 2]
 
 JUDGE_SYSTEM = """You are a brand-fit judge for Adventure Asia's B2B content pipeline.
 You do NOT rewrite content. You score how well a tour rewrite reflects ONE specific client brand's
@@ -214,9 +227,50 @@ def score_brand_fit(
     retry threshold" MIN_QUALITY=7.0). Debate has no retry-threshold concept of its own, so this
     is a parameter here rather than a second hardcoded constant — judge_node.py passes its own
     6.0 explicitly to keep its exact existing behavior unchanged by this extraction.
+
+    AA-714 layer 2: when a reasoning judge's first score lands near MIN_QUALITY, re-score and keep
+    the median so one noisy call does not flip retry/HITL. See `_REPEAT_BAND`.
     """
-    return _judge(JUDGE_SYSTEM, _build_judge_prompt(brand_profile, generated),
-                  mission_absent_cap=mission_absent_cap)
+    system_prompt = JUDGE_SYSTEM
+    user_prompt = _build_judge_prompt(brand_profile, generated)
+    first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap)
+
+    lo, hi = _REPEAT_BAND
+    if _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
+        return first
+
+    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap)
+                         for _ in range(_REPEAT_EXTRA)]
+    brand_fits = [r.brand_fit_score for r in results]
+    distincts = [r.cross_brand_distinct for r in results]
+    mission = sum(r.mission_present for r in results) > len(results) / 2
+    brand_fit = _median3(brand_fits)
+    distinct = _median3(distincts)
+    judge_score = min(brand_fit, distinct)
+    if mission_absent_cap is not None and not mission:
+        judge_score = min(judge_score, mission_absent_cap)
+    picked = min(results, key=lambda r: abs(r.brand_fit_score - brand_fit))   # feedback from a median-ish run
+    logger.info("judge_repeat_median", model=first.model_used, brand_fits=brand_fits,
+                median_brand_fit=brand_fit, median_distinct=distinct)
+    return BrandFitResult(
+        brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
+        feedback=picked.feedback, judge_score=judge_score, model_used=first.model_used,
+        cost_usd=sum(r.cost_usd for r in results),
+        input_tokens=sum((r.input_tokens or 0) for r in results),
+        output_tokens=sum((r.output_tokens or 0) for r in results),
+        stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
+    )
+
+
+def _seeded_model(model_used: Optional[str]) -> bool:
+    """True when the model honours the fixed seed (so one call is already reproducible). Reads the
+    catalog's `supports_temperature`; unknown/legacy models (gpt-4.1) are treated as seeded."""
+    if not model_used:
+        return True
+    from shared.llm_client.catalog import get_model_sync
+    key = model_used.replace("satellite-", "")
+    m = get_model_sync(key)
+    return True if m is None else bool(m.supports_temperature)
 
 
 def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None) -> BrandFitResult:
