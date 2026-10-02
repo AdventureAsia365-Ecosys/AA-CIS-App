@@ -273,12 +273,54 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
 
 // ─── LLM Models Tab (AA-518 Việc C) ────────────────────────────────────────────
 
-interface ModelOption { model_id: string; label: string; available: boolean; reason?: string }
+interface ModelOption { model_id: string; label: string; via?: string; available: boolean; reason?: string }
 interface AccountOption { value: string; label: string }
+// AA-714 — the route the gateway really runs: primary, fallbacks in order, optional shadow.
+interface RouteItem { model_id: string; label: string; via?: string | null }
+interface StageRoute { chain: RouteItem[]; shadow: (RouteItem & { sample_pct: number }) | null }
 interface StageConfigRow {
   stage: string; role: string; provider: string; model_id: string;
   account_route: string | null; updated_at: string | null; updated_by: string;
   options: ModelOption[]; account_route_options: AccountOption[];
+  route?: StageRoute;
+}
+
+// "GPT-6 Luna · Bedrock acc3" vs "GPT-6 Luna (OpenAI) · OpenAI API" — the same model can run on
+// two providers, so the provider is always shown next to the name.
+const withVia = (label: string, via?: string | null) => (via ? `${label} · ${via}` : label);
+
+function RouteLine({ route }: { route?: StageRoute }) {
+  if (!route || route.chain.length === 0) return null;
+  const chip = (i: RouteItem, key: string, tone: "main" | "fb" | "shadow") => (
+    <span key={key} style={{
+      display: "inline-flex", gap: 4, alignItems: "center", padding: "2px 8px", borderRadius: 999,
+      fontSize: 11, border: `1px solid ${A.line}`,
+      background: tone === "main" ? A.line2 : A.card, color: tone === "shadow" ? A.muted2 : A.ink2,
+    }}>
+      <span style={{ fontWeight: tone === "main" ? 600 : 400 }}>{i.label}</span>
+      {i.via && <span style={{ color: A.muted2 }}>· {i.via}</span>}
+    </span>
+  );
+  return (
+    <div data-testid="llm-route-line" style={{
+      width: "100%", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
+      fontSize: 11, color: A.muted2, paddingLeft: 2,
+    }}>
+      <span>Route:</span>
+      {route.chain.map((i, n) => (
+        <span key={`${i.model_id}-${n}`} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {n > 0 && <span aria-hidden>→</span>}
+          {chip(i, i.model_id, n === 0 ? "main" : "fb")}
+        </span>
+      ))}
+      {route.shadow && (
+        <>
+          <span style={{ marginLeft: 8 }}>Shadow ({route.shadow.sample_pct}%, compare only):</span>
+          {chip(route.shadow, "shadow", "shadow")}
+        </>
+      )}
+    </div>
+  );
 }
 
 // Human label + display grouping — a pure presentation layer over the 16 stage rows the API
@@ -327,7 +369,10 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
   const [error, setError] = useState("");
 
   const dirty = modelId !== row.model_id || accountRoute !== (row.account_route ?? "");
-  const modelLabel = (id: string) => row.options.find(o => o.model_id === id)?.label ?? id;
+  const modelLabel = (id: string) => {
+    const o = row.options.find(x => x.model_id === id);
+    return o ? withVia(o.label, o.via) : id;
+  };
   const acctLabel = (v: string) => row.account_route_options.find(o => o.value === v)?.label ?? v;
 
   async function confirmSave() {
@@ -378,12 +423,12 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
         disabled={saving}
         style={{
           padding: "6px 10px", borderRadius: 7, border: `1px solid ${A.line}`,
-          fontSize: 12.5, fontFamily: sans, color: A.body, background: A.card, minWidth: 190,
+          fontSize: 12.5, fontFamily: sans, color: A.body, background: A.card, minWidth: 260,
         }}
       >
         {row.options.map(o => (
           <option key={o.model_id} value={o.model_id} disabled={!o.available}>
-            {o.label}{!o.available ? " — not available" : ""}
+            {withVia(o.label, o.via)}{!o.available ? " — not available" : ""}
           </option>
         ))}
       </select>
@@ -423,6 +468,8 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
           {saving ? "Saving…" : "Save"}
         </Btn>
       </div>
+
+      <RouteLine route={row.route} />
 
       {confirming && (
         <div style={{
@@ -490,8 +537,10 @@ function ModelsTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
         Only admins (aa_internal) can change models here — tenants have no access. Blocked models
-        (e.g. GPT-5.6) still appear in the list with a reason rather than being hidden entirely, so
-        you can see the roadmap.
+        still appear in the list with a reason rather than being hidden entirely. Each model shows
+        where it runs: <b>Bedrock acc3</b> (GPT models on Bedrock exist only on acc3) or{" "}
+        <b>OpenAI API</b> (the OpenAI platform account, billed separately). Fallbacks and the shadow
+        model are read-only here.
       </p>
       {STAGE_GROUPS.map(group => (
         <Card key={group.key}>

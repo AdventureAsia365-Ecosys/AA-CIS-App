@@ -58,11 +58,11 @@ router = APIRouter(prefix="/admin", tags=["admin-llm-ops"])
 # AA-658 / ADR 0005 — options now come from shared.llm_model_catalog. These two lists are only
 # the fallback when the catalog is unreachable.
 _WRITER_OPTIONS = [
-    {"model_id": "haiku", "label": "Claude Haiku 4.5", "available": True},
-    {"model_id": "sonnet", "label": "Claude Sonnet 4.5", "available": True},
+    {"model_id": "haiku", "label": "Claude Haiku 4.5", "via": "Bedrock", "available": True},
+    {"model_id": "sonnet", "label": "Claude Sonnet 4.5", "via": "Bedrock", "available": True},
 ]
 _JUDGE_OPTIONS = [
-    {"model_id": "gpt-4.1", "label": "GPT-4.1 (OpenAI direct)", "available": True},
+    {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": True},
 ]
 _ACCOUNT_ROUTE_OPTIONS = [
     {"value": "acc3", "label": "acc3 (satellite chính)"},
@@ -70,6 +70,45 @@ _ACCOUNT_ROUTE_OPTIONS = [
 ]
 # Permanently rejected — never shown, not even as "blocked".
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
+
+# Used only when the catalog is unreachable; catalog rows win (_via_map).
+_LEGACY_VIA = {"gpt-4.1": "OpenAI API", "haiku": "Bedrock", "sonnet": "Bedrock"}
+
+
+def model_via(m) -> str:
+    """AA-714 — where a Model Key is really served, for the admin UI. GPT models run either on
+    Bedrock (acc3 only: the OpenAI-on-Bedrock agreement exists on acc3, not acc1/acc2) or on the
+    OpenAI platform API; the same model name can be both (gpt-6-luna vs gpt-6-luna-openai)."""
+    if m.provider == "openai":
+        return "OpenAI API"
+    accts = [a for a in ("acc3", "acc1", "acc2") if a in (m.bedrock_profile_ids or {})]
+    if m.api_style == "embed" and not accts:
+        return "Bedrock acc2"
+    return "Bedrock " + " → ".join(accts) if accts else "Bedrock"
+
+
+def _via_map(models: Optional[list]) -> dict[str, str]:
+    out = dict(_LEGACY_VIA)
+    for m in models or []:
+        out[m.model_key] = model_via(m)
+    return out
+
+
+def _route_view(row: dict, models: Optional[list]) -> dict:
+    """AA-714 — the stage route as the gateway runs it: primary, fallbacks in order, shadow."""
+    labels = {m.model_key: m.label for m in models or []}
+    via = _via_map(models)
+
+    def item(key: str) -> dict:
+        return {"model_id": key, "label": labels.get(key, key), "via": via.get(key)}
+
+    chain = [row["model_id"], *(row.get("fallback_model_ids") or [])]
+    shadow = row.get("shadow_model_id")
+    return {
+        "chain": [item(k) for k in chain],
+        "shadow": ({**item(shadow), "sample_pct": row.get("shadow_sample_pct") or 0} if shadow else None),
+    }
+
 
 def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
     """AA-659: every stage now runs through the gateway route, so availability depends only on
@@ -91,7 +130,8 @@ def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
             reason = "Judge phải khác vendor với writer (writer là Anthropic)"
         elif role != "judge" and m.vendor != "anthropic":
             reason = "Writer và judge phải khác vendor (judge là OpenAI)"
-        opt = {"model_id": m.model_key, "label": m.label, "available": reason is None}
+        opt = {"model_id": m.model_key, "label": m.label, "via": model_via(m),
+               "available": reason is None}
         if reason:
             opt["reason"] = reason
         options.append(opt)
@@ -128,6 +168,7 @@ async def get_llm_config():
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         r["options"] = _options_for(r["role"], r["stage"], models)
         r["account_route_options"] = _ACCOUNT_ROUTE_OPTIONS if r["provider"] == "claude" else []
+        r["route"] = _route_view(r, models)
     return {"stages": rows}
 
 
@@ -157,6 +198,7 @@ async def patch_llm_config(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
+    updated["route"] = _route_view(updated, await _load_catalog())
     logger.info("admin_llm_config_changed", stage=stage, model_id=body.model_id,
                 account_route=body.account_route, admin_actor=admin_actor)
     return updated

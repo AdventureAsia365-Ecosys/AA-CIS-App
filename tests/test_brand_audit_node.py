@@ -144,8 +144,9 @@ def test_brand_audit_schema_validates_correct_json():
 
 # ── brand_audit_node graceful fallback ────────────────────────────────────────
 
-def test_brand_audit_node_graceful_fallback_on_openai_error():
-    """When the model call raises, node should return pass and not re-raise."""
+def test_brand_audit_node_fails_closed_on_model_error():
+    """AA-714: when the model call raises, the node does not re-raise and holds the tour
+    (manual_check + BRAND_AUDIT_UNAVAILABLE) instead of passing it unaudited."""
     state = {
         "generated": {
             "name": "Bhutan Tour",
@@ -168,9 +169,30 @@ def test_brand_audit_node_graceful_fallback_on_openai_error():
     ):
         result = brand_audit_node(state)
 
-    assert result["brand_audit_status"] == "pass"
-    assert result["brand_audit_codes"] == []
-    assert result["brand_audit_issues"] == []
+    assert result["brand_audit_status"] == "manual_check"
+    assert result["brand_audit_codes"] == ["BRAND_AUDIT_UNAVAILABLE"]
+    assert "all judge models down" in result["brand_audit_issues"][0]
+
+
+def test_brand_audit_node_fails_closed_on_schema_miss():
+    """AA-714 A/B: Luna on Bedrock sometimes drops the required `status` key. The gateway's schema
+    check raises; the node must hold the tour, and the publish gate must refuse it."""
+    from api.routers.admin_pipeline import _is_publishable
+    state = {
+        "generated": {"name": "Seoul Walk", "subtitle": "City days", "summary": "Calm days.",
+                      "highlights": ["Bukchon lanes"], "itineraries": "Day 1 — Arrive Seoul.",
+                      "seo_title": "Seoul Walking Tour", "seo_meta": "A calm walking tour of Seoul."},
+        "tour": {"duration": "3 days", "country": "South Korea"},
+        "seo": {}, "cost_usd": 0.0,
+    }
+    fake = MagicMock()
+    fake.generate.side_effect = RuntimeError(
+        "gpt-5.6-luna output does not match schema 'brand_audit_result': $.brand_audit: missing required key 'status'")
+    with patch("services.content_generation.brand_audit_node.LLMClient", return_value=fake):
+        result = brand_audit_node(state)
+
+    assert result["brand_audit_status"] == "manual_check"
+    assert not _is_publishable({**result, "quality_score": 9.5})
 
 
 def test_brand_audit_node_skips_empty_generated():
