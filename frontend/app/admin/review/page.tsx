@@ -70,6 +70,8 @@ const PRODUCT_TRUTH_CODES = new Set([
 const BRAND_STYLE_CODES = new Set([
   "FORBIDDEN_WORD", "META_TOO_SHORT", "SEO_META_TOO_LONG", "META_INCOMPLETE_SENTENCE",
   "HIGHLIGHTS_TOO_GENERIC", "HIGHLIGHTS_OPTIONAL_LANGUAGE", "DFS_INTENT_UNDERUSED",
+  // AA-717: overall brand-audit verdicts surfaced as fallback chips
+  "BRAND_MANUAL_CHECK", "BRAND_FLAGGED",
 ]);
 
 type Severity = "red" | "amber" | "gray";
@@ -671,8 +673,30 @@ function RegenerateModal({ item, onClose, onReload }: {
   );
 }
 
+// ── Reasons fallback (AA-717) ─────────────────────────────────────────────────
+// `failures[]` (AA-240) only re-derives codes that map to a specific field. A tour held ONLY on
+// an overall verdict — low score, or brand_audit=manual_check — has no per-field failure, so the
+// REASONS column would render empty even though `failure_summary` states the reason. Parse the
+// summary as a fallback so a blocked tour always shows why.
+//   failure_summary example: "brand_audit=manual_check; codes=FORBIDDEN_WORD,SEO_META_TOO_LONG; low_quality(score=6.0<7.0)"
+function codesFromSummary(summary: string): string[] {
+  const s = summary || "";
+  const codes: string[] = [];
+  const m = s.match(/codes=([A-Z0-9_,]+)/i);
+  if (m) codes.push(...m[1].split(",").map(c => c.trim()).filter(Boolean));
+  if (/low_quality/i.test(s)) codes.push("LOW_QUALITY");
+  if (/brand_audit\s*=\s*manual_check/i.test(s)) codes.push("BRAND_MANUAL_CHECK");
+  if (/brand_audit\s*=\s*flagged/i.test(s)) codes.push("BRAND_FLAGGED");
+  return [...new Set(codes)];
+}
+
 // ── Row mapper ────────────────────────────────────────────────────────────────
 function mapRow(r: any) {
+  // Primary source: per-field failures re-derived on current content (AA-240).
+  const fieldCodes = [...new Set(((r.failures || []) as any[]).map(f => f?.code).filter(Boolean))] as string[];
+  // AA-717 fallback: if nothing re-derived to a field, surface the overall verdict(s) from
+  // failure_summary so the REASONS column is never blank for a blocked tour.
+  const codes = fieldCodes.length ? fieldCodes : codesFromSummary(r.failure_summary || "");
   return {
     id: String(r.id),
     raw: r,
@@ -687,8 +711,7 @@ function mapRow(r: any) {
     failure_summary: r.failure_summary || "",
     version_num: typeof r.version_num === "number" ? r.version_num : null,
     brand_audit_status: r.brand_audit_status || null,   // manual_check | flagged | null
-    // Distinct gate codes for this row, from the per-field failures[] (AA-240).
-    codes: [...new Set(((r.failures || []) as any[]).map(f => f?.code).filter(Boolean))] as string[],
+    codes,
   };
 }
 
