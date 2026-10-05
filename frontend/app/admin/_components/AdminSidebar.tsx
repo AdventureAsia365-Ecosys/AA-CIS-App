@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon, Palette } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -230,19 +230,11 @@ export default function AdminSidebar() {
       </nav>
 
       {/* Settings — models per stage, AA brand identity (AA-663, was a top-level page), SEO config,
-          pipeline gates. All staff roles, same as middleware.ts. */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        {/* UI Kit — internal design-system reference. Admin-only (matches middleware allow-list);
-            sits next to Settings as a system/config tool rather than a content page. */}
-        {isAdmin && (
-          <NavItem active={active("/admin/kit-demo")}
-            icon={<Palette size={15} />} label="UI Kit"
-            onClick={() => router.push("/admin/kit-demo")} />
-        )}
-        <NavItem active={active("/admin/settings")}
-          icon={<Settings size={15} />} label="Settings"
-          onClick={() => router.push("/admin/settings")} />
-      </div>
+          pipeline gates, and the UI-kit reference (AA-662, a tab inside Settings). All staff roles,
+          same as middleware.ts. */}
+      <NavItem active={active("/admin/settings")}
+        icon={<Settings size={15} />} label="Settings"
+        onClick={() => router.push("/admin/settings")} />
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
