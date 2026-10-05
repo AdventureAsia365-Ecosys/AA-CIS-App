@@ -47,6 +47,50 @@ _RETRY_STATUS = {429, 500, 502, 503, 504, 529}
 _CONFIG_TTL_S = 20.0
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
+# AA-720 — Jev credit monitoring. TypeSafe has no balance API; a 402 with error_type
+# "billing_error" is the only signal that credit ran out. decide() fails open (stages keep their
+# existing rule), so a silent credit outage would otherwise cost ~_TIMEOUT_S per failed call across
+# tens of thousands of verdicts (the China rerun, S209). The breaker stops calling TypeSafe for a
+# cooldown window after a 402; the alert surfaces it to an admin.
+JEV_CREDIT_EXHAUSTED_EVENT = "platform.jev_credit.exhausted"
+_JEV_COOLDOWN_MIN = float(os.environ.get("JEV_CREDIT_COOLDOWN_MIN", "15"))
+# Breaker state is process-local (same as the _questions / _allowlist caches below): each worker
+# trips and recovers on its own clock. A truly global breaker would need DB/Redis; per-process is
+# the minimal design that matches the existing caches and is enough to stop the latency bleed.
+_jev_cooldown_until = 0.0        # time.monotonic() deadline; 0.0 = breaker closed (calls allowed)
+
+
+class JevBillingError(Exception):
+    """Raised inside _call_jev when TypeSafe returns 402 with error_type 'billing_error' (credit
+    exhausted). Distinct from generic failures so _decide can trip the breaker and alert."""
+
+
+def jev_breaker_open() -> bool:
+    """True while the credit breaker is cooling down (TypeSafe calls are being skipped)."""
+    return time.monotonic() < _jev_cooldown_until
+
+
+def _trip_jev_breaker() -> None:
+    global _jev_cooldown_until
+    _jev_cooldown_until = time.monotonic() + _JEV_COOLDOWN_MIN * 60.0
+
+
+def reset_jev_breaker() -> None:
+    """Close the breaker now (used by the canary once a probe succeeds, and by tests)."""
+    global _jev_cooldown_until
+    _jev_cooldown_until = 0.0
+
+
+def is_billing_error(status_code: int, body: Any) -> bool:
+    """A TypeSafe 402 whose body says error_type == 'billing_error' means credit is exhausted.
+    Keyed on error_type (not the message text) per the AA-720 live probe (S209)."""
+    if status_code != 402:
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        return detail.get("error_type") == "billing_error"
+    return True        # any 402 from this endpoint is treated as a credit problem
+
 
 @dataclass(frozen=True)
 class Question:
@@ -187,6 +231,13 @@ async def _call_jev(state: Any, questions: dict[str, dict]) -> dict:
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 resp = await client.post(JEV_URL, json=body, headers=headers)
+                if resp.status_code == 402:          # AA-720 — credit exhausted, do not retry
+                    try:
+                        parsed = resp.json()
+                    except Exception:
+                        parsed = None
+                    if is_billing_error(402, parsed):
+                        raise JevBillingError("TypeSafe 402 billing_error (credit exhausted)")
                 if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
                     continue
@@ -261,6 +312,39 @@ class _SingleConn:
         return False
 
 
+_JEV_ALERT_RECENT_SQL = """
+    SELECT 1 FROM shared.notifications
+     WHERE event_type = $1 AND is_read = FALSE AND created_at >= now() - interval '24 hours'
+     LIMIT 1
+"""
+_JEV_ALERT_INSERT_SQL = """
+    INSERT INTO shared.notifications
+        (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
+    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, ARRAY['admin','content'])
+"""
+_JEV_ALERT_MESSAGE = (
+    "Jev (TypeSafe) returned 402 billing_error — API credits are exhausted. The decision layer is "
+    "failing open (stages run on their existing rules without Jev). Top up the TypeSafe account "
+    "(thu@adventure.asia); there is no balance API, so this bell is the only signal."
+)
+
+
+async def maybe_alert_jev_credit(conn, *, source: str) -> bool:
+    """Insert a platform.jev_credit.exhausted notification unless one is already unread within 24h
+    (mirrors AA-627's _maybe_alert_low_balance throttle). Returns True if a new alert was inserted.
+    Best-effort: a notification failure must never fail the calling stage."""
+    try:
+        if await conn.fetchval(_JEV_ALERT_RECENT_SQL, JEV_CREDIT_EXHAUSTED_EVENT):
+            return False
+        payload = json.dumps({"message": _JEV_ALERT_MESSAGE, "error_type": "billing_error", "source": source})
+        await conn.execute(_JEV_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_EXHAUSTED_EVENT, payload)
+        logger.warning("jev_credit_exhausted_alert", source=source)
+        return True
+    except Exception as exc:
+        logger.warning("jev_credit_alert_insert_failed", error=str(exc)[:200])
+        return False
+
+
 async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: list[str],
                   tenant_id: Optional[str], use_cache: bool = True) -> Decision:
     """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while
@@ -307,6 +391,13 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
         except Exception as exc:                  # a cache miss is never an error
             logger.warning("decide_cache_read_failed", stage=stage, error=str(exc)[:200])
 
+    if to_ask and jev_breaker_open():
+        # AA-720 — credit breaker open: skip TypeSafe entirely (no 3s-per-call bleed), the stage
+        # keeps its existing rule just as it would on a fail-open error.
+        for key, q in to_ask.items():
+            decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted (breaker open)")
+        to_ask = {}
+
     if to_ask:
         started = time.perf_counter()
         try:
@@ -320,6 +411,19 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
                 answer = answers.get(key)
                 decision.verdicts[key] = zone_for(q, answer) if answer else \
                     Verdict(key, q.mode, "error", error="no answer returned")
+        except JevBillingError as exc:
+            # AA-720 — credit exhausted: trip the breaker and raise one throttled alert, then fail
+            # open like any other error so the stage keeps running on its existing rule.
+            decision.latency_ms = int((time.perf_counter() - started) * 1000)
+            _trip_jev_breaker()
+            logger.warning("decide_call_billing_error", stage=stage, subject=subject_key)
+            for key, q in to_ask.items():
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error="credit_exhausted")
+            try:
+                async with db.acquire() as conn:
+                    await maybe_alert_jev_credit(conn, source="decide")
+            except Exception as alert_exc:
+                logger.warning("jev_credit_alert_failed", error=str(alert_exc)[:200])
         except Exception as exc:
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
             logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=str(exc)[:200])

@@ -715,3 +715,83 @@ async def get_unmapped_market_requests(request: Request):
     pool = request.app.state.pool
     requests = await list_unmapped_market_requests(pool)
     return {"requests": requests, "total_countries_waiting": len(requests)}
+
+
+# ── AA-720 — Jev credit monitoring: daily canary + 402 sweep ───────────────────────────────────
+# TypeSafe has no balance API (its OpenAPI exposes only the decide endpoint + a models list), so
+# credit exhaustion only shows as a 402 billing_error on an actual call. decide() fails open, so a
+# silent outage would otherwise go unnoticed (S209 China rerun). These two secret-gated endpoints
+# are driven once a day by the same EventBridge->Lambda that runs /dfs-balance/check (AA-627); the
+# Lambda just calls these extra paths with X-Admin-Secret. No scheduler lives in the app. The
+# canary itself calls TypeSafe only through decide._call_jev (never a raw endpoint here), so the
+# "only the gateway talks to TypeSafe" guard (test_aa660) still holds.
+#   POST /admin/jev-canary/check — one tiny real decide-endpoint probe. On 402 the decide() breaker
+#       trips and a throttled bell is raised even on a day with zero pipeline traffic. On success
+#       the breaker is reset (credit is back).
+#   POST /admin/jev/402-sweep    — counts decision_log rows that failed on a 402 in the last 24h
+#       (catches a daytime outage that happened between canary runs) and raises the same throttled
+#       bell if any are found.
+_JEV_402_SWEEP_SQL = """
+    SELECT count(*) AS n, max(created_at) AS last_seen
+      FROM shared.decision_log
+     WHERE zone = 'error'
+       AND error LIKE '%402%'
+       AND created_at >= now() - interval '24 hours'
+"""
+
+
+@router.post("/jev-canary/check", summary="AA-720 — daily Jev canary: one real decide-endpoint probe")
+async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from shared.llm_client import decide as decide_mod
+
+    pool = request.app.state.pool
+    # A minimal, cheap probe. We do not care about the verdict content — only whether the call is
+    # billable (credit present) or raises JevBillingError (402).
+    probe_questions = {"canary": {"type": "noul", "instructions": "Reply true.",
+                                  "criteria": {"true_when": "always"}}}
+    ok, billing_error, detail = True, False, None
+    started = datetime.now(timezone.utc)
+    try:
+        await decide_mod._call_jev("Jev credit canary probe (AA-720).", probe_questions)
+        decide_mod.reset_jev_breaker()        # a billable call proves credit is back
+    except decide_mod.JevBillingError:
+        ok, billing_error = False, True
+        decide_mod._trip_jev_breaker()
+    except Exception as exc:
+        # Any other error (schema/timeout) still means the call was BILLABLE (it passed billing),
+        # so credit is present — the canary only fails on billing_error.
+        detail = str(exc)[:200]
+    alerted = False
+    if billing_error:
+        async with pool.acquire() as conn:
+            alerted = await decide_mod.maybe_alert_jev_credit(conn, source="canary")
+    logger.info("admin_jev_canary_checked", credit_ok=not billing_error, alerted=alerted,
+                breaker_open=decide_mod.jev_breaker_open())
+    return {
+        "credit_ok": not billing_error,
+        "billing_error": billing_error,
+        "alerted": alerted,
+        "breaker_open": decide_mod.jev_breaker_open(),
+        "detail": detail,
+        "checked_at": started.isoformat(),
+    }
+
+
+@router.post("/jev/402-sweep", summary="AA-720 — daily sweep of decision_log for 402 billing errors")
+async def sweep_jev_402(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from shared.llm_client import decide as decide_mod
+
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_JEV_402_SWEEP_SQL)
+        n = int(row["n"]) if row and row["n"] is not None else 0
+        last_seen = row["last_seen"] if row else None
+        alerted = await decide_mod.maybe_alert_jev_credit(conn, source="402_sweep") if n > 0 else False
+    logger.info("admin_jev_402_sweep", errors_24h=n, alerted=alerted)
+    return {
+        "errors_24h": n,
+        "last_seen": last_seen.isoformat() if last_seen else None,
+        "alerted": alerted,
+    }
