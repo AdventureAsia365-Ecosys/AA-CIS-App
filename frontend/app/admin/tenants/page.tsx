@@ -800,7 +800,10 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
       <tr style={{ borderBottom: `1px solid ${A.line2}` }}>
         {/* Tenant name + slug + country */}
         <td style={TD}>
-          <div style={{ fontWeight: 600, color: A.ink, fontSize: 13 }}>{tenant.name}</div>
+          {/* AA-666: open the full Tenant 360 page */}
+          <a href={`/admin/tenants/${tenant.tenant_id}`} style={{ fontWeight: 600, color: A.gold, fontSize: 13, textDecoration: "none" }}>
+            {tenant.name}
+          </a>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
             <code style={{ fontSize: 10.5, color: A.muted, fontFamily: mono }}>{tenant.slug}</code>
             {tenant.country && (
