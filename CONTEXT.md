@@ -51,6 +51,23 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
     live in `frontend/app/_brand/tokens.ts` and are used by admin, portal and login pages
     (AA-605). New pages should reuse them.
+  - **UI kit (AA-662, `frontend/app/_kit/`)**: the shared component library for UI v2, built on
+    TanStack Table (`@tanstack/react-table`) and brand tokens (inline styles, no Tailwind
+    classNames). Exports `DataTable` (per-column filter, multi-sort, column show/hide, pagination,
+    sticky header, row selection + bulk actions, saved views in localStorage per user, CSV export),
+    `Drawer`, `Modal`/`ConfirmModal`, `PageHeader`, `Tabs`, `Badge`/`StatusBadge` (one `tone`
+    vocabulary; `StatusBadge` is driven by job-runner status strings), `EmptyState`, `ErrorState`,
+    `Skeleton`, `ToastProvider`/`useToast`, and `apiGet`/`apiSend` fetch helpers. New pages import
+    from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
+    `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
+    `Skeleton.tsx`) still stand — pages are migrated to the kit one at a time (Review Queue and My
+    Content first). Demo/doc page: `/admin/kit-demo` (`app/admin/kit-demo/page.tsx`).
+  - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
+    via a single `QueryClientProvider` in `app/_kit/Providers.tsx`, mounted from the server root
+    layout (`app/layout.tsx`) around all routes. Defaults: no refetch-on-focus, one retry, 30s
+    stale. Pages that poll opt in per-query with `refetchInterval` (replaces the old hand-rolled
+    `useState`/`useEffect`/`setInterval` fetch). Older pages keep their hand-rolled fetch until
+    migrated.
 - **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
   (acc3 primary → acc1 fallback); the cross-account trust is provisioned in AA-CIS-Infra.
   Embeddings (Cohere Embed v4) run natively on acc2. Claude cannot be invoked from a local shell — the satellite roles only trust the
