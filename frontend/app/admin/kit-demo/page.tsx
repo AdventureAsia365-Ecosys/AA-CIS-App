@@ -113,7 +113,7 @@ function KitDemoInner() {
       <PageHeader
         title="UI Kit"
         breadcrumbs={[{ label: "Admin" }, { label: "UI Kit" }]}
-        description="AA-662 — shared admin/portal components. This page is the living demo."
+        description="Shared admin & portal components — the living design-system reference."
         actions={
           <button
             onClick={() => toast.success("Primary action fired")}
