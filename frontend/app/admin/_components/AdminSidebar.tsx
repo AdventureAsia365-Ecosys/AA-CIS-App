@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
+import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -47,6 +47,8 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
   { label: "Intelligence", items: [
     { href: "/admin/atom-curation", icon: <Puzzle size={15} />, label: "Social Content", adminOnly: true,
       also: ["/admin/tenant-activity", "/admin/platform-stats"] },
+    // AA-705 — SEO Intelligence: demand by market, keywords, PAA, gaps, DFS spend.
+    { href: "/admin/seo-intelligence", icon: <Search size={15} />, label: "SEO Intelligence", adminOnly: true },
   ] },
   { label: "Tenants", items: [
     { href: "/admin/tenants", icon: <Users size={15} />, label: "Tenants", adminOnly: true },
