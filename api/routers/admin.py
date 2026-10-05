@@ -5,7 +5,7 @@ import io
 import json
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Optional
 import asyncpg
@@ -435,18 +435,27 @@ async def delete_tenant(
     return {"status": "deleted", "tenant_id": str(tenant_id)}
 
 
-def _derive_run_display_status(status: str, tours_total: int, tours_passed: int) -> str:
+# A run stored 'ingesting' with partial progress is only really "running" if it is recent — a batch
+# from weeks ago cannot still be mid-pipeline (no job is that long-lived). Past this age a partial
+# 'ingesting' run is stalled/abandoned, not running.
+_RUN_STALE_AFTER = timedelta(hours=24)
+
+
+def _derive_run_display_status(
+    status: str, tours_total: int, tours_passed: int, started_at=None, now=None
+) -> str:
     """AA-718 bug 3 — read-only honest display status for a pipeline run.
 
     `pipeline_runs.status` only ever advances to 'completed' when every tour in the batch reaches a
     terminal raw_tours.pipeline_status (services/export/handler.py::sync_batch_completion). Older
-    ingest-only batches (tours still at 'ingested', never run through S1) therefore sit at
-    'ingesting' forever, and the UI showed a misleading amber "ingesting". We derive a display
-    label here without writing to the DB:
+    ingest-only or abandoned batches sit at 'ingesting' forever, and the UI showed a misleading
+    "ingesting"/"running". We derive a display label here without writing to the DB:
       - 'completed' / 'failed' → unchanged.
-      - stored 'ingesting' with a known total and all tours passed → 'completed' (really done).
-      - stored 'ingesting' with 0 passed and a total → 'ingested' (uploaded, not yet run).
-      - otherwise → 'running' (genuinely mid-pipeline).
+      - stored 'ingesting', all tours passed → 'completed' (really done).
+      - stored 'ingesting', 0 passed with a total → 'ingested' (uploaded, not yet run).
+      - stored 'ingesting', partial progress and OLDER than _RUN_STALE_AFTER → 'stalled'
+        (started long ago, some tours stuck non-terminal — not actually running).
+      - stored 'ingesting', partial progress and recent → 'running' (genuinely mid-pipeline).
     """
     if status in ("completed", "failed"):
         return status
@@ -455,6 +464,14 @@ def _derive_run_display_status(status: str, tours_total: int, tours_passed: int)
             return "completed"
         if tours_total > 0 and tours_passed == 0:
             return "ingested"
+        # partial progress: running only if recent, else stalled
+        if started_at is not None:
+            ref = now or datetime.now(timezone.utc)
+            try:
+                if ref - started_at > _RUN_STALE_AFTER:
+                    return "stalled"
+            except TypeError:
+                pass  # naive/aware mismatch — fall through to 'running'
         return "running"
     return status
 
@@ -483,7 +500,6 @@ async def get_tenant_details(
     pool = request.app.state.pool
 
     # AA-718 — windowed LLM cost (reconcile with External Spend: rolling 30 days, UTC).
-    from datetime import timedelta
     _now = datetime.now(timezone.utc)
     _cost_since = _now - timedelta(days=30)
 
@@ -741,7 +757,8 @@ async def get_tenant_details(
                 # Completed), freshly ingested but not yet run through S1 (0 passed → show Ingested),
                 # or truly mid-run (partial → show Running). 'completed'/'failed' pass through.
                 "display_status":  _derive_run_display_status(
-                    r["status"], int(r["tours_total"] or 0), int(r["tours_passed"] or 0)
+                    r["status"], int(r["tours_total"] or 0), int(r["tours_passed"] or 0),
+                    started_at=r["started_at"], now=_now,
                 ),
             }
             for r in runs

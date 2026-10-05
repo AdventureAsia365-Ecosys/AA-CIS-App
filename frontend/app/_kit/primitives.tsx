@@ -101,6 +101,8 @@ const STATUS_TONE: Record<string, { tone: Tone; label: string }> = {
   retrying: { tone: "warning", label: "Retrying" },
   pending: { tone: "warning", label: "Pending" },
   held: { tone: "warning", label: "Held" },
+  stalled: { tone: "warning", label: "Stalled" },
+  ingested: { tone: "neutral", label: "Ingested" },
   approved: { tone: "success", label: "Approved" },
   rejected: { tone: "danger", label: "Rejected" },
   dismissed: { tone: "neutral", label: "Dismissed" },
