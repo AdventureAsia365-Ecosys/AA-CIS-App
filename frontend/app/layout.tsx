@@ -4,6 +4,7 @@
 
 import type { Metadata } from "next";
 import "./globals.css";
+import { Providers } from "./_kit/Providers";
 
 export const metadata: Metadata = {
   title: "AA-CIS",
@@ -33,7 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body style={{ margin: 0 }}>
-        {children}
+        {/* AA-662: app-wide react-query provider (client entry point) around all routes. */}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
