@@ -476,6 +476,37 @@ def _derive_run_display_status(
     return status
 
 
+# ── GET /admin/tenants/{id}/audit — AA-666 Tenant 360 Audit tab ─────────────
+
+
+@router.get("/tenants/{tenant_id}/audit", summary="AA-666 — a tenant's action timeline")
+async def get_tenant_audit(
+    tenant_id: str,
+    request: Request,
+    limit: int = Query(100, ge=1, le=500),
+    x_admin_secret: str = Header(None),
+):
+    """Per-tenant audit timeline for the Tenant 360 Audit tab (acp_shared.audit_log). Read-only;
+    tenant_id is stored as text there. Newest first."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT action, actor, actor_type, resource_type, resource_id, details, created_at "
+            "FROM acp_shared.audit_log WHERE tenant_id = $1 "
+            "ORDER BY created_at DESC LIMIT $2",
+            str(tenant_id), limit,
+        )
+    return {"events": [{
+        "action": r["action"],
+        "actor": r["actor"],
+        "actor_type": r["actor_type"],
+        "resource_type": r["resource_type"],
+        "resource_id": r["resource_id"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    } for r in rows]}
+
+
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
 
