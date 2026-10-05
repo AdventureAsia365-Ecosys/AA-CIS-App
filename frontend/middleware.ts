@@ -56,6 +56,8 @@ const PUBLIC_PATHS = ["/login", "/tenant-login"];
 const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   // Admin-only (was ADMIN_PATHS)
   { prefix: "/admin/tenants", roles: ["admin"] },
+  // AA-664 — Overview dashboard: whole-system view incl. cost vs budget. Admin-only.
+  { prefix: "/admin/overview", roles: ["admin"] },
   // AA-505 — LLM cost/quality monitoring (Tenant->Model->Stage). Admin-only, same tier as
   // tenants above — this shows real per-call spend + Việc C's model choice is
   // reached via /admin/settings (already admin+reviewer+content, unchanged).
