@@ -34,7 +34,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   deploy success; Vercel is not one of the 5 required checks).
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
-    bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content`, `atom-curation` (Social Content tabs
+    bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
+    server-side filter/sort/paginate + filter-aware stat cards + windowed cost + derived pipeline
+    status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
     `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `settings` (pipeline gates, **Brand
