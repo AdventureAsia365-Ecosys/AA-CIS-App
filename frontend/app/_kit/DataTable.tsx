@@ -103,6 +103,10 @@ export type DataTableProps<T> = {
 
   stickyHeader?: boolean;
   maxBodyHeight?: number | string;
+
+  /** Optional: make rows clickable (e.g. open a detail drawer). Cells that stopPropagation (like
+   * an actions cell) won't trigger it. */
+  onRowClick?: (row: T) => void;
 };
 
 const toolbarBtn: React.CSSProperties = {
@@ -144,6 +148,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     toolbarExtra,
     stickyHeader = true,
     maxBodyHeight,
+    onRowClick,
   } = props;
 
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -188,6 +193,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           aria-label="Select row"
           checked={row.getIsSelected()}
           onChange={row.getToggleSelectedHandler()}
+          onClick={(e) => e.stopPropagation()}
           style={{ cursor: "pointer" }}
         />
       ),
@@ -504,8 +510,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
               {pageRows.map((row) => (
                 <tr
                   key={row.id}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   style={{
                     background: row.getIsSelected() ? K.accentTint : "transparent",
+                    cursor: onRowClick ? "pointer" : undefined,
                   }}
                 >
                   {row.getVisibleCells().map((cell) => (
