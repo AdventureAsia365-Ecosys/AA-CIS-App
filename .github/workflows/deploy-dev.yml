@@ -51,6 +51,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     needs: build-and-push
+    env:
+      # AA-651 — the worker runs the SAME image as the api on its own ECS service. The service +
+      # task-def family name mirror the api one (api: aa-cis-dev-api, worker: aa-cis-dev-worker),
+      # so derive it from ECS_SERVICE instead of adding another secret.
+      ECS_WORKER_SERVICE: ${{ secrets.ECS_SERVICE }}-worker
     steps:
       - uses: actions/checkout@v5
       - name: Configure AWS credentials (OIDC)
@@ -60,46 +65,58 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
       - name: Install jq
         run: sudo apt-get install -y jq
-      - name: Scale up ECS
+      # AA-651 — register a fresh task definition for one family with the new image, then point
+      # its service at it. Reused for both api and worker. Both families are created by Terraform
+      # (modules/ecs); this only ever bumps the image on the latest revision, preserving every
+      # other field (command override, env, secrets, stopTimeout) that Terraform set.
+      - name: Deploy helper
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --desired-count 1 \
-            --region ${{ env.AWS_REGION }}
-      - name: Register new task definition
-        id: task-def
-        run: |
-          NEW_IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_SERVICE }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'taskDefinition' \
-            --output json | \
+          cat > /tmp/deploy_family.sh <<'SH'
+          set -euo pipefail
+          FAMILY="$1"; SERVICE="$2"
+          NEW_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" \
+            --desired-count 1 --region "$AWS_REGION" >/dev/null
+          aws ecs describe-task-definition --task-definition "$FAMILY" --region "$AWS_REGION" \
+            --query 'taskDefinition' --output json | \
           jq --arg img "$NEW_IMAGE" \
             'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy,.deregisteredAt) | .containerDefinitions[0].image = $img' \
-          > /tmp/new_td.json
-          NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file:///tmp/new_td.json \
-            --region ${{ env.AWS_REGION }} \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          echo "task_arn=$NEW_ARN" >> $GITHUB_OUTPUT
-          echo "Registered: $NEW_ARN"
-      - name: Deploy to ECS
+          > /tmp/td_${FAMILY}.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file:///tmp/td_${FAMILY}.json \
+            --region "$AWS_REGION" --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered $FAMILY: $NEW_ARN"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" \
+            --task-definition "$NEW_ARN" --region "$AWS_REGION" >/dev/null
+          SH
+          chmod +x /tmp/deploy_family.sh
+      - name: Deploy api
+        run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
+      # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip
+      # the worker roll gracefully instead of failing the whole deploy (breaks the chicken-and-egg
+      # on first rollout: the image must exist before Infra can create the worker service, and the
+      # service must exist before this step can roll it). Once it exists, this deploys it normally.
+      - name: Deploy worker
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition ${{ steps.task-def.outputs.task_arn }} \
-            --region ${{ env.AWS_REGION }}
+          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
+               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
+               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
+            /tmp/deploy_family.sh "${{ env.ECS_WORKER_SERVICE }}" "${{ env.ECS_WORKER_SERVICE }}"
+          else
+            echo "Worker service ${{ env.ECS_WORKER_SERVICE }} not found yet (AA-CIS-Infra not applied) — skipping."
+          fi
       - name: Wait stable
         run: |
+          SERVICES="${{ env.ECS_SERVICE }}"
+          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
+               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
+               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
+            SERVICES="$SERVICES ${{ env.ECS_WORKER_SERVICE }}"
+          fi
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} \
+            --services $SERVICES \
             --region ${{ env.AWS_REGION }}
-          echo "ECS deployment stable"
+          echo "ECS deployment stable ($SERVICES)"
       - name: Smoke test
         run: |
           sleep 10
