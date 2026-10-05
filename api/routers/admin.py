@@ -435,10 +435,6 @@ async def delete_tenant(
     return {"status": "deleted", "tenant_id": str(tenant_id)}
 
 
-# ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
-
-
-@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
 def _derive_run_display_status(status: str, tours_total: int, tours_passed: int) -> str:
     """AA-718 bug 3 — read-only honest display status for a pipeline run.
 
@@ -463,6 +459,10 @@ def _derive_run_display_status(status: str, tours_total: int, tours_passed: int)
     return status
 
 
+# ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
+
+
+@router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
 async def get_tenant_details(
     tenant_id: UUID,
     request: Request,
