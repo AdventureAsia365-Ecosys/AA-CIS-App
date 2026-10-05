@@ -45,7 +45,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     roles (same list as `middleware.ts` PROTECTED_ROUTES). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
-  - Portal pages: `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool`, `t7-planning` (titled
+  - Portal pages: `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
+    `CatalogTab`, migrated to the UI kit + react-query, AA-662 PR 3), `t7-planning` (titled
     "Social Content", renders the Slate), `t8-angle-gate` (T8+T9 wizard), `t10-review` (My
     Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`. The portal works
     on phones (drawer below 900px, AA-605).
