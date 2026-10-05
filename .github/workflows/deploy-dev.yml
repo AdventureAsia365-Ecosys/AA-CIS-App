@@ -52,11 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     needs: build-and-push
-    env:
-      # AA-651 — the worker runs the SAME image as the api on its own ECS service. The service +
-      # task-def family name mirror the api one (api: aa-cis-dev-api, worker: aa-cis-dev-worker),
-      # so derive it from ECS_SERVICE instead of adding another secret.
-      ECS_WORKER_SERVICE: ${{ secrets.ECS_SERVICE }}-worker
     steps:
       - uses: actions/checkout@v5
       - name: Configure AWS credentials (OIDC)
@@ -64,6 +59,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+      # AA-651 — the worker runs the SAME image as the api on its own ECS service. The real
+      # services are `aa-cis-dev-api` (api) and `aa-cis-dev-worker` (worker). ECS_SERVICE is
+      # `aa-cis-dev-api`, so the worker name is the api name with its `-api` suffix replaced by
+      # `-worker` — NOT `${ECS_SERVICE}-worker` (that gave `aa-cis-dev-api-worker`, which never
+      # matched, so every deploy silently skipped the worker and it stayed on an old image).
+      - name: Derive worker service name
+        run: echo "ECS_WORKER_SERVICE=${ECS_SERVICE%-api}-worker" >> "$GITHUB_ENV"
+        env:
+          ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
       - name: Install jq
         run: sudo apt-get install -y jq
       # AA-651 — register a fresh task definition for one family with the new image, then point
