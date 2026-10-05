@@ -550,9 +550,12 @@ _Avoid_: block (alone), delete, filter.
   After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
   F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,
   observe only: no gate outcome changes).
-  `/portal/t10-review` is now **My Content** (AA-614): a flat list of the tenant's pieces with
-  no gate/held details, displayed text is copy-locked (select/copy/right-click blocked, with a
-  "Use Export" hint; the edit textarea stays editable).
+  `/portal/t10-review` is now **My Content** (AA-614): the tenant's pieces with no gate/held
+  details, displayed text is copy-locked (select/copy/right-click blocked, with a "Use Export"
+  hint; the edit textarea stays editable). AA-669 migrated it to the UI-kit DataTable
+  (columns/filters by channel·status·goal/sort/saved views/CSV) with a right-side drawer for the
+  piece (content + context + flags + inline edit + exports), and bulk actions (export selected,
+  publish selected eligible pieces) via react-query.
 - **T11 — Publish / Export**: tenant-facing WordPress publish, blog Channel only today
   (`/portal/t11-publish`); the other 7 Channels have no publish step built yet. Blog markdown is
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
