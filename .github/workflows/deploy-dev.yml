@@ -91,15 +91,32 @@ jobs:
           chmod +x /tmp/deploy_family.sh
       - name: Deploy api
         run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
+      # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip
+      # the worker roll gracefully instead of failing the whole deploy (breaks the chicken-and-egg
+      # on first rollout: the image must exist before Infra can create the worker service, and the
+      # service must exist before this step can roll it). Once it exists, this deploys it normally.
       - name: Deploy worker
-        run: /tmp/deploy_family.sh "${{ env.ECS_WORKER_SERVICE }}" "${{ env.ECS_WORKER_SERVICE }}"
+        run: |
+          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
+               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
+               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
+            /tmp/deploy_family.sh "${{ env.ECS_WORKER_SERVICE }}" "${{ env.ECS_WORKER_SERVICE }}"
+          else
+            echo "Worker service ${{ env.ECS_WORKER_SERVICE }} not found yet (AA-CIS-Infra not applied) — skipping."
+          fi
       - name: Wait stable
         run: |
+          SERVICES="${{ env.ECS_SERVICE }}"
+          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
+               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
+               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
+            SERVICES="$SERVICES ${{ env.ECS_WORKER_SERVICE }}"
+          fi
           aws ecs wait services-stable \
             --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} ${{ env.ECS_WORKER_SERVICE }} \
+            --services $SERVICES \
             --region ${{ env.AWS_REGION }}
-          echo "ECS deployment stable (api + worker)"
+          echo "ECS deployment stable ($SERVICES)"
       - name: Smoke test
         run: |
           sleep 10
