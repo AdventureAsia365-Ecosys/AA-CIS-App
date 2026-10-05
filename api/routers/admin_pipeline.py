@@ -846,6 +846,34 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None) ->
             logger.error("failed_to_mark_pipeline_failed", error=str(db_exc))
 
 
+def _build_s1_progress(job_id: str):
+    """AA-667: construct a WritingProgress sink + its own short-lived Redis client for one S1 job.
+
+    S1 runs in the in-process background task (not the durable job runner), so there is no
+    app.state.redis in scope — open a client from the same REDIS_HOST env the app lifespan uses.
+    The key's tenant segment is the master/platform tenant (S1 is platform content, no tenant).
+    Returns (progress, redis) or (None, None) on any failure (best-effort, never blocks a run)."""
+    try:
+        import redis.asyncio as aioredis
+
+        from services.acp_shared.writing_progress import (
+            TOUR_STAGE_STEPS, TOUR_STEPS, WritingProgress,
+        )
+        redis = aioredis.from_url(
+            f"redis://{os.environ.get('REDIS_HOST', 'aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com')}:6379",
+            encoding="utf-8", decode_responses=True,
+        )
+        progress = WritingProgress(
+            redis, tenant_id=_MASTER_TENANT_ID, kind="tour", job_id=str(job_id),
+            steps=TOUR_STEPS, stream_stages={"s1_generate"}, display="tour_json",
+            stage_steps=TOUR_STAGE_STEPS,
+        )
+        return progress, redis
+    except Exception as e:
+        logger.warning("s1_progress_build_failed", job_id=job_id, error=str(e))
+        return None, None
+
+
 async def _run_tour_job(job_id: str, tour_req: TourRunRequest) -> None:
     """AA-223: pipeline_jobs lifecycle wrapper around the existing executor.
 
@@ -857,9 +885,32 @@ async def _run_tour_job(job_id: str, tour_req: TourRunRequest) -> None:
     """
     from .jobs_repo import mark_failed, mark_interrupted, mark_running, mark_succeeded
 
+    # AA-667: live writing progress — bind a WritingProgress sink around the whole run so the
+    # s1_generate writer streams into Redis (key wp:{master}:tour:{job_id}), readable by
+    # GET /admin/progress/s1/{job_id}. S1 runs in-process (pipeline_jobs), has no app.state.redis
+    # in scope here, so open a short-lived client from the same env the app lifespan uses — same
+    # precedent as this module opening its own asyncpg connection. Entirely best-effort: a Redis
+    # miss or a construction error must never affect the rewrite.
+    progress, _progress_redis = _build_s1_progress(job_id)
+
     try:
         await mark_running(job_id)
-        result = await _run_tour_safe(tour_req, job_id=job_id)
+        if progress is not None:
+            from shared.llm_client import stream_sink
+            progress.start()
+            result = None
+            try:
+                with stream_sink.bind(progress):
+                    result = await _run_tour_safe(tour_req, job_id=job_id)
+            finally:
+                await progress.finish(ok=result is not None)
+                if _progress_redis is not None:
+                    try:
+                        await _progress_redis.aclose()
+                    except Exception:
+                        pass
+        else:
+            result = await _run_tour_safe(tour_req, job_id=job_id)
         if result is None:
             await mark_failed(job_id, "run_tour failed after retries (see logs)")
         else:
@@ -1117,6 +1168,28 @@ async def get_run_tour_job(job_id: str, x_admin_secret: str = Header(None)):
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     return job
+
+
+@router.get("/progress/s1/{job_id}")
+async def get_s1_progress(job_id: str, request: Request, x_admin_secret: str = Header(None)):
+    """AA-667: live writing progress for one S1 rewrite job (steps + streamed tour fields),
+    the admin counterpart of GET /v1/progress/tour/{id}. Reads the same Redis snapshot the
+    WritingProgress sink bound in _run_tour_job writes, under the master/platform tenant.
+
+    `found: false` is a normal answer (job not started, finished >1h ago, or run before this
+    feature) — the page then falls back to the lifecycle poll (GET /admin/jobs/{job_id})."""
+    verify_admin_secret(x_admin_secret)
+    from services.acp_shared.writing_progress import read_progress
+
+    if not job_id or len(job_id) > 64:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    try:
+        snap = await read_progress(request.app.state.redis, _MASTER_TENANT_ID, "tour", job_id)
+    except Exception:
+        snap = None  # Redis unavailable -> behave like "no live view", never a 500
+    if snap is None:
+        return {"found": False}
+    return {"found": True, **snap}
 
 
 # ── AA-606: S1 rewrite via Bedrock Batch Inference ─────────────────────────────
