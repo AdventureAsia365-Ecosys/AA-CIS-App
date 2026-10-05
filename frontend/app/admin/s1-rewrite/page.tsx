@@ -16,6 +16,7 @@ import {
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
+import AdminLiveWriter from "../_components/AdminLiveWriter";  // AA-667
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const PAGE_SIZE = 20;
@@ -204,6 +205,8 @@ export default function S1RewritePage() {
   const [detailTour, setDetailTour]         = useState<Tour | null>(null);
   const [compareOpen, setCompareOpen]       = useState(false);
   const [jobIds, setJobIds]                 = useState<Record<string, string>>({}); // tour_id -> job_id
+  // AA-667: tour whose live writing panel is open ({tourId, jobId, name}).
+  const [liveTour, setLiveTour]             = useState<{ tourId: string; jobId: string; name: string } | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
   // AA-250 B2: tour_id -> last-seen current_stage from GET /admin/jobs/{id}, and whether that
   // job has looped back into "generate" more than once (validate-retry loop indicator).
@@ -816,6 +819,21 @@ export default function S1RewritePage() {
                             tour={t} runStatus={runStatus} result={result}
                             stage={tourStages[t.tour_id]} isRetry={!!tourRetryFlags[t.tour_id]}
                           />
+                          {/* AA-667: open the live writing panel while this tour is running */}
+                          {runStatus === "running" && jobIds[t.tour_id] && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLiveTour({ tourId: t.tour_id, jobId: jobIds[t.tour_id], name: t.src_name });
+                              }}
+                              style={{
+                                marginTop: 4, fontSize: 11, fontWeight: 600, color: A.gold,
+                                background: "none", border: "none", cursor: "pointer", padding: 0,
+                              }}
+                            >
+                              ● Live view
+                            </button>
+                          )}
                         </td>
                         <td style={{ ...TD, color: A.muted2 }}><ChevronRight size={14} /></td>
                       </tr>
@@ -860,6 +878,44 @@ export default function S1RewritePage() {
                   </Btn>
                 </div>
               </Card>
+            </div>
+          )}
+
+          {/* AA-667: live writing panel (steps + streamed tour fields) for one running tour */}
+          {liveTour && (
+            <div
+              onClick={() => setLiveTour(null)}
+              style={{
+                position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+                display: "flex", justifyContent: "flex-end", zIndex: 120,
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: 480, maxWidth: "90vw", height: "100%", background: A.bg,
+                  borderLeft: `1px solid ${A.line}`, padding: "22px 24px", overflowY: "auto",
+                  boxShadow: "-8px 0 24px rgba(0,0,0,0.12)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {liveTour.name}
+                  </div>
+                  <button
+                    onClick={() => setLiveTour(null)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, fontSize: 20, lineHeight: 1 }}
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                <AdminLiveWriter
+                  jobId={liveTour.jobId}
+                  active={tourStatuses[liveTour.tourId] === "running"}
+                  title="S1 Rewrite"
+                />
+              </div>
             </div>
           )}
 
