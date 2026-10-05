@@ -439,13 +439,66 @@ async def delete_tenant(
 
 
 @router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view")
+def _derive_run_display_status(status: str, tours_total: int, tours_passed: int) -> str:
+    """AA-718 bug 3 — read-only honest display status for a pipeline run.
+
+    `pipeline_runs.status` only ever advances to 'completed' when every tour in the batch reaches a
+    terminal raw_tours.pipeline_status (services/export/handler.py::sync_batch_completion). Older
+    ingest-only batches (tours still at 'ingested', never run through S1) therefore sit at
+    'ingesting' forever, and the UI showed a misleading amber "ingesting". We derive a display
+    label here without writing to the DB:
+      - 'completed' / 'failed' → unchanged.
+      - stored 'ingesting' with a known total and all tours passed → 'completed' (really done).
+      - stored 'ingesting' with 0 passed and a total → 'ingested' (uploaded, not yet run).
+      - otherwise → 'running' (genuinely mid-pipeline).
+    """
+    if status in ("completed", "failed"):
+        return status
+    if status == "ingesting":
+        if tours_total > 0 and tours_passed >= tours_total:
+            return "completed"
+        if tours_total > 0 and tours_passed == 0:
+            return "ingested"
+        return "running"
+    return status
+
+
 async def get_tenant_details(
     tenant_id: UUID,
     request: Request,
     x_admin_secret: str = Header(None),
+    # AA-718 — server-side paging/sort/filter for the internal Master Content catalog. All optional;
+    # omitting them keeps the legacy behaviour (first page, published_at desc). The tenant (B2B)
+    # branch ignores these and is unchanged.
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    sort: str = Query("created_at"),
+    sort_dir: str = Query("desc"),
+    country: Optional[str] = Query(None),
+    master_status: Optional[str] = Query(None),
+    score: Optional[str] = Query(None),  # 9.5+ / 9.0+ / 8.0+ / below8
+    search: Optional[str] = Query(None),
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
+
+    # AA-718 — windowed LLM cost (reconcile with External Spend: rolling 30 days, UTC).
+    from datetime import timedelta
+    _now = datetime.now(timezone.utc)
+    _cost_since = _now - timedelta(days=30)
+
+    # AA-718 — whitelist sortable columns (never interpolate a raw client string into ORDER BY).
+    _SORT_COLS = {
+        "tour_name": "pt.aa_name",
+        "country": "rt.country",
+        "quality_score": "pt.quality_score",
+        "created_at": "pt.published_at",
+        "master_status": "pt.master_status",
+    }
+    _sort_col = _SORT_COLS.get(sort, "pt.published_at")
+    _sort_dir = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
+    _score_min = {"9.5+": 9.5, "9.0+": 9.0, "8.0+": 8.0}.get(score or "")
+    _score_below8 = score == "below8"
 
     async with pool.acquire() as conn:
         tenant = await conn.fetchrow("""
@@ -477,6 +530,16 @@ async def get_tenant_details(
             WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
         """, tenant_id, is_internal)
 
+        # AA-718 bug 2: a windowed cost (rolling 30d, UTC) that reconciles with External Spend's
+        # own 30-day window, alongside the all-time figure above. External Spend buckets by
+        # created_at in [now-30d, now) over the same llm_call_log — matching that here.
+        cost_window = await conn.fetchval("""
+            SELECT COALESCE(SUM(cost_usd), 0)
+            FROM shared.llm_call_log
+            WHERE (tenant_id = $1 OR ($2 AND tenant_id IS NULL))
+              AND created_at >= $3 AND created_at < $4
+        """, tenant_id, is_internal, _cost_since, _now)
+
         # v_tenant_monthly_usage has one row per tenant per billing_month;
         # ORDER BY DESC so we always get the current/most-recent month.
         # COALESCE guards: new tenants have no quota row, producing NULLs.
@@ -489,24 +552,60 @@ async def get_tenant_details(
             ORDER BY billing_month DESC LIMIT 1
         """, tenant_id)
 
+        catalog_total = 0           # AA-718: true filtered COUNT (not len of a capped list)
+        catalog_avg_quality = None  # AA-718: avg over the SAME filter set as the table
         if is_internal:
-            # Show published_tours for the internal catalog
-            tours = await conn.fetch("""
+            # AA-718 — server-side filter/sort/paginate the internal catalog (was ORDER BY
+            # published_at DESC LIMIT 200, which silently dropped the newest rows past 200 and made
+            # Total Tours / Avg Quality cap at 200). Filters are applied in SQL so the summary
+            # stats below match exactly what the table shows.
+            where = ["TRUE"]
+            params: list = []
+            if country:
+                params.append(country)
+                where.append(f"rt.country = ${len(params)}")
+            if master_status and master_status != "all":
+                params.append(master_status)
+                where.append(f"pt.master_status::text = ${len(params)}")
+            else:
+                # default: hide trashed (matches the old client default)
+                where.append("pt.master_status::text <> 'trashed'")
+            if _score_min is not None:
+                params.append(_score_min)
+                where.append(f"pt.quality_score >= ${len(params)}")
+            if _score_below8:
+                where.append("pt.quality_score < 8.0")
+            if search:
+                params.append(f"%{search}%")
+                where.append(f"(pt.aa_name ILIKE ${len(params)} OR rt.country ILIKE ${len(params)})")
+            where_sql = " AND ".join(where)
+
+            # Filter-aware summary (bug 1 + bug 5): real COUNT and AVG over the filtered set.
+            stat_row = await conn.fetchrow(f"""
+                SELECT COUNT(*) AS n, AVG(pt.quality_score) AS avg_q
+                FROM gold_aa_internal.published_tours pt
+                LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+                WHERE {where_sql}
+            """, *params)
+            catalog_total = int(stat_row["n"] or 0)
+            catalog_avg_quality = float(stat_row["avg_q"]) if stat_row["avg_q"] is not None else None
+
+            offset = (page - 1) * page_size
+            tours = await conn.fetch(f"""
                 SELECT pt.id, pt.tour_id, pt.aa_name, rt.country,
                        pt.quality_score, pt.master_status::text AS master_status,
                        (SELECT gc.version_num FROM silver_aa_internal.generated_content gc
                         WHERE gc.tour_id = pt.tour_id ORDER BY gc.created_at DESC LIMIT 1) AS version_number,
-                       -- AA-626: how many of this tour's versions are still stuck pending in the
-                       -- review queue. Surfaced so the admin can jump over and dismiss the stale
-                       -- failed versions of a tour that already has an approved master version.
                        (SELECT COUNT(*) FROM silver_aa_internal.review_queue rq
                         WHERE rq.tour_id = pt.tour_id AND rq.review_status = 'pending')
                         AS pending_review_count,
                        'published'::text AS status, pt.published_at AS created_at
                 FROM gold_aa_internal.published_tours pt
                 LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-                ORDER BY pt.published_at DESC LIMIT 200
-            """)
+                WHERE {where_sql}
+                ORDER BY {_sort_col} {_sort_dir} NULLS LAST, pt.id
+                LIMIT {page_size} OFFSET {offset}
+            """, *params)
         else:
             tours = await conn.fetch("""
                 SELECT ttv.id, NULL::uuid AS tour_id, pt.aa_name, rt.country,
@@ -588,12 +687,24 @@ async def get_tenant_details(
         "summary": {
             "total_rewrites":       int(total_rewrites or 0),
             "total_llm_cost_usd":   float(total_cost or 0),
+            # AA-718 bug 2: windowed cost + label, reconciled with External Spend's 30d window.
+            "llm_cost_window_usd":  float(cost_window or 0) if is_internal else None,
+            "llm_cost_window_label": "last 30 days",
+            # AA-718 bug 1 + 5: true filtered catalog count + filter-aware avg quality (internal).
+            "catalog_total":        catalog_total if is_internal else int(total_rewrites or 0),
+            "avg_quality":          catalog_avg_quality,
             "api_calls_this_month": api_calls,
             "quota_pct":            quota_pct,
             "plan_name":            str(tenant["plan_tier"]).title(),
             "member_since":         tenant["created_at"].isoformat()[:10],
             "tours_view":           "published" if is_internal else "rewrites",
             "pipeline_note":        None if is_internal else "Showing pipeline runs for tours in your catalog",
+        },
+        # AA-718 bug 4: server-side pagination metadata so the UI shows true totals, not a 200 cap.
+        "pagination": {
+            "page":       page,
+            "page_size":  page_size,
+            "total":      catalog_total if is_internal else int(total_rewrites or 0),
         },
         "rewritten_tours": [
             {
@@ -625,6 +736,13 @@ async def get_tenant_details(
                 "llm_model":       r["llm_model"],
                 "llm_cost_usd":    float(r["cost_usd"] or 0),
                 "status":          r["status"],
+                # AA-718 bug 3: an honest DISPLAY status derived read-only (never written back).
+                # A run stored 'ingesting' can be: actually finished (all tours passed → show
+                # Completed), freshly ingested but not yet run through S1 (0 passed → show Ingested),
+                # or truly mid-run (partial → show Running). 'completed'/'failed' pass through.
+                "display_status":  _derive_run_display_status(
+                    r["status"], int(r["tours_total"] or 0), int(r["tours_passed"] or 0)
+                ),
             }
             for r in runs
         ],

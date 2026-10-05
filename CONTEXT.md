@@ -501,6 +501,20 @@ _Avoid_: block (alone), delete, filter.
   Content" once it lands here. Atomize (see Atom above) now fires automatically right after a
   tour is published here (AA-526, `services/export/handler.py::process_export()`), as a
   fire-and-forget background task, `owner_scope='platform'`.
+  - The admin **Master Content** page reads `GET /admin/tenants/{aa_internal}/details`
+    (`admin.py::get_tenant_details`, internal branch). AA-718 added server-side
+    `page`/`page_size`/`sort`/`sort_dir`/`country`/`master_status`/`score`/`search` to it (the
+    tour list was a client-side filter over a fixed `LIMIT 200`, which dropped the newest rows
+    past 200). The summary now carries a filter-aware `catalog_total` + `avg_quality` (true
+    `COUNT`/`AVG` over the same WHERE), a 30-day-windowed `llm_cost_window_usd` (reconciles with
+    External Spend) alongside the all-time figure, and a `pagination` block. Each pipeline run
+    gets a read-only derived `display_status` (`_derive_run_display_status`): a stored
+    `ingesting` run that is actually finished shows **completed**, an ingest-only batch shows
+    **ingested**, a partial one shows **running** — the stored column is never written from this
+    GET. One-off backfill (S211) recomputed `pipeline_runs.tours_passed` from the real published
+    count (26 rows were stale); it did not touch any run `status` (15 of 17 `ingesting` runs are
+    genuinely not-yet-run, 751 tours still at `pipeline_status='ingested'`). The tenant (B2B)
+    branch of the endpoint is unchanged.
 - **A4 — Cross-Tenant Oversight**: admin-side supervision OVER tenant-published content — Trust
   Ramp (graduated autonomy per tenant) and the force-unpublish safety net (`admin_a4.py`). Not
   part of the A0→A3 production line; it watches T-series output instead.
