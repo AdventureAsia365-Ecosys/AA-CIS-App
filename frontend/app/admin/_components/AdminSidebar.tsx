@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
+import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -31,6 +31,8 @@ interface NavEntry {
 
 const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
   { label: "Overview", items: [
+    // AA-664 — whole-system overview (pipeline funnel, intelligence, tenants, jobs, cost, alerts).
+    { href: "/admin/overview", icon: <Gauge size={15} />, label: "Overview", adminOnly: true },
     { href: "/admin/dashboard", icon: <LayoutDashboard size={15} />, label: "Dashboard" },
   ] },
   { label: "Content", items: [
