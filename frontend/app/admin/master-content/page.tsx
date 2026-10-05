@@ -2,16 +2,17 @@
 // app/admin/master-content/page.tsx
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, serif, sans, mono,
-  Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TH, TD,
+  SLabel, Badge, Btn, LoadingScreen, StatCard, TH, TD,
 } from "../_components/adminUi";
 import { BarChart2, Star, DollarSign, CalendarClock } from "lucide-react";
+import { StatusBadge as KitStatusBadge } from "../../_kit";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
-import { FilterBar } from "../_components/FilterBar";
 import { Pagination } from "../_components/Pagination";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
@@ -34,12 +35,23 @@ interface RewrittenTour {
 interface Summary {
   total_rewrites: number;
   total_llm_cost_usd: number;
+  // AA-718: new filter-aware / windowed fields from the backend.
+  llm_cost_window_usd?: number | null;
+  llm_cost_window_label?: string;
+  catalog_total?: number;
+  avg_quality?: number | null;
   api_calls_this_month: number;
   quota_pct: number;
   plan_name: string;
   member_since: string;
-  tours_view: number;
-  pipeline_note: string;
+  tours_view: number | string;
+  pipeline_note: string | null;
+}
+
+interface Pagination {
+  page: number;
+  page_size: number;
+  total: number;
 }
 
 interface PipelineRun {
@@ -50,12 +62,14 @@ interface PipelineRun {
   llm_model: string;
   llm_cost_usd: number;
   status: string;
+  display_status?: string;   // AA-718: honest derived status (completed/ingested/running/failed)
 }
 
 interface DetailsResponse {
   summary: Summary;
   rewritten_tours: RewrittenTour[];
   pipeline_runs: PipelineRun[];
+  pagination?: Pagination;
 }
 
 interface TourVersion {
@@ -779,10 +793,6 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MasterContentPage() {
-  const [data, setData]                 = useState<DetailsResponse | null>(null);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState("");
-  const [refreshing, setRefreshing]     = useState(false);
   const [search, setSearch]             = useState("");
   const [detailTourId, setDetailTourId] = useState<string | null>(null);
   const [detailTourName, setDetailTourName] = useState("");
@@ -794,6 +804,9 @@ export default function MasterContentPage() {
   const [promoting, setPromoting]       = useState<string | null>(null);
   const [page, setPage]                 = useState(1);
   const [runsPage, setRunsPage]         = useState(1);
+  // AA-718: server-side sort (whitelisted on the backend).
+  const [sortKey, setSortKey]           = useState<"tour_name" | "country" | "quality_score" | "created_at" | "master_status">("created_at");
+  const [sortDir, setSortDir]           = useState<"asc" | "desc">("desc");
   const [statusFilter, setStatusFilter] = useState("");
   const [countryFilter, setCountryFilter] = useState("");
   const [scoreFilter, setScoreFilter]   = useState("");
@@ -808,57 +821,55 @@ export default function MasterContentPage() {
   const [compareVersionSel, setCompareVersionSel] = useState<Record<string, Set<number>>>({});
   const [compareVersionOpen, setCompareVersionOpen] = useState<{ tourId: string; tourName: string; vNums: [number, number] } | null>(null);
 
-  async function load() {
-    try {
-      const res = await fetch(`/api/tenant/admin/tenants/${AA_INTERNAL_ID}/details`);
+  // AA-718: all filtering/sort/paging is now server-side (bug 1/4/5 — the old client-side filter
+  // over a LIMIT 200 list dropped the newest rows and made Total/Avg cap at 200). react-query
+  // (AA-662) owns the fetch; the query key carries the filter/sort/page state so changing any of
+  // them refetches the matching page + a filter-aware summary + pagination.total. No fetch-in-
+  // effect (React Compiler rule, frontend/AGENTS.md).
+  const { data, isLoading, isFetching, error: qError, refetch } = useQuery({
+    queryKey: ["master-content", page, sortKey, sortDir, search, countryFilter, scoreFilter, masterStatusFilter],
+    queryFn: async () => {
+      const qs = new URLSearchParams({
+        page: String(page),
+        page_size: String(PAGE_SIZE),
+        sort: sortKey,
+        sort_dir: sortDir,
+      });
+      if (search.trim()) qs.set("search", search.trim());
+      if (countryFilter) qs.set("country", countryFilter);
+      if (scoreFilter) qs.set("score", scoreFilter);
+      if (masterStatusFilter) qs.set("master_status", masterStatusFilter);
+      const res = await fetch(`/api/tenant/admin/tenants/${AA_INTERNAL_ID}/details?${qs.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${res.status}`);
       }
-      setData(await res.json());
-      setError("");
-    } catch (e: any) {
-      setError(e.message || "Failed to load");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+      return (await res.json()) as DetailsResponse;
+    },
+    placeholderData: (prev) => prev,  // keep the current page visible while the next loads
+  });
+  const loading = isLoading;
+  const refreshing = isFetching && !isLoading;
+  const error = qError ? (qError instanceof Error ? qError.message : "Failed to load") : "";
+
+  function refresh() { refetch(); }
+
+  function toggleSort(key: typeof sortKey) {
+    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "quality_score" ? "desc" : "asc"); }
+    setPage(1);
   }
-
-  useEffect(() => { load(); }, []);
-
-  function refresh() { setRefreshing(true); load(); }
 
   const tours = data?.rewritten_tours ?? [];
   const summary = data?.summary;
   const runs = data?.pipeline_runs ?? [];
+  const serverTotal = data?.pagination?.total ?? tours.length;
 
-  const avgScore = tours.length
-    ? tours.reduce((s, t) => s + (t.quality_score ?? 0), 0) / tours.length
-    : 0;
-
-  const uniqueCountries = Array.from(new Set(tours.map(t => t.country).filter(Boolean))).sort() as string[];
-
+  // AA-718: server-side already applied search / country / score / master_status / sort / paging.
+  // `status` and `version` are not backend filters (rarely used), so keep them as a light
+  // client-side narrowing over the current page only.
   const filtered = tours.filter(t => {
-    if (search && !t.tour_name.toLowerCase().includes(search.toLowerCase()) &&
-        !(t.country || "").toLowerCase().includes(search.toLowerCase())) return false;
     if (statusFilter && t.status !== statusFilter) return false;
-    if (masterStatusFilter) {
-      if (masterStatusFilter === "active" && t.master_status !== "active") return false;
-      if (masterStatusFilter === "inactive" && t.master_status !== "inactive") return false;
-      if (masterStatusFilter === "trashed" && t.master_status !== "trashed") return false;
-    } else {
-      // default: hide trashed tours
-      if (t.master_status === "trashed") return false;
-    }
-    if (countryFilter && t.country !== countryFilter) return false;
-    if (scoreFilter) {
-      const s = t.quality_score ?? 0;
-      if (scoreFilter === "9.5+" && s < 9.5) return false;
-      if (scoreFilter === "9.0+" && s < 9.0) return false;
-      if (scoreFilter === "8.0+" && s < 8.0) return false;
-      if (scoreFilter === "below8" && s >= 8.0) return false;
-    }
     if (versionFilter) {
       const v = t.version_number ?? 0;
       if (versionFilter === "v1" && v !== 1) return false;
@@ -868,11 +879,18 @@ export default function MasterContentPage() {
     return true;
   });
 
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // The page IS the server page now — no client slice.
+  const paginated = filtered;
   const paginatedRuns = runs.slice((runsPage - 1) * RUNS_PAGE_SIZE, runsPage * RUNS_PAGE_SIZE);
 
+  // Country dropdown options come from the server page; for a stable full list we fall back to the
+  // page's own countries (a dedicated distinct-country endpoint is out of scope here).
+  const uniqueCountries = Array.from(new Set(tours.map(t => t.country).filter(Boolean))).sort() as string[];
+
+  const anyFilterActive = Boolean(search.trim() || countryFilter || scoreFilter || masterStatusFilter);
+
   function handleSearch(v: string) { setSearch(v); setPage(1); }
-  function handleStatusFilter(v: string) { setStatusFilter(v); setPage(1); }
+  function handleStatusFilter(v: string) { setStatusFilter(v); }
 
   async function exportTours(format: "csv" | "xlsx") {
     setExporting(true);
@@ -988,12 +1006,7 @@ export default function MasterContentPage() {
         alert(err.detail || `Failed to set ${newStatus}`);
         return;
       }
-      setData(prev => prev ? {
-        ...prev,
-        rewritten_tours: prev.rewritten_tours.map(t =>
-          t.tour_id === tourId ? { ...t, master_status: newStatus } : t
-        ),
-      } : prev);
+      refetch();
       showToast(`"${tourName}" set to ${newStatus}`);
     } finally {
       setToggling(null);
@@ -1010,12 +1023,7 @@ export default function MasterContentPage() {
         alert(err.detail || "Failed to trash tour");
         return;
       }
-      setData(prev => prev ? {
-        ...prev,
-        rewritten_tours: prev.rewritten_tours.map(t =>
-          t.tour_id === tourId ? { ...t, master_status: "trashed" } : t
-        ),
-      } : prev);
+      refetch();
       showToast(`"${tourName}" moved to trash`);
     } finally {
       setTrashing(null);
@@ -1031,12 +1039,7 @@ export default function MasterContentPage() {
         alert(err.detail || "Failed to restore tour");
         return;
       }
-      setData(prev => prev ? {
-        ...prev,
-        rewritten_tours: prev.rewritten_tours.map(t =>
-          t.tour_id === tourId ? { ...t, master_status: "inactive" } : t
-        ),
-      } : prev);
+      refetch();
       showToast(`"${tourName}" restored (now inactive — activate manually)`);
     } finally {
       setRestoring(null);
@@ -1068,6 +1071,9 @@ export default function MasterContentPage() {
       )}
       <AdminSidebar />
 
+      {/* AA-718: define the spin keyframe (used by Refresh icon + kit StatusBadge running state). */}
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
       {/* Main area: flex column, fills height */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
@@ -1094,11 +1100,20 @@ export default function MasterContentPage() {
             </div>
           )}
 
+          {/* AA-718: stats are now filter-aware (match the table's current filter) + the cost is a
+              labelled 30-day window reconciled with External Spend, with the all-time figure as
+              context. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-            <StatCard icon={<BarChart2 size={16} />}    label="Total Tours"    value={String(tours.length)}       sub={`↳ ${summary?.tours_view ?? tours.length} visible`} />
-            <StatCard icon={<Star size={16} />}          label="Avg Quality"   value={avgScore.toFixed(1)}        sub="↳ quality_score avg" accent={scoreColor(avgScore)} />
-            <StatCard icon={<DollarSign size={16} />}   label="Total LLM Cost" value={`$${(summary?.total_llm_cost_usd ?? 0).toFixed(4)}`} sub="↳ llm_call_log · internal work, all time" />
-            <StatCard icon={<CalendarClock size={16} />} label="Pipeline Runs" value={String(runs.length)}        sub={`↳ ${summary?.pipeline_note ?? "pipeline_runs"}`} />
+            <StatCard icon={<BarChart2 size={16} />}    label="Tours (filtered)"
+              value={String(summary?.catalog_total ?? serverTotal)}
+              sub={anyFilterActive ? "↳ matching current filters" : "↳ whole catalog"} />
+            <StatCard icon={<Star size={16} />}          label="Avg Quality"
+              value={summary?.avg_quality != null ? summary.avg_quality.toFixed(1) : "—"}
+              sub="↳ avg over filtered set" accent={scoreColor(summary?.avg_quality ?? null)} />
+            <StatCard icon={<DollarSign size={16} />}   label="LLM Cost (30d)"
+              value={`$${(summary?.llm_cost_window_usd ?? summary?.total_llm_cost_usd ?? 0).toFixed(2)}`}
+              sub={`↳ ${summary?.llm_cost_window_label ?? "last 30 days"} · all-time $${(summary?.total_llm_cost_usd ?? 0).toFixed(2)}`} />
+            <StatCard icon={<CalendarClock size={16} />} label="Pipeline Runs" value={String(runs.length)}        sub="↳ most recent 20" />
           </div>
         </div>
 
@@ -1145,7 +1160,8 @@ export default function MasterContentPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <SLabel style={{ margin: 0 }}>Rewritten Tours</SLabel>
               <span style={{ fontSize: 12, color: A.muted2 }}>
-                {filtered.length < tours.length ? `${filtered.length} of ${tours.length}` : `${tours.length}`} tours
+                {/* AA-718: true server total, not the length of a capped page. */}
+                {serverTotal} tours{anyFilterActive ? " (filtered)" : ""}
               </span>
             </div>
 
@@ -1233,9 +1249,15 @@ export default function MasterContentPage() {
                       />
                     </th>
                     <th style={TH}>#</th>
-                    <th style={TH}>Tour Name</th>
-                    <th style={TH}>Country</th>
-                    <th style={TH}>Score</th>
+                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("tour_name")}>
+                      Tour Name{sortKey === "tour_name" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                    </th>
+                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("country")}>
+                      Country{sortKey === "country" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                    </th>
+                    <th style={{ ...TH, cursor: "pointer" }} onClick={() => toggleSort("quality_score")}>
+                      Score{sortKey === "quality_score" ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                    </th>
                     <th style={TH}>Versions</th>
                     <th style={TH}>Status</th>
                     <th style={TH}>Actions</th>
@@ -1492,9 +1514,10 @@ export default function MasterContentPage() {
                 </tbody>
               </table>
             )}
-            {filtered.length > PAGE_SIZE && (
+            {serverTotal > PAGE_SIZE && (
               <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
-                <Pagination page={page} total={filtered.length} pageSize={PAGE_SIZE} onPage={setPage} />
+                {/* AA-718: paginate against the real server total, not the current page length. */}
+                <Pagination page={page} total={serverTotal} pageSize={PAGE_SIZE} onPage={setPage} />
               </div>
             )}
           </div>
@@ -1532,7 +1555,8 @@ export default function MasterContentPage() {
                       <td style={{ ...TD, fontFamily: mono, fontSize: 11 }}>{modelLabel(r.llm_model)}</td>
                       <td style={{ ...TD, color: A.gold, fontWeight: 600 }}>${(r.llm_cost_usd ?? 0).toFixed(4)}</td>
                       <td style={TD}>
-                        <Badge color={r.status === "completed" ? "green" : r.status === "failed" ? "red" : "amber"}>{r.status}</Badge>
+                        {/* AA-718 bug 3: honest derived status (completed/ingested/running/failed). */}
+                        <KitStatusBadge status={r.display_status ?? r.status} />
                       </td>
                     </tr>
                   ))}
