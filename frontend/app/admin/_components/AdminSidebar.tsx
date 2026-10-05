@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon } from "lucide-react";
+import { LayoutDashboard, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Image as ImageIcon, Palette } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -96,12 +96,17 @@ export default function AdminSidebar() {
       .catch(() => {});
   }
 
+  // Pre-existing pattern (predates the React Compiler lint): read role/user from cookies after
+  // mount. Kept as-is to avoid an SSR/client hydration mismatch on the admin-only nav items — a
+  // lazy initial read would render different markup on the server (no cookies) than the client.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const r = document.cookie.split(";").find(c => c.trim().startsWith("cis_role="))?.split("=")[1] ?? "";
     const n = document.cookie.split(";").find(c => c.trim().startsWith("cis_user="))?.split("=")[1] ?? "";
     setRole(r);
     setUserName(n ? decodeURIComponent(n) : r === "admin" ? "Admin" : "Content");
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const isAdmin = role === "admin";
 
@@ -226,9 +231,18 @@ export default function AdminSidebar() {
 
       {/* Settings — models per stage, AA brand identity (AA-663, was a top-level page), SEO config,
           pipeline gates. All staff roles, same as middleware.ts. */}
-      <NavItem active={active("/admin/settings")}
-        icon={<Settings size={15} />} label="Settings"
-        onClick={() => router.push("/admin/settings")} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {/* UI Kit — internal design-system reference. Admin-only (matches middleware allow-list);
+            sits next to Settings as a system/config tool rather than a content page. */}
+        {isAdmin && (
+          <NavItem active={active("/admin/kit-demo")}
+            icon={<Palette size={15} />} label="UI Kit"
+            onClick={() => router.push("/admin/kit-demo")} />
+        )}
+        <NavItem active={active("/admin/settings")}
+          icon={<Settings size={15} />} label="Settings"
+          onClick={() => router.push("/admin/settings")} />
+      </div>
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
