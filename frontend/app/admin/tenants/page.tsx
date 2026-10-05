@@ -657,7 +657,10 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
 
 // ─── Tenant Detail Panel ──────────────────────────────────────────────────────
 
-type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content";
+// AA-666: Tenant 360 — the detail panel is expanded IN PLACE (inline, under the list row), not a
+// separate page. Added tabs: Usage & Billing, Quality (gate telemetry), Audit, Settings.
+type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content"
+          | "billing" | "quality" | "audit" | "settings";
 
 function TenantDetail({ tenantId, planTier }: {
   tenantId: string; planTier: string;
@@ -708,6 +711,11 @@ function TenantDetail({ tenantId, planTier }: {
     { key: "brand", label: "Brand" },
     // AA-557 I.22 — skeleton tab only, see SocialContentTabContent's own comment for why.
     { key: "social_content", label: "Social Content" },
+    // AA-666 — Tenant 360: the remaining management facets, added to the inline panel.
+    { key: "billing" as DTab,  label: "Usage & Billing" },
+    { key: "quality" as DTab,  label: "Quality" },
+    { key: "audit" as DTab,    label: "Audit" },
+    { key: "settings" as DTab, label: "Settings" },
   ];
 
   return (
@@ -748,6 +756,142 @@ function TenantDetail({ tenantId, planTier }: {
       {tab === "api"      && <ApiTabContent      usage={data.api_usage} />}
       {tab === "brand"    && <BrandTabContent    rules={data.brand_rules} tenantId={tenantId} />}
       {tab === "social_content" && <SocialContentTabContent tenantId={tenantId} />}
+      {tab === "billing"  && <BillingTabContent  tenantId={tenantId} />}
+      {tab === "quality"  && <QualityTabContent  tenantId={tenantId} />}
+      {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
+      {tab === "settings" && <SettingsTabContent summary={s} apiUsage={data.api_usage} />}
+    </div>
+  );
+}
+
+// AA-666 — Usage & Billing: quota meters + overage + LLM cost, from GET /admin/billing?tenant_id=
+function BillingTabContent({ tenantId }: { tenantId: string }) {
+  const [b, setB] = useState<Record<string, number | string | null> | null>(null);
+  const [state, setState] = useState<"loading" | "error" | "ok">("loading");
+  useEffect(() => {
+    fetch(`/api/admin/billing?tenant_id=${tenantId}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { setB(d); setState("ok"); })
+      .catch(() => setState("error"));
+  }, [tenantId]);
+  if (state === "loading") return <div style={{ fontSize: 12, color: A.muted }}>Loading billing…</div>;
+  if (state === "error" || !b) return <div style={{ fontSize: 12, color: A.red }}>Failed to load billing</div>;
+  const num = (v: unknown) => (v == null ? 0 : Number(v));
+  const meter = (label: string, pct: number, used: number, quota: number) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ color: A.ink, fontWeight: 600 }}>{label}</span>
+        <span style={{ color: A.muted }}>{used} / {quota || "∞"} ({pct}%)</span>
+      </div>
+      <div style={{ height: 7, background: A.line2, borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: pct >= 100 ? A.red : A.accent }} />
+      </div>
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
+        {[
+          ["Plan", String(b.plan_tier ?? "—")],
+          ["Price / mo", `$${num(b.price_usd_monthly).toFixed(2)}`],
+          ["LLM cost (mo)", `$${num(b.llm_cost_usd).toFixed(3)}`],
+          ["Overage", `$${num(b.overage_usd).toFixed(2)} (${num(b.tours_overage)} tours)`],
+        ].map(([l, v]) => (
+          <div key={l}><div style={{ fontSize: 10, color: A.muted2 }}>{l}</div>
+            <div style={{ fontFamily: serif, fontSize: 16, color: A.body }}>{v}</div></div>
+        ))}
+      </div>
+      {meter("Tours quota", num(b.quota_tours_pct), num(b.tours_rewritten), num(b.tours_quota_monthly))}
+      {meter("API calls quota", num(b.quota_calls_pct), num(b.api_calls_used), num(b.api_calls_quota_monthly))}
+      <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>
+        Invoices and per-stage cost are deferred (no endpoint yet). Totals from the monthly usage view.
+      </div>
+    </div>
+  );
+}
+
+// AA-666 — Quality: gate telemetry for this tenant (client-filtered from the platform endpoint).
+function QualityTabContent({ tenantId }: { tenantId: string }) {
+  const [rows, setRows] = useState<Record<string, number | string>[] | null>(null);
+  const [state, setState] = useState<"loading" | "error" | "ok">("loading");
+  useEffect(() => {
+    fetch("/api/admin/a4/gate-telemetry")
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        const all = (d?.data?.by_tenant_channel ?? []) as Record<string, number | string>[];
+        setRows(all.filter(r => String(r.tenant_id) === tenantId));
+        setState("ok");
+      })
+      .catch(() => setState("error"));
+  }, [tenantId]);
+  if (state === "loading") return <div style={{ fontSize: 12, color: A.muted }}>Loading quality…</div>;
+  if (state === "error") return <div style={{ fontSize: 12, color: A.red }}>Failed to load gate telemetry</div>;
+  if (!rows || rows.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>No gate activity for this tenant yet.</div>;
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <thead><tr>{["Channel", "Total", "Warn", "Held", "Failed", "Published"].map((h, i) => (
+        <th key={h} style={{ ...TH, textAlign: i === 0 ? "left" : "right" }}>{h}</th>))}</tr></thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            <td style={{ ...TD, fontWeight: 600 }}>{String(r.channel)}</td>
+            <td style={{ ...TD, textAlign: "right" }}>{r.total}</td>
+            <td style={{ ...TD, textAlign: "right", color: A.amber }}>{r.warn_count}</td>
+            <td style={{ ...TD, textAlign: "right", color: A.amber }}>{r.held_count}</td>
+            <td style={{ ...TD, textAlign: "right", color: Number(r.failed_count) > 0 ? A.red : A.muted }}>{r.failed_count}</td>
+            <td style={{ ...TD, textAlign: "right", color: A.green }}>{r.publish_count}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// AA-666 — Audit: this tenant's action timeline, from GET /admin/tenants/{id}/audit (new endpoint).
+function AuditTabContent({ tenantId }: { tenantId: string }) {
+  const [rows, setRows] = useState<{ action: string; actor: string; created_at: string; details?: unknown }[] | null>(null);
+  const [state, setState] = useState<"loading" | "error" | "ok">("loading");
+  useEffect(() => {
+    fetch(`/api/admin/tenants/${tenantId}/audit?limit=100`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { setRows(d.events ?? []); setState("ok"); })
+      .catch(() => setState("error"));
+  }, [tenantId]);
+  if (state === "loading") return <div style={{ fontSize: 12, color: A.muted }}>Loading audit…</div>;
+  if (state === "error") return <div style={{ fontSize: 12, color: A.red }}>Failed to load audit log</div>;
+  if (!rows || rows.length === 0) return <div style={{ fontSize: 12, color: A.muted }}>No audit events for this tenant yet.</div>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {rows.map((e, i) => (
+        <div key={i} style={{ display: "flex", gap: 12, padding: "6px 0", borderBottom: `1px solid ${A.line2}`, fontSize: 12 }}>
+          <span style={{ color: A.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleString()}</span>
+          <span style={{ fontWeight: 600, color: A.ink }}>{e.action}</span>
+          <span style={{ color: A.muted, marginLeft: "auto", fontFamily: mono, fontSize: 11 }}>{e.actor}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// AA-666 — Settings: read-only view of plan/RPM (edit via existing PATCH endpoints, follow-up).
+function SettingsTabContent({ summary, apiUsage }: {
+  summary: TenantDetails["summary"]; apiUsage: TenantDetails["api_usage"];
+}) {
+  const line = (l: string, v: React.ReactNode) => (
+    <div style={{ display: "flex", gap: 12, padding: "7px 0", borderBottom: `1px solid ${A.line2}` }}>
+      <div style={{ width: 160, fontSize: 12, fontWeight: 600, color: A.muted }}>{l}</div>
+      <div style={{ fontSize: 13, color: A.body }}>{v}</div>
+    </div>
+  );
+  return (
+    <div>
+      {line("Plan", summary.plan_name)}
+      {line("Rate limit", `${apiUsage.rate_limit_per_min}/min`)}
+      {line("Member since", summary.member_since)}
+      <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
+        Inline editing (plan, RPM, markets, posts/week, activate/deactivate) uses the existing
+        PATCH/PUT tenant endpoints — wiring the editors here is a follow-up.
+      </div>
     </div>
   );
 }
@@ -800,10 +944,7 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
       <tr style={{ borderBottom: `1px solid ${A.line2}` }}>
         {/* Tenant name + slug + country */}
         <td style={TD}>
-          {/* AA-666: open the full Tenant 360 page */}
-          <a href={`/admin/tenants/${tenant.tenant_id}`} style={{ fontWeight: 600, color: A.gold, fontSize: 13, textDecoration: "none" }}>
-            {tenant.name}
-          </a>
+          <div style={{ fontWeight: 600, color: A.ink, fontSize: 13 }}>{tenant.name}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
             <code style={{ fontSize: 10.5, color: A.muted, fontFamily: mono }}>{tenant.slug}</code>
             {tenant.country && (
