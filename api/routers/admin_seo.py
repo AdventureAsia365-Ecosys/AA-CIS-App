@@ -94,8 +94,9 @@ SELECT
     (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log)        AS places_researched,
     (SELECT count(DISTINCT canonical_place) FROM acp_contract.segment_research_log
        WHERE researched_at < now() - make_interval(days => $1))                            AS places_expired,
-    (SELECT extract(epoch FROM (now() - percentile_cont(0.5) WITHIN GROUP (ORDER BY researched_at)))
-            / 86400 FROM acp_contract.segment_research_log)                                AS median_age_days,
+    (SELECT percentile_cont(0.5) WITHIN GROUP (
+                ORDER BY extract(epoch FROM (now() - researched_at)) / 86400)
+       FROM acp_contract.segment_research_log)                                             AS median_age_days,
     (SELECT max(researched_at) FROM acp_contract.segment_research_log)                     AS last_researched
 """
 
