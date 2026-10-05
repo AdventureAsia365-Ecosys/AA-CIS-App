@@ -66,10 +66,6 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin/decisions", roles: ["admin"] },
   // AA-708 — photo sync (enqueues jobs, assigns photos)
   { prefix: "/admin/photos", roles: ["admin"] },
-  // AA-662 — UI kit demo/doc page. Admin-only (internal design-system reference). Without an
-  // allow-list entry it would hit the default-deny branch and redirect to /login even for a
-  // logged-in admin.
-  { prefix: "/admin/kit-demo", roles: ["admin"] },
   // AA-527 — Atom Curation, replacing the removed tenant-facing T6 (AA-526): admin decides which
   // atoms are good to use, same admin-only tier as llm-usage above (Nghiệp's
   // explicit choice among 2 options presented, 05/09/2026), not the broader content-team tier.

@@ -1,14 +1,14 @@
 "use client";
-// app/admin/_kit/page.tsx
-// AA-662 — UI kit demo / documentation page. Renders every kit primitive with static data so the
-// kit can be reviewed in the running Dev admin shell without hitting the backend. One section uses
-// react-query against a fake async source to prove the app-wide QueryClientProvider is wired.
+// app/admin/_components/SettingsKitTab.tsx
+// AA-662 — the UI-kit "living reference" rendered as a tab inside admin Settings (not a standalone
+// nav page). Shows every kit primitive with static data so the design system can be reviewed in
+// the running admin shell without hitting the backend; one section proves the app-wide
+// QueryClientProvider via a fake async query.
 
 import { useQuery } from "@tanstack/react-query";
 import { Trash2, Wand2 } from "lucide-react";
 import { useState } from "react";
-import AdminSidebar from "../_components/AdminSidebar";
-import { A, sans, Card, SLabel } from "../_components/adminUi";
+import { A, sans, Card, SLabel } from "./adminUi";
 import {
   Badge,
   ConfirmModal,
@@ -18,7 +18,6 @@ import {
   EmptyState,
   ErrorState,
   Modal,
-  PageHeader,
   SkeletonBar,
   SkeletonStyle,
   StatusBadge,
@@ -29,7 +28,6 @@ import {
   useToast,
 } from "../../_kit";
 
-// ── Demo data ───────────────────────────────────────────────────────────────
 type DemoTour = {
   id: string;
   name: string;
@@ -53,11 +51,7 @@ const DEMO_ROWS: DemoTour[] = [
 const COLUMNS: ColumnDef<DemoTour, unknown>[] = [
   { accessorKey: "name", header: "Tour", cell: (c) => <strong>{c.getValue<string>()}</strong> },
   { accessorKey: "country", header: "Country" },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: (c) => <StatusBadge status={c.getValue<string>()} />,
-  },
+  { accessorKey: "status", header: "Status", cell: (c) => <StatusBadge status={c.getValue<string>()} /> },
   {
     accessorKey: "quality",
     header: "Quality",
@@ -78,7 +72,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// react-query demo — a fake async fetch to prove the provider works.
 function fakeFetchCount(): Promise<number> {
   return new Promise((resolve) => setTimeout(() => resolve(DEMO_ROWS.length), 600));
 }
@@ -97,45 +90,18 @@ function ReactQueryDemo() {
   );
 }
 
-function KitDemoInner() {
+function KitTabInner() {
   const toast = useToast();
   const [tab, setTab] = useState("primitives");
   const [modal, setModal] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [showSkeleton, setShowSkeleton] = useState(false);
-
   const tones: Tone[] = Object.keys(TONE) as Tone[];
 
   return (
-    <main style={{ flex: 1, padding: "32px 36px", minWidth: 0, overflowY: "auto" }}>
+    <div>
       <SkeletonStyle />
-      <PageHeader
-        title="UI Kit"
-        breadcrumbs={[{ label: "Admin" }, { label: "UI Kit" }]}
-        description="Shared admin & portal components — the living design-system reference."
-        actions={
-          <button
-            onClick={() => toast.success("Primary action fired")}
-            style={{
-              padding: "8px 16px",
-              borderRadius: 999,
-              border: `1px solid ${A.accent}`,
-              background: A.accent,
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: sans,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}
-          >
-            Primary
-          </button>
-        }
-      />
-
       <div style={{ marginBottom: 20 }}>
         <Tabs
           tabs={[
@@ -153,20 +119,16 @@ function KitDemoInner() {
           <Section title="Badges (tones)">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {tones.map((t) => (
-                <Badge key={t} tone={t}>
-                  {t}
-                </Badge>
+                <Badge key={t} tone={t}>{t}</Badge>
               ))}
             </div>
           </Section>
 
           <Section title="StatusBadge (job status driven)">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {["queued", "running", "completed", "failed", "held", "approved", "rejected", "regenerating"].map(
-                (s) => (
-                  <StatusBadge key={s} status={s} />
-                ),
-              )}
+              {["queued", "running", "completed", "failed", "held", "approved", "rejected", "regenerating"].map((s) => (
+                <StatusBadge key={s} status={s} />
+              ))}
             </div>
           </Section>
 
@@ -226,20 +188,10 @@ function KitDemoInner() {
             emptyTitle="No tours"
             bulkActions={({ selectedRows, clearSelection }) => (
               <>
-                <KitBtn
-                  onClick={() => {
-                    toast.success(`Regenerating ${selectedRows.length} tour(s)`);
-                    clearSelection();
-                  }}
-                >
+                <KitBtn onClick={() => { toast.success(`Regenerating ${selectedRows.length} tour(s)`); clearSelection(); }}>
                   <Wand2 size={13} /> Regenerate selected
                 </KitBtn>
-                <KitBtn
-                  onClick={() => {
-                    toast.error(`Deleting ${selectedRows.length}`);
-                    clearSelection();
-                  }}
-                >
+                <KitBtn onClick={() => { toast.error(`Deleting ${selectedRows.length}`); clearSelection(); }}>
                   <Trash2 size={13} /> Delete
                 </KitBtn>
               </>
@@ -256,44 +208,30 @@ function KitDemoInner() {
             <KitBtn onClick={() => setDrawer(true)}>Open Drawer</KitBtn>
           </div>
 
-          <Modal
-            open={modal}
-            onClose={() => setModal(false)}
-            title="Example modal"
-            footer={<KitBtn onClick={() => setModal(false)}>Close</KitBtn>}
-          >
+          <Modal open={modal} onClose={() => setModal(false)} title="Example modal" footer={<KitBtn onClick={() => setModal(false)}>Close</KitBtn>}>
             A centered modal for forms and confirmations. Escape or backdrop closes it.
           </Modal>
 
           <ConfirmModal
             open={confirm}
             onClose={() => setConfirm(false)}
-            onConfirm={() => {
-              setConfirm(false);
-              toast.success("Deleted");
-            }}
+            onConfirm={() => { setConfirm(false); toast.success("Deleted"); }}
             title="Delete this tour?"
             body="This cannot be undone. The tour and its atoms will be removed."
             confirmLabel="Delete"
             destructive
           />
 
-          <Drawer
-            open={drawer}
-            onClose={() => setDrawer(false)}
-            title="Tour detail"
-            footer={<KitBtn onClick={() => setDrawer(false)}>Close</KitBtn>}
-          >
+          <Drawer open={drawer} onClose={() => setDrawer(false)} title="Tour detail" footer={<KitBtn onClick={() => setDrawer(false)}>Close</KitBtn>}>
             <p>Right-side slide-over for detail / edit views.</p>
             <p style={{ color: A.muted }}>Nakasendo Way: Kiso Valley — Japan — 24 atoms.</p>
           </Drawer>
         </Section>
       )}
-    </main>
+    </div>
   );
 }
 
-// Small local button so the demo doesn't depend on admin Btn (kept visually consistent).
 function KitBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
   return (
     <button
@@ -318,13 +256,10 @@ function KitBtn({ children, onClick }: { children: React.ReactNode; onClick?: ()
   );
 }
 
-export default function KitDemoPage() {
+export default function SettingsKitTab() {
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-      <ToastProvider>
-        <KitDemoInner />
-      </ToastProvider>
-    </div>
+    <ToastProvider>
+      <KitTabInner />
+    </ToastProvider>
   );
 }

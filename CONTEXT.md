@@ -63,7 +63,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
     `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
     `Skeleton.tsx`) still stand — pages are migrated to the kit one at a time (Review Queue and My
-    Content first). Demo/doc page: `/admin/kit-demo` (`app/admin/kit-demo/page.tsx`).
+    Content first). Living reference: the **UI Kit tab in admin Settings** (`/admin/settings?tab=ui-kit`,
+    `app/admin/_components/SettingsKitTab.tsx`) — renders every primitive with static data.
   - **Data fetching (AA-662)**: `@tanstack/react-query` is the standard for UI v2, wired app-wide
     via a single `QueryClientProvider` in `app/_kit/Providers.tsx`, mounted from the server root
     layout (`app/layout.tsx`) around all routes. Defaults: no refetch-on-focus, one retry, 30s

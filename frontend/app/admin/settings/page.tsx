@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Settings, X, Plus, Save, AlertTriangle } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
+import SettingsKitTab from "../_components/SettingsKitTab";
 import {
   A, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
@@ -702,6 +703,9 @@ const TABS = [
   { key: "seo",       label: "SEO Config" },
   { key: "models",    label: "LLM Models" },
   { key: "tenant",    label: "Tenant Info" },
+  // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
+  // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
+  { key: "ui-kit",    label: "UI Kit" },
 ];
 
 export default function SettingsPage() {
@@ -781,6 +785,7 @@ function SettingsPageInner() {
             {tab === "tenant" && (
               <TenantInfoTab tenant={data.tenant} plan={data.plan} />
             )}
+            {tab === "ui-kit" && <SettingsKitTab />}
           </>
         )}
       </main>
