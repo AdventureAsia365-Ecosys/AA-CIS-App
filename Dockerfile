@@ -20,6 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api/ ./api/
 COPY shared/ ./shared/
 COPY services/ ./services/
+# AA-651 — the standalone job worker's `python -m worker` entrypoint (worker ECS service).
+COPY worker/ ./worker/
 
 EXPOSE 8000
 

@@ -6,6 +6,7 @@ on:
       - 'api/**'
       - 'shared/**'
       - 'services/**'
+      - 'worker/**'
       - 'Dockerfile'
       - 'requirements.txt'
       - 'frontend/**'
