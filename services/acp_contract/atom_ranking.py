@@ -840,11 +840,16 @@ async def resolve_exclusions(pool, rows) -> dict[str, str | None]:
 # ── DB-facing wrapper (impure) ──────────────────────────────────────────────────────────────
 
 async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -> dict:
-    """Rebuild atom_ranking WHOLE for one market, platform-wide (DELETE+INSERT) — matches the
-    AA-510 STEP0 finding that Ms. Thư's own `routes`/`atom_scores` are "derived, never
-    accumulated"; no downstream table has an FK into this one yet expecting stability across
-    re-runs (AA-545 build confirmed this still holds: neither Route/Hub nor Slate FK a specific
-    `atom_ranking` row).
+    """Rebuild atom_ranking WHOLE for one market, platform-wide, via versioned-swap (AA-734) —
+    write the new rows at the next version (superseded_at NULL), supersede the market's previous
+    current rows in the same transaction, then delete the superseded rows after it commits. A
+    reader filtering `superseded_at IS NULL` never sees this market's rows missing mid-recompute
+    (was DELETE+INSERT, which left a gap between the DELETE and the INSERT — the Score count dip
+    AA-734 removes). Safe to drop history because — matching the AA-510 STEP0 finding that Ms.
+    Thư's own `routes`/`atom_scores` are "derived, never accumulated" — no downstream table has an
+    FK into this one (AA-545 build confirmed this still holds: neither Route/Hub nor Slate FK a
+    specific `atom_ranking` row), unlike route whose superseded rows must live forever for
+    acp_shared.subject.route_id.
 
     AA-545 — recomputes over the WHOLE PLATFORM Segment set (every tenant, every tour), for
     exactly this one `market`, not one tenant's Segment set across several markets. Triggered at
@@ -910,39 +915,79 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
     ranked_row_count = sum(len(r.tour_ids) for r in ranked)
     excluded_row_count = sum(len(e.tour_ids) for e in excluded)
 
+    # AA-734 — versioned-swap instead of DELETE+INSERT, so a reader filtering `superseded_at IS
+    # NULL` never sees this market's rows gone mid-recompute (the headline Score count no longer
+    # dips 6 times during a full platform recompute). Mirrors acp_contract.route (AA-532): write
+    # the new rows at the next version with superseded_at NULL, mark the market's previous current
+    # rows superseded, both in ONE transaction. Then delete the just-superseded rows AFTER that
+    # transaction commits — unlike route, atom_ranking keeps no history (nothing FKs into it), and
+    # the delete is scoped to rows already superseded so it can never reintroduce a dip.
+    #
+    # Version is per-market: a market's identity is (market, tour_id, segment_id), so the counter
+    # is "max version currently live for THIS market, + 1" — a market whose previous pass is being
+    # replaced bumps from N to N+1; a market with no rows yet starts at 1.
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "DELETE FROM acp_contract.atom_ranking WHERE market = $1", market,
+            next_version = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(version), 0) + 1
+                FROM acp_contract.atom_ranking
+                WHERE market = $1
+                """,
+                market,
             )
             if ranked:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_ranking
                         (market, tour_id, segment_id, demand_rank, recurrence_rank,
                          questions_rank, said_rank, total_rank, demand_market, demand_volume,
-                         recurrence, questions, said, excluded_reason)
+                         recurrence, questions, said, excluded_reason, version, superseded_at)
                     VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                            NULL)
+                            NULL, $14, NULL)
                 """, [
                     (market, tour_id, r.segment_id, r.demand_rank, r.recurrence_rank,
                      r.questions_rank, r.said_rank, r.total_rank, r.demand_market,
-                     r.demand_volume, r.recurrence, r.questions, r.said)
+                     r.demand_volume, r.recurrence, r.questions, r.said, next_version)
                     for r in ranked for tour_id in r.tour_ids
                 ])
             if excluded:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_ranking
                         (market, tour_id, segment_id, recurrence, questions, said,
-                         excluded_reason)
-                    VALUES ($1, $2::uuid, $3, 0, 0, 0, $4)
+                         excluded_reason, version, superseded_at)
+                    VALUES ($1, $2::uuid, $3, 0, 0, 0, $4, $5, NULL)
                 """, [
-                    (market, tour_id, e.segment_id, e.reason)
+                    (market, tour_id, e.segment_id, e.reason, next_version)
                     for e in excluded for tour_id in e.tour_ids
                 ])
+            # Supersede the market's previous current rows (every version below the one we just
+            # wrote). Done inside the same transaction as the inserts, so the current set switches
+            # from the old rows to the new rows atomically — a reader filtering superseded_at IS
+            # NULL sees one complete set the whole time, never zero rows.
+            await conn.execute(
+                """
+                UPDATE acp_contract.atom_ranking
+                SET superseded_at = now()
+                WHERE market = $1 AND superseded_at IS NULL AND version < $2
+                """,
+                market, next_version,
+            )
+
+    # Drop the now-superseded rows AFTER the swap committed. A fresh acquire (new transaction) on
+    # purpose: these rows are already not visible to a `superseded_at IS NULL` reader, so deleting
+    # them cannot cause a dip, and keeping the table free of history avoids bloating a ~10k-row
+    # table that has no downstream FK into it (route keeps history only because
+    # acp_shared.subject.route_id must keep resolving — atom_ranking has no such reference).
+    async with pool.acquire() as conn:
+        deleted = await conn.execute(
+            "DELETE FROM acp_contract.atom_ranking WHERE market = $1 AND superseded_at IS NOT NULL",
+            market,
+        )
 
     return {
         "segments_ranked": len(ranked), "segments_excluded": len(excluded),
         "rows_written": ranked_row_count + excluded_row_count,
+        "version": next_version, "superseded_deleted": deleted,
     }
 
 

@@ -164,6 +164,7 @@ async def list_segments(
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
             LEFT JOIN acp_contract.atom_ranking ar
                 ON ar.segment_id = asm.segment_id AND ar.tour_id = ta.tour_id
+               AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
             LEFT JOIN LATERAL (
                 SELECT r.route_id, r.hub_name
                 FROM acp_contract.route r
@@ -256,7 +257,8 @@ async def list_score(
             FROM acp_contract.atom_ranking ar
             LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = ar.segment_id
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ar.tour_id
-            WHERE {where}
+            -- AA-734: current rows only (atom_ranking history is deleted post-swap, not retained like route)
+            WHERE {where} AND ar.superseded_at IS NULL
             ORDER BY rt.src_name, ar.market, (ar.excluded_reason IS NOT NULL), ar.total_rank ASC NULLS LAST
             LIMIT ${limit_idx} OFFSET ${offset_idx}
             """,
@@ -360,6 +362,7 @@ async def list_routes(
                 ON ar.tour_id = r.tour_id
                AND ar.segment_id = ANY (SELECT jsonb_array_elements_text(r.ordered_segment_ids))
                AND ar.excluded_reason IS NULL
+               AND ar.superseded_at IS NULL  -- AA-734: score from current ranking rows only
             WHERE {where}
             GROUP BY r.route_id, r.tour_id, rt.src_name, r.hub_id, r.hub_name,
                      r.ordered_segment_ids, r.first_day, r.last_day, r.created_at, r.version,
@@ -511,6 +514,7 @@ async def list_hubs(
                 ON ar.tour_id = r.tour_id
                AND ar.segment_id = ANY (SELECT jsonb_array_elements_text(r.ordered_segment_ids))
                AND ar.excluded_reason IS NULL
+               AND ar.superseded_at IS NULL  -- AA-734: score from current ranking rows only
             WHERE {where}
             GROUP BY h.hub_id, h.hub_name, h.created_at, h.updated_at
             {having}
@@ -657,6 +661,7 @@ async def dashboard_summary(
                    AND ($2::text IS NULL OR EXISTS (
                        SELECT 1 FROM acp_contract.atom_ranking ar
                        WHERE ar.tour_id = ta.tour_id AND ar.market = $2::text
+                         AND ar.superseded_at IS NULL  -- AA-734
                    ))
                 ) AS tour_count,
                 (SELECT count(*)
@@ -673,12 +678,14 @@ async def dashboard_summary(
                        SELECT 1 FROM acp_contract.atom_ranking ar
                        WHERE ar.segment_id = asm.segment_id AND ar.tour_id = ta.tour_id
                          AND ar.market = $2::text
+                         AND ar.superseded_at IS NULL  -- AA-734
                    ))
                 ) AS segment_count,
                 (SELECT count(*)
                  FROM acp_contract.atom_ranking ar
                  WHERE ($1::uuid IS NULL OR ar.tour_id = $1::uuid)
                    AND ($2::text IS NULL OR ar.market = $2::text)
+                   AND ar.superseded_at IS NULL  -- AA-734: current rows only (no dip during recompute)
                 ) AS score_count,
                 (SELECT count(*)
                  FROM acp_contract.route r
@@ -688,6 +695,7 @@ async def dashboard_summary(
                        SELECT 1 FROM acp_contract.atom_ranking ar
                        WHERE ar.segment_id = ANY (SELECT jsonb_array_elements_text(r.ordered_segment_ids))
                          AND ar.tour_id = r.tour_id AND ar.market = $2::text
+                         AND ar.superseded_at IS NULL  -- AA-734
                    ))
                 ) AS route_count,
                 (SELECT count(DISTINCT h.hub_id)
@@ -699,6 +707,7 @@ async def dashboard_summary(
                        SELECT 1 FROM acp_contract.atom_ranking ar
                        WHERE ar.segment_id = ANY (SELECT jsonb_array_elements_text(r.ordered_segment_ids))
                          AND ar.tour_id = r.tour_id AND ar.market = $2::text
+                         AND ar.superseded_at IS NULL  -- AA-734
                    ))
                 ) AS hub_count
             """,

@@ -271,8 +271,11 @@ async def run_route_detection(pool) -> dict:
                    asg.canonical_place, asg.canonical_action,
                    MIN(ta.itinerary_day) AS day
             FROM (
+                -- AA-734: current ranking rows only (superseded_at IS NULL). Route detection runs
+                -- right after run_atom_ranking has swapped in the new current rows for every
+                -- market, so this read sees exactly the fresh set, never a superseded one.
                 SELECT DISTINCT segment_id, tour_id FROM acp_contract.atom_ranking
-                WHERE excluded_reason IS NULL
+                WHERE excluded_reason IS NULL AND superseded_at IS NULL
             ) ar
             JOIN acp_contract.atom_segment asg ON asg.segment_id = ar.segment_id
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = ar.segment_id

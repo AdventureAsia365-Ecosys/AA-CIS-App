@@ -103,6 +103,7 @@ async def list_routes(request: Request, tenant=Depends(get_tenant)):
                        )
                    AND ar.excluded_reason IS NULL
                    AND ar.market = ANY($2::text[])
+                   AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
                 WHERE r.superseded_at IS NULL AND r.tour_id = ANY($1::uuid[])
                 GROUP BY r.route_id, r.tour_id, r.hub_id, r.hub_name, r.ordered_segment_ids,
                          r.first_day, r.last_day, r.created_at, ar.market

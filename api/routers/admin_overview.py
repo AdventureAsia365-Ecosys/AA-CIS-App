@@ -109,7 +109,8 @@ SELECT
        FROM acp_contract.hub h
        JOIN acp_contract.route r ON r.hub_id = h.hub_id
       WHERE r.superseded_at IS NULL)                                      AS hub_count,
-    (SELECT count(*) FROM acp_contract.atom_ranking)                      AS score_count
+    -- AA-734: current rows only (no dip during recompute)
+    (SELECT count(*) FROM acp_contract.atom_ranking WHERE superseded_at IS NULL) AS score_count
 """
 
 # Research coverage: distinct places researched vs how many are stale (>30 days old).

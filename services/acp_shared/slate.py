@@ -223,6 +223,7 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
             JOIN acp_contract.atom_segment asg ON asg.segment_id = ar.segment_id
             WHERE ar.tour_id = ANY($1::uuid[]) AND ar.market = ANY($2::text[])
               AND ar.excluded_reason IS NULL
+              AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
             GROUP BY ar.segment_id
         """, tour_ids, markets)
     return [
@@ -272,6 +273,7 @@ async def _fetch_route_candidates(tenant_id: UUID, pool, markets: list[str]) -> 
                        )
                    AND ar.excluded_reason IS NULL
                    AND ar.market = ANY($2::text[])
+                   AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
                 -- AA-532: only the CURRENT version of a Route identity is a real candidate — a
                 -- superseded row stays in the table (never deleted, so a Subject already
                 -- pointing at it keeps resolving) but must not keep getting freshly proposed.
