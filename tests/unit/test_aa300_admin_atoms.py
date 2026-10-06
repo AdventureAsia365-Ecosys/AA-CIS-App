@@ -638,67 +638,66 @@ class TestDeleteTriggersRecompute:
     for that atom's tour; a `text`-only edit never does (only `deleted` affects Segment
     eligibility, `WHERE NOT ta.deleted`). AA-609 removed the old `starred` flag entirely."""
 
+    # AA-723: the recompute is now enqueued as a durable `recompute` job (scope=tour), not run
+    # in-process. These assert the enqueue, not the orchestrator call.
     @pytest.mark.asyncio
-    async def test_deleted_true_fires_recompute_for_that_tour(self):
+    async def test_deleted_true_enqueues_recompute_for_that_tour(self):
         tour_id = uuid.uuid4()
         conn = AsyncMock()
         conn.fetchrow.return_value = _atom_row(deleted=True, tour_id=tour_id)
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler.recompute_segment_score_route", AsyncMock()) as m_recompute:
+        with patch("services.jobs.recompute_job.enqueue_recompute",
+                   AsyncMock(return_value=("job-1", True))) as m_enq:
             body = admin_atoms.AtomPatchRequest(deleted=True)
             await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
-            await asyncio.sleep(0)
 
-        m_recompute.assert_awaited_once()
-        args, kwargs = m_recompute.call_args
-        assert args[0] == str(tour_id)
-        assert args[1] is pool
+        m_enq.assert_awaited_once()
+        _args, kwargs = m_enq.call_args
+        assert kwargs["scope"] == "tour"
+        assert kwargs["tour_id"] == str(tour_id)
 
     @pytest.mark.asyncio
-    async def test_deleted_false_also_fires_recompute_undelete_restores_eligibility(self):
-        # Explicitly setting deleted=False (restoring an atom) also changes Segment eligibility
-        # (WHERE NOT ta.deleted) — the trigger is "deleted was included in the patch", not
-        # "deleted was set to true" specifically.
+    async def test_deleted_false_also_enqueues_recompute_undelete_restores_eligibility(self):
+        # Setting deleted=False (restoring an atom) also changes Segment eligibility
+        # (WHERE NOT ta.deleted) — the trigger is "deleted was in the patch", not "deleted==true".
         conn = AsyncMock()
         conn.fetchrow.return_value = _atom_row(deleted=False)
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler.recompute_segment_score_route", AsyncMock()) as m_recompute:
+        with patch("services.jobs.recompute_job.enqueue_recompute",
+                   AsyncMock(return_value=("job-1", True))) as m_enq:
             body = admin_atoms.AtomPatchRequest(deleted=False)
             await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
-            await asyncio.sleep(0)
 
-        m_recompute.assert_awaited_once()
+        m_enq.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_text_only_edit_does_not_fire_recompute(self):
+    async def test_text_only_edit_does_not_enqueue_recompute(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = _atom_row(text="edited")
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler.recompute_segment_score_route", AsyncMock()) as m_recompute:
+        with patch("services.jobs.recompute_job.enqueue_recompute", AsyncMock()) as m_enq:
             body = admin_atoms.AtomPatchRequest(text="edited")
             await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
-            await asyncio.sleep(0)
 
-        m_recompute.assert_not_awaited()
+        m_enq.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_recompute_failure_does_not_surface_as_patch_failure(self):
+    async def test_recompute_enqueue_failure_does_not_surface_as_patch_failure(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = _atom_row(deleted=True)
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        with patch("services.export.handler.recompute_segment_score_route",
+        with patch("services.jobs.recompute_job.enqueue_recompute",
                    AsyncMock(side_effect=RuntimeError("boom"))):
             body = admin_atoms.AtomPatchRequest(deleted=True)
             result = await admin_atoms.patch_atom("atom_abc1234567", body, request, owner_scope=None)
-            await asyncio.sleep(0)
 
         assert result["deleted"] is True
 
