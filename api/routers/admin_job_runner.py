@@ -67,6 +67,17 @@ async def summary(request: Request):
     }
 
 
+@router.get("/deploy-gate", summary="AA-725 — queued+running count for the pre-deploy CI guard")
+async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
+    """Pre-deploy guard (AA-725 part 1). CI has no RDS access (private subnet), so it asks the live
+    API instead of querying shared.job directly. Returns the number of jobs that a deploy would
+    interrupt; CI blocks the roll when `safe_to_deploy` is false. Gated by the admin secret so it
+    is not a public queue-size probe."""
+    verify_admin_secret(x_admin_secret)
+    counts = await queue.active_count(request.app.state.pool)
+    return {**counts, "safe_to_deploy": counts["active"] == 0}
+
+
 @router.get("/workers", summary="AA-687 — worker liveness, running jobs per worker, queue depth")
 async def workers(request: Request):
     health = await queue.worker_health(request.app.state.pool)

@@ -11,6 +11,11 @@ on:
       - 'requirements.txt'
       - 'frontend/**'
   workflow_dispatch:
+    inputs:
+      override_running_jobs:
+        description: "AA-725 — reason to deploy anyway while jobs are queued/running (Nghiệp only). Leave empty to respect the guard."
+        required: false
+        type: string
 permissions:
   id-token: write
   contents: read
@@ -21,6 +26,42 @@ env:
   ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
   ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
 jobs:
+  # AA-725 part 1 — pre-deploy guard. A deploy restarts the api/worker containers; any job that is
+  # queued or running would be interrupted (S212: 3 PRs merged mid Thailand wave killed 16 S1
+  # jobs). CI has no RDS access (private subnet), so it asks the LIVE api, which counts shared.job
+  # with no time filter. The guard blocks the roll when a job is active, unless a workflow_dispatch
+  # run supplied `override_running_jobs` with a reason (logged below).
+  preflight:
+    name: Pre-deploy job guard
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Check for queued/running jobs
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          OVERRIDE: ${{ inputs.override_running_jobs }}
+          GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
+        run: |
+          set -euo pipefail
+          if [ -z "${ADMIN_SECRET:-}" ]; then
+            echo "::warning::ADMIN_SECRET not configured — pre-deploy job guard is DISABLED. Set the ADMIN_SECRET repo secret to enable it (AA-725)."
+            exit 0
+          fi
+          BODY=$(curl -s --max-time 20 -H "x-admin-secret: ${ADMIN_SECRET}" "${GATE_URL}")
+          echo "deploy-gate: ${BODY}"
+          SAFE=$(echo "${BODY}" | jq -r '.safe_to_deploy // empty')
+          ACTIVE=$(echo "${BODY}" | jq -r '.active // "?"')
+          if [ "${SAFE}" = "true" ]; then
+            echo "No queued/running jobs — safe to deploy."
+            exit 0
+          fi
+          if [ -n "${OVERRIDE:-}" ]; then
+            echo "::warning::Deploy guard OVERRIDDEN with ${ACTIVE} active job(s). Reason: ${OVERRIDE}"
+            exit 0
+          fi
+          echo "::error::Deploy blocked: ${ACTIVE} job(s) queued/running. Wait for them to finish, or re-run via workflow_dispatch with an 'override_running_jobs' reason."
+          exit 1
+
   build-and-push:
     name: Build and Push ECR
     runs-on: ubuntu-latest
@@ -51,7 +92,7 @@ jobs:
     name: Deploy to ECS Dev
     runs-on: ubuntu-latest
     environment: dev
-    needs: build-and-push
+    needs: [build-and-push, preflight]
     steps:
       - uses: actions/checkout@v5
       - name: Configure AWS credentials (OIDC)
@@ -122,11 +163,64 @@ jobs:
             --services $SERVICES \
             --region ${{ env.AWS_REGION }}
           echo "ECS deployment stable ($SERVICES)"
+      # AA-725 part 2 — post-deploy live smoke. The old step curled only /health (a static 200
+      # that stays green even when a router is broken — S212's SEO 500 shipped unnoticed). Now it
+      # also hits a maintained list of read-only endpoints on the real domain and asserts 200 +
+      # the expected JSON shape, so a broken endpoint turns this workflow red. Admin endpoints are
+      # skipped when ADMIN_SECRET is not configured (health still runs).
       - name: Smoke test
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          BASE: https://api-cis.lumiguides.it.com
         run: |
+          set -uo pipefail
           sleep 10
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" https://api-cis.lumiguides.it.com/health)
-          [ "$HTTP" = "200" ] && echo "Health check passed" || (echo "Health check failed: $HTTP" && exit 1)
+          fail=0
+
+          # name|path|jq-shape-assertion (empty assertion = only check HTTP 200)
+          public_checks=(
+            "health|/health|.status == \"ok\""
+          )
+          admin_checks=(
+            "job-runner summary|/admin/job-runner/summary|(.kinds | length) > 0"
+            "deploy-gate|/admin/job-runner/deploy-gate|has(\"safe_to_deploy\")"
+            "overview|/admin/overview|type == \"object\""
+          )
+
+          check() {
+            local name="$1" path="$2" shape="$3"; shift 3
+            local hdr=("$@")
+            local body code
+            body=$(curl -s --max-time 25 -o /tmp/body.json -w "%{http_code}" "${hdr[@]}" "${BASE}${path}")
+            code="$body"
+            if [ "$code" != "200" ]; then
+              echo "::error::smoke [$name] ${path} -> HTTP $code"
+              fail=1; return
+            fi
+            if [ -n "$shape" ]; then
+              if ! jq -e "$shape" /tmp/body.json >/dev/null 2>&1; then
+                echo "::error::smoke [$name] ${path} -> 200 but shape failed: $shape"
+                fail=1; return
+              fi
+            fi
+            echo "smoke [$name] ${path} -> 200 OK"
+          }
+
+          for row in "${public_checks[@]}"; do
+            IFS='|' read -r name path shape <<< "$row"
+            check "$name" "$path" "$shape"
+          done
+
+          if [ -n "${ADMIN_SECRET:-}" ]; then
+            for row in "${admin_checks[@]}"; do
+              IFS='|' read -r name path shape <<< "$row"
+              check "$name" "$path" "$shape" -H "x-admin-secret: ${ADMIN_SECRET}"
+            done
+          else
+            echo "::warning::ADMIN_SECRET not set — admin smoke checks skipped (AA-725)."
+          fi
+
+          [ "$fail" = "0" ] && echo "All smoke checks passed" || (echo "Smoke checks failed" && exit 1)
 
   deploy-lambdas:
     name: Deploy Lambda Functions
