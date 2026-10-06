@@ -336,6 +336,18 @@ async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
     return _row_dict(rows[0]) if rows else None
 
 
+async def active_count(pool) -> dict:
+    """AA-725 — queued + running jobs right now, with NO time filter, for the pre-deploy guard.
+    A deploy restarts the containers; any job in these two states would be interrupted (re-queued
+    by the reaper, or lost if in-process), so CI blocks the deploy while this is non-zero."""
+    rows = await pool.fetch(
+        "SELECT status, count(*)::int AS n FROM shared.job "
+        "WHERE status IN ('queued', 'running') GROUP BY status"
+    )
+    by_status = {r["status"]: r["n"] for r in rows}
+    return {"active": sum(by_status.values()), "by_status": by_status}
+
+
 # ── worker liveness (AA-687, migration 178) ─────────────────────────────────────────────────────
 # Read by the Jobs page only; the queue functions above never depend on it.
 
