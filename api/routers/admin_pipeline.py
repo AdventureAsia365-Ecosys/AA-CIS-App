@@ -16,7 +16,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Awaitable, Callable, Optional, List
 
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_jwt
@@ -387,6 +387,7 @@ async def _execute_run_tour(
     batch_text: str | None = None,       # AA-606: Bedrock Batch attempt-1 writer text (skip live writer)
     batch_model_used: str | None = None,
     batch_account: str | None = None,
+    stage_cb: "Callable[[str], Awaitable[None]] | None" = None,  # AA-723
 ) -> dict:
     """Core tour rewrite — called by HTTP endpoint and background retry task.
 
@@ -394,14 +395,16 @@ async def _execute_run_tour(
     _rewrite_tour seeds it (build_graph_from_generated) instead of calling the writer live. All
     brand-resolve / SEO / persist / export / review-queue logic below is reused unchanged.
 
-    AA-250 B2: job_id, when set (async job path only — _run_tour_job), builds an on_stage
-    callback that persists each completed LangGraph node name to
-    shared.pipeline_jobs.current_stage via jobs_repo.update_stage(), so the S1 async job poll
-    can drive a stage-progress bar. None for the sync /admin/run-tour endpoint (no job row to
-    update) — on_stage stays None and _rewrite_tour behaves exactly as before.
+    AA-250 B2 / AA-723: `on_stage` persists each completed LangGraph node name so the S1 job poll
+    can drive a stage-progress bar. Where it is written depends on the caller:
+      - `stage_cb` set (AA-723 worker path) → the s1_rewrite kind writes it into shared.job.progress;
+      - else `job_id` set (legacy in-process path) → jobs_repo.update_stage() → pipeline_jobs;
+      - else None (sync /admin/run-tour) → no stage tracking, same as before.
     """
     on_stage = None
-    if job_id is not None:
+    if stage_cb is not None:
+        on_stage = stage_cb
+    elif job_id is not None:
         from .jobs_repo import update_stage as _update_stage
 
         async def _on_stage(node_name: str) -> None:
@@ -812,7 +815,8 @@ async def _execute_run_tour(
         await conn.close()
 
 
-async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None) -> dict | None:
+async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
+                         stage_cb: "Callable[[str], Awaitable[None]] | None" = None) -> dict | None:
     async with _pipeline_semaphore:
         last_exc: Exception | None = None
         for attempt in range(3):
@@ -821,7 +825,7 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None) ->
             try:
                 # AA-223: surface the executor result so _run_tour_job can read
                 # version_id. Final-fail path below still swallows and returns None.
-                return await _execute_run_tour(tour_req, job_id=job_id)
+                return await _execute_run_tour(tour_req, job_id=job_id, stage_cb=stage_cb)
             except Exception as exc:
                 last_exc = exc
                 logger.warning("run_tour_attempt_failed", tour_id=tour_req.tour_id,
@@ -846,86 +850,26 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None) ->
             logger.error("failed_to_mark_pipeline_failed", error=str(db_exc))
 
 
-def _build_s1_progress(job_id: str):
-    """AA-667: construct a WritingProgress sink + its own short-lived Redis client for one S1 job.
-
-    S1 runs in the in-process background task (not the durable job runner), so there is no
-    app.state.redis in scope — open a client from the same REDIS_HOST env the app lifespan uses.
-    The key's tenant segment is the master/platform tenant (S1 is platform content, no tenant).
-    Returns (progress, redis) or (None, None) on any failure (best-effort, never blocks a run)."""
+def _build_s1_progress_sink(redis, job_id: str):
+    """AA-723: a WritingProgress sink for the s1_rewrite worker job, reusing the redis client the
+    worker already owns (ctx.resources["redis"]) rather than opening a short-lived one like the
+    in-process `_build_s1_progress` did. Same key contract (wp:{master}:tour:{job_id}) so
+    GET /admin/progress/s1/{job_id} is unchanged. Returns a WritingProgress or None (best-effort —
+    a Redis miss must never block the rewrite)."""
+    if redis is None:
+        return None
     try:
-        import redis.asyncio as aioredis
-
         from services.acp_shared.writing_progress import (
             TOUR_STAGE_STEPS, TOUR_STEPS, WritingProgress,
         )
-        redis = aioredis.from_url(
-            f"redis://{os.environ.get('REDIS_HOST', 'aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com')}:6379",
-            encoding="utf-8", decode_responses=True,
-        )
-        progress = WritingProgress(
+        return WritingProgress(
             redis, tenant_id=_MASTER_TENANT_ID, kind="tour", job_id=str(job_id),
             steps=TOUR_STEPS, stream_stages={"s1_generate"}, display="tour_json",
             stage_steps=TOUR_STAGE_STEPS,
         )
-        return progress, redis
     except Exception as e:
-        logger.warning("s1_progress_build_failed", job_id=job_id, error=str(e))
-        return None, None
-
-
-async def _run_tour_job(job_id: str, tour_req: TourRunRequest) -> None:
-    """AA-223: pipeline_jobs lifecycle wrapper around the existing executor.
-
-    _run_tour_safe (semaphore + 3x retry) SWALLOWS the final failure and returns
-    None — so a None result means retries were exhausted: mark the job failed.
-    A returned dict means the run completed (version_id may still be None for a
-    soft-fail, which we surface as succeeded + result_version_id NULL).
-    This is a SEPARATE tier from _run_tour_safe's own pipeline_runs fail-mark.
-    """
-    from .jobs_repo import mark_failed, mark_interrupted, mark_running, mark_succeeded
-
-    # AA-667: live writing progress — bind a WritingProgress sink around the whole run so the
-    # s1_generate writer streams into Redis (key wp:{master}:tour:{job_id}), readable by
-    # GET /admin/progress/s1/{job_id}. S1 runs in-process (pipeline_jobs), has no app.state.redis
-    # in scope here, so open a short-lived client from the same env the app lifespan uses — same
-    # precedent as this module opening its own asyncpg connection. Entirely best-effort: a Redis
-    # miss or a construction error must never affect the rewrite.
-    progress, _progress_redis = _build_s1_progress(job_id)
-
-    try:
-        await mark_running(job_id)
-        if progress is not None:
-            from shared.llm_client import stream_sink
-            progress.start()
-            result = None
-            try:
-                with stream_sink.bind(progress):
-                    result = await _run_tour_safe(tour_req, job_id=job_id)
-            finally:
-                await progress.finish(ok=result is not None)
-                if _progress_redis is not None:
-                    try:
-                        await _progress_redis.aclose()
-                    except Exception:
-                        pass
-        else:
-            result = await _run_tour_safe(tour_req, job_id=job_id)
-        if result is None:
-            await mark_failed(job_id, "run_tour failed after retries (see logs)")
-        else:
-            await mark_succeeded(job_id, result.get("version_id"), None)
-    except asyncio.CancelledError:
-        # AA-295: rolling-deploy SIGTERM (or any explicit task.cancel()) lands here — mark the
-        # job interrupted immediately instead of leaving it 'running' until the next boot's
-        # sweep_interrupted() (which only fires once per boot and only once heartbeat_at is
-        # already >5min stale). Re-raise: never swallow CancelledError, asyncio needs it to
-        # propagate for correct task/loop cancellation semantics.
-        logger.warning("run_tour_job_cancelled", job_id=job_id, tour_id=tour_req.tour_id)
-        await mark_interrupted(job_id, "cancelled (deploy/shutdown)")
-        raise
-    except Exception as e:
-        await mark_failed(job_id, repr(e))
+        logger.warning("s1_progress_sink_build_failed", job_id=job_id, error=str(e))
+        return None
 
 
 # ── AA-234 Phần A: re-validate a human-edited generated_content version ────────
@@ -1083,25 +1027,6 @@ async def _revalidate_tour(content_id: str) -> dict:
         await conn.close()
 
 
-async def _revalidate_job(job_id: str, content_id: str) -> None:
-    """AA-234: pipeline_jobs lifecycle wrapper around _revalidate_tour."""
-    from .jobs_repo import mark_failed, mark_interrupted, mark_running, mark_succeeded
-    try:
-        await mark_running(job_id)
-        result = await _revalidate_tour(content_id)
-        await mark_succeeded(job_id, content_id, None)
-        logger.info("revalidate_job_done", job_id=job_id,
-                    revalidate_passed=result["revalidate_passed"])
-    except asyncio.CancelledError:
-        # AA-295: same bug/fix as _run_tour_job — see comment there.
-        logger.warning("revalidate_job_cancelled", job_id=job_id, content_id=content_id)
-        await mark_interrupted(job_id, "cancelled (deploy/shutdown)")
-        raise
-    except Exception as e:
-        await mark_failed(job_id, repr(e))
-
-
-
 @router.post("/run-tour")
 async def run_tour(req: TourRunRequest, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
@@ -1130,40 +1055,71 @@ async def s1_seo_prefetch(req: S1SeoPrefetchRequest, request: Request, x_admin_s
 
 
 @router.post("/run-tour-async")
-async def run_tour_async(req: TourRunRequest, x_admin_secret: str = Header(None)):
-    """AA-223: 202 + job poll. Returns immediately; _run_tour_job runs the existing
-    executor in the background and tracks lifecycle in shared.pipeline_jobs."""
+async def run_tour_async(req: TourRunRequest, request: Request, x_admin_secret: str = Header(None),
+                         x_admin_user_id: Optional[str] = Header(None)):
+    """AA-223 / AA-723: 202 + job poll. Enqueues an `s1_rewrite` job onto the durable runner
+    (shared.job + worker ECS) and returns immediately. Moved off the in-process
+    asyncio.create_task(_run_tour_job) path (shared.pipeline_jobs), which died on every API deploy
+    and never showed on the Jobs page. The job survives deploys, is retryable, and lists on
+    /admin/job-runner/*. The poll contract is unchanged: GET /admin/jobs/{job_id} maps the
+    shared.job row to the same shape the S1 page already reads."""
     verify_admin_secret(x_admin_secret)
     from fastapi.responses import JSONResponse
-
-    from .jobs_repo import create_job, find_active_duplicate
+    from shared.jobs.registry import enqueue
 
     payload = req.model_dump()
-
-    dup = await find_active_duplicate(payload)
-    if dup:
-        return JSONResponse(status_code=202, content={
-            "job_id": dup, "status": "running", "dedup": True,
-            "poll_url": f"/admin/jobs/{dup}",
-        })
-
-    job_id = await create_job(payload, payload.get("tenant_id"))
-    task = asyncio.create_task(_run_tour_job(job_id, req))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    # Dedup key = the same triple find_active_duplicate used (tour + model_tier + batch), so a
+    # double-click or an overlapping wave reuses the in-flight job instead of writing a 2nd version.
+    idem = f"s1_rewrite:{payload.get('tour_id')}:{payload.get('model_tier')}:{payload.get('batch_id')}"
+    job_id, created = await enqueue(
+        request.app.state.pool, "s1_rewrite", payload,
+        idempotency_key=idem, created_by=f"admin:{x_admin_user_id or 'unknown'}")
 
     return JSONResponse(status_code=202, content={
-        "job_id": job_id, "status": "queued",
+        "job_id": job_id,
+        "status": "queued" if created else "running",
+        "dedup": not created,
         "poll_url": f"/admin/jobs/{job_id}",
     })
 
 
-@router.get("/jobs/{job_id}")
-async def get_run_tour_job(job_id: str, x_admin_secret: str = Header(None)):
-    """AA-223: poll a run-tour job's lifecycle row."""
-    verify_admin_secret(x_admin_secret)
-    from .jobs_repo import get_job
+# shared.job status -> the status vocabulary the S1 Rewrite page already understands
+# (succeeded / failed / interrupted / running / queued). cancelled + stopped_budget are terminal
+# non-success states the page treats like a failure.
+_SHARED_JOB_STATUS_MAP = {
+    "queued": "queued", "running": "running", "succeeded": "succeeded",
+    "failed": "failed", "cancelled": "interrupted", "stopped_budget": "failed",
+}
 
+
+@router.get("/jobs/{job_id}")
+async def get_run_tour_job(job_id: str, request: Request, x_admin_secret: str = Header(None)):
+    """AA-223 / AA-723: poll a run-tour job. Reads the durable shared.job row first (new path) and
+    maps it to the legacy pipeline_jobs shape the S1 page polls; falls back to the old
+    pipeline_jobs row so jobs created before this change still poll."""
+    verify_admin_secret(x_admin_secret)
+    from shared.jobs import queue as _queue
+
+    row = await _queue.get(request.app.state.pool, job_id)
+    if row is not None:
+        progress = row.get("progress") or {}
+        result = row.get("result") or {}
+        return {
+            "id":                row["id"],
+            "job_type":          row["kind"],
+            "status":            _SHARED_JOB_STATUS_MAP.get(row["status"], row["status"]),
+            "result_version_id": result.get("version_id") or progress.get("version_id"),
+            "pipeline_run_id":   None,
+            "error":             row.get("error"),
+            "current_stage":     progress.get("current_stage"),
+            "created_at":        row.get("created_at").isoformat() if row.get("created_at") else None,
+            "started_at":        row.get("started_at").isoformat() if row.get("started_at") else None,
+            "finished_at":       row.get("finished_at").isoformat() if row.get("finished_at") else None,
+            "heartbeat_at":      None,
+        }
+
+    # Legacy: a job created on the old in-process path before AA-723.
+    from .jobs_repo import get_job
     job = await get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -1204,52 +1160,19 @@ class S1BatchSubmitRequest(BaseModel):
     enforce_min: bool = True                   # reject sub-minimum batches (Bedrock rejects them)
 
 
-async def _s1_batch_ingest_task(job_id: str, submit: dict, batch_id: str, seo_mode: str,
-                                model_tier: Optional[str]) -> None:
-    """Background: poll the batch job to completion, then ingest each tour through the existing
-    persist path. Tracks lifecycle in shared.pipeline_jobs (reusing jobs_repo) so the admin UI
-    can poll GET /admin/s1-batch/{job_id}. Runs asyncio.to_thread for the blocking poll so it
-    never blocks the event loop."""
-    from .jobs_repo import mark_running, mark_succeeded, mark_failed
-    from services.content_generation.s1_batch import ingest_s1_batch
-
-    try:
-        await mark_running(job_id)
-        summary = await ingest_s1_batch(
-            job_arn=submit["job_arn"],
-            output_uri=submit["output_uri"],
-            account=submit["account"],
-            tour_ids=submit["tour_ids"],
-            batch_id=batch_id,
-            seo_mode=seo_mode,
-            model_tier=model_tier,
-            poll=True,
-        )
-        # No single result_version_id for a batch — record the run summary in error col (free text,
-        # reused; schema has no summary column). status=succeeded means the batch ingest finished.
-        await mark_succeeded(job_id, None, None)
-        logger.info("s1_batch_ingest_done", job_id=job_id,
-                    ingested=summary.get("ingested"), gate_fail_retry=summary.get("gate_fail_retry"),
-                    batch_write_failed=summary.get("batch_write_failed"))
-    except asyncio.CancelledError:
-        from .jobs_repo import mark_interrupted
-        await mark_interrupted(job_id, "cancelled (deploy/shutdown)")
-        raise
-    except Exception as e:
-        await mark_failed(job_id, repr(e)[:1000])
-        logger.error("s1_batch_ingest_failed", job_id=job_id, error=str(e))
-
-
 @router.post("/s1-batch/submit")
-async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, x_admin_secret: str = Header(None)):
-    """AA-606: materialize + submit an S1-rewrite Bedrock Batch job, then kick off a background
-    poll+ingest task. Returns 202 with job_id (poll GET /admin/s1-batch/{job_id}) and the batch ARN.
+async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
+                                   x_admin_secret: str = Header(None)):
+    """AA-606 / AA-723: materialize + submit an S1-rewrite Bedrock Batch job, then enqueue a
+    durable `s1_batch_ingest` job that polls+ingests on the worker. Returns 202 with job_id (poll
+    GET /admin/s1-batch/{job_id}) and the batch ARN.
 
     The writer attempt-1 runs on Bedrock Batch (Haiku); every tour is then validated/judged/gated/
-    persisted by the existing _execute_run_tour path (gate misses fall to the on-demand retry loop)."""
+    persisted by the existing _execute_run_tour path (gate misses fall to the on-demand retry loop).
+    The submit step stays in the request (it returns the ARN); the long poll+ingest is the job."""
     verify_admin_secret(x_admin_secret)
     from fastapi.responses import JSONResponse
-    from .jobs_repo import create_job
+    from shared.jobs.registry import enqueue
     from services.content_generation.s1_batch import submit_s1_batch
     from shared.llm_client.bedrock_batch import BatchUnavailable
 
@@ -1260,16 +1183,14 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, x_admin_secret: st
     except BatchUnavailable as e:
         raise HTTPException(status_code=400, detail=f"batch submit failed: {e}")
 
-    job_id = await create_job(
-        {"job_type": "s1_batch", "batch_id": req.batch_id, "job_arn": submit["job_arn"],
-         "record_count": submit["record_count"], "account": submit["account"]},
-        _MASTER_TENANT_ID,
-    )
-    task = asyncio.create_task(
-        _s1_batch_ingest_task(job_id, submit, req.batch_id, req.seo_mode, req.model_tier)
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    job_id, created = await enqueue(
+        request.app.state.pool, "s1_batch_ingest",
+        {"job_arn": submit["job_arn"], "output_uri": submit["output_uri"],
+         "account": submit["account"], "tour_ids": submit["tour_ids"],
+         "batch_id": req.batch_id, "seo_mode": req.seo_mode, "model_tier": req.model_tier,
+         "record_count": submit["record_count"]},
+        idempotency_key=f"s1_batch_ingest:{submit['job_arn']}",
+        created_by="admin:s1-batch")
 
     return JSONResponse(status_code=202, content={
         "job_id": job_id, "status": "submitted", "job_arn": submit["job_arn"],
@@ -1279,11 +1200,30 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, x_admin_secret: st
 
 
 @router.get("/s1-batch/{job_id}")
-async def get_s1_batch_job(job_id: str, x_admin_secret: str = Header(None)):
-    """AA-606: poll an S1 batch job's lifecycle row (queued→running→succeeded|failed|interrupted)."""
+async def get_s1_batch_job(job_id: str, request: Request, x_admin_secret: str = Header(None)):
+    """AA-606 / AA-723: poll an S1 batch job. Reads the durable shared.job row (mapped to the
+    legacy shape) and falls back to the old pipeline_jobs row for jobs created before AA-723."""
     verify_admin_secret(x_admin_secret)
-    from .jobs_repo import get_job
+    from shared.jobs import queue as _queue
 
+    row = await _queue.get(request.app.state.pool, job_id)
+    if row is not None:
+        progress = row.get("progress") or {}
+        return {
+            "id":                row["id"],
+            "job_type":          row["kind"],
+            "status":            _SHARED_JOB_STATUS_MAP.get(row["status"], row["status"]),
+            "result_version_id": None,
+            "pipeline_run_id":   None,
+            "error":             row.get("error"),
+            "current_stage":     progress.get("phase"),
+            "created_at":        row.get("created_at").isoformat() if row.get("created_at") else None,
+            "started_at":        row.get("started_at").isoformat() if row.get("started_at") else None,
+            "finished_at":       row.get("finished_at").isoformat() if row.get("finished_at") else None,
+            "heartbeat_at":      None,
+            "result":            row.get("result"),
+        }
+    from .jobs_repo import get_job
     job = await get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -3553,27 +3493,28 @@ async def update_generated_content_fields(
 async def revalidate_generated_content(
     tour_id: str,
     content_id: str,
+    request: Request,
     x_admin_secret: str = Header(None),
 ):
-    """AA-234: async re-validate a human-edited version (202 + job poll).
+    """AA-234 / AA-723: async re-validate a human-edited version (202 + job poll).
 
-    Runs build_revalidation_graph (validate+judge+brand_audit, NO flag_fix) in the
-    background via the pipeline_jobs pattern, overwrites the version's scores, and
-    sets revalidate_passed. Poll GET /admin/jobs/{job_id} for the outcome.
+    Runs build_revalidation_graph (validate+judge+brand_audit, NO flag_fix) on the durable job
+    runner + worker, overwrites the version's scores, and sets revalidate_passed. Poll
+    GET /admin/jobs/{job_id} for the outcome.
     """
     verify_admin_secret(x_admin_secret)
     from fastapi.responses import JSONResponse
-    from .jobs_repo import create_job
+    from shared.jobs.registry import enqueue
 
-    job_id = await create_job(
-        {"job_type": "revalidate", "content_id": content_id, "tour_id": tour_id},
-        "00000000-0000-0000-0000-000000000001",
-    )
-    task = asyncio.create_task(_revalidate_job(job_id, content_id))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    # AA-723: on the durable runner + worker; survives deploys, shows on /admin/job-runner.
+    job_id, created = await enqueue(
+        request.app.state.pool, "revalidate",
+        {"content_id": content_id, "tour_id": tour_id},
+        idempotency_key=f"revalidate:{content_id}",
+        created_by="admin:revalidate")
     return JSONResponse(status_code=202, content={
-        "job_id": job_id, "status": "queued", "poll_url": f"/admin/jobs/{job_id}",
+        "job_id": job_id, "status": "queued" if created else "running",
+        "dedup": not created, "poll_url": f"/admin/jobs/{job_id}",
     })
 
 
