@@ -28,7 +28,6 @@ deleted along with /admin/curation + /admin/curation/preview (their only
 callers, STEP0-confirmed no owner_scope/JWT path ever reached them from T6) —
 see docs/claude_audit/AA-475-step0-atomize-curation-teardown.md.
 """
-import asyncio
 import json
 from decimal import Decimal
 from typing import Optional
@@ -45,10 +44,8 @@ from services.acp_shared.atom_constants import THIN_TRIP_ATOM_MIN
 
 router = APIRouter(prefix="/admin", tags=["admin-atoms"])
 
-# AA-564 3.1 — strong refs for the delete-triggered recompute background task, same GC-safety
-# pattern as services/export/handler.py's own module-level `_background_tasks` set (a bare
-# asyncio.create_task() with no reference can be garbage-collected mid-flight).
-_recompute_tasks: set = set()
+# AA-723 — the delete-triggered Segment/Score/Route recompute is now a durable `recompute` job
+# (services/jobs/recompute_job.py), not an in-process asyncio task, so no task-reference set.
 _recompute_logger = structlog.get_logger()
 
 
@@ -493,17 +490,20 @@ async def patch_atom(
     # — a recompute failure must never surface as this PATCH having failed, the star/delete itself
     # already committed above).
     if body.deleted is not None:
-        from services.export.handler import recompute_segment_score_route
-
-        async def _recompute():
-            try:
-                await recompute_segment_score_route(str(row["tour_id"]), pool, log_tour_id=atom_id)
-            except Exception:
-                _recompute_logger.warning("atom_delete_recompute_failed", atom_id=atom_id, exc_info=True)
-
-        _task = asyncio.create_task(_recompute())
-        _recompute_tasks.add(_task)
-        _task.add_done_callback(_recompute_tasks.discard)
+        # AA-723 (ADR 0003): the Segment/Score/Route recompute now runs as a durable `recompute`
+        # job on the worker (scope=tour) instead of a fire-and-forget asyncio task that died on
+        # deploy and was invisible. Enqueue is just a row insert, so the PATCH still returns at
+        # once; debounced so a burst of atom edits on one tour reuses a single pending job.
+        try:
+            from services.jobs.recompute_job import enqueue_recompute
+            job_id, created = await enqueue_recompute(
+                pool, scope="tour", tour_id=str(row["tour_id"]),
+                reason=f"atom_delete:{atom_id}", created_by="admin:atom_curate")
+            _recompute_logger.info("atom_delete_recompute_enqueued", atom_id=atom_id,
+                                   tour_id=str(row["tour_id"]), job_id=job_id, created=created)
+        except Exception:
+            _recompute_logger.warning("atom_delete_recompute_enqueue_failed", atom_id=atom_id,
+                                      exc_info=True)
 
     return _safe(row)
 
