@@ -297,6 +297,16 @@ async def run_route_detection(pool) -> dict:
             FROM acp_contract.route
             WHERE superseded_at IS NULL
         """)
+        # AA-723 — the highest version ever used for each identity, INCLUDING superseded rows.
+        # A tour that was deactivated then reactivated (AA-713) superseded its routes; when it
+        # comes back the identity is "new" in current_routes, but the raw route_id ({tour}:{fd}-
+        # {ld}) still exists as a superseded row, so inserting it again violated route_pkey. This
+        # lets the new-identity insert pick the next free version instead of colliding.
+        max_version_rows = await conn.fetch("""
+            SELECT tour_id::text AS tour_id, first_day, last_day, max(version) AS max_version
+            FROM acp_contract.route
+            GROUP BY tour_id, first_day, last_day
+        """)
 
     moments = [
         Moment(segment_id=r["segment_id"], tour_id=r["tour_id"], day=r["day"],
@@ -400,6 +410,10 @@ async def run_route_detection(pool) -> dict:
     finished_by_identity = {
         (r.tour_id, r.first_day, r.last_day): r for r in finished
     }
+    # AA-723 — max version ever used per identity (incl. superseded), for the reactivation case.
+    max_version_by_identity = {
+        (r["tour_id"], r["first_day"], r["last_day"]): r["max_version"] for r in max_version_rows
+    }
 
     def _unchanged(route: Route, old: object) -> bool:
         old_segments = old["ordered_segment_ids"]
@@ -419,15 +433,30 @@ async def run_route_detection(pool) -> dict:
     for identity, route in finished_by_identity.items():
         old = existing_by_identity.get(identity)
         if old is None:
-            to_insert.append((
-                route.route_id, route.tour_id, route.hub_id, route.hub_name,
-                json.dumps(list(route.segment_ids)), route.first_day, route.last_day, 1,
-            ))
+            # New in the CURRENT set. If this identity was never seen at all, keep the raw
+            # route_id (version 1). If it existed before and was fully superseded (AA-713
+            # deactivate->reactivate), the raw route_id row still lives superseded — reuse it as a
+            # new version instead of colliding on route_pkey (AA-723).
+            prior_max = max_version_by_identity.get(identity)
+            if prior_max is None:
+                to_insert.append((
+                    route.route_id, route.tour_id, route.hub_id, route.hub_name,
+                    json.dumps(list(route.segment_ids)), route.first_day, route.last_day, 1,
+                ))
+            else:
+                new_version = prior_max + 1
+                to_insert.append((
+                    f"{route.route_id}:v{new_version}", route.tour_id, route.hub_id,
+                    route.hub_name, json.dumps(list(route.segment_ids)),
+                    route.first_day, route.last_day, new_version,
+                ))
         elif _unchanged(route, old):
             unchanged_count += 1
         else:
             to_supersede.append(old["route_id"])
-            new_version = old["version"] + 1
+            # Next version off the max EVER used for this identity (incl. superseded), not just
+            # the current row's version, so the new route_id can never collide with an old one.
+            new_version = max(old["version"], max_version_by_identity.get(identity, old["version"])) + 1
             versioned_id = f"{route.route_id}:v{new_version}"
             to_insert.append((
                 versioned_id, route.tour_id, route.hub_id, route.hub_name,

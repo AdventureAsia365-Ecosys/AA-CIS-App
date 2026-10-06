@@ -59,6 +59,7 @@ class TestRunRouteDetectionVersioning:
             [_moment_row("s1", 1), _moment_row("s2", 2, place="Magome")],  # moments
             [],  # old_hubs
             [],  # current_routes (none exist yet)
+            [],  # max_version_rows (identity never seen before)
         ]
         pool = _make_pool(conn)
 
@@ -88,6 +89,7 @@ class TestRunRouteDetectionVersioning:
                 "hub_name": "Kyoto → Magome", "ordered_segment_ids": json.dumps(["s1", "s2"]),
                 "first_day": 1, "last_day": 2, "version": 1,
             }],
+            [{"tour_id": TOUR, "first_day": 1, "last_day": 2, "max_version": 1}],  # max_version_rows
         ]
         pool = _make_pool(conn)
 
@@ -113,6 +115,7 @@ class TestRunRouteDetectionVersioning:
                 "hub_name": "Old Name", "ordered_segment_ids": json.dumps(["s_old"]),
                 "first_day": 1, "last_day": 2, "version": 1,
             }],
+            [{"tour_id": TOUR, "first_day": 1, "last_day": 2, "max_version": 1}],  # max_version_rows
         ]
         pool = _make_pool(conn)
 
@@ -147,6 +150,7 @@ class TestRunRouteDetectionVersioning:
                 "hub_name": "Old Name", "ordered_segment_ids": json.dumps(["s1", "s2"]),
                 "first_day": 1, "last_day": 2, "version": 1,
             }],
+            [{"tour_id": TOUR, "first_day": 1, "last_day": 2, "max_version": 1}],  # max_version_rows
         ]
         pool = _make_pool(conn)
 
@@ -163,13 +167,37 @@ class TestRunRouteDetectionVersioning:
         """AA-532 — hub-family matching must only look at CURRENT routes; a superseded one lying
         around (never deleted) must not keep matching a family it no longer represents."""
         conn = _txn_conn()
-        conn.fetch.side_effect = [[], [], []]
+        conn.fetch.side_effect = [[], [], [], []]
         pool = _make_pool(conn)
 
         await route_detection.run_route_detection(pool)
 
         old_hubs_query = conn.fetch.call_args_list[1].args[0]
         assert "r.superseded_at IS NULL" in old_hubs_query
+
+    @pytest.mark.asyncio
+    async def test_reactivated_identity_reuses_superseded_id_as_next_version(self):
+        """AA-723 — a tour deactivated then reactivated (AA-713) superseded its routes. On the
+        reactivation recompute the identity is 'new' in current_routes, but the raw route_id still
+        exists as a superseded row. The insert must pick the next version, not collide on
+        route_pkey (the live UniqueViolationError found in S213)."""
+        conn = _txn_conn()
+        base_id = f"{TOUR}:2-3"
+        conn.fetch.side_effect = [
+            [_moment_row("s1", 2), _moment_row("s2", 3, place="Magome")],  # derivation reappears
+            [],  # old_hubs
+            [],  # current_routes — empty, the tour was deactivated so its routes are superseded
+            [{"tour_id": TOUR, "first_day": 2, "last_day": 3, "max_version": 1}],  # superseded v1 exists
+        ]
+        pool = _make_pool(conn)
+
+        result = await route_detection.run_route_detection(pool)
+
+        assert result["routes_written"] == 1
+        assert result["routes_superseded"] == 0  # nothing current to supersede
+        insert_row = conn.executemany.call_args.args[1][0]
+        assert insert_row[0] == f"{base_id}:v2"  # NOT the raw base_id that still exists superseded
+        assert insert_row[-1] == 2
 
 
 class TestCreateRoutePick:
