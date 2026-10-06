@@ -145,6 +145,7 @@ _LIST_FROM = """
     -- list, not a per-market audit (that's admin_dashboard.py's job).
     LEFT JOIN acp_contract.atom_ranking ar
         ON ar.tour_id = ta.tour_id AND ar.segment_id = asm.segment_id AND ar.market = 'US'
+       AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
     -- Route/Hub link — a Segment is "part of a Route" when some Route's ordered_segment_ids
     -- (migration 131, AA-510) contains it. LATERAL + LIMIT 1: a Segment could in principle
     -- appear in more than one Route (re-detection across tours); this page only ever needs ONE
