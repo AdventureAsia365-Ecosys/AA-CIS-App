@@ -936,6 +936,25 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
                 """,
                 market,
             )
+            # Supersede the market's current rows FIRST (every version below the one we are about
+            # to write). Must happen before the INSERT so the partial unique index
+            # `idx_atom_ranking_current_identity` (WHERE superseded_at IS NULL) is satisfied —
+            # otherwise inserting a new current row while the old current row still has
+            # superseded_at=NULL violates the one-current-row-per-identity invariant.
+            #
+            # No-dip guarantee: this UPDATE + INSERT run inside the SAME transaction. A reader on
+            # a separate connection sees the MVCC snapshot from before this transaction started
+            # (all old rows still current, no new rows yet) until the transaction commits. At
+            # commit, both the supersede and the insert become visible atomically — the reader's
+            # next snapshot sees the new current set with no gap in between.
+            await conn.execute(
+                """
+                UPDATE acp_contract.atom_ranking
+                SET superseded_at = now()
+                WHERE market = $1 AND superseded_at IS NULL AND version < $2
+                """,
+                market, next_version,
+            )
             if ranked:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_ranking
@@ -960,18 +979,6 @@ async def run_atom_ranking(market: str, pool, question_counts: dict[str, int]) -
                     (market, tour_id, e.segment_id, e.reason, next_version)
                     for e in excluded for tour_id in e.tour_ids
                 ])
-            # Supersede the market's previous current rows (every version below the one we just
-            # wrote). Done inside the same transaction as the inserts, so the current set switches
-            # from the old rows to the new rows atomically — a reader filtering superseded_at IS
-            # NULL sees one complete set the whole time, never zero rows.
-            await conn.execute(
-                """
-                UPDATE acp_contract.atom_ranking
-                SET superseded_at = now()
-                WHERE market = $1 AND superseded_at IS NULL AND version < $2
-                """,
-                market, next_version,
-            )
 
     # Drop the now-superseded rows AFTER the swap committed. A fresh acquire (new transaction) on
     # purpose: these rows are already not visible to a `superseded_at IS NULL` reader, so deleting
