@@ -152,10 +152,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
     (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`).
-  - The worker loop runs **inside the API process** (lifespan, `JOB_WORKER_IN_API`, default on),
-    Nghiệp's choice for low Dev traffic. `python -m shared.jobs.worker` runs it standalone; a
-    separate ECS service is AA-651 (deferred).
+    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`).
+  - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
+    AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
+    exists for local/dev use.
+  - Slot budget (AA-737): the service worker runs `JOB_WORKER_MAX_PARALLEL` jobs at once (default
+    8), with the default thread executor and DB pool sized to match. Per-kind caps are global
+    across workers: `s1_rewrite` 6, `a3_atomize` 1 (deliberate — platform-wide recompute + Cohere
+    pacing). Keep `s1_rewrite` cap + `a3_atomize` cap below the slot budget, or rewrites starve
+    atomize for a whole wave (S217).
   - A graceful shutdown releases running jobs (attempt not counted); a crash is caught by the
     reaper after the 90 s lease.
   - After a deploy the old task drains for ~5 min; its worker stops claiming as soon as a worker of a
