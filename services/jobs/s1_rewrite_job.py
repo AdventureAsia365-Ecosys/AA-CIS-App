@@ -15,9 +15,11 @@ the version but before the job is marked complete, a reap+retry must NOT write a
 the same tour. The job records the written `version_id` in its progress as soon as the executor
 returns; a retry that sees a recorded `version_id` returns it instead of rewriting.
 
-Concurrency 4 mirrors the old in-process `_pipeline_semaphore` (2) loosened to the worker's own
-slot budget; max_attempts 1 because `_execute_run_tour`'s internal retry (`_run_tour_safe`, 3x) is
-preserved below — a job-level retry would otherwise write a fresh version per attempt.
+Concurrency 6 (AA-737, was 4): the job is I/O-bound on Bedrock — the S217 Nepal wave ran 4 in
+parallel at ~20% worker CPU with no Bedrock fallbacks on s1_generate. The worker has 8 slots
+(worker.WORKER_MAX_PARALLEL_DEFAULT), so 6 rewrites still leave a slot for a3_atomize.
+max_attempts 1 because `_execute_run_tour`'s internal retry (`_run_tour_safe`, 3x) is preserved
+below — a job-level retry would otherwise write a fresh version per attempt.
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ logger = structlog.get_logger()
 KIND = "s1_rewrite"
 
 
-@job_kind(KIND, concurrency=4, max_attempts=1, expected_seconds=600)
+@job_kind(KIND, concurrency=6, max_attempts=1, expected_seconds=600)
 async def run(ctx: JobContext) -> dict:
     # Imported here (not at module import) so registering the kind never drags the heavy
     # admin_pipeline router + its LangGraph imports into the worker's import graph eagerly.

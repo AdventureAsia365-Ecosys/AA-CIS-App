@@ -28,7 +28,7 @@ def _ctx(kind, payload, progress=None):
 # ── registration ──────────────────────────────────────────────────────────────────────────────
 
 def test_all_three_kinds_are_registered():
-    for name, conc, attempts in [("s1_rewrite", 4, 1), ("revalidate", 2, 2), ("s1_batch_ingest", 1, 1)]:
+    for name, conc, attempts in [("s1_rewrite", 6, 1), ("revalidate", 2, 2), ("s1_batch_ingest", 1, 1)]:
         k = registry.get_kind(name)
         assert k is not None, f"{name} not registered"
         assert k.concurrency == conc and k.max_attempts == attempts

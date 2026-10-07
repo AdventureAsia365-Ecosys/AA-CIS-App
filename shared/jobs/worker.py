@@ -19,6 +19,7 @@ import os
 import signal
 import socket
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import structlog
@@ -229,6 +230,21 @@ class Worker:
         await self._liveness(queue.worker_stopped, self.pool, self.worker_id)
 
 
+# AA-737: slot budget of the standalone worker service. S217 Nepal wave: with 4 slots, s1_rewrite
+# (cap 4) held every slot for ~75 min while 60 a3_atomize jobs sat queued (median wait ~59 min),
+# then atomize ran alone as a ~55 min tail. 8 slots = s1_rewrite (cap 6) + a3_atomize (cap 1, by
+# design) + 1 for prefetch/recompute, so atomize drains alongside the rewrites.
+WORKER_MAX_PARALLEL_DEFAULT = 8
+
+
+def worker_max_parallel() -> int:
+    """`JOB_WORKER_MAX_PARALLEL` (env) or the default; never below 1."""
+    try:
+        return max(1, int(os.environ.get("JOB_WORKER_MAX_PARALLEL", WORKER_MAX_PARALLEL_DEFAULT)))
+    except ValueError:
+        return WORKER_MAX_PARALLEL_DEFAULT
+
+
 def in_api_enabled() -> bool:
     return os.environ.get("JOB_WORKER_IN_API", "true").lower() not in ("0", "false", "no")
 
@@ -244,13 +260,21 @@ async def _main() -> None:
     from shared.secrets import get_database_url
 
     load_kinds()
-    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=5)
+    max_parallel = worker_max_parallel()
+    # AA-737: LangGraph runs sync nodes (every LLM call) on the loop's default executor, which is
+    # sized from the CPU count (6 threads on the 0.5 vCPU task) — fewer than the slots. Size it to
+    # the slots (2 per job: a node + a blocking side call such as atomize's Cohere pacing) so
+    # raising max_parallel is not silently capped by threads. Same reason the pool grows with it.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=2 * max_parallel, thread_name_prefix="job"))
+    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, max_parallel + 2))
     redis = None
     if os.environ.get("REDIS_HOST"):
         import redis.asyncio as aioredis
         redis = aioredis.from_url(f"redis://{os.environ['REDIS_HOST']}:6379", encoding="utf-8",
                                   decode_responses=True)
-    worker = Worker(pool, resources={"redis": redis})
+    worker = Worker(pool, max_parallel=max_parallel, resources={"redis": redis})
+    logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, worker._stopping.set)
