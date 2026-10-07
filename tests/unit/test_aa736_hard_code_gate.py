@@ -67,6 +67,14 @@ def test_failure_summary_no_sonnet_note_when_not_retried():
     assert "retried with sonnet" not in summary
 
 
+def test_failure_summary_names_field_of_brand_forbidden_word():
+    # AA-738: brand words (not in the AA core list) in body fields are named in the reason.
+    r = _res(score=8.0, codes=["FORBIDDEN_WORD"], _brand_forbidden_words=["explore", "package"],
+             generated={"name": "Nepal Trek", "itineraries": "Day 1 — Kathmandu\nRest or explore."})
+    summary = admin_pipeline._build_failure_summary(r)
+    assert "forbidden word not auto-removable in aa_itineraries" in summary
+
+
 # ── wired gate through _execute_run_tour (AA-237 harness) ────────────────────────
 
 @pytest.fixture(autouse=True)
@@ -118,8 +126,8 @@ def _run(rewrite_returns, **req_over):
 
 
 def test_surviving_rewrite_hard_code_triggers_one_sonnet_retry():
-    # Haiku leaves a FORBIDDEN_WORD; sonnet clears it. Exactly one extra rewrite, sonnet kept.
-    out, rt = _run([_result(8.0, "haiku-4.5", ["FORBIDDEN_WORD"]),
+    # Haiku leaves a MISSING_FIELD; sonnet clears it. Exactly one extra rewrite, sonnet kept.
+    out, rt = _run([_result(8.0, "haiku-4.5", ["MISSING_FIELD"]),
                     _result(8.0, "sonnet-4.5", [])])
     assert rt.call_count == 2
     assert rt.call_args.kwargs["model_tier"] == "sonnet"
@@ -130,18 +138,18 @@ def test_surviving_rewrite_hard_code_triggers_one_sonnet_retry():
 
 def test_sonnet_kept_when_it_clears_more_hard_codes_even_if_score_equal():
     # Hard-code trigger keeps sonnet on FEWER surviving hard codes, not on a higher score.
-    out, rt = _run([_result(8.0, "haiku-4.5", ["FORBIDDEN_WORD"]),
+    out, rt = _run([_result(8.0, "haiku-4.5", ["MISSING_FIELD"]),
                     _result(8.0, "sonnet-4.5", [])])
     assert out["auto_upgraded"] is True
 
 
 def test_sonnet_still_failing_keeps_haiku_flag_false_but_marks_retried():
-    # Sonnet also leaves the forbidden word → neither run is publishable; we keep the first
+    # Sonnet also leaves the field empty → neither run is publishable; we keep the first
     # (no improvement) but the run is marked retried for the review-queue reason.
-    out, rt = _run([_result(8.0, "haiku-4.5", ["FORBIDDEN_WORD"]),
-                    _result(8.0, "sonnet-4.5", ["FORBIDDEN_WORD"])])
+    out, rt = _run([_result(8.0, "haiku-4.5", ["MISSING_FIELD"]),
+                    _result(8.0, "sonnet-4.5", ["MISSING_FIELD"])])
     assert rt.call_count == 2
-    assert admin_pipeline._surviving_hard_codes(out) == {"FORBIDDEN_WORD"}
+    assert admin_pipeline._surviving_hard_codes(out) == {"MISSING_FIELD"}
     assert admin_pipeline._is_publishable(out) is False
 
 
@@ -156,3 +164,12 @@ def test_clean_haiku_run_no_upgrade():
     out, rt = _run([_result(8.0, "haiku-4.5", [])])
     assert rt.call_count == 1
     assert out["auto_upgraded"] is False
+
+
+def test_forbidden_word_no_longer_triggers_sonnet_upgrade():
+    # AA-738: a FORBIDDEN_WORD that survived the deterministic strip goes straight to review —
+    # Sonnet writes the same brand words, and T2 rewrites on Sonnet anyway.
+    out, rt = _run([_result(8.0, "haiku-4.5", ["FORBIDDEN_WORD"])])
+    assert rt.call_count == 1
+    assert out["auto_upgraded"] is False
+    assert admin_pipeline._is_publishable(out) is False

@@ -75,8 +75,12 @@ _MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 # survivor is worth one haiku->sonnet retry. The rest of _HARD_BLOCK_CODES (SEO_META_TOO_LONG,
 # SEO_TITLE_TOO_LONG, META_INCOMPLETE_SENTENCE, META_TOO_SHORT) are deterministic-fixable by
 # AA-641 fit_seo_meta/fit_seo_title — upgrading the model for those would waste a Sonnet run.
+# AA-738: FORBIDDEN_WORD removed. The writer output is now stripped deterministically before
+# validate (forbidden_strip), so a surviving one is a word the strip could not clean — and the S217
+# Nepal wave showed Sonnet writes the same brand words (explore/package/nestled) anyway, while T2
+# rewrites on Sonnet regardless. It goes straight to review instead of paying for Sonnet twice.
 _REWRITE_CLASS_HARD_CODES = frozenset({
-    "FORBIDDEN_WORD", "BRAND_SEO_META_VIOLATION", "MISSING_FIELD",
+    "BRAND_SEO_META_VIOLATION", "MISSING_FIELD",
 })
 
 
@@ -113,6 +117,7 @@ def _is_publishable(result: dict) -> bool:
 def _build_failure_summary(result: dict) -> str:
     """AA-212: human-readable reason a tour was routed to the HITL review_queue.
 
+    AA-738: a FORBIDDEN_WORD that survived the deterministic strip is named with its field(s).
     AA-736: when a sonnet retry was already tried (hard code survived haiku) and a hard code is
     STILL present, say so explicitly with the offending field(s) — the reviewer must know the
     stronger model was already attempted, e.g. 'retried with sonnet, still FORBIDDEN_WORD in
@@ -133,11 +138,17 @@ def _build_failure_summary(result: dict) -> str:
     surviving = _surviving_hard_codes(result)
     if result.get("_sonnet_retried") and surviving:
         gc = _result_to_gc(result)
-        field_fails = _derive_field_failures(gc, sorted(surviving))
+        field_fails = _derive_field_failures(gc, sorted(surviving), result.get("_brand_forbidden_words"))
         where = ", ".join(
             f"{f['code']} in {f['field']}" for f in field_fails if f["code"] in surviving
         ) or ",".join(sorted(surviving))
         parts.append(f"retried with sonnet, still {where}")
+    elif "FORBIDDEN_WORD" in surviving:
+        # AA-738: no Sonnet retry for FORBIDDEN_WORD — tell the reviewer where the word is.
+        gc = _result_to_gc(result)
+        fields = sorted({f["field"] for f in _derive_field_failures(
+            gc, ["FORBIDDEN_WORD"], result.get("_brand_forbidden_words")) if f["code"] == "FORBIDDEN_WORD"})
+        parts.append("forbidden word not auto-removable" + (f" in {', '.join(fields)}" if fields else ""))
 
     return "; ".join(parts) or "blocked: not publishable"
 
@@ -151,6 +162,7 @@ def _result_to_gc(result: dict) -> dict:
         "aa_name": g.get("name") or "",
         "aa_subtitle": g.get("subtitle") or "",
         "aa_summary": g.get("summary") or "",
+        "aa_description": g.get("description") or "",
         "aa_highlights": g.get("highlights") or [],
         "aa_itineraries": g.get("itineraries") or "",
         "seo_title": g.get("seo_title") or "",
@@ -679,6 +691,9 @@ async def _execute_run_tour(
                 result["_sonnet_retried"] = True
             logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
                         surviving_hard_after=sorted(_surviving_hard_codes(result)))
+
+        # AA-738: the review-queue reason scans the brand's own forbidden words too.
+        result["_brand_forbidden_words"] = brand_rules.get("forbidden_words") or []
 
         version_id = None
         _m_final = None
@@ -2260,7 +2275,7 @@ async def export_audit(
 
 # ── Review queue (admin alias — no JWT required) ─────────────────────────────
 
-def _derive_field_failures(gc: dict, codes: list) -> list:
+def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
     """AA-240: re-derive per-field failure reasons on the CURRENT gc content.
 
     `codes` = historical failure_codes + brand_audit_codes from quality_scores (snapshot at
@@ -2328,10 +2343,17 @@ def _derive_field_failures(gc: dict, codes: list) -> list:
                 add(col, "MISSING_FIELD", f"{col} is empty")
 
     # FORBIDDEN_WORD — scan live text, map to the field that contains it
+    # AA-738: also the brand's own words (extra_forbidden) and the body fields — the S217 Nepal
+    # hits (explore/package/nestled) were brand words in aa_itineraries/aa_highlights, which this
+    # scan used to miss, so the review reason could not name the field.
     if "FORBIDDEN_WORD" in seen:
-        for col in ("aa_name", "aa_subtitle", "aa_summary", "seo_title", "seo_meta"):
-            txt = (gc.get(col) or "").lower()
-            hit = next((w for w in _VALIDATE_FORBIDDEN if has_word(txt, w)), None)
+        _words = list(dict.fromkeys(list(_VALIDATE_FORBIDDEN) + [
+            w.lower().strip() for w in (extra_forbidden or []) if w and w.strip()]))
+        for col in ("aa_name", "aa_subtitle", "aa_summary", "aa_description", "aa_highlights",
+                    "aa_itineraries", "seo_title", "seo_meta"):
+            val = gc.get(col)
+            txt = (val if isinstance(val, str) else _json.dumps(val or "")).lower()
+            hit = next((w for w in _words if has_word(txt, w)), None)
             if hit:
                 add(col, "FORBIDDEN_WORD", f"contains a forbidden word: '{hit}'")
 
