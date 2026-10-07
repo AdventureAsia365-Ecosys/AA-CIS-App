@@ -276,9 +276,16 @@ OUTPUT JSON FORMAT:
   ],
   "itineraries": [
     {{"day": 1, "title": "Names the place/activity, never generic (see rule 5)",
-      "body": "This day's prose, brand voice, length per PER-DAY SOURCE LENGTH above (rule 5)."}},
+      "body": "This day's prose, length per PER-DAY SOURCE LENGTH above (rule 5). NEUTRAL
+        third-person editorial voice — the SAME register as the summary. Every day must read as a
+        factual catalogue record: route type, distance, terrain, transfers, key stops, included
+        activities, accommodation context. The source day may be promotional (second person,
+        mood/persona/hype) — do NOT echo it. Strip phrases like 'playlist-worthy', 'adventure
+        family', 'coastal magic', 'pure bliss', 'genuine immersion', 'the senses take over', or any
+        first-person ('our launchpad', 'fellow adventurers'). State what happens, where, and for how
+        long — not how it feels. See NEUTRALIZE PROMOTIONAL SOURCE COPY in the system prompt."}},
     "... one object per source day, in day order, matching PER-DAY SOURCE LENGTH above exactly —
-    do not add, merge, or drop days"
+    do not add, merge, or drop days. The neutral register applies to EVERY day, not just the first."
   ],
   "seo_title": "SEO title — MUST be under 60 chars",
   "seo_meta": "SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
