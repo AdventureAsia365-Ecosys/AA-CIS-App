@@ -16,11 +16,28 @@ REPO = Path(__file__).resolve().parents[2]
 DEPLOY_WF = (REPO / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
 
 
-def test_build_output_is_the_immutable_per_commit_image():
-    # The build job must export the per-commit tag (FULL_IMAGE = ...:dev-<sha>), not :latest.
-    assert "echo \"image=$FULL_IMAGE\" >> $GITHUB_OUTPUT" in DEPLOY_WF, (
-        "build-and-push must output the immutable FULL_IMAGE (dev-<sha>), not $LATEST — "
-        "otherwise the deploy pins a moving tag and api/worker can diverge (AA-725 part 5)."
+def test_build_output_is_the_per_commit_tag_not_full_image():
+    # The build job must export the per-commit TAG (dev-<sha>), not the full image. The full image
+    # embeds the ECR_REGISTRY secret, which GitHub strips from job outputs, leaving DEPLOY_IMAGE
+    # empty downstream. The tag carries no secret and survives.
+    assert "echo \"tag=$IMAGE_TAG\" >> $GITHUB_OUTPUT" in DEPLOY_WF, (
+        "build-and-push must output the per-commit tag (dev-<sha>), not :latest or the full image "
+        "(the full image contains the ECR_REGISTRY secret and gets dropped) — AA-725 part 5."
+    )
+    assert "echo \"image=$LATEST\"" not in DEPLOY_WF, (
+        "build-and-push must not output the moving `:latest` image (AA-725 part 5)."
+    )
+
+
+def test_deploy_image_is_resolved_from_tag_plus_registry_env():
+    # The deploy job must rebuild the full image from the tag output + its own ECR env, not take
+    # it from a job output (which would be stripped as a secret).
+    assert "DEPLOY_IMAGE=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:?tag not set}" in DEPLOY_WF, (
+        "The deploy job must resolve DEPLOY_IMAGE from the per-commit tag plus ECR_REGISTRY/"
+        "ECR_REPOSITORY env (AA-725 part 5)."
+    )
+    assert "needs.build-and-push.outputs.tag" in DEPLOY_WF, (
+        "The deploy job must consume build-and-push.outputs.tag."
     )
 
 
@@ -31,18 +48,6 @@ def test_deploy_helper_uses_deploy_image_not_latest():
     )
     assert not re.search(r'NEW_IMAGE=.*:latest"', DEPLOY_WF), (
         "deploy_family.sh must not build NEW_IMAGE from the `:latest` tag (AA-725 part 5)."
-    )
-
-
-def test_both_deploy_steps_pass_the_built_image():
-    # Both the api and the worker deploy steps must set DEPLOY_IMAGE from the build output, so a
-    # single deploy rolls one SHA across both services.
-    passes = re.findall(
-        r"DEPLOY_IMAGE:\s*\$\{\{\s*needs\.build-and-push\.outputs\.image\s*\}\}", DEPLOY_WF)
-    # api deploy + worker deploy + the post-deploy SHA verification step.
-    assert len(passes) >= 3, (
-        "Expected the api deploy, worker deploy, and the SHA-verify step to all source "
-        f"DEPLOY_IMAGE from build-and-push.outputs.image; found {len(passes)}."
     )
 
 
