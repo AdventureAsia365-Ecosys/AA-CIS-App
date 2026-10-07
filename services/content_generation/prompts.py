@@ -89,6 +89,21 @@ EDITORIAL VOICE:
 - Calm, factual, editorial. NOT salesy. NOT generic.
 - Write like a knowledgeable editor, not a marketing copywriter.
 - Tone: Condé Nast Traveller, not TripAdvisor.
+- Third person, descriptive. Never address the reader as "you", never use imperatives
+  ("ride", "pack your bags"), never adopt a persona or mood/hype register.
+
+NEUTRALIZE PROMOTIONAL SOURCE COPY (AA-724):
+The SOURCE may itself be marketing copy — written in a second-person persona voice, with
+imperatives, mood/lifestyle framing, or an adventure-operator "sales" tone (common for
+cycling, biking, and adventure tours). Do NOT carry that voice across. Rewrite it into
+neutral, third-person editorial catalogue prose. Specifically, strip and rephrase:
+- Direct address and imperatives: "Sunglasses on", "pack your bags", "get ready to ride".
+- Persona / lifestyle / mood framing: "made for riding", "on your own terms",
+  "playlist-worthy roads", "the kind of route that justifies an early wake", "built for
+  exactly what we're doing".
+- Hype intensifiers and sales mood generally.
+Keep every factual detail (places, distances, activities, days); change only the register.
+A promotional source is not a licence to write promotional output.
 
 STRICT RULES:
 1. NEVER use these words: curated, pristine, refined, tailored, bespoke,

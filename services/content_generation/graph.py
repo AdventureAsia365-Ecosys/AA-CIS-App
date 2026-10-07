@@ -16,7 +16,8 @@ from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
-from .seo_meta_utils import SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN
+from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
+                             fit_seo_meta)
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, has_word
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
@@ -378,6 +379,9 @@ def generate_node(state: ContentState) -> ContentState:
                     model=resp.model_used, cost=resp.cost_usd)
         # AA-225: persist keywords thực sự inject vào prompt (khớp prompts.py:61 + validate_node normalize)
         _apply_seo_keywords_used(generated, state)
+        # AA-724: deterministically fit an over-long seo_meta before validate scores it (mirrors the
+        # T2 path's AA-641 fit) so SEO_META_TOO_LONG doesn't loop the gate on a count the LLM missed.
+        _apply_seo_meta_fit(generated, state)
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client)
@@ -489,6 +493,18 @@ def _apply_seo_keywords_used(generated: dict, state: ContentState) -> None:
         generated["seo_keywords_used"] = _kws_norm
 
 
+def _apply_seo_meta_fit(generated: dict, state: ContentState) -> None:
+    """AA-724: deterministically fit an out-of-band seo_meta BEFORE validate scores it, the same
+    discipline AA-641 gave the T2 path (tenant_pipeline.fit_seo_meta). The S1/A1 path had none, so
+    an over-long meta kept firing SEO_META_TOO_LONG and looping the gate — the LLM counting
+    characters is unreliable. Runs here (shared by generate_node and the batch seed node) so both
+    the live and Bedrock Batch writes get the fix. Keeps the brand's forbidden words out of the
+    salvaged prefix; a too-short meta is left unchanged (the repair path still handles it)."""
+    if isinstance(generated, dict) and isinstance(generated.get("seo_meta"), str):
+        generated["seo_meta"] = fit_seo_meta(
+            generated["seo_meta"], state.get("brand_forbidden_words"))
+
+
 def seed_generated_node(state: ContentState) -> ContentState:
     """AA-606: entry node for build_graph_from_generated — nạp text writer đã sinh SẴN bởi Bedrock
     Batch (attempt-1) vào ``generated``, chạy đúng hậu xử lý generate_node làm (seo_keywords_used +
@@ -504,6 +520,7 @@ def seed_generated_node(state: ContentState) -> ContentState:
         return {**state, "generated": {}, "error": "batch JSON parse error"}
 
     _apply_seo_keywords_used(generated, state)
+    _apply_seo_meta_fit(generated, state)  # AA-724: same deterministic seo_meta fit as the live path
     # Reuse the exact itinerary clamp/nudge + serialize the sync path runs. LLMClient() is only used
     # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
     _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient())
