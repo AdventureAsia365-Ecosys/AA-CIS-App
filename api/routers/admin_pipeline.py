@@ -71,23 +71,53 @@ def _as_list(v):
 _MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
+# AA-736: the subset of _HARD_BLOCK_CODES a model rewrite can actually fix (content/voice), so a
+# survivor is worth one haiku->sonnet retry. The rest of _HARD_BLOCK_CODES (SEO_META_TOO_LONG,
+# SEO_TITLE_TOO_LONG, META_INCOMPLETE_SENTENCE, META_TOO_SHORT) are deterministic-fixable by
+# AA-641 fit_seo_meta/fit_seo_title — upgrading the model for those would waste a Sonnet run.
+_REWRITE_CLASS_HARD_CODES = frozenset({
+    "FORBIDDEN_WORD", "BRAND_SEO_META_VIOLATION", "MISSING_FIELD",
+})
+
+
+def _surviving_hard_codes(result: dict) -> set:
+    """AA-736: hard-block codes still present in a run's failure_codes. Mirrors the set
+    human_edit_gate_node already enforces (graph._HARD_BLOCK_CODES), but applied to the
+    automated rewrite->publish path, which historically never consulted it."""
+    from services.content_generation.graph import _HARD_BLOCK_CODES
+    return set(result.get("failure_codes", []) or []) & set(_HARD_BLOCK_CODES)
+
+
 def _is_publishable(result: dict) -> bool:
     """AA-211: audit-aware publish gate (mirror catalog readiness + v5 spec).
 
     quality_score >= 7.0 is the floor; additionally block manual_check, and block brand-flagged
-    tours the fix pass did not repair (flagged + not fix_pass_applied). Everything else — a clean
-    pass, or flagged-but-fixed (Terra case), or no brand profile at all — is publishable.
+    tours the fix pass did not repair (flagged + not fix_pass_applied).
+
+    AA-736: ALSO block any run whose failure_codes still contain a hard-block code (e.g. a
+    FORBIDDEN_WORD the writer emitted and flag_fix never removed). Before AA-736 this gate read
+    only quality_score + brand_audit, so a tour scoring >=7 with a leftover forbidden word in its
+    body was published to Master — _HARD_BLOCK_CODES was wired only into the human-edit re-validate
+    gate (AA-234), never here. Everything else — a clean pass, flagged-but-fixed (Terra case), or
+    no brand profile — stays publishable.
     """
     audit = result.get("brand_audit_status")
     return (
         result.get("quality_score", 0.0) >= 7.0
         and audit != "manual_check"
         and not (audit == "flagged" and not result.get("fix_pass_applied"))
+        and not _surviving_hard_codes(result)
     )
 
 
 def _build_failure_summary(result: dict) -> str:
-    """AA-212: human-readable reason a tour was routed to the HITL review_queue."""
+    """AA-212: human-readable reason a tour was routed to the HITL review_queue.
+
+    AA-736: when a sonnet retry was already tried (hard code survived haiku) and a hard code is
+    STILL present, say so explicitly with the offending field(s) — the reviewer must know the
+    stronger model was already attempted, e.g. 'retried with sonnet, still FORBIDDEN_WORD in
+    aa_summary'.
+    """
     audit = result.get("brand_audit_status")
     score = float(result.get("quality_score") or 0.0)
     codes = list(result.get("failure_codes", [])) + list(result.get("brand_audit_codes", []))
@@ -98,7 +128,34 @@ def _build_failure_summary(result: dict) -> str:
         parts.append("codes=" + ",".join(str(c) for c in codes))
     if score < 7.0:
         parts.append(f"low_quality(score={score:.1f}<7.0)")
+
+    # AA-736: surface the surviving hard codes per field, noting the sonnet attempt.
+    surviving = _surviving_hard_codes(result)
+    if result.get("_sonnet_retried") and surviving:
+        gc = _result_to_gc(result)
+        field_fails = _derive_field_failures(gc, sorted(surviving))
+        where = ", ".join(
+            f"{f['code']} in {f['field']}" for f in field_fails if f["code"] in surviving
+        ) or ",".join(sorted(surviving))
+        parts.append(f"retried with sonnet, still {where}")
+
     return "; ".join(parts) or "blocked: not publishable"
+
+
+def _result_to_gc(result: dict) -> dict:
+    """AA-736: map a rewrite `result['generated']` (name/subtitle/summary/... keys) onto the
+    gc-column keys _derive_field_failures expects (aa_name/aa_subtitle/...), so the per-field
+    forbidden-word scan runs on the content this run actually produced."""
+    g = result.get("generated") or {}
+    return {
+        "aa_name": g.get("name") or "",
+        "aa_subtitle": g.get("subtitle") or "",
+        "aa_summary": g.get("summary") or "",
+        "aa_highlights": g.get("highlights") or [],
+        "aa_itineraries": g.get("itineraries") or "",
+        "seo_title": g.get("seo_title") or "",
+        "seo_meta": g.get("seo_meta") or "",
+    }
 
 
 async def _enqueue_review(conn, tour_id, generated_content_id, result) -> None:
@@ -579,13 +636,24 @@ async def _execute_run_tour(
         _UPGRADE_THRESHOLD = float(os.environ.get("AUTO_UPGRADE_THRESHOLD", "8.5"))
         _score = result.get("quality_score", 0.0)
         _model = result.get("model_used", "")
-        _auto_upgraded = False  # AA-237: did the opt-in sonnet re-run replace the haiku result?
-        if (
-            req.allow_auto_upgrade  # AA-237: gate the silent sonnet re-run behind explicit opt-in
-            and result.get("status") == "success"
-            and 0 < _score < _UPGRADE_THRESHOLD
-            and "haiku" in _model.lower()
-        ):
+        _auto_upgraded = False  # AA-237/AA-736: did a sonnet re-run replace the haiku result?
+
+        # AA-736: a rewrite-class hard code (FORBIDDEN_WORD / BRAND_SEO_META_VIOLATION /
+        # MISSING_FIELD) that survived haiku's flag_fix forces a one-shot sonnet rewrite, since
+        # these block Master now (_is_publishable). This is independent of AA-237's opt-in and of
+        # the 8.5 score threshold — a tour can score >=7 and still carry a forbidden word.
+        # AA-237 keeps its original opt-in "low score, lift it" behaviour as the other trigger.
+        _surviving_rewrite = _surviving_hard_codes(result) & _REWRITE_CLASS_HARD_CODES
+        _on_haiku = result.get("status") == "success" and "haiku" in _model.lower()
+        _trigger_hard = bool(_surviving_rewrite) and _on_haiku
+        _trigger_optin = (
+            req.allow_auto_upgrade and result.get("status") == "success"
+            and 0 < _score < _UPGRADE_THRESHOLD and "haiku" in _model.lower()
+        )
+        if _trigger_hard or _trigger_optin:
+            logger.info("sonnet_upgrade_triggered", tour_id=req.tour_id,
+                        reason="hard_codes" if _trigger_hard else "low_score_optin",
+                        surviving_hard=sorted(_surviving_rewrite), score=_score)
             _upgraded = await _rewrite_tour(
                 tour, idx=0, total=1,
                 brand_rules=brand_rules,
@@ -595,9 +663,22 @@ async def _execute_run_tour(
                 seo_mode=effective_seo_mode,
                 on_stage=on_stage,
             )
-            if _upgraded.get("quality_score", 0.0) > _score:
+            # Keep sonnet when it is strictly better: for a hard-code trigger that means fewer
+            # surviving hard codes (clearing the blocker is the goal, not a higher score); for the
+            # AA-237 opt-in trigger it keeps the original "higher score wins" rule.
+            if _trigger_hard:
+                _keep = len(_surviving_hard_codes(_upgraded)) < len(_surviving_hard_codes(result))
+            else:
+                _keep = _upgraded.get("quality_score", 0.0) > _score
+            if _keep:
                 result = _upgraded
                 _auto_upgraded = True
+            # AA-736: mark that a sonnet retry happened so the review-queue summary can say so,
+            # whichever run we kept. Only meaningful for the hard-code trigger.
+            if _trigger_hard:
+                result["_sonnet_retried"] = True
+            logger.info("sonnet_upgrade_result", tour_id=req.tour_id, kept=_keep,
+                        surviving_hard_after=sorted(_surviving_hard_codes(result)))
 
         version_id = None
         _m_final = None
