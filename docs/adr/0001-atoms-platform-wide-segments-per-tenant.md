@@ -47,6 +47,10 @@ Considered Options below); it does not endorse per-tenant as correct going forwa
 below and `docs/adr/0003-segment-score-route-hub-will-become-platform-wide.md` for the decision
 to fix it.
 
+**Segment/Score/Route/Hub scope: superseded — now platform-wide (AA-545); see CONTEXT.md.** The
+per-tenant tech debt described above has been resolved: Segment/Score/Route/Hub are computed
+once platform-wide, scoped by `tour_id`, not per tenant. CONTEXT.md is the current source of truth.
+
 ## Considered Options
 
 At AA-509 (01/09/2026): none — Segment was speced as per-tenant from its first written task
