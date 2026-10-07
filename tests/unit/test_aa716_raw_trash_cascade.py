@@ -8,16 +8,20 @@ the AA-713 recompute — all atomically, with restore reversing the chain.
 These are behavioural unit tests over the two endpoints with a fake pool/conn; they assert the SQL
 and notifications emitted inside the transaction and that the recompute runs after commit.
 """
-import os
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-os.environ.setdefault("ADMIN_SECRET", "test-secret")
+from api.routers import admin
+from services.notifications import EventType
 
-from api.routers import admin  # noqa: E402
-from services.notifications import EventType  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _admin_secret(monkeypatch):
+    # admin.ADMIN_SECRET is read at import time from the env; CI has no ADMIN_SECRET set, so patch
+    # the module attribute (and the header matches it) rather than relying on the environment.
+    monkeypatch.setattr(admin, "ADMIN_SECRET", "test-secret")
 
 
 class _Txn:
