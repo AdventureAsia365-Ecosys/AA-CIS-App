@@ -67,7 +67,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     outputs:
-      image: ${{ steps.build.outputs.image }}
+      # AA-725 part 5 — export only the per-commit TAG (dev-<sha>), never the full image. The full
+      # image embeds ECR_REGISTRY, which is a repo secret, and GitHub drops any job output that
+      # contains a secret value ("Skip output 'image' since it may contain secret") — that left
+      # DEPLOY_IMAGE empty downstream. The tag has no secret, so it survives; the deploy job
+      # rebuilds the full image from its own ECR_REGISTRY/ECR_REPOSITORY env.
+      tag: ${{ steps.build.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
       - name: Configure AWS credentials (OIDC)
@@ -92,7 +97,7 @@ jobs:
             -t $FULL_IMAGE -t $LATEST .
           docker push $FULL_IMAGE
           docker push $LATEST
-          echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
   deploy:
     name: Deploy to ECS Dev
     runs-on: ubuntu-latest
@@ -114,6 +119,15 @@ jobs:
         run: echo "ECS_WORKER_SERVICE=${ECS_SERVICE%-api}-worker" >> "$GITHUB_ENV"
         env:
           ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+      # AA-725 part 5 — build the immutable image from the per-commit TAG (from build-and-push, no
+      # secret) plus this job's own ECR_REGISTRY/ECR_REPOSITORY env, and export it for every step
+      # below via $GITHUB_ENV. We cannot pass the full image as a job output: it embeds the
+      # ECR_REGISTRY secret, so GitHub drops the output and DEPLOY_IMAGE would be empty.
+      - name: Resolve deploy image
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
+        run: |
+          echo "DEPLOY_IMAGE=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:?tag not set}" >> "$GITHUB_ENV"
       - name: Install jq
         run: sudo apt-get install -y jq
       # AA-651 — register a fresh task definition for one family with the new image, then point
@@ -143,16 +157,12 @@ jobs:
           SH
           chmod +x /tmp/deploy_family.sh
       - name: Deploy api
-        env:
-          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
       # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip
       # the worker roll gracefully instead of failing the whole deploy (breaks the chicken-and-egg
       # on first rollout: the image must exist before Infra can create the worker service, and the
       # service must exist before this step can roll it). Once it exists, this deploys it normally.
       - name: Deploy worker
-        env:
-          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: |
           if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
                --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
@@ -182,8 +192,6 @@ jobs:
       # If the worker service does not exist yet (first rollout, AA-CIS-Infra not applied), the
       # api must still match the image we just deployed.
       - name: Verify api/worker same image SHA
-        env:
-          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: |
           set -euo pipefail
           running_image() {  # $1 = service name -> image of its running task definition
