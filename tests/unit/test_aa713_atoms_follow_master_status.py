@@ -32,10 +32,11 @@ def test_migration_203_defines_the_view_with_the_status_gate():
     assert "NOT ta.deleted" in mig and "NOT ta.is_empty_marker" in mig
 
 
-def test_all_five_status_endpoints_trigger_a_recompute():
+def test_all_status_endpoints_trigger_a_recompute():
     admin = _src("api/routers/admin.py")
-    # one helper call per endpoint: toggle, trash, restore, activate, deactivate
-    assert admin.count("_recompute_after_status_change(") >= 6  # 5 calls + the def
+    # one helper call per endpoint: master toggle/trash/restore/activate/deactivate (5),
+    # plus AA-716 source trash/restore cascade (2).
+    assert admin.count("_recompute_after_status_change(") >= 8  # 7 calls + the def
 
 
 @pytest.mark.asyncio
