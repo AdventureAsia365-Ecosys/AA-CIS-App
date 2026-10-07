@@ -80,6 +80,11 @@ jobs:
       - name: Build, tag, push image
         id: build
         run: |
+          # AA-725 part 5 — deploy by the IMMUTABLE per-commit tag, not `:latest`. `:latest` is a
+          # moving tag: api and worker register their task definitions at different moments, and a
+          # second push landing in between would leave them on two different SHAs even though both
+          # task defs say `:latest`. We still publish `:latest` for first-rollout/Infra convenience,
+          # but the deploy job pins this exact tag for BOTH services so they always share one SHA.
           IMAGE_TAG=dev-${{ github.sha }}
           FULL_IMAGE=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
           LATEST=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
@@ -87,7 +92,7 @@ jobs:
             -t $FULL_IMAGE -t $LATEST .
           docker push $FULL_IMAGE
           docker push $LATEST
-          echo "image=$LATEST" >> $GITHUB_OUTPUT
+          echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
   deploy:
     name: Deploy to ECS Dev
     runs-on: ubuntu-latest
@@ -120,7 +125,9 @@ jobs:
           cat > /tmp/deploy_family.sh <<'SH'
           set -euo pipefail
           FAMILY="$1"; SERVICE="$2"
-          NEW_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          # AA-725 part 5 — pin the exact per-commit image passed by the deploy steps (DEPLOY_IMAGE),
+          # not `:latest`, so api and worker are guaranteed to roll the SAME SHA in one deploy.
+          NEW_IMAGE="${DEPLOY_IMAGE:?DEPLOY_IMAGE not set}"
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" \
             --desired-count 1 --region "$AWS_REGION" >/dev/null
           aws ecs describe-task-definition --task-definition "$FAMILY" --region "$AWS_REGION" \
@@ -136,12 +143,16 @@ jobs:
           SH
           chmod +x /tmp/deploy_family.sh
       - name: Deploy api
+        env:
+          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: /tmp/deploy_family.sh "${{ env.ECS_SERVICE }}" "${{ env.ECS_SERVICE }}"
       # AA-651 — the worker family/service is created by AA-CIS-Infra. Until that applies, skip
       # the worker roll gracefully instead of failing the whole deploy (breaks the chicken-and-egg
       # on first rollout: the image must exist before Infra can create the worker service, and the
       # service must exist before this step can roll it). Once it exists, this deploys it normally.
       - name: Deploy worker
+        env:
+          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: |
           if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
                --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
@@ -163,6 +174,49 @@ jobs:
             --services $SERVICES \
             --region ${{ env.AWS_REGION }}
           echo "ECS deployment stable ($SERVICES)"
+
+      # AA-725 part 5 — post-deploy revision check. The DoD is "api and worker run the same image
+      # SHA". The two services roll from the same pinned tag above, but assert it on the running
+      # task definitions so a drift (e.g. the worker roll was skipped, or Terraform re-pinned a
+      # family out of band) turns the workflow red instead of silently shipping a split fleet.
+      # If the worker service does not exist yet (first rollout, AA-CIS-Infra not applied), the
+      # api must still match the image we just deployed.
+      - name: Verify api/worker same image SHA
+        env:
+          DEPLOY_IMAGE: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          set -euo pipefail
+          running_image() {  # $1 = service name -> image of its running task definition
+            local svc="$1" td
+            td=$(aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "$svc" \
+                   --region "${{ env.AWS_REGION }}" \
+                   --query 'services[0].taskDefinition' --output text)
+            aws ecs describe-task-definition --task-definition "$td" \
+                   --region "${{ env.AWS_REGION }}" \
+                   --query 'taskDefinition.containerDefinitions[0].image' --output text
+          }
+
+          API_IMAGE=$(running_image "${{ env.ECS_SERVICE }}")
+          echo "api   image: $API_IMAGE"
+          echo "built image: $DEPLOY_IMAGE"
+          if [ "$API_IMAGE" != "$DEPLOY_IMAGE" ]; then
+            echo "::error::api is running $API_IMAGE but this deploy built $DEPLOY_IMAGE"
+            exit 1
+          fi
+
+          if aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" \
+               --services "${{ env.ECS_WORKER_SERVICE }}" --region "${{ env.AWS_REGION }}" \
+               --query 'services[?status==`ACTIVE`].serviceName' --output text | grep -q .; then
+            WORKER_IMAGE=$(running_image "${{ env.ECS_WORKER_SERVICE }}")
+            echo "worker image: $WORKER_IMAGE"
+            if [ "$WORKER_IMAGE" != "$API_IMAGE" ]; then
+              echo "::error::api ($API_IMAGE) and worker ($WORKER_IMAGE) are on different images"
+              exit 1
+            fi
+            echo "api and worker share one image SHA: $API_IMAGE"
+          else
+            echo "::warning::worker service not found yet (AA-CIS-Infra not applied) — api SHA verified only."
+          fi
       # AA-725 part 2 — post-deploy live smoke. The old step curled only /health (a static 200
       # that stays green even when a router is broken — S212's SEO 500 shipped unnoticed). Now it
       # also hits a maintained list of read-only endpoints on the real domain and asserts 200 +
@@ -216,6 +270,32 @@ jobs:
               IFS='|' read -r name path shape <<< "$row"
               check "$name" "$path" "$shape" -H "x-admin-secret: ${ADMIN_SECRET}"
             done
+
+            # AA-725 part 5 — "job_worker_started logged for every kind". The worker logs
+            # job_worker_started with kinds=sorted(caps()) at boot, and republishes those caps to
+            # shared.job_worker (read by /workers). CI has no RDS/log access, so assert via the
+            # live API that a worker is alive AND advertises every registered kind — i.e. it ran
+            # load_kinds() and started on all of them. A worker that booted with a stale image
+            # (missing a new kind) fails this.
+            REG=$(curl -s --max-time 25 -H "x-admin-secret: ${ADMIN_SECRET}" \
+                    "${BASE}/admin/job-runner/summary" | jq -r '[.kinds[].kind] | sort | @json')
+            WK=$(curl -s --max-time 25 "${BASE}/admin/job-runner/workers")
+            ALIVE=$(echo "$WK" | jq '[.workers[] | select(.alive)] | length')
+            if [ "${ALIVE:-0}" -lt 1 ]; then
+              echo "::error::smoke [worker-kinds] no alive worker after deploy"
+              fail=1
+            else
+              WK_CAPS=$(echo "$WK" | jq -r \
+                '[.workers[] | select(.alive) | (.caps | keys[])] | unique | sort | @json')
+              echo "registered kinds: $REG"
+              echo "alive worker caps: $WK_CAPS"
+              if [ "$WK_CAPS" != "$REG" ]; then
+                echo "::error::smoke [worker-kinds] alive worker caps != registered kinds (stale worker image?)"
+                fail=1
+              else
+                echo "smoke [worker-kinds] worker alive on every registered kind -> OK"
+              fi
+            fi
           else
             echo "::warning::ADMIN_SECRET not set — admin smoke checks skipped (AA-725)."
           fi
