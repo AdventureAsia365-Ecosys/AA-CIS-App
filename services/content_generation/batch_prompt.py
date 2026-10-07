@@ -109,8 +109,19 @@ def build_s1_system_prompt(state: dict) -> str:
     # then fired FORBIDDEN_WORD → a flag_fix repair call for something the prompt never forbade.
     from .forbidden_words import all_forbidden
     fw = all_forbidden(state.get("brand_forbidden_words"))
+    # AA-738: a bare list was ignored for ordinary words ("explore", "package", "nestled") on both
+    # Haiku and Sonnet. State it as a hard constraint covering every field, with plain alternatives
+    # for the words actually measured on the S217 Nepal wave.
     if fw:
-        system += "\n\nFORBIDDEN WORDS (never use): " + ", ".join(fw)
+        system += (
+            "\n\nHARD CONSTRAINT — FORBIDDEN WORDS. The output is rejected automatically if any of these"
+            " words or phrases (any capitalization, singular or plural) appears in ANY field — name,"
+            " subtitle, summary, description, every highlight, every itinerary day, seo_title, seo_meta:\n"
+            + ", ".join(fw)
+            + "\nUse plain alternatives instead, e.g. 'visit' / 'walk around' / 'wander' for 'explore',"
+            " 'set in' for 'nestled in', 'trip' for 'package', 'lively' for 'vibrant'."
+            " Before returning the JSON, re-read every field and replace any forbidden word."
+        )
     return system
 
 

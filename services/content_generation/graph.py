@@ -19,6 +19,7 @@ from .judge_node import judge_node
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta)
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, has_word
+from .forbidden_strip import strip_forbidden
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
     generated_day_word_counts,
@@ -385,6 +386,9 @@ def generate_node(state: ContentState) -> ContentState:
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client)
+        # AA-738: strip forbidden words deterministically before validate scores them — after the
+        # itinerary nudge, so its output is covered too.
+        _apply_forbidden_strip(generated, state)
         # AA-620 — resolves the AA-505/AA-434 gap this comment used to flag: ContentState now
         # carries tenant_id + generate_stage, so a T2 tenant rewrite logs stage="t2_generate" with
         # the real tenant_id, while an A1 admin rewrite logs stage="s1_generate" with tenant_id
@@ -505,6 +509,22 @@ def _apply_seo_meta_fit(generated: dict, state: ContentState) -> None:
             generated["seo_meta"], state.get("brand_forbidden_words"))
 
 
+def _apply_forbidden_strip(generated: dict, state: ContentState) -> None:
+    """AA-738: replace/drop forbidden words (AA list + the brand's list) in the writer output, in
+    place, before validate_node scores it. Asking the model to avoid the list (prompt) and retrying
+    on Sonnet (AA-736) both left ordinary brand words like "explore"/"package" in ~10% of tours.
+    What cannot be cleaned is left as is: validate fires FORBIDDEN_WORD and the AA-736 gate holds."""
+    if not isinstance(generated, dict) or not generated:
+        return
+    cleaned, report = strip_forbidden(generated, state.get("brand_forbidden_words"))
+    if report["replaced"] or report["dropped"] or report["unresolved"]:
+        generated.clear()
+        generated.update(cleaned)
+        logger.info("forbidden_strip_applied", tour_id=state.get("tour_id"),
+                    replaced=len(report["replaced"]), dropped=len(report["dropped"]),
+                    unresolved=sorted({f"{f}:{w}" for f, w in report["unresolved"]}))
+
+
 def seed_generated_node(state: ContentState) -> ContentState:
     """AA-606: entry node for build_graph_from_generated — nạp text writer đã sinh SẴN bởi Bedrock
     Batch (attempt-1) vào ``generated``, chạy đúng hậu xử lý generate_node làm (seo_keywords_used +
@@ -524,6 +544,7 @@ def seed_generated_node(state: ContentState) -> ContentState:
     # Reuse the exact itinerary clamp/nudge + serialize the sync path runs. LLMClient() is only used
     # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
     _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient())
+    _apply_forbidden_strip(generated, state)  # AA-738: same deterministic strip as the live path
     logger.info("s1_batch_seeded", tour_id=state.get("tour_id"),
                 model=state.get("model_used", "batch-haiku"))
     return {
