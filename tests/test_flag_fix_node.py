@@ -75,7 +75,9 @@ def test_flag_fix_only_touches_flagged_fields():
     )
     original_name    = state["generated"]["name"]
     original_subtitle = state["generated"]["subtitle"]
-    fixed_meta = "A curated Bhutan journey for discerning travelers."
+    # AA-641/AA-724: seo_meta must be forbidden-free, else the per-field forbidden-revert
+    # guard restores the pre-repair value and seo_meta never lands in fix_pass_fields.
+    fixed_meta = "A measured Bhutan journey through Thimphu and Paro for independent travelers."
 
     mock_resp = MagicMock()
     mock_resp.content = json.dumps({"seo_meta": fixed_meta})
