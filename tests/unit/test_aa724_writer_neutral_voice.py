@@ -51,6 +51,21 @@ def test_neutral_voice_rule_propagates_through_build_s1_system_prompt():
     assert "AA-724" in built and "neutral" in built.lower()
 
 
+def test_itinerary_body_instruction_demands_neutral_voice_per_day():
+    # AA-724 layer 2: the system-prompt EDITORIAL VOICE rule wasn't reaching the per-day itinerary
+    # body — the writer neutralised the summary but kept hype in the itinerary. The OUTPUT JSON
+    # FORMAT's itinerary body instruction must itself demand the neutral register, every day.
+    from services.content_generation.prompts import build_rewrite_prompt
+    tour = {"name": "Cycle Tour", "country": "Thailand", "duration": "7 Days",
+            "itineraries": "Day 1: ride. Day 2: ride more."}
+    p = build_rewrite_prompt(tour, {})
+    # The itinerary body guidance (not just the system prompt) carries the neutral rule.
+    assert "NEUTRAL" in p and "third-person editorial voice" in p
+    assert "applies to EVERY day" in p
+    # And it no longer tells the writer to use "brand voice" for the day body (the old leak).
+    assert "This day's prose, brand voice" not in p
+
+
 # ── (b) deterministic seo_meta fit on the S1 path ────────────────────────────────────────────────
 
 def test_apply_seo_meta_fit_trims_over_long_meta_in_the_generated_dict():
