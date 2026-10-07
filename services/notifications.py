@@ -17,6 +17,11 @@ class EventType(str, Enum):
     DEDUP_PROMOTED = "tour.dedup.promoted"
     SOURCE_TRASHED = "tour.source.trashed"
     SOURCE_RESTORED = "tour.source.restored"
+    # AA-716 — tenant-facing: a source tour the tenant adopted is no longer supplied (its Master
+    # went inactive), or has been reinstated. Distinct from SOURCE_TRASHED/RESTORED, which are the
+    # admin/content-facing events for the same action.
+    TOUR_DISCONTINUED = "tour.discontinued"
+    TOUR_REINSTATED = "tour.reinstated"
     MASTER_ACTIVATED = "tour.master.activated"
     MASTER_DEACTIVATED = "tour.master.deactivated"
     MASTER_TRASHED = "tour.master.trashed"
@@ -32,6 +37,8 @@ _DEFAULT_ROLES: dict[EventType, list[str]] = {
     EventType.DEDUP_PROMOTED:      ["admin"],
     EventType.SOURCE_TRASHED:      ["admin", "content"],
     EventType.SOURCE_RESTORED:     ["admin"],
+    EventType.TOUR_DISCONTINUED:   ["tenant"],   # AA-716 — tenant-facing
+    EventType.TOUR_REINSTATED:     ["tenant"],   # AA-716 — tenant-facing
     EventType.MASTER_ACTIVATED:    ["admin"],
     EventType.MASTER_DEACTIVATED:  ["admin"],
     EventType.MASTER_TRASHED:      ["admin", "content"],

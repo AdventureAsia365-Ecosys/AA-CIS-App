@@ -48,6 +48,32 @@ async def _recompute_after_status_change(pool, tour_id: str, new_status: str) ->
     except Exception:
         _log.warning("aa713_recompute_enqueue_failed", tour_id=tour_id, exc_info=True)
 
+
+async def _notify_adopting_tenants(conn, tour_id: str, event_type, tour_name: str) -> None:
+    """AA-716 — emit one tenant-facing notification per tenant that adopted this tour (its own
+    rewrite in gold_aa_internal.tenant_tour_versions). Runs inside the caller's transaction so the
+    warnings are atomic with the discontinuation. A tour with no adopting tenant emits nothing."""
+    tenant_ids = await conn.fetch(
+        """
+        SELECT DISTINCT ttv.tenant_id
+        FROM gold_aa_internal.tenant_tour_versions ttv
+        JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+        WHERE pt.tour_id = $1::uuid
+        """,
+        tour_id,
+    )
+    svc = NotificationService(conn)
+    for r in tenant_ids:
+        await svc.emit(
+            event_type=event_type,
+            entity_type="tour",
+            entity_id=tour_id,
+            tenant_id=str(r["tenant_id"]),
+            payload={"tour_name": tour_name, "changed_by": "admin"},
+            actor_type="admin",
+        )
+
+
 PLAN_LIMITS = {
     # AA-640: tours per month now live ONLY in shared.membership_plans (what tenants see and are
     # billed on). This table keeps the per-plan rate limit.
@@ -1340,6 +1366,32 @@ async def trash_source_tour(
             if not result:
                 raise HTTPException(404, "Tour not found or already trashed")
 
+            # AA-716 — cascade the discontinuation. AA-713 wired master_status -> atoms; this adds
+            # the missing upstream link raw_tours -> master. All in the same transaction so the
+            # trash is atomic; the Score/Route recompute runs after commit (reads committed state).
+            # 1. Inactivate the Master Content tour (if one was published). v_active_tour_atoms
+            #    (migration 203) gates on master_status='active', so this drops the atoms from the
+            #    view immediately; the post-commit recompute rebuilds the caches that held them.
+            master_inactivated = await conn.execute(
+                """
+                UPDATE gold_aa_internal.published_tours
+                SET master_status = 'inactive'::gold_aa_internal.master_status_enum
+                WHERE tour_id = $1::uuid AND master_status = 'active'
+                """,
+                tour_id,
+            )
+            # 2. Dismiss any pending review_queue rows for this tour — a discontinued source tour
+            #    must not stay an open review item (AA-653 found live S212). Same SQL discipline.
+            await conn.execute(
+                """
+                UPDATE silver_aa_internal.review_queue
+                SET review_status = 'dismissed'::review_status_enum, reviewed_at = NOW(),
+                    reviewer_notes = 'AA-716: source tour discontinued'
+                WHERE tour_id = $1::uuid AND review_status = 'pending'
+                """,
+                tour_id,
+            )
+            # 3. Admin/content-facing event (unchanged).
             await NotificationService(conn).emit(
                 event_type=EventType.SOURCE_TRASHED,
                 entity_type="tour",
@@ -1348,10 +1400,18 @@ async def trash_source_tour(
                 payload={"tour_name": row["src_name"], "changed_by": "admin"},
                 actor_type="admin",
             )
+            # 4. Warn every tenant that adopted this tour (tenant_tour_versions) — one tenant-facing
+            #    notification each. Their work with the OTHER active tours is untouched.
+            await _notify_adopting_tenants(
+                conn, tour_id, EventType.TOUR_DISCONTINUED, row["src_name"])
+
+    # AA-713 chain — recompute Score/Route platform-wide on the remaining active tours (after commit).
+    await _recompute_after_status_change(pool, tour_id, "trashed")
 
     return {
         "tour_id": tour_id,
         "source_status": "trashed",
+        "master_inactivated": master_inactivated != "UPDATE 0",
         "deleted_at": result["deleted_at"].isoformat(),
     }
 
@@ -1398,6 +1458,19 @@ async def restore_source_tour(
             if not result:
                 raise HTTPException(404, "Tour not found or not in trashed state")
 
+            # AA-716 — reverse the cascade. Bring the Master Content tour back to active (only the
+            # rows this cascade had inactivated; a tour an admin deliberately trashed at the master
+            # level stays trashed). The post-commit recompute re-admits its atoms to Score/Route.
+            master_reactivated = await conn.execute(
+                """
+                UPDATE gold_aa_internal.published_tours
+                SET master_status = 'active'::gold_aa_internal.master_status_enum
+                WHERE tour_id = $1::uuid AND master_status = 'inactive'
+                """,
+                tour_id,
+            )
+            # Dismissed review_queue rows are NOT auto-reopened — dismissal is one-way, same as the
+            # publish-based dismiss (AA-653). A reinstated tour re-enters the normal pipeline fresh.
             await NotificationService(conn).emit(
                 event_type=EventType.SOURCE_RESTORED,
                 entity_type="tour",
@@ -1406,8 +1479,18 @@ async def restore_source_tour(
                 payload={"tour_name": row["src_name"], "changed_by": "admin"},
                 actor_type="admin",
             )
+            # Tell adopting tenants the tour is back.
+            await _notify_adopting_tenants(
+                conn, tour_id, EventType.TOUR_REINSTATED, row["src_name"])
 
-    return {"tour_id": tour_id, "source_status": "active"}
+    # AA-713 chain — recompute so the restored tour's atoms re-enter Score/Route (after commit).
+    await _recompute_after_status_change(pool, tour_id, "inactive")
+
+    return {
+        "tour_id": tour_id,
+        "source_status": "active",
+        "master_reactivated": master_reactivated != "UPDATE 0",
+    }
 
 
 # ── PATCH /admin/master/{tour_id}/trash — Soft-delete master tour ─────────────
