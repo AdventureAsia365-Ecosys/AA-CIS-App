@@ -36,7 +36,41 @@ class _SingleConnAsPool:
         return False
 
 
-async def recompute_rankings_and_routes(pool, *, log_reason: str = "") -> dict:
+_TOUR_SEGMENTS_SQL = """
+    SELECT DISTINCT asm.segment_id
+    FROM acp_contract.atom_segment_member asm
+    JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+    WHERE ta.tour_id = $1::uuid AND NOT ta.is_empty_marker
+"""
+
+
+async def tour_segment_ids(conn, tour_id: str) -> list[str]:
+    """AA-743 — the Segments a tour's atoms belong to (deleted atoms included: a removed tour's
+    Segments are exactly the ones whose recurrence / questions change)."""
+    rows = await conn.fetch(_TOUR_SEGMENTS_SQL, tour_id)
+    return [r["segment_id"] for r in rows]
+
+
+async def remove_tour_from_caches(conn, tour_id: str) -> dict:
+    """AA-743 — a tour leaving the active set (inactive / trashed) drops out of what the tenant
+    Slate reads right away, without a platform recompute: its current `atom_ranking` rows and its
+    current `route` rows are superseded (every reader filters `superseded_at IS NULL`; nothing is
+    deleted, AA-532/AA-734 versioning). The Segments it shared with other tours get their score
+    recomputed by the debounced platform `recompute` job, scoped to those Segments."""
+    async with conn.transaction():
+        ranking = await conn.execute(
+            "UPDATE acp_contract.atom_ranking SET superseded_at = now() "
+            "WHERE tour_id = $1::uuid AND superseded_at IS NULL", tour_id)
+        routes = await conn.execute(
+            "UPDATE acp_contract.route SET superseded_at = now() "
+            "WHERE tour_id = $1::uuid AND superseded_at IS NULL", tour_id)
+    out = {"ranking_rows": int(ranking.split()[-1]), "routes": int(routes.split()[-1])}
+    logger.info("tour_removed_from_caches", tour_id=tour_id, **out)
+    return out
+
+
+async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
+                                        segment_ids: list[str] | None = None) -> dict:
     """AA-713 — re-run platform-wide Score + Route only (no per-tour segment matching).
 
     Called when a tour's master_status changes (active <-> inactive/trashed). Segments are an
@@ -44,12 +78,17 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "") -> dict:
     ranking (DELETE+INSERT per market) and route detection both read atoms through
     `v_active_tour_atoms` now (migration 203), so re-running them drops the inactive tour's atoms
     from `atom_ranking` and `route`, which is what the tenant Slate reads. No atomize, no
-    segment_matching: deactivating a tour never adds atoms, only removes them from the caches."""
+    segment_matching: deactivating a tour never adds atoms, only removes them from the caches.
+
+    AA-743 — `segment_ids`: re-land PAA questions only for these Segments (plus brand-new ones,
+    whose questions_count is NULL); every other Segment's count is read from cache. None keeps the
+    original from-scratch pass over every Segment (backfills only)."""
     from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
     from services.acp_contract.route_detection import run_route_detection
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
 
-    question_counts = await precompute_question_landings(pool, None)   # all segments
+    question_counts = await precompute_question_landings(
+        pool, set(segment_ids) if segment_ids is not None else None)
     ranking_results = {}
     for market_code in DFS_LOCATION_MAP:
         ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
@@ -166,9 +205,24 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         # Segment/Route/Subject stay PER-TENANT products... not a single global Segment set." —
         # superseded by AA-545; Segment/Score/Route are that single global set now, Slate/Subject
         # (T7) remain the per-tenant layer on top (unchanged, out of AA-545's scope).
+        #
+        # AA-743 — only this tour's part runs here: segment matching (scoped to the tour, same-country
+        # candidates, PR #595). Score + Route are platform-wide and go to ONE debounced `recompute`
+        # job: every atomize of a wave folds its Segments into the same queued job and pushes its
+        # start back, so a wave runs a handful of platform passes instead of one per tour.
         try:
-            await recompute_segment_score_route(tour_id, pool, log_tour_id=tour_id, progress=progress)
+            from services.acp_contract.segment_matching import run_segment_matching
+            from services.jobs.recompute_job import WAVE_DEBOUNCE_S, enqueue_recompute
+            segment_result = await run_segment_matching(tour_id, pool)
+            logger.info("segment_matching_done", tour_id=tour_id, result=segment_result)
+            segment_ids = await tour_segment_ids(conn, tour_id)
+            job_id, created = await enqueue_recompute(
+                conn, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
+                debounce_s=WAVE_DEBOUNCE_S, created_by="a3_atomize")
             outcome["segment_score_route"] = "ok"
+            outcome["segments"] = len(segment_ids)
+            outcome["score_route_job"] = job_id
+            outcome["score_route_job_reused"] = not created
         except Exception as exc:
             # Best-effort, same precedent as every other step in this function — a Segment/Score/
             # Route failure must never be mistaken for atomize (already logged done above) or the

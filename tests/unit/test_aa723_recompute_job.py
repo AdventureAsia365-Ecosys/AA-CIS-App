@@ -78,12 +78,17 @@ async def test_platform_scope_calls_rankings_and_routes():
 
 @pytest.mark.asyncio
 async def test_enqueue_platform_debounces_against_a_pending_job():
-    pending = [{"id": "existing", "payload": {"scope": "platform", "reason": "x"}}]
-    with patch("shared.jobs.queue.list_jobs", AsyncMock(return_value=pending)), \
-         patch("services.jobs.recompute_job.enqueue", AsyncMock()) as enq:
-        job_id, created = await rc.enqueue_recompute(object(), scope="platform", reason="y")
+    # AA-743: the queued platform job absorbs the enqueue in one UPDATE (no list + insert)
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value="existing")
+    with patch("services.jobs.recompute_job.enqueue", AsyncMock()) as enq:
+        job_id, created = await rc.enqueue_recompute(pool, scope="platform", reason="y",
+                                                     segment_ids=["s2", "s1", "s1"], debounce_s=180)
     assert job_id == "existing" and created is False
     enq.assert_not_awaited()  # reused, no new row
+    sql, ids, debounce, max_wait = pool.fetchval.await_args.args
+    assert "FOR UPDATE SKIP LOCKED" in sql and "status = 'queued'" in sql
+    assert ids == '["s1", "s2"]' and debounce == 180 and max_wait == rc.MAX_WAIT_S
 
 
 @pytest.mark.asyncio
@@ -99,14 +104,49 @@ async def test_enqueue_tour_debounces_only_same_tour():
 
 @pytest.mark.asyncio
 async def test_enqueue_fresh_platform_creates_a_job():
-    with patch("shared.jobs.queue.list_jobs", AsyncMock(return_value=[])), \
-         patch("services.jobs.recompute_job.enqueue", AsyncMock(return_value=("new", True))) as enq:
-        job_id, created = await rc.enqueue_recompute(object(), scope="platform", reason="z")
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=None)          # nothing queued to fold into
+    with patch("services.jobs.recompute_job.enqueue", AsyncMock(return_value=("new", True))) as enq:
+        job_id, created = await rc.enqueue_recompute(pool, scope="platform", reason="z")
     assert job_id == "new" and created is True
     enq.assert_awaited_once()
-    # payload carries scope + reason, no tour_id for platform
+    # payload carries scope + reason, no tour_id / segment scope for an unscoped platform pass
     payload = enq.await_args.args[2]
-    assert payload["scope"] == "platform" and "tour_id" not in payload
+    assert payload["scope"] == "platform" and "tour_id" not in payload and "segment_ids" not in payload
+    assert enq.await_args.kwargs["run_after"] is None
+
+
+@pytest.mark.asyncio
+async def test_enqueue_platform_with_segments_and_debounce_starts_later():
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=None)
+    with patch("services.jobs.recompute_job.enqueue", AsyncMock(return_value=("new", True))) as enq:
+        await rc.enqueue_recompute(pool, scope="platform", reason="a3", segment_ids=["b", "a"],
+                                   debounce_s=180)
+    payload = enq.await_args.args[2]
+    assert payload["segment_ids"] == ["a", "b"]
+    from datetime import datetime, timezone
+    delay = (enq.await_args.kwargs["run_after"] - datetime.now(timezone.utc)).total_seconds()
+    assert 170 < delay <= 180
+
+
+def test_coalesce_sql_unions_scope_and_caps_the_wait():
+    sql = rc._COALESCE_SQL
+    assert "jsonb_agg(DISTINCT x)" in sql                  # union of Segment ids
+    assert "j.payload - 'segment_ids'" in sql              # unscoped (None) absorbs any list
+    assert "LEAST(j.created_at + make_interval(secs => $3)" in sql   # never past created_at + max wait
+    assert "GREATEST(j.run_after" in sql                   # never pulls an already-later start earlier
+
+
+@pytest.mark.asyncio
+async def test_platform_job_passes_segment_scope_to_the_recompute():
+    ctx = _ctx({"scope": "platform", "reason": "a3", "segment_ids": ["s1"], "coalesced": 4})
+    with patch("services.export.handler.recompute_rankings_and_routes",
+               AsyncMock(return_value={"route": {}})) as rr, \
+         patch("asyncpg.connect", AsyncMock(return_value=AsyncMock())):
+        out = await rc.run(ctx)
+    assert rr.await_args.kwargs["segment_ids"] == ["s1"]
+    assert out["coalesced"] == 4 and out["segments_relanded"] == 1
 
 
 @pytest.mark.asyncio
