@@ -115,3 +115,22 @@ async def test_mark_tour_rejected_noop_when_tour_has_no_batch():
     conn = FakeConn(pending_count=0, rejected_row_batch_id=None)
     await mark_tour_rejected(conn, TOUR_ID)
     assert conn.executed == []
+
+
+@pytest.mark.asyncio
+async def test_mark_tour_rejected_never_demotes_a_tour_with_an_active_master():
+    """S218: rejecting an OLD version's review row after the tour already reached Master set
+    'hitl_rejected' on a live tour (Taiwan / Korea, 01/10). The UPDATE is guarded on 'no active
+    Master'; when the guard matches nothing (row None) the batch sync is skipped."""
+    conn = FakeConn(pending_count=0, rejected_row_batch_id=None)
+    seen = []
+    orig = conn.fetchrow
+
+    async def spy(sql, *args):
+        seen.append(sql)
+        return None   # guard excluded the tour — nothing updated
+    conn.fetchrow = spy
+    await mark_tour_rejected(conn, TOUR_ID)
+    assert "master_status = 'active'" in seen[0] and "NOT EXISTS" in seen[0]
+    assert conn.executed == []   # no batch sync when nothing changed
+    conn.fetchrow = orig

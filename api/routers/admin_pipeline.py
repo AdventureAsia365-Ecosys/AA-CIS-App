@@ -2041,7 +2041,10 @@ async def get_all_tours(request: Request, x_admin_secret: str = Header(None)):
                 rt.batch_id::text, rt.source_id::text,
                 rs.filename,
                 COUNT(gc.id)         AS rewrite_count,
-                MAX(gc.created_at)   AS last_rewritten_at
+                MAX(gc.created_at)   AS last_rewritten_at,
+                -- S218: a written tour waiting in Review Queue is not "Ready" — S1 badges it.
+                EXISTS (SELECT 1 FROM silver_aa_internal.review_queue q
+                        WHERE q.tour_id = rt.tour_id AND q.review_status = 'pending') AS in_review
             FROM silver_aa_internal.raw_tours rt
             LEFT JOIN silver_aa_internal.raw_sources rs ON rs.id = rt.source_id
             LEFT JOIN silver_aa_internal.generated_content gc ON gc.tour_id = rt.tour_id
@@ -2068,6 +2071,7 @@ async def get_all_tours(request: Request, x_admin_secret: str = Header(None)):
                 "filename":          t["filename"],
                 "rewrite_count":     int(t["rewrite_count"]),
                 "last_rewritten_at": str(t["last_rewritten_at"]) if t["last_rewritten_at"] else None,
+                "in_review":         bool(t["in_review"]),
             }
             for t in tours
         ],
