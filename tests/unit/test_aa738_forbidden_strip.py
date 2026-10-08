@@ -141,3 +141,22 @@ def test_graph_helper_cleans_generated_in_place():
     gen = {"name": "Mardi Himal Trek", "summary": "Rest or explore Pokhara."}
     _apply_forbidden_strip(gen, {"brand_forbidden_words": AA_BRAND, "tour_id": "t-1"})
     assert gen["summary"] == "Rest or visit Pokhara."
+
+
+def test_revalidate_strips_words_a_repair_reintroduced(monkeypatch):
+    # S218 Sri Lanka: flag_fix rewrote seo_meta back to "Explore ..." after the write-time strip.
+    from services.content_generation import graph
+    seen = {}
+
+    def fake_validate(state):
+        seen["meta"] = state["generated"]["seo_meta"]
+        return {**state, "quality_score": 8.0, "failure_codes": []}
+
+    monkeypatch.setattr(graph, "validate_node", fake_validate)
+    monkeypatch.setattr(graph, "judge_node", lambda s: s)
+    monkeypatch.setattr(graph, "_apply_grounding_recheck", lambda s: s)
+    state = {"fix_pass_applied": True, "brand_forbidden_words": AA_BRAND, "tour": {"name": "T"},
+             "generated": {"seo_meta": "Explore the temples of Kandy and the tea hills of Ella."}}
+    out = graph.revalidate_node(state)
+    assert seen["meta"] == "Visit the temples of Kandy and the tea hills of Ella."
+    assert out["revalidate_passed"] is True

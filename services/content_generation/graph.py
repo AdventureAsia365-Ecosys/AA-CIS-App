@@ -880,6 +880,11 @@ def revalidate_node(state: ContentState) -> ContentState:
     (GPT-4.1) re-confirms brand-fit. On fail -> manual_check so the existing export gate blocks it
     and _enqueue_review routes it to HITL.
     """
+    # AA-738: strip again after every LLM edit (grounding repair, flag_fix, the seo_meta re-repair
+    # loop) — S218 Sri Lanka: 8 tours lost Master because flag_fix rewrote seo_meta back to
+    # "Explore …" after the write-time strip. In place, before the re-validate below scores it.
+    _apply_forbidden_strip(state.get("generated"), state)
+
     if not state.get("fix_pass_applied"):
         return _apply_grounding_recheck({**state, "revalidate_ran": False})
 
