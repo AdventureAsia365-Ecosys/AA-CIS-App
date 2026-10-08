@@ -72,12 +72,12 @@ async def run(ctx: JobContext) -> Optional[dict]:
         # final phase="done" below.
         asyncio.run_coroutine_threadsafe(ctx.progress(**fields), worker_loop).add_done_callback(_log_failure)
 
-    def _in_own_loop() -> None:
-        asyncio.run(_run_a3_atomize_background(
+    def _in_own_loop() -> dict:
+        return asyncio.run(_run_a3_atomize_background(
             tour_id=p["tour_id"], rewritten=p["rewritten"], country=p.get("country") or "",
             version_id=p["version_id"], reraise=True, progress=_report,
         ))
 
-    await asyncio.to_thread(_in_own_loop)
+    outcome = await asyncio.to_thread(_in_own_loop) or {}
     await ctx.progress(phase="done")
-    return {"tour_id": p["tour_id"], "version_id": p["version_id"]}
+    return {"tour_id": p["tour_id"], "version_id": p["version_id"], **outcome}

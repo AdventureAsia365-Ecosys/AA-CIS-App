@@ -26,11 +26,13 @@ def test_kind_runs_one_tour_at_a_time():
 
 @pytest.mark.asyncio
 async def test_runs_the_existing_atomize_chain_and_surfaces_failures():
-    with patch("services.export.handler._run_a3_atomize_background", AsyncMock()) as m_bg:
+    outcome = {"segment_score_route": "failed: UniqueViolationError: dup"}
+    with patch("services.export.handler._run_a3_atomize_background", AsyncMock(return_value=outcome)) as m_bg:
         out = await a3.run(_ctx())
     kwargs = m_bg.call_args.kwargs
     assert kwargs["tour_id"] == "t-1" and kwargs["version_id"] == "v-1" and kwargs["reraise"] is True
-    assert out == {"tour_id": "t-1", "version_id": "v-1"}
+    # S218 — a failed Segment/Score/Route step is visible in the job result, not only in logs.
+    assert out == {"tour_id": "t-1", "version_id": "v-1", **outcome}
 
 
 @pytest.mark.asyncio

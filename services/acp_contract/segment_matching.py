@@ -464,6 +464,29 @@ async def _apart_pairs(atoms: list[SegmentAtom], new_ids: set[str], pool) -> tup
     return frozenset(p for p, rejected in results if rejected), len(pairs)
 
 
+# S218 — re-point a losing Segment's members as insert-then-delete, never a bare UPDATE. An atom
+# can already be a member of the surviving Segment (or of two losers that merge into the same
+# target in one run); `UPDATE ... SET segment_id = target` then hits atom_segment_member_pkey and
+# aborts the whole transaction. Because the failed merge is never stored, every later tour's run
+# derives the same merge again and fails the same way — from 05/10/2026 no tour got Segments,
+# Score or Route (the failure was swallowed by the best-effort guard in export/handler.py).
+_REPOINT_INSERT_SQL = """
+    INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id, is_alias)
+    SELECT $2, atom_id, is_alias FROM acp_contract.atom_segment_member WHERE segment_id = $1
+    ON CONFLICT (segment_id, atom_id) DO NOTHING
+"""
+_REPOINT_DELETE_SQL = "DELETE FROM acp_contract.atom_segment_member WHERE segment_id = $1"
+
+
+async def _repoint_members(conn, alias_rows: list[tuple[str, str]]) -> None:
+    """Move every member of each `was` Segment to its `target` (rows: (was, target)); an atom
+    already in the target keeps its one existing row."""
+    if not alias_rows:
+        return
+    await conn.executemany(_REPOINT_INSERT_SQL, alias_rows)
+    await conn.executemany(_REPOINT_DELETE_SQL, [(was,) for was, _ in alias_rows])
+
+
 async def run_segment_matching(tour_id: str, pool) -> dict:
     """Incrementally fold ONE tour's atoms into the platform-wide Segment set (AA-545 — replaces
     AA-509's per-tenant, full-recompute wrapper; see this module's own docstring for why and
@@ -553,11 +576,7 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            if alias_rows:
-                await conn.executemany("""
-                    UPDATE acp_contract.atom_segment_member SET segment_id = $2
-                    WHERE segment_id = $1
-                """, alias_rows)
+            await _repoint_members(conn, alias_rows)
 
             # atom_segment: UPSERT-only, never DELETEd (module docstring + migration 129 comment
             # — required by atom_segment_alias's own FK, an id that "gave way" still has to

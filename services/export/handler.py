@@ -122,7 +122,7 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
-                                      reraise: bool = False, progress=None) -> None:
+                                      reraise: bool = False, progress=None) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
     slow multi-day LLM atomize run (services.acp_produce.tenant_pipeline.run_t5_atomize(), up to
     one invoke_claude() call per itinerary day) never adds latency to — or risks an API Gateway
@@ -139,7 +139,11 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
 
     AA-652 — runs inside the `a3_atomize` job (services/jobs/a3_atomize_job.py) with
     `reraise=True`, so an atomize failure is retried and shows on the Jobs page instead of only
-    being logged. The default (False) keeps the old best-effort behaviour for any direct caller."""
+    being logged. The default (False) keeps the old best-effort behaviour for any direct caller.
+
+    Returns {"segment_score_route": "ok" | "failed: <error>"} so the job result shows a failed
+    Segment/Score/Route step (S218: it failed silently for every tour from 05/10)."""
+    outcome = {"segment_score_route": "not_run"}
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         from services.acp_produce.tenant_pipeline import run_t5_atomize
@@ -164,11 +168,13 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         # (T7) remain the per-tenant layer on top (unchanged, out of AA-545's scope).
         try:
             await recompute_segment_score_route(tour_id, pool, log_tour_id=tour_id, progress=progress)
-        except Exception:
+            outcome["segment_score_route"] = "ok"
+        except Exception as exc:
             # Best-effort, same precedent as every other step in this function — a Segment/Score/
             # Route failure must never be mistaken for atomize (already logged done above) or the
-            # publish itself having failed.
-            logger.warning("a3_segment_score_route_failed", tour_id=tour_id, exc_info=True)
+            # publish itself having failed. It is still an error, and lands in the job result.
+            outcome["segment_score_route"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
+            logger.error("a3_segment_score_route_failed", tour_id=tour_id, exc_info=True)
     except Exception as exc:
         # Best-effort, same precedent as this file's own ACP-S1 manifest fanout (process_export()
         # below) — atomize failing must never be mistaken for the publish itself having failed;
@@ -179,6 +185,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             raise
     finally:
         await conn.close()
+    return outcome
 
 # AA-476: terminal raw_tours.pipeline_status values that mean "this tour will never publish,
 # stop waiting on it" — anything else is still in flight. Before this fix the completion check
