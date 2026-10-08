@@ -18,7 +18,7 @@ from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta)
-from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, has_word
+from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
@@ -647,8 +647,9 @@ def validate_node(state: ContentState) -> ContentState:
     # AA-738: scan the copy only. seo_keywords_used holds DFS keywords (e.g. "cheap summer getaways",
     # or the source title "Explore Amazing Five ...") — data the writer did not author and no repair
     # can change, so a hit there blocked Master permanently (S218: 13/538 latest versions).
-    content_text = json.dumps({k: v for k, v in generated.items()
-                               if k not in _FORBIDDEN_SCAN_SKIP}).lower()
+    # Plain text, not json.dumps — the dump's escapes hide a word after "\n" or "—" (copy_text).
+    content_text = copy_text({k: v for k, v in generated.items()
+                              if k not in _FORBIDDEN_SCAN_SKIP}).lower()
     for word in all_forbidden:
         if has_word(content_text, word):
             issues.append(f"Forbidden word: '{word}'")

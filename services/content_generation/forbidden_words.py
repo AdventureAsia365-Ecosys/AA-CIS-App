@@ -35,8 +35,22 @@ def has_word(text: str, word: str) -> bool:
     return bool(word) and _word_re(word).search((text or "").lower()) is not None
 
 
+def copy_text(value) -> str:
+    """AA-738: the plain text of a field (str / list / dict, nested), strings joined by newlines.
+    Word scans must run on this, not on json.dumps(): the dump escapes "\n" and "—" (\u2014), so
+    the letter before a word becomes "n" or "4" and the whole-word lookbehind misses it — S218: a
+    master went live with "—explore" in its itinerary."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(copy_text(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return "\n".join(copy_text(v) for v in value)
+    return "" if value is None else str(value)
+
+
 def forbidden_in(value, words) -> set[str]:
-    """Forbidden words present in `value` (any JSON-able field), matched exactly as validate_node
-    matches: whole words in the lowercased JSON dump."""
-    text = json.dumps(value).lower()
+    """Forbidden words present in `value` (any field shape), matched exactly as validate_node
+    matches: whole words in the field's plain text (copy_text)."""
+    text = copy_text(value)
     return {w for w in words if has_word(text, w)}
