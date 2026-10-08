@@ -22,3 +22,16 @@ _CI_UNIT_ENV = {
 }
 for _k, _v in _CI_UNIT_ENV.items():
     os.environ.setdefault(_k, _v)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_jev_decision_memo():
+    """AA-742: decide() keeps an in-process memo of Jev answers + pending cache-hit counts; clear it
+    between tests so one test's verdict never answers another's question."""
+    from shared.llm_client import decide
+    decide.reset_decision_memo()
+    yield
+    decide.reset_decision_memo()

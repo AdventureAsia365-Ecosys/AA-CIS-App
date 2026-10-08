@@ -23,8 +23,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
@@ -269,9 +272,81 @@ _CACHE_SQL = """
     WHERE l.subject_key = $1
       AND l.tenant_id IS NOT DISTINCT FROM $4::uuid
       AND l.zone IN ('accept', 'grey', 'reject')
+      AND NOT l.cached
       AND l.created_at > now() - make_interval(days => $5)
     ORDER BY l.question_key, l.created_at DESC
 """
+# AA-742: `NOT l.cached` — the age check runs on the verdict Jev actually gave. Before, every cache
+# hit was re-logged with a fresh created_at, so a verdict that kept being re-read never expired.
+
+# AA-742: in-process memo of reusable answers, in front of the DB cache. A3 recomputes ask the same
+# (subject, question) for every segment after each atomized tour; the memo answers those without a
+# lookup query. Keyed by the wording hash, so a reworded question misses. The Zone is still computed
+# with today's Floors (zone_for), exactly like a DB hit. TTL is far below CACHE_MAX_AGE_DAYS.
+_MEMO_MAX = 50_000
+_MEMO_TTL_S = 6 * 3600
+_memo: OrderedDict = OrderedDict()            # key -> (expires_at monotonic, answer row)
+_memo_lock = threading.Lock()                 # decide_sync runs loops in worker threads
+
+# AA-742: cache hits are counted, not logged row by row — flushed into
+# shared.decision_cache_hits_daily on the next ledger write once enough are pending or time passed.
+# A crash loses at most the unflushed counts (observability only, never a verdict).
+_HITS_FLUSH_N = 500
+_HITS_FLUSH_S = 60.0
+_hits: Counter = Counter()                    # (day, stage, question_key, mode, zone) -> n
+_hits_flushed_at = time.monotonic()
+_HITS_SQL = """
+    INSERT INTO shared.decision_cache_hits_daily (day, stage, question_key, mode, zone, hits)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (day, stage, question_key, mode, zone)
+    DO UPDATE SET hits = shared.decision_cache_hits_daily.hits + excluded.hits, updated_at = now()
+"""
+
+
+def _memo_key(subject_key: str, tenant_id, q: Question) -> tuple:
+    return (subject_key, str(tenant_id) if tenant_id else None, q.key, q.question_hash or "")
+
+
+def _memo_get(key: tuple) -> Optional[dict]:
+    with _memo_lock:
+        hit = _memo.get(key)
+        if hit is None:
+            return None
+        if hit[0] < time.monotonic():
+            _memo.pop(key, None)
+            return None
+        _memo.move_to_end(key)
+        return hit[1]
+
+
+def _memo_put(key: tuple, row: dict) -> None:
+    with _memo_lock:
+        _memo[key] = (time.monotonic() + _MEMO_TTL_S, row)
+        _memo.move_to_end(key)
+        while len(_memo) > _MEMO_MAX:
+            _memo.popitem(last=False)
+
+
+def _take_due_hits(force: bool = False) -> list[tuple]:
+    """Pop the pending hit counts if a flush is due (or forced); [] otherwise."""
+    global _hits_flushed_at
+    with _memo_lock:
+        if not _hits:
+            return []
+        if not force and sum(_hits.values()) < _HITS_FLUSH_N \
+                and time.monotonic() - _hits_flushed_at < _HITS_FLUSH_S:
+            return []
+        rows = [(*k, n) for k, n in _hits.items()]
+        _hits.clear()
+        _hits_flushed_at = time.monotonic()
+        return rows
+
+
+def reset_decision_memo() -> None:
+    """Tests: drop the memo and any pending hit counts."""
+    with _memo_lock:
+        _memo.clear()
+        _hits.clear()
 
 
 def cached_answer(q: Question, row: dict) -> Optional[dict]:
@@ -374,20 +449,30 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
 
     to_ask = dict(asked)
     if asked and use_cache:
+        for key, q in list(to_ask.items()):
+            row = _memo_get(_memo_key(subject_key, tenant_id, q))
+            answer = cached_answer(q, row) if row else None
+            if answer is not None:
+                v = zone_for(q, answer)
+                v.cached = True
+                decision.verdicts[key] = v
+                to_ask.pop(key)
+    if to_ask and use_cache:
         try:
             async with db.acquire() as conn:
                 rows = await conn.fetch(
-                    _CACHE_SQL, subject_key, list(asked), [q.question_hash or "" for q in asked.values()],
+                    _CACHE_SQL, subject_key, list(to_ask), [q.question_hash or "" for q in to_ask.values()],
                     str(tenant_id) if tenant_id else None, CACHE_MAX_AGE_DAYS,
                 )
             for r in rows:
-                q = asked[r["question_key"]]
+                q = to_ask[r["question_key"]]
                 answer = cached_answer(q, dict(r))
                 if answer is not None:
                     v = zone_for(q, answer)
                     v.cached = True
                     decision.verdicts[q.key] = v
                     to_ask.pop(q.key, None)
+                    _memo_put(_memo_key(subject_key, tenant_id, q), dict(r))
         except Exception as exc:                  # a cache miss is never an error
             logger.warning("decide_cache_read_failed", stage=stage, error=str(exc)[:200])
 
@@ -411,6 +496,10 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
                 answer = answers.get(key)
                 decision.verdicts[key] = zone_for(q, answer) if answer else \
                     Verdict(key, q.mode, "error", error="no answer returned")
+                v = decision.verdicts[key]
+                if v.zone in ("accept", "grey", "reject") and v.probability is not None:
+                    _memo_put(_memo_key(subject_key, tenant_id, q),
+                              {"probability": v.probability, "choice": v.choice, "probabilities": v.probabilities})
         except JevBillingError as exc:
             # AA-720 — credit exhausted: trip the breaker and raise one throttled alert, then fail
             # open like any other error so the stage keeps running on its existing rule.
@@ -435,10 +524,17 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
 
 
 async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, asked) -> None:
+    """One ledger row per verdict that was asked, errored or skipped. A cache hit gets no row
+    (AA-742): it is counted into shared.decision_cache_hits_daily, flushed in batches."""
     job_id = current_job_id()
     per_q_cost = decision.cost_usd / len(asked) if asked else 0.0
     rows = []
+    day = datetime.now(timezone.utc).date()
     for key, v in decision.verdicts.items():
+        if v.cached:
+            with _memo_lock:
+                _hits[(day, stage, key, v.mode, v.zone)] += 1
+            continue
         q = _questions.get(key)
         rows.append((
             stage, key, subject_key, str(tenant_id) if tenant_id else None, job_id, v.mode,
@@ -447,11 +543,20 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
             q.threshold_version if q else None, decision.model, decision.latency_ms,
             per_q_cost if key in asked else 0.0, v.error, q.question_hash if q else None, v.cached,
         ))
-    try:
-        async with db.acquire() as conn:
-            await conn.executemany(_LOG_SQL, rows)
-    except Exception as exc:
-        logger.warning("decision_log_write_failed", stage=stage, error=str(exc))
+    hit_rows = _take_due_hits()
+    if rows or hit_rows:
+        try:
+            async with db.acquire() as conn:
+                if rows:
+                    await conn.executemany(_LOG_SQL, rows)
+                if hit_rows:
+                    await conn.executemany(_HITS_SQL, hit_rows)
+        except Exception as exc:
+            logger.warning("decision_log_write_failed", stage=stage, error=str(exc))
+            if hit_rows:                            # keep the counts for the next flush
+                with _memo_lock:
+                    for *k, n in hit_rows:
+                        _hits[tuple(k)] += n
     if asked and decision.model:
         zones: dict[str, int] = {}
         for v in decision.verdicts.values():

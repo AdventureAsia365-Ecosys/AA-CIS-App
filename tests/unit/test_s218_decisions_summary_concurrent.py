@@ -30,6 +30,9 @@ class _SlowPool:
             return [{"stage": "s", "calls": 3, "cost_usd": 0.5, "tokens_in": 10}]
         if sql is m._DAILY_SQL:
             return [{"day": date(2026, 10, 8), "verdicts": 3}]
+        if sql is m._HITS_SQL:
+            return [{"day": date(2026, 10, 8), "stage": "s", "question_key": "q", "mode": "enforce",
+                     "zone": "accept", "hits": 5, "last_used_at": _NOW}]
         if sql in (m._ORPHAN_SQL, m._STAGE_SQL):
             return [{"stage": "s", "last_used_at": _NOW}]
         return [{"tenant_id": "t", "slug": "x", "name": "X", "reason": "r"}]
@@ -43,10 +46,22 @@ async def test_summary_reads_run_concurrently(monkeypatch):
     t0 = time.monotonic()
     out = await m.summary(req, days=7, x_admin_secret="x")
     elapsed = time.monotonic() - t0
-    assert pool.peak == 6
-    assert elapsed < 0.6  # six 0.2 s reads in sequence would take 1.2 s
+    assert pool.peak == 7
+    assert elapsed < 0.6  # seven 0.2 s reads in sequence would take 1.4 s
     assert out["questions"][0]["criteria"] == ["a"]
     assert out["questions"][0]["last_used_at"] == _NOW.isoformat()
     assert out["daily"][0]["day"] == "2026-10-08"
     assert out["total_calls"] == 3 and out["total_cost_usd"] == 0.5
     assert out["tenant_allowlist"][0]["slug"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_cache_hits_from_the_rollup_are_added_back(monkeypatch):
+    # AA-742: hits have no ledger row; the summary must still count them (verdicts, zone, acted, cached)
+    monkeypatch.setattr(m, "verify_admin_secret", lambda _s: None)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_SlowPool(0))))
+    out = await m.summary(req, days=7, x_admin_secret="x")
+    q = out["questions"][0]
+    assert q["verdicts"] == 5 and q["accept"] == 5 and q["acted"] == 5 and q["cached"] == 5
+    assert out["daily"][0]["verdicts"] == 8           # 3 ledger + 5 hits
+    assert out["stages"][0]["cached"] == 5

@@ -89,7 +89,9 @@ def _conn(questions, allowlist=(), cached=()):
 def _fresh_cache():
     d._questions_loaded_at = 0.0
     d._allowlist_loaded_at = 0.0
+    d.reset_decision_memo()
     yield
+    d.reset_decision_memo()
 
 
 @pytest.mark.asyncio
@@ -213,8 +215,11 @@ async def test_cached_verdict_is_reused_with_todays_floors_and_no_call():
     m_log.assert_not_awaited()                                  # nothing billed
     v = dec.verdicts["kw_belongs"]
     assert v.cached and v.zone == "reject" and dec.rejected("kw_belongs")
-    row = conn.executemany.await_args.args[1][0]
-    assert row[13] == 0.0 and row[15] == "h-kw_belongs" and row[16] is True   # cost, hash, cached
+    # AA-742: a cache hit writes no decision_log row; it is counted for the daily rollup instead
+    conn.executemany.assert_not_awaited()
+    assert sum(d._hits.values()) == 1
+    (day, stage, key, mode, zone), = d._hits
+    assert (stage, key, mode, zone) == ("a3_research", "kw_belongs", "enforce", "reject")
 
 
 @pytest.mark.asyncio
@@ -245,3 +250,85 @@ def test_no_typesafe_endpoint_outside_the_gateway():
     hits = [str(p.relative_to(repo)) for root in ("services", "api") for p in (repo / root).rglob("*.py")
             if "typesafe.ai" in p.read_text(encoding="utf-8") or "/v1/systemone" in p.read_text(encoding="utf-8")]
     assert not hits, f"TypeSafe must be called through shared/llm_client/decide.py: {hits}"
+
+
+# ── AA-742: no ledger row per cache hit, real expiry, in-process memo ─────────────────────────────
+
+def test_cache_lookup_ignores_rows_that_were_themselves_cache_hits():
+    # the 180-day age check must run on the verdict Jev gave, not on a re-logged hit of it
+    assert "AND NOT l.cached" in d._CACHE_SQL
+    assert "make_interval(days => $5)" in d._CACHE_SQL
+
+
+@pytest.mark.asyncio
+async def test_verdict_older_than_max_age_is_asked_again():
+    # The DB returns nothing for a verdict past CACHE_MAX_AGE_DAYS (filtered by the SQL) → Jev is asked.
+    conn = _conn([_q()], cached=[])
+    answer = {"model": "jev", "usage": {"input_tokens": 10}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        await d._decide(d._SingleConn(conn), "a3_research", "kw:old", "x", ["kw_belongs"], None)
+    m_call.assert_awaited_once()
+    cache_call = next(c for c in conn.fetch.await_args_list if "FROM shared.decision_log" in c.args[0])
+    assert cache_call.args[5] == d.CACHE_MAX_AGE_DAYS
+
+
+@pytest.mark.asyncio
+async def test_memo_answers_a_repeat_without_a_db_lookup_or_a_call():
+    conn = _conn([_q()])
+    answer = {"model": "jev", "usage": {"input_tokens": 10}, "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
+    with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
+         patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        await d._decide(d._SingleConn(conn), "a3_research", "kw:memo", "x", ["kw_belongs"], None)
+        lookups = sum("FROM shared.decision_log" in c.args[0] for c in conn.fetch.await_args_list)
+        dec = await d._decide(d._SingleConn(conn), "a3_research", "kw:memo", "x", ["kw_belongs"], None)
+    assert m_call.await_count == 1
+    assert sum("FROM shared.decision_log" in c.args[0] for c in conn.fetch.await_args_list) == lookups
+    assert dec.verdicts["kw_belongs"].cached and dec.accepted("kw_belongs")
+
+
+@pytest.mark.asyncio
+async def test_memo_misses_when_the_wording_changes():
+    import dataclasses
+    q1, q2 = dataclasses.replace(_q(), question_hash="h1"), dataclasses.replace(_q(), question_hash="h2")
+    d._memo_put(d._memo_key("kw:w", None, q1), {"probability": 0.9, "choice": None, "probabilities": None})
+    assert d._memo_get(d._memo_key("kw:w", None, q1)) is not None
+    assert d._memo_get(d._memo_key("kw:w", None, q2)) is None
+
+
+def test_memo_is_bounded():
+    q = _q()
+    with patch.object(d, "_MEMO_MAX", 3):
+        for i in range(5):
+            d._memo_put(d._memo_key(f"s{i}", None, q), {"probability": 0.5})
+        assert len(d._memo) == 3 and d._memo_get(d._memo_key("s0", None, q)) is None
+
+
+@pytest.mark.asyncio
+async def test_hits_flush_into_the_daily_rollup_once_due():
+    conn = _conn([_q(accept=0.95, reject=0.30)],
+                 cached=[{"question_key": "kw_belongs", "probability": 0.25, "choice": None, "probabilities": None}])
+    with patch.object(d, "_call_jev", new=AsyncMock()), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()), \
+         patch.object(d, "_HITS_FLUSH_N", 3):
+        for i in range(3):
+            await d._decide(d._SingleConn(conn), "a3_research", f"kw:{i}", "x", ["kw_belongs"], None)
+    sqls = [c.args[0] for c in conn.executemany.await_args_list]
+    assert len(sqls) == 1 and "decision_cache_hits_daily" in sqls[0]
+    rows = conn.executemany.await_args.args[1]
+    assert len(rows) == 1 and rows[0][1:] == ("a3_research", "kw_belongs", "enforce", "reject", 3)
+    assert not d._hits
+
+
+@pytest.mark.asyncio
+async def test_failed_flush_keeps_the_counts():
+    conn = _conn([_q(accept=0.95, reject=0.30)],
+                 cached=[{"question_key": "kw_belongs", "probability": 0.25, "choice": None, "probabilities": None}])
+    conn.executemany = AsyncMock(side_effect=RuntimeError("db down"))
+    with patch.object(d, "_call_jev", new=AsyncMock()), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()), \
+         patch.object(d, "_HITS_FLUSH_N", 1):
+        await d._decide(d._SingleConn(conn), "a3_research", "kw:f", "x", ["kw_belongs"], None)
+    assert sum(d._hits.values()) == 1
