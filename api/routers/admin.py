@@ -555,6 +555,7 @@ async def get_tenant_details(
     master_status: Optional[str] = Query(None),
     score: Optional[str] = Query(None),  # 9.5+ / 9.0+ / 8.0+ / below8
     search: Optional[str] = Query(None),
+    version: Optional[str] = Query(None),  # AA-739: v1 / v2+ / v3+ on the latest content version
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
@@ -629,6 +630,7 @@ async def get_tenant_details(
         """, tenant_id)
 
         catalog_total = 0           # AA-718: true filtered COUNT (not len of a capped list)
+        facet_countries: list = []  # AA-739
         catalog_avg_quality = None  # AA-718: avg over the SAME filter set as the table
         if is_internal:
             # AA-718 — server-side filter/sort/paginate the internal catalog (was ORDER BY
@@ -654,6 +656,12 @@ async def get_tenant_details(
             if search:
                 params.append(f"%{search}%")
                 where.append(f"(pt.aa_name ILIKE ${len(params)} OR rt.country ILIKE ${len(params)})")
+            # AA-739: version used to be a client-side filter over the current page only.
+            _ver_min = {"v1": None, "v2+": 2, "v3+": 3}.get(version or "")
+            if version in ("v1", "v2+", "v3+"):
+                _latest_ver = ("(SELECT gc.version_num FROM silver_aa_internal.generated_content gc "
+                               "WHERE gc.tour_id = pt.tour_id ORDER BY gc.created_at DESC LIMIT 1)")
+                where.append(f"{_latest_ver} = 1" if version == "v1" else f"{_latest_ver} >= {_ver_min}")
             where_sql = " AND ".join(where)
 
             # Filter-aware summary (bug 1 + bug 5): real COUNT and AVG over the filtered set.
@@ -665,6 +673,15 @@ async def get_tenant_details(
             """, *params)
             catalog_total = int(stat_row["n"] or 0)
             catalog_avg_quality = float(stat_row["avg_q"]) if stat_row["avg_q"] is not None else None
+            # AA-739: every country in the catalog (non-trashed), not just the current page's — the
+            # Country dropdown used to be built from the 20 rows on screen.
+            facet_countries = [r["country"] for r in await conn.fetch("""
+                SELECT DISTINCT rt.country
+                FROM gold_aa_internal.published_tours pt
+                JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+                WHERE pt.master_status::text <> 'trashed' AND rt.country IS NOT NULL
+                ORDER BY rt.country
+            """)]
 
             offset = (page - 1) * page_size
             tours = await conn.fetch(f"""
@@ -782,6 +799,7 @@ async def get_tenant_details(
             "page_size":  page_size,
             "total":      catalog_total if is_internal else int(total_rewrites or 0),
         },
+        "facets": {"countries": facet_countries if is_internal else []},  # AA-739
         "rewritten_tours": [
             {
                 "version_id":     str(r["id"]),
