@@ -172,3 +172,14 @@ def test_validate_ignores_forbidden_word_in_dfs_keywords():
     gen["summary"] = "A cheap trip."
     out = validate_node({"generated": gen, "tour": {}, "brand_forbidden_words": ["cheap"]})
     assert "FORBIDDEN_WORD" in out["failure_codes"]
+
+
+def test_validate_sees_words_after_newline_and_em_dash():
+    # S218: "—explore" / "\nExplore" were invisible to the json.dumps scan (escapes —, \n).
+    from services.content_generation.graph import validate_node
+    from services.content_generation.forbidden_words import forbidden_in
+    itin = "Day 1 — Kathmandu\nExplore Thamel.\nDay 2 — Free\nRest or shop as you wish—explore the city."
+    assert forbidden_in(itin, ["explore"]) == {"explore"}
+    gen = {"name": "Nepal Trek", "summary": "A trek.", "highlights": ["a", "b", "c"], "itineraries": itin}
+    out = validate_node({"generated": gen, "tour": {}, "brand_forbidden_words": ["explore"]})
+    assert "FORBIDDEN_WORD" in out["failure_codes"]
