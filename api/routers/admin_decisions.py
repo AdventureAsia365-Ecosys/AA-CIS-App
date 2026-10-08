@@ -27,18 +27,20 @@ router = APIRouter(prefix="/admin/decisions", tags=["admin-decisions"])
 
 _ZONES = ("accept", "grey", "reject", "error", "skipped")
 
+# count(l.created_at), not count(l.id): created_at is an index key, id is not, so the per-question
+# aggregate stays an index-only scan on decision_log_question_created_cov_idx (migration 205).
 _SUMMARY_SQL = """
     SELECT q.question_key, q.stage, q.kind, q.instructions, q.criteria, q.mode,
            q.accept_floor::float AS accept_floor, q.reject_ceiling::float AS reject_ceiling,
            q.threshold_version, q.calibration_ref, q.notes, q.updated_at, q.updated_by,
-           count(l.id)::int AS verdicts,
-           count(l.id) FILTER (WHERE l.zone = 'accept')::int  AS accept,
-           count(l.id) FILTER (WHERE l.zone = 'grey')::int    AS grey,
-           count(l.id) FILTER (WHERE l.zone = 'reject')::int  AS reject,
-           count(l.id) FILTER (WHERE l.zone = 'error')::int   AS error,
-           count(l.id) FILTER (WHERE l.zone = 'skipped')::int AS skipped,
-           count(l.id) FILTER (WHERE l.zone IN ('accept', 'reject') AND l.mode = 'enforce')::int AS acted,
-           count(l.id) FILTER (WHERE l.cached)::int AS cached,
+           count(l.created_at)::int AS verdicts,
+           count(l.created_at) FILTER (WHERE l.zone = 'accept')::int  AS accept,
+           count(l.created_at) FILTER (WHERE l.zone = 'grey')::int    AS grey,
+           count(l.created_at) FILTER (WHERE l.zone = 'reject')::int  AS reject,
+           count(l.created_at) FILTER (WHERE l.zone = 'error')::int   AS error,
+           count(l.created_at) FILTER (WHERE l.zone = 'skipped')::int AS skipped,
+           count(l.created_at) FILTER (WHERE l.zone IN ('accept', 'reject') AND l.mode = 'enforce')::int AS acted,
+           count(l.created_at) FILTER (WHERE l.cached)::int AS cached,
            coalesce(sum(l.cost_usd), 0)::float AS cost_usd,
            avg(l.latency_ms) FILTER (WHERE l.zone NOT IN ('skipped', 'error'))::float AS avg_latency_ms,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY l.latency_ms)
