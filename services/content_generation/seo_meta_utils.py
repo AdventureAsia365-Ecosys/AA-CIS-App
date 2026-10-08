@@ -230,14 +230,22 @@ _MENTIONS_DAYS = re.compile(
     r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[- ](day|night)s?\b", re.IGNORECASE)
 
 
+# "a guided day trip from Shanghai", "same-day tour" — the meta already says it is one day.
+_MENTIONS_DAY_TRIP = re.compile(
+    r"\b(day[- ](trip|tour|excursion)|same[- ]day|half[- ]day|full[- ]day)\b", re.IGNORECASE)
+
+
 def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
     t = meta.strip()
     body = t[:-1] if t.endswith(".") else t
     days = tour_days((facts or {}).get("duration"))
     country = ((facts or {}).get("country") or "").strip()
-    if days and _MENTIONS_DAYS.search(body):
+    if days and (_MENTIONS_DAYS.search(body) or _MENTIONS_DAY_TRIP.search(body)):
         days = None  # the meta already states the length; don't say it twice
     tails = []
+    if days == 1:  # AA-744: "over 1 days" — a one-day tour gets its own wording
+        tails += ([f", a one-day trip in {country}."] if country else []) + [", a one-day trip."]
+        days = None
     if days and country:
         tails += [f", over {days} days in {country}.", f", a {days}-day trip in {country}.",
                   f" Duration: {days} days in {country}."]

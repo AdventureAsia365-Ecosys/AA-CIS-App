@@ -93,3 +93,26 @@ def test_revalidate_passthrough_when_nothing_to_fix(monkeypatch):
          "plus flights between Kathmandu and Pokhara on this short trip.")
     out = graph.revalidate_node({"fix_pass_applied": False, "tour": SL, "generated": {"seo_meta": m}})
     assert out["revalidate_ran"] is False
+
+
+def test_one_day_tour_never_says_1_days():
+    # AA-744 dry run: day tours got ", over 1 days in China." / ", over 1 days."
+    m = ("Trek Mae Taeng valleys north of Chiang Mai with a local guide, visit hill villages, and enjoy "
+         "Thai lunch on excellent hiking terrain.")
+    out = fit_seo_meta_final(m, {"duration": "1 day", "country": "Thailand"})
+    assert "1 days" not in out and "1-day" not in out
+    assert _ok(out)
+
+
+def test_meta_that_already_says_day_trip_gets_no_day_count():
+    m = ("Join a guided day trip from Shanghai to Suzhou's classical gardens and historic Grand Canal by "
+         "boat, with lunch and dinner included.")
+    out = fit_seo_meta_final(m, {"duration": "1 day", "country": "China"})
+    assert "1 days" not in out and "one-day" not in out
+
+
+def test_short_one_day_meta_gets_one_day_wording():
+    m = ("Cycle through cinnamon plantations and rural villages near Bentota with a local guide, "
+         "stopping at a family-run tea stall.")
+    out = fit_seo_meta_final(m, {"duration": "1 day", "country": "Sri Lanka"})
+    assert _ok(out) and "a one-day trip" in out and "1 days" not in out
