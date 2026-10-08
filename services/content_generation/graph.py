@@ -19,7 +19,7 @@ from .judge_node import judge_node
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta)
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, has_word
-from .forbidden_strip import strip_forbidden
+from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
     generated_day_word_counts,
@@ -644,7 +644,11 @@ def validate_node(state: ContentState) -> ContentState:
     # P3-S3: AA core list + the tenant's own words (AA-641: shared with flag_fix_node)
     all_forbidden = all_forbidden_words(state.get("brand_forbidden_words"))
 
-    content_text = json.dumps(generated).lower()
+    # AA-738: scan the copy only. seo_keywords_used holds DFS keywords (e.g. "cheap summer getaways",
+    # or the source title "Explore Amazing Five ...") — data the writer did not author and no repair
+    # can change, so a hit there blocked Master permanently (S218: 13/538 latest versions).
+    content_text = json.dumps({k: v for k, v in generated.items()
+                               if k not in _FORBIDDEN_SCAN_SKIP}).lower()
     for word in all_forbidden:
         if has_word(content_text, word):
             issues.append(f"Forbidden word: '{word}'")
