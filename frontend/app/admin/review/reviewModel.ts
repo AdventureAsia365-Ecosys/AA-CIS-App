@@ -30,6 +30,8 @@ export const SEO_META_MAX = 155;
 
 // AA-626 — classify a gate failure code by nature.
 const PRODUCT_TRUTH_CODES = new Set([
+  "FACT_CHECK_MANUAL_CHECK",
+  "UNSUPPORTED_NUMBER",
   "MISSING_FIELD",
   "ITINERARY_DAY_COUNT_MISMATCH",
   "ITINERARY_MEAL_TIME_INVENTED",
@@ -141,8 +143,19 @@ export type ReviewItem = {
   version_num: number | null;
   brand_audit_status: string | null;
   codes: string[];
+  // AA-739: why the row is not on Master (server-computed). The headline, ahead of the score.
+  block: ReviewBlock | null;
   // Client-only: set while a non-blocking regenerate job is in flight for this row (AA-719).
   regenerating?: boolean;
+};
+
+export type ReviewBlock = { kind: "needs_human" | "hard" | "low_quality" | "other"; label: string };
+
+export const BLOCK_STYLE: Record<ReviewBlock["kind"], { bg: string; color: string; border: string }> = {
+  needs_human: SEV_STYLE.red,
+  hard: SEV_STYLE.red,
+  low_quality: SEV_STYLE.amber,
+  other: SEV_STYLE.gray,
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -168,5 +181,6 @@ export function mapRow(r: any): ReviewItem {
     version_num: typeof r.version_num === "number" ? r.version_num : null,
     brand_audit_status: r.brand_audit_status || null,
     codes,
+    block: r.block && r.block.kind ? (r.block as ReviewBlock) : null,
   };
 }

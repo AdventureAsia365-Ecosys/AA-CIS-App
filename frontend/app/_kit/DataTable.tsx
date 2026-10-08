@@ -12,10 +12,10 @@
 //   - saved views (localStorage, per user)
 //   - CSV export of the current (filtered) rows
 //
-// It is intentionally client-side (filter/sort/paginate the rows it is given). Server-side modes
-// (manual pagination/filtering) can be layered later via props; the two migration targets
-// (Review Queue, My Content) both load a bounded page and filter in-memory today, so client-side
-// matches current behaviour.
+// Client-side by default (filter/sort/paginate the rows it is given). AA-739: pass
+// `serverPagination` when the page holds only one server page of a larger set — the pager and the
+// page-size select then drive the server (pageIndex/pageSize/total come from the caller). Search
+// and column sort still act on the rows of the current page only.
 
 import {
   ColumnDef,
@@ -85,6 +85,14 @@ export type DataTableProps<T> = {
   // Pagination
   pageSize?: number;
   pageSizeOptions?: number[];
+  /** AA-739: server-side pagination. `data` is the current server page; `total` is the row count
+   * across all pages (after server filters). The pager calls `onChange(pageIndex, pageSize)`. */
+  serverPagination?: {
+    pageIndex: number;
+    pageSize: number;
+    total: number;
+    onChange: (pageIndex: number, pageSize: number) => void;
+  };
 
   // Saved views
   enableSavedViews?: boolean;
@@ -139,6 +147,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     bulkActions,
     pageSize = 25,
     pageSizeOptions = [10, 25, 50, 100],
+    serverPagination,
     enableSavedViews = false,
     userId = "anon",
     enableCsv = false,
@@ -205,10 +214,25 @@ export function DataTable<T>(props: DataTableProps<T>) {
     [selectCol, columns],
   );
 
+  const sp = serverPagination;
   const table = useReactTable<T>({
     data,
     columns: allColumns,
-    state: { sorting, columnFilters, columnVisibility, globalFilter, rowSelection },
+    state: {
+      sorting, columnFilters, columnVisibility, globalFilter, rowSelection,
+      ...(sp ? { pagination: { pageIndex: sp.pageIndex, pageSize: sp.pageSize } } : {}),
+    },
+    ...(sp
+      ? {
+          manualPagination: true,
+          pageCount: Math.max(1, Math.ceil(sp.total / Math.max(1, sp.pageSize))),
+          onPaginationChange: (updater) => {
+            const cur = { pageIndex: sp.pageIndex, pageSize: sp.pageSize };
+            const next = typeof updater === "function" ? updater(cur) : updater;
+            sp.onChange(next.pageIndex, next.pageSize);
+          },
+        }
+      : {}),
     getRowId: (row) => getRowId(row),
     enableRowSelection: enableSelection,
     enableMultiSort: true,
@@ -223,10 +247,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
     getPaginationRowModel: getPaginationRowModel(),
   });
 
-  // Keep the table's page size in sync with the local control.
+  // Keep the table's page size in sync with the local control (client mode only — in server mode
+  // the caller owns pageSize and setPageSize would round-trip through onChange).
   useEffect(() => {
-    table.setPageSize(pageSizeState);
-  }, [pageSizeState, table]);
+    if (!sp) table.setPageSize(pageSizeState);
+  }, [pageSizeState, table, sp]);
 
   const selectedRows = table.getSelectedRowModel().rows.map((r) => r.original);
   const clearSelection = () => setRowSelection({});
@@ -288,10 +313,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const totalFiltered = table.getFilteredRowModel().rows.length;
+  const totalFiltered = sp ? sp.total : table.getFilteredRowModel().rows.length;
   const pageRows = table.getRowModel().rows;
   const pageIndex = table.getState().pagination.pageIndex;
   const pageCount = table.getPageCount();
+  const effPageSize = sp ? sp.pageSize : pageSizeState;
 
   return (
     <div style={{ fontFamily: sans, position: "relative" }}>
@@ -550,12 +576,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: K.muted }}>
             <span>
-              {pageIndex * pageSizeState + 1}–{Math.min((pageIndex + 1) * pageSizeState, totalFiltered)} of{" "}
+              {pageIndex * effPageSize + 1}–{Math.min((pageIndex + 1) * effPageSize, totalFiltered)} of{" "}
               {totalFiltered}
             </span>
             <select
-              value={pageSizeState}
-              onChange={(e) => setPageSizeState(Number(e.target.value))}
+              value={effPageSize}
+              onChange={(e) =>
+                sp ? sp.onChange(0, Number(e.target.value)) : setPageSizeState(Number(e.target.value))
+              }
               style={{
                 padding: "4px 8px",
                 borderRadius: RADIUS.sm,

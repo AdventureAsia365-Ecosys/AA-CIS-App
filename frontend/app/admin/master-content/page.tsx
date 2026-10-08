@@ -70,6 +70,7 @@ interface DetailsResponse {
   rewritten_tours: RewrittenTour[];
   pipeline_runs: PipelineRun[];
   pagination?: Pagination;
+  facets?: { countries?: string[] };  // AA-739: every catalog country, not only this page's
 }
 
 interface TourVersion {
@@ -803,11 +804,11 @@ export default function MasterContentPage() {
   const [versionLoading, setVersionLoading] = useState<Record<string, boolean>>({});
   const [promoting, setPromoting]       = useState<string | null>(null);
   const [page, setPage]                 = useState(1);
+  const [pageSize, setPageSize]         = useState(PAGE_SIZE);  // AA-739: user-selectable
   const [runsPage, setRunsPage]         = useState(1);
   // AA-718: server-side sort (whitelisted on the backend).
   const [sortKey, setSortKey]           = useState<"tour_name" | "country" | "quality_score" | "created_at" | "master_status">("created_at");
   const [sortDir, setSortDir]           = useState<"asc" | "desc">("desc");
-  const [statusFilter, setStatusFilter] = useState("");
   const [countryFilter, setCountryFilter] = useState("");
   const [scoreFilter, setScoreFilter]   = useState("");
   const [versionFilter, setVersionFilter] = useState("");
@@ -827,11 +828,11 @@ export default function MasterContentPage() {
   // them refetches the matching page + a filter-aware summary + pagination.total. No fetch-in-
   // effect (React Compiler rule, frontend/AGENTS.md).
   const { data, isLoading, isFetching, error: qError, refetch } = useQuery({
-    queryKey: ["master-content", page, sortKey, sortDir, search, countryFilter, scoreFilter, masterStatusFilter],
+    queryKey: ["master-content", page, pageSize, sortKey, sortDir, search, countryFilter, scoreFilter, versionFilter, masterStatusFilter],
     queryFn: async () => {
       const qs = new URLSearchParams({
         page: String(page),
-        page_size: String(PAGE_SIZE),
+        page_size: String(pageSize),
         sort: sortKey,
         sort_dir: sortDir,
       });
@@ -839,6 +840,7 @@ export default function MasterContentPage() {
       if (countryFilter) qs.set("country", countryFilter);
       if (scoreFilter) qs.set("score", scoreFilter);
       if (masterStatusFilter) qs.set("master_status", masterStatusFilter);
+      if (versionFilter) qs.set("version", versionFilter);
       const res = await fetch(`/api/tenant/admin/tenants/${AA_INTERNAL_ID}/details?${qs.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -865,32 +867,24 @@ export default function MasterContentPage() {
   const runs = data?.pipeline_runs ?? [];
   const serverTotal = data?.pagination?.total ?? tours.length;
 
-  // AA-718: server-side already applied search / country / score / master_status / sort / paging.
-  // `status` and `version` are not backend filters (rarely used), so keep them as a light
-  // client-side narrowing over the current page only.
-  const filtered = tours.filter(t => {
-    if (statusFilter && t.status !== statusFilter) return false;
-    if (versionFilter) {
-      const v = t.version_number ?? 0;
-      if (versionFilter === "v1" && v !== 1) return false;
-      if (versionFilter === "v2+" && v < 2) return false;
-      if (versionFilter === "v3+" && v < 3) return false;
-    }
-    return true;
-  });
+  // AA-718/AA-739: every filter (search, country, score, version, master_status), sort and paging
+  // runs on the server. The old "Status" select only ever matched "published" on this catalog and
+  // "Version" filtered the current page only — both removed/moved server-side.
+  const filtered = tours;
 
   // The page IS the server page now — no client slice.
   const paginated = filtered;
   const paginatedRuns = runs.slice((runsPage - 1) * RUNS_PAGE_SIZE, runsPage * RUNS_PAGE_SIZE);
 
-  // Country dropdown options come from the server page; for a stable full list we fall back to the
-  // page's own countries (a dedicated distinct-country endpoint is out of scope here).
-  const uniqueCountries = Array.from(new Set(tours.map(t => t.country).filter(Boolean))).sort() as string[];
+  // AA-739: the full country list comes from the server facets; the page's own countries are only a
+  // fallback for an older API.
+  const uniqueCountries = (data?.facets?.countries?.length
+    ? data.facets.countries
+    : Array.from(new Set(tours.map(t => t.country).filter(Boolean))).sort()) as string[];
 
-  const anyFilterActive = Boolean(search.trim() || countryFilter || scoreFilter || masterStatusFilter);
+  const anyFilterActive = Boolean(search.trim() || countryFilter || scoreFilter || versionFilter || masterStatusFilter);
 
   function handleSearch(v: string) { setSearch(v); setPage(1); }
-  function handleStatusFilter(v: string) { setStatusFilter(v); }
 
   async function exportTours(format: "csv" | "xlsx") {
     setExporting(true);
@@ -927,7 +921,6 @@ export default function MasterContentPage() {
     } finally { setExporting(false); }
   }
 
-  const statusOptions = ["published", "active", "pending", "failed"].map(s => ({ label: s, value: s }));
   const countryOptions = uniqueCountries.map(c => ({ label: c, value: c }));
   const scoreOptions = [
     { label: "9.5+", value: "9.5+" },
@@ -1173,11 +1166,6 @@ export default function MasterContentPage() {
                 placeholder="Search name or country…"
                 style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: "#fff", color: A.ink, outline: "none" }}
               />
-              <select value={statusFilter} onChange={e => handleStatusFilter(e.target.value)}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
-                <option value="">All Status</option>
-                {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
               <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
                 style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
                 <option value="">All Countries</option>
@@ -1226,7 +1214,7 @@ export default function MasterContentPage() {
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             {filtered.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center" as const, color: A.muted, fontSize: 13 }}>
-                {search || statusFilter || countryFilter || scoreFilter || versionFilter
+                {search || countryFilter || scoreFilter || versionFilter
                   ? "No tours match your filters"
                   : "No rewritten tours found"}
               </div>
@@ -1265,7 +1253,7 @@ export default function MasterContentPage() {
                 </thead>
                 <tbody>
                   {paginated.map((t, i) => {
-                    const absIdx = (page - 1) * PAGE_SIZE + i;
+                    const absIdx = (page - 1) * pageSize + i;
                     const isExpanded = t.tour_id ? expandedTours.has(t.tour_id) : false;
                     const isSelected = t.tour_id ? selectedIds.has(t.tour_id) : false;
                     const versions   = t.tour_id ? (tourVersions[t.tour_id] ?? []) : [];
@@ -1514,10 +1502,22 @@ export default function MasterContentPage() {
                 </tbody>
               </table>
             )}
-            {serverTotal > PAGE_SIZE && (
-              <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
-                {/* AA-718: paginate against the real server total, not the current page length. */}
-                <Pagination page={page} total={serverTotal} pageSize={PAGE_SIZE} onPage={setPage} />
+            {serverTotal > 0 && (
+              <div style={{ padding: "12px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                {/* AA-739: choose rows per page; AA-718: paginate against the real server total. */}
+                <label style={{ fontSize: 12, color: A.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, serverTotal)} of {serverTotal}
+                  <select
+                    value={pageSize}
+                    onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
+                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}
+                  >
+                    {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
+                  </select>
+                </label>
+                {serverTotal > pageSize && (
+                  <Pagination page={page} total={serverTotal} pageSize={pageSize} onPage={setPage} />
+                )}
               </div>
             )}
           </div>

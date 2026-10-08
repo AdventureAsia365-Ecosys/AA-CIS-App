@@ -13,13 +13,31 @@ export type ReviewRaw = Record<string, unknown> & {
 
 export type ReviewQueueResponse = {
   data: ReviewRaw[];
-  pagination?: { total?: number };
+  pagination?: { page?: number; page_size?: number; total?: number };
+  // AA-739: every country present for this status, independent of the current page/filters.
+  facets?: { countries?: { country: string; n: number }[] };
 };
 
-export function fetchReviewQueue(status: string): Promise<ReviewQueueResponse> {
-  return apiGet<ReviewQueueResponse>(`/api/admin/review-queue?status=${encodeURIComponent(status)}`, {
-    admin: true,
+export type ReviewQueueQuery = {
+  status: string;
+  page: number; // 1-based
+  pageSize: number;
+  country?: string; // "all" = no filter
+  score?: string; // all | critical | low | ok
+  tourId?: string | null;
+};
+
+// AA-739: paging and filters run on the server (the page used to filter a 20-row slice).
+export function fetchReviewQueue(q: ReviewQueueQuery): Promise<ReviewQueueResponse> {
+  const qs = new URLSearchParams({
+    status: q.status,
+    page: String(q.page),
+    page_size: String(q.pageSize),
   });
+  if (q.country && q.country !== "all") qs.set("country", q.country);
+  if (q.score && q.score !== "all") qs.set("score", q.score);
+  if (q.tourId) qs.set("tour_id", q.tourId);
+  return apiGet<ReviewQueueResponse>(`/api/admin/review-queue?${qs.toString()}`, { admin: true });
 }
 
 export function approveReview(id: string): Promise<unknown> {

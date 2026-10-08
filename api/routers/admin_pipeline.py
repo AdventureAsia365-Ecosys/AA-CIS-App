@@ -2373,6 +2373,36 @@ def _derive_field_failures(gc: dict, codes: list, extra_forbidden=None) -> list:
     return out
 
 
+_REVIEW_MAX_PAGE_SIZE = 200
+_MANUAL_CHECK_REVIEW_CODES = {"FACT_CHECK_MANUAL_CHECK", "PRODUCT_TRUTH_RISK", "UNSUPPORTED_NUMBER",
+                              "UNSUPPORTED_CLAIM"}
+
+
+def _review_block(score, codes: list, failures: list, brand_audit_status) -> dict:
+    """AA-739: the reason a review row is NOT on Master, as the headline the UI shows instead of the
+    score. A high score can still be blocked (AA-736 hard codes are orthogonal to the score), so the
+    reviewer must see WHY. Kinds: needs_human (fact check / unsupported claim — a person decides,
+    e.g. elephant riding, chị Thư 08/10), hard (a hard-block code survived), low_quality (score <
+    7), other. Presentation only — the gate itself (_is_publishable) is unchanged."""
+    from services.content_generation.graph import _HARD_BLOCK_CODES
+    cs = set(codes or [])
+    manual = sorted(cs & _MANUAL_CHECK_REVIEW_CODES)
+    if manual or brand_audit_status == "manual_check":
+        why = {"FACT_CHECK_MANUAL_CHECK": "fact check (e.g. elephant riding)",
+               "PRODUCT_TRUTH_RISK": "product-truth risk",
+               "UNSUPPORTED_NUMBER": "number not in the source",
+               "UNSUPPORTED_CLAIM": "claim not in the source"}
+        label = ", ".join(why.get(m, m) for m in manual) or "manual check"
+        return {"kind": "needs_human", "label": f"Needs a person: {label}"}
+    hard = sorted(cs & set(_HARD_BLOCK_CODES))
+    if hard:
+        where = sorted({f"{f['code']} in {f['field']}" for f in (failures or []) if f.get("code") in hard})
+        return {"kind": "hard", "label": "Blocked: " + (", ".join(where) or ", ".join(hard))}
+    if score is not None and score < 7.0:
+        return {"kind": "low_quality", "label": f"Low quality: score {score:.1f} < 7.0"}
+    return {"kind": "other", "label": "Held for review"}
+
+
 @router.get("/review-queue")
 async def admin_review_queue(
     request: Request,
@@ -2380,19 +2410,46 @@ async def admin_review_queue(
     page: int = 1,
     page_size: int = 20,
     status: str = "pending",
+    country: Optional[str] = None,
+    score: str = "all",
+    tour_id: Optional[str] = None,
 ):
+    """AA-739: server-side paging + filters (country, score band, tour) and full facets, so the
+    page no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only
+    the countries on that slice)."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     tenant_id = "00000000-0000-0000-0000-000000000001"
+    page = max(1, page)
+    page_size = max(1, min(page_size, _REVIEW_MAX_PAGE_SIZE))
     offset = (page - 1) * page_size
+
+    # Shared WHERE for rows, total and facets. $1 = tenant; further params appended in order.
+    params: list = [tenant_id]
+    where = ["rq.tenant_id = $1::uuid"]
     if status == "all":
         # AA-626: hide 'dismissed' from the "all" view too, same as 'superseded' — both are
         # closed-out-without-a-quality-verdict rows the reviewer intentionally cleared.
-        status_clause = "AND rq.review_status NOT IN ('superseded', 'dismissed')"
-        status_params: list = []
+        where.append("rq.review_status NOT IN ('superseded', 'dismissed')")
     else:
-        status_clause = "AND rq.review_status = $4"
-        status_params = [status]
+        params.append(status)
+        where.append(f"rq.review_status = ${len(params)}")
+    facet_where = list(where)          # facets ignore the country/score/tour filters themselves
+    facet_params = list(params)
+    if country and country != "all":
+        params.append(country)
+        where.append(f"rt.country = ${len(params)}")
+    if score == "critical":
+        where.append("rq.score_overall < 5")
+    elif score == "low":
+        where.append("rq.score_overall >= 5 AND rq.score_overall < 7")
+    elif score == "ok":
+        where.append("rq.score_overall >= 7")
+    if tour_id and _is_uuid(tour_id):
+        params.append(tour_id)
+        where.append(f"rq.tour_id = ${len(params)}::uuid")
+    where_sql = " AND ".join(where)
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(f"""
             SELECT rq.id, rq.tour_id, rq.generated_content_id,
@@ -2406,22 +2463,36 @@ async def admin_review_queue(
                    rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id
             FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
-            LEFT JOIN silver_aa_internal.quality_scores qs
-                   ON qs.generated_content_id = rq.generated_content_id
+            -- AA-739: latest evaluation only; a plain LEFT JOIN repeated a row per evaluation.
+            LEFT JOIN LATERAL (
+                SELECT q.failure_codes, q.brand_audit_codes, q.brand_audit_status
+                FROM silver_aa_internal.quality_scores q
+                WHERE q.generated_content_id = rq.generated_content_id
+                ORDER BY q.evaluated_at DESC LIMIT 1
+            ) qs ON TRUE
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
-            WHERE rq.tenant_id = $1::uuid
-              {status_clause}
+            WHERE {where_sql}
             ORDER BY rq.created_at DESC
-            LIMIT $2 OFFSET $3
-        """, tenant_id, page_size, offset, *status_params)
-        if status == "all":
-            total_where = "AND review_status NOT IN ('superseded', 'dismissed')"
-        else:
-            total_where = "AND review_status = $2"
+            LIMIT {page_size} OFFSET {offset}
+        """, *params)
         total = await conn.fetchval(f"""
-            SELECT COUNT(*) FROM silver_aa_internal.review_queue
-            WHERE tenant_id = $1::uuid {total_where}
-        """, tenant_id, *status_params)
+            SELECT COUNT(*) FROM silver_aa_internal.review_queue rq
+            JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
+            WHERE {where_sql}
+        """, *params)
+        facet_rows = await conn.fetch(f"""
+            SELECT rt.country, COUNT(*) AS n FROM silver_aa_internal.review_queue rq
+            JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
+            WHERE {" AND ".join(facet_where)}
+            GROUP BY rt.country ORDER BY rt.country
+        """, *facet_params)
+        # AA-739 (from AA-738): mark the brand's own forbidden words too, not only the AA core list.
+        brand_words = await conn.fetchval("""
+            SELECT forbidden_words FROM shared.tenant_brand_rules
+            WHERE tenant_id = $1::uuid AND is_active
+            ORDER BY (brand_name = 'default') DESC, version DESC LIMIT 1
+        """, tenant_id)
+    brand_words = _as_list(brand_words)
 
     data = []
     for r in rows:
@@ -2439,6 +2510,7 @@ async def admin_review_queue(
             "og_tags":           r["og_tags"] if isinstance(r["og_tags"], dict) else {},
         }
         codes = list(_as_list(r["failure_codes"])) + list(_as_list(r["brand_audit_codes"]))
+        _failures = _derive_field_failures(gc, codes, brand_words)
         data.append({
             "id":                 str(r["id"]),
             "tour_id":            str(r["tour_id"]),
@@ -2457,7 +2529,11 @@ async def admin_review_queue(
             "edited_at":          str(r["edited_at"]) if r["edited_at"] else None,
             "revalidate_passed":  r["revalidate_passed"],  # 3-state: None/True/False
             # AA-240 per-field failure reasons re-derived on current content
-            "failures":           _derive_field_failures(gc, codes),
+            "failures":           _failures,
+            # AA-739: why this row is not on Master — the UI headline, ahead of the score
+            "block":              _review_block(
+                float(r["score_overall"]) if r["score_overall"] is not None else None,
+                codes, _failures, r["brand_audit_status"]),
             # AA-242 regenerate context: tier the caller originally requested (may be null),
             # and the raw-tour batch so the FE can pass it back through run-tour-async
             "requested_tier":     r["requested_tier"],
@@ -2474,6 +2550,9 @@ async def admin_review_queue(
     return {
         "data": data,
         "pagination": {"page": page, "page_size": page_size, "total": total},
+        # AA-739: every country present for this status, regardless of page/filters.
+        "facets": {"countries": [{"country": f["country"], "n": f["n"]} for f in facet_rows
+                                 if f["country"]]},
     }
 
 

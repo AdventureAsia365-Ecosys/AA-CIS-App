@@ -35,6 +35,7 @@ import {
   SEV_STYLE,
   codeSeverity,
   mapRow,
+  BLOCK_STYLE,
   type ReviewItem,
 } from "./reviewModel";
 
@@ -99,9 +100,15 @@ function ReviewQueueInner() {
   const toast = useToast();
   const qc = useQueryClient();
 
-  const [filterStatus, setFilterStatus] = useState("pending");
-  const [filterCountry, setCountry] = useState("all");
-  const [filterScore, setScore] = useState("all");
+  const [filterStatus, setFilterStatusRaw] = useState("pending");
+  const [filterCountry, setCountryRaw] = useState("all");
+  const [filterScore, setScoreRaw] = useState("all");
+  // AA-739: server-side paging. Any filter change goes back to the first page.
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const setFilterStatus = (v: string) => { setFilterStatusRaw(v); setPageIndex(0); };
+  const setCountry = (v: string) => { setCountryRaw(v); setPageIndex(0); };
+  const setScore = (v: string) => { setScoreRaw(v); setPageIndex(0); };
   // Deep-link ?tour_id= from Master Content ("N failed" badge). Read once from the URL as a lazy
   // initial value (client-only; null on the server) rather than setting state in an effect, which
   // the React Compiler forbids (AGENTS.md). Null-safe for SSR/prerender.
@@ -124,8 +131,17 @@ function ReviewQueueInner() {
 
   // ── Query: the review queue for the selected status ──
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["review-queue", filterStatus],
-    queryFn: () => fetchReviewQueue(filterStatus),
+    queryKey: ["review-queue", filterStatus, filterCountry, filterScore, tourFilter, pageIndex, pageSize],
+    queryFn: () =>
+      fetchReviewQueue({
+        status: filterStatus,
+        page: pageIndex + 1,
+        pageSize,
+        country: filterCountry,
+        score: filterScore,
+        tourId: tourFilter,
+      }),
+    placeholderData: (prev) => prev, // keep the current page visible while the next one loads
     // Poll while any row we kicked off is still present in the queue (AA-719). Reading the live
     // result here (not derived state) keeps this self-stopping without an effect: once every
     // regenerating row has left the queue, the interval returns false and polling stops.
@@ -191,19 +207,10 @@ function ReviewQueueInner() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Dismiss failed"),
   });
 
-  // ── Filters (client-side over the loaded rows, same as before) ──
-  const countries = useMemo(() => [...new Set(items.map((i) => i.country))], [items]);
-  const filtered = useMemo(() => {
-    return items.filter((item) => {
-      const mt = !tourFilter || String(item.raw.tour_id) === tourFilter;
-      const mc = filterCountry === "all" || item.country === filterCountry;
-      const ms =
-        filterScore === "all" ||
-        (filterScore === "critical" && item.score < 5) ||
-        (filterScore === "low" && item.score >= 5 && item.score < 7);
-      return mt && mc && ms;
-    });
-  }, [items, tourFilter, filterCountry, filterScore]);
+  // ── Filters run on the server (AA-739); the country list comes from the server facets, so it
+  // lists every country in this status, not only the ones on the loaded page. ──
+  const countries = data?.facets?.countries ?? [];
+  const filtered = items;
 
   // ── Columns ──
   const canApprove = (item: ReviewItem) => {
@@ -254,6 +261,16 @@ function ReviewQueueInner() {
         header: "Score",
         cell: (c) => {
           const s = c.row.original.score;
+          const kind = c.row.original.block?.kind;
+          // AA-739: a high score on a blocked row is not the story — show it quietly so the
+          // block reason in the next column reads as the headline.
+          if (kind === "hard" || kind === "needs_human") {
+            return (
+              <span style={{ fontFamily: mono, fontSize: 12, color: A.muted2 }} title="Score is not why this tour is held — see Reasons">
+                {s.toFixed(1)}
+              </span>
+            );
+          }
           const col = s >= 7 ? A.green : s >= 5 ? A.amber : A.red;
           return (
             <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: col }}>
@@ -266,12 +283,31 @@ function ReviewQueueInner() {
         id: "reasons",
         header: "Reasons",
         enableSorting: false,
-        cell: (c) =>
-          c.row.original.regenerating ? (
-            <StatusBadge status="regenerating" />
-          ) : (
-            <ReasonChips codes={c.row.original.codes} />
-          ),
+        cell: (c) => {
+          if (c.row.original.regenerating) return <StatusBadge status="regenerating" />;
+          const b = c.row.original.block;
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+              {b && (
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    background: BLOCK_STYLE[b.kind].bg,
+                    color: BLOCK_STYLE[b.kind].color,
+                    border: `1px solid ${BLOCK_STYLE[b.kind].border}`,
+                    maxWidth: 360,
+                  }}
+                >
+                  {b.label}
+                </span>
+              )}
+              <ReasonChips codes={c.row.original.codes} />
+            </div>
+          );
+        },
       },
       {
         id: "actions",
@@ -387,7 +423,7 @@ function ReviewQueueInner() {
             Showing failed versions for <strong>{tourFilterName || "one selected tour"}</strong> only.
           </span>
           <button
-            onClick={() => setTourFilter(null)}
+            onClick={() => { setTourFilter(null); setPageIndex(0); }}
             style={{
               marginLeft: "auto",
               border: `1px solid ${A.line}`,
@@ -444,7 +480,17 @@ function ReviewQueueInner() {
         enableSavedViews
         enableCsv
         csvFilename="review-queue"
-        pageSize={25}
+        pageSize={pageSize}
+        pageSizeOptions={[25, 50, 100, 200]}
+        serverPagination={{
+          pageIndex,
+          pageSize,
+          total,
+          onChange: (pi, ps) => {
+            setPageIndex(ps !== pageSize ? 0 : pi);
+            setPageSize(ps);
+          },
+        }}
         emptyTitle="Review queue is empty"
         emptyDescription="Every tour has been reviewed."
         toolbarExtra={
@@ -458,13 +504,16 @@ function ReviewQueueInner() {
             <select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}>
               <option value="all">All countries</option>
               {countries.map((c) => (
-                <option key={c}>{c}</option>
+                <option key={c.country} value={c.country}>
+                  {c.country} ({c.n})
+                </option>
               ))}
             </select>
             <select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
               <option value="all">All scores</option>
               <option value="critical">Critical (&lt;5.0)</option>
               <option value="low">Low (5.0–6.9)</option>
+              <option value="ok">7.0+ (held for another reason)</option>
             </select>
             <Btn variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> Refresh
