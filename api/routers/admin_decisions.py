@@ -11,6 +11,7 @@ row (provider 'typesafe', role 'validate'), see shared/llm_client/decide.py.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Literal, Optional
 
@@ -115,19 +116,29 @@ def _iso(row: dict, *keys: str) -> dict:
 async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
+    # The window holds ~100k ledger rows a day during a wave; run the five reads side by side
+    # (each on its own pooled connection) so the page stays under the 29 s API Gateway limit.
+    q_rows, orphan_rows, call_rows, daily_rows, stage_rows, allow_rows = await asyncio.gather(
+        pool.fetch(_SUMMARY_SQL, days),
+        pool.fetch(_ORPHAN_SQL, days),
+        pool.fetch(_CALLS_SQL, days),
+        pool.fetch(_DAILY_SQL, days),
+        pool.fetch(_STAGE_SQL, days),
+        pool.fetch(
+            "SELECT a.tenant_id::text, t.slug, t.name, a.reason FROM shared.jev_tenant_allowlist a "
+            "JOIN shared.tenants t USING (tenant_id) ORDER BY t.slug"),
+    )
     questions = []
-    for r in await pool.fetch(_SUMMARY_SQL, days):
+    for r in q_rows:
         d = _iso(dict(r), "updated_at", "last_used_at", "first_used_at")
         if isinstance(d.get("criteria"), str):
             d["criteria"] = json.loads(d["criteria"])
         questions.append(d)
-    orphans = [_iso(dict(r), "last_used_at") for r in await pool.fetch(_ORPHAN_SQL, days)]
-    calls = [dict(r) for r in await pool.fetch(_CALLS_SQL, days)]
-    daily = [{**dict(r), "day": r["day"].isoformat()} for r in await pool.fetch(_DAILY_SQL, days)]
-    stages = [_iso(dict(r), "last_used_at") for r in await pool.fetch(_STAGE_SQL, days)]
-    allowlist = [dict(r) for r in await pool.fetch(
-        "SELECT a.tenant_id::text, t.slug, t.name, a.reason FROM shared.jev_tenant_allowlist a "
-        "JOIN shared.tenants t USING (tenant_id) ORDER BY t.slug")]
+    orphans = [_iso(dict(r), "last_used_at") for r in orphan_rows]
+    calls = [dict(r) for r in call_rows]
+    daily = [{**dict(r), "day": r["day"].isoformat()} for r in daily_rows]
+    stages = [_iso(dict(r), "last_used_at") for r in stage_rows]
+    allowlist = [dict(r) for r in allow_rows]
     return {
         "days": days,
         "questions": questions,
