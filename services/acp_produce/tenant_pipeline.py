@@ -59,7 +59,7 @@ from services.acp_shared.atom_extraction import (
 )
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
-from services.content_generation.seo_meta_utils import fit_seo_meta
+from services.content_generation.seo_meta_utils import SEO_TITLE_MAX, fit_seo_meta, fit_seo_title  # noqa: F401
 from shared.llm_client.bedrock_satellite import invoke_claude
 from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import record_call_with_pool
@@ -196,35 +196,7 @@ def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -
     return [c for c in codes if c in _HARD_BLOCK_CODES]
 
 
-SEO_TITLE_MAX = 60  # same limit graph.py validate_node applies (SEO_TITLE_TOO_LONG)
-_TITLE_SEPARATORS = (" — ", " – ", " | ", ": ", " - ")
-_TITLE_DANGLING = {"and", "&", "with", "of", "in", "to", "for", "the", "a", "an", "—", "–", "-", "|", ":", ","}
-
-
-def fit_seo_title(title: str, max_len: int = SEO_TITLE_MAX) -> str:
-    """AA-639 — shorten an SEO title to max_len without an LLM call. First drop trailing
-    separator-delimited segments ("Manaslu Circuit Trek — 18 Days | Nepal" → "Manaslu Circuit
-    Trek — 18 Days") while that keeps a meaningful title; otherwise cut at the last word boundary
-    and trim a dangling connector/punctuation. Titles already within the limit are unchanged."""
-    t = " ".join(title.split())
-    if len(t) <= max_len:
-        return t
-    head = t
-    while len(head) > max_len:
-        cut = max((head.rfind(sep) for sep in _TITLE_SEPARATORS), default=-1)
-        if cut <= 0:
-            break
-        head = head[:cut].rstrip()
-    # a clean leading segment (the tour's own name) beats a phrase cut mid-way
-    if len(head) <= max_len and len(head) >= min(15, max_len // 2):
-        return head
-    words = t[: max_len + 1].split(" ")
-    if len(t) > max_len:
-        words = words[:-1] if len(words) > 1 else words
-    while words and words[-1].lower().strip(",:;") in _TITLE_DANGLING:
-        words.pop()
-    out = " ".join(words).rstrip(" ,;:—–-|")
-    return out[:max_len] if out else t[:max_len]
+# AA-740: fit_seo_title + its constants moved to seo_meta_utils so the S1 path can use them too.
 
 
 _T3_FEEDBACK_MAX_SENTENCES = 8

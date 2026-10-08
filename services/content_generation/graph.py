@@ -17,7 +17,7 @@ from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
-                             fit_seo_meta)
+                             fit_seo_meta_final, fit_seo_title)
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
@@ -497,32 +497,50 @@ def _apply_seo_keywords_used(generated: dict, state: ContentState) -> None:
         generated["seo_keywords_used"] = _kws_norm
 
 
-def _apply_seo_meta_fit(generated: dict, state: ContentState) -> None:
+def _apply_seo_meta_fit(generated: dict, state: ContentState) -> bool:
     """AA-724: deterministically fit an out-of-band seo_meta BEFORE validate scores it, the same
-    discipline AA-641 gave the T2 path (tenant_pipeline.fit_seo_meta). The S1/A1 path had none, so
-    an over-long meta kept firing SEO_META_TOO_LONG and looping the gate — the LLM counting
-    characters is unreliable. Runs here (shared by generate_node and the batch seed node) so both
-    the live and Bedrock Batch writes get the fix. Keeps the brand's forbidden words out of the
-    salvaged prefix; a too-short meta is left unchanged (the repair path still handles it)."""
-    if isinstance(generated, dict) and isinstance(generated.get("seo_meta"), str):
-        generated["seo_meta"] = fit_seo_meta(
-            generated["seo_meta"], state.get("brand_forbidden_words"))
+    discipline AA-641 gave the T2 path. Runs in generate_node and the batch seed node (live + Bedrock
+    Batch), and AA-740 again in revalidate_node after the last LLM repair.
+
+    AA-740: since AA-736 the length codes block Master, but the salvage alone left a one-sentence
+    meta > 155 or a meta < 140 unchanged (S218: 15 tours scoring >= 7 stuck in review). Now
+    fit_seo_meta_final also cuts at a clause/word boundary or appends a clause built from the tour's
+    own facts (days, country); seo_title gets fit_seo_title (AA-639). Returns True if anything
+    changed. What still misses the band is left for the hard code."""
+    if not isinstance(generated, dict):
+        return False
+    changed = False
+    tour = state.get("tour") or {}
+    meta = generated.get("seo_meta")
+    if isinstance(meta, str):
+        new = fit_seo_meta_final(meta, {"duration": tour.get("duration"), "country": tour.get("country")},
+                                 state.get("brand_forbidden_words"))
+        if new != meta:
+            generated["seo_meta"], changed = new, True
+    title = generated.get("seo_title")
+    if isinstance(title, str) and len(title) > 60:
+        new = fit_seo_title(title)
+        if new != title:
+            generated["seo_title"], changed = new, True
+    return changed
 
 
-def _apply_forbidden_strip(generated: dict, state: ContentState) -> None:
+def _apply_forbidden_strip(generated: dict, state: ContentState) -> bool:
     """AA-738: replace/drop forbidden words (AA list + the brand's list) in the writer output, in
     place, before validate_node scores it. Asking the model to avoid the list (prompt) and retrying
     on Sonnet (AA-736) both left ordinary brand words like "explore"/"package" in ~10% of tours.
     What cannot be cleaned is left as is: validate fires FORBIDDEN_WORD and the AA-736 gate holds."""
     if not isinstance(generated, dict) or not generated:
-        return
+        return False
     cleaned, report = strip_forbidden(generated, state.get("brand_forbidden_words"))
-    if report["replaced"] or report["dropped"] or report["unresolved"]:
+    changed = bool(report["replaced"] or report["dropped"])
+    if changed or report["unresolved"]:
         generated.clear()
         generated.update(cleaned)
         logger.info("forbidden_strip_applied", tour=(state.get("tour") or {}).get("name"),
                     replaced=len(report["replaced"]), dropped=len(report["dropped"]),
                     unresolved=sorted({f"{f}:{w}" for f, w in report["unresolved"]}))
+    return changed
 
 
 def seed_generated_node(state: ContentState) -> ContentState:
@@ -888,9 +906,13 @@ def revalidate_node(state: ContentState) -> ContentState:
     # AA-738: strip again after every LLM edit (grounding repair, flag_fix, the seo_meta re-repair
     # loop) — S218 Sri Lanka: 8 tours lost Master because flag_fix rewrote seo_meta back to
     # "Explore …" after the write-time strip. In place, before the re-validate below scores it.
-    _apply_forbidden_strip(state.get("generated"), state)
+    stripped = _apply_forbidden_strip(state.get("generated"), state)
+    # AA-740: same position for the seo_meta/seo_title length fit (repairs can push them out again).
+    fitted = _apply_seo_meta_fit(state.get("generated"), state)
 
-    if not state.get("fix_pass_applied"):
+    # A deterministic edit here must be re-validated even without a fix pass, or validate's old
+    # codes (FORBIDDEN_WORD / SEO_META_TOO_LONG …) would keep blocking content that is now clean.
+    if not state.get("fix_pass_applied") and not (stripped or fitted):
         return _apply_grounding_recheck({**state, "revalidate_ran": False})
 
     # Re-run in the same order as the main graph: validate sets quality_score that judge then

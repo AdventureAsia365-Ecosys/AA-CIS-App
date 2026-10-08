@@ -722,12 +722,11 @@ async def _execute_run_tour(
             _itin = generated.get("itineraries", "")
             if not isinstance(_itin, str):
                 _itin = str(_itin)
-            # AA-204: sentence-aware backstop trim; if a whole-sentence cut would drop the meta
-            # below the 140 floor, fall back to the longer word-boundary cut (repair is the
-            # primary fix; this is only the final DB-write net).
-            _m = generated.get("seo_meta") or ""
-            _m_sent = _trim_to_word_boundary(_m, 155, sentence=True)
-            _m_final = _m_sent if len(_m_sent) >= 140 else _trim_to_word_boundary(_m, 155)
+            # AA-740: store exactly what validate saw. The old AA-204 write-time trim made the stored
+            # meta (e.g. 153) differ from the validated one (> 155), so a review row showed an
+            # in-band meta under SEO_META_TOO_LONG. The length fit now runs in the graph
+            # (fit_seo_meta_final) and approved rows are in band by the gate; columns are unbounded.
+            _m_final = generated.get("seo_meta") or ""
             try:
                 version_id = await conn.fetchval("""
                     INSERT INTO silver_aa_internal.generated_content (
@@ -755,7 +754,7 @@ async def _execute_run_tour(
                     generated.get("description", ""),
                     json.dumps(generated.get("highlights", [])),
                     _itin,
-                    _trim_to_word_boundary(generated.get("seo_title"), 60),
+                    generated.get("seo_title") or "",  # AA-740: no write-time trim (see seo_meta)
                     _m_final,
                     json.dumps(generated.get("seo_keywords_used", [])),
                     result.get("model_used", ""),
