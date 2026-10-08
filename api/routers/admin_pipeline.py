@@ -736,7 +736,7 @@ async def _execute_run_tour(
                         seo_title, seo_meta, seo_keywords_used,
                         model_editorial, status, og_tags, metadata,
                         brand_rules_version, requested_tier, fallback_used, satellite_used,
-                        satellite_account
+                        satellite_account, revalidate_passed
                     ) VALUES (
                         $1::uuid, $2::uuid,
                         COALESCE((SELECT MAX(version_num) + 1
@@ -744,7 +744,7 @@ async def _execute_run_tour(
                         WHERE tour_id = $1::uuid), 1),
                         $3, $4, $5, $6, $7::jsonb, $8,
                         $9, $10, $11::jsonb, $12, $13::content_status_enum, $14::jsonb, $15::jsonb,
-                        $16, $17, $18, $19, $20
+                        $16, $17, $18, $19, $20, $21
                     ) RETURNING id
                 """,
                     req.tour_id, tenant_uuid,
@@ -768,6 +768,8 @@ async def _execute_run_tour(
                     # satellite_account is not None thay vì đọc field bool cũ (đã xoá khỏi LLMResponse).
                     result.get("satellite_account") is not None,
                     result.get("satellite_account"),         # AA-397: satellite_account (text, 'acc1'/'acc3'/None)
+                    # S218 audit: the column existed but was never written (0/681 rows); metadata had it.
+                    result.get("revalidate_passed") if result.get("revalidate_ran") else None,
                 )
                 if version_id:
                     logger.info("version_inserted", tour_id=req.tour_id, version_id=str(version_id))
