@@ -160,3 +160,15 @@ def test_revalidate_strips_words_a_repair_reintroduced(monkeypatch):
     out = graph.revalidate_node(state)
     assert seen["meta"] == "Visit the temples of Kandy and the tea hills of Ella."
     assert out["revalidate_passed"] is True
+
+
+def test_validate_ignores_forbidden_word_in_dfs_keywords():
+    # S218: "cheap summer getaways" (a DFS keyword) fired FORBIDDEN_WORD with no copy field to fix.
+    from services.content_generation.graph import validate_node
+    gen = {"name": "Sri Lanka Family Trip", "summary": "A quiet trip.", "highlights": ["a", "b", "c"],
+           "itineraries": "Day 1 — Colombo\nArrive.", "seo_keywords_used": ["cheap summer getaways"]}
+    out = validate_node({"generated": gen, "tour": {}, "brand_forbidden_words": ["cheap"]})
+    assert "FORBIDDEN_WORD" not in out["failure_codes"]
+    gen["summary"] = "A cheap trip."
+    out = validate_node({"generated": gen, "tour": {}, "brand_forbidden_words": ["cheap"]})
+    assert "FORBIDDEN_WORD" in out["failure_codes"]

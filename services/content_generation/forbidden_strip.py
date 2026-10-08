@@ -61,8 +61,9 @@ _INTRANSITIVE_NEXT = frozenset({
 
 # Fields written as prose, where dropping a whole sentence is acceptable.
 _PROSE_FIELDS = frozenset({"summary", "description", "itineraries"})
-# Metadata the writer does not author (DFS keywords) — never rewritten here.
-_SKIP_FIELDS = frozenset({"seo_keywords_used"})
+# Metadata the writer does not author (DFS keywords) — never rewritten here, and never scanned for
+# FORBIDDEN_WORD by validate_node either (S218: "cheap summer getaways" / a source title as keyword).
+SKIP_FIELDS = frozenset({"seo_keywords_used"})
 _MIN_HIGHLIGHTS = 3  # validate_node fires HIGHLIGHTS_TOO_FEW below this
 
 _DAY_MARKER = re.compile(r"\bday\s*\d+", re.IGNORECASE)
@@ -164,7 +165,7 @@ def strip_forbidden(generated: dict, tenant_words=None) -> tuple[dict, dict]:
     report = {"replaced": [], "dropped": [], "unresolved": []}
     out = dict(generated or {})
     for field, value in out.items():
-        if field in _SKIP_FIELDS:
+        if field in SKIP_FIELDS:
             continue
         if isinstance(value, str) and _hits(value, forbidden):
             new = _strip_text(field, value, forbidden, report)
