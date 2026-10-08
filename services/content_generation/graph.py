@@ -520,7 +520,7 @@ def _apply_forbidden_strip(generated: dict, state: ContentState) -> None:
     if report["replaced"] or report["dropped"] or report["unresolved"]:
         generated.clear()
         generated.update(cleaned)
-        logger.info("forbidden_strip_applied", tour_id=state.get("tour_id"),
+        logger.info("forbidden_strip_applied", tour=(state.get("tour") or {}).get("name"),
                     replaced=len(report["replaced"]), dropped=len(report["dropped"]),
                     unresolved=sorted({f"{f}:{w}" for f, w in report["unresolved"]}))
 
