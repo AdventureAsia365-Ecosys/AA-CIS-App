@@ -155,7 +155,8 @@ def pairs_to_ask(atoms: list[SegmentAtom], new_ids: set[str]) -> dict[frozenset,
     return out
 
 
-def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset()) -> list[Segment]:
+def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset(),
+                    involving: frozenset | None = None) -> list[Segment]:
     """Sort Atoms into Segments. Same Atoms in, same Segments out.
 
     Quadratic in the number of Atoms given — the DB-facing wrapper below keeps this pool small
@@ -164,8 +165,12 @@ def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset()) ->
     """
     keys = {atom.atom_id: _key(atom) for atom in atoms}
     by_id = {atom.atom_id: atom for atom in atoms}
+    # S218 — `involving` (the new atoms' ids): a pair of which neither side is in it is never
+    # compared. Existing Segments were already grouped by earlier runs; two of them still merge
+    # when a new atom bridges both. None = compare every pair (the pure, whole-set behaviour).
     memberships = _connected(sorted(keys.items()),
-                             lambda a, b: may_join(by_id[a], by_id[b], apart))
+                             lambda a, b: may_join(by_id[a], by_id[b], apart),
+                             involving)
 
     segments = []
     for members in memberships:
@@ -407,9 +412,10 @@ def _about_the_same_thing(left: Key, right: Key) -> bool:
     return bool(left.about & right.about)
 
 
-def _connected(keyed: list[tuple[str, Key]], allowed=None) -> list[set[str]]:
+def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset | None = None) -> list[set[str]]:
     """Connected components over `_looks_like_one_moment`, independent of order. `allowed(a, b)`
-    (AA-695) can veto a pair the moment rule would join."""
+    (AA-695) can veto a pair the moment rule would join; `involving` skips pairs with no member
+    in it (S218)."""
     parent = {atom_id: atom_id for atom_id, _ in keyed}
 
     def find(node: str) -> str:
@@ -420,6 +426,8 @@ def _connected(keyed: list[tuple[str, Key]], allowed=None) -> list[set[str]]:
 
     for index, (atom_id, key) in enumerate(keyed):
         for other_id, other_key in keyed[index + 1:]:
+            if involving is not None and atom_id not in involving and other_id not in involving:
+                continue
             if _looks_like_one_moment(key, other_key) and (allowed is None or allowed(atom_id, other_id)):
                 left, right = find(atom_id), find(other_id)
                 if left != right:
@@ -462,6 +470,25 @@ async def _apart_pairs(atoms: list[SegmentAtom], new_ids: set[str], pool) -> tup
 
     results = await asyncio.gather(*[one(p, spec) for p, spec in pairs.items()])
     return frozenset(p for p, rejected in results if rejected), len(pairs)
+
+
+def _candidate_pseudo_atoms(new_atoms: list[SegmentAtom], pseudo_atoms: list[SegmentAtom],
+                            keep: set[str] = frozenset()) -> list[SegmentAtom]:
+    """S218 — the existing Segments a new atom could join at all: same verb and at least one shared
+    place word (`_looks_like_one_moment` needs both), plus `keep` (Segments this tour's atoms
+    already belong to). Everything else cannot end up in a new atom's component, so leaving it out
+    of the quadratic grouping changes nothing but the cost."""
+    verbs: dict[str, set[str]] = {}
+    for atom in new_atoms:
+        key = _key(atom)
+        if key.verb:
+            verbs.setdefault(key.verb, set()).update(key.place)
+    out = []
+    for p in pseudo_atoms:
+        key = _key(p)
+        if p.atom_id in keep or (key.verb in verbs and verbs[key.verb] & set(key.place)):
+            out.append(p)
+    return out
 
 
 # S218 — re-point a losing Segment's members as insert-then-delete, never a bare UPDATE. An atom
@@ -519,39 +546,50 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         if not atom_rows:
             return {"segments_written": 0, "atoms": 0, "aliases": 0, "existing_segments": 0}
 
-        # AA-695 — each existing Segment's country = its member tours' most common country.
-        existing_rows = await conn.fetch("""
-            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') AS country
-            FROM acp_contract.atom_segment asg
-            LEFT JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
-            LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
-            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
-        """)
         atom_ids = [r["atom_id"] for r in atom_rows]
         assigned_rows = await conn.fetch("""
             SELECT atom_id, segment_id FROM acp_contract.atom_segment_member
             WHERE atom_id = ANY($1::text[])
         """, atom_ids)
+        # AA-695 — each existing Segment's country = its member tours' most common country.
+        # S218 — scoped: a Segment never spans countries (may_join), so only this tour's country
+        # (and unknown) can join; a Segment with no members has given way to an alias target and
+        # is not a candidate. Segments this tour's atoms already belong to always stay in (retry
+        # / re-atomize). Before this, every run loaded every platform Segment and the per-tour
+        # cost grew with the whole catalog (5 s -> 36 s per tour during the S218 backfill).
+        tour_country = atom_rows[0]["country"] or ""
+        existing_rows = await conn.fetch("""
+            SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
+                   coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') AS country
+            FROM acp_contract.atom_segment asg
+            JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
+            LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
+            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+            GROUP BY asg.segment_id, asg.canonical_place, asg.canonical_action
+            HAVING $1 = '' OR coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') IN ($1, '')
+                OR asg.segment_id = ANY($2::text[])
+        """, tour_country, list({r["segment_id"] for r in assigned_rows}))
 
     new_atoms = [
         SegmentAtom(r["atom_id"], str(r["tour_id"]), r["itinerary_day"], r["place"], r["action"],
                     r["country"])
         for r in atom_rows
     ]
-    pseudo_atoms = [
-        SegmentAtom(f"{_PSEUDO_PREFIX}{r['segment_id']}", "", None,
-                    r["canonical_place"], r["canonical_action"], r["country"])
-        for r in existing_rows
-    ]
+    pseudo_atoms = _candidate_pseudo_atoms(
+        new_atoms,
+        [SegmentAtom(f"{_PSEUDO_PREFIX}{r['segment_id']}", "", None,
+                     r["canonical_place"], r["canonical_action"], r["country"])
+         for r in existing_rows],
+        keep={f"{_PSEUDO_PREFIX}{r['segment_id']}" for r in assigned_rows},
+    )
     assigned = {r["atom_id"]: r["segment_id"] for r in assigned_rows}
-    for r in existing_rows:
-        assigned[f"{_PSEUDO_PREFIX}{r['segment_id']}"] = r["segment_id"]
+    for p in pseudo_atoms:
+        assigned[p.atom_id] = p.atom_id[len(_PSEUDO_PREFIX):]
 
     pool_atoms = new_atoms + pseudo_atoms
-    apart, asked = await _apart_pairs(pool_atoms, {a.atom_id for a in new_atoms}, pool)   # AA-695
-    derived = derive_segments(pool_atoms, apart)
+    new_ids = frozenset(a.atom_id for a in new_atoms)
+    apart, asked = await _apart_pairs(pool_atoms, set(new_ids), pool)   # AA-695
+    derived = derive_segments(pool_atoms, apart, involving=new_ids)
     segments, aliases = reconcile_ids(derived, assigned)
 
     # Strip pseudo membership before persisting, and drop any resulting segment whose ONLY
