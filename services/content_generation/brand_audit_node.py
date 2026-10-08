@@ -221,7 +221,10 @@ def _audit_from_judge(state: dict, generated: dict) -> dict:
     pre_codes = pre_audit_checks(generated, state.get("tour"))
     judge_feedback = (state.get("judge_feedback") or "").strip()
     issues = [judge_feedback] if judge_feedback else []
-    status = "flagged" if pre_codes else "pass"
+    # S218 audit: same status rule as the LLM audit path (derive_status). This path used its own
+    # "flagged if any code", so FACT_CHECK_MANUAL_CHECK (elephant riding) read as a fixable brand
+    # flag: flag_fix ran with nothing to fix and the reviewer saw the wrong reason.
+    status = derive_status(pre_codes, None)
     logger.info("brand_audit_from_judge", status=status, codes=pre_codes,
                 brand_fit=state.get("judge_brand_fit"),
                 mission_present=state.get("judge_mission_present"))

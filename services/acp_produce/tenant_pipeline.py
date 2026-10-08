@@ -91,6 +91,38 @@ def _llm_log_tenant_id(owner_scope: str) -> str | None:
     except (ValueError, AttributeError, TypeError):
         return None  # not a real tenant (e.g. "platform") — log with no tenant attribution
 
+
+_MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+async def _atom_forbidden_words(pool, owner_scope: str) -> list[str]:
+    """S218 audit: the forbidden list (AA core + the owner's brand words) atoms must not carry —
+    platform atoms use the AA master brand, tenant atoms their own. 863/14,091 platform atoms held
+    "explore" etc. because atoms were extracted before the AA-738 strip existed. Never raises: a
+    lookup failure means no strip, not a failed atomize."""
+    from services.content_generation.forbidden_words import all_forbidden
+    tenant = _MASTER_TENANT_ID if owner_scope == "platform" else owner_scope
+    try:
+        async with pool.acquire() as conn:
+            raw = await conn.fetchval(
+                "SELECT forbidden_words FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid "
+                "AND is_active ORDER BY (brand_name = 'default') DESC, version DESC LIMIT 1", tenant)
+        words = json.loads(raw) if isinstance(raw, str) else raw
+        return all_forbidden(words if isinstance(words, list) else [])
+    except Exception as e:  # noqa: BLE001 — best effort, see docstring
+        logger.warning("atom_forbidden_words_lookup_failed", owner_scope=owner_scope, error=str(e)[:200])
+        return all_forbidden([])
+
+
+def _strip_atom_action(action: str, words: list[str]) -> str:
+    """Substitution-only strip of one atom's action (AA-738 map; no sentence drop — an action is a
+    phrase). A word with no safe substitute is left as is."""
+    if not action or not words:
+        return action
+    from services.content_generation.forbidden_strip import strip_forbidden
+    out, _ = strip_forbidden({"action": action}, words)
+    return out.get("action", action)
+
 # Fields checked for both gates — same set graph.py's validate_node treats as the
 # rewrite's real prose output (name/seo_title/seo_meta excluded: short/derived,
 # not narrative claims — same exclusion s1_from_atom.py's _GATED_FIELDS makes).
@@ -435,16 +467,20 @@ async def run_t5_atomize(
     # does), but still readable for audit/debugging and still what the legacy path skips on.
     source_hash = _source_hash(row)
 
+    forbidden_words = await _atom_forbidden_words(pool, tenant_id)   # S218 audit
     days = parse_canonical_itinerary_days(row["itinerary_source"])
     if not days or not version_id:
-        return await _atomize_whole_tour_legacy(tenant_id, tour_id, row, source_hash, pool, country)
+        return await _atomize_whole_tour_legacy(tenant_id, tour_id, row, source_hash, pool, country,
+                                                forbidden_words=forbidden_words)
     return await _atomize_per_day(
         tenant_id, tour_id, version_id, row, days, source_hash, pool, country,
+        forbidden_words=forbidden_words,
     )
 
 
 async def _atomize_whole_tour_legacy(
     tenant_id: str, tour_id: str, row: dict, source_hash: str, pool, country: str,
+    forbidden_words: list[str] | None = None,
 ) -> dict:
     """Pre-AA-508 behavior, unchanged (see run_t5_atomize()'s own docstring for when this runs).
     Random atom_id, one LLM call for the whole itinerary, source_hash-over-the-whole-tour skip."""
@@ -509,7 +545,7 @@ async def _atomize_whole_tour_legacy(
             for atom in atoms:
                 atom_id = f"atom_{uuid.uuid4().hex[:10]}"
                 place = atom.get("place") or ""
-                action = atom.get("action") or ""
+                action = _strip_atom_action(atom.get("action") or "", forbidden_words)   # S218 audit
                 text = _derive_atom_text(place, action)
                 distinctiveness = score_distinctiveness(text, competitor_idx)
                 await conn.execute("""
@@ -590,7 +626,7 @@ async def ground_day_atoms(atoms: list[dict], day: dict, owner_scope: str, tour_
 
 async def _atomize_per_day(
     tenant_id: str, tour_id: str, version_id: str, row: dict, days: dict,
-    source_hash: str, pool, country: str,
+    source_hash: str, pool, country: str, forbidden_words: list[str] | None = None,
 ) -> dict:
     """AA-508 — one day at a time: fingerprint-gated skip (blocks the LLM call, not just logged
     after one), content-hash atom_id, real UPSERT. See atom_extraction.py::content_hash_atom_id()/
@@ -683,7 +719,8 @@ async def _atomize_per_day(
             if atoms:
                 for atom in atoms:
                     place = atom.get("place") or ""
-                    action = atom.get("action") or ""
+                    # S218 audit: strip before the content-hash id and text are derived.
+                    action = _strip_atom_action(atom.get("action") or "", forbidden_words)
                     text = _derive_atom_text(place, action)
                     # AA-610 — evidence: the verbatim source-text span `said` (atom_ranking.py)
                     # should measure, not `text`'s place—action join. checkable_evidence()

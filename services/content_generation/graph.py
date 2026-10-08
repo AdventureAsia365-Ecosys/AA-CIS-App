@@ -147,6 +147,21 @@ _HARD_BLOCK_CODES = frozenset({
     "FORBIDDEN_WORD", "MISSING_FIELD",
 })
 
+# S218 audit (lesson: "a hard code needs a repair path"): every code that blocks Master must name
+# the step that can clear it. AA-736 made the length codes hard with no deterministic fix and 15
+# tours scoring >= 7 sat in review until AA-740. tests/unit/test_s218_hard_code_repair.py fails if a
+# code is added to _HARD_BLOCK_CODES without an entry here. "deterministic:" = no LLM, "llm:" =
+# a model retry that may still fail (then review).
+HARD_CODE_REPAIR = {
+    "META_TOO_SHORT":           "deterministic: seo_meta_utils.fit_seo_meta_final (fact clause)",
+    "SEO_META_TOO_LONG":        "deterministic: seo_meta_utils.fit_seo_meta_final (clause/word cut)",
+    "META_INCOMPLETE_SENTENCE": "deterministic: seo_meta_utils.fit_seo_meta_final (close sentence)",
+    "SEO_TITLE_TOO_LONG":       "deterministic: seo_meta_utils.fit_seo_title",
+    "FORBIDDEN_WORD":           "deterministic: forbidden_strip.strip_forbidden",
+    "BRAND_SEO_META_VIOLATION": "llm: flag_fix seo_meta repair, then one haiku->sonnet retry (AA-736)",
+    "MISSING_FIELD":            "llm: one haiku->sonnet retry (AA-736)",
+}
+
 class ContentState(TypedDict):
     tour:                   dict
     seo:                    dict
