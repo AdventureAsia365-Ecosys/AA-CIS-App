@@ -574,14 +574,22 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     # run.
     alias_rows = [(was, target) for was, target in aliases.items() if target in live_ids]
 
+    # S218 — an alias target can be a NEW id whose only members this run are pseudo-atoms (a merge
+    # of existing Segments that this tour's atoms did not join). It is not in `to_write`, but the
+    # re-pointed members and the alias row both reference it, so its atom_segment row must exist
+    # before either is written (FK). Upsert every target, and do it before re-pointing.
+    alias_targets = {target for _, target in alias_rows}
+    segment_rows = {s.id: (s.id, s.place, s.action) for s in to_write}
+    for s in segments:
+        if s.id in alias_targets and s.id not in segment_rows:
+            segment_rows[s.id] = (s.id, s.place, s.action)
+
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _repoint_members(conn, alias_rows)
-
             # atom_segment: UPSERT-only, never DELETEd (module docstring + migration 129 comment
             # — required by atom_segment_alias's own FK, an id that "gave way" still has to
             # exist as a row).
-            if to_write:
+            if segment_rows:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_segment
                         (segment_id, canonical_place, canonical_action)
@@ -589,7 +597,9 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
                     ON CONFLICT (segment_id) DO UPDATE SET
                         canonical_place = excluded.canonical_place,
                         canonical_action = excluded.canonical_action
-                """, [(s.id, s.place, s.action) for s in to_write])
+                """, list(segment_rows.values()))
+            await _repoint_members(conn, alias_rows)
+            if to_write:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id)
                     VALUES ($1, $2)
