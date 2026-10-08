@@ -255,10 +255,15 @@ async def mark_tour_rejected(conn, tour_id: str) -> None:
     review_queue.review_status + generated_content.status — raw_tours.pipeline_status was
     never touched, so a rejected tour stayed 'ingested' indefinitely and sync_batch_completion
     counted it as still-pending forever, even once every other tour in the batch was done."""
+    # S218: rejecting the review row of an OLD version must not demote a tour that already has an
+    # active Master from another version (two tours showed 'hitl_rejected' + an active Master, and
+    # S1 badged them "Ready").
     row = await conn.fetchrow("""
-        UPDATE silver_aa_internal.raw_tours
+        UPDATE silver_aa_internal.raw_tours rt
         SET pipeline_status = 'hitl_rejected'
-        WHERE tour_id = $1::uuid
+        WHERE rt.tour_id = $1::uuid
+          AND NOT EXISTS (SELECT 1 FROM gold_aa_internal.published_tours p
+                          WHERE p.tour_id = rt.tour_id AND p.master_status = 'active')
         RETURNING batch_id
     """, tour_id)
     if row and row["batch_id"]:

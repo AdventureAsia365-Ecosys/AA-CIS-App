@@ -48,6 +48,7 @@ interface Tour {
   filename: string | null;
   rewrite_count: number;
   last_rewritten_at: string | null;
+  in_review?: boolean;
 }
 
 interface BrandSummary {
@@ -169,9 +170,14 @@ function PipelineStatusBadge({ tour, runStatus, result, stage, isRetry }: {
   if (pipeline_status === "published") {
     return <Badge color="green">Published</Badge>;
   }
+  // S218: every other status used to fall through to "Ready" (hitl_rejected tours with a Master).
+  if (pipeline_status === "hitl_rejected") return <Badge color="red">Rejected</Badge>;
+  if (pipeline_status === "failed") return <Badge color="red">Failed</Badge>;
+  if (tour.in_review) return <Badge color="amber">In review (rewritten {rewrite_count}×)</Badge>;
   if (pipeline_status === "ingested" && rewrite_count > 0) {
     return <Badge color="green">Ready (rewritten {rewrite_count}×)</Badge>;
   }
+  if (pipeline_status !== "ingested") return <Badge color="gray">{pipeline_status}</Badge>;
   return <Badge color="gray">Ready</Badge>;
 }
 
@@ -301,7 +307,8 @@ export default function S1RewritePage() {
     if (filterFile && t.filename !== filterFile) return false;
     if (filterSearch && !t.src_name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
     if (filterStatus === "published" && t.pipeline_status !== "published") return false;
-    if (filterStatus === "ready"     && t.pipeline_status === "published") return false;
+    if (filterStatus === "ready"     && (t.pipeline_status !== "ingested" || t.in_review)) return false;
+    if (filterStatus === "review"    && !t.in_review) return false;
     return true;
   });
 
@@ -721,6 +728,7 @@ export default function S1RewritePage() {
                 <option value="">All Status</option>
                 <option value="published">Published</option>
                 <option value="ready">Ready</option>
+                <option value="review">In review</option>
               </select>
 
               <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 10px", background: "#fff", flex: 1, minWidth: 200 }}>
