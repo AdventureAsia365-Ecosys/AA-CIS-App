@@ -134,3 +134,27 @@ async def test_mark_tour_rejected_never_demotes_a_tour_with_an_active_master():
     assert "master_status = 'active'" in seen[0] and "NOT EXISTS" in seen[0]
     assert conn.executed == []   # no batch sync when nothing changed
     conn.fetchrow = orig
+
+
+@pytest.mark.asyncio
+async def test_aa746_trashed_superseded_deleted_and_in_review_tours_count_as_settled():
+    """AA-746: 10 batches sat in 'ingesting' forever because a trashed/superseded tour (or one
+    waiting on a human in Review Queue) never reaches published/hitl_rejected/failed."""
+    conn = FakeConn(pending_count=0)
+    captured_sql = []
+
+    async def fetchval(sql, *args):
+        captured_sql.append(sql)
+        if "UPDATE shared.pipeline_runs" in sql and "RETURNING 1" in sql:
+            return 1
+        return 0
+
+    conn.fetchval = fetchval
+    await sync_batch_completion(conn, BATCH_ID)
+    pending_sql = next(s for s in captured_sql if "SELECT COUNT" in s)
+    flip_sql = next(s for s in captured_sql if "RETURNING 1" in s)
+    for sql in (pending_sql, flip_sql):
+        assert "rt.source_status = 'active'" in sql
+        assert "rt.deleted_at IS NULL" in sql
+        assert "hitl_required" in sql
+        assert "review_status = 'pending'" in sql

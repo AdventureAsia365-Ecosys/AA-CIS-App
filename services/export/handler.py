@@ -194,6 +194,19 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
 # 'ingesting' forever even after every other tour in the batch finished.
 _TERMINAL_TOUR_STATUSES = ("published", "hitl_rejected", "failed")
 
+# AA-746: a tour still "in flight" for its batch. Besides the terminal statuses above, a tour is
+# settled when it left the catalog (trashed / superseded / deleted — S218: 10 batches stuck in
+# 'ingesting' forever on those) or when its automated work is done and it waits on a human
+# (hitl_required, or a pending Review Queue row). Batch completion is display-only (AA-492).
+_UNSETTLED_TOUR_SQL = f"""
+    rt.batch_id = $1::uuid
+    AND rt.pipeline_status NOT IN {_TERMINAL_TOUR_STATUSES + ("hitl_required",)}
+    AND rt.source_status = 'active'
+    AND rt.deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM silver_aa_internal.review_queue q
+                    WHERE q.tour_id = rt.tour_id AND q.review_status = 'pending')
+"""
+
 
 async def sync_batch_completion(conn, batch_id, silver: str = "silver_aa_internal") -> tuple[int, bool]:
     """Recompute tours_passed + flip pipeline_runs.status to 'completed' once every tour in
@@ -225,9 +238,8 @@ async def sync_batch_completion(conn, batch_id, silver: str = "silver_aa_interna
     """, batch_id)
 
     pending = await conn.fetchval(f"""
-        SELECT COUNT(*) FROM {silver}.raw_tours
-        WHERE batch_id = $1::uuid
-          AND pipeline_status NOT IN {_TERMINAL_TOUR_STATUSES}
+        SELECT COUNT(*) FROM {silver}.raw_tours rt
+        WHERE {_UNSETTLED_TOUR_SQL}
     """, batch_id)
 
     flipped = await conn.fetchval(f"""
@@ -236,9 +248,8 @@ async def sync_batch_completion(conn, batch_id, silver: str = "silver_aa_interna
         WHERE batch_id = $1::uuid
           AND status = 'ingesting'
           AND NOT EXISTS (
-              SELECT 1 FROM {silver}.raw_tours
-              WHERE batch_id = $1::uuid
-                AND pipeline_status NOT IN {_TERMINAL_TOUR_STATUSES}
+              SELECT 1 FROM {silver}.raw_tours rt
+              WHERE {_UNSETTLED_TOUR_SQL}
           )
         RETURNING 1
     """, batch_id)
