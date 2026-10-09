@@ -357,6 +357,11 @@ _SHADOW_REPORT_SQL = """
 """
 
 
+# Mirrors services/content_generation/judge_node.py::_MIN_QUALITY (kept in sync by a unit test;
+# not imported, to keep the LLM pipeline out of this router's import graph).
+_JUDGE_PASS_LINE = 7.0
+
+
 def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
     """Return {"passed": bool, "score": Optional[float]} for one judge output, or None if the
     output cannot be parsed. Reuses the production judge parser (parse_judge_json) and reads the
@@ -405,6 +410,11 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
         passed = status.strip().lower() == "pass"
     elif passed is None and isinstance(data.get("passed"), bool):
         passed = data["passed"]
+
+    # The A1 brand-fit judge returns only a 1-10 score; the pipeline's pass line is the judge gate
+    # (`judge_node._MIN_QUALITY`, 7.0) — derive pass/fail from it so agreement is measurable.
+    if passed is None and score is not None and stage.startswith(("s1_judge", "t2_judge")):
+        passed = score >= _JUDGE_PASS_LINE
 
     if score is None and passed is None:
         return None
