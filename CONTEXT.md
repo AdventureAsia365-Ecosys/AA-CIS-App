@@ -240,8 +240,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   failing same-origin `/api/` call, or a blank page (no table rows and no kit empty state).
   Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact
   and link from one PR comment. Secrets: `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass),
-  `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. Portal pages skip until a tenant test account exists
-  (AA-741). Not a required check. e2e specs carry no hardcoded credentials (shared helper
+  `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. The bypass header is sent only to the BASE_URL
+  origin (origin-scoped route), never to a third-party host. Portal pages skip until a tenant test
+  account exists (AA-741; the real tenant login takes an API key → `E2E_TENANT_API_KEY`). Not a
+  required check. e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Migrations are not applied by CI/CD.** Deploy only builds the image and updates the ECS

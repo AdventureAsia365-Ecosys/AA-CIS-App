@@ -5,8 +5,8 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:3001';
 
 // ── Auth helpers ──────────────────────────────────────────────
 // AA-732: admin credentials come from the environment (E2E_ADMIN_USERNAME / E2E_ADMIN_PASSWORD),
-// never a literal. The content-role login below is a separate, pre-existing path with no env var
-// provisioned yet — left as-is (out of AA-732 scope); 'wrongpass' is a negative-test value.
+// never a literal. The 'content' role user no longer exists (login → 401), so its tests are
+// skipped below; 'wrongpass' stays as a negative-test value.
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
@@ -14,14 +14,6 @@ async function loginAsAdmin(page) {
   await page.fill('input[name="password"], input[type="password"]', adminPassword());
   await page.click('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")');
   await page.waitForURL(/\/(upload|dashboard)/, { timeout: 5000 });
-}
-
-async function loginAsContent(page) {
-  await page.goto('/login');
-  await page.fill('input[name="username"], input[type="text"]', 'content');
-  await page.fill('input[name="password"], input[type="password"]', 'content2026');
-  await page.click('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")');
-  await page.waitForURL(/\/upload/, { timeout: 5000 });
 }
 
 // ── Test Suite 1: Authentication ──────────────────────────────
@@ -38,10 +30,8 @@ test.describe('Authentication', () => {
     await expect(page).toHaveURL(/\/(upload|dashboard)/);
   });
 
-  test('content login → redirects to /upload', async ({ page }) => {
-    await loginAsContent(page);
-    await expect(page).toHaveURL(/\/upload/);
-  });
+  // AA-732: the 'content' role user was removed (login → 401) — skip until a real content account.
+  test.skip('content login → redirects to /upload', async () => {});
 
   test('invalid credentials → shows error', async ({ page }) => {
     await page.goto('/login');
@@ -52,12 +42,8 @@ test.describe('Authentication', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test('content role cannot access /dashboard', async ({ page }) => {
-    await loginAsContent(page);
-    await page.goto('/dashboard');
-    // Should redirect away from dashboard
-    await expect(page).not.toHaveURL(/\/dashboard/);
-  });
+  // AA-732: 'content' role user removed (login → 401) — skip until a real content account exists.
+  test.skip('content role cannot access /dashboard', async () => {});
 
   test('logout clears session → redirect to login', async ({ page }) => {
     await loginAsAdmin(page);

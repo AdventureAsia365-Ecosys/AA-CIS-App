@@ -217,13 +217,12 @@ jobs:
           artifact-name: sbom-${{ github.sha }}.cdx.json
 
   # AA-732 — frontend ESLint (UI-kit conventions). New, NON-required job: it is not one of the 5
-  # existing required checks and does not rename them. Runs the same `npm run lint` the kit rules
-  # live in. NOTE: the frontend lint currently reports pre-existing React-Compiler errors unrelated
-  # to AA-732 (set-state-in-effect / purity in legacy pages); until those are addressed separately
-  # this job can be red. It is intentionally not a required check.
+  # existing required checks and does not rename them.
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
+    # 74 pre-existing errors in legacy pages; fixed under AA-601, then remove continue-on-error.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -236,6 +235,18 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Run ESLint
+      - name: Run ESLint (write summary to the job summary)
         working-directory: frontend
-        run: npm run lint 
+        run: |
+          set +e
+          npm run lint 2>&1 | tee lint-output.txt
+          STATUS=${PIPESTATUS[0]}
+          SUMMARY_LINE=$(grep -E "problems \(" lint-output.txt | tail -n1)
+          {
+            echo "### Frontend ESLint"
+            echo ""
+            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
+            echo ""
+            echo "_Non-required job; 74 pre-existing legacy errors tracked under AA-601._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $STATUS 

@@ -15,7 +15,6 @@ permissions:
   contents: read
   pull-requests: write
   deployments: read
-  statuses: write
 
 concurrency:
   # One run per deployment target / manual dispatch; a newer deployment cancels an in-flight run.
@@ -33,7 +32,7 @@ jobs:
        github.event.deployment_status.environment == 'Preview')
     env:
       # Preview is behind Vercel SSO — the bypass secret lets Playwright reach it; the spec only
-      # sends the header when the secret is present.
+      # sends the header to the BASE_URL origin, and only when the secret is present.
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
       E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
@@ -69,15 +68,16 @@ jobs:
           retention-days: 14
 
       # ── Find the PR for the deployed sha and post/update ONE comment ──
+      # All values reach `run:` through env (never `${{ }}` interpolation inside the script).
       - name: Find PR for the deployed sha
         if: always()
         id: findpr
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.deployment_status.deployment.sha || github.sha }}
         run: |
-          SHA="${{ github.event.deployment_status.deployment.sha || github.sha }}"
-          PR=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" \
-                 --jq '.[0].number // empty' 2>/dev/null || true)
+          PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "Found PR: ${PR:-none}"
 
@@ -85,23 +85,25 @@ jobs:
         if: always() && steps.findpr.outputs.pr != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           PR: ${{ steps.findpr.outputs.pr }}
           OUTCOME: ${{ job.status }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          BASE_URL: ${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
         run: |
           MARKER="<!-- ui-smoke-report -->"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
           if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
           BODY=$(printf '%s\n### UI smoke — %s\n\nPreview: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
                    "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
           # Find an existing marker comment and edit it in place; otherwise create one.
-          EXISTING=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" \
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
                        --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
           if [ -n "$EXISTING" ]; then
-            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$EXISTING" \
-              -f body="$BODY" >/dev/null
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
             echo "Updated comment $EXISTING"
           else
-            gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" \
-              -f body="$BODY" >/dev/null
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
             echo "Created a new comment"
           fi
