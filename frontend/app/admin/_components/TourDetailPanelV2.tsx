@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
 import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
+import { formatDate } from "../../_kit";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ function relTime(iso: string | null): string {
   if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatDate(iso);
 }
 
 function modelShort(m: string | null | undefined): string {

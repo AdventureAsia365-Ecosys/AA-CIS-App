@@ -4,9 +4,10 @@
 // API: /admin/decisions/{summary,log,questions/{key}}. Jev spend also appears in External Spend.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, RefreshCw, Scale } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { A, alpha, serif, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { A, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { PageHeader, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ const usd = (v: number | null | undefined) => (v == null ? "—" : v < 0.01 ? `$
 // (the "Acted on = NaN" bug). The backend now zero-fills every aggregate; this is the FE guard so
 // one bad row can never poison a reduce again.
 const n0 = (v: number | null | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const when = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
+const when = (s: string | null) => formatDateTime(s);
 const num = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toFixed(d));
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
 
@@ -313,20 +314,23 @@ export default function DecisionsPage() {
     <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
         {/* Sticky header + tabs */}
         <div style={{ position: "sticky", top: 0, zIndex: 5, background: A.bg, padding: "22px 32px 0", borderBottom: `1px solid ${A.line}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 13), color: A.accent, display: "grid", placeItems: "center" }}><Scale size={18} /></div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 600, color: A.ink, margin: 0 }}>Jev Decisions</h1>
-              <div style={{ fontSize: 12, color: A.muted, marginTop: 2 }}>
+          <PageHeader
+            title="Jev Decisions"
+            description={
+              <>
                 Which pipeline stage asks Jev which question, whether the answer is used, and what it costs.
                 New here? Open <a onClick={() => setTab("guide")} style={{ color: A.accentDeep, fontWeight: 600, cursor: "pointer" }}>Guide</a>.
-              </div>
-            </div>
-            <select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title="Time window for all numbers on this page">
-              <option value={1}>Last 24 h</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
-            </select>
-            <Btn onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> Refresh</Btn>
-          </div>
+              </>
+            }
+            actions={
+              <>
+                <select value={days} onChange={e => { setDays(Number(e.target.value)); setVPage(0); }} style={input} title="Time window for all numbers on this page">
+                  <option value={1}>Last 24 h</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+                </select>
+                <Btn onClick={() => { loadSummary(); if (tab === "verdicts") loadLog(); }}><RefreshCw size={13} /> Refresh</Btn>
+              </>
+            }
+          />
           <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
             {tabBtn("overview", "Overview")}{tabBtn("questions", `Questions (${qs.length})`)}{tabBtn("verdicts", "Verdicts")}{tabBtn("guide", "Guide")}
           </div>

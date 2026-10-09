@@ -9,6 +9,7 @@ import {
   A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
 } from "../_components/adminUi";
+import { PageHeader, formatDate, useIsPhone } from "../../_kit";
 import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
@@ -159,8 +160,7 @@ function scoreColor(s: number | null | undefined): string {
 }
 
 function relDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDate(iso);
 }
 
 function statusBadge(status: string) {
@@ -805,6 +805,7 @@ function MasterContentPageInner() {
   const [detailTourName, setDetailTourName] = useState("");
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [compareOpen, setCompareOpen]   = useState(false);
+  const isPhone = useIsPhone();
   const [expandedTours, setExpandedTours] = useState<Set<string>>(new Set());
   const [tourVersions, setTourVersions] = useState<Record<string, TourVersion[]>>({});
   const [versionLoading, setVersionLoading] = useState<Record<string, boolean>>({});
@@ -1090,20 +1091,16 @@ function MasterContentPageInner() {
 
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
         <div style={{ flexShrink: 0, padding: "20px 32px 16px", background: A.bg, borderBottom: `1px solid ${A.line}` }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div>
-              <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
-                Master Content
-              </div>
-              <div style={{ fontSize: 12, color: A.muted, marginTop: 2 }}>
-                aa_internal tenant · {AA_INTERNAL_ID.slice(0, 8)}…
-              </div>
-            </div>
-            <Btn variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
-              <RefreshCw size={13} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
-              {refreshing ? "Refreshing…" : "Refresh"}
-            </Btn>
-          </div>
+          <PageHeader
+            title="Master Content"
+            description={`aa_internal tenant · ${AA_INTERNAL_ID.slice(0, 8)}…`}
+            actions={
+              <Btn variant="secondary" size="sm" onClick={refresh} disabled={refreshing}>
+                <RefreshCw size={13} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </Btn>
+            }
+          />
 
           {error && (
             <div style={{ padding: "10px 14px", background: A.redSoft, color: A.red, borderRadius: 7, fontSize: 13, marginBottom: 12 }}>
@@ -1263,6 +1260,102 @@ function MasterContentPageInner() {
                 {search || countryFilter || scoreFilter || versionFilter
                   ? "No tours match your filters"
                   : "No rewritten tours found"}
+              </div>
+            ) : isPhone ? (
+              // AA-752 — phone card list (< 768px). Each tour becomes a card (name as title, the
+              // rest as label/value rows) with the same View / Versions / status / trash actions as
+              // the table row, so the wide table never forces page-level horizontal scroll.
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12 }}>
+                {paginated.map((t, i) => {
+                  const absIdx = (page - 1) * pageSize + i;
+                  const isExpanded = t.tour_id ? expandedTours.has(t.tour_id) : false;
+                  const isSelected = t.tour_id ? selectedIds.has(t.tour_id) : false;
+                  return (
+                    <div
+                      key={t.version_id}
+                      style={{
+                        border: `1px solid ${isSelected ? A.accentBorder : A.line}`,
+                        borderRadius: 12,
+                        background: t.master_status === "trashed" ? A.redTint : A.card,
+                        padding: "12px 14px",
+                        opacity: t.master_status === "trashed" ? 0.75 : 1,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                        {t.tour_id && (
+                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(t.tour_id!)} style={{ accentColor: A.gold, marginTop: 3 }} />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, color: A.ink, fontFamily: serif, fontSize: 14 }}>{t.tour_name}</div>
+                          <div style={{ fontSize: 11, color: A.muted2, marginTop: 2 }}>#{absIdx + 1} · {t.country || "—"}</div>
+                        </div>
+                        <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 16, color: scoreColor(t.quality_score), flexShrink: 0 }}>
+                          {t.quality_score != null ? t.quality_score.toFixed(1) : "—"}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                        {t.version_number != null
+                          ? <Badge color="blue">v{t.version_number}</Badge>
+                          : <span style={{ color: A.muted2, fontSize: 12 }}>—</span>}
+                        {(t.pending_review_count ?? 0) > 0 && t.tour_id && (
+                          <a href={`/admin/review?tour_id=${t.tour_id}`}
+                            title={`${t.pending_review_count} failed version(s) pending in Review Queue`}
+                            style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20, background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)", textDecoration: "none", whiteSpace: "nowrap" }}>
+                            ⚠ {t.pending_review_count} failed
+                          </a>
+                        )}
+                        {statusBadge(t.status)}
+                        {masterStatusBadge(t.master_status)}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+                        <button
+                          onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
+                          style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
+                        >View</button>
+                        {t.tour_id && t.master_status !== "trashed" && (
+                          <button onClick={() => toggleExpand(t.tour_id!)}
+                            style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}>
+                            {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
+                          </button>
+                        )}
+                        {t.tour_id && t.master_status === "active" && (
+                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")} disabled={toggling === t.tour_id} title="Set to inactive"
+                            style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}>
+                            {toggling === t.tour_id ? "…" : "Set Inactive"}
+                          </button>
+                        )}
+                        {t.tour_id && t.master_status === "inactive" && (
+                          <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")} disabled={toggling === t.tour_id} title="Set to active"
+                            style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}>
+                            {toggling === t.tour_id ? "…" : "Set Active"}
+                          </button>
+                        )}
+                        {t.tour_id && t.master_status !== "trashed" && (
+                          <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title="Move to trash"
+                            style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}>
+                            <Trash2 size={11} />{trashing === t.tour_id ? "…" : "Trash"}
+                          </button>
+                        )}
+                        {t.tour_id && t.master_status === "trashed" && (
+                          <button onClick={() => restoreMaster(t.tour_id!, t.tour_name)} disabled={restoring === t.tour_id} title="Restore from trash (→ inactive)"
+                            style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}>
+                            <RotateCcw size={11} />{restoring === t.tour_id ? "…" : "Restore"}
+                          </button>
+                        )}
+                      </div>
+
+                      {isExpanded && t.tour_id && (
+                        <div style={{ marginTop: 10, fontSize: 12 }}>
+                          <a href={`/admin/jobs?tour_id=${t.tour_id}`} style={{ color: A.accent }}>
+                            Jobs for this tour (atomize, tenant rewrites) →
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse" }}>

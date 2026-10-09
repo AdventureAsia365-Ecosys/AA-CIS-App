@@ -29,6 +29,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
+import { PageHeader, formatDateTime } from "../../_kit";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
 
 // ── Types — match GET /admin/a4/review-log, /admin/a4/platform-stats ───────────────────────────
@@ -92,7 +93,7 @@ interface GateTelemetry {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(s: string | null): string {
-  return s ? new Date(s).toLocaleString() : "—";
+  return formatDateTime(s);
 }
 
 // ── Sort — same mechanism as Content Trace (06), AA-572/575 ─────────────────────
@@ -627,14 +628,10 @@ export default function PlatformStatsPage() {
   return (
     <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
-          <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
-            07 · Platform Stats
-          </h1>
-          <div style={{ fontSize: 12, color: A.muted, marginTop: 4, maxWidth: 760 }}>
-            Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step.
-            Review Log is read-only pattern review; the aggregate below is a real platform-wide
-            backend rollup, not a per-page-load client-side count.
-          </div>
+          <PageHeader
+            title="07 · Platform Stats"
+            description="Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step. Review Log is read-only pattern review; the aggregate below is a real platform-wide backend rollup, not a per-page-load client-side count."
+          />
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "auto", padding: "20px 32px 32px" }}>

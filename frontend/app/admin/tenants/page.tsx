@@ -14,6 +14,7 @@ import {
   A, serif, mono, sans,
   Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
 } from "../_components/adminUi";
+import { PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -290,8 +291,8 @@ function StatusChip({ status }: { status: string }) {
 function EmptyRow({ cols, msg }: { cols: number; msg: string }) {
   return <tr><td colSpan={cols} style={{ padding: "20px 0", textAlign: "center", fontSize: 12, color: A.muted }}>{msg}</td></tr>;
 }
-function fmtD(s: string) { return new Date(s).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
-function fmtDT(s: string) { return new Date(s).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+function fmtD(s: string) { return formatDate(s); }
+function fmtDT(s: string) { return formatDateTime(s); }
 
 function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursView?: string }) {
   const isPublished = toursView === "published";
@@ -864,7 +865,7 @@ function AuditTabContent({ tenantId }: { tenantId: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {rows.map((e, i) => (
         <div key={i} style={{ display: "flex", gap: 12, padding: "6px 0", borderBottom: `1px solid ${A.line2}`, fontSize: 12 }}>
-          <span style={{ color: A.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>{new Date(e.created_at).toLocaleString()}</span>
+          <span style={{ color: A.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>{formatDateTime(e.created_at)}</span>
           <span style={{ fontWeight: 600, color: A.ink }}>{e.action}</span>
           <span style={{ color: A.muted, marginLeft: "auto", fontFamily: mono, fontSize: 11 }}>{e.actor}</span>
         </div>
@@ -899,11 +900,12 @@ function SettingsTabContent({ summary, apiUsage }: {
 
 // ─── Tenant Row ───────────────────────────────────────────────────────────────
 
-function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false }: {
+function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false, isPhone = false }: {
   tenant: Tenant;
   onRotateKey: (t: Tenant) => void;
   onDeleted: (id: string) => void;
   initialExpanded?: boolean;
+  isPhone?: boolean;
 }) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [toggling, setToggling] = useState(false);
@@ -939,6 +941,74 @@ function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false }: 
     source_active: 0, source_superseded: 0, source_trashed: 0,
     master_active: 0, master_inactive: 0, master_trashed: 0,
   };
+
+  if (isPhone) {
+    // AA-752 — phone card (< 768px): the same tenant data as the table row, laid out as a card so
+    // the wide table does not force page-level horizontal scroll. Rotate key / delete / expand
+    // detail are all kept.
+    return (
+      <div style={{ borderBottom: `1px solid ${A.line2}`, padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: A.ink, fontSize: 14 }}>{tenant.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+              <code style={{ fontSize: 10.5, color: A.muted, fontFamily: mono }}>{tenant.slug}</code>
+              {tenant.country && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10.5, color: A.muted2 }}>
+                  <Globe size={10} />{tenant.country}
+                </span>
+              )}
+            </div>
+          </div>
+          <button onClick={toggle} disabled={toggling} style={{
+            padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer", flexShrink: 0,
+            fontSize: 11, fontWeight: 700,
+            background: isActive ? A.greenSoft : A.redSoft, color: isActive ? A.green : A.red,
+          }}>
+            {toggling ? "…" : isActive ? "Active" : "Inactive"}
+          </button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <Badge color={PLAN_BADGE[tenant.plan_tier] ?? "gray"}>{tenant.plan_tier}</Badge>
+          <span style={{ fontSize: 11, color: A.muted2 }}>
+            {tenant.posts_per_week != null ? `${tenant.posts_per_week} posts/week` : "—"}
+          </span>
+        </div>
+
+        <div style={{ marginTop: 10 }}><LifecycleBar lc={lc} /></div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 10, fontSize: 12 }}>
+          <span style={{ color: A.muted }}>
+            <span style={{ fontWeight: 600, color: A.ink }}>{lc.source_active}</span> source active ·{" "}
+            <span style={{ color: A.green }}>{tenant.this_month.api_calls_used.toLocaleString()} calls</span>
+          </span>
+          <span style={{ color: A.muted }}>{tenant.this_month.quota_tours_pct}% tour quota</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+          <button onClick={() => onRotateKey(tenant)} title="Rotate API key"
+            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <Key size={12} /> Key
+          </button>
+          <button onClick={deleteTenant} disabled={deleting} title="Delete tenant"
+            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.red, display: "flex", alignItems: "center" }}>
+            {deleting ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+          </button>
+          <button onClick={() => setExpanded(!expanded)}
+            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />} Detail
+          </button>
+        </div>
+
+        {expanded && (
+          <div style={{ marginTop: 12 }}>
+            <TenantDetail tenantId={tenant.tenant_id} planTier={tenant.plan_tier} />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -1044,6 +1114,7 @@ function TenantsPageInner() {
   // inline 360 panel. Read once (no setState-in-effect).
   const deepTenant = useSearchParams().get("tenant");
   const [tenants, setTenants]       = useState<Tenant[]>([]);
+  const isPhone = useIsPhone();
   const [loading, setLoading]       = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newKey, setNewKey]         = useState<NewApiKey | null>(null);
@@ -1087,20 +1158,16 @@ function TenantsPageInner() {
   return (
     <>
         <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-            <div>
-              <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
-                Tenants
-              </h1>
-              <p style={{ fontSize: 13, color: A.muted, margin: 0 }}>
-                {totalActive} active · {totalSrcActive.toLocaleString()} source tours · {totalMstrActive.toLocaleString()} published
-              </p>
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <Btn variant="secondary" onClick={load}><RefreshCw size={13} /> Refresh</Btn>
-              <Btn variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> New Tenant</Btn>
-            </div>
-          </div>
+          <PageHeader
+            title="Tenants"
+            description={`${totalActive} active · ${totalSrcActive.toLocaleString()} source tours · ${totalMstrActive.toLocaleString()} published`}
+            actions={
+              <>
+                <Btn variant="secondary" onClick={load}><RefreshCw size={13} /> Refresh</Btn>
+                <Btn variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> New Tenant</Btn>
+              </>
+            }
+          />
 
           {error && (
             <div style={{ marginBottom: 16, padding: "10px 14px", background: A.redSoft, border: `1px solid ${A.redBorder}`, borderRadius: 8, fontSize: 13, color: A.red, display: "flex", alignItems: "center", gap: 8 }}>
@@ -1142,7 +1209,18 @@ function TenantsPageInner() {
 
           {/* Table */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
-            {loading ? <LoadingScreen msg="Loading tenants…" /> : (
+            {loading ? <LoadingScreen msg="Loading tenants…" /> : isPhone ? (
+              // AA-752 — phone card list (< 768px) instead of the wide table.
+              tenants.length === 0 ? (
+                <div style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants yet</div>
+              ) : (
+                <div>
+                  {tenants.map(t => (
+                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onDeleted={handleDeleted} initialExpanded={t.tenant_id === deepTenant} isPhone />
+                  ))}
+                </div>
+              )
+            ) : (
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>

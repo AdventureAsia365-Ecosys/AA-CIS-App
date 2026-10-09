@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { A, mono, Card, SLabel, Badge, Btn, TH, TD } from "../_components/adminUi";
+import { formatDateTime } from "../../_kit";
 
 interface BudgetRow {
   provider: string;
@@ -180,7 +181,7 @@ export default function BudgetsPanel() {
                     </td>
                     <td style={{ ...TD, color: A.muted, fontSize: 11.5 }}>
                       {r.updated_by ?? "—"}
-                      {r.updated_at && <div>{new Date(r.updated_at).toLocaleString()}</div>}
+                      {r.updated_at && <div>{formatDateTime(r.updated_at)}</div>}
                     </td>
                     <td style={{ ...TD, whiteSpace: "nowrap" }}>
                       <Btn size="sm" disabled={!dirty || saving === key} onClick={() => save(r.provider, r.scope, d)}>

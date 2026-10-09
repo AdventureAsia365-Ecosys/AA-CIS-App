@@ -1,6 +1,8 @@
 // app/admin/jobs/jobsShared.ts — types and small helpers shared by the Jobs page, its drawer and the
 // worker health panel (AA-650 / AA-687). API: /admin/job-runner/* via /api/admin proxy.
 
+import { formatDateTime } from "../../_kit";
+
 export interface Job {
   id: string;
   kind: string;
@@ -61,8 +63,7 @@ export const STATUS_COLOR: Record<string, "red" | "green" | "amber" | "gray" | "
 };
 
 export function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return formatDateTime(iso);
 }
 
 export function fmtSeconds(s: number): string {

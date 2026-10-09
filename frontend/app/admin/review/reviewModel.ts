@@ -4,6 +4,7 @@
 // page keeps identical behaviour; only the data/table layer changed.
 
 import { A } from "../_components/adminUi";
+import { formatDate } from "../../_kit";
 
 // ── Field model ───────────────────────────────────────────────────────────────
 // Mirrors backend _ALLOWED_GC_FIELDS (11). og_tags is read-only in v1 (data empty).
@@ -184,7 +185,7 @@ export function mapRow(r: any): ReviewItem {
     name: r.aa_name || r.src_name || "Untitled tour",
     country: r.country || "Unknown",
     score: typeof r.score_overall === "number" ? r.score_overall : parseFloat(r.score_overall || "0"),
-    date: r.created_at ? new Date(r.created_at).toLocaleDateString() : "",
+    date: r.created_at ? formatDate(r.created_at) : "",
     created_at_ms: r.created_at ? new Date(r.created_at).getTime() : 0,
     human_edited: !!r.human_edited,
     edited_at: r.edited_at || null,

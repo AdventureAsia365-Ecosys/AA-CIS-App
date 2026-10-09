@@ -11,6 +11,7 @@ import {
   Card, SLabel, Btn, TH, TD, Badge,
 } from "../_components/adminUi";
 import { Pagination } from "../_components/Pagination";
+import { PageHeader, formatDate } from "../../_kit";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -26,8 +27,7 @@ function relativeTime(isoStr: string | null | undefined): string {
   if (diff < 60) return "Just now";
   if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
-  const d = new Date(isoStr);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDate(isoStr);
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1610,19 +1610,20 @@ function TourContentTab() {
 export default function UploadPage() {
   return (
         <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "28px 36px 56px", overflowY: "auto" }}>
-          <div style={{ marginBottom: 20 }}>
-            <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink,
-              margin: "0 0 6px", letterSpacing: "-0.01em" }}>Upload (S0)</h1>
-            <p style={{ fontSize: 13, color: A.muted, margin: "0 0 4px" }}>
-              Tour Content ingestion
-            </p>
-            <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
-              Manage brand identity settings →{" "}
-              <a href="/admin/settings?tab=brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
-                Brand Identity page
-              </a>
-            </p>
-          </div>
+          <PageHeader
+            title="Upload (S0)"
+            description={
+              <>
+                <span style={{ display: "block", marginBottom: 4 }}>Tour Content ingestion</span>
+                <span style={{ display: "block", fontSize: 12, color: A.muted2 }}>
+                  Manage brand identity settings →{" "}
+                  <a href="/admin/settings?tab=brand" style={{ color: A.gold, textDecoration: "none", fontWeight: 500 }}>
+                    Brand Identity page
+                  </a>
+                </span>
+              </>
+            }
+          />
           <TourContentTab />
         </main>
   );

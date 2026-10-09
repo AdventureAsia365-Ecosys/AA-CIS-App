@@ -7,8 +7,9 @@
 // tours are re-extracted; a photo is compared only with the places on its own tour's itinerary.
 
 import { useCallback, useEffect, useState } from "react";
-import { Image as ImageIcon, RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
+import { RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { A, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
+import { PageHeader, formatDateTime } from "../../_kit";
 
 type CountryRow = {
   country: string; photos: number; with_file: number; with_tour: number; with_destination: number;
@@ -41,7 +42,7 @@ const TABS = [
   { key: "folders", label: "Folders" }, { key: "gallery", label: "Gallery" },
 ];
 
-const fmtTime = (s: string | null) => s ? new Date(s).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" }) : "—";
+const fmtTime = (s: string | null) => formatDateTime(s);
 const fmtMB = (b: number) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`;
 const pct = (a: number, b: number) => b ? Math.round((a / b) * 100) : 0;
 
@@ -197,31 +198,27 @@ export default function PhotosPage() {
 
   return (
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
-            <ImageIcon size={18} />
-          </div>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <h1 style={{ fontFamily: serif, fontSize: 24, margin: 0, color: A.ink }}>Photos</h1>
-            <div style={{ fontSize: 12.5, color: A.muted }}>
-              AA marketing photos for the whole system — Contents board (Google Drive) → S3, matched to tours and places.
-              Read by the TripPlanner, portal and AA-Booking through the photo views.
-            </div>
-          </div>
-          <select value={country} onChange={e => { setCountry(e.target.value); setOffset(0); }} style={selectStyle}>
-            <option value="">All countries</option>
-            {countries.map(c => <option key={c.country} value={c.country}>{c.country}</option>)}
-          </select>
-          <label style={{ fontSize: 12.5, color: A.body, display: "flex", gap: 6, alignItems: "center" }}
-                 title="Only after this country's tours are rewritten, atomized and their places re-extracted">
-            <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
-            Match places + covers
-          </label>
-          <Btn onClick={refresh} size="sm"><RefreshCw size={13} /> Refresh</Btn>
-          <Btn onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
-            {jobRunning ? "Sync running…" : country ? `Sync ${country}` : "Sync all"}
-          </Btn>
-        </div>
+        <PageHeader
+          title="Photos"
+          description="AA marketing photos for the whole system — Contents board (Google Drive) → S3, matched to tours and places. Read by the TripPlanner, portal and AA-Booking through the photo views."
+          actions={
+            <>
+              <select value={country} onChange={e => { setCountry(e.target.value); setOffset(0); }} style={selectStyle}>
+                <option value="">All countries</option>
+                {countries.map(c => <option key={c.country} value={c.country}>{c.country}</option>)}
+              </select>
+              <label style={{ fontSize: 12.5, color: A.body, display: "flex", gap: 6, alignItems: "center" }}
+                     title="Only after this country's tours are rewritten, atomized and their places re-extracted">
+                <input type="checkbox" checked={matchPlaces} onChange={e => setMatchPlaces(e.target.checked)} />
+                Match places + covers
+              </label>
+              <Btn onClick={refresh} size="sm"><RefreshCw size={13} /> Refresh</Btn>
+              <Btn onClick={syncNow} variant="primary" size="sm" disabled={busy === "sync" || !!jobRunning}>
+                {jobRunning ? "Sync running…" : country ? `Sync ${country}` : "Sync all"}
+              </Btn>
+            </>
+          }
+        />
 
         {error && (
           <Card style={{ marginBottom: 16, borderColor: A.redBorder, background: A.redTint }}>

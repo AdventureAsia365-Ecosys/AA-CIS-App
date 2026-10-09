@@ -60,8 +60,9 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, Radio } from "lucide-react";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
-import { A, serif, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
+import { A, mono, sans, Card, Badge, LoadingScreen } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState } from "../_components/auditPanels";
+import { PageHeader, formatDateTime } from "../../_kit";
 
 // ── Types — match GET /api/admin/a4/content-log's response (AA-568 extension) ──────────────────
 
@@ -274,14 +275,16 @@ export default function ContentTracePage() {
   return (
     <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
-          <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
-            06 · Content Trace
-          </h1>
-          <div style={{ fontSize: 12, color: A.muted, marginTop: 4, maxWidth: 760 }}>
-            Every content piece written across ALL tenants, one row per write attempt — full
-            lineage, all 3 generated angles, gate detail, and retry reasoning on click. Admin-only
-            lesson log, not the tenant&apos;s own view of their content.
-          </div>
+          <PageHeader
+            title="06 · Content Trace"
+            description={
+              <>
+                Every content piece written across ALL tenants, one row per write attempt — full
+                lineage, all 3 generated angles, gate detail, and retry reasoning on click. Admin-only
+                lesson log, not the tenant&apos;s own view of their content.
+              </>
+            }
+          />
 
           {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never
               a placeholder that must be replaced before the table shows anything). */}
@@ -485,7 +488,7 @@ function ContentTraceTable({ rows, expandedId, sort, onSort, onToggle, onForceUn
                       <Badge color="amber">Not yet</Badge>
                     ) : <Badge color="gray">No</Badge>}
                   </td>
-                  <td style={rowTd}>{new Date(r.created_at).toLocaleString()}</td>
+                  <td style={rowTd}>{formatDateTime(r.created_at)}</td>
                 </tr>
                 {expanded && (
                   <tr>
@@ -653,7 +656,7 @@ function ContentTraceAccordion({ row: p, onForceUnpublish, unpublishingId }: {
           <a href={p.publish_external_url} target="_blank" rel="noreferrer" style={{ color: A.gold }}>View published post ↗</a>
         )}
         {p.publish_published_at && (
-          <span style={{ fontSize: 11.5, color: A.muted2 }}>published {new Date(p.publish_published_at).toLocaleString()}</span>
+          <span style={{ fontSize: 11.5, color: A.muted2 }}>published {formatDateTime(p.publish_published_at)}</span>
         )}
         {/* AA-560 — moved here from the deleted a4-oversight page's own Publish Log section, same
             confirm-then-call shape. Only a published row with a real publish_id can be

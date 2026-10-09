@@ -10,9 +10,10 @@ import {
 } from "recharts";
 import BudgetsPanel from "./BudgetsPanel";
 import {
-  A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
+  A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
 } from "../_components/adminUi";
+import { PageHeader, formatDate, formatDateTime } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -267,7 +268,7 @@ function StageLeaf({ b }: { b: Branch }) {
       {b.fallback_count > 0 && <Badge color="amber">{Math.round(fbPct * 100)}% fb</Badge>}
       {b.truncated_count > 0 && <Badge color="red">{b.truncated_count} trunc</Badge>}
       <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
-        {b.last_call_at ? new Date(b.last_call_at).toLocaleString() : "—"}
+        {formatDateTime(b.last_call_at)}
       </span>
     </div>
   );
@@ -428,7 +429,7 @@ function FallbackModal({ tenantId, tenantLabel, rangeQs, rangeLabel, onClose }: 
               <tbody>
                 {calls.map(c => (
                   <tr key={c.id}>
-                    <td style={{ ...TD, fontSize: 12, color: A.muted }}>{c.created_at ? new Date(c.created_at).toLocaleString() : "—"}</td>
+                    <td style={{ ...TD, fontSize: 12, color: A.muted }}>{formatDateTime(c.created_at)}</td>
                     <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.stage}</td>
                     <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{c.model}</td>
                     <td style={{ ...TD }}><AcctDot account={acctKey({ account: c.account ?? "unknown", provider: c.provider ?? "" })} /></td>
@@ -659,29 +660,26 @@ export default function ExternalSpendPage() {
 
   return (
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
-            <Wallet size={18} />
-          </div>
-          <div>
-            <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>External Spend</h1>
-            <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>Real LLM + DataForSEO cost — by tenant, account, model, stage</div>
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {DAY_OPTIONS.map(d => (
-              <Btn key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
-                   onClick={() => { setCustom(null); setDays(d); }}>{d} days</Btn>
-            ))}
-            <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
-            <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label="From (UTC)"
-                   style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
-            <span style={{ fontSize: 12, color: A.muted }}>→</span>
-            <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label="To (UTC, inclusive; empty = today)"
-                   style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
-            <Btn size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
-                 disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>Apply</Btn>
-          </div>
-        </div>
+        <PageHeader
+          title="External Spend"
+          description="Real LLM + DataForSEO cost — by tenant, account, model, stage"
+          actions={
+            <>
+              {DAY_OPTIONS.map(d => (
+                <Btn key={d} size="sm" variant={!custom && days === d ? "primary" : "secondary"}
+                     onClick={() => { setCustom(null); setDays(d); }}>{d} days</Btn>
+              ))}
+              <span style={{ width: 1, height: 20, background: A.line, margin: "0 4px" }} />
+              <input type="date" value={draftStart} onChange={e => setDraftStart(e.target.value)} aria-label="From (UTC)"
+                     style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
+              <span style={{ fontSize: 12, color: A.muted }}>→</span>
+              <input type="date" value={draftEnd} onChange={e => setDraftEnd(e.target.value)} aria-label="To (UTC, inclusive; empty = today)"
+                     style={{ ...DATE_INPUT, borderColor: custom ? A.ink3 : A.line }} />
+              <Btn size="sm" variant={custom ? "primary" : "secondary"} onClick={applyCustom}
+                   disabled={!draftStart || (!!draftEnd && draftStart > draftEnd)}>Apply</Btn>
+            </>
+          }
+        />
 
         {/* Filters — tenant + account, apply to all tabs */}
         <Card style={{ marginBottom: 16, padding: "12px 16px" }}>
@@ -727,7 +725,7 @@ export default function ExternalSpendPage() {
                 {" "}(threshold {fmtUsd2(dfsBalance.threshold_usd)}). Top up the account to avoid SEO fetch failures (HTTP 402).
                 {dfsBalance.fetched_at && (
                   <span style={{ fontWeight: 400, color: A.muted, marginLeft: 6 }}>
-                    · as of {new Date(dfsBalance.fetched_at).toLocaleString()}
+                    · as of {formatDateTime(dfsBalance.fetched_at)}
                   </span>
                 )}
               </span>
@@ -835,7 +833,7 @@ export default function ExternalSpendPage() {
                         <StatCard
                           label="Bedrock actual (AWS bill)"
                           value={fmtUsd2(costExplorer.bedrock_usd ?? 0)}
-                          sub={costExplorer.fetched_at ? `CE · as of ${new Date(costExplorer.fetched_at).toLocaleString()}` : "CE"}
+                          sub={costExplorer.fetched_at ? `CE · as of ${formatDateTime(costExplorer.fetched_at)}` : "CE"}
                           accent={A.gold}
                         />
                         <StatCard
@@ -973,7 +971,7 @@ export default function ExternalSpendPage() {
                     label="Account balance"
                     value={dfsBalance?.has_data ? fmtUsd2(dfsBalance.balance_usd ?? 0) : "—"}
                     sub={dfsBalance?.has_data && dfsBalance.fetched_at
-                      ? `as of ${new Date(dfsBalance.fetched_at).toLocaleDateString()}`
+                      ? `as of ${formatDate(dfsBalance.fetched_at)}`
                       : "no reading yet"}
                     accent={dfsBalance?.below_threshold ? A.red : A.green}
                   />
