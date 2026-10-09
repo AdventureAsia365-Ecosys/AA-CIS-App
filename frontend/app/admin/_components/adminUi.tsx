@@ -6,8 +6,9 @@
 // for translucent fills — the old hex-alpha-suffix trick breaks with var().
 
 import { Loader2 } from "lucide-react";
-import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
+import { FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
 import { alpha } from "../../_kit/tokens";
+import { Button } from "../../_kit/primitives";
 
 export { alpha };
 
@@ -174,29 +175,26 @@ export function LoadingScreen({ msg = "Loading..." }: { msg?: string }) {
 }
 
 // ── Button ────────────────────────────────────────────────────────────────────
+// AA-752: the brand button lives once in the kit (`_kit/primitives.tsx` `Button`). `Btn` keeps its
+// existing name/signature (used across admin) and delegates, so the gold-pill primary + gold-outline
+// secondary are defined in a single place. `size="sm"` stays non-uppercase (dense table rows).
 export function Btn({ children, onClick, variant = "secondary", size = "md", disabled = false, style = {}, title, ariaLabel }: {
   children: React.ReactNode; onClick?: () => void; title?: string; ariaLabel?: string;
   variant?: "primary" | "secondary" | "danger" | "ghost";
   size?: "sm" | "md" | "lg"; disabled?: boolean; style?: React.CSSProperties;
 }) {
-  const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
-  const fz  = { sm: 11, md: 13, lg: 14 }[size];
-  const base: Record<string, React.CSSProperties> = {
-    primary:   { background: A.accent,  color: "var(--aa-on-accent)",  border: `1px solid ${A.accent}` },
-    secondary: { background: A.card,    color: A.ink3,  border: `1px solid ${A.line}` },
-    danger:    { background: A.redSoft, color: A.red,   border: `1px solid ${A.redBorder}` },
-    ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
-  };
   return (
-    <button onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} style={{
-      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-      padding: pad, borderRadius: BTN_RADIUS, fontSize: fz, fontWeight: 600,
-      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
-      transition: "opacity .15s", fontFamily: sans,
-      // AA-605: brand uppercase only on md/lg primaries; "sm" sits in dense table rows where the
-      // wider uppercase label overflowed (Review Queue actions column).
-      ...base[variant], ...(variant === "primary" && size !== "sm" ? BTN_PRIMARY_TEXT : {}), ...style,
-    }}>{children}</button>
+    <Button
+      onClick={onClick}
+      variant={variant}
+      size={size}
+      disabled={disabled}
+      style={style}
+      title={title}
+      ariaLabel={ariaLabel}
+    >
+      {children}
+    </Button>
   );
 }
 

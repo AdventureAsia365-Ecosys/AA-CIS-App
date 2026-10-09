@@ -73,6 +73,33 @@ export const serif = FONT_DISPLAY;
 export const sans = FONT_SANS;
 export const mono = FONT_MONO;
 
+// ── Date formatting (AA-752) ────────────────────────────────────────────────
+// One date format across the whole admin: en-GB, numeric day, short month, numeric year.
+//   formatDate("2026-10-09T14:05:00Z")     -> "9 Oct 2026"
+//   formatDateTime("2026-10-09T14:05:00Z") -> "9 Oct 2026, 14:05"
+// null / undefined / unparseable input -> "—". Fixed `en-GB` locale (not the runtime locale) so a
+// stored row reads the same for every admin, server-render and client-render alike.
+export function formatDate(input: string | number | Date | null | undefined): string {
+  if (input == null || input === "") return "—";
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+export function formatDateTime(input: string | number | Date | null | undefined): string {
+  if (input == null || input === "") return "—";
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export { BTN_RADIUS, BTN_PRIMARY_TEXT };
 
 // Shared radii/spacing — the app had no scale object before; the kit introduces a small one so

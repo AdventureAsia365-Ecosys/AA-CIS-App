@@ -14,7 +14,76 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { K, RADIUS, sans } from "./tokens";
+import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
+
+// ── Button (AA-752) ───────────────────────────────────────────────────────────
+// The canonical brand button. Variants follow adventure.asia: primary = gold pill (uppercase on
+// md/lg), secondary = gold outline, danger = red soft, ghost = line outline. `size="sm"` stays
+// non-uppercase for dense table rows (AA-605). The admin legacy `Btn` (adminUi.tsx) re-points here.
+export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ButtonSize = "sm" | "md" | "lg";
+
+export function Button({
+  children,
+  onClick,
+  variant = "secondary",
+  size = "md",
+  disabled = false,
+  type = "button",
+  style = {},
+  title,
+  ariaLabel,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  disabled?: boolean;
+  type?: "button" | "submit" | "reset";
+  style?: React.CSSProperties;
+  title?: string;
+  ariaLabel?: string;
+}) {
+  const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
+  const fz = { sm: 11, md: 13, lg: 14 }[size];
+  // secondary is the adventure.asia gold outline (EXPLORE); primary is the gold pill (ENQUIRE).
+  const base: Record<ButtonVariant, React.CSSProperties> = {
+    primary: { background: K.accent, color: "var(--aa-on-accent)", border: `1px solid ${K.accent}` },
+    secondary: { background: "transparent", color: K.accentDeep, border: `1px solid ${K.accentBorder}` },
+    danger: { background: K.dangerSoft, color: K.danger, border: `1px solid ${K.dangerBorder}` },
+    ghost: { background: "transparent", color: K.muted, border: `1px solid ${K.line}` },
+  };
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={ariaLabel}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        padding: pad,
+        borderRadius: BTN_RADIUS,
+        fontSize: fz,
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        transition: "opacity .15s",
+        fontFamily: sans,
+        // Brand uppercase only on md/lg primary + secondary; "sm" sits in dense table rows where
+        // the wider uppercase label overflowed (AA-605).
+        ...base[variant],
+        ...((variant === "primary" || variant === "secondary") && size !== "sm" ? BTN_PRIMARY_TEXT : {}),
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 // ── Tone system ───────────────────────────────────────────────────────────────
 // One tone vocabulary the whole kit shares. Both the admin Badge `color` union and the portal

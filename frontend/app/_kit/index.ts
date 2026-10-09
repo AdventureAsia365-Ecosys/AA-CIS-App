@@ -23,3 +23,4 @@ export { BottomNav } from "./BottomNav";
 export * from "./adminNav";
 export { useSidebarCollapsed } from "./useSidebar";
 export { useAdminIdentity } from "./useAdminIdentity";
+export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./useMediaQuery";

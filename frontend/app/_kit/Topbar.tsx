@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu as MenuIcon } from "lucide-react";
-import { K, sans, serif, alpha } from "./tokens";
+import { K, sans, serif, alpha, formatDateTime } from "./tokens";
 import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
 import { useAdminIdentity } from "./useAdminIdentity";
@@ -222,7 +222,7 @@ function Notifications() {
             <div key={n.id} style={{ padding: "9px 14px", background: n.is_read ? "transparent" : alpha(K.accent, 8), borderBottom: `1px solid ${K.line2}` }}>
               <div style={{ fontSize: 12, color: K.ink, fontWeight: n.is_read ? 400 : 600 }}>{n.title || n.event_type}</div>
               {n.message && <div style={{ fontSize: 11, color: K.muted, marginTop: 2 }}>{n.message}</div>}
-              <div style={{ fontSize: 10, color: K.muted2, marginTop: 2 }}>{new Date(n.created_at).toLocaleString()}</div>
+              <div style={{ fontSize: 10, color: K.muted2, marginTop: 2 }}>{formatDateTime(n.created_at)}</div>
             </div>
           ))}
         </div>
