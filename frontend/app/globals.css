@@ -85,11 +85,16 @@ body {
     height: 100% !important;
     z-index: 1000;
     transform: translateX(-100%);
-    transition: transform 0.22s ease;
+    transition: transform 0.22s ease, visibility 0.22s ease;
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+    /* Closed drawer must not be keyboard-focusable (its nav buttons would otherwise be in the tab
+       order while off-canvas). visibility:hidden takes it out of the tab order; it only applies
+       < 768px, so >= 768px is unaffected. */
+    visibility: hidden;
   }
   .aa-admin-sidebar.aa-admin-sidebar--open {
     transform: translateX(0);
+    visibility: visible;
   }
 
   /* Fixed top-left hamburger, ≥ 40×40 touch target. */
@@ -124,4 +129,16 @@ body {
     padding: 56px 16px 40px !important;
   }
   /* The Social Content split (sub-nav + body) already stacks via its own rule at 980px. */
+
+  /* AA-601 (feedback 1) — the atom-curation inner split (tour list 280px + body) kept a fixed
+     280px first track, so its body column forced ~1136px of page-level horizontal scroll at 390px.
+     Stack it to a single column below 768px; the body's own tables keep their overflow-x wrapper. */
+  .aa-curation-split {
+    grid-template-columns: 1fr !important;
+  }
+  /* KPI / stat-card rows (5- and 6-up on desktop) wrap to 2-up on small screens so their fixed
+     label text does not force page-level overflow. */
+  .aa-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
 }

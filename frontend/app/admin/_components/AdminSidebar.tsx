@@ -153,15 +153,19 @@ export default function AdminSidebar() {
 
   return (
     <>
-      {/* AA-601 — fixed hamburger (shown only < 768px via CSS). Opens the off-canvas drawer. */}
-      <button
-        className="aa-admin-hamburger"
-        aria-label="Open navigation menu"
-        aria-expanded={drawerOpen}
-        onClick={() => setDrawerOpen(true)}
-      >
-        <Menu size={20} />
-      </button>
+      {/* AA-601 — fixed hamburger (shown only < 768px via CSS). Opens the off-canvas drawer. Hidden
+          while the drawer is open (feedback 1) so it no longer sits over the drawer's logo; the
+          drawer closes via a nav click / backdrop click / Escape. */}
+      {!drawerOpen && (
+        <button
+          className="aa-admin-hamburger"
+          aria-label="Open navigation menu"
+          aria-expanded={false}
+          onClick={() => setDrawerOpen(true)}
+        >
+          <Menu size={20} />
+        </button>
+      )}
       {/* Backdrop (shown only < 768px when open). Click closes the drawer. */}
       {drawerOpen && (
         <div className="aa-admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />

@@ -280,7 +280,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
         <>
           {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
               summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
-          <div data-testid="admin-content-ready" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 6 }}>
+          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
@@ -337,7 +337,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
             </Card>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 18, alignItems: "start" }}>
+          <div className="aa-curation-split" style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
             {/* AA-554 B.4/B.5 — sticky (same `position: sticky, top: 0` pattern AA-551 already
                 proved works for the 01-05 section-nav, within this same page's outer scroll
                 container — see that inner-nav below for the identical mechanism) + taller
@@ -1357,7 +1357,7 @@ function AtomCurationDashboard() {
           </div>
 
           {/* Header stat bar — AA-551, AA-550 mục F point 3/4: auto-updates with the filter above. */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+          <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
             {([
               ["Tours", stats?.tour_count],
               ["Atoms", stats?.atom_count],
