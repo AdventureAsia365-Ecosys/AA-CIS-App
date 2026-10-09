@@ -235,6 +235,116 @@ export async function assertMobileLayout(page: Page, label: string): Promise<voi
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
+/** AA-601 part B — assert the admin page actually renders a DARK theme under
+ * `prefers-color-scheme: dark` and a LIGHT theme under light. Bounded + deterministic (no network,
+ * no screenshot diff): it reads the computed background-color of `.aa-admin-main` (fallback: body),
+ * converts to relative luminance (WCAG), and asserts luminance < 0.2 for dark and > 0.8 for light.
+ * The admin follows the emulated color scheme because the layout.tsx restore script resolves
+ * "no stored choice" via matchMedia, and the theme store listens for scheme changes. Resets the
+ * color scheme to light after. */
+export async function assertThemeSwitches(page: Page, label: string): Promise<void> {
+  // Measure under a given emulated scheme after letting the theme store + CSS vars settle.
+  const measure = async (scheme: 'light' | 'dark'): Promise<number> => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.waitForTimeout(300);
+    return page.evaluate(() => {
+      const el = (document.querySelector('.aa-admin-main') as HTMLElement | null) ?? document.body;
+      // Walk up for the first non-transparent background so a transparent main still resolves.
+      let node: HTMLElement | null = el;
+      let bg = '';
+      while (node) {
+        const c = getComputedStyle(node).backgroundColor;
+        if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') { bg = c; break; }
+        node = node.parentElement;
+      }
+      const m = bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) return 1; // no colour read → treat as light (fails the dark assertion loudly)
+      const [r, g, b] = m[1].split(',').slice(0, 3).map((s) => parseInt(s.trim(), 10) / 255);
+      const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    });
+  };
+
+  const darkLum = await measure('dark');
+  expect(
+    darkLum,
+    `${label}: expected a DARK admin background under colorScheme=dark (relative luminance < 0.2) but got ${darkLum.toFixed(3)} — the dark theme did not apply.`,
+  ).toBeLessThan(0.2);
+
+  // AA-601 part B (feedback 2) — regression guard. Still under colorScheme=dark: fail if any
+  // visible element has a background with relative luminance > 0.75 and an area ≥ 2,000 px²,
+  // EXCLUDING the accent/badge surfaces (whose background IS the brand accent / a solid pill — they
+  // are meant to stay bright in both themes). This catches a surface (header, input, panel, tab
+  // strip, table row) that stayed white in dark. Bounded + deterministic — pure DOM read.
+  const offenders = await page.evaluate(() => {
+    const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const lum = (r: number, g: number, b: number) =>
+      0.2126 * lin(r / 255) + 0.7152 * lin(g / 255) + 0.0722 * lin(b / 255);
+    // Resolve the brand accent (gold) in the current theme so we can exclude accent-coloured
+    // surfaces (gold buttons/badges) regardless of the hex.
+    const cs = getComputedStyle(document.documentElement);
+    const accentRaw = cs.getPropertyValue('--aa-accent').trim();
+    const probe = document.createElement('span');
+    probe.style.color = accentRaw || '#DB9628';
+    document.body.appendChild(probe);
+    const accentRgb = getComputedStyle(probe).color;
+    probe.remove();
+    const am = accentRgb.match(/rgba?\(([^)]+)\)/);
+    const accentLum = am
+      ? lum(...(am[1].split(',').slice(0, 3).map((s) => parseInt(s.trim(), 10)) as [number, number, number]))
+      : 0.5;
+
+    const scope = (document.querySelector('.aa-admin-main') as HTMLElement | null) ?? document.body;
+    const out: { tag: string; cls: string; text: string; rgb: string; lum: number; area: number }[] = [];
+    const els = scope.querySelectorAll<HTMLElement>('*');
+    for (const el of Array.from(els)) {
+      const st = getComputedStyle(el);
+      if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') continue;
+      const bg = st.backgroundColor;
+      const m = bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) continue;
+      const parts = m[1].split(',').map((s) => parseFloat(s.trim()));
+      const [r, g, b] = parts;
+      const a = parts.length > 3 ? parts[3] : 1;
+      if (a < 0.5) continue; // translucent overlays are not a solid white surface
+      const L = lum(r, g, b);
+      if (L <= 0.75) continue;
+      // Exclude accent/badge surfaces (their bg ≈ the bright gold accent). If the accent itself is
+      // bright (dark theme uses a lighter gold), skip elements whose bg luminance is close to it.
+      if (Math.abs(L - accentLum) < 0.12) continue;
+      const rect = el.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area < 2000) continue;
+      out.push({
+        tag: el.tagName.toLowerCase(),
+        cls: (el.className && typeof el.className === 'string' ? el.className : '').slice(0, 40),
+        text: (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 40),
+        rgb: bg,
+        lum: Math.round(L * 100) / 100,
+        area: Math.round(area),
+      });
+    }
+    return out;
+  });
+
+  expect(
+    offenders,
+    `${label}: ${offenders.length} bright surface(s) remained light under colorScheme=dark (bg luminance > 0.75, area ≥ 2000px², not the accent). Offenders:\n` +
+      offenders
+        .map((o) => `  <${o.tag} class="${o.cls}"> lum=${o.lum} area=${o.area} rgb=${o.rgb} text="${o.text}"`)
+        .join('\n'),
+  ).toEqual([]);
+
+  const lightLum = await measure('light');
+  expect(
+    lightLum,
+    `${label}: expected a LIGHT admin background under colorScheme=light (relative luminance > 0.8) but got ${lightLum.toFixed(3)} — the light theme did not apply.`,
+  ).toBeGreaterThan(0.8);
+
+  await page.emulateMedia({ colorScheme: 'light' }).catch(() => {});
+}
+
+
 /** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the
  * given (already-loaded, already-checked) page.
  *

@@ -252,7 +252,7 @@ export default function OverviewPage() {
         <header
           style={{
             height: 56,
-            background: "#fff",
+            background: A.card,
             borderBottom: `1px solid ${K.line}`,
             display: "flex",
             alignItems: "center",

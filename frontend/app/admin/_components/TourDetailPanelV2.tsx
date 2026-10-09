@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { A, serif, sans, mono, Badge } from "./adminUi";
+import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
       background: type === "success" ? A.green : A.red,
-      color: "#fff", padding: "11px 18px", borderRadius: 8,
+      color: "var(--aa-on-solid)", padding: "11px 18px", borderRadius: 8,
       fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
     }}>
       {msg}
@@ -192,7 +192,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "7px 11px", borderRadius: 7,
     border: `1px solid ${state === "error" ? A.red : A.line}`,
-    background: "#fff", fontSize: 13, color: A.ink, fontFamily: sans,
+    background: A.card, fontSize: 13, color: A.ink, fontFamily: sans,
     boxSizing: "border-box",
     resize: rows ? "vertical" : "none",
     outline: "none",
@@ -386,7 +386,7 @@ function SeoKeywordsPanel({ tourId }: { tourId: string }) {
           </thead>
           <tbody>
             {sorted.map((k, i) => (
-              <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? "#fff" : A.bg }}>
+              <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? A.card : A.bg }}>
                 <td style={{ padding: "8px 12px", color: A.ink }}>{k.keyword}</td>
                 <td style={{ padding: "8px 12px", textAlign: "right", fontFamily: mono, color: A.body }}>{fmtVolume(k.search_volume)}</td>
                 <td style={{ padding: "8px 12px", textAlign: "right", color: A.muted }}>{compDisplay(k)}</td>
@@ -547,7 +547,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
       {/* Panel */}
       <div style={{
         position: "fixed", top: 0, right: 0, bottom: 0,
-        width: "70vw", background: "#fff",
+        width: "70vw", background: A.card,
         boxShadow: "-4px 0 32px rgba(0,0,0,0.14)",
         zIndex: 200, display: "flex", flexDirection: "column",
         fontFamily: sans,
@@ -631,7 +631,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   disabled={savingAll}
                   style={{
                     padding: "9px 22px", borderRadius: 7, border: "none", cursor: savingAll ? "not-allowed" : "pointer",
-                    background: "#2563EB", color: "#fff", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
+                    background: "var(--aa-blue-deep)", color: "var(--aa-on-accent)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
                   }}
                 >
                   {savingAll ? "Saving…" : "Save All"}
@@ -753,12 +753,12 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           onClick={() => loadVersion(h.version_num)}
                           style={{
                             borderTop: `1px solid ${A.line}`,
-                            background: isActive ? `${A.gold}18` : i % 2 === 0 ? "#fff" : A.bg,
+                            background: isActive ? alpha(A.gold, 9) : i % 2 === 0 ? A.card : A.bg,
                             cursor: "pointer",
                           }}
                         >
                           <td style={{ padding: "8px 12px" }}>
-                            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? A.gold : A.goldTint, color: isActive ? "#fff" : A.gold, fontWeight: 600 }}>
+                            <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: isActive ? A.gold : A.goldTint, color: isActive ? "var(--aa-on-solid)" : A.gold, fontWeight: 600 }}>
                               v{h.version_num}
                             </span>
                           </td>
@@ -788,7 +788,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                               <button
                                 onClick={e => { e.stopPropagation(); loadVersion(h.version_num); }}
                                 disabled={loadingVersion}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: "#fff", cursor: "pointer", color: A.muted, fontWeight: 600 }}
+                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.muted, fontWeight: 600 }}
                               >
                                 {loadingVersion && isActive ? "…" : "View content"}
                               </button>
@@ -825,7 +825,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       <button
                         onClick={() => promoteVersion(selectedVersion.version_num)}
                         disabled={promoting}
-                        style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.gold, cursor: "pointer", color: "#fff", fontWeight: 600 }}
+                        style={{ padding: "5px 12px", fontSize: 12, border: `1px solid ${A.gold}`, borderRadius: 6, background: A.gold, cursor: "pointer", color: "var(--aa-on-solid)", fontWeight: 600 }}
                       >
                         {promoting ? "Promoting…" : "Make Current"}
                       </button>
@@ -888,7 +888,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                       display: "inline-flex", alignItems: "center", gap: 6,
                       padding: "9px 18px", borderRadius: 8,
                       background: A.gold, border: `1px solid ${A.gold}`,
-                      fontSize: 13, fontWeight: 600, color: "#fff", textDecoration: "none",
+                      fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
                     }}
                   >
                     Re-run Rewrite <ChevronRight size={13} />

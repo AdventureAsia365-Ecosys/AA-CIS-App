@@ -8,7 +8,7 @@ import AdminSidebar from "../_components/AdminSidebar";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
 import {
-  A, serif, sans, mono,
+  A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
 } from "../_components/adminUi";
 
@@ -90,9 +90,9 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
             <div key={step} style={{ display: "flex", alignItems: "center" }}>
               <div style={{
                 padding: "6px 14px", borderRadius: 20,
-                background: `${A.accent}15`, color: A.accentDeep,
+                background: alpha(A.accent, 8), color: A.accentDeep,
                 fontSize: 12, fontWeight: 600, fontFamily: mono,
-                border: `1px solid ${A.accent}30`,
+                border: `1px solid ${alpha(A.accent, 19)}`,
               }}>
                 {step}
               </div>
@@ -200,7 +200,7 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
             <span key={i} style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 999,
-              background: `${A.accent}12`, color: A.accentDeep,
+              background: alpha(A.accent, 7), color: A.accentDeep,
               fontSize: 12, fontWeight: 500, fontFamily: mono,
             }}>
               {kw}
@@ -744,7 +744,7 @@ function SettingsPageInner() {
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
           <div style={{
             width: 36, height: 36, borderRadius: 9,
-            background: `${A.accent}15`, color: A.accent,
+            background: alpha(A.accent, 8), color: A.accent,
             display: "grid", placeItems: "center",
           }}>
             <Settings size={18} />

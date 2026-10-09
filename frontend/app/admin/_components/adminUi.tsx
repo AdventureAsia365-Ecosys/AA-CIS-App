@@ -1,39 +1,46 @@
 // app/(admin)/_components/adminUi.tsx
 // Design system for admin — Adventure Asia brand tokens (app/_brand/tokens.ts, AA-605).
+// AA-601 part B: `A` returns the `var(--aa-…)` CSS variables from app/globals.css (light = the
+// previous hex, dark = the dark palette), so <html data-theme="dark"> recolours every admin page.
+// `BRAND` stays hex for the login pages / portal `T`. Use `alpha(color, pct)` (from _kit/tokens)
+// for translucent fills — the old hex-alpha-suffix trick breaks with var().
 
 import { Loader2 } from "lucide-react";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
+import { BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../_brand/tokens";
+import { alpha } from "../../_kit/tokens";
+
+export { alpha };
 
 export const A = {
-  // Accent — brand gold (AA-605: was red #EF4444, which also meant "error")
-  accent:       BRAND.accent,
-  accentDeep:   BRAND.accentDeep,
-  accentSoft:   BRAND.accentSoft,
-  accentTint:   BRAND.accentTint,
-  accentBorder: BRAND.accentBorder,
-  slate:        BRAND.slate,
+  // Accent — brand gold (AA-605: was a red that also meant "error")
+  accent:       "var(--aa-accent)",
+  accentDeep:   "var(--aa-accent-deep)",
+  accentSoft:   "var(--aa-accent-soft)",
+  accentTint:   "var(--aa-accent-tint)",
+  accentBorder: "var(--aa-accent-border)",
+  slate:        "var(--aa-slate)",
   // `red*` now means danger/error only (failed, blocked, delete, low score).
-  red:       BRAND.danger,
-  redSoft:   BRAND.dangerSoft,
-  redTint:   BRAND.dangerTint,
-  redBorder: BRAND.dangerBorder,
+  red:       "var(--aa-red)",
+  redSoft:   "var(--aa-red-soft)",
+  redTint:   "var(--aa-red-tint)",
+  redBorder: "var(--aa-red-border)",
   // Base (shared with portal)
-  ink:       BRAND.ink,
-  ink2:      BRAND.ink2,
-  ink3:      BRAND.ink3,
-  body:      BRAND.body,
-  muted:     BRAND.muted,
-  muted2:    BRAND.muted2,
-  bg:        BRAND.bg,
-  card:      BRAND.card,
-  line:      BRAND.line,
-  line2:     BRAND.line2,
-  green:     BRAND.success,
-  greenSoft: BRAND.successSoft,
-  amber:     "#F59E0B",
-  amberSoft: "#FEF3C7",
-  gold:      BRAND.accent,
-  goldTint:  BRAND.accentTint,
+  ink:       "var(--aa-ink)",
+  ink2:      "var(--aa-ink2)",
+  ink3:      "var(--aa-ink3)",
+  body:      "var(--aa-body)",
+  muted:     "var(--aa-muted)",
+  muted2:    "var(--aa-muted2)",
+  bg:        "var(--aa-bg)",
+  card:      "var(--aa-card)",
+  line:      "var(--aa-line)",
+  line2:     "var(--aa-line2)",
+  green:     "var(--aa-green)",
+  greenSoft: "var(--aa-green-soft)",
+  amber:     "var(--aa-amber)",
+  amberSoft: "var(--aa-amber-soft)",
+  gold:      "var(--aa-gold)",
+  goldTint:  "var(--aa-gold-tint)",
 } as const;
 
 // `serif` keeps its name (used for titles and big numbers everywhere) but is now the brand
@@ -56,8 +63,11 @@ export function Card({ children, style = {}, dark = false }: {
 }) {
   return (
     <div style={{
-      background: dark ? `linear-gradient(160deg,${A.ink} 0%,${A.ink2} 100%)` : A.card,
-      border: `1px solid ${dark ? A.ink2 : A.line}`,
+      // The `dark` variant is a deliberately-dark surface in BOTH themes (used for hero/stat
+      // panels), so it reads from the fixed-dark sidebar tokens, not A.ink (which is light in
+      // the dark theme).
+      background: dark ? "linear-gradient(160deg,var(--aa-side-bg) 0%,var(--aa-side-panel) 100%)" : A.card,
+      border: `1px solid ${dark ? "var(--aa-side-panel)" : A.line}`,
       borderRadius: 12, padding: "20px 22px", position: "relative",
       ...style,
     }}>{children}</div>
@@ -83,7 +93,7 @@ export function StatCard({ label, value, sub, accent = A.accent, icon }: {
     <Card>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         {icon && (
-          <div style={{ padding: 8, borderRadius: 8, background: `${accent}15`, color: accent }}>
+          <div style={{ padding: 8, borderRadius: 8, background: alpha(accent, 8), color: accent }}>
             {icon}
           </div>
         )}
@@ -130,12 +140,12 @@ export function Badge({ children, color = "gray" }: {
 }) {
   const s = {
     red:    { bg: A.redSoft, c: A.red },
-    green:  { bg: "#D1FAE5", c: "#065F46" },
-    amber:  { bg: "#FEF3C7", c: "#92400E" },
-    gray:   { bg: "#F3F4F6", c: "#4B5563" },
+    green:  { bg: "var(--aa-green-bg)", c: "var(--aa-green-darkest)" },
+    amber:  { bg: "var(--aa-amber-bg)", c: "var(--aa-amber-deep)" },
+    gray:   { bg: "var(--aa-neutral-bg)", c: "var(--aa-neutral-fg)" },
     gold:   { bg: A.accentTint, c: A.accentDeep },
-    blue:   { bg: "#DBEAFE", c: "#1E40AF" },
-    purple: { bg: "#EDE9FE", c: "#5B21B6" },
+    blue:   { bg: "var(--aa-blue-bg2)", c: "var(--aa-blue-darkest)" },
+    purple: { bg: "var(--aa-purple-bg)", c: "var(--aa-purple-strong)" },
   }[color];
   return (
     <span style={{
@@ -172,7 +182,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
   const pad = { sm: "5px 12px", md: "8px 16px", lg: "10px 22px" }[size];
   const fz  = { sm: 11, md: 13, lg: 14 }[size];
   const base: Record<string, React.CSSProperties> = {
-    primary:   { background: A.accent,  color: "#fff",  border: `1px solid ${A.accent}` },
+    primary:   { background: A.accent,  color: "var(--aa-on-accent)",  border: `1px solid ${A.accent}` },
     secondary: { background: A.card,    color: A.ink3,  border: `1px solid ${A.line}` },
     danger:    { background: A.redSoft, color: A.red,   border: `1px solid ${A.redBorder}` },
     ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
@@ -204,12 +214,13 @@ export const TD: React.CSSProperties = {
 };
 
 // ── TOOLTIP (recharts) ────────────────────────────────────────────────────────
+// Fixed-dark panel in both themes (a tooltip floats over the chart); on-dark text.
 export const CHART_TOOLTIP = {
   contentStyle: {
-    background: A.ink, border: `1px solid ${A.ink2}`,
-    borderRadius: 8, fontSize: 12, color: "#F8F6F2",
+    background: "var(--aa-side-bg)", border: "1px solid var(--aa-side-panel)",
+    borderRadius: 8, fontSize: 12, color: "var(--aa-on-dark)",
   },
-  labelStyle: { color: "#F8F6F2" },
+  labelStyle: { color: "var(--aa-on-dark)" },
 };
 
 // ── Chart card ────────────────────────────────────────────────────────────────

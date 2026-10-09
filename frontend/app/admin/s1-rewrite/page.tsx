@@ -9,7 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
-  A, serif, sans, mono,
+  A, alpha, serif, sans, mono,
   Card, SLabel, Badge, Btn, LoadingScreen,
   TH, TD,
 } from "../_components/adminUi";
@@ -591,7 +591,7 @@ export default function S1RewritePage() {
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
         <div style={{
           position: "sticky", top: 0, zIndex: 20,
-          background: "#fff", borderBottom: `1px solid ${A.line}`,
+          background: A.card, borderBottom: `1px solid ${A.line}`,
           padding: "12px 36px",
         }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12, alignItems: "flex-end" }}>
@@ -606,7 +606,7 @@ export default function S1RewritePage() {
                   setBrandName(picked ? picked.brand_name : null);
                 }}
                 disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
               >
                 {brandList.length === 0 && <option value="">No brand configured</option>}
                 {brandList.map(b => (
@@ -622,7 +622,7 @@ export default function S1RewritePage() {
                 value={seoMode}
                 onChange={e => setSeoMode(e.target.value)}
                 disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
               >
                 <option value="standard">Standard — DataForSEO keywords, balanced</option>
                 <option value="aggressive">Aggressive — keyword-heavy, SEO-first</option>
@@ -635,7 +635,7 @@ export default function S1RewritePage() {
                 value={modelTier}
                 onChange={e => setModelTier(e.target.value)}
                 disabled={running}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff" }}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card }}
               >
                 <option value="">Settings default{s1Models.current ? ` — ${s1Models.current}` : ""}</option>
                 {s1Models.options.map(o => (
@@ -705,7 +705,7 @@ export default function S1RewritePage() {
               <select
                 value={filterCountry}
                 onChange={e => handleFilterChange(setFilterCountry, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff", minWidth: 140 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 140 }}
               >
                 <option value="">All Countries</option>
                 {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
@@ -714,7 +714,7 @@ export default function S1RewritePage() {
               <select
                 value={filterFile}
                 onChange={e => handleFilterChange(setFilterFile, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff", minWidth: 180 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 180 }}
               >
                 <option value="">All Files</option>
                 {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
@@ -723,7 +723,7 @@ export default function S1RewritePage() {
               <select
                 value={filterStatus}
                 onChange={e => handleFilterChange(setFilterStatus, e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: "#fff", minWidth: 130 }}
+                style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 13, fontFamily: sans, background: A.card, minWidth: 130 }}
               >
                 <option value="">All Status</option>
                 <option value="published">Published</option>
@@ -731,7 +731,7 @@ export default function S1RewritePage() {
                 <option value="review">In review</option>
               </select>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 10px", background: "#fff", flex: 1, minWidth: 200 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "6px 10px", background: A.card, flex: 1, minWidth: 200 }}>
                 <Search size={13} style={{ color: A.muted2, flexShrink: 0 }} />
                 <input
                   placeholder="Search by tour name…"
@@ -791,7 +791,7 @@ export default function S1RewritePage() {
                         onClick={() => setDetailTour(isDetail ? null : t)}
                         style={{
                           borderTop: i > 0 ? `1px solid ${A.line}` : undefined,
-                          background: isDetail ? `${A.gold}18` : isSelected ? `${A.gold}10` : "transparent",
+                          background: isDetail ? alpha(A.gold, 9) : isSelected ? alpha(A.gold, 6) : "transparent",
                           cursor: "pointer",
                           transition: "background .12s",
                         }}
@@ -993,7 +993,7 @@ export default function S1RewritePage() {
           position: "fixed", bottom: 24, right: 28, zIndex: 9999,
           display: "flex", alignItems: "center", gap: 8,
           padding: "12px 18px", borderRadius: 10,
-          background: "#fff", border: `1px solid ${A.green}`,
+          background: A.card, border: `1px solid ${A.green}`,
           boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
           fontSize: 13, fontWeight: 600, color: A.ink, fontFamily: sans,
           maxWidth: 380,

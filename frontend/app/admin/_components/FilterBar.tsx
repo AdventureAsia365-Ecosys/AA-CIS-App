@@ -40,7 +40,7 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
           style={{
             width: "100%", padding: "7px 32px 7px 30px",
             border: `1px solid ${A.line}`, borderRadius: 7,
-            background: "#fff", color: A.ink, fontSize: 13,
+            background: A.card, color: A.ink, fontSize: 13,
             fontFamily: sans, outline: "none", boxSizing: "border-box",
           }}
         />
@@ -64,7 +64,7 @@ export function FilterBar({ search, onSearch, placeholder, filters, extra }: Fil
           onChange={e => f.onChange(e.target.value)}
           style={{
             padding: "7px 10px", border: `1px solid ${A.line}`, borderRadius: 7,
-            background: "#fff", color: A.ink, fontSize: 13, fontFamily: sans,
+            background: A.card, color: A.ink, fontSize: 13, fontFamily: sans,
             outline: "none", cursor: "pointer",
           }}
         >

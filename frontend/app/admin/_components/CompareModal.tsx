@@ -130,7 +130,7 @@ export function CompareModal({ tourIds, onClose }: {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#fff",
+      position: "fixed", inset: 0, background: A.card,
       zIndex: 300, display: "flex", flexDirection: "column",
     }}>
       {/* Modal header */}
@@ -193,7 +193,7 @@ export function CompareModal({ tourIds, onClose }: {
                 borderRight: idx < n - 1 ? `1px solid ${A.line}` : undefined,
               }}>
                 {/* Column header (fixed) */}
-                <div style={{ padding: "14px 16px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: "#fff" }}>
+                <div style={{ padding: "14px 16px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: A.card }}>
                   {/* Badges */}
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 7 }}>
                     {raw?.country && <Badge color="blue">{raw.country}</Badge>}

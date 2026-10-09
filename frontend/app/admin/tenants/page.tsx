@@ -204,7 +204,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
   const copy = () => { navigator.clipboard.writeText(keyData.api_key); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div style={{ background: A.card, border: "1px solid #86EFAC", borderRadius: 16, padding: 32, width: 460 }}>
+      <div style={{ background: A.card, border: "1px solid var(--aa-green-border)", borderRadius: 16, padding: 32, width: 460 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <CheckCircle size={20} color={A.green} />
           <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>{keyData.rotated ? "New API Key" : "Tenant Created"}</div>
@@ -217,7 +217,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{
               flex: 1, fontFamily: mono, fontSize: 12, padding: "10px 14px",
-              background: A.bg, border: "1px solid #86EFAC", borderRadius: 8,
+              background: A.bg, border: "1px solid var(--aa-green-border)", borderRadius: 8,
               color: show ? A.green : A.muted, letterSpacing: show ? 0.3 : 3, wordBreak: "break-all",
             }}>
               {show ? keyData.api_key : "•".repeat(32)}
@@ -228,7 +228,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Copy size={13} />{copied ? "Copied!" : "Copy Key"}
           </button>
           <Btn variant="secondary" onClick={onClose} style={{ flex: 1 }}>Done</Btn>
@@ -274,14 +274,14 @@ const SCORE_COLOR = (s: number | null) =>
   s == null ? A.muted2 : s >= 9 ? A.green : s >= 7 ? A.gold : A.red;
 
 const STATUS_STYLE: Record<string, { bg: string; col: string }> = {
-  approved:     { bg: A.greenSoft, col: "#16A34A" },
-  ai_generated: { bg: "#EFF6FF", col: "#2563EB" },
+  approved:     { bg: A.greenSoft, col: "var(--aa-green-strong)" },
+  ai_generated: { bg: "var(--aa-blue-bg)", col: "var(--aa-blue-deep)" },
   rejected:     { bg: A.redSoft, col: A.red },
-  needs_review: { bg: "#FEF3C7", col: "#D97706" },
-  pending:      { bg: "#FEF9C3", col: "#B45309" },
-  completed:    { bg: A.greenSoft, col: "#16A34A" },
+  needs_review: { bg: "var(--aa-amber-bg)", col: "var(--aa-amber-orange2)" },
+  pending:      { bg: "var(--aa-amber-bg2)", col: "var(--aa-amber-strong)" },
+  completed:    { bg: A.greenSoft, col: "var(--aa-green-strong)" },
   failed:       { bg: A.redSoft, col: A.red },
-  ingesting:    { bg: "#EFF6FF", col: "#2563EB" },
+  ingesting:    { bg: "var(--aa-blue-bg)", col: "var(--aa-blue-deep)" },
 };
 function StatusChip({ status }: { status: string }) {
   const s = STATUS_STYLE[status] ?? { bg: A.line2, col: A.muted2 };
@@ -378,7 +378,7 @@ function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
         {([["Total Calls", usage.total_calls.toLocaleString()], ["Rate Limit", `${usage.rate_limit_per_min}/min`], ["Quota Used", `${pct}%`]] as [string, string][]).map(([l, v]) => (
-          <div key={l} style={{ padding: "10px 14px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8 }}>
+          <div key={l} style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{l}</div>
             <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{v}</div>
           </div>
@@ -394,7 +394,7 @@ function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
 // admin-scoped write path (PUT /admin/tenants/{id}/brand-identity — see api/routers/admin.py's
 // own comment on why the tenant-facing endpoint couldn't just be reused for this).
 const brandFieldStyle: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", background: "#fff", border: `1px solid ${A.line}`,
+  width: "100%", padding: "9px 12px", background: A.card, border: `1px solid ${A.line}`,
   borderRadius: 8, color: A.body, fontSize: 12.5, fontFamily: sans, outline: "none", boxSizing: "border-box",
 };
 function BrandField({ label, value, onChange, rows }: {
@@ -507,19 +507,19 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
             {rules.style_guide && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Writing Style</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.style_guide}</div>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.style_guide}</div>
               </div>
             )}
             {rules.good_examples && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Good Examples</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.good_examples}</div>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.good_examples}</div>
               </div>
             )}
             {rules.system_prompt && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Should Write (System Prompt)</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, fontFamily: mono, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, fontFamily: mono, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
                   {rules.system_prompt.slice(0, 400)}{rules.system_prompt.length > 400 ? "…" : ""}
                 </div>
               </div>
@@ -638,7 +638,7 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 14 }}>
         {([["Content pieces written", data.pieces_written], ["Published", data.pieces_published]] as [string, number][]).map(([l, v]) => (
-          <div key={l} style={{ padding: "10px 14px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 140 }}>
+          <div key={l} style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 140 }}>
             <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{l}</div>
             <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{v}</div>
           </div>
@@ -1075,7 +1075,7 @@ export default function TenantsPage() {
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
       <AdminSidebar />
       <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{ height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
+        <header style={{ height: 56, background: A.card, borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
           <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
           <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Tenants</span>
         </header>

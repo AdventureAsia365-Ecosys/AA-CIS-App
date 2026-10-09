@@ -11,9 +11,10 @@ import {
 import AdminSidebar from "../_components/AdminSidebar";
 import BudgetsPanel from "./BudgetsPanel";
 import {
-  A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
+  A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
   CHART_TOOLTIP,
 } from "../_components/adminUi";
+import { useChartColors } from "../../_kit/useTheme";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -468,6 +469,12 @@ export default function ExternalSpendPage() {
   // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
   const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
+  // AA-601 part B — recharts stroke/fill are SVG attributes; resolve the theme colours to concrete
+  // values for portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
+  const chart = useChartColors({
+    gold: "--aa-gold", green: "--aa-green", line: "--aa-line", line2: "--aa-line2", muted: "--aa-muted",
+  });
+
   // One time window for the whole page (LLM, DFS, trend, fallback drill-down AND Cost Explorer):
   // a rolling preset, or a custom from/to date range (UTC calendar days, "to" inclusive) — e.g.
   // "from the day X shipped". Both sides of the AWS-actual vs estimated comparison use it.
@@ -656,7 +663,7 @@ export default function ExternalSpendPage() {
       <AdminSidebar />
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.accent}15`, color: A.accent, display: "grid", placeItems: "center" }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
             <Wallet size={18} />
           </div>
           <div>
@@ -761,13 +768,13 @@ export default function ExternalSpendPage() {
                   ) : (
                     <ResponsiveContainer width="100%" height={240}>
                       <AreaChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={A.line2} vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: A.muted }} stroke={A.line} />
-                        <YAxis tick={{ fontSize: 11, fill: A.muted }} stroke={A.line} tickFormatter={(v) => `$${v}`} />
+                        <CartesianGrid strokeDasharray="3 3" stroke={chart.line2} vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: chart.muted }} stroke={chart.line} />
+                        <YAxis tick={{ fontSize: 11, fill: chart.muted }} stroke={chart.line} tickFormatter={(v) => `$${v}`} />
                         <Tooltip {...CHART_TOOLTIP} formatter={(v) => fmtUsd(Number(v) || 0)} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Area type="monotone" dataKey="llm" name="LLM" stackId="1" stroke={A.gold} fill={`${A.gold}55`} />
-                        <Area type="monotone" dataKey="dfs" name="DataForSEO" stackId="1" stroke={A.green} fill={`${A.green}55`} />
+                        <Area type="monotone" dataKey="llm" name="LLM" stackId="1" stroke={chart.gold} fill={chart.gold} fillOpacity={0.33} />
+                        <Area type="monotone" dataKey="dfs" name="DataForSEO" stackId="1" stroke={chart.green} fill={chart.green} fillOpacity={0.33} />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}

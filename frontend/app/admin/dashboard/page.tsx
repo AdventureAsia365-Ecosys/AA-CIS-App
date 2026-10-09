@@ -4,14 +4,15 @@ import React, { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
-  A, serif, mono, sans,
+  A, alpha, serif, mono, sans,
   Card, SLabel, TabBar, LoadingScreen, TH, TD,
   ChartCard, CHART_TOOLTIP,
 } from "../_components/adminUi";
+import { useChartColors } from "../../_kit/useTheme";
 
 const STATUS_COLOR: Record<string, string> = {
-  healthy: A.green, degraded: "#F59E0B", down: A.red,
-  running: A.green, interrupted: A.red, idle: "#9099A6",
+  healthy: A.green, degraded: "var(--aa-amber)", down: A.red,
+  running: A.green, interrupted: A.red, idle: "var(--aa-muted2)",
 };
 
 function MetricCard({ label, value, sub, src, color = A.ink }: {
@@ -31,6 +32,9 @@ function MetricCard({ label, value, sub, src, color = A.ink }: {
 
 // ─── Tab 1: Overview ──────────────────────────────────────────────────────────
 function OverviewTab({ data }: { data: any }) {
+  // AA-601 part B — recharts fill is an SVG attribute; resolve theme colours to concrete values for
+  // portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
+  const chart = useChartColors({ green: "--aa-green", gold: "--aa-gold", red: "--aa-red" });
   if (!data) return (
     <div style={{ padding: 40, textAlign: "center", color: A.red }}>Failed to load metrics</div>
   );
@@ -71,7 +75,7 @@ function OverviewTab({ data }: { data: any }) {
           label="Tenant Rewrites"
           value={rewrites}
           src="↳ gold_aa_internal.tenant_tour_versions"
-          color="#7C3AED"
+          color="var(--aa-purple-strong)"
         />
         <MetricCard
           label="Pass Rate"
@@ -121,9 +125,9 @@ function OverviewTab({ data }: { data: any }) {
               <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(v: string) => v?.slice(5) ?? v} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip {...CHART_TOOLTIP} />
-              <Bar dataKey="passed" name="Passed" fill={A.green} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="hitl"   name="HITL"   fill={A.gold}  radius={[3, 3, 0, 0]} />
-              <Bar dataKey="failed" name="Failed" fill={A.red} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="passed" name="Passed" fill={chart.green} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="hitl"   name="HITL"   fill={chart.gold}  radius={[3, 3, 0, 0]} />
+              <Bar dataKey="failed" name="Failed" fill={chart.red} radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -210,7 +214,7 @@ function OverviewTab({ data }: { data: any }) {
                 <span style={{ fontSize: 12, fontWeight: 500, color: A.ink }}>{s.name}</span>
                 <span style={{
                   fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
-                  background: `${STATUS_COLOR[s.status] || A.muted2}18`,
+                  background: alpha(STATUS_COLOR[s.status] || A.muted2, 9),
                   color: STATUS_COLOR[s.status] || A.muted2,
                   textTransform: "capitalize",
                 }}>{s.status}</span>
@@ -262,7 +266,7 @@ function SeoTab() {
           label="Countries"
           value={(data.countries ?? []).length}
           sub="with SEO data"
-          color="#7C3AED"
+          color="var(--aa-purple-strong)"
         />
       </div>
 
@@ -361,7 +365,7 @@ function LibraryTab() {
         <MetricCard
           label="Published (30d)"
           value={data.published_last_30d ?? 0}
-          color="#7C3AED"
+          color="var(--aa-purple-strong)"
         />
       </div>
 
@@ -454,7 +458,7 @@ export default function DashboardPage() {
       <AdminSidebar />
       <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={{
-          height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`,
+          height: 56, background: A.card, borderBottom: `1px solid ${A.line}`,
           display: "flex", alignItems: "center", padding: "0 32px", gap: 8,
           position: "sticky", top: 0, zIndex: 10,
         }}>

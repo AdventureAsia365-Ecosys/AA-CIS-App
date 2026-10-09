@@ -62,8 +62,8 @@ export function codeSeverity(code: string): Severity {
 
 export const SEV_STYLE: Record<Severity, { bg: string; color: string; border: string }> = {
   red: { bg: A.redSoft, color: A.red, border: A.redBorder },
-  amber: { bg: A.amberSoft, color: "#92400E", border: "#FDE68A" },
-  gray: { bg: "#F3F4F6", color: "#4B5563", border: "#E5E7EB" },
+  amber: { bg: A.amberSoft, color: "var(--aa-amber-deep)", border: "var(--aa-amber-border)" },
+  gray: { bg: "var(--aa-neutral-bg)", color: "var(--aa-neutral-fg)", border: "var(--aa-neutral-border)" },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

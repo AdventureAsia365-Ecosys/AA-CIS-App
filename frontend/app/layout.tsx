@@ -15,11 +15,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="light">
       <head>
-        {/* Theme restore — giữ nguyên như cũ */}
+        {/* AA-601 part B — theme restore (runs before paint, no wrong-theme flash).
+            localStorage.cis_theme holds the CHOICE: 'light' | 'dark' | (absent === system).
+            For 'system' we resolve via prefers-color-scheme; an explicit choice wins. The RESOLVED
+            value ('light'|'dark') is written to <html data-theme>, which drives the --aa-* vars. */}
         <script dangerouslySetInnerHTML={{ __html: `
           (function() {
-            var t = localStorage.getItem('cis_theme') || 'light';
-            document.documentElement.setAttribute('data-theme', t);
+            try {
+              var c = localStorage.getItem('cis_theme');
+              var resolved = (c === 'light' || c === 'dark')
+                ? c
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+              document.documentElement.setAttribute('data-theme', resolved);
+            } catch (e) {
+              document.documentElement.setAttribute('data-theme', 'light');
+            }
           })();
         `}} />
 

@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw, Scale } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import AdminSidebar from "../_components/AdminSidebar";
-import { A, serif, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { A, alpha, serif, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
+import { useChartColors } from "../../_kit/useTheme";
 
 // ── types ──────────────────────────────────────────────────────────────────────────────────────
 type Mode = "off" | "shadow" | "enforce";
@@ -42,17 +43,17 @@ interface Verdict {
 
 // ── meaning of every status, shown in the Guide and as tooltips ────────────────────────────────
 const ZONES: Zone[] = ["accept", "grey", "reject", "error", "skipped"];
-const ZONE_META: Record<Zone, { label: string; color: string; help: string }> = {
-  accept:  { label: "Accept",  color: "#047857", help: "Jev is confidently YES (probability ≥ accept floor). In enforce mode the stage acts on it." },
-  grey:    { label: "Grey",    color: "#6B7280", help: "Jev is not confident either way. The stage keeps its old rule — nothing changes." },
-  reject:  { label: "Reject",  color: "#B91C1C", help: "Jev is confidently NO (probability ≤ reject ceiling). In enforce mode the stage acts on it (e.g. drops the keyword)." },
-  error:   { label: "Error",   color: "#B45309", help: "Jev could not answer (timeout, API error, bad config). Fail-open: the stage keeps its old rule." },
-  skipped: { label: "Skipped", color: "#1D4ED8", help: "Not asked: the question is off, or it is tenant content and the tenant is not on the allow-list." },
+const ZONE_META: Record<Zone, { label: string; color: string; cssVar: string; help: string }> = {
+  accept:  { label: "Accept",  color: "var(--aa-green-deep)",  cssVar: "--aa-green-deep",  help: "Jev is confidently YES (probability ≥ accept floor). In enforce mode the stage acts on it." },
+  grey:    { label: "Grey",    color: "var(--aa-neutral-fg2)", cssVar: "--aa-neutral-fg2", help: "Jev is not confident either way. The stage keeps its old rule — nothing changes." },
+  reject:  { label: "Reject",  color: "var(--aa-red-strong)",  cssVar: "--aa-red-strong",  help: "Jev is confidently NO (probability ≤ reject ceiling). In enforce mode the stage acts on it (e.g. drops the keyword)." },
+  error:   { label: "Error",   color: "var(--aa-amber-strong)",cssVar: "--aa-amber-strong",help: "Jev could not answer (timeout, API error, bad config). Fail-open: the stage keeps its old rule." },
+  skipped: { label: "Skipped", color: "var(--aa-blue-link)",   cssVar: "--aa-blue-link",   help: "Not asked: the question is off, or it is tenant content and the tenant is not on the allow-list." },
 };
 const MODE_META: Record<Mode, { label: string; color: string; help: string }> = {
-  off:     { label: "Off",     color: "#4B5563", help: "The question is not asked at all." },
-  shadow:  { label: "Shadow",  color: "#1D4ED8", help: "Asked and logged, but the pipeline ignores the answer. Used to collect calibration data." },
-  enforce: { label: "Enforce", color: "#B45309", help: "Asked and ACTED ON when the answer is confident (accept / reject). Needs a calibration record." },
+  off:     { label: "Off",     color: "var(--aa-neutral-fg)",  help: "The question is not asked at all." },
+  shadow:  { label: "Shadow",  color: "var(--aa-blue-link)",   help: "Asked and logged, but the pipeline ignores the answer. Used to collect calibration data." },
+  enforce: { label: "Enforce", color: "var(--aa-amber-strong)",help: "Asked and ACTED ON when the answer is confident (accept / reject). Needs a calibration record." },
 };
 const KIND_HELP: Record<string, string> = {
   noul: "Yes/no question — Jev returns the probability that the answer is yes (0–1).",
@@ -74,7 +75,7 @@ const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "�
 function Pill({ color, children, title }: { color: string; children: React.ReactNode; title?: string }) {
   return (
     <span title={title} style={{
-      display: "inline-block", padding: "3px 10px", borderRadius: 999, background: color, color: "#fff",
+      display: "inline-block", padding: "3px 10px", borderRadius: 999, background: color, color: "var(--aa-on-solid)",
       fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", whiteSpace: "nowrap", cursor: title ? "help" : "default",
     }}>{children}</span>
   );
@@ -84,7 +85,7 @@ const ModePill = ({ m }: { m: Mode }) => <Pill color={MODE_META[m].color} title=
 
 function Kpi({ label, value, sub, color = A.ink }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${A.line}`, borderRadius: 10, padding: "14px 16px" }}>
+    <div style={{ background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: "14px 16px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: A.muted }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 700, color, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div style={{ fontSize: 11.5, color: A.muted, marginTop: 2 }}>{sub}</div>}
@@ -92,9 +93,9 @@ function Kpi({ label, value, sub, color = A.ink }: { label: string; value: strin
   );
 }
 
-const STICKY_TH: React.CSSProperties = { ...TH, position: "sticky", top: 0, zIndex: 2, background: "#F4F1EC", whiteSpace: "nowrap" };
-const TABLE_BOX: React.CSSProperties = { overflow: "auto", maxHeight: "62vh", border: `1px solid ${A.line}`, borderRadius: 10, background: "#fff" };
-const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${A.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: "#fff" };
+const STICKY_TH: React.CSSProperties = { ...TH, position: "sticky", top: 0, zIndex: 2, background: "var(--aa-bg)", whiteSpace: "nowrap" };
+const TABLE_BOX: React.CSSProperties = { overflow: "auto", maxHeight: "62vh", border: `1px solid ${A.line}`, borderRadius: 10, background: A.card };
+const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${A.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: A.card };
 
 function SortTh<K extends string>({ label, k, sort, setSort, title }: {
   label: string; k: K; sort: { key: K; dir: "asc" | "desc" }; setSort: (s: { key: K; dir: "asc" | "desc" }) => void; title?: string;
@@ -226,6 +227,12 @@ export default function DecisionsPage() {
   const [days, setDays] = useState(7);
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // AA-601 part B — recharts fill/stroke are SVG attributes; resolve zone colours + grid to concrete
+  // values for portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
+  const chartColors = useChartColors({
+    accept: ZONE_META.accept.cssVar, grey: ZONE_META.grey.cssVar, reject: ZONE_META.reject.cssVar,
+    error: ZONE_META.error.cssVar, skipped: ZONE_META.skipped.cssVar, line: "--aa-line",
+  });
   // questions tab
   const [qSearch, setQSearch] = useState(""); const [qStage, setQStage] = useState(""); const [qMode, setQMode] = useState("");
   const [qSort, setQSort] = useState<{ key: QSortKey; dir: "asc" | "desc" }>({ key: "stage", dir: "asc" });
@@ -310,7 +317,7 @@ export default function DecisionsPage() {
         {/* Sticky header + tabs */}
         <div style={{ position: "sticky", top: 0, zIndex: 5, background: A.bg, padding: "22px 32px 0", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.accent}22`, color: A.accent, display: "grid", placeItems: "center" }}><Scale size={18} /></div>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 13), color: A.accent, display: "grid", placeItems: "center" }}><Scale size={18} /></div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 600, color: A.ink, margin: 0 }}>Jev Decisions</h1>
               <div style={{ fontSize: 12, color: A.muted, marginTop: 2 }}>
@@ -358,11 +365,11 @@ export default function DecisionsPage() {
                   <div style={{ height: 240 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={data.daily ?? []}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={A.line} />
+                        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.line} />
                         <XAxis dataKey="day" fontSize={11} /><YAxis fontSize={11} allowDecimals={false} />
                         <Tooltip {...CHART_TOOLTIP} />
                         <Legend />
-                        {ZONES.map(z => <Bar key={z} dataKey={z} name={ZONE_META[z].label} stackId="z" fill={ZONE_META[z].color} />)}
+                        {ZONES.map(z => <Bar key={z} dataKey={z} name={ZONE_META[z].label} stackId="z" fill={chartColors[z]} />)}
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -456,7 +463,7 @@ export default function DecisionsPage() {
                           <td style={TD}><ModePill m={q.mode} /></td>
                           <td style={{ ...TD, fontFamily: mono }}>{num(q.accept_floor)}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{num(q.reject_ceiling)}</td>
-                          <td style={TD}>{q.calibration_ref ? <Pill color="#047857">Yes</Pill> : <Pill color="#9CA3AF">No</Pill>}</td>
+                          <td style={TD}>{q.calibration_ref ? <Pill color="var(--aa-green-deep)">Yes</Pill> : <Pill color="var(--aa-muted2)">No</Pill>}</td>
                           <td style={{ ...TD, fontWeight: 700 }}>{q.verdicts}</td>
                           <td style={TD}>{q.cached ?? 0}</td>
                           <td style={{ ...TD, color: ZONE_META.accept.color, fontWeight: 600 }}>{q.accept}</td>

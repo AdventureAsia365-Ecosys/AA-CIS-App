@@ -1,17 +1,16 @@
 // app/_kit/tokens.ts
 // AA-662 — UI kit shared design tokens.
 //
-// The kit is brand-neutral: every component reads from `K`, a single token object derived
-// straight from `app/_brand/tokens.ts` (BRAND). It deliberately does NOT depend on the admin `A`
-// or the portal `T` objects so the kit can be used from either surface without a circular import
-// (adminUi.tsx / ui.tsx are the ones that re-export kit primitives behind their existing names —
-// not the other way round).
+// The kit is brand-neutral: every component reads from `K`. AA-601 part B: `K` now returns the
+// `var(--aa-…)` CSS variables defined in app/globals.css (light values = the previous hex, dark
+// values = the dark palette) instead of the raw hex, so a single <html data-theme> switch
+// recolours every kit component. `BRAND` (_brand/tokens.ts) still holds hex and is read directly
+// by the login pages and the portal `T` object, which stay light.
 //
 // Styling convention (whole app, AA-605): inline `style={{...}}` objects reading these tokens.
 // No Tailwind classNames.
 
 import {
-  BRAND,
   BTN_PRIMARY_TEXT,
   BTN_RADIUS,
   FONT_DISPLAY,
@@ -21,39 +20,54 @@ import {
 
 export const K = {
   // Accent — brand gold
-  accent: BRAND.accent,
-  accentDeep: BRAND.accentDeep,
-  accentSoft: BRAND.accentSoft,
-  accentTint: BRAND.accentTint,
-  accentBorder: BRAND.accentBorder,
-  slate: BRAND.slate,
+  accent: "var(--aa-accent)",
+  accentDeep: "var(--aa-accent-deep)",
+  accentSoft: "var(--aa-accent-soft)",
+  accentTint: "var(--aa-accent-tint)",
+  accentBorder: "var(--aa-accent-border)",
+  slate: "var(--aa-slate)",
   // Semantic
-  danger: BRAND.danger,
-  dangerSoft: BRAND.dangerSoft,
-  dangerTint: BRAND.dangerTint,
-  dangerBorder: BRAND.dangerBorder,
-  success: BRAND.success,
-  successSoft: BRAND.successSoft,
+  danger: "var(--aa-red)",
+  dangerSoft: "var(--aa-red-soft)",
+  dangerTint: "var(--aa-red-tint)",
+  dangerBorder: "var(--aa-red-border)",
+  success: "var(--aa-green)",
+  successSoft: "var(--aa-green-soft)",
   // Amber / warning (kit-local; admin & portal each have their own slightly different amber,
   // the kit uses one consistent value).
-  amber: "#B5791F",
-  amberSoft: "#FBEFD6",
+  amber: "var(--aa-kit-amber)",
+  amberSoft: "var(--aa-kit-amber-soft)",
   // Info (blue) — used by StatusBadge for "running"/"info"; neither A nor T defines a blue, so
   // the kit owns these.
-  info: "#1E40AF",
-  infoSoft: "#DBEAFE",
+  info: "var(--aa-info)",
+  infoSoft: "var(--aa-info-soft)",
+  // Purple — kit tone
+  purple: "var(--aa-purple)",
+  purpleSoft: "var(--aa-purple-soft)",
+  // Neutral tone (gray pill)
+  neutralBg: "var(--aa-neutral-bg)",
+  neutralFg: "var(--aa-neutral-fg)",
   // Neutrals
-  ink: BRAND.ink,
-  ink2: BRAND.ink2,
-  ink3: BRAND.ink3,
-  body: BRAND.body,
-  muted: BRAND.muted,
-  muted2: BRAND.muted2,
-  bg: BRAND.bg,
-  card: BRAND.card,
-  line: BRAND.line,
-  line2: BRAND.line2,
+  ink: "var(--aa-ink)",
+  ink2: "var(--aa-ink2)",
+  ink3: "var(--aa-ink3)",
+  body: "var(--aa-body)",
+  muted: "var(--aa-muted)",
+  muted2: "var(--aa-muted2)",
+  bg: "var(--aa-bg)",
+  card: "var(--aa-card)",
+  line: "var(--aa-line)",
+  line2: "var(--aa-line2)",
 } as const;
+
+// AA-601 part B — alpha(color, pct): a translucent version of a colour that works with CSS
+// variables. The old hex-alpha-suffix trick (appending two hex digits) breaks when `color` is a
+// (you cannot concatenate an alpha byte onto a `var()` string). color-mix mixes the colour with
+// `transparent`, so it accepts a var() too. pct is the opacity percentage (0–100).
+// e.g. alpha(A.accent, 8) → "color-mix(in srgb, var(--aa-accent) 8%, transparent)".
+export function alpha(color: string, pct: number): string {
+  return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+}
 
 export const serif = FONT_DISPLAY;
 export const sans = FONT_SANS;

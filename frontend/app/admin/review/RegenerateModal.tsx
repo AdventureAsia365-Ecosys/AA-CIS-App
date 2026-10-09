@@ -137,7 +137,7 @@ export function RegenerateModal({
                   textTransform: "capitalize",
                   border: `1px solid ${tier === t ? A.gold : A.line}`,
                   background: tier === t ? A.gold : A.card,
-                  color: tier === t ? "#fff" : A.body,
+                  color: tier === t ? "var(--aa-on-solid)" : A.body,
                 }}
               >
                 {t}

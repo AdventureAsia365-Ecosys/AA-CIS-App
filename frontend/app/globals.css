@@ -1,28 +1,319 @@
 @import "tailwindcss";
 
-:root {
+/* ──────────────────────────────────────────────────────────────────────────
+   AA-601 part B — admin dark theme.
+
+   Single source of the admin/kit colour palette. The admin token object `A`
+   (admin/_components/adminUi.tsx) and the kit token object `K` (_kit/tokens.ts)
+   read these `--aa-*` variables via `var()` instead of hard-coding hex, so one
+   theme switch recolours every admin page and every kit component used on the
+   admin surface.
+
+   `BRAND` (_brand/tokens.ts) stays hex — the login pages and the tenant portal
+   `T` object read it unchanged, so they are unaffected by the admin theme.
+
+   Resolution order (handled by layout.tsx's restore script + AdminSidebar
+   toggle; localStorage key `cis_theme`):
+     - no stored choice  → follow `prefers-color-scheme`
+     - 'light' | 'dark'  → that explicit choice wins
+   The resolved value is written to <html data-theme="light|dark"> before paint,
+   so there is no flash of the wrong theme.
+
+   LIGHT values below = the exact hex the app used before this change (so the
+   light theme is pixel-identical in intent). DARK values are a considered dark
+   palette: dark-slate surfaces, light text, the brand gold accent kept
+   recognisable, semantic red/green/amber readable on dark, body text ≥ 4.5:1
+   on card/bg (WCAG AA).
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── LIGHT (default + explicit light) ──────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  /* Accent — brand gold */
+  --aa-accent:        #DB9628;
+  --aa-accent-deep:   #9E6E16;
+  --aa-accent-soft:   #F4E2C2;
+  --aa-accent-tint:   #FBF3E3;
+  --aa-accent-border: #DDA64E;
+  --aa-gold:          #DB9628; /* alias of accent (admin A.gold / A.gold === accent) */
+  --aa-gold-tint:     #FBF3E3; /* A.goldTint */
+  /* Secondary — brand slate */
+  --aa-slate:         #35495E;
+  /* Danger / error (red) */
+  --aa-red:           #C20101;
+  --aa-red-soft:      #FBE9E7;
+  --aa-red-tint:      #FDF4F3;
+  --aa-red-border:    #F2C4BF;
+  /* Success (green) */
+  --aa-green:         #2E7D5B;
+  --aa-green-soft:    #E4F1E9;
+  /* Amber / warning (admin A.amber/amberSoft) */
+  --aa-amber:         #F59E0B;
+  --aa-amber-soft:    #FEF3C7;
+  /* Kit amber (K.amber/amberSoft — a slightly different, consistent kit value) */
+  --aa-kit-amber:      #B5791F;
+  --aa-kit-amber-soft: #FBEFD6;
+  /* Info (blue) — kit owns these (K.info/infoSoft) */
+  --aa-info:          #1E40AF;
+  --aa-info-soft:     #DBEAFE;
+  /* Purple — kit tone */
+  --aa-purple:        #5B21B6;
+  --aa-purple-soft:   #EDE9FE;
+  /* Neutrals / surfaces */
+  --aa-ink:           #1F2933;
+  --aa-ink2:          #2A333E;
+  --aa-ink3:          #3A4453;
+  --aa-body:          #33363D;
+  --aa-muted:         #6B7380;
+  --aa-muted2:        #9099A6;
+  --aa-bg:            #F8F6F2;
+  --aa-card:          #FFFFFF;
+  --aa-line:          #E9E4DB;
+  --aa-line2:         #F0EBE0;
+
+  /* ── Status / semantic pill tokens (consolidated from ad-hoc hex across the
+       11 admin files — status pills, legacy tints, decision zones). Each maps a
+       light hex to a dark-readable counterpart below. ── */
+  /* neutral pill (gray) */
+  --aa-neutral-bg:    #F3F4F6;
+  --aa-neutral-fg:    #4B5563;
+  --aa-neutral-fg2:   #6B7280;   /* a lighter gray text used by some pills */
+  --aa-neutral-border:#E5E7EB;
+  /* strong green text/border (status pills that used #16A34A / #047857 / #065F46 / #86EFAC / #BBF7D0 / #D1FAE5 / #F0FDF4) */
+  --aa-green-strong:  #16A34A;
+  --aa-green-deep:    #047857;
+  --aa-green-darkest: #065F46;
+  --aa-green-border:  #86EFAC;
+  --aa-green-border2: #BBF7D0;
+  --aa-green-bg:      #D1FAE5;
+  --aa-green-bg2:     #F0FDF4;
+  --aa-green-bg3:     #EAF3DE;
+  --aa-green-border3: #B8DFA0;
+  /* strong amber / orange text + tints (#B45309 #D97706 #92400E #C2410C #B5791F #FEF9C3 #FEF3C7 #FFEDD5 #FEFCE8 #FFFBEB #FEF9C3 #FDE68A #FED7AA #FFF7ED #FFF9E6 #FFF0C4) */
+  --aa-amber-strong:  #B45309;
+  --aa-amber-deep:    #92400E;
+  --aa-amber-orange:  #C2410C;
+  --aa-amber-orange2: #D97706;
+  --aa-amber-bg:      #FEF3C7;
+  --aa-amber-bg2:     #FEF9C3;
+  --aa-amber-bg3:     #FFEDD5;
+  --aa-amber-bg4:     #FEFCE8;
+  --aa-amber-bg5:     #FFFBEB;
+  --aa-amber-bg6:     #FFF7ED;
+  --aa-amber-bg7:     #FFF9E6;
+  --aa-amber-bg8:     #FFF0C4;
+  --aa-amber-border:  #FDE68A;
+  --aa-amber-border2: #FED7AA;
+  /* blue (info variants used by status maps / links #3B82F6 #2563EB #1E40AF #1D4ED8 #EFF6FF #DBEAFE #F8FAFF) */
+  --aa-blue:          #3B82F6;
+  --aa-blue-deep:     #2563EB;
+  --aa-blue-darkest:  #1E40AF;
+  --aa-blue-link:     #1D4ED8;
+  --aa-blue-bg:       #EFF6FF;
+  --aa-blue-bg2:      #DBEAFE;
+  --aa-blue-bg3:      #F8FAFF;
+  /* purple (#7C3AED #5B21B6 #3730A3 #EDE9FE #EEF2FF #F5F3FF) */
+  --aa-purple-strong: #7C3AED;
+  --aa-purple-deep:   #3730A3;
+  --aa-purple-bg:     #EEF2FF;
+  --aa-purple-bg2:    #F5F3FF;
+  /* red variants (#B91C1C #FCA5A5 #FFFCFC) */
+  --aa-red-strong:    #B91C1C;
+  --aa-red-border2:   #FCA5A5;
+  --aa-red-tint2:     #FFFCFC;
+  /* dark/toast surfaces (#1C1917 toast, #2A333E notif dropdown, #2563EB active) */
+  --aa-toast-bg:      #1C1917;
+  --aa-on-dark:       #F8F6F2;   /* light text on a dark surface (chart tooltip, toast) */
+  /* sidebar-specific neutrals (the sidebar is a dark panel in BOTH themes) */
+  --aa-side-bg:       #1F2933;   /* A.ink */
+  --aa-side-panel:    #2A333E;   /* notif dropdown */
+  --aa-side-text:     #C9CFD8;
+  --aa-side-text2:    #8A929D;
+  --aa-side-text3:    #6E7681;
+  --aa-side-title:    #F4F1EC;
+  /* neutral card bg stripes used by panels */
+  --aa-panel-bg0:     #FAFAF8;
+  --aa-panel-bg1:     #F8FAFF;
+  --aa-panel-bg2:     #F0FDF4;
+  --aa-panel-bg3:     #F5F3FF;
+  /* on-accent / on-strong text (white on gold buttons, badge dots) */
+  --aa-on-accent:     #FFFFFF;
+  /* on-solid — white text/icon that must stay white in BOTH themes, sitting on a solid coloured
+     surface (green/red/blue/dark buttons, toasts, spinner icons on coloured buttons). */
+  --aa-on-solid:      #FFFFFF;
+}
+
+/* ── DARK (explicit dark OR system dark with no stored choice) ─────────────────
+   data-theme="dark" is set by the restore script when the resolved theme is
+   dark. Values chosen for AA contrast on the dark surfaces below. ── */
+[data-theme="dark"] {
+  /* Accent — gold kept recognisable, nudged brighter for contrast on dark */
+  --aa-accent:        #E8A838;
+  --aa-accent-deep:   #F0C070;   /* "deep" is used as text-on-tint; on dark it must be light */
+  --aa-accent-soft:   #4A3A1C;
+  --aa-accent-tint:   #332814;
+  --aa-accent-border: #6B531F;
+  --aa-gold:          #E8A838;
+  --aa-gold-tint:     #332814;
+  --aa-slate:         #8CA3BC;
+  /* Danger */
+  --aa-red:           #F2746F;
+  --aa-red-soft:      #3A1E1C;
+  --aa-red-tint:      #2A1716;
+  --aa-red-border:    #6E3330;
+  /* Success */
+  --aa-green:         #4FB488;
+  --aa-green-soft:    #15301F;
+  /* Amber */
+  --aa-amber:         #F0B04A;
+  --aa-amber-soft:    #38290F;
+  --aa-kit-amber:      #E0A040;
+  --aa-kit-amber-soft: #352711;
+  /* Info */
+  --aa-info:          #7FA0F0;
+  --aa-info-soft:     #1C2847;
+  /* Purple */
+  --aa-purple:        #B99BF0;
+  --aa-purple-soft:   #2A1F42;
+  /* Neutrals / surfaces — dark slate */
+  --aa-ink:           #EAEEF4;   /* was darkest ink → now the lightest text */
+  --aa-ink2:          #D4DAE2;
+  --aa-ink3:          #B8C0CC;
+  --aa-body:          #D4DAE2;
+  --aa-muted:         #9099A6;
+  --aa-muted2:        #8A93A2;   /* AA-601 part B (feedback 1, item 3): ≥4.5:1 on card (5.2:1) and bg (6.0:1); was #717A88 (3.7:1) */
+  --aa-bg:            #0F141B;
+  --aa-card:          #19212C;
+  --aa-line:          #2A3542;
+  --aa-line2:         #222C38;
+
+  /* Status / semantic pills — dark surfaces + light foregrounds */
+  --aa-neutral-bg:    #263040;
+  --aa-neutral-fg:    #B8C0CC;
+  --aa-neutral-fg2:   #9099A6;
+  --aa-neutral-border:#303B4A;
+  --aa-green-strong:  #4FB488;
+  --aa-green-deep:    #5CC095;
+  --aa-green-darkest: #7FD1AC;
+  --aa-green-border:  #2E6B4E;
+  --aa-green-border2: #2E6B4E;
+  --aa-green-bg:      #15301F;
+  --aa-green-bg2:     #15301F;
+  --aa-green-bg3:     #1C3320;
+  --aa-green-border3: #3A6B3A;
+  --aa-amber-strong:  #F0B04A;
+  --aa-amber-deep:    #F0B04A;
+  --aa-amber-orange:  #F2975A;
+  --aa-amber-orange2: #F0A848;
+  --aa-amber-bg:      #38290F;
+  --aa-amber-bg2:     #352A10;
+  --aa-amber-bg3:     #3A2512;
+  --aa-amber-bg4:     #322C12;
+  --aa-amber-bg5:     #322810;
+  --aa-amber-bg6:     #38260F;
+  --aa-amber-bg7:     #332A12;
+  --aa-amber-bg8:     #3A2E14;
+  --aa-amber-border:  #6B5420;
+  --aa-amber-border2: #6E4A24;
+  --aa-blue:          #6FA0F0;
+  --aa-blue-deep:     #7FA0F0;
+  --aa-blue-darkest:  #9CB6F5;
+  --aa-blue-link:     #8FB0F5;
+  --aa-blue-bg:       #1C2847;
+  --aa-blue-bg2:      #1C2847;
+  --aa-blue-bg3:      #1A2335;
+  --aa-purple-strong: #B99BF0;
+  --aa-purple-deep:   #C4ABF5;
+  --aa-purple-bg:     #2A1F42;
+  --aa-purple-bg2:    #241B3A;
+  --aa-red-strong:    #F2746F;
+  --aa-red-border2:   #6E3330;
+  --aa-red-tint2:     #2A1716;
+  --aa-toast-bg:      #0A0E13;
+  --aa-on-dark:       #EAEEF4;
+  /* Sidebar stays a dark panel; slightly deeper than the dark page bg so it reads as a panel */
+  --aa-side-bg:       #141A22;
+  --aa-side-panel:    #222C38;
+  --aa-side-text:     #C9CFD8;
+  --aa-side-text2:    #8A929D;
+  --aa-side-text3:    #6E7681;
+  --aa-side-title:    #F4F1EC;
+  --aa-panel-bg0:     #1C242F;
+  --aa-panel-bg1:     #1A2130;
+  --aa-panel-bg2:     #15301F;
+  --aa-panel-bg3:     #241B3A;
+  --aa-on-accent:     #1A1206;   /* dark text on the brighter gold button reads better */
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Legacy variables (the `--bg-*` / `--text-*` set the body + a few components
+   still read). Kept for backwards compatibility; now driven by the `--aa-*`
+   palette so the body background/text follow the theme too.
+   ────────────────────────────────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
   --brand-gold:      #DB9628;
   --brand-gold-dark: #B87A1A;
   --brand-blackblue: #1F2933;
   --brand-gray:      #33363D;
   --brand-offwhite:  #F8F6F2;
-  --bg-primary:      #0F1419;
-  --bg-card:         #1A2230;
-  --bg-card-hover:   #1F2A3C;
-  --border:          #2A3547;
-  --text-primary:    #F8F6F2;
-  --text-secondary:  #8B9BB4;
-  --text-muted:      #4A5568;
+  /* AA-601 part B (feedback 1, item 2): these legacy light literals must stay EXACTLY what the app
+     used before — the effective old values came from the second [data-theme="light"] block that
+     won the cascade. Login / tenant-login / body read them directly, so mapping them to the
+     --aa-* palette (slightly different hex) visibly changed those pages. Restored verbatim. */
+  --bg-primary:      #F4F1EC;
+  --bg-card:         #FFFFFF;
+  --bg-card-hover:   #EDE9E3;
+  --border:          #D8D3CC;
+  --text-primary:    #1F2933;
+  --text-secondary:  #4A5568;
+  --text-muted:      #8B9BB4;
   --before-bg:       #FCEBEB;
   --before-border:   #F5C6C6;
   --after-bg:        #EAF3DE;
   --after-border:    #B8DFA0;
 }
 
+[data-theme="dark"] {
+  --bg-primary:      var(--aa-bg);
+  --bg-card:         var(--aa-card);
+  --bg-card-hover:   #222C38;
+  --border:          var(--aa-line);
+  --text-primary:    var(--aa-ink);
+  --text-secondary:  var(--aa-ink3);
+  --text-muted:      var(--aa-muted2);
+}
+
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: 'Poppins', system-ui, -apple-system, sans-serif; /* AA-605 brand body font */
+}
+
+/* AA-601 part B (feedback 2) — tell the UA which colour scheme is active so native widgets
+   (dropdown popups, date pickers, scrollbars, form-control chrome) render for the right theme.
+   Scoped to the data-theme element: the portal + login pin data-theme="light", so they stay light. */
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"]  { color-scheme: dark; }
+
+/* AA-601 part B (feedback 2) — themed baseline for admin form controls under the dark theme. Inline
+   styles still win where a component sets them (those were converted to tokens), but this catches
+   controls that rely on UA defaults so none render as a white box with invisible light text. Scoped
+   to [data-theme="dark"] (admin only — portal/login are pinned light). */
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: var(--aa-card);
+  color: var(--aa-ink);
+  border-color: var(--aa-line);
+}
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: var(--aa-muted2);
+}
+[data-theme="dark"] option {
+  background-color: var(--aa-card);
+  color: var(--aa-ink);
 }
 
 /* Scrollbar */
@@ -39,28 +330,6 @@ body {
 [contenteditable]:focus {
   box-shadow: inset 0 0 0 1px var(--brand-gold);
   border-radius: 4px;
-}
-
-/* Light theme */
-[data-theme="light"] {
-  --bg-primary:      #F8F6F2;
-  --bg-card:         #FFFFFF;
-  --bg-card-hover:   #F0EDE8;
-  --border:          #E2DDD8;
-  --text-primary:    #1F2933;
-  --text-secondary:  #4A5568;
-  --text-muted:      #8B9BB4;
-}
-
-/* Light theme */
-[data-theme="light"] {
-  --bg-primary:    #F4F1EC;
-  --bg-card:       #FFFFFF;
-  --bg-card-hover: #EDE9E3;
-  --border:        #D8D3CC;
-  --text-primary:  #1F2933;
-  --text-secondary:#4A5568;
-  --text-muted:    #8B9BB4;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

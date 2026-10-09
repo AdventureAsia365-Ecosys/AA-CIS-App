@@ -32,7 +32,7 @@ function RevalidatePill({ state }: { state: boolean | null }) {
       ? { bg: A.greenSoft, color: A.green, label: "Re-validation passed", Icon: ShieldCheck }
       : state === false
         ? { bg: A.redSoft, color: A.red, label: "Re-validation failed", Icon: XCircle }
-        : { bg: "#FEF3C7", color: "#92400E", label: "Needs re-validation", Icon: AlertTriangle };
+        : { bg: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", label: "Needs re-validation", Icon: AlertTriangle };
   const { Icon } = cfg;
   return (
     <span
@@ -63,7 +63,7 @@ function FieldLabel({ field, fails }: { field: string; fails?: { code: string; r
           fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: "0.1em",
-          color: failed ? A.red : "#6B7280",
+          color: failed ? A.red : "var(--aa-neutral-fg2)",
         }}
       >
         {FIELD_LABEL[field] || field}
@@ -100,7 +100,7 @@ function fieldBoxStyle(failed: boolean): React.CSSProperties {
     borderRadius: 6,
     background: A.card,
     lineHeight: 1.6,
-    border: `1px solid ${failed ? "#FCA5A5" : A.line}`,
+    border: `1px solid ${failed ? "var(--aa-red-border2)" : A.line}`,
     outline: "none",
     resize: "vertical",
   };

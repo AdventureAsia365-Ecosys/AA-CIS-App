@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
-  A, serif, sans, mono,
+  A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, TH, TD,
 } from "../_components/adminUi";
 import { BarChart2, Star, DollarSign, CalendarClock } from "lucide-react";
@@ -181,7 +181,7 @@ function masterStatusBadge(ms: string) {
     </span>
   );
   if (ms === "inactive") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#F3F4F6", color: "#6B7280", fontSize: 11, fontWeight: 600 }}>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-neutral-bg)", color: "var(--aa-neutral-fg2)", fontSize: 11, fontWeight: 600 }}>
       INACTIVE
     </span>
   );
@@ -194,13 +194,13 @@ function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | n
     <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>✓ Pass</span>
   );
   if (status === "flagged" && fixPassApplied) return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "#FEF9C3", color: "#B45309", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg2)", color: "var(--aa-amber-strong)", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
   );
   if (status === "flagged") return (
     <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
   );
   if (status === "manual_check") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FFEDD5", color: "#C2410C", fontSize: 11, fontWeight: 600 }}>Manual check</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg3)", color: "var(--aa-amber-orange)", fontSize: 11, fontWeight: 600 }}>Manual check</span>
   );
   return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
 }
@@ -299,7 +299,7 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
             </thead>
             <tbody>
               {sorted.map((k, i) => (
-                <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? "#fff" : A.bg }}>
+                <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? A.card : A.bg }}>
                   <td style={{ padding: "4px 8px", color: A.ink }}>{k.keyword}</td>
                   <td style={{ padding: "4px 8px", textAlign: "right", fontFamily: mono, color: A.body }}>{fmtVol(k.search_volume)}</td>
                   <td style={{ padding: "4px 8px", textAlign: "right", color: A.muted }}>
@@ -336,8 +336,8 @@ interface PanelState {
   loading: boolean;
 }
 
-const PANEL_COLORS = [A.gold, "#3B82F6", "#16A34A", "#7C3AED"];
-const PANEL_BG     = ["#FAFAF8", "#F8FAFF", "#F0FDF4", "#F5F3FF"];
+const PANEL_COLORS = [A.gold, "var(--aa-blue)", "var(--aa-green-strong)", "var(--aa-purple-strong)"];
+const PANEL_BG     = ["var(--aa-panel-bg0)", "var(--aa-panel-bg1)", "var(--aa-panel-bg2)", "var(--aa-panel-bg3)"];
 
 const CONTENT_FIELDS: [keyof VersionDetail, string][] = [
   ["aa_name",        "Tour Name"],
@@ -509,14 +509,14 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   return (
     <div style={{
       position: "fixed", top: 0, left: 240, width: "calc(100vw - 240px)", height: "100vh",
-      background: "#fff", zIndex: 300, display: "flex", flexDirection: "column",
+      background: A.card, zIndex: 300, display: "flex", flexDirection: "column",
       boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
     }}>
       {/* Modal header */}
       <div style={{
         padding: "14px 24px", borderBottom: `1px solid ${A.line}`,
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        flexShrink: 0, background: "#fff", zIndex: 10,
+        flexShrink: 0, background: A.card, zIndex: 10,
       }}>
         <div>
           <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
@@ -533,7 +533,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
             style={{
               padding: "6px 12px", fontSize: 12, fontWeight: 600,
               border: `1px solid ${A.line}`, borderRadius: 6,
-              background: "#fff", color: A.body, cursor: exporting ? "not-allowed" : "pointer",
+              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
               opacity: exporting ? 0.5 : 1,
             }}
           >
@@ -545,7 +545,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
             style={{
               padding: "6px 12px", fontSize: 12, fontWeight: 600,
               border: `1px solid ${A.line}`, borderRadius: 6,
-              background: "#fff", color: A.body, cursor: exporting ? "not-allowed" : "pointer",
+              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
               opacity: exporting ? 0.5 : 1,
             }}
           >
@@ -598,7 +598,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       onChange={e => changePanel(idx, parseInt(e.target.value))}
                       style={{
                         padding: "3px 8px", fontSize: 12, fontWeight: 700,
-                        background: color, color: "#fff",
+                        background: color, color: "var(--aa-on-solid)",
                         border: "none", borderRadius: 10, cursor: "pointer",
                       }}
                     >
@@ -618,7 +618,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         style={{
                           padding: "2px 8px", fontSize: 11, fontWeight: 600,
                           border: `1px solid ${A.line}`, borderRadius: 6,
-                          background: "#fff", color: A.body,
+                          background: A.card, color: A.body,
                           cursor: exporting ? "not-allowed" : "pointer",
                         }}
                       >DOCX</button>
@@ -696,7 +696,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         </div>
                       )}
                       {v.fix_pass_applied && v.fix_pass_fields && v.fix_pass_fields.length > 0 && (
-                        <div style={{ color: "#3B82F6", marginTop: 4 }}>
+                        <div style={{ color: "var(--aa-blue)", marginTop: 4 }}>
                           Fixed: {v.fix_pass_fields.join(", ")}
                         </div>
                       )}
@@ -767,16 +767,16 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 {CONTENT_FIELDS.map(([key, label]) => {
                   const diff = isFieldDiff(idx, key);
                   return (
-                    <div key={key} style={{ borderBottom: `1px solid ${A.line}`, background: diff ? "#FFF9E6" : "transparent" }}>
+                    <div key={key} style={{ borderBottom: `1px solid ${A.line}`, background: diff ? "var(--aa-amber-bg7)" : "transparent" }}>
                       <div style={{
                         padding: "5px 20px",
-                        background: diff ? "#FFF0C4" : A.line2,
+                        background: diff ? "var(--aa-amber-bg8)" : A.line2,
                         fontSize: 10, fontWeight: 700,
                         textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted,
                         display: "flex", alignItems: "center", gap: 6,
                       }}>
                         {label}
-                        {diff && <span style={{ color: "#C2410C", fontSize: 9 }}>↕ diff</span>}
+                        {diff && <span style={{ color: "var(--aa-amber-orange)", fontSize: 9 }}>↕ diff</span>}
                       </div>
                       {cellVal(panel, key)}
                     </div>
@@ -1055,7 +1055,7 @@ export default function MasterContentPage() {
       {toast && (
         <div style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 9999,
-          background: "#1C1917", color: "#fff", padding: "10px 20px",
+          background: "var(--aa-toast-bg)", color: "var(--aa-on-dark)", padding: "10px 20px",
           borderRadius: 8, fontSize: 13, fontWeight: 500,
           boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         }}>
@@ -1113,7 +1113,7 @@ export default function MasterContentPage() {
         {/* ── Section 2: Rewritten Tours (flex, scrollable) ───────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${A.line}` }}>
           {/* Master status tabs */}
-          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: "#fff", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: A.card, flexShrink: 0 }}>
             {[
               { label: "Active", value: "active" },
               { label: "Inactive", value: "inactive" },
@@ -1146,7 +1146,7 @@ export default function MasterContentPage() {
 
           {/* Sticky inner header */}
           <div style={{
-            position: "sticky", top: 0, zIndex: 5, background: "#fff",
+            position: "sticky", top: 0, zIndex: 5, background: A.card,
             padding: "10px 32px 8px", borderBottom: `1px solid ${A.line}`,
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0,
           }}>
@@ -1164,20 +1164,20 @@ export default function MasterContentPage() {
                 value={search}
                 onChange={e => handleSearch(e.target.value)}
                 placeholder="Search name or country…"
-                style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: "#fff", color: A.ink, outline: "none" }}
+                style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: A.card, color: A.ink, outline: "none" }}
               />
               <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Countries</option>
                 {countryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Scores</option>
                 {scoreOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Versions</option>
                 {versionOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -1263,8 +1263,8 @@ export default function MasterContentPage() {
                       <React.Fragment key={t.version_id}>
                         <tr style={{
                           background: t.master_status === "trashed" ? A.redTint
-                            : isExpanded ? `${A.gold}14` : isSelected ? `${A.gold}10`
-                            : absIdx % 2 === 0 ? "#fff" : A.bg,
+                            : isExpanded ? alpha(A.gold, 8) : isSelected ? alpha(A.gold, 6)
+                            : absIdx % 2 === 0 ? A.card : A.bg,
                           borderBottom: isExpanded ? "none" : undefined,
                           opacity: t.master_status === "trashed" ? 0.7 : 1,
                         }}>
@@ -1295,7 +1295,7 @@ export default function MasterContentPage() {
                                   title={`${t.pending_review_count} failed version(s) pending in Review Queue — click to review/dismiss`}
                                   style={{
                                     fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                                    background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
+                                    background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)",
                                     textDecoration: "none", whiteSpace: "nowrap",
                                   }}
                                 >
@@ -1312,12 +1312,12 @@ export default function MasterContentPage() {
                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                               <button
                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: "#fff", cursor: "pointer", color: A.body }}
+                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
                               >View</button>
                               {t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => toggleExpand(t.tour_id!)}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? `${A.gold}22` : "#fff", cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
                                 </button>
@@ -1327,7 +1327,7 @@ export default function MasterContentPage() {
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")}
                                   disabled={toggling === t.tour_id}
                                   title="Set to inactive"
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", cursor: "pointer", color: "#D97706", fontWeight: 600 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Inactive"}
                                 </button>
@@ -1337,7 +1337,7 @@ export default function MasterContentPage() {
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
                                   disabled={toggling === t.tour_id}
                                   title="Set to active"
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, fontWeight: 600 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Active"}
                                 </button>
@@ -1358,7 +1358,7 @@ export default function MasterContentPage() {
                                   onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
                                   disabled={restoring === t.tour_id}
                                   title="Restore from trash (→ inactive)"
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid #BBF7D0`, borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <RotateCcw size={11} />
                                   {restoring === t.tour_id ? "…" : "Restore"}
@@ -1368,7 +1368,7 @@ export default function MasterContentPage() {
                           </td>
                         </tr>
                         {isExpanded && (
-                          <tr style={{ background: `${A.gold}08` }}>
+                          <tr style={{ background: alpha(A.gold, 3) }}>
                             <td colSpan={9} style={{ padding: "0 0 0 48px", borderBottom: `1px solid ${A.line}` }}>
                               {/* AA-687 — the background jobs for this tour (atomize, tenant rewrites). */}
                               {t.tour_id && (
@@ -1394,7 +1394,7 @@ export default function MasterContentPage() {
                                     </thead>
                                     <tbody>
                                       {versions.map(v => (
-                                        <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "#FEFCE8" : "transparent" }}>
+                                        <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "var(--aa-amber-bg4)" : "transparent" }}>
                                           <td style={{ padding: "6px 10px", width: 32 }}>
                                             <input
                                               type="checkbox"
@@ -1405,7 +1405,7 @@ export default function MasterContentPage() {
                                             />
                                           </td>
                                           <td style={{ padding: "6px 10px" }}>
-                                            <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "#fff" : A.gold, fontSize: 11, fontWeight: 600 }}>
+                                            <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "var(--aa-on-solid)" : A.gold, fontSize: 11, fontWeight: 600 }}>
                                               v{v.version_num}
                                             </span>
                                             {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: A.gold }}>current</span>}
@@ -1446,14 +1446,14 @@ export default function MasterContentPage() {
                                             <div style={{ display: "flex", gap: 5 }}>
                                               <button
                                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                                style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: "#fff", cursor: "pointer", color: A.body }}
+                                                style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                               >View</button>
                                               {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
                                               {v.version_num > 0 && (
                                                 <button
                                                   onClick={() => t.tour_id && exportVersionDocx(t.tour_id, Number(v.version_num))}
                                                   title="Export this version as DOCX"
-                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: "#fff", cursor: "pointer", color: A.body }}
+                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                                 >DOCX</button>
                                               )}
                                               {!v.is_current && (
@@ -1510,7 +1510,7 @@ export default function MasterContentPage() {
                   <select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}
+                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}
                   >
                     {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
                   </select>
@@ -1526,7 +1526,7 @@ export default function MasterContentPage() {
         {/* ── Section 3: Pipeline Runs (fixed height) ──────────────────────── */}
         <div style={{ height: 280, display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {/* Sticky section header */}
-          <div style={{ padding: "8px 32px 6px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: "#fff" }}>
+          <div style={{ padding: "8px 32px 6px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: A.card }}>
             <SLabel style={{ margin: 0 }}>Recent Pipeline Runs</SLabel>
           </div>
           {runs.length === 0 ? (
@@ -1547,7 +1547,7 @@ export default function MasterContentPage() {
                 </thead>
                 <tbody>
                   {paginatedRuns.map((r, i) => (
-                    <tr key={r.run_id} style={{ background: i % 2 === 0 ? "#fff" : A.bg }}>
+                    <tr key={r.run_id} style={{ background: i % 2 === 0 ? A.card : A.bg }}>
                       <td style={{ ...TD, fontFamily: mono, fontSize: 11, color: A.muted2 }}>{r.run_id.slice(0, 8)}…</td>
                       <td style={{ ...TD, fontSize: 11, color: A.muted2 }}>{relDate(r.started_at)}</td>
                       <td style={TD}>{r.tours_processed}</td>
