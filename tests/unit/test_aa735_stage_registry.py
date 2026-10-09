@@ -36,12 +36,46 @@ def test_every_stage_declares_reads_writes_and_a_valid_strategy():
         assert stage.write_strategy in VALID_WRITE_STRATEGIES, name
 
 
+def test_per_table_strategies_cover_every_written_table_and_are_valid():
+    # AA-735 — a stage that writes several tables declares a strategy PER table; the map must
+    # cover exactly `writes`, every value must be a valid strategy, and the stage's own
+    # `write_strategy` must be one of its per-table strategies.
+    for name, stage in all_stages().items():
+        assert set(stage.table_strategies) == set(stage.writes), name
+        for table, strategy in stage.table_strategies.items():
+            assert strategy in VALID_WRITE_STRATEGIES, (name, table)
+        assert stage.write_strategy in stage.table_strategies.values(), name
+
+
 def test_declared_write_strategies_match_the_real_sql():
     # Declared from the real SQL each wrapped function runs (see stages.py docstring).
-    assert get_stage("segment").write_strategy == "upsert"          # atom_segment ON CONFLICT
-    assert get_stage("landing").write_strategy == "upsert"          # UPDATE questions_count cache
-    assert get_stage("score").write_strategy == "versioned_swap"    # atom_ranking supersede+insert
-    assert get_stage("route").write_strategy == "versioned_swap"    # route supersede+insert (AA-532)
+    segment = get_stage("segment")
+    assert segment.write_strategy == "upsert"
+    # segment is mixed per table: atom_segment never deletes (mig 129 FK), member re-points as
+    # insert+delete on a bridging merge, alias upserts.
+    assert segment.table_strategies == {
+        "acp_contract.atom_segment": "upsert",
+        "acp_contract.atom_segment_member": "delete_insert",
+        "acp_contract.atom_segment_alias": "upsert",
+    }
+    # landing upserts across every table it touches (questions_count cache, atom_matches, the two
+    # embedding caches).
+    landing = get_stage("landing")
+    assert landing.write_strategy == "upsert"
+    assert set(landing.writes) == {
+        "acp_contract.atom_segment", "acp_contract.atom_matches",
+        "acp_contract.atom_embedding", "acp_contract.question_embedding",
+    }
+    assert all(s == "upsert" for s in landing.table_strategies.values())
+    # score: atom_ranking supersede + insert (AA-734).
+    assert get_stage("score").write_strategy == "versioned_swap"
+    # route is mixed per table: route versioned (AA-532), hub persistent upsert.
+    route = get_stage("route")
+    assert route.write_strategy == "versioned_swap"
+    assert route.table_strategies == {
+        "acp_contract.route": "versioned_swap",
+        "acp_contract.hub": "upsert",
+    }
 
 
 def test_named_lists_mirror_the_two_old_chains():
@@ -203,6 +237,70 @@ async def test_platform_stages_pass_the_segment_scope_straight_to_landing():
         # None = backfill, every Segment
         await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids=None), pool=object())
         assert landing.await_args.args[1] is None
+
+
+@pytest.mark.asyncio
+async def test_platform_stages_are_progress_silent_and_emit_no_per_tour_logs():
+    """AA-735 — base's platform chain (recompute_rankings_and_routes) passed NO progress callback
+    and logged only its own recompute_rankings_and_routes_done. The stage version must stay
+    log-identical: called with no progress (exactly as the wrapper calls it), landing gets
+    progress=None, no progress events fire, and the per-tour `ranking_done` /
+    `route_detection_done` events (tour chain only) never appear."""
+    landing = AsyncMock(return_value={})
+    with patch("services.acp_contract.atom_ranking.precompute_question_landings", landing), \
+         patch("services.acp_contract.atom_ranking.run_atom_ranking", AsyncMock(return_value={})), \
+         patch("services.acp_contract.route_detection.run_route_detection",
+               AsyncMock(return_value={})), \
+         patch("services.seo_intelligence.seed_builder.DFS_LOCATION_MAP",
+               {"US": 1, "UK": 2, "AU": 3, "DE": 4, "FR": 5, "NL": 6}), \
+         patch("services.recompute.stages.logger") as log:
+        # Exactly how recompute_rankings_and_routes calls it: no progress argument.
+        await run_stages(PLATFORM_STAGES, RecomputeScope(segment_ids={"a"}), pool=object())
+    # landing's 3rd positional arg is the progress callback — None on the platform path.
+    assert landing.await_args.args[2] is None
+    # the per-tour log events must not fire on the platform path (base logged neither).
+    logged = [c.args[0] for c in log.info.call_args_list]
+    assert "ranking_done" not in logged
+    assert "route_detection_done" not in logged
+
+
+# ── A3 atomize path runs segment matching through the one stage registry ──────────────────────
+
+@pytest.mark.asyncio
+async def test_a3_atomize_path_runs_segment_matching_once_through_run_stages():
+    """AA-735 — `_run_a3_atomize_background` used to call `run_segment_matching(tour_id, pool)`
+    inline; it now goes through `run_stages(["segment"], ...)`. The observable outcome must stay
+    the base one: segment matching is still called EXACTLY once with (tour_id, pool), and the
+    returned outcome still carries `segment_score_route="ok"` plus the debounced platform job's
+    keys (segments / score_route_job / score_route_job_reused). Score + Route are NOT run inline
+    here (they go to the enqueued `recompute` job), so only `segment` runs through run_stages."""
+    from services.export import handler
+
+    pool = AsyncMock()           # open_job_pool() result; .close() awaited in finally
+    seg = AsyncMock(return_value={"segment_rows": 3})
+    enqueue = AsyncMock(return_value=("job-9", True))
+
+    with patch("services.acp_produce.tenant_pipeline.run_t5_atomize",
+               AsyncMock(return_value={"atoms": 1})), \
+         patch("services.acp_contract.segment_matching.run_segment_matching", seg), \
+         patch("services.export.handler.tour_segment_ids",
+               AsyncMock(return_value=["s1", "s2"])), \
+         patch("services.jobs.recompute_job.enqueue_recompute", enqueue), \
+         patch("services.export.handler.open_job_pool", AsyncMock(return_value=pool)):
+        outcome = await handler._run_a3_atomize_background(
+            TOUR, {"days": []}, "US", "v1")
+
+    # segment matching ran exactly once, scoped to this tour, on the job pool
+    seg.assert_awaited_once_with(TOUR, pool)
+    # base outcome keys unchanged (S218: the step reports ok and the debounced job's identity)
+    assert outcome["segment_score_route"] == "ok"
+    assert outcome["segments"] == 2
+    assert outcome["score_route_job"] == "job-9"
+    assert outcome["score_route_job_reused"] is False
+    # the platform score+route go to the enqueued job, not inline — enqueued once, scope platform
+    enqueue.assert_awaited_once()
+    assert enqueue.await_args.kwargs["scope"] == "platform"
+    assert enqueue.await_args.kwargs["segment_ids"] == ["s1", "s2"]
 
 
 # ── handler wrappers keep the Jobs-page result keys ───────────────────────────────────────────

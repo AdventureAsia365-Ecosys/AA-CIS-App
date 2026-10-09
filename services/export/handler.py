@@ -89,19 +89,17 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
 
     Called when a tour's master_status changes (active <-> inactive/trashed). Segments are an
     UPSERT-only, platform-wide set — an inactivated tour's atoms stay in atom_segment_member — but
-    ranking and route detection both read atoms through `v_active_tour_atoms` now (migration 203),
-    so re-running them drops the inactive tour's atoms from `atom_ranking` and `route`, which is
-    what the tenant Slate reads. No atomize, no segment_matching: deactivating a tour never adds
-    atoms, only removes them from the caches.
+    ranking (DELETE+INSERT per market) and route detection both read atoms through
+    `v_active_tour_atoms` now (migration 203), so re-running them drops the inactive tour's atoms
+    from `atom_ranking` and `route`, which is what the tenant Slate reads. No atomize, no
+    segment_matching: deactivating a tour never adds atoms, only removes them from the caches.
 
     AA-743 — `segment_ids`: re-land PAA questions only for these Segments (plus brand-new ones,
     whose questions_count is NULL); every other Segment's count is read from cache. None keeps the
     original from-scratch pass over every Segment (backfills only).
 
-    AA-735 nac 3 — a thin wrapper over the declared stage registry (PLATFORM_STAGES =
-    landing -> score -> route). Kept as a named function because callers/scripts import it and the
-    `recompute` job maps its result keys back to the Jobs-page shape (`ranking`/`route`). The SQL,
-    order and progress events are the orchestrator's — identical to the old inline chain."""
+    AA-735 nac 3 — the body now runs through `services.recompute.run_stages(PLATFORM_STAGES, ...)`
+    (landing -> score -> route); same SQL, order and (absent) progress as the old inline chain."""
     from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(
         segment_ids=set(segment_ids) if segment_ids is not None else None,
@@ -114,22 +112,20 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
 
 async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None,
                                        progress=None) -> dict:
-    """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below so it can ALSO be fired
-    on its own, from `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag
-    changes. Before AA-564, curating an atom (star or soft-delete) never recomputed
-    Segment/Score/Route at all — AA-563's investigation confirmed this was a real staleness gap,
-    not a misunderstanding: only `deleted` actually affects Segment eligibility
-    (`WHERE NOT ta.deleted`, segment_matching.py), `starred` never does, so this is deliberately
-    NOT wired to the star action too.
+    """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below (which still calls this
+    right after atomize, unchanged) so it can ALSO be fired on its own, from
+    `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag changes. Before
+    AA-564, curating an atom (star or soft-delete) never recomputed Segment/Score/Route at all —
+    AA-563's investigation confirmed this was a real staleness gap, not a misunderstanding: only
+    `deleted` actually affects Segment eligibility (`WHERE NOT ta.deleted`, segment_matching.py),
+    `starred` never does, so this is deliberately NOT wired to the star action too.
 
     Platform-wide (AA-545) — `run_route_detection()` recomputes ALL tours' Routes, not just this
-    one; `run_segment_matching(tour_id, ...)` itself is incremental and stays scoped to this tour.
-    PAA landing is scoped to this tour's own Segments (AA-610 scope fix) — every other Segment's
-    questions_count is read from cache.
+    one, same as `_run_a3_atomize_background()` already did; `run_segment_matching(tour_id, ...)`
+    itself is incremental and does stay scoped to this one tour.
 
-    AA-735 nac 3 — a thin wrapper over the declared stage registry (TOUR_STAGES =
-    segment -> landing -> score -> route). Result keys stay `{segment, ranking, route}`; the SQL,
-    order and progress events are the orchestrator's — identical to the old inline chain."""
+    AA-735 nac 3 — the body now runs through `services.recompute.run_stages(TOUR_STAGES, ...)`
+    (segment -> landing -> score -> route); same SQL, order and progress as the old inline chain."""
     from services.recompute import TOUR_STAGES, RecomputeScope, run_stages
     scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id)
     results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress)
@@ -190,11 +186,10 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             from services.recompute import RecomputeScope, run_stages
             # AA-735 nac 3 — segment matching for this tour goes through the one stage registry
             # (run_stages(["segment"], ...)) instead of an inline run_segment_matching call. Same
-            # function, same scope (this tour); Score + Route still go to the debounced platform
-            # `recompute` job below, not inline.
-            seg_results = await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
-            segment_result = seg_results["segment"]
-            logger.info("segment_matching_done", tour_id=tour_id, result=segment_result)
+            # function, same scope (this tour); the `segment` stage already logs
+            # `segment_matching_done`, so this path no longer logs it again. Score + Route still go
+            # to the debounced platform `recompute` job below, not inline.
+            await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
             segment_ids = await tour_segment_ids(pool, tour_id)
             job_id, created = await enqueue_recompute(
                 pool, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
