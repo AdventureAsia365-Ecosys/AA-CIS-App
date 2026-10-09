@@ -8,6 +8,7 @@ import base64
 import datetime
 import json
 import os
+import re
 from uuid import UUID
 
 import asyncpg
@@ -2395,6 +2396,64 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     return {"kind": "other", "label": "Held for review"}
 
 
+_TRANSIENT_RE = re.compile(
+    r"timeout|timed out|throttl|ThrottlingException|TooManyRequests|\b429\b|"
+    r"ServiceUnavailable|InternalServerError|Bad Gateway|Gateway Timeout|HTTP\s*5\d\d",
+    re.IGNORECASE)
+
+
+def _review_failure_class(score, codes: list, failures: list, brand_audit_status,
+                          failure_summary, src_itinerary_chars) -> dict:
+    """AA-728: per-row *actionability* of a held review row — can Regenerate (a retry on the same
+    harness) actually fix it, and if not, what should the reviewer do instead? Distinct from
+    `_review_block` (the headline label): this drives whether the UI shows the Regenerate button.
+
+    First match wins, in this order:
+      - `raw_insufficient` — the raw itinerary source is too thin for any rewrite to work.
+        Not retryable; trash the tour or enrich the raw itinerary.
+      - `needs_human` — a person must decide (fact check / unsupported claim, or brand audit
+        manual_check — e.g. elephant riding, chị Thư's keep-and-review policy). Not retryable.
+      - `writer_tone` — a Sonnet retry already failed (AA-736 'retried with sonnet' in the
+        summary); a stronger model will not change a tone/word the brand forbids. Not retryable.
+      - `transient` — the failure text looks like a timeout / throttle / 429 / 5xx; a plain retry
+        is exactly the fix. Retryable.
+      - `hard` — any other surviving hard-block code (incl. a FORBIDDEN_WORD not yet retried with
+        Sonnet). Retryable (Regenerate escalates to Sonnet).
+      - `low_quality` — score below the floor with no hard code. Retryable.
+      - `other` — fallback. Retryable.
+    """
+    from services.content_generation.graph import _HARD_BLOCK_CODES
+    cs = set(codes or [])
+    summary = failure_summary or ""
+
+    if src_itinerary_chars is not None and src_itinerary_chars < 500:
+        return {"failure_class": "raw_insufficient", "retryable": False,
+                "hint": "Raw source too thin — trash the tour or enrich the raw itinerary"}
+
+    if (cs & _MANUAL_CHECK_REVIEW_CODES) or brand_audit_status == "manual_check":
+        return {"failure_class": "needs_human", "retryable": False,
+                "hint": "A person decides — edit, then Approve or Reject"}
+
+    if "retried with sonnet" in summary.lower():
+        return {"failure_class": "writer_tone", "retryable": False,
+                "hint": "Sonnet already tried — edit by hand or Reject"}
+
+    if _TRANSIENT_RE.search(summary):
+        return {"failure_class": "transient", "retryable": True,
+                "hint": "Transient model error — regenerate to retry"}
+
+    if cs & set(_HARD_BLOCK_CODES):
+        return {"failure_class": "hard", "retryable": True,
+                "hint": "Regenerate with Sonnet"}
+
+    if score is not None and score < 7.0:
+        return {"failure_class": "low_quality", "retryable": True,
+                "hint": "Low quality — regenerate for a better draft"}
+
+    return {"failure_class": "other", "retryable": True,
+            "hint": "Regenerate to try again"}
+
+
 @router.get("/review-queue")
 async def admin_review_queue(
     request: Request,
@@ -2452,7 +2511,8 @@ async def admin_review_queue(
                    gc.human_edited, gc.reviewed_by, gc.edited_at, gc.revalidate_passed,
                    gc.requested_tier, gc.status, gc.version_num,
                    qs.failure_codes, qs.brand_audit_codes, qs.brand_audit_status,
-                   rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id
+                   rt.src_name, rt.country, rt.duration, rt.batch_id AS raw_tours_batch_id,
+                   length(rt.src_itineraries) AS src_itinerary_chars
             FROM silver_aa_internal.review_queue rq
             JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
             -- AA-739: latest evaluation only; a plain LEFT JOIN repeated a row per evaluation.
@@ -2526,6 +2586,12 @@ async def admin_review_queue(
             "block":              _review_block(
                 float(r["score_overall"]) if r["score_overall"] is not None else None,
                 codes, _failures, r["brand_audit_status"]),
+            # AA-728: whether Regenerate (a same-harness retry) can fix this row, and the hint for
+            # what to do when it cannot. Drives the FE Regenerate button + bulk skip.
+            **_review_failure_class(
+                float(r["score_overall"]) if r["score_overall"] is not None else None,
+                codes, _failures, r["brand_audit_status"],
+                r["failure_summary"], r["src_itinerary_chars"]),
             # AA-242 regenerate context: tier the caller originally requested (may be null),
             # and the raw-tour batch so the FE can pass it back through run-tour-async
             "requested_tier":     r["requested_tier"],
