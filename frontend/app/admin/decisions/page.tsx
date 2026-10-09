@@ -6,7 +6,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BookOpen, ChevronDown, ChevronRight, RefreshCw, Scale } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import AdminSidebar from "../_components/AdminSidebar";
 import { A, alpha, serif, sans, mono, Card, SLabel, Btn, LoadingScreen, TH, TD, CHART_TOOLTIP } from "../_components/adminUi";
 import { useChartColors } from "../../_kit/useTheme";
 
@@ -311,9 +310,7 @@ export default function DecisionsPage() {
   const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setVPage(0); };
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-      <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
         {/* Sticky header + tabs */}
         <div style={{ position: "sticky", top: 0, zIndex: 5, background: A.bg, padding: "22px 32px 0", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -591,6 +588,5 @@ export default function DecisionsPage() {
           )}
         </div>
       </main>
-    </div>
   );
 }

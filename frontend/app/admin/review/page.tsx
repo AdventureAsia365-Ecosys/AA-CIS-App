@@ -12,7 +12,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import AdminSidebar from "../_components/AdminSidebar";
 import { A, serif, mono, sans, Btn } from "../_components/adminUi";
 import {
   Badge,
@@ -605,11 +604,8 @@ function ReviewQueueInner() {
 
 export default function AdminReviewPage() {
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: sans, background: A.bg }}>
-      <AdminSidebar />
-      <ToastProvider>
-        <ReviewQueueInner />
-      </ToastProvider>
-    </div>
+    <ToastProvider>
+      <ReviewQueueInner />
+    </ToastProvider>
   );
 }

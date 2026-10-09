@@ -7,7 +7,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, alpha, serif, sans, mono,
   Card, SLabel, Badge, Btn, LoadingScreen,
@@ -572,21 +571,15 @@ export default function S1RewritePage() {
 
   if (loading) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", background: A.bg }}>
-        <AdminSidebar />
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px", overflowY: "auto" }}>
           <LoadingScreen msg="Loading tours…" />
         </main>
-      </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-
-      {/* Right column: sticky config + scrollable main */}
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+    <>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, minHeight: 0 }}>
 
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
         <div style={{
@@ -1001,6 +994,6 @@ export default function S1RewritePage() {
           {toast}
         </div>
       )}
-    </div>
+    </>
   );
 }

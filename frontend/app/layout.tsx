@@ -33,6 +33,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           })();
         `}} />
 
+        {/* AA-752 — sidebar collapsed-state restore (runs before paint, no wrong-width flash).
+            localStorage.cis_sidebar === 'collapsed' means the rail is collapsed; absent === expanded.
+            Written to <html data-sidebar>, matching app/_kit/sidebarStore.ts. */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            try {
+              var s = localStorage.getItem('cis_sidebar');
+              document.documentElement.setAttribute('data-sidebar', s === 'collapsed' ? 'collapsed' : 'expanded');
+            } catch (e) {
+              document.documentElement.setAttribute('data-sidebar', 'expanded');
+            }
+          })();
+        `}} />
+
         {/* AA-605 — Fahkwang (display) + Poppins (UI) are the Adventure Asia brand faces
             (app/_brand/tokens.ts), used by admin and the tenant portal;
             JetBrains Mono for IDs/codes. */}

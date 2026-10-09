@@ -1,10 +1,10 @@
 "use client";
 // app/admin/master-content/page.tsx
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { Suspense, useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
@@ -788,8 +788,20 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MasterContentPage() {
+  // useSearchParams() needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <MasterContentPageInner />
+    </Suspense>
+  );
+}
+
+function MasterContentPageInner() {
+  // AA-752 — deep link from the ⌘K palette: /admin/master-content?tour=<tour_id> opens that tour's
+  // detail panel. Read the param once with a lazy useState initializer (no setState-in-effect).
+  const searchParams = useSearchParams();
   const [search, setSearch]             = useState("");
-  const [detailTourId, setDetailTourId] = useState<string | null>(null);
+  const [detailTourId, setDetailTourId] = useState<string | null>(() => searchParams.get("tour"));
   const [detailTourName, setDetailTourName] = useState("");
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [compareOpen, setCompareOpen]   = useState(false);
@@ -1051,17 +1063,14 @@ export default function MasterContentPage() {
 
   if (loading) {
     return (
-      <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-        <AdminSidebar />
-        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px", overflowY: "auto" }}>
           <LoadingScreen msg="Loading master content…" />
         </main>
-      </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans, overflow: "hidden" }}>
+    <>
       {toast && (
         <div style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 9999,
@@ -1072,13 +1081,12 @@ export default function MasterContentPage() {
           {toast}
         </div>
       )}
-      <AdminSidebar />
 
       {/* AA-718: define the spin keyframe (used by Refresh icon + kit StatusBadge running state). */}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Main area: flex column, fills height */}
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, minHeight: 0 }}>
 
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
         <div style={{ flexShrink: 0, padding: "20px 32px 16px", background: A.bg, borderBottom: `1px solid ${A.line}` }}>
@@ -1592,6 +1600,6 @@ export default function MasterContentPage() {
           onClose={() => setCompareVersionOpen(null)}
         />
       )}
-    </div>
+    </>
   );
 }

@@ -4,12 +4,12 @@
 // immediately, no onboarding approval step left. The "Onboarding" tab and its pending-tenant
 // UI (added AA-389, trimmed AA-472) are gone.
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Users, Plus, Key, RefreshCw, ChevronDown, ChevronUp,
   AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Trash2, Globe,
 } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, serif, mono, sans,
   Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
@@ -899,12 +899,13 @@ function SettingsTabContent({ summary, apiUsage }: {
 
 // ─── Tenant Row ───────────────────────────────────────────────────────────────
 
-function TenantRow({ tenant, onRotateKey, onDeleted }: {
+function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false }: {
   tenant: Tenant;
   onRotateKey: (t: Tenant) => void;
   onDeleted: (id: string) => void;
+  initialExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialExpanded);
   const [toggling, setToggling] = useState(false);
   const [isActive, setIsActive] = useState(tenant.is_active);
   const [deleting, setDeleting] = useState(false);
@@ -1030,6 +1031,18 @@ function TenantRow({ tenant, onRotateKey, onDeleted }: {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TenantsPage() {
+  // useSearchParams() needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <TenantsPageInner />
+    </Suspense>
+  );
+}
+
+function TenantsPageInner() {
+  // AA-752 — deep link from the ⌘K palette: /admin/tenants?tenant=<id> expands that tenant's
+  // inline 360 panel. Read once (no setState-in-effect).
+  const deepTenant = useSearchParams().get("tenant");
   const [tenants, setTenants]       = useState<Tenant[]>([]);
   const [loading, setLoading]       = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -1072,15 +1085,8 @@ export default function TenantsPage() {
   const totalMstrActive = tenants.reduce((s, t) => s + (t.lifecycle?.master_active ?? 0), 0);
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
-      <AdminSidebar />
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{ height: 56, background: A.card, borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
-          <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
-          <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Tenants</span>
-        </header>
-
-        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+    <>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
             <div>
               <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink, margin: "0 0 6px", letterSpacing: "-0.01em" }}>
@@ -1149,17 +1155,16 @@ export default function TenantsPage() {
                   {tenants.length === 0 ? (
                     <tr><td colSpan={7} style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants yet</td></tr>
                   ) : tenants.map(t => (
-                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onDeleted={handleDeleted} />
+                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onDeleted={handleDeleted} initialExpanded={t.tenant_id === deepTenant} />
                   ))}
                 </tbody>
               </table>
             )}
           </Card>
         </main>
-      </div>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNewKey(k); load(); }} />}
       {newKey && <ApiKeyModal keyData={newKey} onClose={() => setNewKey(null)} />}
-    </div>
+    </>
   );
 }

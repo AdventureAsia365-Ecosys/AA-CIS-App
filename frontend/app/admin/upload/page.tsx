@@ -6,7 +6,6 @@ import {
   ChevronDown, ChevronUp, FileText, Copy, RefreshCw, Search,
   Trash2, RotateCcw,
 } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, serif, sans, mono,
   Card, SLabel, Btn, TH, TD, Badge,
@@ -1610,18 +1609,7 @@ function TourContentTab() {
 
 export default function UploadPage() {
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{
-          height: 56, background: A.card, borderBottom: `1px solid ${A.line}`,
-          display: "flex", alignItems: "center", padding: "0 32px", gap: 8,
-          position: "sticky", top: 0, zIndex: 10,
-        }}>
-          <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
-          <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Upload (S0)</span>
-        </header>
-        <main style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "28px 36px 56px", overflowY: "auto" }}>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "28px 36px 56px", overflowY: "auto" }}>
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ fontFamily: serif, fontSize: 24, fontWeight: 500, color: A.ink,
               margin: "0 0 6px", letterSpacing: "-0.01em" }}>Upload (S0)</h1>
@@ -1637,7 +1625,5 @@ export default function UploadPage() {
           </div>
           <TourContentTab />
         </main>
-      </div>
-    </div>
   );
 }

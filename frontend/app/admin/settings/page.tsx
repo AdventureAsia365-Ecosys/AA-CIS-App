@@ -4,7 +4,6 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Settings, X, Plus, Save, AlertTriangle } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
 import {
@@ -736,9 +735,6 @@ function SettingsPageInner() {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
@@ -791,6 +787,5 @@ function SettingsPageInner() {
           </>
         )}
       </main>
-    </div>
   );
 }
