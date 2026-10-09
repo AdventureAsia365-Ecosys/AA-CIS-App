@@ -13,11 +13,14 @@ from shared.secrets import get_database_url
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
-from .seo_meta_utils import (best_meta_candidate, meta_in_band, SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX)
+from .seo_meta_utils import (best_meta_candidate, meta_in_band, meta_complete_sentence,
+                             meta_has_forbidden, fit_seo_meta_final, fit_seo_title,
+                             SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX)
 from .forbidden_words import all_forbidden, forbidden_in
 from .prompts import parse_source_day_word_counts
 from .itinerary_utils import (
-    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
+    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
+    clamp_distance, nudge_itinerary_day,
     parse_canonical_itinerary_days, serialize_itinerary_days,
 )
 
@@ -91,6 +94,100 @@ def _build_fix_keys(state: dict) -> set:
             if mapped:
                 fix_keys.add(mapped)
     return fix_keys
+
+
+# AA-747: SEO codes that the deterministic fit (fit_seo_meta_final / fit_seo_title, AA-740) can
+# resolve WITHOUT an LLM call — they are re-checkable on the fitted value (length / incomplete
+# sentence / budget-word removal). _seo_code_fires() re-runs the exact validate_node check for
+# each on the fitted value; a code that no longer fires is dropped from the LLM request.
+_FITTABLE_SEO_CODES = {
+    "SEO_META_TOO_LONG", "META_TOO_SHORT", "META_INCOMPLETE_SENTENCE",
+    "BRAND_SEO_META_VIOLATION", "SEO_TITLE_TOO_LONG",
+}
+# SEO codes mapped to seo_meta / seo_title that are NOT deterministically re-checkable here
+# (brand/intent judgments from brand_audit) — they stay with the LLM unless the fit removes the
+# offending text, which only the fittable codes above can detect. Listed for clarity / tests.
+_CONTENT_SEO_CODES = {
+    "META_OPENER_ROBOTIC", "META_PACKAGE_WORD", "META_DFS_VERBATIM", "DFS_INTENT_UNDERUSED",
+    "SEO_TITLE_WEAK", "SEO_TITLE_WRONG_ACTIVITY",
+}
+
+
+def _seo_code_fires(code: str, meta: str, title: str, forbidden) -> bool:
+    """AA-747: re-run validate_node's own deterministic check for one SEO code against a value.
+    True = the code still fires (same meaning validate_node gives it); only the fittable length /
+    sentence / forbidden codes are re-checked here — content codes are never passed in."""
+    m = (meta or "").strip()
+    if code == "SEO_META_TOO_LONG":
+        return len(m) > SEO_META_MAX
+    if code == "META_TOO_SHORT":
+        return bool(m) and len(m) < SEO_META_MIN
+    if code == "META_INCOMPLETE_SENTENCE":
+        return bool(m) and not meta_complete_sentence(m)
+    if code == "BRAND_SEO_META_VIOLATION":
+        return meta_has_forbidden(m, forbidden)
+    if code == "SEO_TITLE_TOO_LONG":
+        return len(title or "") > SEO_TITLE_MAX
+    return True  # unknown / content code — treat as still firing (keep with the LLM)
+
+
+def _apply_seo_fit_before_llm(state: dict, content: dict, fix_keys: set) -> tuple[set, set, dict]:
+    """AA-747: before building the LLM fix request, apply the deterministic fit to seo_meta /
+    seo_title (fit_seo_meta_final / fit_seo_title, AA-740) and re-check that field's codes on the
+    fitted value. A fittable length/sentence/forbidden code that no longer fires is dropped; a
+    field left with NO firing code is dropped from fix_keys entirely (no LLM call for it). Content
+    codes (opener-robotic, dfs-verbatim, …) stay with the LLM unless the fit truly resolves them —
+    the fit only trims/extends/removes-clause, so it can only clear the fittable codes.
+
+    Mutates ``content`` in place with the fitted value when the field is being dropped from the LLM
+    request (so the deterministic fix is kept). Returns (new_fix_keys, dropped_codes, changed) where
+    ``changed`` maps field -> fitted value actually written to content."""
+    tenant_forbidden = state.get("brand_forbidden_words")
+    forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
+    tour = state.get("tour", {}) or {}
+    facts = {"duration": tour.get("duration"), "country": tour.get("country")}
+
+    # The SEO codes this fix pass is acting on, per field (brand_audit + deterministic validate).
+    acting_codes = set(state.get("brand_audit_codes", []) or [])
+    acting_codes |= {c for c in (state.get("failure_codes", []) or []) if c in _DETERMINISTIC_SEO_CODES}
+
+    dropped_codes: set[str] = set()
+    changed: dict[str, str] = {}
+    new_fix_keys = set(fix_keys)
+
+    for field, fit_fn in (("seo_meta", lambda v: fit_seo_meta_final(v, facts, tenant_forbidden)),
+                          ("seo_title", lambda v: fit_seo_title(v))):
+        if field not in fix_keys:
+            continue
+        orig = content.get(field)
+        if not isinstance(orig, str) or not orig.strip():
+            continue
+        fitted = fit_fn(orig)
+        # Codes mapped to THIS field that this fix pass is acting on.
+        field_codes = {c for c in acting_codes if STAGE2_FIX_MAPPING.get(c) == field}
+        if not field_codes:
+            continue
+        meta_val = fitted if field == "seo_meta" else (content.get("seo_meta") or "")
+        title_val = fitted if field == "seo_title" else (content.get("seo_title") or "")
+        remaining = set()
+        for code in field_codes:
+            if code in _FITTABLE_SEO_CODES:
+                if _seo_code_fires(code, meta_val, title_val, forbidden):
+                    remaining.add(code)   # fit didn't resolve it → still needs the LLM
+                else:
+                    dropped_codes.add(code)
+            else:
+                remaining.add(code)       # content code — keep with the LLM
+        if not remaining:
+            # Every code for this field is resolved by the fit — write the fitted value and drop
+            # the field from the LLM request (no LLM call for it).
+            if fitted != orig:
+                content[field] = fitted
+                changed[field] = fitted
+            new_fix_keys.discard(field)
+            logger.info("flag_fix_seo_fitted_no_llm", field=field,
+                        dropped_codes=sorted(c for c in field_codes if c in dropped_codes))
+    return new_fix_keys, dropped_codes, changed
 
 FIX_SYSTEM = """You are Adventure Asia's editorial fixer.
 Fix ONLY the specified fields. Keep all other fields exactly as-is.
@@ -183,7 +280,19 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
     return best
 
 
-def _repair_still_compressed_days(state: dict, itinerary_text: str):
+def _mark_day_ratio_skipped(state: dict, day_num) -> None:
+    """AA-747: record on the tour's per-day ratio record (set by generate_node's
+    _process_itineraries) that this out-of-clamp day was NOT nudged because the per-tour nudge
+    budget was spent — so services/eval/regression.py's nudged_days / nudge_rate counters stay
+    correct (they read these records, not the LLM-call log)."""
+    for r in state.get("itinerary_day_ratios") or []:
+        if r.get("day") == day_num:
+            r["nudged"] = False
+            r["skipped_reason"] = NUDGE_SKIP_REASON
+            return
+
+
+def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget: int):
     """AA-329c: dedicated per-day repair for ITINERARY_STILL_COMPRESSED — reuses AA-353's own
     nudge_itinerary_day with the correct target_word_count per violating day, instead of routing
     "itineraries" through the generic FIX_SYSTEM prompt below (which has no idea what any day's
@@ -193,13 +302,18 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str):
     in [ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX] — otherwise the pre-fix day is kept untouched
     rather than being overwritten with something no better (or worse).
 
-    Returns (new_itinerary_text, extra_cost_usd, applied: bool). applied=False when there was
-    nothing to repair (no still-violating day, or a violating day couldn't be matched back to
-    source text) — new_itinerary_text is the unchanged input in that case.
+    AA-747: at most ``nudge_budget`` days are nudged — the REMAINING per-tour budget after
+    generate_node already spent some (MAX_NUDGES_PER_TOUR across both call sites). The WORST days
+    (largest distance outside the clamp band) are repaired first; the rest are recorded on the
+    tour's per-day ratio record as nudged=false / skipped_reason="nudge_cap" (regression counters).
+
+    Returns (new_itinerary_text, extra_cost_usd, applied: bool, nudges_used: int). applied=False
+    when nothing was repaired (no still-violating day, no budget, or a violating day couldn't be
+    matched back to source text) — new_itinerary_text is the unchanged input in that case.
     """
     days = parse_canonical_itinerary_days(itinerary_text)
     if not days:
-        return itinerary_text, 0.0, False
+        return itinerary_text, 0.0, False, 0
 
     tour = state.get("tour", {})
     itineraries_raw = tour.get("itineraries") or tour.get("itinerary") or ""
@@ -207,22 +321,32 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str):
     source_words_by_day = source["day_word_counts"]
     source_text_by_day = source["day_text"]
 
-    still_violating = []
+    still_violating = []  # (clamp_distance, day_num, ratio)
     for day_num, day in days.items():
         src_words = source_words_by_day.get(day_num)
         if not src_words:
             continue
         ratio = len(day["body"].split()) / src_words
         if not (ITINERARY_CLAMP_MIN <= ratio <= ITINERARY_CLAMP_MAX):
-            still_violating.append(day_num)
+            still_violating.append((clamp_distance(ratio), day_num, ratio))
 
     if not still_violating:
-        return itinerary_text, 0.0, False
+        return itinerary_text, 0.0, False, 0
+
+    # AA-747: worst (largest distance outside the band) first; break ties by day order.
+    still_violating.sort(key=lambda t: (-t[0], t[1]))
+    budget = max(0, nudge_budget)
 
     client = LLMClient()
     extra_cost = 0.0
     applied = False
-    for day_num in sorted(still_violating):
+    nudges_used = 0
+    for _dist, day_num, _ratio in still_violating:
+        if nudges_used >= budget:
+            # AA-747: budget spent — leave the day untouched, mark it skipped on the ratio record.
+            _mark_day_ratio_skipped(state, day_num)
+            logger.info("itinerary_day_repair_skipped_cap", day=day_num)
+            continue
         target_words = source_words_by_day.get(day_num)
         source_text = source_text_by_day.get(day_num)
         if not target_words or not source_text:
@@ -231,6 +355,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str):
             client, source_text, days[day_num]["title"], days[day_num]["body"], target_words,
         )
         extra_cost += resp.cost_usd
+        nudges_used += 1
         new_ratio = len(new_body.split()) / target_words
         in_clamp = ITINERARY_CLAMP_MIN <= new_ratio <= ITINERARY_CLAMP_MAX
         record_call_sync(
@@ -250,8 +375,8 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str):
             logger.warning("itinerary_day_repair_still_out_of_clamp", day=day_num,
                             new_ratio=round(new_ratio, 3))
     if not applied:
-        return itinerary_text, extra_cost, False
-    return serialize_itinerary_days(days), extra_cost, True
+        return itinerary_text, extra_cost, False, nudges_used
+    return serialize_itinerary_days(days), extra_cost, True, nudges_used
 
 
 def _revert_introduced_forbidden(before: dict, after: dict, keys, forbidden) -> dict:
@@ -294,13 +419,25 @@ def flag_fix_node(state: dict) -> dict:
         extra_cost = 0.0
         applied_fields: set = set()
 
+        # AA-747: apply the deterministic SEO fit (fit_seo_meta_final / fit_seo_title, AA-740) and
+        # re-check each seo_meta/seo_title code on the fitted value BEFORE any LLM request. A length
+        # / incomplete-sentence / budget-word code the fit resolves is dropped; a field left with no
+        # firing code is pulled out of fix_keys so no LLM call is made for it (content codes stay).
+        # When the fit resolves every field, the post-itinerary `if not fix_keys` block below returns
+        # fix_pass_applied=True with the fitted content (no LLM call), or False if nothing changed.
+        fix_keys, _seo_dropped, _seo_fitted = _apply_seo_fit_before_llm(state, current_content, fix_keys)
+        applied_fields |= set(_seo_fitted.keys())
+
         # AA-329c: ITINERARY_STILL_COMPRESSED gets the dedicated per-day repair above instead of
         # the generic FIX_SYSTEM prompt below — pull "itineraries" out of fix_keys so the generic
         # call (if still needed for other fields) doesn't also try to rewrite it in the same pass.
         if "ITINERARY_STILL_COMPRESSED" in (state.get("failure_codes") or []) and "itineraries" in fix_keys:
             fix_keys = fix_keys - {"itineraries"}
-            new_itinerary, itin_cost, itin_applied = _repair_still_compressed_days(
-                state, current_content.get("itineraries", ""),
+            # AA-747: budget left for this tour's nudges after generate_node already used some
+            # (MAX_NUDGES_PER_TOUR counted across both nudge call sites).
+            _nudge_budget = max(0, MAX_NUDGES_PER_TOUR - (state.get("itinerary_nudges_used") or 0))
+            new_itinerary, itin_cost, itin_applied, _itin_nudges = _repair_still_compressed_days(
+                state, current_content.get("itineraries", ""), _nudge_budget,
             )
             extra_cost += itin_cost
             if itin_applied:
