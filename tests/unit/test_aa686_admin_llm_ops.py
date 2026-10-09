@@ -397,6 +397,19 @@ def test_parse_judge_output_numeric_brand_fit_score():
     assert out["score"] == 8.0 and out["passed"] is True
 
 
+def test_parse_judge_output_s1_judge_score_only_derives_pass_from_gate():
+    # The real s1_judge output has no status — only the 1-10 brand-fit score.
+    hi = ops._parse_judge_output("s1_judge", json.dumps({"brand_fit_score": 7, "cross_brand_distinct": 6}))
+    lo = ops._parse_judge_output("s1_judge", json.dumps({"brand_fit_score": 6, "cross_brand_distinct": 9}))
+    assert hi == {"passed": True, "score": 7.0}
+    assert lo == {"passed": False, "score": 6.0}
+
+
+def test_judge_pass_line_matches_pipeline_gate():
+    from services.content_generation.judge_node import _MIN_QUALITY
+    assert ops._JUDGE_PASS_LINE == _MIN_QUALITY
+
+
 def test_parse_judge_output_salvages_fenced_json():
     raw = "```json\n{\"status\": \"pass\"}\n```"
     out = ops._parse_judge_output("t10_judge", raw)
