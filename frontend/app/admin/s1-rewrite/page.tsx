@@ -9,7 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Play, RefreshCw, ArrowRight, Search, CheckCircle, XCircle, Loader2, ChevronRight } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
-  A, serif, sans, mono,
+  A, alpha, serif, sans, mono,
   Card, SLabel, Badge, Btn, LoadingScreen,
   TH, TD,
 } from "../_components/adminUi";
@@ -791,7 +791,7 @@ export default function S1RewritePage() {
                         onClick={() => setDetailTour(isDetail ? null : t)}
                         style={{
                           borderTop: i > 0 ? `1px solid ${A.line}` : undefined,
-                          background: isDetail ? `${A.gold}18` : isSelected ? `${A.gold}10` : "transparent",
+                          background: isDetail ? alpha(A.gold, 9) : isSelected ? alpha(A.gold, 6) : "transparent",
                           cursor: "pointer",
                           transition: "background .12s",
                         }}

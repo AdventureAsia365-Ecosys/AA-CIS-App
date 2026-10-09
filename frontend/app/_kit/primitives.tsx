@@ -29,13 +29,13 @@ export type Tone =
   | "purple";
 
 export const TONE: Record<Tone, { bg: string; fg: string }> = {
-  neutral: { bg: "#F3F4F6", fg: "#4B5563" },
+  neutral: { bg: K.neutralBg, fg: K.neutralFg },
   accent: { bg: K.accentTint, fg: K.accentDeep },
   success: { bg: K.successSoft, fg: K.success },
   warning: { bg: K.amberSoft, fg: K.amber },
   danger: { bg: K.dangerSoft, fg: K.danger },
   info: { bg: K.infoSoft, fg: K.info },
-  purple: { bg: "#EDE9FE", fg: "#5B21B6" },
+  purple: { bg: K.purpleSoft, fg: K.purple },
 };
 
 // ── Badge ───────────────────────────────────────────────────────────────────

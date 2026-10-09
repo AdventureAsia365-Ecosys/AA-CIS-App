@@ -521,7 +521,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
               </thead>
               <tbody>
                 {trashedTours.map((t, i) => (
-                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "#FFFCFC", opacity: 0.85 }}>
+                  <tr key={t.tour_id} style={{ background: i % 2 === 1 ? A.redTint : "var(--aa-red-tint2)", opacity: 0.85 }}>
                     <td style={{ ...TD, color: A.red, fontWeight: 500 }}>{t.src_name || "—"}</td>
                     <td style={TD}>{t.country || "—"}</td>
                     <td style={{ ...TD, color: A.muted }}>
@@ -532,7 +532,7 @@ function ToursReadySection({ tours, loading, onRefresh }: {
                         onClick={() => restoreTour(t.tour_id, t.src_name || "this tour")}
                         disabled={restoring === t.tour_id}
                         title="Restore source tour"
-                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green }}
+                        style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green }}
                       >
                         <RotateCcw size={11} />
                         {restoring === t.tour_id ? "…" : "Restore"}

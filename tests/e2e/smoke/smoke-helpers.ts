@@ -235,6 +235,52 @@ export async function assertMobileLayout(page: Page, label: string): Promise<voi
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
+/** AA-601 part B — assert the admin page actually renders a DARK theme under
+ * `prefers-color-scheme: dark` and a LIGHT theme under light. Bounded + deterministic (no network,
+ * no screenshot diff): it reads the computed background-color of `.aa-admin-main` (fallback: body),
+ * converts to relative luminance (WCAG), and asserts luminance < 0.2 for dark and > 0.8 for light.
+ * The admin follows the emulated color scheme because the layout.tsx restore script resolves
+ * "no stored choice" via matchMedia, and the theme store listens for scheme changes. Resets the
+ * color scheme to light after. */
+export async function assertThemeSwitches(page: Page, label: string): Promise<void> {
+  // Measure under a given emulated scheme after letting the theme store + CSS vars settle.
+  const measure = async (scheme: 'light' | 'dark'): Promise<number> => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.waitForTimeout(300);
+    return page.evaluate(() => {
+      const el = (document.querySelector('.aa-admin-main') as HTMLElement | null) ?? document.body;
+      // Walk up for the first non-transparent background so a transparent main still resolves.
+      let node: HTMLElement | null = el;
+      let bg = '';
+      while (node) {
+        const c = getComputedStyle(node).backgroundColor;
+        if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') { bg = c; break; }
+        node = node.parentElement;
+      }
+      const m = bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) return 1; // no colour read → treat as light (fails the dark assertion loudly)
+      const [r, g, b] = m[1].split(',').slice(0, 3).map((s) => parseInt(s.trim(), 10) / 255);
+      const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    });
+  };
+
+  const darkLum = await measure('dark');
+  expect(
+    darkLum,
+    `${label}: expected a DARK admin background under colorScheme=dark (relative luminance < 0.2) but got ${darkLum.toFixed(3)} — the dark theme did not apply.`,
+  ).toBeLessThan(0.2);
+
+  const lightLum = await measure('light');
+  expect(
+    lightLum,
+    `${label}: expected a LIGHT admin background under colorScheme=light (relative luminance > 0.8) but got ${lightLum.toFixed(3)} — the light theme did not apply.`,
+  ).toBeGreaterThan(0.8);
+
+  await page.emulateMedia({ colorScheme: 'light' }).catch(() => {});
+}
+
+
 /** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the
  * given (already-loaded, already-checked) page.
  *

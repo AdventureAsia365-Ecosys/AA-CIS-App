@@ -204,7 +204,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
   const copy = () => { navigator.clipboard.writeText(keyData.api_key); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div style={{ background: A.card, border: "1px solid #86EFAC", borderRadius: 16, padding: 32, width: 460 }}>
+      <div style={{ background: A.card, border: "1px solid var(--aa-green-border)", borderRadius: 16, padding: 32, width: 460 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <CheckCircle size={20} color={A.green} />
           <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>{keyData.rotated ? "New API Key" : "Tenant Created"}</div>
@@ -217,7 +217,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{
               flex: 1, fontFamily: mono, fontSize: 12, padding: "10px 14px",
-              background: A.bg, border: "1px solid #86EFAC", borderRadius: 8,
+              background: A.bg, border: "1px solid var(--aa-green-border)", borderRadius: 8,
               color: show ? A.green : A.muted, letterSpacing: show ? 0.3 : 3, wordBreak: "break-all",
             }}>
               {show ? keyData.api_key : "•".repeat(32)}
@@ -228,7 +228,7 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={copy} style={{ flex: 1, padding: "10px 0", background: copied ? A.greenSoft : "var(--aa-green-bg2)", border: "1px solid var(--aa-green-border)", borderRadius: 8, color: A.green, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Copy size={13} />{copied ? "Copied!" : "Copy Key"}
           </button>
           <Btn variant="secondary" onClick={onClose} style={{ flex: 1 }}>Done</Btn>
@@ -274,14 +274,14 @@ const SCORE_COLOR = (s: number | null) =>
   s == null ? A.muted2 : s >= 9 ? A.green : s >= 7 ? A.gold : A.red;
 
 const STATUS_STYLE: Record<string, { bg: string; col: string }> = {
-  approved:     { bg: A.greenSoft, col: "#16A34A" },
-  ai_generated: { bg: "#EFF6FF", col: "#2563EB" },
+  approved:     { bg: A.greenSoft, col: "var(--aa-green-strong)" },
+  ai_generated: { bg: "var(--aa-blue-bg)", col: "var(--aa-blue-deep)" },
   rejected:     { bg: A.redSoft, col: A.red },
-  needs_review: { bg: "#FEF3C7", col: "#D97706" },
-  pending:      { bg: "#FEF9C3", col: "#B45309" },
-  completed:    { bg: A.greenSoft, col: "#16A34A" },
+  needs_review: { bg: "var(--aa-amber-bg)", col: "var(--aa-amber-orange2)" },
+  pending:      { bg: "var(--aa-amber-bg2)", col: "var(--aa-amber-strong)" },
+  completed:    { bg: A.greenSoft, col: "var(--aa-green-strong)" },
   failed:       { bg: A.redSoft, col: A.red },
-  ingesting:    { bg: "#EFF6FF", col: "#2563EB" },
+  ingesting:    { bg: "var(--aa-blue-bg)", col: "var(--aa-blue-deep)" },
 };
 function StatusChip({ status }: { status: string }) {
   const s = STATUS_STYLE[status] ?? { bg: A.line2, col: A.muted2 };

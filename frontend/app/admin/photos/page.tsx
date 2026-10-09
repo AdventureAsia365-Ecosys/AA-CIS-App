@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Image as ImageIcon, RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
-import { A, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
+import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
 
 type CountryRow = {
   country: string; photos: number; with_file: number; with_tour: number; with_destination: number;
@@ -201,7 +201,7 @@ export default function PhotosPage() {
       <AdminSidebar />
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.accent}15`, color: A.accent, display: "grid", placeItems: "center" }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
             <ImageIcon size={18} />
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>

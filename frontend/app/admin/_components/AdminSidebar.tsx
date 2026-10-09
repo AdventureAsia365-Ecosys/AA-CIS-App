@@ -3,9 +3,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon, Menu } from "lucide-react";
-import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
+import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon, Menu, Sun, Moon, Monitor } from "lucide-react";
+import { A, alpha, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
+import { useThemeChoice } from "../../_kit/useTheme";
+import type { ThemeChoice } from "../../_kit/theme";
 
 interface Notif {
   id: number;
@@ -173,7 +175,7 @@ export default function AdminSidebar() {
       <aside
         className={`aa-admin-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
         style={{
-          width: SIDEBAR_WIDTH, flexShrink: 0, background: A.ink, color: "#C9CFD8",
+          width: SIDEBAR_WIDTH, flexShrink: 0, background: "var(--aa-side-bg)", color: "var(--aa-side-text)",
           padding: "22px 14px 24px", display: "flex", flexDirection: "column",
           gap: 28, position: "sticky", top: 0, height: "100vh", overflowY: "auto",
         }}
@@ -187,7 +189,7 @@ export default function AdminSidebar() {
           <img src={LOGO_SRC} alt="Adventure Asia" width={38} height={24}
             style={{ width: 38, height: "auto", flexShrink: 0, display: "block" }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 500, color: "#F4F1EC", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
+            <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 500, color: "var(--aa-side-title)", letterSpacing: "-0.01em", lineHeight: 1.2 }}>
               CIS Admin
             </div>
             <div style={{ fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.18em", color: A.accent, fontWeight: 600, marginTop: 1 }}>
@@ -197,7 +199,7 @@ export default function AdminSidebar() {
           {/* Notification bell */}
           <button onClick={openNotifs} title="Notifications" style={{
             position: "relative", background: "none", border: "none", cursor: "pointer",
-            color: "#C9CFD8", display: "flex", padding: 4,
+            color: "var(--aa-side-text)", display: "flex", padding: 4,
           }}>
             <Bell size={15} />
             {unread > 0 && (
@@ -216,7 +218,7 @@ export default function AdminSidebar() {
         {showNotifs && (
           <div style={{
             position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
-            background: "#2A333E", border: "1px solid rgba(255,255,255,0.1)",
+            background: "var(--aa-side-panel)", border: "1px solid rgba(255,255,255,0.1)",
             borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
             maxHeight: 320, overflowY: "auto",
           }}>
@@ -224,7 +226,7 @@ export default function AdminSidebar() {
               display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "10px 12px 8px", borderBottom: "1px solid rgba(255,255,255,0.07)",
             }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "#F4F1EC" }}>Notifications</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--aa-side-title)" }}>Notifications</span>
               {unread > 0 && (
                 <button onClick={markAllRead} style={{
                   background: "none", border: "none", cursor: "pointer",
@@ -233,7 +235,7 @@ export default function AdminSidebar() {
               )}
             </div>
             {notifs.length === 0 ? (
-              <div style={{ padding: "16px 12px", fontSize: 11, color: "#6E7681", textAlign: "center" }}>
+              <div style={{ padding: "16px 12px", fontSize: 11, color: "var(--aa-side-text3)", textAlign: "center" }}>
                 No notifications
               </div>
             ) : notifs.map(n => (
@@ -242,13 +244,13 @@ export default function AdminSidebar() {
                 background: n.is_read ? "transparent" : "rgba(219,150,40,0.08)",
                 borderBottom: "1px solid rgba(255,255,255,0.04)",
               }}>
-                <div style={{ fontSize: 11, color: "#C9CFD8", fontWeight: n.is_read ? 400 : 600 }}>
+                <div style={{ fontSize: 11, color: "var(--aa-side-text)", fontWeight: n.is_read ? 400 : 600 }}>
                   {n.title || n.event_type}
                 </div>
                 {n.message && (
-                  <div style={{ fontSize: 10, color: "#6E7681", marginTop: 2 }}>{n.message}</div>
+                  <div style={{ fontSize: 10, color: "var(--aa-side-text3)", marginTop: 2 }}>{n.message}</div>
                 )}
-                <div style={{ fontSize: 9.5, color: "#6E7681", marginTop: 2 }}>
+                <div style={{ fontSize: 9.5, color: "var(--aa-side-text3)", marginTop: 2 }}>
                   {new Date(n.created_at).toLocaleString()}
                 </div>
               </div>
@@ -281,6 +283,9 @@ export default function AdminSidebar() {
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+        {/* AA-601 part B — Light / Dark / System theme toggle. Persists in localStorage.cis_theme;
+            "System" follows prefers-color-scheme. */}
+        <ThemeToggle />
         <div style={{
           display: "flex", alignItems: "center", gap: 9,
           padding: 8, borderRadius: 8, background: "rgba(255,255,255,0.03)",
@@ -294,11 +299,11 @@ export default function AdminSidebar() {
             {userName.charAt(0).toUpperCase()}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "#F4F1EC", fontSize: 12, fontWeight: 600 }}>{userName}</div>
-            <div style={{ color: "#8A929D", fontSize: 10.5 }}>{isAdmin ? "Admin" : "Content"}</div>
+            <div style={{ color: "var(--aa-side-title)", fontSize: 12, fontWeight: 600 }}>{userName}</div>
+            <div style={{ color: "var(--aa-side-text2)", fontSize: 10.5 }}>{isAdmin ? "Admin" : "Content"}</div>
           </div>
           <button onClick={logout} title="Sign out"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "#8A929D", display: "flex" }}>
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--aa-side-text2)", display: "flex" }}>
             <LogOut size={13} />
           </button>
         </div>
@@ -308,10 +313,57 @@ export default function AdminSidebar() {
   );
 }
 
+// AA-601 part B — Light / Dark / System segmented toggle in the sidebar footer. The sidebar is a
+// dark panel in both themes, so the control uses the fixed-dark side tokens; the active segment is
+// a translucent-gold pill. State is read lazily via useSyncExternalStore (useThemeChoice) — no
+// setState-in-effect, so it is clean under the React Compiler.
+const THEME_OPTIONS: { key: ThemeChoice; label: string; icon: React.ReactNode }[] = [
+  { key: "light", label: "Light", icon: <Sun size={13} /> },
+  { key: "dark", label: "Dark", icon: <Moon size={13} /> },
+  { key: "system", label: "System", icon: <Monitor size={13} /> },
+];
+
+function ThemeToggle() {
+  const [choice, setChoice] = useThemeChoice();
+  return (
+    <div
+      role="group"
+      aria-label="Theme"
+      style={{
+        display: "flex", gap: 2, padding: 3, marginBottom: 10,
+        background: "rgba(255,255,255,0.04)", borderRadius: 8,
+      }}
+    >
+      {THEME_OPTIONS.map((o) => {
+        const on = choice === o.key;
+        return (
+          <button
+            key={o.key}
+            onClick={() => setChoice(o.key)}
+            aria-pressed={on}
+            title={o.label}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              padding: "6px 4px", borderRadius: 6, border: "none", cursor: "pointer",
+              fontSize: 11, fontWeight: 600, fontFamily: sans,
+              background: on ? alpha(A.gold, 16) : "transparent",
+              color: on ? A.gold : "var(--aa-side-text)",
+              transition: "background .15s, color .15s",
+            }}
+          >
+            {o.icon}
+            <span style={{ whiteSpace: "nowrap" }}>{o.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function NavGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.16em", color: "#6E7681", padding: "0 10px 8px", fontWeight: 600 }}>
+      <div style={{ fontSize: 9.5, textTransform: "uppercase" as const, letterSpacing: "0.16em", color: "var(--aa-side-text3)", padding: "0 10px 8px", fontWeight: 600 }}>
         {label}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>{children}</div>
@@ -327,8 +379,8 @@ function NavItem({ active, icon, label, onClick }: {
     <button onClick={onClick} aria-current={active ? "page" : undefined} style={{
       display: "flex", alignItems: "center", gap: 10, width: "100%",
       padding: "8px 10px", borderRadius: 7, border: "none",
-      background: active ? `${accent}18` : "transparent",
-      color: active ? "#fff" : "#C9CFD8",
+      background: active ? alpha(accent, 9) : "transparent",
+      color: active ? "#fff" : "var(--aa-side-text)",
       fontSize: 13, fontWeight: 500, cursor: "pointer",
       textAlign: "left" as const, fontFamily: sans, position: "relative",
       transition: "background .15s, color .15s",

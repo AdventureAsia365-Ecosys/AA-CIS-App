@@ -25,6 +25,7 @@ import {
   assertNavOk,
   describeApiFailures,
   screenshotMatrix,
+  assertThemeSwitches,
   type PageSpec,
 } from './smoke-helpers';
 
@@ -100,6 +101,13 @@ async function runPageCheck(
     // is restored to desktop first.
     if (opts.checkMobileLayout) {
       await assertMobileLayout(page, spec.label);
+    }
+
+    // AA-601 part B — admin dark theme: assert the page actually switches theme with
+    // prefers-color-scheme (dark background under dark, light under light). Deterministic
+    // luminance check, no screenshot diff. Admin only (the portal stays light by design).
+    if (opts.checkMobileLayout) {
+      await assertThemeSwitches(page, spec.label);
     }
 
     // Screenshots: desktop + mobile, light + dark (on the same, already-authenticated page).

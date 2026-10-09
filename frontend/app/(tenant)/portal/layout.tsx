@@ -142,7 +142,11 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
       tenantName, planTier, poolTotal, catTotal, billing, globalSearch,
       refreshCatalogCount, showToast,
     }}>
-      <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: T.bg }}>
+      {/* AA-601 part B — the tenant portal stays LIGHT (its redesign is a later issue). The kit
+          (`K`) reads the `--aa-*` CSS variables, which <html data-theme> can set to dark; pinning
+          data-theme="light" here re-declares the light values for the whole portal subtree, so
+          portal + kit components render light regardless of the admin/OS theme. */}
+      <div data-theme="light" style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: T.bg }}>
 
         {/* Toast */}
         {toast && (

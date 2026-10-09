@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } from "lucide-react";
 import AdminSidebar from "../_components/AdminSidebar";
 import {
-  A, serif, sans, mono,
+  A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, TH, TD,
 } from "../_components/adminUi";
 import { BarChart2, Star, DollarSign, CalendarClock } from "lucide-react";
@@ -181,7 +181,7 @@ function masterStatusBadge(ms: string) {
     </span>
   );
   if (ms === "inactive") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#F3F4F6", color: "#6B7280", fontSize: 11, fontWeight: 600 }}>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-neutral-bg)", color: "var(--aa-neutral-fg2)", fontSize: 11, fontWeight: 600 }}>
       INACTIVE
     </span>
   );
@@ -194,13 +194,13 @@ function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | n
     <span style={{ padding: "2px 7px", borderRadius: 10, background: A.greenSoft, color: A.green, fontSize: 11, fontWeight: 600 }}>✓ Pass</span>
   );
   if (status === "flagged" && fixPassApplied) return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "#FEF9C3", color: "#B45309", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
+    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg2)", color: "var(--aa-amber-strong)", fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚡ Fixed</span>
   );
   if (status === "flagged") return (
     <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: A.redSoft, color: A.red, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>⚠ Flagged</span>
   );
   if (status === "manual_check") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: "#FFEDD5", color: "#C2410C", fontSize: 11, fontWeight: 600 }}>Manual check</span>
+    <span style={{ padding: "2px 7px", borderRadius: 10, background: "var(--aa-amber-bg3)", color: "var(--aa-amber-orange)", fontSize: 11, fontWeight: 600 }}>Manual check</span>
   );
   return <span style={{ color: A.muted2, fontSize: 11 }}>—</span>;
 }
@@ -336,8 +336,8 @@ interface PanelState {
   loading: boolean;
 }
 
-const PANEL_COLORS = [A.gold, "#3B82F6", "#16A34A", "#7C3AED"];
-const PANEL_BG     = ["#FAFAF8", "#F8FAFF", "#F0FDF4", "#F5F3FF"];
+const PANEL_COLORS = [A.gold, "var(--aa-blue)", "var(--aa-green-strong)", "var(--aa-purple-strong)"];
+const PANEL_BG     = ["var(--aa-panel-bg0)", "var(--aa-panel-bg1)", "var(--aa-panel-bg2)", "var(--aa-panel-bg3)"];
 
 const CONTENT_FIELDS: [keyof VersionDetail, string][] = [
   ["aa_name",        "Tour Name"],
@@ -696,7 +696,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         </div>
                       )}
                       {v.fix_pass_applied && v.fix_pass_fields && v.fix_pass_fields.length > 0 && (
-                        <div style={{ color: "#3B82F6", marginTop: 4 }}>
+                        <div style={{ color: "var(--aa-blue)", marginTop: 4 }}>
                           Fixed: {v.fix_pass_fields.join(", ")}
                         </div>
                       )}
@@ -767,16 +767,16 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                 {CONTENT_FIELDS.map(([key, label]) => {
                   const diff = isFieldDiff(idx, key);
                   return (
-                    <div key={key} style={{ borderBottom: `1px solid ${A.line}`, background: diff ? "#FFF9E6" : "transparent" }}>
+                    <div key={key} style={{ borderBottom: `1px solid ${A.line}`, background: diff ? "var(--aa-amber-bg7)" : "transparent" }}>
                       <div style={{
                         padding: "5px 20px",
-                        background: diff ? "#FFF0C4" : A.line2,
+                        background: diff ? "var(--aa-amber-bg8)" : A.line2,
                         fontSize: 10, fontWeight: 700,
                         textTransform: "uppercase" as const, letterSpacing: "0.12em", color: A.muted,
                         display: "flex", alignItems: "center", gap: 6,
                       }}>
                         {label}
-                        {diff && <span style={{ color: "#C2410C", fontSize: 9 }}>↕ diff</span>}
+                        {diff && <span style={{ color: "var(--aa-amber-orange)", fontSize: 9 }}>↕ diff</span>}
                       </div>
                       {cellVal(panel, key)}
                     </div>
@@ -1055,7 +1055,7 @@ export default function MasterContentPage() {
       {toast && (
         <div style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 9999,
-          background: "#1C1917", color: "#fff", padding: "10px 20px",
+          background: "var(--aa-toast-bg)", color: "var(--aa-on-dark)", padding: "10px 20px",
           borderRadius: 8, fontSize: 13, fontWeight: 500,
           boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         }}>
@@ -1263,8 +1263,8 @@ export default function MasterContentPage() {
                       <React.Fragment key={t.version_id}>
                         <tr style={{
                           background: t.master_status === "trashed" ? A.redTint
-                            : isExpanded ? `${A.gold}14` : isSelected ? `${A.gold}10`
-                            : absIdx % 2 === 0 ? "#fff" : A.bg,
+                            : isExpanded ? alpha(A.gold, 8) : isSelected ? alpha(A.gold, 6)
+                            : absIdx % 2 === 0 ? A.card : A.bg,
                           borderBottom: isExpanded ? "none" : undefined,
                           opacity: t.master_status === "trashed" ? 0.7 : 1,
                         }}>
@@ -1295,7 +1295,7 @@ export default function MasterContentPage() {
                                   title={`${t.pending_review_count} failed version(s) pending in Review Queue — click to review/dismiss`}
                                   style={{
                                     fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                                    background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
+                                    background: "var(--aa-amber-bg)", color: "var(--aa-amber-deep)", border: "1px solid var(--aa-amber-border)",
                                     textDecoration: "none", whiteSpace: "nowrap",
                                   }}
                                 >
@@ -1317,7 +1317,7 @@ export default function MasterContentPage() {
                               {t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => toggleExpand(t.tour_id!)}
-                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? `${A.gold}22` : "#fff", cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: isExpanded ? alpha(A.gold, 13) : A.card, cursor: "pointer", color: A.gold, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
                                 </button>
@@ -1327,7 +1327,7 @@ export default function MasterContentPage() {
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")}
                                   disabled={toggling === t.tour_id}
                                   title="Set to inactive"
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", cursor: "pointer", color: "#D97706", fontWeight: 600 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Inactive"}
                                 </button>
@@ -1337,7 +1337,7 @@ export default function MasterContentPage() {
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
                                   disabled={toggling === t.tour_id}
                                   title="Set to active"
-                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid #BBF7D0", borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, fontWeight: 600 }}
+                                  style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}
                                 >
                                   {toggling === t.tour_id ? "…" : "Set Active"}
                                 </button>
@@ -1358,7 +1358,7 @@ export default function MasterContentPage() {
                                   onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
                                   disabled={restoring === t.tour_id}
                                   title="Restore from trash (→ inactive)"
-                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid #BBF7D0`, borderRadius: 5, background: "#F0FDF4", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
+                                  style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}
                                 >
                                   <RotateCcw size={11} />
                                   {restoring === t.tour_id ? "…" : "Restore"}
@@ -1368,7 +1368,7 @@ export default function MasterContentPage() {
                           </td>
                         </tr>
                         {isExpanded && (
-                          <tr style={{ background: `${A.gold}08` }}>
+                          <tr style={{ background: alpha(A.gold, 3) }}>
                             <td colSpan={9} style={{ padding: "0 0 0 48px", borderBottom: `1px solid ${A.line}` }}>
                               {/* AA-687 — the background jobs for this tour (atomize, tenant rewrites). */}
                               {t.tour_id && (
@@ -1394,7 +1394,7 @@ export default function MasterContentPage() {
                                     </thead>
                                     <tbody>
                                       {versions.map(v => (
-                                        <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "#FEFCE8" : "transparent" }}>
+                                        <tr key={v.id} style={{ borderTop: `1px solid ${A.line}`, background: v.is_current ? "var(--aa-amber-bg4)" : "transparent" }}>
                                           <td style={{ padding: "6px 10px", width: 32 }}>
                                             <input
                                               type="checkbox"

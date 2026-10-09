@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
-import { A, serif, sans, Card, SLabel, Btn } from "./adminUi";
+import { A, alpha, serif, sans, Card, SLabel, Btn } from "./adminUi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -538,7 +538,7 @@ export default function BrandIdentityEditor() {
                   disabled={parsing}
                   title="Upload DOCX brand brief"
                   style={{
-                    background: "#EEF2FF", border: "none", borderRadius: 5, color: "#3730A3",
+                    background: "var(--aa-purple-bg)", border: "none", borderRadius: 5, color: "var(--aa-purple-deep)",
                     cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
                     display: "flex", alignItems: "center", gap: 3, opacity: parsing ? 0.6 : 1,
                   }}
@@ -567,7 +567,7 @@ export default function BrandIdentityEditor() {
                   onClick={() => selectBrand(b.brand_name)}
                   style={{
                     padding: "12px 16px", cursor: "pointer", borderBottom: `1px solid ${A.line}`,
-                    background: selected === b.brand_name ? `${A.gold}18` : "transparent",
+                    background: selected === b.brand_name ? alpha(A.gold, 9) : "transparent",
                     borderLeft: selected === b.brand_name ? `3px solid ${A.gold}` : "3px solid transparent",
                     transition: "background .1s",
                   }}
@@ -595,15 +595,15 @@ export default function BrandIdentityEditor() {
                 {isReadOnly && (
                   <div style={{
                     marginBottom: 16, padding: "10px 16px", borderRadius: 8,
-                    background: "#FFF7ED", border: "1px solid #FED7AA",
+                    background: "var(--aa-amber-bg6)", border: "1px solid var(--aa-amber-border2)",
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
-                    <span style={{ fontSize: 13, color: "#C2410C", fontWeight: 500 }}>
+                    <span style={{ fontSize: 13, color: "var(--aa-amber-orange)", fontWeight: 500 }}>
                       Read-only — version {viewingVersion}
                     </span>
                     <button onClick={exitVersionView} style={{
                       background: "none", border: "none", cursor: "pointer",
-                      fontSize: 12, color: "#C2410C", fontWeight: 600, textDecoration: "underline",
+                      fontSize: 12, color: "var(--aa-amber-orange)", fontWeight: 600, textDecoration: "underline",
                     }}>
                       Back to current
                     </button>
@@ -817,8 +817,8 @@ export default function BrandIdentityEditor() {
                               <button
                                 onClick={() => viewVersion(v)}
                                 style={{
-                                  background: "#EEF2FF", border: "none", borderRadius: 5,
-                                  color: "#3730A3", cursor: "pointer", padding: "3px 10px",
+                                  background: "var(--aa-purple-bg)", border: "none", borderRadius: 5,
+                                  color: "var(--aa-purple-deep)", cursor: "pointer", padding: "3px 10px",
                                   fontSize: 12, fontWeight: 600,
                                 }}
                               >

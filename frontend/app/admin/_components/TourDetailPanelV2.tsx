@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, ChevronRight } from "lucide-react";
-import { A, serif, sans, mono, Badge } from "./adminUi";
+import { A, alpha, serif, sans, mono, Badge } from "./adminUi";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -631,7 +631,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                   disabled={savingAll}
                   style={{
                     padding: "9px 22px", borderRadius: 7, border: "none", cursor: savingAll ? "not-allowed" : "pointer",
-                    background: "#2563EB", color: "#fff", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
+                    background: "var(--aa-blue-deep)", color: "var(--aa-on-accent)", fontSize: 13, fontWeight: 600, opacity: savingAll ? 0.6 : 1,
                   }}
                 >
                   {savingAll ? "Saving…" : "Save All"}
@@ -753,7 +753,7 @@ export function TourDetailPanelV2({ tourId, tourName, rewriteCount = 0, onClose 
                           onClick={() => loadVersion(h.version_num)}
                           style={{
                             borderTop: `1px solid ${A.line}`,
-                            background: isActive ? `${A.gold}18` : i % 2 === 0 ? "#fff" : A.bg,
+                            background: isActive ? alpha(A.gold, 9) : i % 2 === 0 ? A.card : A.bg,
                             cursor: "pointer",
                           }}
                         >
