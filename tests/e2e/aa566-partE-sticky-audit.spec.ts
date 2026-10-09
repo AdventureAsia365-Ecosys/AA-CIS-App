@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 // AA-566 Phần E — systemic sticky-header audit fix live-verify.
 //
 // Structural check (primary): the scrollable content pane (`<main>` or the page's designated
@@ -16,8 +17,8 @@ const WANDERLUX_API_KEY = process.env.WANDERLUX_API_KEY || '';
 
 async function adminLogin(page: Page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForTimeout(2000);
 }

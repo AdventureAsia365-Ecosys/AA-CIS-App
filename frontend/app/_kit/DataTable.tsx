@@ -532,10 +532,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 </tr>
               ))}
             </thead>
-            <tbody>
+            <tbody data-testid="kit-datatable-body">
               {pageRows.map((row) => (
                 <tr
                   key={row.id}
+                  data-testid="kit-datatable-row"
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   style={{
                     background: row.getIsSelected() ? K.accentTint : "transparent",

@@ -1,0 +1,118 @@
+name: UI Smoke
+
+# AA-732 — run the Playwright UI smoke suite against a PR's Vercel preview on every deployment.
+# Vercel posts a `deployment_status` event per deployment; we react to the successful Preview one.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to run the smoke against (e.g. a preview or production URL)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  deployments: read
+
+concurrency:
+  # One run per deployment target / manual dispatch; a newer deployment cancels an in-flight run.
+  group: ui-smoke-${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: UI smoke (Playwright)
+    runs-on: ubuntu-latest
+    # Gate: on deployment_status, only a SUCCESSFUL PREVIEW deployment. workflow_dispatch always runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Preview')
+    env:
+      # Preview is behind Vercel SSO — the bypass secret lets Playwright reach it; the spec only
+      # sends the header to the BASE_URL origin, and only when the secret is present.
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      BASE_URL: ${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+    steps:
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v5
+        with:
+          # On deployment_status the default ref is the deployment sha; be explicit for clarity.
+          ref: ${{ github.event.deployment_status.deployment.sha || github.sha }}
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies (repo root — Playwright lives here)
+        run: npm ci
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the UI smoke project
+        run: npx playwright test --project=smoke -c playwright.config.ts
+
+      - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-${{ github.run_id }}
+          # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
+          path: |
+            tests/e2e/results/smoke/**/*.png
+            tests/e2e/results/smoke/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # ── Find the PR for the deployed sha and post/update ONE comment ──
+      # All values reach `run:` through env (never `${{ }}` interpolation inside the script).
+      - name: Find PR for the deployed sha
+        if: always()
+        id: findpr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.deployment_status.deployment.sha || github.sha }}
+        run: |
+          PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "Found PR: ${PR:-none}"
+
+      - name: Comment smoke result on the PR
+        if: always() && steps.findpr.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.findpr.outputs.pr }}
+          OUTCOME: ${{ job.status }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          BASE_URL: ${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+        run: |
+          MARKER="<!-- ui-smoke-report -->"
+          RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
+          BODY=$(printf '%s\n### UI smoke — %s\n\nPreview: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
+                   "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
+          # Find an existing marker comment and edit it in place; otherwise create one.
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+            echo "Updated comment $EXISTING"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+            echo "Created a new comment"
+          fi
+
+      # Scrub the Playwright auth storage state (live session cookies) regardless of outcome, so it
+      # never lingers on the runner or leaks into any later step/artifact.
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth

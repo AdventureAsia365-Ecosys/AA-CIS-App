@@ -234,6 +234,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
 - **Frontend (Vercel)**: preview per PR, production on merge.
+- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: on each Vercel `deployment_status`
+  (successful Preview) a Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
+  opens the key admin pages as a logged-in admin and fails the check on any HTTP/console error,
+  failing same-origin `/api/` call, or a blank page (no table rows and no kit empty state).
+  Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact
+  and link from one PR comment. Secrets: `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass),
+  `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. The bypass header is sent only to the BASE_URL
+  origin (origin-scoped route), never to a third-party host. Portal pages skip until a tenant test
+  account exists (AA-741; the real tenant login takes an API key → `E2E_TENANT_API_KEY`). Not a
+  required check. e2e specs carry no hardcoded credentials (shared helper
+  `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
+  `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Migrations are not applied by CI/CD.** Deploy only builds the image and updates the ECS
   task definition. Apply each new `api/migrations/NNN_*.sql` by hand through ECS exec into the
   `api` container, using Python + asyncpg with the admin secret `aa-cis/dev/rds` (the container

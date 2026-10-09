@@ -30,6 +30,8 @@ package-lock.json
 test-results/
 playwright-report/
 tests/e2e/results/
+# AA-732: Playwright auth storage state (live session cookies) — never commit, never upload.
+tests/e2e/.auth/
 data/
 scripts/
 .vercel

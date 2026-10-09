@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 // AA-663 — admin information architecture: every nav item opens with no JS error at 1440 px and
@@ -32,8 +33,8 @@ const REDIRECTS: [string, RegExp][] = [
 
 async function login(page: Page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForURL(/\/admin\/dashboard/, { timeout: 15000 });
 }

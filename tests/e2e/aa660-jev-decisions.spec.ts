@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 // AA-660 — Jev is tracked like the LLM models. v2 page (S203 feedback): tabs Overview / Questions /
@@ -8,8 +9,8 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function login(page: Page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForURL(/\/admin\/dashboard/, { timeout: 15000 });
 }

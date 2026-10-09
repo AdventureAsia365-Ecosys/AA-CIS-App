@@ -1,6 +1,7 @@
 // tests/e2e/aa562-content-trace-rename.spec.ts — AA-562 live-verify: "06-08 · Tenant Activity" ->
 // "Content Trace" rename, sidebar + page title + all cross-link text, route unchanged.
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa562';
@@ -8,8 +9,8 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForTimeout(2500);
 }

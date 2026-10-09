@@ -2,6 +2,7 @@
 // Captures the real, current-build screenshots for every changed section, to attach to the
 // Linear issue as required (not just described in text).
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa561-final';
@@ -9,8 +10,8 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForTimeout(2500);
 }

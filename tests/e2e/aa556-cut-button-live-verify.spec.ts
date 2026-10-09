@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 const SHOT_DIR = 'tests/e2e/results/aa556';
 fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -19,8 +20,8 @@ async function tenantLogin(page: import('@playwright/test').Page) {
 
 async function adminLogin(page: import('@playwright/test').Page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   // Let the post-login client-side redirect (to /admin/dashboard) finish settling before
   // navigating elsewhere — otherwise a goto() issued too early races that redirect.
