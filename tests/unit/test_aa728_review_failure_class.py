@@ -53,10 +53,20 @@ def test_transient_timeout():
 
 def test_transient_throttling_and_429():
     for summary in ("ThrottlingException from Bedrock", "HTTP 429 Too Many Requests",
-                    "503 ServiceUnavailable", "upstream 500 error"):
+                    "503 ServiceUnavailable", "InternalServerError", "Bad Gateway from the proxy",
+                    "HTTP 503 from bedrock", "upstream HTTP 500"):
         c = ap._review_failure_class(0.0, [], [], None, summary, src_itinerary_chars=2000)
         assert c["failure_class"] == "transient", summary
         assert c["retryable"] is True
+
+
+def test_transient_regex_does_not_match_bare_5xx_number():
+    # AA-728 feedback round 1: `\b5\d\d\b` used to match any 3-digit number starting with 5, so a
+    # char/word count in the summary (e.g. "itinerary 531 chars") was wrongly flagged transient.
+    for summary in ("itinerary 531 chars", "523 words in the summary",
+                    "low_quality(score=5.0<7.0)"):
+        c = ap._review_failure_class(6.0, [], [], "pass", summary, src_itinerary_chars=2000)
+        assert c["failure_class"] != "transient", summary
 
 
 def test_hard_code_not_yet_retried_is_retryable():

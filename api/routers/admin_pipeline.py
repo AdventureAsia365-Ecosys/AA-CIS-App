@@ -2396,7 +2396,10 @@ def _review_block(score, codes: list, failures: list, brand_audit_status) -> dic
     return {"kind": "other", "label": "Held for review"}
 
 
-_TRANSIENT_RE = re.compile(r"timeout|throttl|\b429\b|\b5\d\d\b|serviceunavailable", re.IGNORECASE)
+_TRANSIENT_RE = re.compile(
+    r"timeout|timed out|throttl|ThrottlingException|TooManyRequests|\b429\b|"
+    r"ServiceUnavailable|InternalServerError|Bad Gateway|Gateway Timeout|HTTP\s*5\d\d",
+    re.IGNORECASE)
 
 
 def _review_failure_class(score, codes: list, failures: list, brand_audit_status,

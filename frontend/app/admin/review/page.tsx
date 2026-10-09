@@ -326,43 +326,42 @@ function ReviewQueueInner() {
           const ok = canApprove(item);
           const busy = item.regenerating;
           return (
-            <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-              {/* AA-601 — icon-only (like Dismiss) so all 4 actions fit a 1440px screen.
-                  AA-728 — Regenerate is a same-harness retry, so it is shown only when the server
-                  marked the row retryable. For a non-retryable row the slot stays empty (an
-                  invisible placeholder of the same width) so the other 3 actions keep their place
-                  and the row still fits 1440px. */}
-              {item.retryable ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }} onClick={(e) => e.stopPropagation()}>
+              {/* AA-728 (feedback r1) — two-row Actions cell so it still fits 1440px with the full
+                  TEXT Regenerate button restored (#605's icon-only button was too small to read).
+                  Row 1: Regenerate, only when the server marked the row retryable. Row 2: the
+                  always-present Dismiss · Reject · Approve. */}
+              {item.retryable && (
                 <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
-                  title="Regenerate — rewrite this tour again" ariaLabel="Regenerate">
-                  <RotateCcw size={13} />
+                  title="Regenerate — rewrite this tour again">
+                  <RotateCcw size={12} /> Regenerate
                 </Btn>
-              ) : (
-                <span aria-hidden style={{ width: 29, display: "inline-block" }} />
               )}
-              <button
-                onClick={() => dismissM.mutate(item.id)}
-                disabled={busy}
-                title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
-                style={{
-                  padding: 7,
-                  border: `1px solid ${A.line}`,
-                  borderRadius: 8,
-                  background: "none",
-                  cursor: busy ? "not-allowed" : "pointer",
-                  color: A.muted,
-                  display: "flex",
-                  opacity: busy ? 0.5 : 1,
-                }}
-              >
-                <Ban size={13} />
-              </button>
-              <Btn variant="danger" size="sm" disabled={busy} onClick={() => rejectM.mutate(item.id)}>
-                Reject
-              </Btn>
-              <Btn variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
-                Approve
-              </Btn>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }}>
+                <button
+                  onClick={() => dismissM.mutate(item.id)}
+                  disabled={busy}
+                  title="Dismiss — drop this stale failed version from the queue (no edit, no publish)"
+                  style={{
+                    padding: 7,
+                    border: `1px solid ${A.line}`,
+                    borderRadius: 8,
+                    background: "none",
+                    cursor: busy ? "not-allowed" : "pointer",
+                    color: A.muted,
+                    display: "flex",
+                    opacity: busy ? 0.5 : 1,
+                  }}
+                >
+                  <Ban size={13} />
+                </button>
+                <Btn variant="danger" size="sm" disabled={busy} onClick={() => rejectM.mutate(item.id)}>
+                  Reject
+                </Btn>
+                <Btn variant={ok ? "primary" : "ghost"} size="sm" disabled={!ok || busy} onClick={() => approveM.mutate(item.id)}>
+                  Approve
+                </Btn>
+              </div>
             </div>
           );
         },
