@@ -321,8 +321,10 @@ function ReviewQueueInner() {
           const busy = item.regenerating;
           return (
             <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-              <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}>
-                <RotateCcw size={12} /> Regenerate
+              {/* AA-601 — icon-only (like Dismiss) so all 4 actions fit a 1440px screen. */}
+              <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
+                title="Regenerate — rewrite this tour again" ariaLabel="Regenerate">
+                <RotateCcw size={13} />
               </Btn>
               <button
                 onClick={() => dismissM.mutate(item.id)}
