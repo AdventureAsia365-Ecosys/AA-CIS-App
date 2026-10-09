@@ -497,6 +497,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
         // the remaining visible columns render as label/value rows. The selection checkbox (if on)
         // sits top-right of each card, so bulk selection + row actions still work.
         <div data-testid="kit-datatable-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Title cells are written for a narrow desktop column (one line + ellipsis); on a card the
+              title is the main content, so let it wrap. */}
+          <style>{`.aa-dt-card-title, .aa-dt-card-title * { white-space: normal !important; max-width: none !important; overflow-wrap: anywhere; }`}</style>
           {pageRows.map((row) => {
             const cells = row.getVisibleCells();
             const titleCell = cells.find((c) => c.column.id !== "__select");
@@ -518,7 +521,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: K.ink }}>
+                  <div
+                    className="aa-dt-card-title"
+                    style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: K.ink }}
+                  >
                     {titleCell && flexRender(titleCell.column.columnDef.cell, titleCell.getContext())}
                   </div>
                   {selectCell && (
