@@ -196,6 +196,9 @@ export default function AdminSidebar() {
               {isAdmin ? "Administrator" : "Content Team"}
             </div>
           </div>
+          {/* AA-601 — theme switch in the always-visible header (the footer was below the fold on
+              laptop screens). Click cycles Light → Dark → System. */}
+          <ThemeToggle />
           {/* Notification bell */}
           <button onClick={openNotifs} title="Notifications" style={{
             position: "relative", background: "none", border: "none", cursor: "pointer",
@@ -283,9 +286,6 @@ export default function AdminSidebar() {
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-        {/* AA-601 part B — Light / Dark / System theme toggle. Persists in localStorage.cis_theme;
-            "System" follows prefers-color-scheme. */}
-        <ThemeToggle />
         <div style={{
           display: "flex", alignItems: "center", gap: 9,
           padding: 8, borderRadius: 8, background: "rgba(255,255,255,0.03)",
@@ -313,50 +313,33 @@ export default function AdminSidebar() {
   );
 }
 
-// AA-601 part B — Light / Dark / System segmented toggle in the sidebar footer. The sidebar is a
-// dark panel in both themes, so the control uses the fixed-dark side tokens; the active segment is
-// a translucent-gold pill. State is read lazily via useSyncExternalStore (useThemeChoice) — no
-// setState-in-effect, so it is clean under the React Compiler.
+// AA-601 — Light / Dark / System theme switch: one icon button in the sidebar header that cycles
+// through the three choices (the icon shows the current one; the title names it and the next). The
+// sidebar is a dark panel in both themes, so it uses the fixed-dark side tokens. State is read via
+// useSyncExternalStore (useThemeChoice) — no setState-in-effect, clean under the React Compiler.
 const THEME_OPTIONS: { key: ThemeChoice; label: string; icon: React.ReactNode }[] = [
-  { key: "light", label: "Light", icon: <Sun size={13} /> },
-  { key: "dark", label: "Dark", icon: <Moon size={13} /> },
-  { key: "system", label: "System", icon: <Monitor size={13} /> },
+  { key: "light", label: "Light", icon: <Sun size={15} /> },
+  { key: "dark", label: "Dark", icon: <Moon size={15} /> },
+  { key: "system", label: "System", icon: <Monitor size={15} /> },
 ];
 
 function ThemeToggle() {
   const [choice, setChoice] = useThemeChoice();
+  const i = Math.max(0, THEME_OPTIONS.findIndex((o) => o.key === choice));
+  const cur = THEME_OPTIONS[i];
+  const next = THEME_OPTIONS[(i + 1) % THEME_OPTIONS.length];
   return (
-    <div
-      role="group"
-      aria-label="Theme"
+    <button
+      onClick={() => setChoice(next.key)}
+      title={`Theme: ${cur.label} — click for ${next.label}`}
+      aria-label={`Theme: ${cur.label}. Switch to ${next.label}`}
       style={{
-        display: "flex", gap: 2, padding: 3, marginBottom: 10,
-        background: "rgba(255,255,255,0.04)", borderRadius: 8,
+        background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4,
+        color: choice === "system" ? "var(--aa-side-text)" : A.gold,
       }}
     >
-      {THEME_OPTIONS.map((o) => {
-        const on = choice === o.key;
-        return (
-          <button
-            key={o.key}
-            onClick={() => setChoice(o.key)}
-            aria-pressed={on}
-            title={o.label}
-            style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-              padding: "6px 4px", borderRadius: 6, border: "none", cursor: "pointer",
-              fontSize: 11, fontWeight: 600, fontFamily: sans,
-              background: on ? alpha(A.gold, 16) : "transparent",
-              color: on ? A.gold : "var(--aa-side-text)",
-              transition: "background .15s, color .15s",
-            }}
-          >
-            {o.icon}
-            <span style={{ whiteSpace: "nowrap" }}>{o.label}</span>
-          </button>
-        );
-      })}
-    </div>
+      {cur.icon}
+    </button>
   );
 }
 
