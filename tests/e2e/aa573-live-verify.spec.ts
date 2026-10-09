@@ -2,6 +2,7 @@
 // (/tenant-login) logins should auto-redirect on their own, no manual
 // refresh/URL-typing needed. Screenshots + timing recorded as evidence.
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa573';
@@ -11,8 +12,8 @@ test.describe.configure({ mode: 'serial' });
 
 test('01 - staff login auto-redirects to /admin/dashboard, no manual action', async ({ page }) => {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
 
   const t0 = Date.now();
   await page.click('button:has-text("Login")');
@@ -35,9 +36,9 @@ test('02 - staff login: double-Enter no longer fires two POSTs / hangs', async (
   });
 
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
+  await page.fill('input[type="text"]', adminUsername());
   const pw = page.locator('input[type="password"]');
-  await pw.fill('e2eTest2026!');
+  await pw.fill(adminPassword());
 
   const t0 = Date.now();
   await pw.press('Enter');
@@ -56,8 +57,8 @@ test('03 - B2B tenant login auto-redirects to /portal, no manual action', async 
   // WanderLux Travel test tenant (reused across many prior sessions —
   // see memory reference_tenant_test_login_via_generate_key.md).
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForURL('**/admin/dashboard', { timeout: 3000 });
 

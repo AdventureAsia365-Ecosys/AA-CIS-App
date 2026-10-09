@@ -11,6 +11,7 @@
 //      opened directly, no ?resume_request_id= — this one needs no mocking, it's WanderLux's
 //      real, organic state for that deep-link).
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa576-final';
@@ -20,8 +21,8 @@ test.describe.configure({ mode: 'serial' });
 
 test('00 - tenant login via real generate-key + tenant-login form', async ({ page, browser }) => {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForURL('**/admin/dashboard', { timeout: 5000 });
 

@@ -1,13 +1,17 @@
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3001';
 
 // ── Auth helpers ──────────────────────────────────────────────
+// AA-732: admin credentials come from the environment (E2E_ADMIN_USERNAME / E2E_ADMIN_PASSWORD),
+// never a literal. The content-role login below is a separate, pre-existing path with no env var
+// provisioned yet — left as-is (out of AA-732 scope); 'wrongpass' is a negative-test value.
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
-  await page.fill('input[name="username"], input[type="text"]', 'admin');
-  await page.fill('input[name="password"], input[type="password"]', 'admin2026');
+  await page.fill('input[name="username"], input[type="text"]', adminUsername());
+  await page.fill('input[name="password"], input[type="password"]', adminPassword());
   await page.click('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")');
   await page.waitForURL(/\/(upload|dashboard)/, { timeout: 5000 });
 }

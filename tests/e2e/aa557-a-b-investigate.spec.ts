@@ -6,10 +6,11 @@
 //   B. bulk-select checkboxes have no "Star selected (N)" button, and star doesn't update without F5
 //
 // This spec runs against the REAL production domain (BASE_URL=https://aa-cis.lumiguides.it.com),
-// the exact URL Nghiệp used, with a real e2e-test-admin login through the real /login form — not
+// the exact URL Nghiệp used, with a real admin login through the real /login form — not
 // a local dev server — specifically to rule out "Nghiệp saw a stale/cached build" as the
 // explanation before concluding regression.
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa557';
@@ -17,8 +18,8 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForTimeout(2500);
   console.log('POST-LOGIN URL:', page.url());

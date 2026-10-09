@@ -1,7 +1,8 @@
 // tests/e2e/aa557-full-live-verify.spec.ts — AA-557 post-deploy live verify (07/09/2026).
 // Real Playwright against production (https://aa-cis.lumiguides.it.com), all 3 PRs deployed
-// (task def :241, real /login, real e2e-test-admin account). Covers C/D/E/F/G/H/I/J.
+// (task def :241, real /login, real admin test account). Covers C/D/E/F/G/H/I/J.
 import { test, expect } from '@playwright/test';
+import { adminUsername, adminPassword } from './helpers/auth';
 import fs from 'fs';
 
 const SHOT_DIR = 'tests/e2e/results/aa557-final';
@@ -9,8 +10,8 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function loginAsAdmin(page) {
   await page.goto('/login');
-  await page.fill('input[type="text"]', 'e2e-test-admin');
-  await page.fill('input[type="password"]', 'e2eTest2026!');
+  await page.fill('input[type="text"]', adminUsername());
+  await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
   await page.waitForTimeout(2000);
 }
