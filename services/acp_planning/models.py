@@ -62,6 +62,11 @@ class AtomRecord(BaseModel):
     text: str
     activity_type: Optional[str] = None  # AA-379 — decompose enum (trek|bike|food|culture|stay|transit|other)
     distinctiveness: Distinctiveness = "LOW"
+    # AA-749 (option b) — owner_scope decides whether `distinctiveness` is a real measurement. A
+    # platform atom (owner_scope='platform') is never scored (its value is a default), so quarter
+    # scoring treats it as unscored and excludes it from the distinctiveness average. A tenant
+    # atom (owner_scope = a tenant id, T5 score_distinctiveness path) carries a real HIGH/MED/LOW.
+    owner_scope: str = "platform"
     deleted: bool = False
     weight: float = 1.0
     cooldown_until: dict[str, Any] = Field(default_factory=dict)
