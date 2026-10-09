@@ -22,7 +22,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
 from shared.aws_client.cost_explorer import (
@@ -249,13 +249,16 @@ async def patch_llm_route(
     # Keep whatever the current row has for any field the caller omits (partial update).
     fallbacks = body.fallback_model_ids if body.fallback_model_ids is not None \
         else list(current.get("fallback_model_ids") or [])
-    shadow = body.shadow_model_id if body.shadow_model_id is not None \
+    # An explicit `"shadow_model_id": null` clears the shadow; omitting the field keeps it.
+    shadow = body.shadow_model_id if "shadow_model_id" in body.model_fields_set \
         else current.get("shadow_model_id")
     sample_pct = body.shadow_sample_pct if body.shadow_sample_pct is not None \
         else (current.get("shadow_sample_pct") or 0)
 
     if not 0 <= sample_pct <= 100:
         raise HTTPException(status_code=422, detail="shadow_sample_pct must be between 0 and 100")
+    if shadow is None:
+        sample_pct = 0  # no shadow model → nothing to sample
 
     allowed = {o["model_id"] for o in _options_for(current["role"], stage, await _load_catalog())
                if o["available"]}
@@ -299,8 +302,8 @@ async def patch_llm_route(
 
 
 class LlmCatalogPatch(BaseModel):
-    price_in_per_mtok: Optional[float] = None
-    price_out_per_mtok: Optional[float] = None
+    price_in_per_mtok: Optional[float] = Field(None, ge=0)
+    price_out_per_mtok: Optional[float] = Field(None, ge=0)
     price_source: Optional[str] = None
     enabled: Optional[bool] = None
 

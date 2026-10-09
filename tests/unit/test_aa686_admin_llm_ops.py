@@ -182,6 +182,24 @@ async def test_route_valid_update_calls_setter():
     assert res["route"]["shadow"]["model_id"] == "gpt-4.1"
 
 
+@pytest.mark.asyncio
+async def test_route_explicit_null_clears_shadow_omitted_keeps_it():
+    captured = {}
+
+    async def setter(stage, **kw):
+        captured.update(kw)
+        return {"stage": stage, "model_id": "gpt-5.6-luna", "updated_at": None, **kw}
+
+    with_shadow = {**JUDGE_STAGE, "shadow_model_id": "gpt-4.1", "shadow_sample_pct": 20}
+    await _call_route({"shadow_model_id": None}, stage_rows=[with_shadow], setter=setter)
+    assert captured["shadow_model_id"] is None
+    assert captured["shadow_sample_pct"] == 0  # no shadow -> nothing to sample
+
+    await _call_route({"fallback_model_ids": ["gpt-4.1"]}, stage_rows=[with_shadow], setter=setter)
+    assert captured["shadow_model_id"] == "gpt-4.1"
+    assert captured["shadow_sample_pct"] == 20
+
+
 # ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
 # ║ 2. set_stage_route store helper — audit insert (before/after) in the same transaction          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
