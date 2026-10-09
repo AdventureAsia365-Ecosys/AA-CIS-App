@@ -6,10 +6,10 @@
 // `useResolvedTheme()` returns 'light' | 'dark' and re-renders on any theme change (OS, toggle,
 // cross-tab) via useSyncExternalStore — React-Compiler safe (no setState-in-effect).
 //
-// Recharts note: `stroke`/`fill` are SVG PRESENTATION ATTRIBUTES, which do NOT resolve CSS
-// `var(--…)` (only the CSS fill/stroke PROPERTIES do, and recharts emits attributes). So charts
-// cannot pass `var(--aa-…)` straight to `stroke`/`fill`. `useChartColors()` resolves the needed
-// variables to concrete hex/rgb with getComputedStyle and recomputes whenever the theme changes.
+// Recharts note: `stroke`/`fill` are rendered as SVG presentation attributes. Chromium DOES resolve
+// `var(--…)` in those attributes, but it is NOT portable — other engines and static SVG export
+// paths do not — so we keep the robust approach: `useChartColors()` resolves the needed variables
+// to concrete colours with getComputedStyle and recomputes whenever the theme changes.
 
 import { useSyncExternalStore } from "react";
 import {

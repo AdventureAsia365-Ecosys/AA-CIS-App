@@ -469,8 +469,8 @@ export default function ExternalSpendPage() {
   // AA-622 fallback drill-down: {tenantId, label} when open (tenantId null = all tenants)
   const [fbModal, setFbModal] = useState<{ tenantId: string | null; label: string | null } | null>(null);
 
-  // AA-601 part B — recharts stroke/fill are SVG attributes, which do NOT resolve var(--…); resolve
-  // the theme colours to concrete values here (recomputes on theme change).
+  // AA-601 part B — recharts stroke/fill are SVG attributes; resolve the theme colours to concrete
+  // values for portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
   const chart = useChartColors({
     gold: "--aa-gold", green: "--aa-green", line: "--aa-line", line2: "--aa-line2", muted: "--aa-muted",
   });

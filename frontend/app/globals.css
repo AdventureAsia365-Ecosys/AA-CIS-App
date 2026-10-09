@@ -178,7 +178,7 @@
   --aa-ink3:          #B8C0CC;
   --aa-body:          #D4DAE2;
   --aa-muted:         #9099A6;
-  --aa-muted2:        #717A88;
+  --aa-muted2:        #8A93A2;   /* AA-601 part B (feedback 1, item 3): ≥4.5:1 on card (5.2:1) and bg (6.0:1); was #717A88 (3.7:1) */
   --aa-bg:            #0F141B;
   --aa-card:          #19212C;
   --aa-line:          #2A3542;
@@ -254,13 +254,17 @@
   --brand-blackblue: #1F2933;
   --brand-gray:      #33363D;
   --brand-offwhite:  #F8F6F2;
-  --bg-primary:      var(--aa-bg);
-  --bg-card:         var(--aa-card);
+  /* AA-601 part B (feedback 1, item 2): these legacy light literals must stay EXACTLY what the app
+     used before — the effective old values came from the second [data-theme="light"] block that
+     won the cascade. Login / tenant-login / body read them directly, so mapping them to the
+     --aa-* palette (slightly different hex) visibly changed those pages. Restored verbatim. */
+  --bg-primary:      #F4F1EC;
+  --bg-card:         #FFFFFF;
   --bg-card-hover:   #EDE9E3;
-  --border:          var(--aa-line);
-  --text-primary:    var(--aa-ink);
+  --border:          #D8D3CC;
+  --text-primary:    #1F2933;
   --text-secondary:  #4A5568;
-  --text-muted:      var(--aa-muted2);
+  --text-muted:      #8B9BB4;
   --before-bg:       #FCEBEB;
   --before-border:   #F5C6C6;
   --after-bg:        #EAF3DE;

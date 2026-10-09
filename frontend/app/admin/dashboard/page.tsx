@@ -32,7 +32,8 @@ function MetricCard({ label, value, sub, src, color = A.ink }: {
 
 // ─── Tab 1: Overview ──────────────────────────────────────────────────────────
 function OverviewTab({ data }: { data: any }) {
-  // AA-601 part B — recharts fill is an SVG attribute (no var() support); resolve theme colours.
+  // AA-601 part B — recharts fill is an SVG attribute; resolve theme colours to concrete values for
+  // portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
   const chart = useChartColors({ green: "--aa-green", gold: "--aa-gold", red: "--aa-red" });
   if (!data) return (
     <div style={{ padding: 40, textAlign: "center", color: A.red }}>Failed to load metrics</div>

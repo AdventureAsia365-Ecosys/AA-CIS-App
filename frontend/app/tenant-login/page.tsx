@@ -43,7 +43,7 @@ export default function TenantLoginPage() {
   };
 
   return (
-    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
+    <div data-theme="light" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
       <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
           {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}

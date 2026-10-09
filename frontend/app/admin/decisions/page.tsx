@@ -227,7 +227,8 @@ export default function DecisionsPage() {
   const [days, setDays] = useState(7);
   const [data, setData] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // AA-601 part B — recharts fill/stroke are SVG attributes (no var()); resolve zone colours + grid.
+  // AA-601 part B — recharts fill/stroke are SVG attributes; resolve zone colours + grid to concrete
+  // values for portability (Chromium resolves var() in SVG attrs, other engines/exports do not).
   const chartColors = useChartColors({
     accept: ZONE_META.accept.cssVar, grey: ZONE_META.grey.cssVar, reject: ZONE_META.reject.cssVar,
     error: ZONE_META.error.cssVar, skipped: ZONE_META.skipped.cssVar, line: "--aa-line",
