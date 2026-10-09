@@ -64,16 +64,30 @@ async def process_seo(
     # extra_seeds is a list (possibly EMPTY: a one-seed title like "LAYA-GASA TREK") for every S1
     # call, None for other callers — the S1 pilot's Laya-Gasa skipped reuse on `[]` and re-bought.
     if extra_seeds is not None and tour_id and seo_mode == "dataforseo":
-        from .s1_prefetch import load_fresh
+        from .s1_prefetch import load_fresh, prefetch_job_covers_tour, wait_for_prefetched_seo
         try:
             reuse_conn = await asyncpg.connect(get_database_url())
             try:
                 fresh = await load_fresh(reuse_conn, tour_id)
+                # AA-747: the S1 page now starts the rewrite workers at the same time as the batched
+                # prefetch (no await on it). If this tour has no row yet BUT a prefetch job that
+                # includes it is still queued/running, wait for the prefetch's own row (poll ~10s,
+                # cap 5 min) instead of buying DataForSEO here — the prefetch commits per batch of 5,
+                # so an early tour's row lands within ~1 min. After the cap we fall through to the
+                # per-tour fetch below. This is the "never buy twice" guarantee: once the row exists,
+                # we reuse it; we only buy if the prefetch never produced one.
+                covered = fresh is None and await prefetch_job_covers_tour(reuse_conn, tour_id)
             finally:
                 await reuse_conn.close()
         except Exception as _reuse_err:
             logger.warning("seo_reuse_lookup_failed", tour_id=tour_id, error=str(_reuse_err))
             fresh = None
+            covered = False
+        if not fresh and covered:
+            logger.info("seo_waiting_on_prefetch", tour_id=tour_id)
+            waited = await wait_for_prefetched_seo(tour_id)
+            if waited:
+                fresh = waited
         if fresh:
             logger.info("seo_reused", tour_id=tour_id)
             return {"status": "reused", "data": fresh}

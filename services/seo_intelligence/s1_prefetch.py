@@ -42,6 +42,10 @@ JEV_PER_TOUR = 30
 JEV_CONCURRENCY = 8
 MAX_SEEDS_PER_TASK = 20           # DFS keywords_for_keywords limit, same price for 1 or 20
 MIN_CACHED_IDEAS = 5              # research cache alone is enough when it has this many
+# AA-747: commit the prefetch's seo_context rows in batches of this many tours, in the order given,
+# so a concurrently-running s1_rewrite job finds the early tours' rows within ~1 min instead of
+# waiting for the whole prefetch (~8 min / 50 tours) to finish.
+PREFETCH_COMMIT_BATCH = 5
 
 
 def cache_key(seed: str, location_code: int) -> str:
@@ -199,6 +203,61 @@ async def load_fresh(conn, tour_id: str) -> dict | None:
     }
 
 
+# AA-747: a rewrite started at the same time as the prefetch (the FE no longer awaits the prefetch)
+# must not buy DataForSEO for a tour the prefetch is about to commit. These let the S1 SEO step wait
+# for the prefetch's own row for this tour instead of buying — and fall back to the per-tour fetch
+# after a cap, so a stuck/failed prefetch never blocks a rewrite indefinitely. The prefetch commits
+# per batch of 5, so an early tour's row appears within ~1 min; never a double buy (once the row
+# exists, load_fresh reuses it).
+PREFETCH_WAIT_POLL_SECONDS = 10
+PREFETCH_WAIT_CAP_SECONDS = 300
+
+
+async def prefetch_job_covers_tour(conn, tour_id: str) -> bool:
+    """True if an s1_seo_prefetch job that INCLUDES this tour is still queued or running — i.e. the
+    tour's seo_context row is on its way, so the rewrite should wait for it rather than buy."""
+    row = await conn.fetchrow(
+        """SELECT 1 FROM shared.job
+            WHERE kind = 's1_seo_prefetch' AND status IN ('queued', 'running')
+              AND payload -> 'tour_ids' @> $1::jsonb
+            LIMIT 1""",
+        json.dumps([str(tour_id)]))
+    return row is not None
+
+
+async def wait_for_prefetched_seo(tour_id: str, *, poll_seconds: int = PREFETCH_WAIT_POLL_SECONDS,
+                                  cap_seconds: int = PREFETCH_WAIT_CAP_SECONDS) -> dict | None:
+    """AA-747: poll for the prefetch's own seo_context row for `tour_id`, every `poll_seconds` up to
+    `cap_seconds`. Returns the reusable seo_data as soon as the row appears, or None after the cap
+    (caller then falls back to its own per-tour fetch). Opens short-lived connections (same style as
+    process_seo) so it never shares one connection across concurrent tasks (S219 #600). Only waits
+    while a prefetch job that includes this tour is still queued/running — stops early if the job
+    disappears (finished/failed) and the row still isn't there."""
+    import asyncio
+    import time
+
+    import asyncpg
+
+    from shared.secrets import get_database_url
+
+    deadline = time.monotonic() + max(0, cap_seconds)
+    while True:
+        conn = await asyncpg.connect(get_database_url())
+        try:
+            fresh = await load_fresh(conn, str(tour_id))
+            if fresh:
+                return fresh
+            covered = await prefetch_job_covers_tour(conn, str(tour_id))
+        finally:
+            await conn.close()
+        if not covered:
+            return None  # no in-flight prefetch for this tour anymore and still no row
+        if time.monotonic() >= deadline:
+            logger.info("s1_seo_prefetch_wait_cap_reached", tour_id=str(tour_id))
+            return None
+        await asyncio.sleep(poll_seconds)
+
+
 async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa: list[str],
                    related: list[str], tenant_id: str) -> None:
     from shared.repository.seo_context_repository import SeoContextRepository
@@ -265,57 +324,69 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 cached[s["tour_id"]] = (ideas, paa)  # merged with bought ideas below
 
     client = client or DataForSEOClient(tenant_id=tenant_id)
-    bought: dict[str, list[dict]] = {}
-    for batch in plan_batches(buy):
-        seeds: list[str] = []
-        for s in batch:
-            for sd in s["seeds"]:
-                if sd.casefold() not in {x.casefold() for x in seeds}:
-                    seeds.append(sd)
-        try:
-            ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
-                                                           language_code, limit=300)
-            summary["ideas_tasks"] += 1
-        except Exception as e:  # BudgetExceeded included: stop buying, keep what we have
-            from shared.cost_guard import BudgetExceeded
-            if isinstance(e, BudgetExceeded):
-                raise
-            logger.warning("s1_prefetch_ideas_failed", error=str(e)[:200], seeds=len(seeds))
-            ideas = []
-        for s in batch:
-            bought[s["tour_id"]] = candidates_for(batch, s, ideas)
 
+    # AA-747: process the tours IN THE ORDER GIVEN, in batches of 5, committing each batch's
+    # seo_context rows before starting the next — so a running s1_rewrite job finds the early
+    # tours' rows within ~1 min instead of waiting for the whole ~8 min prefetch. Within a batch
+    # the paid keywords_for_keywords task is still shared (plan_batches: same country, ≤20 seeds),
+    # so this does not cost more DFS tasks than the old all-at-once path.
     done = 0
-    for s in todo:
-        ideas, paa = cached.get(s["tour_id"], ([], []))
-        candidates = list(ideas)
-        if s["tour_id"] in bought:
-            seen = {i["keyword"].casefold() for i in candidates}
-            candidates += [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen]
-        else:
-            summary["from_research_cache"] += 1
-        ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"], country=s["country"],
-                                             foreign_places=s.get("foreign"))
-        # AA-706: Jev sees every candidate — research-cache ideas too (the pilot's "druk hotel paro"
-        # came from search_demand and bypassed the question). Lodging searches never reach it.
-        if jev:
-            ideas = await jev_review(s, [i for i in candidates if not is_lodging_search(i["keyword"])],
-                                     ideas, pool=pool)
-        related: list[str] = []
-        if not paa:
+    buy_ids = {s["tour_id"] for s in buy}
+    for i in range(0, len(todo), PREFETCH_COMMIT_BATCH):
+        chunk = todo[i:i + PREFETCH_COMMIT_BATCH]
+        chunk_buy = [s for s in chunk if s["tour_id"] in buy_ids]
+        bought: dict[str, list[dict]] = {}
+        for dfs_batch in plan_batches(chunk_buy):
+            seeds: list[str] = []
+            for s in dfs_batch:
+                for sd in s["seeds"]:
+                    if sd.casefold() not in {x.casefold() for x in seeds}:
+                        seeds.append(sd)
             try:
-                client.tour_id = s["tour_id"]
-                serp = await client._serp_advanced(s["seed"], location_code, language_code)
-                paa, related = client._parse_paa(serp), client._parse_related(serp)
-                summary["serp_calls"] += 1
-            except Exception as e:
+                ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
+                                                               language_code, limit=300)
+                summary["ideas_tasks"] += 1
+            except Exception as e:  # BudgetExceeded included: stop buying, keep what we have
                 from shared.cost_guard import BudgetExceeded
                 if isinstance(e, BudgetExceeded):
                     raise
-                logger.warning("s1_prefetch_serp_failed", tour_id=s["tour_id"], error=str(e)[:200])
-        await _persist(conn, s, location_code, ideas[:25], paa, related, tenant_id)
-        done += 1
-        if progress is not None and done % 5 == 0:
+                logger.warning("s1_prefetch_ideas_failed", error=str(e)[:200], seeds=len(seeds))
+                ideas = []
+            for s in dfs_batch:
+                bought[s["tour_id"]] = candidates_for(dfs_batch, s, ideas)
+
+        for s in chunk:
+            ideas, paa = cached.get(s["tour_id"], ([], []))
+            candidates = list(ideas)
+            if s["tour_id"] in bought:
+                seen = {i["keyword"].casefold() for i in candidates}
+                candidates += [i for i in bought[s["tour_id"]] if i["keyword"].casefold() not in seen]
+            else:
+                summary["from_research_cache"] += 1
+            ideas = rank_keyword_ideas(candidates, s["places"], activity_words=s["activity"], country=s["country"],
+                                                 foreign_places=s.get("foreign"))
+            # AA-706: Jev sees every candidate — research-cache ideas too (the pilot's "druk hotel
+            # paro" came from search_demand and bypassed the question). Lodging searches never reach it.
+            if jev:
+                ideas = await jev_review(s, [i for i in candidates if not is_lodging_search(i["keyword"])],
+                                         ideas, pool=pool)
+            related: list[str] = []
+            if not paa:
+                try:
+                    client.tour_id = s["tour_id"]
+                    serp = await client._serp_advanced(s["seed"], location_code, language_code)
+                    paa, related = client._parse_paa(serp), client._parse_related(serp)
+                    summary["serp_calls"] += 1
+                except Exception as e:
+                    from shared.cost_guard import BudgetExceeded
+                    if isinstance(e, BudgetExceeded):
+                        raise
+                    logger.warning("s1_prefetch_serp_failed", tour_id=s["tour_id"], error=str(e)[:200])
+            # Commit this tour's row now (asyncpg auto-commits each statement) — a concurrent
+            # s1_rewrite job polling for this tour_id sees it as soon as this returns.
+            await _persist(conn, s, location_code, ideas[:25], paa, related, tenant_id)
+            done += 1
+        if progress is not None:
             await progress(done=done, total=len(todo))
     logger.info("s1_prefetch_done", **summary)
     return summary

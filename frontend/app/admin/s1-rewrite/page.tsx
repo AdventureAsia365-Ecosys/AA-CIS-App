@@ -434,10 +434,14 @@ export default function S1RewritePage() {
     queueRef.current = [...selectedTours];
     runTourIdsRef.current = selectedTours.map(t => t.tour_id);
 
-    // AA-653 — buy the selected tours' DataForSEO data in shared tasks first (reused for a year),
-    // so each rewrite below finds it and buys nothing. A failed prefetch only means the rewrites
+    // AA-653 — buy the selected tours' DataForSEO data in shared tasks (reused for a year), so
+    // each rewrite below finds it and buys nothing. A failed prefetch only means the rewrites
     // fetch per tour as before.
-    if (seoMode !== "minimal") await prefetchSeo(selectedTours.map(t => t.tour_id));
+    // AA-747 — the prefetch is NOT awaited: the rewrite workers start at the SAME time. The
+    // prefetch job commits each batch of 5 tours' seo_context as it goes (s1_prefetch.py), and the
+    // s1_rewrite job waits for its own tour's row (cap 5 min) before fetching per tour, so early
+    // tours are ready within ~1 min instead of blocking the whole wave on the full ~8 min prefetch.
+    if (seoMode !== "minimal") void prefetchSeo(selectedTours.map(t => t.tour_id));
 
     const workerCount = Math.min(3, queueRef.current.length);
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
