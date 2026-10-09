@@ -91,7 +91,9 @@ interface TourSummary {
 }
 
 interface Summary {
-  distinctiveness_breakdown: { HIGH: number; MED: number; LOW: number };
+  // AA-749 (option b) — breakdown gains a NOT_SCORED bucket (platform atoms, never scored);
+  // HIGH/MED/LOW now count only tenant-scored atoms.
+  distinctiveness_breakdown: { HIGH: number; MED: number; LOW: number; NOT_SCORED: number };
   total_count: number;
   reviewed_count: number;
   by_tour: TourSummary[];
@@ -136,7 +138,9 @@ interface Atom {
   tour_name: string;
   text: string;
   activity_type: string | null;
-  distinctiveness: "HIGH" | "MED" | "LOW";
+  // AA-749 (option b) — a platform atom is never scored for distinctiveness; the API now
+  // returns null for it, which renders as a neutral "Not scored" badge (see DIST_LABEL below).
+  distinctiveness: "HIGH" | "MED" | "LOW" | null;
   deleted: boolean;
   unreviewed: boolean;
   segment_id: string | null;
@@ -152,6 +156,12 @@ interface Atom {
 }
 
 const DIST_COLOR: Record<string, "green" | "amber" | "gray"> = { HIGH: "green", MED: "amber", LOW: "gray" };
+// AA-749 (option b) — a platform atom's distinctiveness comes back null; show a neutral
+// "Not scored" badge rather than a (misleading) MED value.
+function distBadge(distinctiveness: "HIGH" | "MED" | "LOW" | null): { label: string; color: "green" | "amber" | "gray" } {
+  if (distinctiveness == null) return { label: "Not scored", color: "gray" };
+  return { label: distinctiveness, color: DIST_COLOR[distinctiveness] ?? "gray" };
+}
 const PAGE_SIZE = 50;
 const TOURS_PAGE_SIZE = 30; // AA-554 B.6 — Tours sidebar "Load more" window size
 
@@ -260,7 +270,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     onSummaryChange();
   }
 
-  const breakdown = summary?.distinctiveness_breakdown ?? { HIGH: 0, MED: 0, LOW: 0 };
+  const breakdown = summary?.distinctiveness_breakdown ?? { HIGH: 0, MED: 0, LOW: 0, NOT_SCORED: 0 };
   // AA-564 1.3 — this block used to always read the whole-dataset `summary.total_count`/
   // `reviewed_count`, even when a single Tour was selected (the header stat bar above it does
   // filter correctly, which is why the two used to visibly disagree). `summary.by_tour` already
@@ -280,13 +290,15 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
         <>
           {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
               summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
-          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
+          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
               ["High distinctiveness", breakdown.HIGH, A.green],
               ["Medium", breakdown.MED, A.amber],
               ["Low", breakdown.LOW, A.muted2],
+              // AA-749 (option b) — platform atoms are never scored; shown here, not folded into MED.
+              ["Not scored", breakdown.NOT_SCORED, A.muted2],
             ].map(([label, value, accent]) => (
               <Card key={label as string} style={{ padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 6 }}>{label}</div>
@@ -296,8 +308,8 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
           </div>
           <div style={{ fontSize: 10.5, color: A.muted2, marginBottom: 14 }}>
             {selectedTourMeta
-              ? "Total atoms/Reviewed are for the selected Tour. High/Medium/Low distinctiveness stays platform-wide (all tours)."
-              : "All 5 figures are platform-wide (all tours)."}
+              ? "Total atoms/Reviewed are for the selected Tour. Distinctiveness buckets stay platform-wide (all tours)."
+              : "All 6 figures are platform-wide (all tours)."}
           </div>
 
           {/* AA-564 3.2 — manual atomize backfill banner. Only 1 automatic trigger exists (a
@@ -397,6 +409,8 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
                   <option value="HIGH">High</option>
                   <option value="MED">Medium</option>
                   <option value="LOW">Low</option>
+                  {/* AA-749 (option b) — platform atoms, never scored. */}
+                  <option value="NOT_SCORED">Not scored</option>
                 </select>
                 <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
                   <option value="">All lifecycle stages</option>
@@ -499,7 +513,7 @@ function AtomCard({ atom, showTour, onDelete }: {
           {showTour && <div style={{ fontSize: 11, color: A.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>}
           <div style={{ fontSize: 13.5, color: A.body, lineHeight: 1.5 }}>{atom.text}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Badge color={DIST_COLOR[atom.distinctiveness] ?? "gray"}>{atom.distinctiveness}</Badge>
+            <Badge color={distBadge(atom.distinctiveness).color}>{distBadge(atom.distinctiveness).label}</Badge>
             {atom.activity_type && <Badge color="gray">{atom.activity_type}</Badge>}
             {atom.unreviewed && <Badge color="blue">New</Badge>}
             <OwnerBadge scope={atom.owner_scope} />

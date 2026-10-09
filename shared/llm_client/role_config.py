@@ -62,8 +62,12 @@ class StageConfig:
     shadow_sample_pct: int = 0
 
 
-# AA-659: SAFE_DEFAULTS deliberately keep GPT-4.1 for the judges (no route) — the known-good
-# setup when the DB cannot be read; the live judge route (migration 171) is DB-only.
+# AA-714 (S222, Nghiệp): every path prefers Bedrock. The judge defaults mirror the live judge route
+# (migration 171: GPT-5.6 Luna -> GPT-6 Luna on Bedrock acc3 -> GPT-6 Luna on the OpenAI API) and end
+# with GPT-4.1 — a LEGACY key that needs no catalog row. If the DB (and so the catalog) cannot be read,
+# the Luna keys are skipped as "not in catalog" and GPT-4.1 still judges; with a readable catalog the
+# call always goes to Bedrock first. (Before AA-714 the defaults were GPT-4.1 alone, OpenAI direct.)
+_JUDGE_ROUTE_DEFAULT = ("gpt-6-luna", "gpt-6-luna-openai", "gpt-4.1")
 # Matches shared.llm_role_config's own seed data (migration 137) exactly — see that file's
 # header for why each value is what it is. This is the fallback when the DB is unreachable OR a
 # stage has no row yet (e.g. a new call site shipped before its migration/seed caught up).
@@ -73,14 +77,17 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # kept separate so admin can move ONLY the T2 rewrite to Sonnet via Settings > LLM Models
     # without touching the A1 admin batch write. See migration 156.
     "t2_generate":        StageConfig("t2_generate", "writer", "claude", "haiku", "acc3"),
-    "s1_judge":           StageConfig("s1_judge", "judge", "openai", "gpt-4.1", None),
-    "s1_brand_audit":     StageConfig("s1_brand_audit", "judge", "openai", "gpt-4.1", None),
+    "s1_judge":           StageConfig("s1_judge", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    "s1_brand_audit":     StageConfig("s1_brand_audit", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     "s1_flag_fix":        StageConfig("s1_flag_fix", "writer", "claude", "haiku", "acc3"),
     "s1_itinerary_nudge": StageConfig("s1_itinerary_nudge", "writer", "claude", "haiku", "acc3"),
     "s1_atom_writer":     StageConfig("s1_atom_writer", "writer", "claude", "sonnet", "acc3"),
     "t8_angle_gen":       StageConfig("t8_angle_gen", "writer", "claude", "sonnet", "acc3"),
     "t9_write":           StageConfig("t9_write", "writer", "claude", "sonnet", "acc3"),
-    "t10_judge":          StageConfig("t10_judge", "judge", "openai", "gpt-4.1", None),
+    "t10_judge":          StageConfig("t10_judge", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-619: Sonnet->Haiku — A/B proved equal atom quality, ~4x cheaper (see migration 155).
     "t5_atomize":         StageConfig("t5_atomize", "writer", "claude", "haiku", "acc3"),
     "n7_draft":           StageConfig("n7_draft", "writer", "claude", "sonnet", "acc3"),

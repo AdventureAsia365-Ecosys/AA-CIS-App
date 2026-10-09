@@ -181,7 +181,14 @@ _LIST_FROM = """
 _LIST_SELECT_COLS = """
     SELECT ta.atom_id, ta.tour_id, rt.src_name AS tour_name, ta.text,
            ta.activity_type, ta.emotional_hook, ta.visual_potential,
-           ta.distinctiveness, ta.media, ta.deleted,
+           -- AA-749 (option b) — a platform atom (owner_scope='platform') is never scored for
+           -- distinctiveness: its stored value is a default, not a measurement, so surface it as
+           -- NULL ("not scored") rather than the misleading MED it carries in the column. Only a
+           -- tenant atom (owner_scope = a tenant id, written through the T5 score_distinctiveness
+           -- path) has a real HIGH/MED/LOW to show.
+           CASE WHEN ta.owner_scope = 'platform' THEN NULL
+                ELSE ta.distinctiveness END AS distinctiveness,
+           ta.media, ta.deleted,
            ta.created_at, ta.updated_at,
            (ta.updated_at = ta.created_at) AS unreviewed,
            tc.atom_count AS tour_atom_count,
@@ -204,7 +211,13 @@ async def list_atoms(
     tour_id: Optional[str] = Query(None),
     tour_ids: Optional[str] = Query(None),
     atom_ids: Optional[str] = Query(None),
-    distinctiveness: Optional[str] = Query(None, pattern="^(HIGH|MED|LOW)$"),
+    distinctiveness: Optional[str] = Query(
+        None, pattern="^(HIGH|MED|LOW|NOT_SCORED)$",
+        description="AA-749 (option b) — HIGH/MED/LOW match only tenant-scored atoms "
+                    "(owner_scope != 'platform'); NOT_SCORED matches the platform atoms "
+                    "(owner_scope = 'platform') whose stored distinctiveness is a default, not a "
+                    "measurement, and so is surfaced as null.",
+    ),
     unreviewed_only: bool = Query(False),
     thin_only: bool = Query(False),
     include_deleted: bool = Query(False),
@@ -285,7 +298,12 @@ async def list_atoms(
         if atom_id_list:
             _add("ta.atom_id = ANY(${n})", atom_id_list)
     if distinctiveness:
-        _add("ta.distinctiveness = ${n}", distinctiveness)
+        # AA-749 (option b) — NOT_SCORED == platform atoms (their stored distinctiveness is a
+        # default, never a measurement); HIGH/MED/LOW only ever match a tenant-scored atom.
+        if distinctiveness == "NOT_SCORED":
+            clauses.append("ta.owner_scope = 'platform'")
+        else:
+            _add("ta.distinctiveness = ${n} AND ta.owner_scope != 'platform'", distinctiveness)
     if not include_deleted:
         clauses.append("NOT ta.deleted")
     if unreviewed_only:
@@ -341,10 +359,13 @@ async def atoms_summary(
 
     async with pool.acquire() as conn:
         breakdown_rows = await conn.fetch(f"""
-            SELECT distinctiveness, count(*) AS c
+            SELECT
+                CASE WHEN owner_scope = 'platform' THEN 'NOT_SCORED'
+                     ELSE distinctiveness END AS bucket,
+                count(*) AS c
             FROM acp_contract.tour_atoms
             WHERE NOT deleted AND NOT is_empty_marker {scope_clause}
-            GROUP BY distinctiveness
+            GROUP BY 1
         """, *scope_params)
         totals = await conn.fetchrow(f"""
             SELECT count(*) AS total,
@@ -378,10 +399,12 @@ async def atoms_summary(
             ORDER BY rt.src_name
         """, *scope_params)
 
-    breakdown = {"HIGH": 0, "MED": 0, "LOW": 0}
+    # AA-749 (option b) — HIGH/MED/LOW count only tenant-scored atoms; platform atoms (never
+    # scored) land in their own NOT_SCORED bucket instead of being miscounted as MED.
+    breakdown = {"HIGH": 0, "MED": 0, "LOW": 0, "NOT_SCORED": 0}
     for r in breakdown_rows:
-        if r["distinctiveness"] in breakdown:
-            breakdown[r["distinctiveness"]] = r["c"]
+        if r["bucket"] in breakdown:
+            breakdown[r["bucket"]] = r["c"]
 
     by_tour = [
         {

@@ -79,7 +79,7 @@ class TestFetchTenantAtomsByTrip:
         trip_id = uuid.uuid4()
         pool, conn = _mock_pool([{
             "atom_id": "atom_1", "tour_id": trip_id, "text": "text", "activity_type": "trek",
-            "distinctiveness": "HIGH", "deleted": False, "weight": 1.0,
+            "distinctiveness": "HIGH", "owner_scope": str(TENANT), "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }])
 
@@ -99,7 +99,7 @@ class TestFetchTenantAtomsByTrip:
         trip_id = uuid.uuid4()
         pool, _ = _mock_pool([{
             "atom_id": "atom_1", "tour_id": trip_id, "text": "text", "activity_type": None,
-            "distinctiveness": "MED", "deleted": False, "weight": 1.5,
+            "distinctiveness": "MED", "owner_scope": str(TENANT), "deleted": False, "weight": 1.5,
             "cooldown_until": '{"blog": "2026-09-01"}', "usage_log": "[]",
         }])
         by_trip = await fetch_tenant_atoms_by_trip(TENANT, pool)
