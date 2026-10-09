@@ -82,7 +82,7 @@ async function runPageCheck(
     ).toEqual([]);
 
     // Screenshots: desktop + mobile, light + dark (on the same, already-authenticated page).
-    await screenshotMatrix(page, spec.path, spec.id);
+    await screenshotMatrix(page, spec.id);
   } finally {
     await context.close();
   }

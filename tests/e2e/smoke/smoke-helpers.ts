@@ -137,14 +137,15 @@ export function watchPage(page: Page): PageWatcher {
     consoleErrors,
     apiFailures,
     settle: async () => {
-      await Promise.all(pending);
+      // Bounded: a streaming / long-poll body would otherwise never resolve.
+      await Promise.race([Promise.all(pending), new Promise((r) => setTimeout(r, 10000))]);
     },
   };
 }
 
 /**
  * True when the page shows ≥1 data row or the kit empty state — "page rendered real content, not a
- * blank/broken shell". Kit testids first; then a legacy `main table tbody tr` fallback that
+ * blank/broken shell". Kit testids first; then a legacy `table tbody tr` fallback (legacy pages have no <main>; the sidebar has no table) that
  * excludes the kit's loading skeleton (the kit renders its skeleton as shimmer <div>s, NOT table
  * rows, so a real `<tbody><tr>` is genuine data); then the exact kit empty-state wording scoped to
  * `main`. No broad text regex.
@@ -155,12 +156,12 @@ export async function hasContentOrEmptyState(page: Page): Promise<boolean> {
   if ((await page.locator('[data-testid="kit-empty-state"]').count()) > 0) return true;
 
   // Legacy fallback: a real data row inside a <main> table body (kit skeleton is <div>, not <tr>).
-  if ((await page.locator('main table tbody tr').count()) > 0) return true;
+  if ((await page.locator('table tbody tr').count()) > 0) return true;
 
-  // Legacy empty-state copy — scoped to <main>, exact phrases only (no broad regex).
+  // Legacy empty-state copy — exact phrases only (no broad regex).
   const emptyPhrases = ['Nothing here yet', 'No results', 'No data'];
   for (const phrase of emptyPhrases) {
-    if ((await page.locator('main', { hasText: phrase }).count()) > 0) return true;
+    if ((await page.locator('body', { hasText: phrase }).count()) > 0) return true;
   }
   return false;
 }
@@ -175,34 +176,35 @@ export async function waitForSkeletonGone(page: Page): Promise<void> {
       () => {
         const hasBody = document.querySelector('[data-testid="kit-datatable-body"]');
         const hasEmpty = document.querySelector('[data-testid="kit-empty-state"]');
-        const hasLegacy = document.querySelector('main table tbody tr');
+        const hasLegacy = document.querySelector('table tbody tr');
         return Boolean(hasBody || hasEmpty || hasLegacy);
       },
+      undefined, // waitForFunction(fn, arg, options) — options is the THIRD param
       { timeout: 8000 },
     )
     .catch(() => {});
 }
 
 /** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the
- * given (already-authenticated) page. */
-export async function screenshotMatrix(
-  page: Page,
-  pathToVisit: string,
-  slug: string,
-): Promise<void> {
+ * given (already-loaded, already-checked) page.
+ *
+ * No reload per shot: viewport size and `prefers-color-scheme` apply live, and reloading a long page
+ * 4 times with networkidle + full-page capture blew the 60 s test timeout on Master Content (S220
+ * live run). Desktop is full-page; mobile is the first screen (a 390px full-page list is huge). */
+export async function screenshotMatrix(page: Page, slug: string): Promise<void> {
   const viewports = [
-    { name: 'desktop', width: 1440, height: 900 },
-    { name: 'mobile', width: 390, height: 844 },
+    { name: 'desktop', width: 1440, height: 900, fullPage: true },
+    { name: 'mobile', width: 390, height: 844, fullPage: false },
   ];
   const schemes: ('light' | 'dark')[] = ['light', 'dark'];
   for (const vp of viewports) {
+    await page.setViewportSize({ width: vp.width, height: vp.height });
     for (const scheme of schemes) {
-      await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.emulateMedia({ colorScheme: scheme });
-      await page.goto(pathToVisit, { waitUntil: 'networkidle' }).catch(() => {});
+      await page.waitForTimeout(300); // let layout / theme transitions settle
       await page.screenshot({
         path: path.join(SMOKE_RESULTS_DIR, `${slug}-${vp.name}-${scheme}.png`),
-        fullPage: true,
+        fullPage: vp.fullPage,
       });
     }
   }
@@ -231,5 +233,7 @@ export async function assertNavOk(page: Page, pathToVisit: string): Promise<void
   expect(resp, `no response for ${pathToVisit}`).not.toBeNull();
   const status = resp!.status();
   expect(status, `navigation to ${pathToVisit} returned HTTP ${status}`).toBeLessThan(400);
-  await page.waitForLoadState('networkidle').catch(() => {});
+  // Bounded: a page that polls (or keeps a long-lived request open) never reaches networkidle, and an
+  // unbounded wait burned the whole 60 s test timeout on Master Content (S220 live run).
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 }
