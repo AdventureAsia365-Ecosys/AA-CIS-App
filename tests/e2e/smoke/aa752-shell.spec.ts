@@ -28,8 +28,24 @@ test.describe('AA-752 — admin shell', () => {
       await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
       const logo = page.getByTestId('sidebar-logo');
       await expect(logo).toBeVisible({ timeout: 10000 });
-      await logo.click();
-      await page.waitForURL(/\/admin\/overview\b/, { timeout: 15000 });
+      // The logo is a client-component button whose onClick (router.push) only works AFTER React
+      // hydrates. Clicking right after domcontentloaded can land before hydration, so the click is
+      // a no-op and waitForURL times out (the flake this test had). Wait for a bounded hydration
+      // signal — the page's own <main className="aa-admin-main"> mounts only once the client page
+      // component has rendered — then retry the click within a bound in case it still raced.
+      await expect(page.locator('.aa-admin-main')).toBeVisible({ timeout: 15000 });
+      await expect
+        .poll(
+          async () => {
+            if (new URL(page.url()).pathname === '/admin/overview') return '/admin/overview';
+            await logo.click();
+            // Give the client navigation a short, bounded moment to update the URL before re-reading.
+            await page.waitForURL(/\/admin\/overview\b/, { timeout: 3000 }).catch(() => {});
+            return new URL(page.url()).pathname;
+          },
+          { timeout: 15000, intervals: [500, 1000, 1500] },
+        )
+        .toBe('/admin/overview');
       expect(new URL(page.url()).pathname).toBe('/admin/overview');
     } finally {
       await context.close();
