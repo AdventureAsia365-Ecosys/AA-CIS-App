@@ -49,6 +49,11 @@ async def run(ctx: JobContext) -> dict:
         rows = [dict(r) for r in await conn.fetch(
             """SELECT tour_id, src_name, country, activities FROM silver_aa_internal.raw_tours
                 WHERE tour_id = ANY($1::uuid[]) AND source_status = 'active'""", tour_ids)]
+        # AA-747: SELECT ... = ANY() does not preserve array order — reorder to the order the tours
+        # were given in, so prefetch commits each batch of 5 in that order (the same order the S1
+        # page's rewrite workers pull them, so the tours started first are ready first).
+        _order = {str(t): i for i, t in enumerate(tour_ids)}
+        rows.sort(key=lambda r: _order.get(str(r["tour_id"]), len(_order)))
         location_code, _name, language_code = await _market(conn, tenant_id)
         await ctx.progress(phase="fetching", tours=len(rows))
 

@@ -1,8 +1,35 @@
+import os
 import re
 
 import structlog
 
 logger = structlog.get_logger()
+
+# AA-747: per-day target word counts in the main generate prompt, behind a flag that defaults OFF.
+# Follows how other S1 flags are read (os.environ.get, same as S1_SEO_REUSE_DAYS). Claude Code A/Bs
+# it on 10 tours before turning it on — do NOT enable it here. tenant-config override is read first
+# (per tour's own config) and falls back to the env var.
+_S1_PER_DAY_TARGETS_ENV = "S1_PER_DAY_TARGETS"
+
+
+def _flag_on(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def s1_per_day_targets_enabled(tenant_flags: dict | None = None) -> bool:
+    """AA-747: whether to add explicit per-day TARGET word counts to the generate prompt. OFF by
+    default. A tenant-config flag (``tenant_flags["S1_PER_DAY_TARGETS"]``) wins when present;
+    otherwise the ``S1_PER_DAY_TARGETS`` env var decides (default off)."""
+    if tenant_flags and _S1_PER_DAY_TARGETS_ENV in tenant_flags:
+        return _flag_on(tenant_flags[_S1_PER_DAY_TARGETS_ENV])
+    return _flag_on(os.environ.get(_S1_PER_DAY_TARGETS_ENV, "false"))
+
+
+def _clamp_midpoint() -> float:
+    """AA-747: midpoint of the per-day clamp band [ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX]
+    (imported here, not hardcoded, so a clamp change moves the target with it)."""
+    from .itinerary_utils import ITINERARY_CLAMP_MAX, ITINERARY_CLAMP_MIN
+    return (ITINERARY_CLAMP_MIN + ITINERARY_CLAMP_MAX) / 2.0
 
 # AA-353: line-anchored so a day-count number mentioned mid-line never matches — e.g. "Easy Day 82
 # km Tarmac Road" as a day's OWN title text must not be misread as a "Day 82" marker (AA-346's own
@@ -204,7 +231,7 @@ def strip_itinerary_meal_metadata(itinerary: str) -> str:
 
 
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
-                         subtitle_focus: str = "standard") -> str:
+                         subtitle_focus: str = "standard", per_day_targets: bool = False) -> str:
     few_shot_text = ""
     if few_shots:
         examples = "\n\n".join([
@@ -235,9 +262,20 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
         " (source had no clear per-day markers — estimated evenly; treat as a rough guide)"
         if _day_counts["used_fallback"] else ""
     )
-    per_day_length_text = "\n".join(
-        f"Day {d}: {w} words" for d, w in sorted(_day_counts["day_word_counts"].items())
-    ) + _fallback_note
+    # AA-747: when S1_PER_DAY_TARGETS is on, give the writer an explicit per-day TARGET word count
+    # (source day words × the clamp midpoint) alongside the source count, so it aims straight at the
+    # band the AA-353 clamp checks instead of inferring it from the 0.7x-1.3x guidance. OFF by
+    # default — the line is byte-identical to before (just "Day N: W words") when the flag is off.
+    if per_day_targets and not _day_counts["used_fallback"]:
+        _mid = _clamp_midpoint()
+        per_day_length_text = "\n".join(
+            f"Day {d}: {w} words (target ~{max(1, round(w * _mid))} words)"
+            for d, w in sorted(_day_counts["day_word_counts"].items())
+        ) + _fallback_note
+    else:
+        per_day_length_text = "\n".join(
+            f"Day {d}: {w} words" for d, w in sorted(_day_counts["day_word_counts"].items())
+        ) + _fallback_note
 
     return f"""Rewrite the following tour content for a master content catalog.
 {few_shot_text}

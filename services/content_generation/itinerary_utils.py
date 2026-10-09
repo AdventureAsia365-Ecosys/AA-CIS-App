@@ -19,6 +19,29 @@ from shared.llm_client.models import LLMRequest
 ITINERARY_CLAMP_MIN = 0.6
 ITINERARY_CLAMP_MAX = 1.5
 
+# AA-747: at most this many nudge LLM calls per tour, counted ACROSS both call sites
+# (generate_node in graph.py and the ITINERARY_STILL_COMPRESSED repair in flag_fix_node.py).
+# A nudge is one Haiku call per out-of-clamp day; a 15+ day tour that misses on many days used to
+# fire a call per day. The cap keeps S1's per-tour LLM spend bounded — the worst days (largest
+# distance from the clamp band) are fixed first, the rest are recorded as skipped (nudged=false,
+# skipped_reason="nudge_cap") so the eval/regression nudge counters stay correct.
+MAX_NUDGES_PER_TOUR = 3
+
+# AA-747: marker written into a per-day record when a day was outside the clamp but skipped
+# because the per-tour nudge budget was already spent.
+NUDGE_SKIP_REASON = "nudge_cap"
+
+
+def clamp_distance(ratio: float) -> float:
+    """AA-747: how far a day's actual/source ratio sits OUTSIDE [ITINERARY_CLAMP_MIN,
+    ITINERARY_CLAMP_MAX]. 0.0 for an in-band day; a positive number otherwise. Used to pick the
+    worst days first when the per-tour nudge budget can't cover every out-of-clamp day."""
+    if ratio < ITINERARY_CLAMP_MIN:
+        return ITINERARY_CLAMP_MIN - ratio
+    if ratio > ITINERARY_CLAMP_MAX:
+        return ratio - ITINERARY_CLAMP_MAX
+    return 0.0
+
 _ITINERARY_NUDGE_SYSTEM_PROMPT = """You are a travel content editor for Adventure Asia, fixing the
 LENGTH of ONE day of a tour itinerary that was written too short or too long relative to its
 source detail. Rewrite ONLY this one day, in the same brand voice (calm, factual, editorial — not

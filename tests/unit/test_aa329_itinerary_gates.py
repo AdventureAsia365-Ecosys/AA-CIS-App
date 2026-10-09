@@ -20,7 +20,7 @@ from services.content_generation.flag_fix_node import (
     STAGE2_FIX_MAPPING, _DETERMINISTIC_SEO_CODES,
 )
 from services.content_generation.itinerary_utils import (
-    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, parse_canonical_itinerary_days,
+    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, parse_canonical_itinerary_days,
     serialize_itinerary_days,
 )
 
@@ -169,7 +169,8 @@ def test_repair_still_compressed_days_fixes_the_violating_day_only():
 
     with patch("services.content_generation.flag_fix_node.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = nudge_reply
-        new_text, extra_cost, applied = _repair_still_compressed_days(state, itinerary_text)
+        new_text, extra_cost, applied, _nudges = _repair_still_compressed_days(
+            state, itinerary_text, MAX_NUDGES_PER_TOUR)
 
     assert applied is True
     assert extra_cost == 0.001
@@ -192,7 +193,8 @@ def test_repair_still_compressed_days_keeps_pre_fix_day_when_retry_still_out_of_
 
     with patch("services.content_generation.flag_fix_node.LLMClient") as MockClient:
         MockClient.return_value.generate.return_value = still_bad_reply
-        new_text, extra_cost, applied = _repair_still_compressed_days(state, itinerary_text)
+        new_text, extra_cost, applied, _nudges = _repair_still_compressed_days(
+            state, itinerary_text, MAX_NUDGES_PER_TOUR)
 
     assert applied is False
     assert new_text == itinerary_text  # unchanged — pre-fix day kept
@@ -204,7 +206,8 @@ def test_repair_still_compressed_days_noop_when_nothing_violates():
     state = {"tour": {"itineraries": source, "duration": "1 Days"}}
 
     with patch("services.content_generation.flag_fix_node.LLMClient") as MockClient:
-        new_text, extra_cost, applied = _repair_still_compressed_days(state, itinerary_text)
+        new_text, extra_cost, applied, _nudges = _repair_still_compressed_days(
+            state, itinerary_text, MAX_NUDGES_PER_TOUR)
         MockClient.assert_not_called()
 
     assert applied is False
