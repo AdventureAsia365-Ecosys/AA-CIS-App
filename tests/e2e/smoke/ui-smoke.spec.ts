@@ -21,6 +21,7 @@ import {
   watchPage,
   hasContentOrEmptyState,
   waitForSkeletonGone,
+  assertMobileLayout,
   assertNavOk,
   describeApiFailures,
   screenshotMatrix,
@@ -29,15 +30,27 @@ import {
 
 ensureResultsDir();
 
-// ── Admin pages (routes verified under frontend/app/admin/). Add a page = add one line here. ──
+// ── Admin pages — all 16 routes under frontend/app/admin/*/page.tsx (AA-601). Add a page = add one
+// line here. `readySelector` is set only for pages whose loaded content is neither a kit/table row
+// nor the kit empty state; it marks real content that renders only after data has loaded. (The
+// `dashboard` route is retired in a later PR — AA-722 — but is included here for now.) ──
 const ADMIN_PAGES: PageSpec[] = [
-  { id: 'overview', label: 'Overview', path: '/admin/overview' },
-  { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
-  { id: 'review', label: 'Review Queue', path: '/admin/review' },
-  { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence' },
+  { id: 'atom-curation', label: 'Social Content', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'dashboard', label: 'Dashboard', path: '/admin/dashboard' },
+  { id: 'decisions', label: 'Jev Decisions', path: '/admin/decisions' },
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs' },
-  { id: 'tenants', label: 'Tenants', path: '/admin/tenants' },
+  { id: 'llm-usage', label: 'External Spend', path: '/admin/llm-usage' },
+  { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
+  { id: 'overview', label: 'Overview', path: '/admin/overview' },
+  { id: 'photos', label: 'Photos', path: '/admin/photos' },
+  { id: 'platform-stats', label: 'Platform Stats', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite' },
+  { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence' },
+  { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'tenants', label: 'Tenants', path: '/admin/tenants' },
+  { id: 'upload', label: 'Upload', path: '/admin/upload' },
 ];
 
 // ── Portal pages (tenant). The real tenant login takes an API key, so this is gated on
@@ -52,6 +65,7 @@ async function runPageCheck(
   browser: import('@playwright/test').Browser,
   storageStatePath: string,
   spec: PageSpec,
+  opts: { checkMobileLayout?: boolean } = {},
 ): Promise<void> {
   const context = await browser.newContext({
     baseURL: baseUrl(),
@@ -63,7 +77,7 @@ async function runPageCheck(
   const watcher = watchPage(page);
   try {
     await assertNavOk(page, spec.path);
-    await waitForSkeletonGone(page);
+    await waitForSkeletonGone(page, spec.readySelector);
 
     // Let every in-flight same-origin /api/ body read complete before asserting.
     await watcher.settle();
@@ -73,13 +87,20 @@ async function runPageCheck(
       `${spec.label}: failing same-origin /api/ responses:\n${describeApiFailures(watcher.apiFailures)}`,
     ).toEqual([]);
 
-    const ok = await hasContentOrEmptyState(page);
+    const ok = await hasContentOrEmptyState(page, spec.readySelector);
     expect(ok, `${spec.label}: no table rows and no empty state — page looks blank/broken`).toBe(true);
 
     expect(
       watcher.consoleErrors,
       `${spec.label}: console errors:\n${watcher.consoleErrors.map((e) => `  ${e.text}`).join('\n')}`,
     ).toEqual([]);
+
+    // AA-601 — mobile layout guard (admin only): no page-level horizontal overflow at 390px and the
+    // sidebar takes no width (off-canvas drawer). Runs before the screenshot matrix so the viewport
+    // is restored to desktop first.
+    if (opts.checkMobileLayout) {
+      await assertMobileLayout(page, spec.label);
+    }
 
     // Screenshots: desktop + mobile, light + dark (on the same, already-authenticated page).
     await screenshotMatrix(page, spec.id);
@@ -91,7 +112,7 @@ async function runPageCheck(
 test.describe('UI smoke — admin', () => {
   for (const spec of ADMIN_PAGES) {
     test(`admin: ${spec.label} (${spec.path})`, async ({ browser }) => {
-      await runPageCheck(browser, ADMIN_STATE, spec);
+      await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
     });
   }
 });

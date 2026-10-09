@@ -275,7 +275,7 @@ export default function ContentTracePage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
             06 · Content Trace
@@ -358,14 +358,20 @@ export default function ContentTracePage() {
               ) : error ? (
                 <ErrorState message={error} onRetry={load} />
               ) : !rows || rows.length === 0 ? (
-                <EmptyState
-                  title="No content pieces match these filters"
-                  body="Nothing has been written yet for this combination of tenant/channel/status/date — try widening a filter, or 'All tenants' to check whether the data exists elsewhere."
-                />
+                // AA-601 — "content rendered" signal for the UI smoke: present only once the trace
+                // load resolves (never on the LoadingScreen), so a blank/broken page still fails.
+                <div data-testid="admin-content-ready">
+                  <EmptyState
+                    title="No content pieces match these filters"
+                    body="Nothing has been written yet for this combination of tenant/channel/status/date — try widening a filter, or 'All tenants' to check whether the data exists elsewhere."
+                  />
+                </div>
               ) : (
-                <ContentTraceTable rows={sortedRows ?? rows} expandedId={expandedId} sort={sort} onSort={toggleSort}
-                  onToggle={id => setExpandedId(prev => prev === id ? null : id)}
-                  onForceUnpublish={handleForceUnpublish} unpublishingId={unpublishingId} />
+                <div data-testid="admin-content-ready">
+                  <ContentTraceTable rows={sortedRows ?? rows} expandedId={expandedId} sort={sort} onSort={toggleSort}
+                    onToggle={id => setExpandedId(prev => prev === id ? null : id)}
+                    onForceUnpublish={handleForceUnpublish} unpublishingId={unpublishingId} />
+                </div>
               )}
             </div>
           </div>

@@ -278,7 +278,9 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     <>
       {summaryLoading ? <LoadingScreen msg="Loading curation dashboard…" /> : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 6 }}>
+          {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
+              summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
+          <div data-testid="admin-content-ready" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 6 }}>
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
@@ -1314,7 +1316,7 @@ function AtomCurationDashboard() {
           scroll-container relationship, not a missing style. Only the inner section-nav below
           still uses `sticky`, now correctly scoped to its own immediate scroll container. Both
           verified by a real Playwright scroll test post-build (see implementation notes). */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div>

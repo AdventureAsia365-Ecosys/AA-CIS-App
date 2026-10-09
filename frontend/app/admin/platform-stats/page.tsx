@@ -247,9 +247,11 @@ function ReviewLogSection() {
       ) : error ? (
         <div style={{ padding: 24, textAlign: "center", color: A.red }}>{error}</div>
       ) : rows.length === 0 ? (
-        <div style={{ padding: 24, textAlign: "center", color: A.muted2 }}>No escalations found.</div>
+        // AA-601 — deterministic "content rendered" signal for the UI smoke: appears only after the
+        // review-log load resolves (never on the Loading… state), so a blank/broken page still fails.
+        <div data-testid="admin-content-ready" style={{ padding: 24, textAlign: "center", color: A.muted2 }}>No escalations found.</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div data-testid="admin-content-ready" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: A.bg }}>
@@ -626,7 +628,7 @@ export default function PlatformStatsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
             07 · Platform Stats

@@ -319,7 +319,7 @@ function ReviewQueueInner() {
           const ok = canApprove(item);
           const busy = item.regenerating;
           return (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }} onClick={(e) => e.stopPropagation()}>
               <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}>
                 <RotateCcw size={12} /> Regenerate
               </Btn>
@@ -370,7 +370,7 @@ function ReviewQueueInner() {
   }
 
   return (
-    <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
+    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
@@ -493,6 +493,10 @@ function ReviewQueueInner() {
         }}
         emptyTitle="Review queue is empty"
         emptyDescription="Every tour has been reviewed."
+        // AA-601 — Tour + Country + Version + Written + Score + Reasons + the 4-button Actions cell
+        // need ~1180px; below that the wrapper scrolls horizontally instead of squeezing and
+        // clipping the Actions buttons.
+        tableMinWidth={1180}
         toolbarExtra={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>

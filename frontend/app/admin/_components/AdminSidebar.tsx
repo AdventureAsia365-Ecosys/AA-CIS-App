@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon } from "lucide-react";
+import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon, Menu } from "lucide-react";
 import { A, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 
@@ -70,6 +70,18 @@ export default function AdminSidebar() {
   const [unread, setUnread]     = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
   const [notifs, setNotifs]     = useState<Notif[]>([]);
+  // AA-601 — below 768px the sidebar is an off-canvas drawer. Default closed; the fixed hamburger
+  // opens it, a nav click / backdrop click / Escape closes it. ≥ 768px the drawer state is inert
+  // (the CSS only moves the sidebar off-canvas under the media query).
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Escape closes the drawer. (Nav click / backdrop click close it via their own handlers, so no
+  // render-time setState is needed — clean under the React Compiler.)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDrawerOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const fetchCount = useCallback(() => {
     fetch("/api/admin/notifications/count")
@@ -133,12 +145,35 @@ export default function AdminSidebar() {
     return pathname === href || pathname.startsWith(href + "/");
   }
 
+  // Navigate and close the drawer (a no-op on the closed state at ≥ 768px).
+  function go(href: string) {
+    router.push(href);
+    setDrawerOpen(false);
+  }
+
   return (
-    <aside style={{
-      width: SIDEBAR_WIDTH, flexShrink: 0, background: A.ink, color: "#C9CFD8",
-      padding: "22px 14px 24px", display: "flex", flexDirection: "column",
-      gap: 28, position: "sticky", top: 0, height: "100vh", overflowY: "auto",
-    }}>
+    <>
+      {/* AA-601 — fixed hamburger (shown only < 768px via CSS). Opens the off-canvas drawer. */}
+      <button
+        className="aa-admin-hamburger"
+        aria-label="Open navigation menu"
+        aria-expanded={drawerOpen}
+        onClick={() => setDrawerOpen(true)}
+      >
+        <Menu size={20} />
+      </button>
+      {/* Backdrop (shown only < 768px when open). Click closes the drawer. */}
+      {drawerOpen && (
+        <div className="aa-admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
+      <aside
+        className={`aa-admin-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
+        style={{
+          width: SIDEBAR_WIDTH, flexShrink: 0, background: A.ink, color: "#C9CFD8",
+          padding: "22px 14px 24px", display: "flex", flexDirection: "column",
+          gap: 28, position: "sticky", top: 0, height: "100vh", overflowY: "auto",
+        }}
+      >
       {/* Brand */}
       <div style={{ position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 18, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
@@ -226,7 +261,7 @@ export default function AdminSidebar() {
             <NavGroup key={group.label} label={group.label}>
               {items.map(n => (
                 <NavItem key={n.href} active={[n.href, ...(n.also ?? [])].some(active)} icon={n.icon} label={n.label}
-                  onClick={() => router.push(n.href)} />
+                  onClick={() => go(n.href)} />
               ))}
             </NavGroup>
           );
@@ -238,7 +273,7 @@ export default function AdminSidebar() {
           same as middleware.ts. */}
       <NavItem active={active("/admin/settings")}
         icon={<Settings size={15} />} label="Settings"
-        onClick={() => router.push("/admin/settings")} />
+        onClick={() => go("/admin/settings")} />
 
       {/* Footer */}
       <div style={{ paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
@@ -265,6 +300,7 @@ export default function AdminSidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }
 

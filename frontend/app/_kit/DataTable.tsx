@@ -111,6 +111,10 @@ export type DataTableProps<T> = {
 
   stickyHeader?: boolean;
   maxBodyHeight?: number | string;
+  /** AA-601 — minimum table width in px. When the columns need more room than the wrapper has (e.g.
+   * a wide actions column), the table keeps this width and the wrapper (overflow:auto) scrolls
+   * horizontally with a visible scrollbar, instead of squeezing columns and clipping their content. */
+  tableMinWidth?: number;
 
   /** Optional: make rows clickable (e.g. open a detail drawer). Cells that stopPropagation (like
    * an actions cell) won't trigger it. */
@@ -157,6 +161,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     toolbarExtra,
     stickyHeader = true,
     maxBodyHeight,
+    tableMinWidth,
     onRowClick,
   } = props;
 
@@ -492,7 +497,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             background: K.card,
           }}
         >
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table style={{ width: "100%", minWidth: tableMinWidth, borderCollapse: "collapse" }}>
             <thead>
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>

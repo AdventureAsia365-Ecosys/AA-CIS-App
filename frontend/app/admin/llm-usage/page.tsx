@@ -654,7 +654,7 @@ export default function ExternalSpendPage() {
   return (
     <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
-      <main style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+      <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: `${A.accent}15`, color: A.accent, display: "grid", placeItems: "center" }}>
             <Wallet size={18} />

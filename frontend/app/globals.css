@@ -62,3 +62,66 @@ body {
   --text-secondary:#4A5568;
   --text-muted:    #8B9BB4;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   AA-601 — admin responsive (< 768px). Media queries cannot be inline styles,
+   so the minimal rules live here as plain CSS classes (no Tailwind classNames).
+   ≥ 768px nothing below applies: the admin sidebar + page layout stay exactly
+   as the inline styles define them.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* The hamburger that opens the drawer. Hidden ≥ 768px; shown only on small screens. */
+.aa-admin-hamburger { display: none; }
+.aa-admin-backdrop { display: none; }
+
+@media (max-width: 767px) {
+  /* Take the sidebar out of the flex row so it no longer eats ~60% of a 390px screen:
+     fixed + off-canvas by default, slid in when open. */
+  .aa-admin-sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: 100% !important;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+  }
+  .aa-admin-sidebar.aa-admin-sidebar--open {
+    transform: translateX(0);
+  }
+
+  /* Fixed top-left hamburger, ≥ 40×40 touch target. */
+  .aa-admin-hamburger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 1001;
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--brand-blackblue, #1F2933);
+    color: #F4F1EC;
+    cursor: pointer;
+  }
+
+  /* Backdrop behind the open drawer; click to close. */
+  .aa-admin-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  /* The page content sits full-width with a small top gap so it clears the hamburger. */
+  .aa-admin-main {
+    padding: 56px 16px 40px !important;
+  }
+  /* The Social Content split (sub-nav + body) already stacks via its own rule at 980px. */
+}

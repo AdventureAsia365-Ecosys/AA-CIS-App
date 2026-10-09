@@ -1043,7 +1043,7 @@ export default function MasterContentPage() {
     return (
       <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
         <AdminSidebar />
-        <main style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
           <LoadingScreen msg="Loading master content…" />
         </main>
       </div>
@@ -1068,7 +1068,7 @@ export default function MasterContentPage() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Main area: flex column, fills height */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
         {/* ── Section 1: Page header + Stats (fixed) ──────────────────────── */}
         <div style={{ flexShrink: 0, padding: "20px 32px 16px", background: A.bg, borderBottom: `1px solid ${A.line}` }}>

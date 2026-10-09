@@ -574,7 +574,7 @@ export default function S1RewritePage() {
     return (
       <div style={{ display: "flex", minHeight: "100vh", background: A.bg }}>
         <AdminSidebar />
-        <main style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
+        <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, padding: "32px 36px" }}>
           <LoadingScreen msg="Loading tours…" />
         </main>
       </div>
@@ -586,7 +586,7 @@ export default function S1RewritePage() {
       <AdminSidebar />
 
       {/* Right column: sticky config + scrollable main */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
         {/* ── Sticky Config Panel ─────────────────────────────────────────── */}
         <div style={{

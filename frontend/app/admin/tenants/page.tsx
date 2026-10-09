@@ -1074,7 +1074,7 @@ export default function TenantsPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
       <AdminSidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={{ height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
           <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
           <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Tenants</span>
