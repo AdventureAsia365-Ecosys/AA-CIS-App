@@ -97,6 +97,15 @@ _STAGE_SQL = """
     GROUP BY stage ORDER BY stage
 """
 
+# AA-742: verdicts served from the decide() cache no longer get a ledger row each — they are counted
+# per day/stage/question/mode/zone. Added back into the counts above so the page reads the same.
+_HITS_SQL = """
+    SELECT day, stage, question_key, mode, zone, sum(hits)::bigint AS hits, max(updated_at) AS last_used_at
+    FROM shared.decision_cache_hits_daily
+    WHERE day >= (now() - make_interval(days => $1))::date
+    GROUP BY day, stage, question_key, mode, zone
+"""
+
 # The exact billed amount per stage (one llm_call_log row per Jev call).
 _CALLS_SQL = """
     SELECT stage, count(*)::int AS calls, coalesce(sum(cost_usd), 0)::float AS cost_usd,
@@ -105,6 +114,20 @@ _CALLS_SQL = """
     WHERE provider = 'typesafe' AND created_at >= now() - make_interval(days => $1)
     GROUP BY stage ORDER BY stage
 """
+
+
+def _add_hits(target: dict, h: dict) -> None:
+    """Fold one rollup row of cache hits into a question / stage / day aggregate."""
+    n = int(h["hits"])
+    target["verdicts"] = (target.get("verdicts") or 0) + n
+    target["cached"] = (target.get("cached") or 0) + n
+    if h["zone"] in ("accept", "grey", "reject"):
+        target[h["zone"]] = (target.get(h["zone"]) or 0) + n
+    if h["zone"] in ("accept", "reject") and h["mode"] == "enforce":
+        target["acted"] = (target.get("acted") or 0) + n
+    last = h.get("last_used_at")
+    if last is not None and (target.get("last_used_at") is None or last > target["last_used_at"]):
+        target["last_used_at"] = last
 
 
 def _iso(row: dict, *keys: str) -> dict:
@@ -120,7 +143,7 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
     pool = request.app.state.pool
     # The window holds ~100k ledger rows a day during a wave; run the five reads side by side
     # (each on its own pooled connection) so the page stays under the 29 s API Gateway limit.
-    q_rows, orphan_rows, call_rows, daily_rows, stage_rows, allow_rows = await asyncio.gather(
+    q_rows, orphan_rows, call_rows, daily_rows, stage_rows, allow_rows, hit_rows = await asyncio.gather(
         pool.fetch(_SUMMARY_SQL, days),
         pool.fetch(_ORPHAN_SQL, days),
         pool.fetch(_CALLS_SQL, days),
@@ -129,17 +152,29 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
         pool.fetch(
             "SELECT a.tenant_id::text, t.slug, t.name, a.reason FROM shared.jev_tenant_allowlist a "
             "JOIN shared.tenants t USING (tenant_id) ORDER BY t.slug"),
+        pool.fetch(_HITS_SQL, days),
     )
+    hits = [dict(h) for h in hit_rows]
+    q_by_key = {r["question_key"]: dict(r) for r in q_rows}
+    stage_by_key = {r["stage"]: dict(r) for r in stage_rows}
+    day_by_key = {r["day"]: dict(r) for r in daily_rows}
+    for h in hits:
+        if h["question_key"] in q_by_key:
+            _add_hits(q_by_key[h["question_key"]], h)
+        _add_hits(stage_by_key.setdefault(h["stage"], {"stage": h["stage"]}), h)
+        day_row = day_by_key.setdefault(h["day"], {"day": h["day"], "cost_usd": 0.0})
+        _add_hits(day_row, h)
+        day_row.pop("last_used_at", None)
     questions = []
-    for r in q_rows:
-        d = _iso(dict(r), "updated_at", "last_used_at", "first_used_at")
+    for d in q_by_key.values():
+        d = _iso(d, "updated_at", "last_used_at", "first_used_at")
         if isinstance(d.get("criteria"), str):
             d["criteria"] = json.loads(d["criteria"])
         questions.append(d)
     orphans = [_iso(dict(r), "last_used_at") for r in orphan_rows]
     calls = [dict(r) for r in call_rows]
-    daily = [{**dict(r), "day": r["day"].isoformat()} for r in daily_rows]
-    stages = [_iso(dict(r), "last_used_at") for r in stage_rows]
+    daily = [{**r, "day": r["day"].isoformat()} for _, r in sorted(day_by_key.items())]
+    stages = [_iso(r, "last_used_at") for _, r in sorted(stage_by_key.items())]
     allowlist = [dict(r) for r in allow_rows]
     return {
         "days": days,
