@@ -138,6 +138,9 @@
   --aa-panel-bg3:     #F5F3FF;
   /* on-accent / on-strong text (white on gold buttons, badge dots) */
   --aa-on-accent:     #FFFFFF;
+  /* on-solid — white text/icon that must stay white in BOTH themes, sitting on a solid coloured
+     surface (green/red/blue/dark buttons, toasts, spinner icons on coloured buttons). */
+  --aa-on-solid:      #FFFFFF;
 }
 
 /* ── DARK (explicit dark OR system dark with no stored choice) ─────────────────
@@ -285,6 +288,32 @@ body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: 'Poppins', system-ui, -apple-system, sans-serif; /* AA-605 brand body font */
+}
+
+/* AA-601 part B (feedback 2) — tell the UA which colour scheme is active so native widgets
+   (dropdown popups, date pickers, scrollbars, form-control chrome) render for the right theme.
+   Scoped to the data-theme element: the portal + login pin data-theme="light", so they stay light. */
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"]  { color-scheme: dark; }
+
+/* AA-601 part B (feedback 2) — themed baseline for admin form controls under the dark theme. Inline
+   styles still win where a component sets them (those were converted to tokens), but this catches
+   controls that rely on UA defaults so none render as a white box with invisible light text. Scoped
+   to [data-theme="dark"] (admin only — portal/login are pinned light). */
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: var(--aa-card);
+  color: var(--aa-ink);
+  border-color: var(--aa-line);
+}
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: var(--aa-muted2);
+}
+[data-theme="dark"] option {
+  background-color: var(--aa-card);
+  color: var(--aa-ink);
 }
 
 /* Scrollbar */

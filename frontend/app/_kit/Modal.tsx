@@ -178,7 +178,7 @@ export function ConfirmModal({
               borderRadius: RADIUS.pill,
               border: `1px solid ${confirmColor}`,
               background: destructive ? K.dangerSoft : confirmColor,
-              color: destructive ? K.danger : "#fff",
+              color: destructive ? K.danger : "var(--aa-on-solid)",
               fontSize: 13,
               fontWeight: 600,
               cursor: busy ? "not-allowed" : "pointer",

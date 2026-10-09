@@ -170,13 +170,13 @@ function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
               <div style={{
                 width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                background: active ? "#fff" : done ? A.green : A.muted2,
-                color: active ? A.gold : "#fff", fontSize: 11, fontWeight: 700,
+                background: active ? "var(--aa-on-solid)" : done ? A.green : A.muted2,
+                color: active ? A.gold : "var(--aa-on-solid)", fontSize: 11, fontWeight: 700,
               }}>
                 {done ? "✓" : s.n}
               </div>
               <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
-                color: active ? "#fff" : done ? A.green : A.muted }}>
+                color: active ? "var(--aa-on-solid)" : done ? A.green : A.muted }}>
                 {s.label}
               </span>
             </div>
@@ -284,7 +284,7 @@ function Toast({ msg, type }: { msg: string; type: "success" | "error" }) {
     <div style={{
       position: "fixed", bottom: 24, right: 24, zIndex: 999,
       background: type === "success" ? A.green : A.red,
-      color: "#fff", padding: "12px 20px", borderRadius: 8,
+      color: "var(--aa-on-solid)", padding: "12px 20px", borderRadius: 8,
       fontSize: 13, fontWeight: 500, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
       display: "flex", alignItems: "center", gap: 8,
     }}>
@@ -418,12 +418,12 @@ function ToursReadySection({ tours, loading, onRefresh }: {
       {!loading && localTours.length > 0 && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10 }}>
           <select value={filterCountry} onChange={e => handleCountry(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: "#fff" }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
             <option value="">All Countries</option>
             {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select value={filterFile} onChange={e => handleFile(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: "#fff", maxWidth: 220 }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card, maxWidth: 220 }}>
             <option value="">All Files</option>
             {uniqueFiles.map(f => <option key={f} value={f}>{stripUuidPrefix(f)}</option>)}
           </select>
@@ -598,12 +598,12 @@ function UploadHistorySection({ history, loading, onRefresh }: {
       {!loading && history.length > 0 && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${A.line}`, display: "flex", gap: 10, alignItems: "center" }}>
           <select value={dateFilter} onChange={e => handleDate(e.target.value)}
-            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: "#fff" }}>
+            style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${A.line}`, fontSize: 12, fontFamily: sans, background: A.card }}>
             <option value="all">All Time</option>
             <option value="today">Today</option>
             <option value="week">Last 7 Days</option>
           </select>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px", background: "#fff", flex: 1, maxWidth: 260 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${A.line}`, borderRadius: 6, padding: "5px 8px", background: A.card, flex: 1, maxWidth: 260 }}>
             <Search size={12} style={{ color: A.muted2, flexShrink: 0 }} />
             <input
               placeholder="Search filename…"
@@ -911,7 +911,7 @@ function DuplicateReviewStep({
                     style={{
                       padding: "5px 8px", borderRadius: 6,
                       border: `1px solid ${A.line}`, fontSize: 12,
-                      fontFamily: sans, background: "#fff", flex: 1,
+                      fontFamily: sans, background: A.card, flex: 1,
                     }}
                   >
                     {(Object.entries(DECISION_LABELS) as [Decision, string][]).map(([val, label]) => (
@@ -957,7 +957,7 @@ function DuplicateReviewStep({
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "9px 18px", borderRadius: 8,
               background: A.gold, border: `1px solid ${A.gold}`,
-              fontSize: 13, fontWeight: 600, color: "#fff", textDecoration: "none",
+              fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
             }}>
               Go to S1 Rewrite <ArrowRight size={14} />
             </a>
@@ -1267,7 +1267,7 @@ function TourContentTab() {
                   <input type="number" min={1} max={500} value={maxTours}
                     onChange={e => setMaxTours(Math.min(500, Math.max(1, Number(e.target.value))))}
                     style={{ width: 90, padding: "7px 10px", borderRadius: 7,
-                      border: `1px solid ${A.line}`, background: "#fff",
+                      border: `1px solid ${A.line}`, background: A.card,
                       fontSize: 13, color: A.ink, fontFamily: sans }} />
                   <span style={{ fontSize: 11, color: A.muted2 }}>min 1 · max 500</span>
                 </div>
@@ -1301,10 +1301,10 @@ function TourContentTab() {
                       : fs.status === "error" ? A.red : A.gold,
                   }}>
                     {fs.status === "uploading" || fs.status === "parsing"
-                      ? <Loader2 size={12} style={{ color: "#fff", animation: "spin 1s linear infinite" }} />
+                      ? <Loader2 size={12} style={{ color: "var(--aa-on-solid)", animation: "spin 1s linear infinite" }} />
                       : fs.status === "error"
-                        ? <XCircle size={12} style={{ color: "#fff" }} />
-                        : <CheckCircle size={12} style={{ color: "#fff" }} />}
+                        ? <XCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
+                        : <CheckCircle size={12} style={{ color: "var(--aa-on-solid)" }} />}
                   </div>
                   <span style={{ fontSize: 13, flex: 1, minWidth: 0,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -1516,12 +1516,12 @@ function TourContentTab() {
                       : fs.status === "error" ? A.red : A.gold,
                   }}>
                     {fs.status === "committing"
-                      ? <Loader2 size={12} style={{ color: "#fff", animation: "spin 1s linear infinite" }} />
+                      ? <Loader2 size={12} style={{ color: "var(--aa-on-solid)", animation: "spin 1s linear infinite" }} />
                       : fs.status === "error"
-                        ? <XCircle size={12} style={{ color: "#fff" }} />
+                        ? <XCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
                         : noNewTours
-                          ? <AlertCircle size={12} style={{ color: "#fff" }} />
-                          : <CheckCircle size={12} style={{ color: "#fff" }} />}
+                          ? <AlertCircle size={12} style={{ color: "var(--aa-on-solid)" }} />
+                          : <CheckCircle size={12} style={{ color: "var(--aa-on-solid)" }} />}
                   </div>
                   <span style={{ fontSize: 13, flex: 1, color: A.body }}>{fs.file.name}</span>
                   <span style={{ fontSize: 12, fontWeight: 600,
@@ -1570,7 +1570,7 @@ function TourContentTab() {
                     display: "inline-flex", alignItems: "center", gap: 8,
                     padding: "9px 18px", borderRadius: 8,
                     background: A.gold, border: `1px solid ${A.gold}`,
-                    fontSize: 13, fontWeight: 600, color: "#fff", textDecoration: "none",
+                    fontSize: 13, fontWeight: 600, color: "var(--aa-on-solid)", textDecoration: "none",
                   }}>
                     Go to S1 Rewrite <ArrowRight size={14} />
                   </a>
@@ -1614,7 +1614,7 @@ export default function UploadPage() {
       <AdminSidebar />
       <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={{
-          height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`,
+          height: 56, background: A.card, borderBottom: `1px solid ${A.line}`,
           display: "flex", alignItems: "center", padding: "0 32px", gap: 8,
           position: "sticky", top: 0, zIndex: 10,
         }}>

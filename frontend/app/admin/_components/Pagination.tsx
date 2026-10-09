@@ -18,8 +18,8 @@ export function Pagination({ page, total, pageSize, onPage }: PaginationProps) {
   const btnStyle = (active: boolean, disabled: boolean): React.CSSProperties => ({
     minWidth: 32, height: 32, padding: "0 8px",
     border: `1px solid ${active ? A.gold : A.line}`,
-    borderRadius: 6, background: active ? A.gold : "#fff",
-    color: active ? "#fff" : disabled ? A.muted2 : A.ink,
+    borderRadius: 6, background: active ? A.gold : A.card,
+    color: active ? "var(--aa-on-solid)" : disabled ? A.muted2 : A.ink,
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 12, fontFamily: sans, fontWeight: active ? 600 : 400,
     display: "inline-flex", alignItems: "center", justifyContent: "center",

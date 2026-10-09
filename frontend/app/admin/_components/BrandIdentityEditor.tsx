@@ -102,7 +102,7 @@ function TagsInput({ value, onChange, placeholder, readOnly }: {
             style={{
               flex: 1, padding: "7px 10px", border: `1px solid ${A.line}`,
               borderRadius: 6, fontSize: 13, fontFamily: sans,
-              background: "#fff", color: A.ink, outline: "none",
+              background: A.card, color: A.ink, outline: "none",
             }}
           />
           <Btn variant="secondary" onClick={add} style={{ padding: "7px 12px" }}>Add</Btn>
@@ -128,7 +128,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "8px 12px", border: `1px solid ${A.line}`,
   borderRadius: 6, fontSize: 13, fontFamily: sans,
-  background: "#fff", color: A.ink, outline: "none", boxSizing: "border-box",
+  background: A.card, color: A.ink, outline: "none", boxSizing: "border-box",
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -526,7 +526,7 @@ export default function BrandIdentityEditor() {
         <div style={{ display: "flex", minWidth: 0, minHeight: 640, height: "calc(100vh - 220px)", fontFamily: sans,
                       background: A.bg, border: `1px solid ${A.line}`, borderRadius: 10, overflow: "hidden" }}>
           {/* Left panel — brand list */}
-          <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: "#fff", display: "flex", flexDirection: "column" }}>
+          <div style={{ width: 260, borderRight: `1px solid ${A.line}`, background: A.card, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "16px 16px 10px", borderBottom: `1px solid ${A.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: A.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Brands</span>
               <div style={{ display: "flex", gap: 4 }}>
@@ -547,7 +547,7 @@ export default function BrandIdentityEditor() {
                 </button>
                 <input ref={docxRef} type="file" accept=".docx" style={{ display: "none" }} onChange={handleDocx} />
                 <button onClick={startNew} style={{
-                  background: A.gold, border: "none", borderRadius: 5, color: "#fff",
+                  background: A.gold, border: "none", borderRadius: 5, color: "var(--aa-on-solid)",
                   cursor: "pointer", padding: "4px 8px", fontSize: 12, fontWeight: 600,
                   display: "flex", alignItems: "center", gap: 3,
                 }}>
@@ -810,7 +810,7 @@ export default function BrandIdentityEditor() {
                               <span style={{ fontSize: 13, fontWeight: 500 }}>v{v.version}</span>
                               <span style={{ fontSize: 11, color: A.muted }}>{v.updated_at?.slice(0, 10) || "—"}</span>
                               {v.is_active && (
-                                <span style={{ fontSize: 10, background: A.gold, color: "#fff", borderRadius: 4, padding: "1px 6px" }}>active</span>
+                                <span style={{ fontSize: 10, background: A.gold, color: "var(--aa-on-solid)", borderRadius: 4, padding: "1px 6px" }}>active</span>
                               )}
                             </div>
                             <div style={{ display: "flex", gap: 6 }}>

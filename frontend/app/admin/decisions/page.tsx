@@ -75,7 +75,7 @@ const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "â€
 function Pill({ color, children, title }: { color: string; children: React.ReactNode; title?: string }) {
   return (
     <span title={title} style={{
-      display: "inline-block", padding: "3px 10px", borderRadius: 999, background: color, color: "#fff",
+      display: "inline-block", padding: "3px 10px", borderRadius: 999, background: color, color: "var(--aa-on-solid)",
       fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", whiteSpace: "nowrap", cursor: title ? "help" : "default",
     }}>{children}</span>
   );
@@ -85,7 +85,7 @@ const ModePill = ({ m }: { m: Mode }) => <Pill color={MODE_META[m].color} title=
 
 function Kpi({ label, value, sub, color = A.ink }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${A.line}`, borderRadius: 10, padding: "14px 16px" }}>
+    <div style={{ background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: "14px 16px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: A.muted }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 700, color, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div style={{ fontSize: 11.5, color: A.muted, marginTop: 2 }}>{sub}</div>}
@@ -95,7 +95,7 @@ function Kpi({ label, value, sub, color = A.ink }: { label: string; value: strin
 
 const STICKY_TH: React.CSSProperties = { ...TH, position: "sticky", top: 0, zIndex: 2, background: "var(--aa-bg)", whiteSpace: "nowrap" };
 const TABLE_BOX: React.CSSProperties = { overflow: "auto", maxHeight: "62vh", border: `1px solid ${A.line}`, borderRadius: 10, background: A.card };
-const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${A.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: "#fff" };
+const input: React.CSSProperties = { padding: "7px 9px", border: `1px solid ${A.line}`, borderRadius: 7, fontSize: 12.5, fontFamily: sans, background: A.card };
 
 function SortTh<K extends string>({ label, k, sort, setSort, title }: {
   label: string; k: K; sort: { key: K; dir: "asc" | "desc" }; setSort: (s: { key: K; dir: "asc" | "desc" }) => void; title?: string;

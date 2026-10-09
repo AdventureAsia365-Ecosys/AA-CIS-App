@@ -378,7 +378,7 @@ function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
         {([["Total Calls", usage.total_calls.toLocaleString()], ["Rate Limit", `${usage.rate_limit_per_min}/min`], ["Quota Used", `${pct}%`]] as [string, string][]).map(([l, v]) => (
-          <div key={l} style={{ padding: "10px 14px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8 }}>
+          <div key={l} style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8 }}>
             <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{l}</div>
             <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{v}</div>
           </div>
@@ -394,7 +394,7 @@ function ApiTabContent({ usage }: { usage: TenantDetails["api_usage"] }) {
 // admin-scoped write path (PUT /admin/tenants/{id}/brand-identity — see api/routers/admin.py's
 // own comment on why the tenant-facing endpoint couldn't just be reused for this).
 const brandFieldStyle: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", background: "#fff", border: `1px solid ${A.line}`,
+  width: "100%", padding: "9px 12px", background: A.card, border: `1px solid ${A.line}`,
   borderRadius: 8, color: A.body, fontSize: 12.5, fontFamily: sans, outline: "none", boxSizing: "border-box",
 };
 function BrandField({ label, value, onChange, rows }: {
@@ -507,19 +507,19 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
             {rules.style_guide && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Writing Style</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.style_guide}</div>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.style_guide}</div>
               </div>
             )}
             {rules.good_examples && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Good Examples</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.good_examples}</div>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules.good_examples}</div>
               </div>
             )}
             {rules.system_prompt && (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: A.muted, marginBottom: 6 }}>Should Write (System Prompt)</div>
-                <div style={{ padding: "10px 12px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, fontFamily: mono, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                <div style={{ padding: "10px 12px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, fontSize: 12, color: A.body, fontFamily: mono, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
                   {rules.system_prompt.slice(0, 400)}{rules.system_prompt.length > 400 ? "…" : ""}
                 </div>
               </div>
@@ -638,7 +638,7 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 14 }}>
         {([["Content pieces written", data.pieces_written], ["Published", data.pieces_published]] as [string, number][]).map(([l, v]) => (
-          <div key={l} style={{ padding: "10px 14px", background: "#fff", border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 140 }}>
+          <div key={l} style={{ padding: "10px 14px", background: A.card, border: `1px solid ${A.line}`, borderRadius: 8, minWidth: 140 }}>
             <div style={{ fontSize: 10, color: A.muted2, marginBottom: 3 }}>{l}</div>
             <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{v}</div>
           </div>
@@ -1075,7 +1075,7 @@ export default function TenantsPage() {
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
       <AdminSidebar />
       <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{ height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
+        <header style={{ height: 56, background: A.card, borderBottom: `1px solid ${A.line}`, display: "flex", alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10 }}>
           <span style={{ fontSize: 12, color: A.muted2 }}>Admin /</span>
           <span style={{ fontSize: 12, fontWeight: 500, color: A.body }}>Tenants</span>
         </header>

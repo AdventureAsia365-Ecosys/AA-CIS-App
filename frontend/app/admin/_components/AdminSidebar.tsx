@@ -205,7 +205,7 @@ export default function AdminSidebar() {
             {unread > 0 && (
               <span style={{
                 position: "absolute", top: 0, right: 0,
-                background: A.red, color: "#fff",
+                background: A.red, color: "var(--aa-on-solid)",
                 borderRadius: 999, fontSize: 9, fontWeight: 700,
                 minWidth: 14, height: 14, display: "grid", placeItems: "center",
                 padding: "0 3px",
@@ -294,7 +294,7 @@ export default function AdminSidebar() {
             width: 30, height: 30, borderRadius: 6,
             background: A.accent,
             display: "grid", placeItems: "center",
-            color: "#fff", fontWeight: 700, fontSize: 12, flexShrink: 0,
+            color: "var(--aa-on-solid)", fontWeight: 700, fontSize: 12, flexShrink: 0,
           }}>
             {userName.charAt(0).toUpperCase()}
           </div>
@@ -380,7 +380,7 @@ function NavItem({ active, icon, label, onClick }: {
       display: "flex", alignItems: "center", gap: 10, width: "100%",
       padding: "8px 10px", borderRadius: 7, border: "none",
       background: active ? alpha(accent, 9) : "transparent",
-      color: active ? "#fff" : "var(--aa-side-text)",
+      color: active ? "var(--aa-on-solid)" : "var(--aa-side-text)",
       fontSize: 13, fontWeight: 500, cursor: "pointer",
       textAlign: "left" as const, fontFamily: sans, position: "relative",
       transition: "background .15s, color .15s",

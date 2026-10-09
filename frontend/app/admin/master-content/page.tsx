@@ -299,7 +299,7 @@ function DfsCompareSection({ seed, ideas: ideasRaw, paa: paaRaw, related: relate
             </thead>
             <tbody>
               {sorted.map((k, i) => (
-                <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? "#fff" : A.bg }}>
+                <tr key={`${k.keyword}-${i}`} style={{ borderTop: `1px solid ${A.line}`, background: i % 2 === 0 ? A.card : A.bg }}>
                   <td style={{ padding: "4px 8px", color: A.ink }}>{k.keyword}</td>
                   <td style={{ padding: "4px 8px", textAlign: "right", fontFamily: mono, color: A.body }}>{fmtVol(k.search_volume)}</td>
                   <td style={{ padding: "4px 8px", textAlign: "right", color: A.muted }}>
@@ -509,14 +509,14 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
   return (
     <div style={{
       position: "fixed", top: 0, left: 240, width: "calc(100vw - 240px)", height: "100vh",
-      background: "#fff", zIndex: 300, display: "flex", flexDirection: "column",
+      background: A.card, zIndex: 300, display: "flex", flexDirection: "column",
       boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
     }}>
       {/* Modal header */}
       <div style={{
         padding: "14px 24px", borderBottom: `1px solid ${A.line}`,
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        flexShrink: 0, background: "#fff", zIndex: 10,
+        flexShrink: 0, background: A.card, zIndex: 10,
       }}>
         <div>
           <div style={{ fontFamily: serif, fontSize: 16, fontWeight: 500, color: A.ink }}>
@@ -533,7 +533,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
             style={{
               padding: "6px 12px", fontSize: 12, fontWeight: 600,
               border: `1px solid ${A.line}`, borderRadius: 6,
-              background: "#fff", color: A.body, cursor: exporting ? "not-allowed" : "pointer",
+              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
               opacity: exporting ? 0.5 : 1,
             }}
           >
@@ -545,7 +545,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
             style={{
               padding: "6px 12px", fontSize: 12, fontWeight: 600,
               border: `1px solid ${A.line}`, borderRadius: 6,
-              background: "#fff", color: A.body, cursor: exporting ? "not-allowed" : "pointer",
+              background: A.card, color: A.body, cursor: exporting ? "not-allowed" : "pointer",
               opacity: exporting ? 0.5 : 1,
             }}
           >
@@ -598,7 +598,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                       onChange={e => changePanel(idx, parseInt(e.target.value))}
                       style={{
                         padding: "3px 8px", fontSize: 12, fontWeight: 700,
-                        background: color, color: "#fff",
+                        background: color, color: "var(--aa-on-solid)",
                         border: "none", borderRadius: 10, cursor: "pointer",
                       }}
                     >
@@ -618,7 +618,7 @@ function VersionCompareModal({ tourId, tourName, versionNums, onClose }: {
                         style={{
                           padding: "2px 8px", fontSize: 11, fontWeight: 600,
                           border: `1px solid ${A.line}`, borderRadius: 6,
-                          background: "#fff", color: A.body,
+                          background: A.card, color: A.body,
                           cursor: exporting ? "not-allowed" : "pointer",
                         }}
                       >DOCX</button>
@@ -1113,7 +1113,7 @@ export default function MasterContentPage() {
         {/* ── Section 2: Rewritten Tours (flex, scrollable) ───────────────── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: `2px solid ${A.line}` }}>
           {/* Master status tabs */}
-          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: "#fff", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${A.line}`, background: A.card, flexShrink: 0 }}>
             {[
               { label: "Active", value: "active" },
               { label: "Inactive", value: "inactive" },
@@ -1146,7 +1146,7 @@ export default function MasterContentPage() {
 
           {/* Sticky inner header */}
           <div style={{
-            position: "sticky", top: 0, zIndex: 5, background: "#fff",
+            position: "sticky", top: 0, zIndex: 5, background: A.card,
             padding: "10px 32px 8px", borderBottom: `1px solid ${A.line}`,
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0,
           }}>
@@ -1164,20 +1164,20 @@ export default function MasterContentPage() {
                 value={search}
                 onChange={e => handleSearch(e.target.value)}
                 placeholder="Search name or country…"
-                style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: "#fff", color: A.ink, outline: "none" }}
+                style={{ padding: "5px 10px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, width: 180, background: A.card, color: A.ink, outline: "none" }}
               />
               <select value={countryFilter} onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Countries</option>
                 {countryOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={scoreFilter} onChange={e => { setScoreFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Scores</option>
                 {scoreOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <select value={versionFilter} onChange={e => { setVersionFilter(e.target.value); setPage(1); }}
-                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}>
+                style={{ padding: "5px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}>
                 <option value="">All Versions</option>
                 {versionOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -1312,7 +1312,7 @@ export default function MasterContentPage() {
                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                               <button
                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: "#fff", cursor: "pointer", color: A.body }}
+                                style={{ padding: "3px 8px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 5, background: A.card, cursor: "pointer", color: A.body }}
                               >View</button>
                               {t.tour_id && t.master_status !== "trashed" && (
                                 <button
@@ -1405,7 +1405,7 @@ export default function MasterContentPage() {
                                             />
                                           </td>
                                           <td style={{ padding: "6px 10px" }}>
-                                            <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "#fff" : A.gold, fontSize: 11, fontWeight: 600 }}>
+                                            <span style={{ padding: "2px 7px", borderRadius: 10, background: v.is_current ? A.gold : A.goldTint, color: v.is_current ? "var(--aa-on-solid)" : A.gold, fontSize: 11, fontWeight: 600 }}>
                                               v{v.version_num}
                                             </span>
                                             {v.is_current && <span style={{ marginLeft: 6, fontSize: 10, color: A.gold }}>current</span>}
@@ -1446,14 +1446,14 @@ export default function MasterContentPage() {
                                             <div style={{ display: "flex", gap: 5 }}>
                                               <button
                                                 onClick={() => { if (t.tour_id) { setDetailTourId(t.tour_id); setDetailTourName(t.tour_name); } }}
-                                                style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: "#fff", cursor: "pointer", color: A.body }}
+                                                style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                               >View</button>
                                               {/* AA-220 (H3): per-version DOCX export (shared page-scope helper) */}
                                               {v.version_num > 0 && (
                                                 <button
                                                   onClick={() => t.tour_id && exportVersionDocx(t.tour_id, Number(v.version_num))}
                                                   title="Export this version as DOCX"
-                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: "#fff", cursor: "pointer", color: A.body }}
+                                                  style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                                 >DOCX</button>
                                               )}
                                               {!v.is_current && (
@@ -1510,7 +1510,7 @@ export default function MasterContentPage() {
                   <select
                     value={pageSize}
                     onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: "#fff", color: A.ink }}
+                    style={{ padding: "4px 8px", border: `1px solid ${A.line}`, borderRadius: 6, fontSize: 12, fontFamily: sans, background: A.card, color: A.ink }}
                   >
                     {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
                   </select>
@@ -1526,7 +1526,7 @@ export default function MasterContentPage() {
         {/* ── Section 3: Pipeline Runs (fixed height) ──────────────────────── */}
         <div style={{ height: 280, display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {/* Sticky section header */}
-          <div style={{ padding: "8px 32px 6px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: "#fff" }}>
+          <div style={{ padding: "8px 32px 6px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: A.card }}>
             <SLabel style={{ margin: 0 }}>Recent Pipeline Runs</SLabel>
           </div>
           {runs.length === 0 ? (
@@ -1547,7 +1547,7 @@ export default function MasterContentPage() {
                 </thead>
                 <tbody>
                   {paginatedRuns.map((r, i) => (
-                    <tr key={r.run_id} style={{ background: i % 2 === 0 ? "#fff" : A.bg }}>
+                    <tr key={r.run_id} style={{ background: i % 2 === 0 ? A.card : A.bg }}>
                       <td style={{ ...TD, fontFamily: mono, fontSize: 11, color: A.muted2 }}>{r.run_id.slice(0, 8)}…</td>
                       <td style={{ ...TD, fontSize: 11, color: A.muted2 }}>{relDate(r.started_at)}</td>
                       <td style={TD}>{r.tours_processed}</td>
