@@ -229,6 +229,7 @@ export function EmptyState({
 }) {
   return (
     <div
+      data-testid="kit-empty-state"
       style={{
         display: "flex",
         flexDirection: "column",
