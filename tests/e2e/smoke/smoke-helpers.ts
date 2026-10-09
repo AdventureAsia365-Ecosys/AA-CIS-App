@@ -26,6 +26,11 @@ export type PageSpec = {
   label: string;
   /** Route to navigate to (path only; BASE_URL is prepended by Playwright). */
   path: string;
+  /** AA-601 — optional CSS selector that marks "this page's real content has rendered". Set it for
+   * pages whose loaded state is neither a kit/table row nor the kit empty state (card lists, a
+   * config view, a custom empty-state). The element MUST render only after data has loaded, never
+   * on the loading skeleton, so a blank/broken page still fails. */
+  readySelector?: string;
 };
 
 export function baseUrl(): string {
@@ -150,7 +155,11 @@ export function watchPage(page: Page): PageWatcher {
  * rows, so a real `<tbody><tr>` is genuine data); then the exact kit empty-state wording scoped to
  * `main`. No broad text regex.
  */
-export async function hasContentOrEmptyState(page: Page): Promise<boolean> {
+export async function hasContentOrEmptyState(page: Page, readySelector?: string): Promise<boolean> {
+  // AA-601 — a page-specific "content rendered" signal (card lists, config view, custom empty
+  // state). It renders only after data loads, never on the skeleton, so it is a genuine signal.
+  if (readySelector && (await page.locator(readySelector).count()) > 0) return true;
+
   // Kit DataTable row / kit EmptyState — the robust UI-v2 signal.
   if ((await page.locator('[data-testid="kit-datatable-row"]').count()) > 0) return true;
   if ((await page.locator('[data-testid="kit-empty-state"]').count()) > 0) return true;
@@ -168,21 +177,62 @@ export async function hasContentOrEmptyState(page: Page): Promise<boolean> {
 
 /** Wait for the kit loading skeleton to resolve into real content (data row, empty state, or a
  * legacy table row) before reading content. Bounded + non-fatal. */
-export async function waitForSkeletonGone(page: Page): Promise<void> {
+export async function waitForSkeletonGone(page: Page, readySelector?: string): Promise<void> {
   // The kit shows a shimmer skeleton (not a <tbody>) while loading; once data (or empty) resolves,
-  // either the tbody appears or the EmptyState renders. Give it a bounded wait, non-fatal.
+  // either the tbody appears, the EmptyState renders, or the page's own readySelector appears. Give
+  // it a bounded wait, non-fatal.
   await page
     .waitForFunction(
-      () => {
+      (sel) => {
         const hasBody = document.querySelector('[data-testid="kit-datatable-body"]');
         const hasEmpty = document.querySelector('[data-testid="kit-empty-state"]');
         const hasLegacy = document.querySelector('table tbody tr');
-        return Boolean(hasBody || hasEmpty || hasLegacy);
+        const hasReady = sel ? document.querySelector(sel) : null;
+        return Boolean(hasBody || hasEmpty || hasLegacy || hasReady);
       },
-      undefined, // waitForFunction(fn, arg, options) — options is the THIRD param
+      readySelector ?? null, // waitForFunction(fn, arg, options) — options is the THIRD param
       { timeout: 8000 },
     )
     .catch(() => {});
+}
+
+/** AA-601 — at 390px, assert the admin page is mobile-safe:
+ *   - no PAGE-LEVEL horizontal overflow (wide tables must scroll inside their own container, not
+ *     the document);
+ *   - the off-canvas sidebar takes no width, so the main content starts near the left edge
+ *     (< 40px — it is no longer pushed ~236px right by the sidebar).
+ * Call after the page is loaded and content has rendered. Resets to the desktop viewport after. */
+export async function assertMobileLayout(page: Page, label: string): Promise<void> {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250); // let the layout settle at the new width
+
+  const metrics = await page.evaluate(() => {
+    const doc = document.documentElement;
+    // The admin main container is tagged `.aa-admin-main` (sibling of the sidebar).
+    const main = document.querySelector('.aa-admin-main') as HTMLElement | null;
+    const mainLeft = main ? main.getBoundingClientRect().left : 0;
+    return {
+      scrollWidth: doc.scrollWidth,
+      innerWidth: window.innerWidth,
+      mainLeft,
+      hasMain: Boolean(main),
+    };
+  });
+
+  expect(
+    metrics.scrollWidth,
+    `${label}: page-level horizontal overflow at 390px (scrollWidth ${metrics.scrollWidth} > innerWidth ${metrics.innerWidth}). Wide content must scroll inside its own container, not the page.`,
+  ).toBeLessThanOrEqual(metrics.innerWidth + 1);
+
+  if (metrics.hasMain) {
+    expect(
+      metrics.mainLeft,
+      `${label}: main content left edge is ${metrics.mainLeft}px at 390px — the sidebar is still taking width (it must be an off-canvas drawer < 768px).`,
+    ).toBeLessThan(40);
+  }
+
+  // Back to desktop for any later work on this page.
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 /** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the

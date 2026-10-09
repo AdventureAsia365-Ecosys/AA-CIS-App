@@ -224,8 +224,9 @@ function ReviewQueueInner() {
         accessorKey: "name",
         header: "Tour",
         cell: (c) => (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 280 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 180 }}>
             <span
+              title={c.row.original.name}
               style={{
                 fontWeight: 600,
                 color: A.ink,
@@ -319,9 +320,11 @@ function ReviewQueueInner() {
           const ok = canApprove(item);
           const busy = item.regenerating;
           return (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
-              <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}>
-                <RotateCcw size={12} /> Regenerate
+            <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+              {/* AA-601 — icon-only (like Dismiss) so all 4 actions fit a 1440px screen. */}
+              <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
+                title="Regenerate — rewrite this tour again" ariaLabel="Regenerate">
+                <RotateCcw size={13} />
               </Btn>
               <button
                 onClick={() => dismissM.mutate(item.id)}
@@ -370,7 +373,7 @@ function ReviewQueueInner() {
   }
 
   return (
-    <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
+    <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
@@ -493,6 +496,8 @@ function ReviewQueueInner() {
         }}
         emptyTitle="Review queue is empty"
         emptyDescription="Every tour has been reviewed."
+        // AA-601 — the Tour column is capped (names ellipsize) so the 4-button Actions cell fits a
+        // 1440px screen; narrower screens scroll the table inside its wrapper.
         toolbarExtra={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>

@@ -164,8 +164,8 @@ export function LoadingScreen({ msg = "Loading..." }: { msg?: string }) {
 }
 
 // ── Button ────────────────────────────────────────────────────────────────────
-export function Btn({ children, onClick, variant = "secondary", size = "md", disabled = false, style = {} }: {
-  children: React.ReactNode; onClick?: () => void;
+export function Btn({ children, onClick, variant = "secondary", size = "md", disabled = false, style = {}, title, ariaLabel }: {
+  children: React.ReactNode; onClick?: () => void; title?: string; ariaLabel?: string;
   variant?: "primary" | "secondary" | "danger" | "ghost";
   size?: "sm" | "md" | "lg"; disabled?: boolean; style?: React.CSSProperties;
 }) {
@@ -178,7 +178,7 @@ export function Btn({ children, onClick, variant = "secondary", size = "md", dis
     ghost:     { background: "transparent", color: A.muted, border: `1px solid ${A.line}` },
   };
   return (
-    <button onClick={onClick} disabled={disabled} style={{
+    <button onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} style={{
       display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
       padding: pad, borderRadius: BTN_RADIUS, fontSize: fz, fontWeight: 600,
       cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,

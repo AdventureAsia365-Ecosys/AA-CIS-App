@@ -452,7 +452,7 @@ export default function DashboardPage() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: A.bg }}>
       <AdminSidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={{
           height: 56, background: "#fff", borderBottom: `1px solid ${A.line}`,
           display: "flex", alignItems: "center", padding: "0 32px", gap: 8,

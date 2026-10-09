@@ -115,6 +115,46 @@ _CALLS_SQL = """
     GROUP BY stage ORDER BY stage
 """
 
+# Tenants whose content is sent to Jev (the allow-list), shown on the overview.
+_ALLOWLIST_SQL = """
+    SELECT a.tenant_id::text, t.slug, t.name, a.reason
+    FROM shared.jev_tenant_allowlist a
+    JOIN shared.tenants t USING (tenant_id)
+    ORDER BY t.slug
+"""
+
+
+# Every aggregate the FE sums (reduce) must carry each numeric field as a real number — never a
+# missing key or NULL. A stage that only appears in the cache-hit rollup (_HITS_SQL) or in
+# _CALLS_SQL, or a ledger row where a FILTERed count/sum is NULL, would otherwise reach the FE as
+# `undefined`/`null`; `reduce((n, s) => n + s.acted)` then yields NaN (the live "Acted on" bug:
+# s1_judge_tiebreak had acted: null). Starting every aggregate from a zeroed template, and
+# coalescing the DB rows, makes one bad row impossible.
+_STAGE_NUM_FIELDS = ("questions", "verdicts", "acted", "errors", "skipped", "cached", "cost_usd")
+_QUESTION_NUM_FIELDS = ("verdicts", "accept", "grey", "reject", "error", "skipped", "acted",
+                        "cached", "cost_usd")
+_DAY_NUM_FIELDS = ("verdicts", "accept", "grey", "reject", "error", "skipped", "cost_usd")
+
+
+def _new_stage(stage: str) -> dict:
+    d = {k: 0 for k in _STAGE_NUM_FIELDS}
+    d.update(stage=stage, avg_latency_ms=None, last_used_at=None)
+    return d
+
+
+def _new_day(day) -> dict:
+    d = {k: 0 for k in _DAY_NUM_FIELDS}
+    d["day"] = day
+    return d
+
+
+def _coalesce_nums(target: dict, fields) -> None:
+    """A FILTERed count is 0 (never NULL), but sum()/avg() can be NULL on an empty group — zero the
+    numeric counters so the FE never sums a NULL."""
+    for k in fields:
+        if target.get(k) is None:
+            target[k] = 0
+
 
 def _add_hits(target: dict, h: dict) -> None:
     """Fold one rollup row of cache hits into a question / stage / day aggregate."""
@@ -149,22 +189,34 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
         pool.fetch(_CALLS_SQL, days),
         pool.fetch(_DAILY_SQL, days),
         pool.fetch(_STAGE_SQL, days),
-        pool.fetch(
-            "SELECT a.tenant_id::text, t.slug, t.name, a.reason FROM shared.jev_tenant_allowlist a "
-            "JOIN shared.tenants t USING (tenant_id) ORDER BY t.slug"),
+        pool.fetch(_ALLOWLIST_SQL),
         pool.fetch(_HITS_SQL, days),
     )
     hits = [dict(h) for h in hit_rows]
     q_by_key = {r["question_key"]: dict(r) for r in q_rows}
     stage_by_key = {r["stage"]: dict(r) for r in stage_rows}
     day_by_key = {r["day"]: dict(r) for r in daily_rows}
+    # Zero every numeric field a DB sum() could have left NULL (an empty group) so the FE sums only
+    # real numbers.
+    for q in q_by_key.values():
+        _coalesce_nums(q, _QUESTION_NUM_FIELDS)
+    for s in stage_by_key.values():
+        _coalesce_nums(s, _STAGE_NUM_FIELDS)
+    for d in day_by_key.values():
+        _coalesce_nums(d, _DAY_NUM_FIELDS)
     for h in hits:
         if h["question_key"] in q_by_key:
             _add_hits(q_by_key[h["question_key"]], h)
-        _add_hits(stage_by_key.setdefault(h["stage"], {"stage": h["stage"]}), h)
-        day_row = day_by_key.setdefault(h["day"], {"day": h["day"], "cost_usd": 0.0})
+        # A stage seen only in the cache-hit rollup starts from a fully-zeroed template (not just
+        # {"stage": ...}), so acted/errors/skipped/cost_usd are 0, never missing.
+        _add_hits(stage_by_key.setdefault(h["stage"], _new_stage(h["stage"])), h)
+        day_row = day_by_key.setdefault(h["day"], _new_day(h["day"]))
         _add_hits(day_row, h)
         day_row.pop("last_used_at", None)
+    # A stage that billed Jev calls (_CALLS_SQL) but has no ledger/hit rows must still appear with
+    # every numeric field present, not be absent from `stages`.
+    for c in call_rows:
+        stage_by_key.setdefault(c["stage"], _new_stage(c["stage"]))
     questions = []
     for d in q_by_key.values():
         d = _iso(d, "updated_at", "last_used_at", "first_used_at")

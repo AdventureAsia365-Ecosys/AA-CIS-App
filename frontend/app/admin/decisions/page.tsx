@@ -62,6 +62,11 @@ const KIND_HELP: Record<string, string> = {
 
 // ── small UI pieces ────────────────────────────────────────────────────────────────────────────
 const usd = (v: number | null | undefined) => (v == null ? "—" : v < 0.01 ? `$${v.toFixed(5)}` : `$${v.toFixed(3)}`);
+// AA-601: a count that arrives null/undefined (a stage seen only in the cache-hit rollup, or a
+// FILTERed sum that was NULL) must count as 0 — summing it directly would make the whole total NaN
+// (the "Acted on = NaN" bug). The backend now zero-fills every aggregate; this is the FE guard so
+// one bad row can never poison a reduce again.
+const n0 = (v: number | null | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const when = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
 const num = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toFixed(d));
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
@@ -262,13 +267,13 @@ export default function DecisionsPage() {
   const stagesAll = useMemo(() => Array.from(new Set([...(data?.stages ?? []).map(s => s.stage), ...qs.map(q => q.stage)])).sort(), [data, qs]);
   const totals = useMemo(() => {
     const t = { accept: 0, grey: 0, reject: 0, error: 0, skipped: 0 } as Record<Zone, number>;
-    for (const d of data?.daily ?? []) for (const z of ZONES) t[z] += d[z];
+    for (const d of data?.daily ?? []) for (const z of ZONES) t[z] += n0(d[z]);
     return t;
   }, [data]);
-  const verdictTotal = ZONES.reduce((n, z) => n + totals[z], 0);
-  const acted = (data?.stages ?? []).reduce((n, s) => n + s.acted, 0);
+  const verdictTotal = ZONES.reduce((n, z) => n + n0(totals[z]), 0);
+  const acted = (data?.stages ?? []).reduce((n, s) => n + n0(s.acted), 0);
   const latencies = (data?.stages ?? []).filter(s => s.avg_latency_ms != null);
-  const avgLatency = latencies.length ? latencies.reduce((n, s) => n + (s.avg_latency_ms ?? 0) * s.verdicts, 0) / Math.max(1, latencies.reduce((n, s) => n + s.verdicts, 0)) : null;
+  const avgLatency = latencies.length ? latencies.reduce((n, s) => n + n0(s.avg_latency_ms) * n0(s.verdicts), 0) / Math.max(1, latencies.reduce((n, s) => n + n0(s.verdicts), 0)) : null;
 
   const filteredQs = useMemo(() => {
     const s = qSearch.toLowerCase();
@@ -301,7 +306,7 @@ export default function DecisionsPage() {
   return (
     <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
-      <main style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+      <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
         {/* Sticky header + tabs */}
         <div style={{ position: "sticky", top: 0, zIndex: 5, background: A.bg, padding: "22px 32px 0", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -385,11 +390,11 @@ export default function DecisionsPage() {
                       return (
                         <tr key={s.stage}>
                           <td style={{ ...TD, fontFamily: mono, fontWeight: 700 }}>{s.stage}</td>
-                          <td style={TD}>{s.questions}</td>
-                          <td style={TD}>{s.verdicts.toLocaleString()}</td>
-                          <td style={{ ...TD, fontWeight: 700, color: s.acted ? MODE_META.enforce.color : A.muted }}>{s.acted}</td>
-                          <td style={{ ...TD, color: s.errors ? ZONE_META.error.color : A.muted }}>{s.errors} <span style={{ color: A.muted }}>({pct(s.errors, s.verdicts)})</span></td>
-                          <td style={TD}>{s.skipped}</td>
+                          <td style={TD}>{n0(s.questions)}</td>
+                          <td style={TD}>{n0(s.verdicts).toLocaleString()}</td>
+                          <td style={{ ...TD, fontWeight: 700, color: s.acted ? MODE_META.enforce.color : A.muted }}>{n0(s.acted)}</td>
+                          <td style={{ ...TD, color: s.errors ? ZONE_META.error.color : A.muted }}>{n0(s.errors)} <span style={{ color: A.muted }}>({pct(n0(s.errors), n0(s.verdicts))})</span></td>
+                          <td style={TD}>{n0(s.skipped)}</td>
                           <td style={TD}>{calls?.calls ?? "—"}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{usd(calls?.cost_usd ?? s.cost_usd)}</td>
                           <td style={{ ...TD, fontFamily: mono }}>{s.avg_latency_ms != null ? `${Math.round(s.avg_latency_ms)} ms` : "—"}</td>

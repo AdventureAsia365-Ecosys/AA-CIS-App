@@ -284,7 +284,7 @@ export default function SeoIntelligencePage() {
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: K.bg }}>
       <SkeletonStyle />
       <AdminSidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={{
           height: 56, background: "#fff", borderBottom: `1px solid ${K.line}`, display: "flex",
           alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10,

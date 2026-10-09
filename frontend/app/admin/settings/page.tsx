@@ -739,7 +739,7 @@ function SettingsPageInner() {
     <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
       <AdminSidebar />
 
-      <main style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
+      <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
           <div style={{
@@ -770,7 +770,9 @@ function SettingsPageInner() {
 
         {!loading && data && (
           <>
-            <div style={{ marginBottom: 24 }}>
+            {/* AA-601 — "content rendered" signal for the UI smoke: present only once the settings
+                payload has loaded (!loading && data), never on the LoadingScreen. */}
+            <div data-testid="admin-content-ready" style={{ marginBottom: 24 }}>
               <TabBar tabs={TABS} active={tab} onChange={setTab} />
             </div>
 

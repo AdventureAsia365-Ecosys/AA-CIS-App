@@ -278,7 +278,9 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     <>
       {summaryLoading ? <LoadingScreen msg="Loading curation dashboard…" /> : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 6 }}>
+          {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
+              summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
+          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
@@ -335,7 +337,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
             </Card>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 18, alignItems: "start" }}>
+          <div className="aa-curation-split" style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
             {/* AA-554 B.4/B.5 — sticky (same `position: sticky, top: 0` pattern AA-551 already
                 proved works for the 01-05 section-nav, within this same page's outer scroll
                 container — see that inner-nav below for the identical mechanism) + taller
@@ -1154,7 +1156,7 @@ function SlateSection() {
   const tenantPicker = (
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ fontSize: 12, color: A.muted }}>Tenant:</span>
-      <select value={selectedTenant ?? ""} onChange={e => setSelectedTenant(e.target.value || null)} style={{ ...selectStyle, minWidth: 200, fontWeight: 600 }}>
+      <select value={selectedTenant ?? ""} onChange={e => setSelectedTenant(e.target.value || null)} style={{ ...selectStyle, flex: "1 1 220px", width: "100%", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}>
         <option value="">Choose a tenant…</option>
         {tenants.map(t => <option key={t.tenant_id} value={t.tenant_id}>{t.name}</option>)}
       </select>
@@ -1314,7 +1316,7 @@ function AtomCurationDashboard() {
           scroll-container relationship, not a missing style. Only the inner section-nav below
           still uses `sticky`, now correctly scoped to its own immediate scroll container. Both
           verified by a real Playwright scroll test post-build (see implementation notes). */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div>
@@ -1333,7 +1335,11 @@ function AtomCurationDashboard() {
               <select
                 value={selectedTour ?? ""}
                 onChange={e => setSelectedTour(e.target.value || null)}
-                style={{ ...selectStyle, minWidth: 200, fontWeight: 600 }}
+                // AA-601 (feedback 2) — a <select> sizes to its LONGEST option (full tour names,
+                // ~1000px), which overflowed the page at 390px. minWidth: 0 is not enough: a grid/flex
+                // ancestor still sizes to the select's min-content (= that longest option). A % width
+                // makes a form control's min-content contribution 0, so it shrinks to its container.
+                style={{ ...selectStyle, flex: "1 1 220px", width: "100%", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}
               >
                 {/* AA-554 A.3 — copy reflects the real behavior of this filter (narrows the view;
                     it's never required to see data, unlike Slate below) instead of implying a
@@ -1344,7 +1350,7 @@ function AtomCurationDashboard() {
                 ))}
               </select>
               <span style={{ fontSize: 12, color: A.muted }}>Market:</span>
-              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", width: "100%", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">All markets</option>
                 {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -1355,7 +1361,7 @@ function AtomCurationDashboard() {
           </div>
 
           {/* Header stat bar — AA-551, AA-550 mục F point 3/4: auto-updates with the filter above. */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+          <div className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
             {([
               ["Tours", stats?.tour_count],
               ["Atoms", stats?.atom_count],
