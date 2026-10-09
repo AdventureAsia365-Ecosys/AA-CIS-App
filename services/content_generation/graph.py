@@ -21,8 +21,8 @@ from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence,
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
-    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, nudge_itinerary_day,
-    generated_day_word_counts,
+    ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
+    clamp_distance, nudge_itinerary_day, generated_day_word_counts,
 )
 
 logger = structlog.get_logger()
@@ -36,7 +36,8 @@ GENERATE_MAX_TOKENS = 8192
 MIN_QUALITY = 7.0
 
 
-def _process_itineraries(generated: dict, tour: dict, client: LLMClient) -> dict:
+def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
+                         nudge_budget: int = MAX_NUDGES_PER_TOUR) -> dict:
     """AA-353: validate the model's structured ``itineraries`` array against its own PER-DAY
     SOURCE LENGTH target, auto-nudge (once, non-repeating) any day outside the hard clamp, then
     serialize the array back to the pre-existing canonical "Day N — Title\\nBody" string format —
@@ -48,14 +49,22 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient) -> dict
     untouched, logs a warning) if the model didn't return the array contract at all — old string
     behavior, not a crash.
 
+    AA-747: at most ``nudge_budget`` days are nudged (default MAX_NUDGES_PER_TOUR). When more days
+    are out of clamp than the budget allows, the WORST days (largest distance outside the clamp
+    band, clamp_distance()) are nudged first; the rest are recorded with ``nudged: False`` and
+    ``skipped_reason: "nudge_cap"`` so the eval/regression nudge counters stay correct. The budget
+    is counted across BOTH nudge call sites (this one and flag_fix_node's ITINERARY_STILL_COMPRESSED
+    repair) via the caller threading the remaining budget through state.
+
     Returns {"day_ratios": [...], "extra_cost_usd": float, "extra_cache_read_tokens": int,
-    "extra_cache_write_tokens": int} for the caller to fold into generate_node's own totals and
-    metadata (AA-353 STEP 0: generated_content.metadata JSONB, same place as AA-213's
+    "extra_cache_write_tokens": int, "nudges_used": int} for the caller to fold into generate_node's
+    own totals and metadata (AA-353 STEP 0: generated_content.metadata JSONB, same place as AA-213's
     fallback_used/score_overall/batch_id).
     """
     itineraries = generated.get("itineraries")
     empty_result = {"day_ratios": [], "extra_cost_usd": 0.0,
-                     "extra_cache_read_tokens": 0, "extra_cache_write_tokens": 0}
+                     "extra_cache_read_tokens": 0, "extra_cache_write_tokens": 0,
+                     "nudges_used": 0}
     if not isinstance(itineraries, list):
         if itineraries:
             logger.warning("itinerary_contract_not_array", value_type=type(itineraries).__name__)
@@ -67,16 +76,14 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient) -> dict
     source_text_by_day = source["day_text"]
     source_ordered = sorted(source_by_day.items())  # [(day_num, words), ...]
 
-    day_ratios = []
-    extra_cost = 0.0
-    extra_read = 0
-    extra_write = 0
-
+    # AA-747: first pass — resolve each day's source words/text and ratio, WITHOUT nudging yet, so
+    # we can pick the worst out-of-clamp days once the whole tour is scored. Keyed by the item's
+    # position so the serialize step below still emits days in their original order.
+    day_meta = []  # list of dicts: position, day_item, source_words, source_text, ratio, record
     for position, day_item in enumerate(itineraries):
         if not isinstance(day_item, dict):
             continue
         day_num = day_item.get("day")
-        title = str(day_item.get("title") or "")
         body = str(day_item.get("body") or "")
 
         source_words = source_by_day.get(day_num)
@@ -91,47 +98,76 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient) -> dict
         actual_words = len(body.split())
         record = {"day": day_num, "source_words": source_words, "actual_words": actual_words,
                    "nudged": False}
-
-        if source_words:
-            ratio = actual_words / source_words
+        ratio = (actual_words / source_words) if source_words else None
+        if ratio is not None:
             record["ratio"] = round(ratio, 3)
-            if ratio < ITINERARY_CLAMP_MIN or ratio > ITINERARY_CLAMP_MAX:
-                new_title, new_body, resp = nudge_itinerary_day(
-                    client, source_text or itineraries_raw, title, body, source_words,
-                )
-                extra_cost += resp.cost_usd
-                extra_read += resp.cache_read_tokens
-                extra_write += resp.cache_write_tokens
-                title, body = new_title, new_body
-                day_item["title"], day_item["body"] = new_title, new_body
-                actual_words_after = len(body.split())
-                record["nudged"] = True
-                record["actual_words_after_nudge"] = actual_words_after
-                record["ratio_after_nudge"] = round(actual_words_after / source_words, 3)
-                # AA-505 — quality_signal = did the nudge actually land inside clamp? Real,
-                # computed right here, not a fabricated placeholder.
-                record_call_sync(
-                    stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
-                    tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-                    cost_usd=resp.cost_usd, tenant_id=None,
-                    quality_signal={
-                        "landed_in_clamp": ITINERARY_CLAMP_MIN <= record["ratio_after_nudge"] <= ITINERARY_CLAMP_MAX,
-                        "ratio_after_nudge": record["ratio_after_nudge"],
-                    },
-                    stop_reason=getattr(resp, "stop_reason", None),
-                    account=getattr(resp, "satellite_account", None),
-                    fallback_used=getattr(resp, "fallback_used", None),
-                )
-                logger.info("itinerary_day_nudged", day=day_num, ratio_before=record["ratio"],
-                            ratio_after=record["ratio_after_nudge"])
-        day_ratios.append(record)
+        day_meta.append({"position": position, "day_item": day_item, "source_words": source_words,
+                         "source_text": source_text, "ratio": ratio, "record": record})
+
+    # AA-747: out-of-clamp days, worst (largest distance from the band) first; break ties by day
+    # order so the choice is deterministic.
+    out_of_clamp = [
+        m for m in day_meta
+        if m["ratio"] is not None and (m["ratio"] < ITINERARY_CLAMP_MIN or m["ratio"] > ITINERARY_CLAMP_MAX)
+    ]
+    out_of_clamp.sort(key=lambda m: (-clamp_distance(m["ratio"]), m["position"]))
+    to_nudge = {id(m) for m in out_of_clamp[:max(0, nudge_budget)]}
+
+    extra_cost = 0.0
+    extra_read = 0
+    extra_write = 0
+    nudges_used = 0
+
+    for m in out_of_clamp:
+        record = m["record"]
+        day_num = record["day"]
+        if id(m) not in to_nudge:
+            # AA-747: budget spent — leave the day as written, record WHY it wasn't nudged so the
+            # eval/regression counters distinguish "skipped for budget" from "nudge was attempted".
+            record["skipped_reason"] = NUDGE_SKIP_REASON
+            logger.info("itinerary_day_nudge_skipped_cap", day=day_num, ratio=record["ratio"])
+            continue
+        day_item = m["day_item"]
+        source_words = m["source_words"]
+        new_title, new_body, resp = nudge_itinerary_day(
+            client, m["source_text"] or itineraries_raw,
+            str(day_item.get("title") or ""), str(day_item.get("body") or ""), source_words,
+        )
+        extra_cost += resp.cost_usd
+        extra_read += resp.cache_read_tokens
+        extra_write += resp.cache_write_tokens
+        nudges_used += 1
+        day_item["title"], day_item["body"] = new_title, new_body
+        actual_words_after = len(new_body.split())
+        record["nudged"] = True
+        record["actual_words_after_nudge"] = actual_words_after
+        record["ratio_after_nudge"] = round(actual_words_after / source_words, 3)
+        # AA-505 — quality_signal = did the nudge actually land inside clamp? Real,
+        # computed right here, not a fabricated placeholder.
+        record_call_sync(
+            stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
+            tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+            cost_usd=resp.cost_usd, tenant_id=None,
+            quality_signal={
+                "landed_in_clamp": ITINERARY_CLAMP_MIN <= record["ratio_after_nudge"] <= ITINERARY_CLAMP_MAX,
+                "ratio_after_nudge": record["ratio_after_nudge"],
+            },
+            stop_reason=getattr(resp, "stop_reason", None),
+            account=getattr(resp, "satellite_account", None),
+            fallback_used=getattr(resp, "fallback_used", None),
+        )
+        logger.info("itinerary_day_nudged", day=day_num, ratio_before=record["ratio"],
+                    ratio_after=record["ratio_after_nudge"])
+
+    day_ratios = [m["record"] for m in day_meta]
 
     generated["itineraries"] = "\n\n".join(
         f"Day {d.get('day')} — {d.get('title') or ''}\n{d.get('body') or ''}".strip()
         for d in itineraries if isinstance(d, dict)
     )
     return {"day_ratios": day_ratios, "extra_cost_usd": extra_cost,
-            "extra_cache_read_tokens": extra_read, "extra_cache_write_tokens": extra_write}
+            "extra_cache_read_tokens": extra_read, "extra_cache_write_tokens": extra_write,
+            "nudges_used": nudges_used}
 # AA-216: structural failure (empty/missing field) caps quality below the gate regardless of
 # other sub-scores. Empty content scores brand/quality=10 (no rule to violate) which the
 # 4-bucket average can't pull under 7 — mirror judge's _MISSION_ABSENT_CAP pattern.
@@ -222,6 +258,10 @@ class ContentState(TypedDict):
     # set by generate_node's _process_itineraries. Must be declared here or LangGraph strips it
     # from node_output before _rewrite_tour ever sees it (same gotcha as judge_score, AA-209).
     itinerary_day_ratios:   list
+    # AA-747: nudge LLM calls already spent on this tour by generate_node's _process_itineraries,
+    # so flag_fix_node's ITINERARY_STILL_COMPRESSED repair stays under MAX_NUDGES_PER_TOUR across
+    # BOTH call sites. Declared here or LangGraph strips it before flag_fix reads it (AA-209 gotcha).
+    itinerary_nudges_used:  int
     # AA-606: raw writer text from Bedrock Batch attempt-1, consumed by seed_generated_node
     # (build_graph_from_generated). Declared here so LangGraph doesn't strip it before the seed
     # node reads it. Absent/None on the normal synchronous build_graph() path.
@@ -432,6 +472,7 @@ def generate_node(state: ContentState) -> ContentState:
             "cache_write_tokens": (state.get("cache_write_tokens", 0) + resp.cache_write_tokens
                                     + _itin_result["extra_cache_write_tokens"]),
             "itinerary_day_ratios": _itin_result["day_ratios"],
+            "itinerary_nudges_used": _itin_result["nudges_used"],
         }
     except Exception as e:
         logger.error("generation_failed", error=str(e))
@@ -589,6 +630,7 @@ def seed_generated_node(state: ContentState) -> ContentState:
         "cache_read_tokens": state.get("cache_read_tokens", 0) + _itin_result["extra_cache_read_tokens"],
         "cache_write_tokens": state.get("cache_write_tokens", 0) + _itin_result["extra_cache_write_tokens"],
         "itinerary_day_ratios": _itin_result["day_ratios"],
+        "itinerary_nudges_used": _itin_result["nudges_used"],
     }
 
 

@@ -128,11 +128,14 @@ def build_s1_system_prompt(state: dict) -> str:
 def build_s1_user_prompt(state: dict) -> str:
     """The S1 writer USER prompt for attempt-1 (no retry feedback). style_guide is appended the
     same way generate_node does (onto the user prompt, not the system prompt)."""
+    from .prompts import s1_per_day_targets_enabled
     prompt = build_rewrite_prompt(
         state["tour"],
         state.get("seo", {}),
         state.get("few_shots", []),
         subtitle_focus=state.get("subtitle_focus", "standard"),
+        # AA-747: OFF by default; a tenant flag wins over the S1_PER_DAY_TARGETS env var.
+        per_day_targets=s1_per_day_targets_enabled(state.get("tenant_flags")),
     )
     style_guide = state.get("brand_style_guide", "") or ""
     if style_guide:
