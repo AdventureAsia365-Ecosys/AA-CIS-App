@@ -214,4 +214,28 @@ jobs:
           image: "aa-cis-api:ci-${{ github.sha }}"
           format: cyclonedx-json
           output-file: sbom-${{ github.sha }}.cdx.json
-          artifact-name: sbom-${{ github.sha }}.cdx.json 
+          artifact-name: sbom-${{ github.sha }}.cdx.json
+
+  # AA-732 — frontend ESLint (UI-kit conventions). New, NON-required job: it is not one of the 5
+  # existing required checks and does not rename them. Runs the same `npm run lint` the kit rules
+  # live in. NOTE: the frontend lint currently reports pre-existing React-Compiler errors unrelated
+  # to AA-732 (set-state-in-effect / purity in legacy pages); until those are addressed separately
+  # this job can be red. It is intentionally not a required check.
+  frontend-lint:
+    name: Frontend Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run ESLint
+        working-directory: frontend
+        run: npm run lint 
