@@ -58,12 +58,15 @@ jobs:
       - name: Run the UI smoke project
         run: npx playwright test --project=smoke -c playwright.config.ts
 
-      - name: Upload smoke artifacts (screenshots + HTML report)
+      - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-smoke-${{ github.run_id }}
-          path: tests/e2e/results/smoke/
+          # Only screenshots and the HTML report. Never upload tests/e2e/.auth (session cookies).
+          path: |
+            tests/e2e/results/smoke/**/*.png
+            tests/e2e/results/smoke/playwright-report/
           if-no-files-found: warn
           retention-days: 14
 
@@ -107,3 +110,9 @@ jobs:
             gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
             echo "Created a new comment"
           fi
+
+      # Scrub the Playwright auth storage state (live session cookies) regardless of outcome, so it
+      # never lingers on the runner or leaks into any later step/artifact.
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth

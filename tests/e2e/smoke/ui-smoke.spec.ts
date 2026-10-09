@@ -17,6 +17,7 @@ import {
   baseUrl,
   installBypassRoute,
   ensureResultsDir,
+  ensureAuthDir,
   watchPage,
   hasContentOrEmptyState,
   waitForSkeletonGone,
@@ -81,7 +82,7 @@ async function runPageCheck(
     ).toEqual([]);
 
     // Screenshots: desktop + mobile, light + dark (on the same, already-authenticated page).
-    await screenshotMatrix(context, page, spec.path, spec.id);
+    await screenshotMatrix(page, spec.path, spec.id);
   } finally {
     await context.close();
   }
@@ -107,6 +108,7 @@ test.describe('UI smoke — portal', () => {
   test.beforeAll(async ({ browser }) => {
     // TODO(AA-741): tenant test account — once it exists, log in with the API key and persist a
     // tenant storageState. The real form has a single API-key input (type=password).
+    ensureAuthDir();
     const context = await browser.newContext({ baseURL: baseUrl() });
     await installBypassRoute(context);
     const page = await context.newPage();

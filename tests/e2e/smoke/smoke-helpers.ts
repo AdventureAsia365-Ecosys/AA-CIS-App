@@ -9,8 +9,11 @@ import fs from 'fs';
 import path from 'path';
 
 export const SMOKE_RESULTS_DIR = 'tests/e2e/results/smoke';
-export const ADMIN_STATE = path.join(SMOKE_RESULTS_DIR, 'admin-state.json');
-export const TENANT_STATE = path.join(SMOKE_RESULTS_DIR, 'tenant-state.json');
+// Auth storage state holds LIVE session cookies — keep it OUT of the results dir that CI uploads
+// as an artifact, and out of git (see .gitignore). A workflow step deletes it after the run.
+export const AUTH_DIR = 'tests/e2e/.auth';
+export const ADMIN_STATE = path.join(AUTH_DIR, 'admin-state.json');
+export const TENANT_STATE = path.join(AUTH_DIR, 'tenant-state.json');
 
 /** Known-benign console messages. Empty by default — add a precise substring to silence real
  * third-party noise, never to hide an app error. */
@@ -49,6 +52,10 @@ export async function installBypassRoute(context: BrowserContext): Promise<void>
   const origin = baseOrigin();
   await context.route('**/*', async (route) => {
     const req = route.request();
+    // The route handler fires per request with that request's OWN URL — a cross-origin redirect
+    // (e.g. BASE_URL → an SSO host) is a NEW request the handler re-evaluates by its new URL, so
+    // the bypass header is never carried off-origin. Only requests whose origin equals BASE_URL's
+    // get the header.
     let reqOrigin = '';
     try {
       reqOrigin = new URL(req.url()).origin;
@@ -158,9 +165,9 @@ export async function hasContentOrEmptyState(page: Page): Promise<boolean> {
   return false;
 }
 
-/** Wait for the kit loading skeleton to disappear, if one is present, before reading content. */
+/** Wait for the kit loading skeleton to resolve into real content (data row, empty state, or a
+ * legacy table row) before reading content. Bounded + non-fatal. */
 export async function waitForSkeletonGone(page: Page): Promise<void> {
-  const skeleton = page.locator('[data-testid="kit-datatable-body"]');
   // The kit shows a shimmer skeleton (not a <tbody>) while loading; once data (or empty) resolves,
   // either the tbody appears or the EmptyState renders. Give it a bounded wait, non-fatal.
   await page
@@ -174,13 +181,11 @@ export async function waitForSkeletonGone(page: Page): Promise<void> {
       { timeout: 8000 },
     )
     .catch(() => {});
-  void skeleton;
 }
 
-/** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes, using
- * the given storageState and an origin-scoped bypass route. */
+/** Capture desktop (1440) + mobile (390) screenshots in both light and dark color schemes on the
+ * given (already-authenticated) page. */
 export async function screenshotMatrix(
-  context: BrowserContext,
   page: Page,
   pathToVisit: string,
   slug: string,
@@ -207,6 +212,10 @@ export async function screenshotMatrix(
 
 export function ensureResultsDir(): void {
   fs.mkdirSync(SMOKE_RESULTS_DIR, { recursive: true });
+}
+
+export function ensureAuthDir(): void {
+  fs.mkdirSync(AUTH_DIR, { recursive: true });
 }
 
 /** Build a failure message that embeds the recorded API failures (URL + status + body preview). */
