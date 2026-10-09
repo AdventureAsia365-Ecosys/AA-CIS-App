@@ -33,8 +33,17 @@ from shared.aws_client.cost_explorer import (
 )
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
-from shared.llm_client.catalog import list_models
-from shared.llm_client.role_config import list_stage_configs, set_stage_config
+from shared.llm_client.catalog import (
+    CatalogPriceRequired,
+    list_catalog_rows,
+    list_models,
+    set_catalog_price,
+)
+from shared.llm_client.role_config import (
+    list_stage_configs,
+    set_stage_config,
+    set_stage_route,
+)
 
 # AA-627 — DFS low-balance alert threshold (USD). Env-driven to match the repo's config
 # convention (ADMIN_SECRET, DATAFORSEO_*, SECRET_* are all env). Default $10 per the issue.
@@ -198,6 +207,7 @@ async def patch_llm_config(
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}",
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -206,6 +216,296 @@ async def patch_llm_config(
     logger.info("admin_llm_config_changed", stage=stage, model_id=body.model_id,
                 account_route=body.account_route, admin_actor=admin_actor)
     return updated
+
+
+# ── AA-686 — PATCH a stage route (fallback chain + shadow) ─────────────────────────────────────
+# Separate from PATCH /llm-config/{stage} (which sets the primary model): the route is the ordered
+# fallbacks + optional shadow (ADR 0006). Every model named must be a catalog model that
+# _options_for() marks `available` for the stage — the same vendor + enabled rule as the model
+# PATCH — so the UI can never save a route the gateway would refuse to run.
+
+
+class LlmRoutePatch(BaseModel):
+    fallback_model_ids: Optional[list[str]] = None
+    shadow_model_id: Optional[str] = None
+    shadow_sample_pct: Optional[int] = None
+
+
+@router.patch("/llm-config/{stage}/route",
+              summary="AA-686 — change one stage's fallback chain + shadow (admin-only)")
+async def patch_llm_route(
+    stage: str,
+    body: LlmRoutePatch,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    current = next((r for r in await list_stage_configs() if r["stage"] == stage), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"unknown stage: {stage!r}")
+
+    primary = current["model_id"]
+    # Keep whatever the current row has for any field the caller omits (partial update).
+    fallbacks = body.fallback_model_ids if body.fallback_model_ids is not None \
+        else list(current.get("fallback_model_ids") or [])
+    shadow = body.shadow_model_id if body.shadow_model_id is not None \
+        else current.get("shadow_model_id")
+    sample_pct = body.shadow_sample_pct if body.shadow_sample_pct is not None \
+        else (current.get("shadow_sample_pct") or 0)
+
+    if not 0 <= sample_pct <= 100:
+        raise HTTPException(status_code=422, detail="shadow_sample_pct must be between 0 and 100")
+
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, await _load_catalog())
+               if o["available"]}
+
+    # Fallback list: no duplicates, must not contain the primary, every entry available.
+    if len(fallbacks) != len(set(fallbacks)):
+        raise HTTPException(status_code=422, detail="fallback_model_ids has duplicates")
+    if primary in fallbacks:
+        raise HTTPException(status_code=422,
+                            detail=f"fallback_model_ids must not contain the primary model {primary!r}")
+    for m in fallbacks:
+        if m not in allowed:
+            raise HTTPException(status_code=422,
+                                detail=f"fallback model {m!r} is not selectable for stage {stage!r}")
+
+    # Shadow: != primary, and available for the stage.
+    if shadow is not None:
+        if shadow == primary:
+            raise HTTPException(status_code=422,
+                                detail="shadow_model_id must differ from the primary model")
+        if shadow not in allowed:
+            raise HTTPException(status_code=422,
+                                detail=f"shadow model {shadow!r} is not selectable for stage {stage!r}")
+
+    try:
+        updated = await set_stage_route(
+            stage, fallback_model_ids=fallbacks, shadow_model_id=shadow,
+            shadow_sample_pct=sample_pct, updated_by=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    updated["updated_at"] = updated["updated_at"].isoformat() if updated["updated_at"] else None
+    updated["route"] = _route_view(updated, await _load_catalog())
+    logger.info("admin_llm_route_changed", stage=stage, fallback_model_ids=fallbacks,
+                shadow_model_id=shadow, shadow_sample_pct=sample_pct, admin_actor=admin_actor)
+    return updated
+
+
+# ── AA-686 — model catalog read + price/enabled edit ───────────────────────────────────────────
+
+
+class LlmCatalogPatch(BaseModel):
+    price_in_per_mtok: Optional[float] = None
+    price_out_per_mtok: Optional[float] = None
+    price_source: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@router.get("/llm-catalog", summary="AA-686 — every catalog row (prices, provenance, enabled)")
+async def get_llm_catalog():
+    return {"models": await list_catalog_rows()}
+
+
+@router.patch("/llm-catalog/{model_key}",
+              summary="AA-686 — edit a catalog row's price / enabled (admin-only)")
+async def patch_llm_catalog(
+    model_key: str,
+    body: LlmCatalogPatch,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+):
+    verify_admin_secret(x_admin_secret)
+    admin_actor = x_admin_user_id or "unknown"
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    try:
+        updated = await set_catalog_price(
+            model_key, fields=fields, updated_by=f"admin:{admin_actor}",
+            audit_actor=f"admin:{admin_actor}",
+        )
+    except CatalogPriceRequired as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    logger.info("admin_llm_catalog_changed", model_key=model_key, fields=list(fields),
+                admin_actor=admin_actor)
+    return updated
+
+
+# ── AA-686 — shadow A/B report (shared.llm_shadow_log) ─────────────────────────────────────────
+# Groups shadow rows by (stage, primary_model, shadow_model) and reports, per group: n, shadow
+# errors, agreement rate (same pass/fail), mean |score delta|, cost (sum + per call) for primary
+# vs shadow, shadow latency p50/p95, and repeat-scoring variance (stddev of primary and of shadow
+# scores among rows that share a request_sha256). Scores/pass are parsed per stage with the
+# EXISTING judge parsers (parse_judge_json + the per-stage field each judge stage already reads);
+# rows whose output cannot be parsed are counted as `unparsed`, never dropped silently.
+
+_SHADOW_REPORT_SQL = """
+    SELECT stage, primary_model, shadow_model, primary_output, shadow_output, shadow_error,
+           primary_cost_usd, shadow_cost_usd, shadow_latency_ms, request_sha256
+      FROM shared.llm_shadow_log
+     WHERE created_at >= now() - ($1 || ' days')::interval
+     ORDER BY stage, primary_model, shadow_model
+"""
+
+
+def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
+    """Return {"passed": bool, "score": Optional[float]} for one judge output, or None if the
+    output cannot be parsed. Reuses the production judge parser (parse_judge_json) and reads the
+    SAME fields each judge stage already reads downstream — no new ad-hoc regex (AA-686 contract):
+
+      * s1_judge / t2_judge*       — brand-fit JSON: numeric `brand_fit_score`, pass derived from it.
+      * s1_brand_audit             — {"brand_audit": {"status": ...}} (or flat `status`); pass/fail only.
+      * t10_judge / n7_judge       — rubric `items[].score` (1/0) and/or `status`: score = pass fraction.
+    """
+    if not raw or not raw.strip():
+        return None
+    from services.acp_produce.judge_client import parse_judge_json
+    try:
+        data = parse_judge_json(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    # brand_audit nests its result under "brand_audit".
+    if "brand_audit" in data and isinstance(data["brand_audit"], dict):
+        data = data["brand_audit"]
+
+    score: Optional[float] = None
+    passed: Optional[bool] = None
+
+    # Rubric judges (F8/F9, t10/n7): list of items each scored 1/0.
+    items = data.get("items")
+    if isinstance(items, list) and items:
+        scored = [str(i.get("score")) for i in items if isinstance(i, dict)]
+        if scored:
+            ones = sum(1 for s in scored if s == "1")
+            score = ones / len(scored)
+            passed = ones == len(scored)
+
+    # A numeric brand-fit / overall score (s1_judge, t2 judge).
+    for key in ("brand_fit_score", "overall_score", "score", "judge_score"):
+        v = data.get(key)
+        if isinstance(v, (int, float)):
+            score = float(v)
+            break
+
+    # A status string is the authoritative pass/fail when present (brand_audit, F9).
+    status = data.get("status")
+    if isinstance(status, str):
+        passed = status.strip().lower() == "pass"
+    elif passed is None and isinstance(data.get("passed"), bool):
+        passed = data["passed"]
+
+    if score is None and passed is None:
+        return None
+    return {"passed": passed, "score": score}
+
+
+def _percentile(values: list[float], pct: float) -> Optional[float]:
+    """Nearest-rank percentile (pct in 0..100). None for an empty list."""
+    if not values:
+        return None
+    s = sorted(values)
+    if len(s) == 1:
+        return s[0]
+    import math
+    rank = max(0, min(len(s) - 1, math.ceil(pct / 100 * len(s)) - 1))
+    return s[rank]
+
+
+def _stddev(values: list[float]) -> Optional[float]:
+    """Population standard deviation; None for <2 values (one value has no spread to report)."""
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
+
+
+def _summarize_shadow_group(stage: str, rows: list[dict]) -> dict:
+    n = len(rows)
+    shadow_error = sum(1 for r in rows if r["shadow_error"])
+    primary_cost = sum(float(r["primary_cost_usd"] or 0) for r in rows)
+    shadow_cost = sum(float(r["shadow_cost_usd"] or 0) for r in rows)
+    latencies = [r["shadow_latency_ms"] for r in rows if r["shadow_latency_ms"] is not None]
+
+    agree_total = 0
+    agree_same = 0
+    deltas: list[float] = []
+    unparsed = 0
+    # request_sha256 -> parsed primary / shadow scores, for repeat-scoring variance.
+    by_sha_primary: dict[str, list[float]] = {}
+    by_sha_shadow: dict[str, list[float]] = {}
+
+    for r in rows:
+        p = _parse_judge_output(stage, r["primary_output"])
+        s = None if r["shadow_error"] else _parse_judge_output(stage, r["shadow_output"])
+        if p is None or (s is None and not r["shadow_error"]):
+            unparsed += 1
+            continue
+        if s is not None:
+            if p["passed"] is not None and s["passed"] is not None:
+                agree_total += 1
+                if p["passed"] == s["passed"]:
+                    agree_same += 1
+            if p["score"] is not None and s["score"] is not None:
+                deltas.append(abs(p["score"] - s["score"]))
+        sha = r["request_sha256"]
+        if sha:
+            if p["score"] is not None:
+                by_sha_primary.setdefault(sha, []).append(p["score"])
+            if s is not None and s["score"] is not None:
+                by_sha_shadow.setdefault(sha, []).append(s["score"])
+
+    # Repeat-scoring variance: over shas scored more than once, the stddev of the repeated scores,
+    # averaged across such shas (how much the same model disagrees with itself on the same input).
+    def _repeat_variance(by_sha: dict[str, list[float]]) -> Optional[float]:
+        stds = [_stddev(v) for v in by_sha.values() if len(v) > 1]
+        stds = [x for x in stds if x is not None]
+        return (sum(stds) / len(stds)) if stds else None
+
+    return {
+        "stage": stage,
+        "primary_model": rows[0]["primary_model"],
+        "shadow_model": rows[0]["shadow_model"],
+        "n": n,
+        "shadow_error": shadow_error,
+        "unparsed": unparsed,
+        "agreement_rate": (agree_same / agree_total) if agree_total else None,
+        "agreement_sample": agree_total,
+        "mean_abs_score_delta": (sum(deltas) / len(deltas)) if deltas else None,
+        "score_delta_sample": len(deltas),
+        "primary_cost_usd": primary_cost,
+        "shadow_cost_usd": shadow_cost,
+        "primary_cost_per_call": (primary_cost / n) if n else None,
+        "shadow_cost_per_call": (shadow_cost / n) if n else None,
+        "shadow_latency_p50_ms": _percentile([float(x) for x in latencies], 50),
+        "shadow_latency_p95_ms": _percentile([float(x) for x in latencies], 95),
+        "primary_repeat_score_stddev": _repeat_variance(by_sha_primary),
+        "shadow_repeat_score_stddev": _repeat_variance(by_sha_shadow),
+    }
+
+
+@router.get("/llm-shadow/report",
+            summary="AA-686 — shadow A/B comparison (agreement, score delta, cost, variance)")
+async def get_llm_shadow_report(request: Request, days: int = Query(30, ge=1, le=365)):
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_SHADOW_REPORT_SQL, str(days))
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        d = dict(r)
+        groups.setdefault((d["stage"], d["primary_model"], d["shadow_model"]), []).append(d)
+    report = [_summarize_shadow_group(stage, grp) for (stage, _p, _s), grp in groups.items()]
+    report.sort(key=lambda g: (g["stage"], g["primary_model"], g["shadow_model"]))
+    logger.info("admin_llm_shadow_report_queried", days=days, group_count=len(report))
+    return {"days": days, "groups": report}
 
 
 # ── AA-623 follow-up — one time window for every External Spend endpoint ───────────────────────
