@@ -49,8 +49,10 @@ jobs:
         with:
           node-version: "22"
 
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored, so `npm ci` fails
+      # (first live dispatch, S220). The only root dependency is @playwright/test.
       - name: Install dependencies (repo root — Playwright lives here)
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Install Playwright browser (chromium)
         run: npx playwright install --with-deps chromium

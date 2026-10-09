@@ -221,8 +221,6 @@ jobs:
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
-    # 74 pre-existing errors in legacy pages; fixed under AA-601, then remove continue-on-error.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
 
@@ -235,8 +233,11 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # 74 pre-existing errors in legacy pages; fixed under AA-601, then remove continue-on-error.
+      # Step-level (not job-level): a job-level continue-on-error still shows a red check on every PR.
       - name: Run ESLint (write summary to the job summary)
         working-directory: frontend
+        continue-on-error: true
         run: |
           set +e
           npm run lint 2>&1 | tee lint-output.txt
