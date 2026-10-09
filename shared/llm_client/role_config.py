@@ -14,9 +14,10 @@ a bad DB read must never be the reason a writer/judge call fails.
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import asyncpg
 import structlog
@@ -26,6 +27,26 @@ from shared.secrets import get_database_url
 logger = structlog.get_logger()
 
 _CACHE_TTL_SECONDS = 20.0
+
+# AA-686 — admin LLM-ops changes are audited in acp_shared.audit_log in the SAME transaction as
+# the config update (a lost audit row is a silent gap, the same reasoning as
+# services/acp_shared/audit_log.py). actor_type is left NULL on purpose: the audit_actor_type
+# enum (hitl_reviewer / tenant_admin / tenant_reviewer, migration 021) has no admin value, and
+# every pre-existing acp_shared.audit_log admin write (admin.py agency.onboard / agency.offboard)
+# already leaves it NULL rather than force-fit a reviewer value.
+_AUDIT_INSERT_SQL = """
+    INSERT INTO acp_shared.audit_log
+        (actor, action, resource_type, resource_id, details)
+    VALUES ($1, $2, $3, $4, $5::jsonb)
+"""
+
+
+async def _insert_audit(conn, *, actor: str, action: str, resource_type: str,
+                        resource_id: str, before: Any, after: Any) -> None:
+    await conn.execute(
+        _AUDIT_INSERT_SQL, actor, action, resource_type, str(resource_id),
+        json.dumps({"before": before, "after": after}, default=str),
+    )
 
 
 @dataclass(frozen=True)
@@ -193,26 +214,92 @@ async def list_stage_configs() -> list[StageConfig]:
 
 async def set_stage_config(
     stage: str, model_id: str, account_route: Optional[str], updated_by: str,
+    audit_actor: Optional[str] = None,
 ) -> dict:
     """Admin UI write — role/provider are NOT editable here (they're a property of the call site,
     not a choice; changing role/provider for a stage is a code change, not a config change).
     Raises ValueError if `stage` doesn't already exist (no upsert-a-brand-new-stage from the UI —
     every real stage is seeded by migration 137; a typo'd stage name should fail loud, not create
-    a silently-dead config row nothing reads)."""
+    a silently-dead config row nothing reads).
+
+    AA-686: when `audit_actor` is given, the change is recorded in acp_shared.audit_log inside the
+    same transaction as the UPDATE (action `llm_model_changed`), so a committed model change is
+    always paired with its audit row.
+    """
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
-        row = await conn.fetchrow(
-            """
-            UPDATE shared.llm_role_config
-            SET model_id = $2, account_route = $3, updated_at = now(), updated_by = $4
-            WHERE stage = $1
-            RETURNING stage, role, provider, model_id, account_route, is_active, updated_at, updated_by,
-                      fallback_model_ids, shadow_model_id, shadow_sample_pct
-            """,
-            stage, model_id, account_route, updated_by,
-        )
-        if row is None:
-            raise ValueError(f"unknown stage: {stage!r}")
+        async with conn.transaction():
+            before = await conn.fetchrow(
+                "SELECT model_id, account_route FROM shared.llm_role_config WHERE stage = $1",
+                stage,
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE shared.llm_role_config
+                SET model_id = $2, account_route = $3, updated_at = now(), updated_by = $4
+                WHERE stage = $1
+                RETURNING stage, role, provider, model_id, account_route, is_active, updated_at,
+                          updated_by, fallback_model_ids, shadow_model_id, shadow_sample_pct
+                """,
+                stage, model_id, account_route, updated_by,
+            )
+            if row is None:
+                raise ValueError(f"unknown stage: {stage!r}")
+            if audit_actor is not None:
+                await _insert_audit(
+                    conn, actor=audit_actor, action="llm_model_changed",
+                    resource_type="llm_role_config", resource_id=stage,
+                    before=dict(before) if before else None,
+                    after={"model_id": model_id, "account_route": account_route},
+                )
+        out = dict(row)
+        out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
+        return out
+    finally:
+        await conn.close()
+        invalidate(stage)
+
+
+async def set_stage_route(
+    stage: str, *, fallback_model_ids: list[str], shadow_model_id: Optional[str],
+    shadow_sample_pct: int, updated_by: str, audit_actor: str,
+) -> dict:
+    """AA-686 — set a stage's route (ordered fallback chain + optional shadow). Validation of the
+    model keys (vendor rule, duplicate/primary-in-fallback, shadow == primary) belongs to the
+    router, which has the catalog; this helper is the persistence + audit boundary. The UPDATE and
+    the acp_shared.audit_log row (action `llm_route_changed`) share one transaction, and the stage
+    cache is invalidated the same way set_stage_config does so the next LLM call sees the new route.
+    """
+    conn = await asyncpg.connect(get_database_url(), ssl="require")
+    try:
+        async with conn.transaction():
+            before = await conn.fetchrow(
+                f"SELECT model_id, {_ROUTE_COLUMNS} FROM shared.llm_role_config WHERE stage = $1",
+                stage,
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE shared.llm_role_config
+                SET fallback_model_ids = $2, shadow_model_id = $3, shadow_sample_pct = $4,
+                    updated_at = now(), updated_by = $5
+                WHERE stage = $1
+                RETURNING stage, role, provider, model_id, account_route, is_active, updated_at,
+                          updated_by, fallback_model_ids, shadow_model_id, shadow_sample_pct
+                """,
+                stage, list(fallback_model_ids), shadow_model_id, shadow_sample_pct, updated_by,
+            )
+            if row is None:
+                raise ValueError(f"unknown stage: {stage!r}")
+            before_d = dict(before) if before else None
+            if before_d and before_d.get("fallback_model_ids") is not None:
+                before_d["fallback_model_ids"] = list(before_d["fallback_model_ids"])
+            await _insert_audit(
+                conn, actor=audit_actor, action="llm_route_changed",
+                resource_type="llm_role_config", resource_id=stage,
+                before=before_d,
+                after={"fallback_model_ids": list(fallback_model_ids),
+                       "shadow_model_id": shadow_model_id, "shadow_sample_pct": shadow_sample_pct},
+            )
         out = dict(row)
         out["fallback_model_ids"] = list(out["fallback_model_ids"] or [])
         return out
