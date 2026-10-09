@@ -48,6 +48,9 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite' },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence' },
   { id: 'settings', label: 'Settings', path: '/admin/settings', readySelector: '[data-testid="admin-content-ready"]' },
+  // AA-686 — the LLM Models tab (route/shadow editor, catalog, shadow A/B). `?tab=models` opens it
+  // directly; `llm-models-ready` renders once the tab mounts, so a blank/broken tab still fails.
+  { id: 'settings-models', label: 'Settings · LLM Models', path: '/admin/settings?tab=models', readySelector: '[data-testid="llm-models-ready"]' },
   { id: 'tenant-activity', label: 'Content Trace', path: '/admin/tenant-activity', readySelector: '[data-testid="admin-content-ready"]' },
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants' },
   { id: 'upload', label: 'Upload', path: '/admin/upload' },
