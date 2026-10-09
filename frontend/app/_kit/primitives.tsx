@@ -390,9 +390,12 @@ export function PageHeader({
         gap: 16,
         marginBottom: 20,
         fontFamily: sans,
+        // Wrap on narrow screens so the actions drop below the title instead of overlapping it
+        // (AA-752: at 390px the title and the action buttons were colliding).
+        flexWrap: "wrap",
       }}
     >
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, flex: "1 1 240px" }}>
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div
             style={{
@@ -434,7 +437,7 @@ export function PageHeader({
         )}
       </div>
       {actions && (
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {actions}
         </div>
       )}
