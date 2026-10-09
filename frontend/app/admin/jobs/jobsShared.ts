@@ -42,6 +42,7 @@ export interface Worker {
   stopped_at: string | null;
   max_parallel: number;
   caps: Record<string, number> | null;
+  task_revision: number | null;
   running_jobs: number;
   reaped_requeued: number;
   reaped_failed: number;
@@ -56,11 +57,9 @@ export interface WorkerHealthResp {
   alive_seconds: number;
 }
 
+// The six job-runner statuses (queue.TERMINAL + queued/running). The kit StatusBadge owns the
+// status→tone mapping now (AA-721), so the page no longer keeps a colour map here.
 export const STATUSES = ["queued", "running", "succeeded", "failed", "stopped_budget", "cancelled"] as const;
-export const STATUS_COLOR: Record<string, "red" | "green" | "amber" | "gray" | "gold" | "blue" | "purple"> = {
-  queued: "gray", running: "blue", succeeded: "green", failed: "red", stopped_budget: "amber",
-  cancelled: "purple",
-};
 
 export function fmtTime(iso: string | null | undefined): string {
   return formatDateTime(iso);

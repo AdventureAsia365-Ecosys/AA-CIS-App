@@ -165,6 +165,7 @@ const STATUS_TONE: Record<string, { tone: Tone; label: string }> = {
   completed: { tone: "success", label: "Completed" },
   done: { tone: "success", label: "Done" },
   failed: { tone: "danger", label: "Failed" },
+  stopped_budget: { tone: "warning", label: "Stopped (budget)" },
   cancelled: { tone: "neutral", label: "Cancelled" },
   canceled: { tone: "neutral", label: "Cancelled" },
   retrying: { tone: "warning", label: "Retrying" },
