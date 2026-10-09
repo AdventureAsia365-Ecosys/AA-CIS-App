@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { LayoutDashboard, Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon, Menu, Sun, Moon, Monitor } from "lucide-react";
+import { Gauge, Users, Upload, Wand2, ClipboardList, Library, LogOut, Bell, Settings, Wallet, Puzzle, ListChecks, Scale, Search, Image as ImageIcon, Menu, Sun, Moon, Monitor } from "lucide-react";
 import { A, alpha, serif, sans, SIDEBAR_WIDTH } from "./adminUi";
 import { LOGO_SRC } from "../../_brand/tokens";
 import { useThemeChoice } from "../../_kit/useTheme";
@@ -34,8 +34,9 @@ interface NavEntry {
 const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
   { label: "Overview", items: [
     // AA-664 — whole-system overview (pipeline funnel, intelligence, tenants, jobs, cost, alerts).
+    // AA-722 — the legacy /admin/dashboard page was retired; /admin/dashboard now redirects
+    // (middleware.ts) to the role's landing page (Overview for admin, Review Queue otherwise).
     { href: "/admin/overview", icon: <Gauge size={15} />, label: "Overview", adminOnly: true },
-    { href: "/admin/dashboard", icon: <LayoutDashboard size={15} />, label: "Dashboard" },
   ] },
   { label: "Content", items: [
     { href: "/admin/upload",         icon: <Upload size={15} />,        label: "Upload (S0)" },

@@ -31,13 +31,12 @@ import {
 
 ensureResultsDir();
 
-// ── Admin pages — all 16 routes under frontend/app/admin/*/page.tsx (AA-601). Add a page = add one
-// line here. `readySelector` is set only for pages whose loaded content is neither a kit/table row
-// nor the kit empty state; it marks real content that renders only after data has loaded. (The
-// `dashboard` route is retired in a later PR — AA-722 — but is included here for now.) ──
+// ── Admin pages — all 15 routes under frontend/app/admin/*/page.tsx (AA-601, AA-722 retired
+// dashboard). Add a page = add one line here. `readySelector` is set only for pages whose loaded
+// content is neither a kit/table row nor the kit empty state; it marks real content that renders
+// only after data has loaded. ──
 const ADMIN_PAGES: PageSpec[] = [
   { id: 'atom-curation', label: 'Social Content', path: '/admin/atom-curation', readySelector: '[data-testid="admin-content-ready"]' },
-  { id: 'dashboard', label: 'Dashboard', path: '/admin/dashboard' },
   { id: 'decisions', label: 'Jev Decisions', path: '/admin/decisions' },
   { id: 'jobs', label: 'Jobs', path: '/admin/jobs' },
   { id: 'llm-usage', label: 'External Spend', path: '/admin/llm-usage' },
@@ -123,6 +122,26 @@ test.describe('UI smoke — admin', () => {
       await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
     });
   }
+
+  // AA-722 — the legacy /admin/dashboard page is retired. As an admin, a request to it must land
+  // on /admin/overview (middleware's role-aware redirect). Bounded wait; keep this independent of
+  // the per-page checks above.
+  test('admin: /admin/dashboard redirects to /admin/overview', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: baseUrl(),
+      storageState: ADMIN_STATE,
+      viewport: { width: 1440, height: 900 },
+    });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/admin/dashboard', { waitUntil: 'domcontentloaded' });
+      await page.waitForURL(/\/admin\/overview\b/, { timeout: 15000 });
+      expect(new URL(page.url()).pathname).toBe('/admin/overview');
+    } finally {
+      await context.close();
+    }
+  });
 });
 
 const hasTenantKey = Boolean(process.env.E2E_TENANT_API_KEY);
