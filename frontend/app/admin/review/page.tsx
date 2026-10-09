@@ -224,8 +224,9 @@ function ReviewQueueInner() {
         accessorKey: "name",
         header: "Tour",
         cell: (c) => (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 280 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: 180 }}>
             <span
+              title={c.row.original.name}
               style={{
                 fontWeight: 600,
                 color: A.ink,
@@ -493,10 +494,8 @@ function ReviewQueueInner() {
         }}
         emptyTitle="Review queue is empty"
         emptyDescription="Every tour has been reviewed."
-        // AA-601 — Tour + Country + Version + Written + Score + Reasons + the 4-button Actions cell
-        // need ~1180px; below that the wrapper scrolls horizontally instead of squeezing and
-        // clipping the Actions buttons.
-        tableMinWidth={1180}
+        // AA-601 — the Tour column is capped (names ellipsize) so the 4-button Actions cell fits a
+        // 1440px screen; narrower screens scroll the table inside its wrapper.
         toolbarExtra={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
