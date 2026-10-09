@@ -184,6 +184,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     ends without success marks the piece `failed`, which the portal already shows with Retry).
     **A3 atomize is a job** (`a3_atomize`, one tour at a time), enqueued by publish
     (`process_export`) and by `POST /admin/atoms/atomize` (one job per tour).
+  - **Recompute stage registry (AA-735 nac 3, ADR 0003 layer B + C)**: the platform-wide
+    Segment/Score/Route recompute is a declared stage registry in `services/recompute/`, not two
+    hand-written chains. Each stage (`segment`, `landing`, `score`, `route`) is a pure
+    `run(ctx, scope)` that declares the tables it reads, the tables it writes and its
+    `write_strategy` (`segment`/`landing` upsert; `score`/`route` versioned-swap — the SQL itself
+    is unchanged, only declared). The orchestrator `run_stages(names, scope, pool=, progress=)`
+    runs a named list in order. Two lists: `TOUR_STAGES` (segment→landing→score→route, a tour's
+    publish / atom edit) and `PLATFORM_STAGES` (landing→score→route, platform score+route only).
+    The `recompute` job and the `a3_atomize` path (its inline segment matching) run their work
+    only through `run_stages`; the thin wrappers `recompute_segment_score_route` /
+    `recompute_rankings_and_routes` in `services/export/handler.py` map the stage results back to
+    the Jobs-page result keys (`{segment, ranking, route}` / `{ranking, route}`).
 - **Bedrock Batch for S1 (AA-606)**: `shared/llm_client/bedrock_batch.py` +
   `services/content_generation/s1_batch.py`, endpoints `POST /admin/s1-batch/submit` and
   `GET /admin/s1-batch/{job_id}`. Built and merged, but **never run for real**: AWS has not yet

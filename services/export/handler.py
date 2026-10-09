@@ -89,89 +89,51 @@ async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
 
     Called when a tour's master_status changes (active <-> inactive/trashed). Segments are an
     UPSERT-only, platform-wide set — an inactivated tour's atoms stay in atom_segment_member — but
-    ranking (DELETE+INSERT per market) and route detection both read atoms through
-    `v_active_tour_atoms` now (migration 203), so re-running them drops the inactive tour's atoms
-    from `atom_ranking` and `route`, which is what the tenant Slate reads. No atomize, no
-    segment_matching: deactivating a tour never adds atoms, only removes them from the caches.
+    ranking and route detection both read atoms through `v_active_tour_atoms` now (migration 203),
+    so re-running them drops the inactive tour's atoms from `atom_ranking` and `route`, which is
+    what the tenant Slate reads. No atomize, no segment_matching: deactivating a tour never adds
+    atoms, only removes them from the caches.
 
     AA-743 — `segment_ids`: re-land PAA questions only for these Segments (plus brand-new ones,
     whose questions_count is NULL); every other Segment's count is read from cache. None keeps the
-    original from-scratch pass over every Segment (backfills only)."""
-    from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
-    from services.acp_contract.route_detection import run_route_detection
-    from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
+    original from-scratch pass over every Segment (backfills only).
 
-    question_counts = await precompute_question_landings(
-        pool, set(segment_ids) if segment_ids is not None else None)
-    ranking_results = {}
-    for market_code in DFS_LOCATION_MAP:
-        ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
-    route_result = await run_route_detection(pool)
-    logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=route_result)
-    return {"ranking": ranking_results, "route": route_result}
+    AA-735 nac 3 — a thin wrapper over the declared stage registry (PLATFORM_STAGES =
+    landing -> score -> route). Kept as a named function because callers/scripts import it and the
+    `recompute` job maps its result keys back to the Jobs-page shape (`ranking`/`route`). The SQL,
+    order and progress events are the orchestrator's — identical to the old inline chain."""
+    from services.recompute import PLATFORM_STAGES, RecomputeScope, run_stages
+    scope = RecomputeScope(
+        segment_ids=set(segment_ids) if segment_ids is not None else None,
+        log_reason=log_reason)
+    results = await run_stages(PLATFORM_STAGES, scope, pool=pool)
+    out = {"ranking": results["score"], "route": results["route"]}
+    logger.info("recompute_rankings_and_routes_done", reason=log_reason, route=out["route"])
+    return out
 
 
 async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str | None = None,
                                        progress=None) -> dict:
-    """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below (which still calls this
-    right after atomize, unchanged) so it can ALSO be fired on its own, from
-    `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag changes. Before
-    AA-564, curating an atom (star or soft-delete) never recomputed Segment/Score/Route at all —
-    AA-563's investigation confirmed this was a real staleness gap, not a misunderstanding: only
-    `deleted` actually affects Segment eligibility (`WHERE NOT ta.deleted`, segment_matching.py),
-    `starred` never does, so this is deliberately NOT wired to the star action too.
+    """AA-564 3.1 — extracted out of `_run_a3_atomize_background()` below so it can ALSO be fired
+    on its own, from `api/routers/admin_atoms.py::patch_atom()`, whenever an atom's `deleted` flag
+    changes. Before AA-564, curating an atom (star or soft-delete) never recomputed
+    Segment/Score/Route at all — AA-563's investigation confirmed this was a real staleness gap,
+    not a misunderstanding: only `deleted` actually affects Segment eligibility
+    (`WHERE NOT ta.deleted`, segment_matching.py), `starred` never does, so this is deliberately
+    NOT wired to the star action too.
 
     Platform-wide (AA-545) — `run_route_detection()` recomputes ALL tours' Routes, not just this
-    one, same as `_run_a3_atomize_background()` already did; `run_segment_matching(tour_id, ...)`
-    itself is incremental and does stay scoped to this one tour."""
-    from services.acp_contract.segment_matching import run_segment_matching
-    segment_result = await run_segment_matching(tour_id, pool)
-    logger.info("segment_matching_done", tour_id=log_tour_id or tour_id, result=segment_result)
+    one; `run_segment_matching(tour_id, ...)` itself is incremental and stays scoped to this tour.
+    PAA landing is scoped to this tour's own Segments (AA-610 scope fix) — every other Segment's
+    questions_count is read from cache.
 
-    from services.acp_contract.atom_ranking import precompute_question_landings, run_atom_ranking
-    from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
-    # AA-610 (Sub 2 redesign, then Sub 2 scope fix) — PAA landing does not vary by market (a
-    # question landing on a Segment's atom has nothing to do with which finite buyer market is
-    # being scored), but used to be recomputed inside run_atom_ranking() itself, once per market
-    # — 6x real embedding-matching work per atomize run for no reason. Computed exactly ONCE
-    # here (the redesign fix), passed into every run_atom_ranking() call below.
-    #
-    # Scoped to just THIS tour's own Segments (the scope fix) — a live re-test of the redesign
-    # above found a single tour-triggered call still taking over 6 hours, because it was landing
-    # PAA questions for every OTHER platform Segment too, not just this tour's. Every other
-    # Segment's questions_count is read back from cache instead (precompute_question_landings()'s
-    # own docstring has the full story of both fixes).
-    async with pool.acquire() as conn:
-        this_tour_segment_rows = await conn.fetch(
-            """
-            SELECT DISTINCT asm.segment_id
-            FROM acp_contract.atom_segment_member asm
-            JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
-            WHERE ta.tour_id = $1::uuid AND NOT ta.deleted AND NOT ta.is_empty_marker
-            """,
-            tour_id,
-        )
-    this_tour_segment_ids = {r["segment_id"] for r in this_tour_segment_rows}
-    # AA-688: `progress` (optional sync callback) reports the embedding pre-pass to the Jobs page.
-    question_counts = await precompute_question_landings(pool, this_tour_segment_ids, progress)
-    ranking_results = {}
-    markets = list(DFS_LOCATION_MAP)
-    for i, market_code in enumerate(markets, start=1):
-        ranking_results[market_code] = await run_atom_ranking(market_code, pool, question_counts)
-        # AA-687: without these steps the Jobs page kept showing "landing_questions · n/n · ETA 0s"
-        # for the ~80 s that ranking + route detection take after the landing.
-        if progress:
-            progress({"step": "ranking_markets", "done": i, "total": len(markets)})
-    logger.info("ranking_done", tour_id=log_tour_id or tour_id, result=ranking_results)
-
-    from services.acp_contract.route_detection import run_route_detection
-    if progress:
-        progress({"step": "route_detection", "done": 0, "total": 1})
-    route_result = await run_route_detection(pool)
-    if progress:
-        progress({"step": "route_detection", "done": 1, "total": 1})
-    logger.info("route_detection_done", tour_id=log_tour_id or tour_id, result=route_result)
-    return {"segment": segment_result, "ranking": ranking_results, "route": route_result}
+    AA-735 nac 3 — a thin wrapper over the declared stage registry (TOUR_STAGES =
+    segment -> landing -> score -> route). Result keys stay `{segment, ranking, route}`; the SQL,
+    order and progress events are the orchestrator's — identical to the old inline chain."""
+    from services.recompute import TOUR_STAGES, RecomputeScope, run_stages
+    scope = RecomputeScope(tour_id=tour_id, log_tour_id=log_tour_id)
+    results = await run_stages(TOUR_STAGES, scope, pool=pool, progress=progress)
+    return {"segment": results["segment"], "ranking": results["score"], "route": results["route"]}
 
 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
@@ -224,9 +186,14 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         # job: every atomize of a wave folds its Segments into the same queued job and pushes its
         # start back, so a wave runs a handful of platform passes instead of one per tour.
         try:
-            from services.acp_contract.segment_matching import run_segment_matching
             from services.jobs.recompute_job import WAVE_DEBOUNCE_S, enqueue_recompute
-            segment_result = await run_segment_matching(tour_id, pool)
+            from services.recompute import RecomputeScope, run_stages
+            # AA-735 nac 3 — segment matching for this tour goes through the one stage registry
+            # (run_stages(["segment"], ...)) instead of an inline run_segment_matching call. Same
+            # function, same scope (this tour); Score + Route still go to the debounced platform
+            # `recompute` job below, not inline.
+            seg_results = await run_stages(["segment"], RecomputeScope(tour_id=tour_id), pool=pool)
+            segment_result = seg_results["segment"]
             logger.info("segment_matching_done", tour_id=tour_id, result=segment_result)
             segment_ids = await tour_segment_ids(pool, tour_id)
             job_id, created = await enqueue_recompute(
