@@ -46,6 +46,7 @@ from api.routers.admin_job_runner import router as admin_job_runner_router  # AA
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
+from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
@@ -211,6 +212,7 @@ app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
+app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 

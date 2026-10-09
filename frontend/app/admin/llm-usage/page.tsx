@@ -8,7 +8,6 @@ import { AlertTriangle, ChevronRight, ChevronDown, Cpu, Search, Wallet, Building
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
-import AdminSidebar from "../_components/AdminSidebar";
 import BudgetsPanel from "./BudgetsPanel";
 import {
   A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar, TH, TD,
@@ -659,8 +658,6 @@ export default function ExternalSpendPage() {
   const filterActive = tenantFilter || acctFilter;
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
@@ -1091,6 +1088,5 @@ export default function ExternalSpendPage() {
           <FallbackModal tenantId={fbModal.tenantId} tenantLabel={fbModal.label} rangeQs={rangeQs} rangeLabel={rangeLabel} onClose={() => setFbModal(null)} />
         )}
       </main>
-    </div>
   );
 }

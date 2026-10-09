@@ -8,7 +8,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Image as ImageIcon, RefreshCw, HardDrive, Map as MapIcon, Images, AlertTriangle, CheckCircle2 } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD, StatCard, TabBar } from "../_components/adminUi";
 
 type CountryRow = {
@@ -197,8 +196,6 @@ export default function PhotosPage() {
   const shownFolders = folders.filter(f => folderFilter === "all" || (folderFilter === "unmatched" ? !f.tour_id : !!f.tour_id));
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
@@ -411,6 +408,5 @@ export default function PhotosPage() {
           </>
         )}
       </main>
-    </div>
   );
 }

@@ -48,7 +48,6 @@ import { useSearchParams } from "next/navigation";
 import {
   Trash2, ChevronDown, ChevronRight, Layers, Milestone,
 } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
 import { A, serif, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
@@ -1309,14 +1308,7 @@ function AtomCurationDashboard() {
   const selectedTourMeta = summary?.by_tour.find(t => t.tour_id === selectedTour) ?? null;
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
-      {/* AA-551 sticky fix (AA-550 A.4): header is a normal, non-scrolling flex item OUTSIDE
-          the scroll region — the original bug was a `position: sticky` header with no defined
-          scroll-container relationship, not a missing style. Only the inner section-nav below
-          still uses `sticky`, now correctly scoped to its own immediate scroll container. Both
-          verified by a real Playwright scroll test post-build (see implementation notes). */}
-      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div>
@@ -1426,6 +1418,5 @@ function AtomCurationDashboard() {
           </div>
         </div>
       </div>
-    </div>
   );
 }

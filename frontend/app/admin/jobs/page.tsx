@@ -6,8 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ListChecks, RefreshCw } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
-import { A, alpha, serif, sans, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { A, alpha, serif, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import JobDrawer from "./JobDrawer";
 import WorkerHealth from "./WorkerHealth";
 import {
@@ -148,8 +147,6 @@ export default function JobsPage() {
   if (jobs === null) return <LoadingScreen msg="Loading jobs..." />;
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: A.bg, fontFamily: sans }}>
-      <AdminSidebar />
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
@@ -296,6 +293,5 @@ export default function JobsPage() {
           />
         )}
       </main>
-    </div>
   );
 }

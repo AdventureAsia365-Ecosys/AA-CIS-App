@@ -8,8 +8,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { BarChart3, HelpCircle, Search, TriangleAlert, Wallet } from "lucide-react";
-import AdminSidebar from "../_components/AdminSidebar";
-import { sans } from "../_components/adminUi";
 import {
   apiGet,
   Badge,
@@ -281,19 +279,9 @@ export default function SeoIntelligencePage() {
   };
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: sans, background: K.bg }}>
+    <>
       <SkeletonStyle />
-      <AdminSidebar />
-      <div className="aa-admin-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
-        <header style={{
-          height: 56, background: K.card, borderBottom: `1px solid ${K.line}`, display: "flex",
-          alignItems: "center", padding: "0 32px", gap: 8, position: "sticky", top: 0, zIndex: 10,
-        }}>
-          <span style={{ fontSize: 12, color: K.muted2 }}>Admin /</span>
-          <span style={{ fontSize: 12, fontWeight: 500, color: K.body }}>SEO Intelligence</span>
-        </header>
-
-        <main style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
+      <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
           <PageHeader
             title="SEO Intelligence"
             description="Search demand, keywords, PAA questions, coverage gaps and research spend — merged from Segment research, S1 SEO context and DataForSEO."
@@ -344,7 +332,6 @@ export default function SeoIntelligencePage() {
             </>
           )}
         </main>
-      </div>
-    </div>
+    </>
   );
 }
