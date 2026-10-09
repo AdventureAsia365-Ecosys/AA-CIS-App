@@ -18,8 +18,11 @@ def test_backoff_doubles_and_is_capped():
     assert queue.backoff_seconds(20) == queue.BACKOFF_MAX_SECONDS
 
 
-@pytest.mark.parametrize("value,expected", [(None, True), ("true", True), ("false", False), ("0", False)])
+@pytest.mark.parametrize("value,expected", [(None, False), ("true", True), ("1", True),
+                                            ("false", False), ("0", False)])
 def test_in_api_worker_flag(monkeypatch, value, expected):
+    # AA-735 (ADR 0003 nac 5): the in-API worker is OFF by default — unset or any falsy value is
+    # False; only an explicit truthy JOB_WORKER_IN_API runs it (local/dev).
     if value is None:
         monkeypatch.delenv("JOB_WORKER_IN_API", raising=False)
     else:
