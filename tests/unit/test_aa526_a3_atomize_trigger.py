@@ -176,7 +176,7 @@ class TestRunA3AtomizeBackground:
         conn.close = AsyncMock()
         rewritten = {"name": "Tour", "summary": "s", "highlights": "[]", "itineraries": "Day 1..."}
 
-        with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+        with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
                  "services.acp_produce.tenant_pipeline.run_t5_atomize",
@@ -207,7 +207,7 @@ class TestRunA3AtomizeBackground:
         conn = AsyncMock()
         conn.close = AsyncMock()
 
-        with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+        with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
                  "services.acp_produce.tenant_pipeline.run_t5_atomize",
@@ -248,7 +248,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         ranking = AsyncMock()
         routes = AsyncMock()
 
-        with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+        with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
                  "services.acp_produce.tenant_pipeline.run_t5_atomize",
@@ -280,7 +280,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         conn = AsyncMock()
         conn.close = AsyncMock()
 
-        with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+        with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
                  "services.acp_produce.tenant_pipeline.run_t5_atomize",

@@ -53,12 +53,12 @@ async def test_enqueue_keys_on_the_content_version_only_for_the_publish_path(ded
 @pytest.mark.asyncio
 async def test_reraise_propagates_an_atomize_error():
     from services.export import handler
-    conn = AsyncMock()
-    with patch.object(handler.asyncpg, "connect", AsyncMock(return_value=conn)), \
+    pool = AsyncMock()   # S219: the job owns a small real pool, closed even when atomize raises
+    with patch.object(handler, "open_job_pool", AsyncMock(return_value=pool)), \
          patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock(side_effect=RuntimeError("bedrock"))):
         with pytest.raises(RuntimeError):
             await handler._run_a3_atomize_background("t-1", {}, "", "v-1", reraise=True)
-    conn.close.assert_awaited_once()
+    pool.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -81,3 +81,20 @@ async def test_status_change_never_raises():
     conn = _conn()
     conn.fetch = AsyncMock(side_effect=RuntimeError("db down"))
     await admin._recompute_after_status_change(_pool(conn), TOUR, "trashed")
+
+
+@pytest.mark.asyncio
+async def test_job_pool_is_a_real_pool_with_room_for_concurrent_decides():
+    """S219: one shared connection made concurrent decide() calls collide ("another operation is
+    in progress") and fail open — the jobs must open a real pool with more than one connection."""
+    with patch("services.export.handler.asyncpg.create_pool", AsyncMock(return_value="pool")) as cp, \
+         patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://x")):
+        assert await handler.open_job_pool() == "pool"
+    assert cp.await_args.kwargs["max_size"] >= 2
+
+
+def test_job_paths_no_longer_use_a_single_shared_connection():
+    import inspect
+    from services.jobs import recompute_job
+    assert "_SingleConnAsPool" not in inspect.getsource(recompute_job.run)
+    assert "_SingleConnAsPool" not in inspect.getsource(handler._run_a3_atomize_background)

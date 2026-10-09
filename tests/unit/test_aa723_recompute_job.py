@@ -53,7 +53,7 @@ async def test_tour_scope_calls_segment_score_route():
     with patch("services.export.handler.recompute_segment_score_route", seg), \
          patch("services.export.handler.recompute_rankings_and_routes", plat), \
          patch("shared.secrets.get_database_url", return_value="postgres://x"), \
-         patch("asyncpg.connect", AsyncMock(return_value=AsyncMock())):
+         patch("services.export.handler.open_job_pool", AsyncMock(return_value=AsyncMock())):
         out = await rc.run(_ctx({"scope": "tour", "tour_id": TOUR, "reason": "atom_delete:a1"}))
     seg.assert_awaited_once()
     plat.assert_not_awaited()
@@ -67,7 +67,7 @@ async def test_platform_scope_calls_rankings_and_routes():
     with patch("services.export.handler.recompute_segment_score_route", seg), \
          patch("services.export.handler.recompute_rankings_and_routes", plat), \
          patch("shared.secrets.get_database_url", return_value="postgres://x"), \
-         patch("asyncpg.connect", AsyncMock(return_value=AsyncMock())):
+         patch("services.export.handler.open_job_pool", AsyncMock(return_value=AsyncMock())):
         out = await rc.run(_ctx({"scope": "platform", "reason": "master_status=active:t1"}))
     plat.assert_awaited_once()
     seg.assert_not_awaited()
@@ -143,7 +143,7 @@ async def test_platform_job_passes_segment_scope_to_the_recompute():
     ctx = _ctx({"scope": "platform", "reason": "a3", "segment_ids": ["s1"], "coalesced": 4})
     with patch("services.export.handler.recompute_rankings_and_routes",
                AsyncMock(return_value={"route": {}})) as rr, \
-         patch("asyncpg.connect", AsyncMock(return_value=AsyncMock())):
+         patch("services.export.handler.open_job_pool", AsyncMock(return_value=AsyncMock())):
         out = await rc.run(ctx)
     assert rr.await_args.kwargs["segment_ids"] == ["s1"]
     assert out["coalesced"] == 4 and out["segments_relanded"] == 1
