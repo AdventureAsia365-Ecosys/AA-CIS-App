@@ -1156,7 +1156,7 @@ function SlateSection() {
   const tenantPicker = (
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ fontSize: 12, color: A.muted }}>Tenant:</span>
-      <select value={selectedTenant ?? ""} onChange={e => setSelectedTenant(e.target.value || null)} style={{ ...selectStyle, minWidth: 200, fontWeight: 600 }}>
+      <select value={selectedTenant ?? ""} onChange={e => setSelectedTenant(e.target.value || null)} style={{ ...selectStyle, flex: "1 1 220px", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}>
         <option value="">Choose a tenant…</option>
         {tenants.map(t => <option key={t.tenant_id} value={t.tenant_id}>{t.name}</option>)}
       </select>
@@ -1335,7 +1335,10 @@ function AtomCurationDashboard() {
               <select
                 value={selectedTour ?? ""}
                 onChange={e => setSelectedTour(e.target.value || null)}
-                style={{ ...selectStyle, minWidth: 200, fontWeight: 600 }}
+                // AA-601 (feedback 2) — a <select> sizes to its LONGEST option (full tour names,
+                // ~1000px), which overflowed the page at 390px. Let it shrink to its container and
+                // let the native control truncate the long option text.
+                style={{ ...selectStyle, flex: "1 1 220px", minWidth: 0, maxWidth: "100%", fontWeight: 600 }}
               >
                 {/* AA-554 A.3 — copy reflects the real behavior of this filter (narrows the view;
                     it's never required to see data, unlike Slate below) instead of implying a
@@ -1346,7 +1349,7 @@ function AtomCurationDashboard() {
                 ))}
               </select>
               <span style={{ fontSize: 12, color: A.muted }}>Market:</span>
-              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+              <select value={selectedMarket} onChange={e => setSelectedMarket(e.target.value)} style={{ ...selectStyle, flex: "0 1 130px", minWidth: 0, maxWidth: "100%" }}>
                 <option value="">All markets</option>
                 {MARKETS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
