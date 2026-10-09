@@ -30,11 +30,6 @@ router = APIRouter(prefix="/admin", tags=["admin-pipeline"])
 
 _pipeline_semaphore = asyncio.Semaphore(2)
 
-# AA-223: strong refs to fire-and-forget run-tour jobs. asyncio only keeps a weak
-# ref to scheduled tasks — without this the task can be GC'd mid-flight, leaving the
-# job stuck 'running' forever. add_done_callback(discard) releases the ref on finish.
-_background_tasks: set = set()
-
 
 def _is_uuid(value) -> bool:
     """True when value is a valid UUID (shared.pipeline_runs.batch_id is uuid-typed).
@@ -465,21 +460,14 @@ async def _execute_run_tour(
     brand-resolve / SEO / persist / export / review-queue logic below is reused unchanged.
 
     AA-250 B2 / AA-723: `on_stage` persists each completed LangGraph node name so the S1 job poll
-    can drive a stage-progress bar. Where it is written depends on the caller:
-      - `stage_cb` set (AA-723 worker path) → the s1_rewrite kind writes it into shared.job.progress;
-      - else `job_id` set (legacy in-process path) → jobs_repo.update_stage() → pipeline_jobs;
-      - else None (sync /admin/run-tour) → no stage tracking, same as before.
+    can drive a stage-progress bar. The s1_rewrite worker kind passes `stage_cb`, which writes it
+    into shared.job.progress; the sync /admin/run-tour path passes neither (no stage tracking).
+
+    AA-735 (ADR 0003 nac 5): the old `job_id`-only branch (jobs_repo.update_stage -> pipeline_jobs)
+    is gone — pipeline_jobs is read-only history now. `job_id` is still accepted (the worker kind
+    passes it alongside stage_cb) but no longer drives any pipeline_jobs write here.
     """
-    on_stage = None
-    if stage_cb is not None:
-        on_stage = stage_cb
-    elif job_id is not None:
-        from .jobs_repo import update_stage as _update_stage
-
-        async def _on_stage(node_name: str) -> None:
-            await _update_stage(job_id, node_name)
-
-        on_stage = _on_stage
+    on_stage = stage_cb
 
     conn = await asyncpg.connect(os.environ["DATABASE_URL"])
     TENANT_SLUG_MAP = {"aa_internal": "00000000-0000-0000-0000-000000000001"}

@@ -1,21 +1,20 @@
 """AA-223 — async run-tour (202 + job poll). ADR-2026-016.
 
-Covers the job-lifecycle repo (jobs_repo) and the new admin_pipeline endpoints
-WITHOUT touching the DB or Bedrock:
+Covers the pipeline_jobs read helpers (jobs_repo) and the admin_pipeline poll endpoints WITHOUT
+touching the DB or Bedrock:
   * jobs_repo: asyncpg.connect is patched to a fake AsyncMock conn.
-  * _run_tour_job: _run_tour_safe + mark_* are patched — pins all 4 branches
-    (success / soft-fail / hard-fail-None / exception).
   * endpoints: verify_admin_secret patched no-op, coroutines called directly.
 
-_run_tour_safe SWALLOWS the final failure and returns None (retries exhausted),
-so result is None ⇒ mark_failed; a returned dict ⇒ mark_succeeded (version_id may
-be None for a soft-fail). These tests pin exactly that contract.
+AA-735 (ADR 0003 nac 5): `shared.pipeline_jobs` is now read-only history. The writer helpers
+(create_job / mark_running / mark_succeeded / update_stage / mark_failed / mark_interrupted /
+sweep_interrupted) and the in-process _run_tour_job wrapper were retired — S1 and revalidate run
+as shared.job kinds (test_aa723_bg_tasks_on_worker.py / test_aa650_job_runner.py). Only the read
+path (get_job, find_active_duplicate) and the shared.job-backed poll endpoints remain here.
 """
 
-import asyncio
 import json
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -42,20 +41,7 @@ def _req(**over):
     return admin_pipeline.TourRunRequest(**base)
 
 
-# ── jobs_repo: create_job / find_active_duplicate / sweep ──────────────────────
-
-@pytest.mark.asyncio
-async def test_create_job_roundtrip():
-    conn = _fake_conn()
-    conn.fetchval.return_value = uuid.UUID(FAKE_UUID)
-    with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
-        jid = await jobs_repo.create_job({"tour_id": FAKE_UUID}, "aa_internal")
-    assert jid == FAKE_UUID
-    sql = conn.fetchval.call_args.args[0]
-    assert "INSERT INTO shared.pipeline_jobs" in sql
-    assert "'queued'" in sql
-    conn.close.assert_awaited_once()
-
+# ── jobs_repo read path: find_active_duplicate / get_job ───────────────────────
 
 @pytest.mark.asyncio
 async def test_find_active_duplicate_match():
@@ -81,33 +67,9 @@ async def test_find_active_duplicate_none():
     assert res is None
 
 
-@pytest.mark.asyncio
-async def test_sweep_interrupted_parses_count():
-    conn = _fake_conn()
-    conn.execute.return_value = "UPDATE 3"
-    with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
-        n = await jobs_repo.sweep_interrupted()
-    assert n == 3
-
-
-@pytest.mark.asyncio
-async def test_mark_interrupted_writes_status_and_reason():
-    """AA-295: single-job interrupt marker (used from the CancelledError handlers below),
-    complementary to the bulk sweep_interrupted() above — same status value, immediate
-    instead of once-per-boot/heartbeat-staleness-gated."""
-    conn = _fake_conn()
-    with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
-        await jobs_repo.mark_interrupted("job-9", "cancelled (deploy/shutdown)")
-    sql = conn.execute.call_args.args[0]
-    assert "status='interrupted'" in sql
-    assert "error=$2" in sql
-    assert conn.execute.call_args.args[1:] == ("job-9", "cancelled (deploy/shutdown)")
-    conn.close.assert_awaited_once()
-
-
 # ── endpoints: POST /run-tour-async + GET /jobs/{id} ───────────────────────────
-# AA-723: run_tour_async now enqueues an `s1_rewrite` job onto shared.job and the poll endpoint
-# reads shared.job (mapped to the legacy shape). The old in-process _run_tour_job wrapper is gone.
+# AA-723: run_tour_async enqueues an `s1_rewrite` job onto shared.job and the poll endpoint reads
+# shared.job (mapped to the legacy shape), falling back to the read-only pipeline_jobs row.
 
 def _request():
     from types import SimpleNamespace
@@ -177,19 +139,7 @@ async def test_get_job_falls_back_to_legacy_pipeline_jobs_row():
     assert res == legacy
 
 
-# ── AA-250 B2: current_stage (migration 076) ────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_update_stage_writes_stage_and_heartbeat():
-    conn = _fake_conn()
-    with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
-        await jobs_repo.update_stage(FAKE_UUID, "brand_audit")
-    sql = conn.execute.call_args.args[0]
-    assert "current_stage=$2" in sql
-    assert "heartbeat_at=now()" in sql
-    assert conn.execute.call_args.args[1:] == (FAKE_UUID, "brand_audit")
-    conn.close.assert_awaited_once()
-
+# ── AA-250 B2: current_stage read-through (migration 076) ───────────────────────
 
 @pytest.mark.asyncio
 async def test_get_job_selects_and_returns_current_stage():
@@ -220,9 +170,3 @@ async def test_get_job_current_stage_null_before_first_stage_report():
     with patch("api.routers.jobs_repo.asyncpg.connect", AsyncMock(return_value=conn)):
         job = await jobs_repo.get_job(FAKE_UUID)
     assert job["current_stage"] is None
-
-
-# _run_tour_job / _revalidate_job wrappers and their AA-295 CancelledError + AA-250 wiring tests
-# were removed in AA-723: those in-process pipeline_jobs wrappers no longer exist. S1 and
-# revalidate now run as shared.job kinds — see tests/unit/test_aa723_bg_tasks_on_worker.py (worker
-# drain / deploy-survival is the job runner's own concern, covered by test_aa650_job_runner.py).

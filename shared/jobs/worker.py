@@ -1,8 +1,9 @@
 """AA-650 — the worker: claims jobs from shared.job and runs their handlers.
 
-Runs inside the API process today (started from the FastAPI lifespan, `JOB_WORKER_IN_API`), or
-standalone with `python -m shared.jobs.worker` (its own pool, SIGTERM handling) once it gets its
-own ECS service (AA-651).
+Runs as its own ECS service via `python -m worker` (its own pool, SIGTERM handling, AA-651). It can
+also run inside the API process (started from the FastAPI lifespan) for local/dev, but only when
+`JOB_WORKER_IN_API` is explicitly set truthy — the default is off (AA-735, ADR 0003 nac 5), so no
+default/stray API deploy runs a second worker against shared.job.
 
 Lifecycle of one job:
   claim (lease) -> heartbeat every `heartbeat_seconds` -> handler returns   -> succeeded
@@ -246,7 +247,11 @@ def worker_max_parallel() -> int:
 
 
 def in_api_enabled() -> bool:
-    return os.environ.get("JOB_WORKER_IN_API", "true").lower() not in ("0", "false", "no")
+    """AA-735 (ADR 0003 nac 5): the worker no longer runs inside the API by default. The worker
+    runs as its own ECS service (`python -m worker`); the API process starts an in-process worker
+    only when `JOB_WORKER_IN_API` is explicitly set truthy (local/dev convenience). Unset or any
+    falsy value → False, so a stray/default deploy can never run two workers against shared.job."""
+    return os.environ.get("JOB_WORKER_IN_API", "false").lower() in ("1", "true", "yes")
 
 
 def load_kinds() -> None:
