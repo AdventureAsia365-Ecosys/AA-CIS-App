@@ -238,28 +238,15 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
     (no tenant param) — the real permanent trigger point (see docs/implementation-notes/
     AA-545.md), superseding AA-526's own original "deliberately not run here" decision."""
 
-    async def test_segment_score_route_run_in_order_after_atomize(self):
+    async def test_segment_matching_then_one_debounced_platform_recompute(self):
+        """AA-743 — A3 does this tour's segment matching only; Score + Route go to the debounced
+        platform `recompute` job, scoped to this tour's Segments (no per-tour platform pass)."""
         conn = AsyncMock()
         conn.close = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[{"segment_id": "seg_a"}, {"segment_id": "seg_b"}])
         rewritten = {"name": "Tour", "summary": "s", "highlights": "[]", "itineraries": "Day 1..."}
-
-        call_order = []
-
-        async def fake_segment_matching(tour_id, _pool):
-            call_order.append(("segment_matching", tour_id))
-            return {"segments_written": 1}
-
-        async def fake_atom_ranking(market, _pool, _question_counts):
-            call_order.append(("atom_ranking", market))
-            return {"segments_ranked": 1}
-
-        async def fake_route_detection(_pool):
-            call_order.append(("route_detection",))
-            return {"routes_written": 1}
-
-        # AA-610 (Sub 2 redesign) — precompute_question_landings() now runs once, before the
-        # per-market loop, not per-market inside run_atom_ranking() anymore.
-        fake_precompute = AsyncMock(return_value={})
+        ranking = AsyncMock()
+        routes = AsyncMock()
 
         with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
@@ -267,20 +254,25 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
                  "services.acp_produce.tenant_pipeline.run_t5_atomize",
                  AsyncMock(return_value={"status": "success", "atom_count": 3}),
              ), \
-             patch("services.acp_contract.segment_matching.run_segment_matching", fake_segment_matching), \
-             patch("services.acp_contract.atom_ranking.precompute_question_landings", fake_precompute), \
-             patch("services.acp_contract.atom_ranking.run_atom_ranking", fake_atom_ranking), \
-             patch("services.acp_contract.route_detection.run_route_detection", fake_route_detection):
-            await export_handler._run_a3_atomize_background(
+             patch("services.acp_contract.segment_matching.run_segment_matching",
+                   AsyncMock(return_value={"segments_written": 1})) as seg, \
+             patch("services.jobs.recompute_job.enqueue_recompute",
+                   AsyncMock(return_value=("job-9", False))) as enq, \
+             patch("services.acp_contract.atom_ranking.run_atom_ranking", ranking), \
+             patch("services.acp_contract.route_detection.run_route_detection", routes):
+            out = await export_handler._run_a3_atomize_background(
                 tour_id=TOUR_ID, rewritten=rewritten, country="Vietnam", version_id=GC_ID,
             )
 
-        assert call_order[0] == ("segment_matching", TOUR_ID)
-        # Score runs once per DFS_LOCATION_MAP market, all before Route.
-        from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
-        markets_called = [c[1] for c in call_order if c[0] == "atom_ranking"]
-        assert set(markets_called) == set(DFS_LOCATION_MAP)
-        assert call_order[-1] == ("route_detection",)
+        seg.assert_awaited_once()
+        assert seg.await_args.args[0] == TOUR_ID
+        ranking.assert_not_awaited()
+        routes.assert_not_awaited()
+        kw = enq.await_args.kwargs
+        assert kw["scope"] == "platform" and kw["segment_ids"] == ["seg_a", "seg_b"]
+        assert kw["debounce_s"] > 0
+        assert out == {"segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
+                       "score_route_job_reused": True}
 
     async def test_segment_score_route_failure_is_swallowed_never_raises(self):
         """Best-effort, same precedent as atomize itself — must never surface as the publish

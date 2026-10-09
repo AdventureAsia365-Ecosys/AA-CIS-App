@@ -37,14 +37,23 @@ async def _recompute_after_status_change(pool, tour_id: str, new_status: str) ->
     durable `recompute` job on the worker (scope=platform) instead of a fire-and-forget asyncio
     task that died on deploy and was invisible (ADR 0003). Debounced: a burst of status flips
     reuses one pending job. Best-effort to enqueue — a status change must not fail if the queue
-    insert does."""
+    insert does.
+
+    AA-743 — scoped: a tour leaving the active set has its ranking/route rows superseded right
+    away (no platform pass), and the debounced platform job re-lands questions only for the
+    Segments this tour touched."""
     try:
-        from services.jobs.recompute_job import enqueue_recompute
+        from services.export.handler import remove_tour_from_caches, tour_segment_ids
+        from services.jobs.recompute_job import STATUS_DEBOUNCE_S, enqueue_recompute
+        async with pool.acquire() as conn:
+            if new_status != "active":
+                await remove_tour_from_caches(conn, tour_id)
+            segment_ids = await tour_segment_ids(conn, tour_id)
         job_id, created = await enqueue_recompute(
             pool, scope="platform", reason=f"master_status={new_status}:{tour_id}",
-            created_by="admin:status_change")
+            created_by="admin:status_change", segment_ids=segment_ids, debounce_s=STATUS_DEBOUNCE_S)
         _log.info("aa713_recompute_enqueued", tour_id=tour_id, new_status=new_status,
-                  job_id=job_id, created=created)
+                  job_id=job_id, created=created, segments=len(segment_ids))
     except Exception:
         _log.warning("aa713_recompute_enqueue_failed", tour_id=tour_id, exc_info=True)
 
