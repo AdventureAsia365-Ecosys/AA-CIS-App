@@ -7,17 +7,15 @@ import { RefreshCw, ChevronDown, ChevronRight, Download, X, Trash2, RotateCcw } 
 import AdminSidebar from "../_components/AdminSidebar";
 import {
   A, alpha, serif, sans, mono,
-  SLabel, Badge, Btn, LoadingScreen, StatCard, TH, TD,
+  SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
 } from "../_components/adminUi";
-import { BarChart2, Star, DollarSign, CalendarClock } from "lucide-react";
-import { StatusBadge as KitStatusBadge } from "../../_kit";
+import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
 
 const AA_INTERNAL_ID = "00000000-0000-0000-0000-000000000001";
 const PAGE_SIZE = 20;
-const RUNS_PAGE_SIZE = 10;
 
 interface RewrittenTour {
   version_id: string;
@@ -54,21 +52,17 @@ interface Pagination {
   total: number;
 }
 
-interface PipelineRun {
-  run_id: string;
-  started_at: string;
-  tours_processed: number;
-  tours_passed: number;
-  llm_model: string;
-  llm_cost_usd: number;
-  status: string;
-  display_status?: string;   // AA-718: honest derived status (completed/ingested/running/failed)
+// AA-722: one bucket of the master pool's quality-score distribution, from
+// GET /admin/metrics/library (score_distribution). Shown here instead of the
+// retired Dashboard's Content Library tab.
+interface ScoreBucket {
+  range: string;
+  count: number;
 }
 
 interface DetailsResponse {
   summary: Summary;
   rewritten_tours: RewrittenTour[];
-  pipeline_runs: PipelineRun[];
   pagination?: Pagination;
   facets?: { countries?: string[] };  // AA-739: every catalog country, not only this page's
 }
@@ -805,7 +799,6 @@ export default function MasterContentPage() {
   const [promoting, setPromoting]       = useState<string | null>(null);
   const [page, setPage]                 = useState(1);
   const [pageSize, setPageSize]         = useState(PAGE_SIZE);  // AA-739: user-selectable
-  const [runsPage, setRunsPage]         = useState(1);
   // AA-718: server-side sort (whitelisted on the backend).
   const [sortKey, setSortKey]           = useState<"tour_name" | "country" | "quality_score" | "created_at" | "master_status">("created_at");
   const [sortDir, setSortDir]           = useState<"asc" | "desc">("desc");
@@ -854,6 +847,20 @@ export default function MasterContentPage() {
   const refreshing = isFetching && !isLoading;
   const error = qError ? (qError instanceof Error ? qError.message : "Failed to load") : "";
 
+  // AA-722: the retired Dashboard's "Content Library" tab showed the master pool's score
+  // distribution (GET /admin/metrics/library → score_distribution). It now lives here, replacing
+  // the stale "Pipeline Runs" StatCard + "Recent Pipeline Runs" table (both fed by
+  // shared.pipeline_runs, which only S0 upload writes). react-query (AA-662); no fetch-in-effect.
+  const { data: libraryMetrics } = useQuery({
+    queryKey: ["master-content-library"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/metrics/library");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as { score_distribution?: ScoreBucket[] };
+    },
+    staleTime: 60_000,
+  });
+
   function refresh() { refetch(); }
 
   function toggleSort(key: typeof sortKey) {
@@ -864,8 +871,12 @@ export default function MasterContentPage() {
 
   const tours = data?.rewritten_tours ?? [];
   const summary = data?.summary;
-  const runs = data?.pipeline_runs ?? [];
   const serverTotal = data?.pagination?.total ?? tours.length;
+
+  // AA-722: master-pool score distribution (replaces the stale pipeline_runs widgets). Empty while
+  // loading or when the metrics endpoint has no data yet.
+  const scoreDistribution = libraryMetrics?.score_distribution ?? [];
+  const scoreDistMax = scoreDistribution.reduce((m, b) => Math.max(m, b.count), 0);
 
   // AA-718/AA-739: every filter (search, country, score, version, master_status), sort and paging
   // runs on the server. The old "Status" select only ever matched "published" on this catalog and
@@ -874,7 +885,6 @@ export default function MasterContentPage() {
 
   // The page IS the server page now — no client slice.
   const paginated = filtered;
-  const paginatedRuns = runs.slice((runsPage - 1) * RUNS_PAGE_SIZE, runsPage * RUNS_PAGE_SIZE);
 
   // AA-739: the full country list comes from the server facets; the page's own countries are only a
   // fallback for an older API.
@@ -1106,7 +1116,35 @@ export default function MasterContentPage() {
             <StatCard icon={<DollarSign size={16} />}   label="LLM Cost (30d)"
               value={`$${(summary?.llm_cost_window_usd ?? summary?.total_llm_cost_usd ?? 0).toFixed(2)}`}
               sub={`↳ ${summary?.llm_cost_window_label ?? "last 30 days"} · all-time $${(summary?.total_llm_cost_usd ?? 0).toFixed(2)}`} />
-            <StatCard icon={<CalendarClock size={16} />} label="Pipeline Runs" value={String(runs.length)}        sub="↳ most recent 20" />
+            {/* AA-722: Score distribution of the master pool (was the stale "Pipeline Runs" card,
+                fed by shared.pipeline_runs). Compact bar list — same data the retired Dashboard's
+                Content Library tab showed (GET /admin/metrics/library · score_distribution). */}
+            <Card>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <div style={{ padding: 8, borderRadius: 8, background: alpha(A.gold, 8), color: A.gold }}>
+                  <BarChart2 size={16} />
+                </div>
+                <span style={{ fontSize: 12, color: A.muted }}>Score distribution</span>
+              </div>
+              {scoreDistribution.length === 0 ? (
+                <div style={{ fontSize: 12, color: A.muted2 }}>No distribution data yet</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {scoreDistribution.map(b => (
+                    <div key={b.range} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+                      <span style={{ width: 34, color: A.muted2, fontFamily: mono, flexShrink: 0 }}>{b.range}</span>
+                      <div style={{ flex: 1, minWidth: 0, height: 8, borderRadius: 4, background: A.line2 }}>
+                        <div style={{
+                          width: `${scoreDistMax > 0 ? Math.round((b.count / scoreDistMax) * 100) : 0}%`,
+                          height: "100%", borderRadius: 4, background: A.gold,
+                        }} />
+                      </div>
+                      <span style={{ width: 32, textAlign: "right", color: A.ink, fontWeight: 600, fontVariantNumeric: "tabular-nums" as const, flexShrink: 0 }}>{b.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
         </div>
 
@@ -1523,53 +1561,9 @@ export default function MasterContentPage() {
           </div>
         </div>
 
-        {/* ── Section 3: Pipeline Runs (fixed height) ──────────────────────── */}
-        <div style={{ height: 280, display: "flex", flexDirection: "column", flexShrink: 0 }}>
-          {/* Sticky section header */}
-          <div style={{ padding: "8px 32px 6px", borderBottom: `1px solid ${A.line}`, flexShrink: 0, background: A.card }}>
-            <SLabel style={{ margin: 0 }}>Recent Pipeline Runs</SLabel>
-          </div>
-          {runs.length === 0 ? (
-            <div style={{ padding: "16px 32px", fontSize: 12, color: A.muted }}>No pipeline runs found.</div>
-          ) : (
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead style={{ position: "sticky", top: 0, background: A.bg, zIndex: 2 }}>
-                  <tr>
-                    <th style={TH}>Run ID</th>
-                    <th style={TH}>Date</th>
-                    <th style={TH}>Processed</th>
-                    <th style={TH}>Passed</th>
-                    <th style={TH}>Model</th>
-                    <th style={TH}>Cost</th>
-                    <th style={TH}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedRuns.map((r, i) => (
-                    <tr key={r.run_id} style={{ background: i % 2 === 0 ? A.card : A.bg }}>
-                      <td style={{ ...TD, fontFamily: mono, fontSize: 11, color: A.muted2 }}>{r.run_id.slice(0, 8)}…</td>
-                      <td style={{ ...TD, fontSize: 11, color: A.muted2 }}>{relDate(r.started_at)}</td>
-                      <td style={TD}>{r.tours_processed}</td>
-                      <td style={{ ...TD, color: A.green, fontWeight: 600 }}>{r.tours_passed}</td>
-                      <td style={{ ...TD, fontFamily: mono, fontSize: 11 }}>{modelLabel(r.llm_model)}</td>
-                      <td style={{ ...TD, color: A.gold, fontWeight: 600 }}>${(r.llm_cost_usd ?? 0).toFixed(4)}</td>
-                      <td style={TD}>
-                        {/* AA-718 bug 3: honest derived status (completed/ingested/running/failed). */}
-                        <KitStatusBadge status={r.display_status ?? r.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {runs.length > RUNS_PAGE_SIZE && (
-                <div style={{ padding: "8px 20px", borderTop: `1px solid ${A.line}`, display: "flex", justifyContent: "flex-end" }}>
-                  <Pagination page={runsPage} total={runs.length} pageSize={RUNS_PAGE_SIZE} onPage={setRunsPage} />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        {/* AA-722: the "Recent Pipeline Runs" section (fed by the stale shared.pipeline_runs, which
+            only S0 upload writes) was removed. The master-pool score distribution now shows in the
+            stat-card row above (Score distribution). */}
       </div>
 
       {/* Detail panel v2 */}

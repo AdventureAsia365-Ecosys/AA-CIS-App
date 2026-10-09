@@ -84,7 +84,10 @@ const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
   { prefix: "/admin/platform-stats", roles: ["admin"] },
   // Internal staff pages (was INTERNAL_PATHS) — admin/reviewer get real JWT
   // verification; content is the known-limitation carve-out described above.
-  { prefix: "/admin/dashboard", roles: ["admin", "reviewer", "content"] },
+  // AA-722 — /admin/dashboard was retired. Its request is handled by the
+  // role-aware redirect at the top of middleware() below (admin → Overview,
+  // reviewer/content → Review Queue), so it is intentionally no longer an
+  // allow-list entry here.
   { prefix: "/admin/upload", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/pipeline", roles: ["admin", "reviewer", "content"] },
   { prefix: "/admin/master-content", roles: ["admin", "reviewer", "content"] },
@@ -105,6 +108,22 @@ export async function middleware(request: NextRequest) {
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next();
+  }
+
+  // AA-722 — the legacy /admin/dashboard page is retired. Route old bookmarks
+  // and the login redirect to the role's landing page: admin → Overview
+  // (admin-only), reviewer/content → Review Queue. This must run BEFORE the
+  // allow-list lookup below: /admin/dashboard is no longer in PROTECTED_ROUTES,
+  // so it would otherwise hit the deny-by-default branch and bounce to /login.
+  // A static next.config redirect to Overview would 403/redirect reviewer and
+  // content back to /login (Overview is admin-only), hence the cookie-aware
+  // branch here. No token verification needed — the redirect only picks a
+  // destination; the destination's own PROTECTED_ROUTES entry still enforces
+  // auth on the follow-up request.
+  if (pathname === "/admin/dashboard" || pathname.startsWith("/admin/dashboard/")) {
+    const dashRole = request.cookies.get("cis_role")?.value;
+    const target = dashRole === "admin" ? "/admin/overview" : "/admin/review";
+    return NextResponse.redirect(new URL(target, request.url));
   }
 
   const route = PROTECTED_ROUTES.find(r => pathname.startsWith(r.prefix));

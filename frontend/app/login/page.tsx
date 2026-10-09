@@ -63,6 +63,10 @@ export default function LoginPage() {
       // what renders, and a fresh page load always leaves the old stuck
       // state behind either way.
       // AA-663 — every staff role lands on the one Dashboard (the legacy /upload page is gone).
+      // AA-722 — /admin/dashboard is retired as a page but kept as the login landing target: the
+      // middleware now redirects it role-aware (admin → /admin/overview, reviewer/content →
+      // /admin/review). Keeping the single target here means the login page needs no role branch —
+      // whatever role the session has, middleware picks the right landing page on the next request.
       window.location.href = "/admin/dashboard";
     } catch {
       setError("Network error — check connection");
