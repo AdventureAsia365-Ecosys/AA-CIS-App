@@ -155,13 +155,6 @@ interface Atom {
   lifecycle_stage: "active" | "phasing_out" | "retired";
 }
 
-const DIST_COLOR: Record<string, "green" | "amber" | "gray"> = { HIGH: "green", MED: "amber", LOW: "gray" };
-// AA-749 (option b) — a platform atom's distinctiveness comes back null; show a neutral
-// "Not scored" badge rather than a (misleading) MED value.
-function distBadge(distinctiveness: "HIGH" | "MED" | "LOW" | null): { label: string; color: "green" | "amber" | "gray" } {
-  if (distinctiveness == null) return { label: "Not scored", color: "gray" };
-  return { label: distinctiveness, color: DIST_COLOR[distinctiveness] ?? "gray" };
-}
 const PAGE_SIZE = 50;
 const TOURS_PAGE_SIZE = 30; // AA-554 B.6 — Tours sidebar "Load more" window size
 
@@ -178,7 +171,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 }) {
   const [atoms, setAtoms] = useState<Atom[]>([]);
   const [total, setTotal] = useState(0);
-  const [distinctiveness, setDistinctiveness] = useState("");
   const [unreviewedOnly, setUnreviewedOnly] = useState(false);
   const [lifecycleFilter, setLifecycleFilter] = useState("");
   const [atomsLoading, setAtomsLoading] = useState(true);
@@ -245,7 +237,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     if (append) setLoadingMore(true); else setAtomsLoading(true);
     setAtomsError(null);
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
-    if (distinctiveness) params.set("distinctiveness", distinctiveness);
     if (unreviewedOnly) params.set("unreviewed_only", "true");
     if (selectedTour) params.set("tour_id", selectedTour);
     if (lifecycleFilter) params.set("lifecycle_stage", lifecycleFilter);
@@ -256,7 +247,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
       })
       .catch(e => setAtomsError(String(e.message || e)))
       .finally(() => { setAtomsLoading(false); setLoadingMore(false); });
-  }, [distinctiveness, unreviewedOnly, selectedTour, lifecycleFilter]);
+  }, [unreviewedOnly, selectedTour, lifecycleFilter]);
 
   useEffect(() => { loadAtoms(0, false); }, [loadAtoms]);
 
@@ -270,14 +261,11 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
     onSummaryChange();
   }
 
-  const breakdown = summary?.distinctiveness_breakdown ?? { HIGH: 0, MED: 0, LOW: 0, NOT_SCORED: 0 };
   // AA-564 1.3 — this block used to always read the whole-dataset `summary.total_count`/
   // `reviewed_count`, even when a single Tour was selected (the header stat bar above it does
   // filter correctly, which is why the two used to visibly disagree). `summary.by_tour` already
   // carries per-tour `atom_count`/`unreviewed_count` (GET /admin/atoms/summary, unchanged) — just
-  // read that when a Tour is selected instead of the platform-wide totals. High/Medium/Low stays
-  // platform-wide on purpose (decision 3, AA-563/564: backend's distinctiveness breakdown has no
-  // per-tour grouping, out of scope here) — labeled below so it doesn't read as another bug.
+  // read that when a Tour is selected instead of the platform-wide totals.
   const selectedTourMeta = selectedTour ? (summary?.by_tour ?? []).find(t => t.tour_id === selectedTour) ?? null : null;
   const totalAtoms = selectedTourMeta ? selectedTourMeta.atom_count : (summary?.total_count ?? 0);
   const reviewedAtoms = selectedTourMeta
@@ -290,15 +278,12 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
         <>
           {/* AA-601 — "content rendered" signal for the UI smoke: present only once the curation
               summary has loaded (never on the LoadingScreen), so a blank/broken page still fails. */}
-          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
+          <div data-testid="admin-content-ready" className="aa-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 6 }}>
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
-              ["High distinctiveness", breakdown.HIGH, A.green],
-              ["Medium", breakdown.MED, A.amber],
-              ["Low", breakdown.LOW, A.muted2],
-              // AA-749 (option b) — platform atoms are never scored; shown here, not folded into MED.
-              ["Not scored", breakdown.NOT_SCORED, A.muted2],
+              // AA-749 — no distinctiveness here: platform atoms are never scored (only the tenant
+              // T5 path has a competitor set) and the source repo dropped the concept.
             ].map(([label, value, accent]) => (
               <Card key={label as string} style={{ padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 6 }}>{label}</div>
@@ -308,8 +293,8 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
           </div>
           <div style={{ fontSize: 10.5, color: A.muted2, marginBottom: 14 }}>
             {selectedTourMeta
-              ? "Total atoms/Reviewed are for the selected Tour. Distinctiveness buckets stay platform-wide (all tours)."
-              : "All 6 figures are platform-wide (all tours)."}
+              ? "Total atoms/Reviewed are for the selected Tour."
+              : "Both figures are platform-wide (all tours)."}
           </div>
 
           {/* AA-564 3.2 — manual atomize backfill banner. Only 1 automatic trigger exists (a
@@ -403,15 +388,6 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
 
             <div>
               <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
-                <select value={distinctiveness} onChange={e => setDistinctiveness(e.target.value)}
-                  style={selectStyle}>
-                  <option value="">All distinctiveness</option>
-                  <option value="HIGH">High</option>
-                  <option value="MED">Medium</option>
-                  <option value="LOW">Low</option>
-                  {/* AA-749 (option b) — platform atoms, never scored. */}
-                  <option value="NOT_SCORED">Not scored</option>
-                </select>
                 <select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)} style={selectStyle}>
                   <option value="">All lifecycle stages</option>
                   <option value="active">Active</option>
@@ -513,7 +489,6 @@ function AtomCard({ atom, showTour, onDelete }: {
           {showTour && <div style={{ fontSize: 11, color: A.muted2, marginBottom: 4, fontFamily: mono }}>{atom.tour_name}</div>}
           <div style={{ fontSize: 13.5, color: A.body, lineHeight: 1.5 }}>{atom.text}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Badge color={distBadge(atom.distinctiveness).color}>{distBadge(atom.distinctiveness).label}</Badge>
             {atom.activity_type && <Badge color="gray">{atom.activity_type}</Badge>}
             {atom.unreviewed && <Badge color="blue">New</Badge>}
             <OwnerBadge scope={atom.owner_scope} />
