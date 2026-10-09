@@ -306,6 +306,12 @@ function ReviewQueueInner() {
                 </span>
               )}
               <ReasonChips codes={c.row.original.codes} />
+              {/* AA-728 — when Regenerate cannot fix this row, tell the reviewer what to do. */}
+              {!c.row.original.retryable && c.row.original.hint && (
+                <span style={{ fontSize: 10.5, color: A.muted, lineHeight: 1.4, maxWidth: 360 }}>
+                  {c.row.original.hint}
+                </span>
+              )}
             </div>
           );
         },
@@ -321,11 +327,19 @@ function ReviewQueueInner() {
           const busy = item.regenerating;
           return (
             <div style={{ display: "flex", gap: 6, alignItems: "center", whiteSpace: "nowrap", flexWrap: "nowrap" }} onClick={(e) => e.stopPropagation()}>
-              {/* AA-601 — icon-only (like Dismiss) so all 4 actions fit a 1440px screen. */}
-              <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
-                title="Regenerate — rewrite this tour again" ariaLabel="Regenerate">
-                <RotateCcw size={13} />
-              </Btn>
+              {/* AA-601 — icon-only (like Dismiss) so all 4 actions fit a 1440px screen.
+                  AA-728 — Regenerate is a same-harness retry, so it is shown only when the server
+                  marked the row retryable. For a non-retryable row the slot stays empty (an
+                  invisible placeholder of the same width) so the other 3 actions keep their place
+                  and the row still fits 1440px. */}
+              {item.retryable ? (
+                <Btn variant="primary" size="sm" disabled={busy} onClick={() => setRegenItems([item])}
+                  title="Regenerate — rewrite this tour again" ariaLabel="Regenerate">
+                  <RotateCcw size={13} />
+                </Btn>
+              ) : (
+                <span aria-hidden style={{ width: 29, display: "inline-block" }} />
+              )}
               <button
                 onClick={() => dismissM.mutate(item.id)}
                 disabled={busy}
@@ -526,18 +540,38 @@ function ReviewQueueInner() {
           </div>
         }
         onRowClick={(row) => setEditorItem(row)}
-        bulkActions={({ selectedRows, clearSelection }) => (
-          <Btn
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setRegenItems(selectedRows);
-              clearSelection();
-            }}
-          >
-            <RotateCcw size={12} /> Regenerate selected
-          </Btn>
-        )}
+        bulkActions={({ selectedRows, clearSelection }) => {
+          // AA-728 — Regenerate only the retryable rows; non-retryable rows (raw too thin, needs a
+          // person, or Sonnet already failed) are skipped. If none are retryable the action is
+          // disabled with a tooltip.
+          const retryable = selectedRows.filter((r) => r.retryable);
+          const skipped = selectedRows.length - retryable.length;
+          const noneRetryable = retryable.length === 0;
+          return (
+            <Btn
+              variant="primary"
+              size="sm"
+              disabled={noneRetryable}
+              title={
+                noneRetryable
+                  ? "None of the selected rows can be regenerated (raw too thin, needs a person, or a stronger model already failed)"
+                  : skipped > 0
+                    ? `Regenerate ${retryable.length} · skip ${skipped} not retryable`
+                    : "Regenerate the selected rows"
+              }
+              onClick={() => {
+                setRegenItems(retryable);
+                if (skipped > 0) {
+                  toast.info(`Regenerating ${retryable.length} · skipped ${skipped} (not retryable)`);
+                }
+                clearSelection();
+              }}
+            >
+              <RotateCcw size={12} /> Regenerate selected
+              {skipped > 0 ? ` (${retryable.length})` : ""}
+            </Btn>
+          );
+        }}
       />
 
       {/* Clicking a row (except the actions cell) opens the field editor in a drawer. */}

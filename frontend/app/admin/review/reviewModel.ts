@@ -145,11 +145,25 @@ export type ReviewItem = {
   codes: string[];
   // AA-739: why the row is not on Master (server-computed). The headline, ahead of the score.
   block: ReviewBlock | null;
+  // AA-728: can Regenerate (a same-harness retry) fix this row, and what to do if not.
+  failure_class: FailureClass | null;
+  retryable: boolean;
+  hint: string;
   // Client-only: set while a non-blocking regenerate job is in flight for this row (AA-719).
   regenerating?: boolean;
 };
 
 export type ReviewBlock = { kind: "needs_human" | "hard" | "low_quality" | "other"; label: string };
+
+// AA-728 — the per-row actionability class the server computes alongside `block`.
+export type FailureClass =
+  | "raw_insufficient"
+  | "needs_human"
+  | "writer_tone"
+  | "transient"
+  | "hard"
+  | "low_quality"
+  | "other";
 
 export const BLOCK_STYLE: Record<ReviewBlock["kind"], { bg: string; color: string; border: string }> = {
   needs_human: SEV_STYLE.red,
@@ -182,5 +196,10 @@ export function mapRow(r: any): ReviewItem {
     brand_audit_status: r.brand_audit_status || null,
     codes,
     block: r.block && r.block.kind ? (r.block as ReviewBlock) : null,
+    // AA-728: default to retryable when the server omits the field (older payloads), so a missing
+    // classifier never hides the Regenerate button on a row that used to show it.
+    failure_class: (r.failure_class as FailureClass) || null,
+    retryable: r.retryable !== false,
+    hint: typeof r.hint === "string" ? r.hint : "",
   };
 }
