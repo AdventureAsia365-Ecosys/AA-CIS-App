@@ -179,3 +179,30 @@ async def test_process_seo_reuses_prefetched_row_never_buys():
 
     assert result["status"] == "reused"
     assert result["data"] == fresh_row
+
+
+@pytest.mark.asyncio
+async def test_prefetch_skips_a_tour_bought_by_a_rewrite_meanwhile():
+    """A rewrite that hit its wait cap buys tour #6 while the prefetch is on batch 1 — batch 2
+    re-checks freshness and does not buy or write tour #6 again (no double buy)."""
+    uuids = [f"00000000-0000-0000-0000-00000000000{c}" for c in "1234567"]
+    rows = [_row(u, f"Trek {i}", "Nepal") for i, u in enumerate(uuids)]
+
+    class _Racing(_Conn):
+        async def fetch(self, sql, *args):
+            if "seo_context" in sql and len(self.inserted) >= 5:
+                self.fresh.add(uuids[5])  # bought by the rewrite after batch 1 was committed
+            return await super().fetch(sql, *args)
+
+    conn = _Racing()
+    client = DataForSEOClient(login="x", password="y")
+    client.fetch_keyword_ideas_multi = AsyncMock(return_value=[])
+    client._serp_advanced = AsyncMock(return_value={})
+
+    summary = await P.prefetch(conn, rows, tenant_id="t", location_code=2840, language_code="en",
+                               jev=False, client=client)
+
+    written = [a[0] for a in conn.inserted]
+    assert uuids[5] not in written
+    assert written == uuids[:5] + [uuids[6]]
+    assert summary["reused"] == 1

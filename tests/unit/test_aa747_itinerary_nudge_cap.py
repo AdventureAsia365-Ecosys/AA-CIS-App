@@ -185,3 +185,14 @@ def test_prompt_adds_targets_when_flag_on():
     mid = (ITINERARY_CLAMP_MIN + ITINERARY_CLAMP_MAX) / 2.0
     expected = max(1, round(next(iter(src.values())) * mid))
     assert f"target ~{expected} words" in on
+
+
+def test_cap_skip_never_erases_a_real_generate_nudge():
+    from services.content_generation.flag_fix_node import _mark_day_ratio_skipped
+    state = {"itinerary_day_ratios": [{"day": 1, "ratio": 0.3, "nudged": True},
+                                      {"day": 2, "ratio": 0.3, "nudged": False}]}
+    _mark_day_ratio_skipped(state, 1)
+    _mark_day_ratio_skipped(state, 2)
+    day1, day2 = state["itinerary_day_ratios"]
+    assert day1["nudged"] is True and "skipped_reason" not in day1
+    assert day2["nudged"] is False and day2["skipped_reason"] == "nudge_cap"

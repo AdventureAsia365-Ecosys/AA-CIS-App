@@ -398,6 +398,16 @@ export default function S1RewritePage() {
       });
       if (!res.ok) throw new Error(await res.text());
       const { job_id } = await res.json();
+      // AA-747: return once the job exists (so a rewrite sees it and waits for its tour's SEO row
+      // instead of buying); progress is followed in the background.
+      void watchPrefetch(job_id);
+    } catch (e) {
+      setSeoPrefetch({ state: "failed", text: `SEO prefetch could not start — rewrites will fetch per tour (${String(e).slice(0, 80)})` });
+    }
+  }
+
+  async function watchPrefetch(job_id: string): Promise<void> {
+    try {
       const deadline = Date.now() + 15 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 4000));
@@ -412,9 +422,9 @@ export default function S1RewritePage() {
           return;
         }
       }
-      setSeoPrefetch({ state: "failed", text: "SEO prefetch still running — rewrites start anyway" });
+      setSeoPrefetch({ state: "failed", text: "SEO prefetch still running — rewrites continue meanwhile" });
     } catch (e) {
-      setSeoPrefetch({ state: "failed", text: `SEO prefetch could not start — rewrites will fetch per tour (${String(e).slice(0, 80)})` });
+      setSeoPrefetch({ state: "failed", text: `SEO prefetch status unavailable (${String(e).slice(0, 80)})` });
     }
   }
 
@@ -441,7 +451,8 @@ export default function S1RewritePage() {
     // prefetch job commits each batch of 5 tours' seo_context as it goes (s1_prefetch.py), and the
     // s1_rewrite job waits for its own tour's row (cap 5 min) before fetching per tour, so early
     // tours are ready within ~1 min instead of blocking the whole wave on the full ~8 min prefetch.
-    if (seoMode !== "minimal") void prefetchSeo(selectedTours.map(t => t.tour_id));
+    // AA-747: await only the job creation (not its completion) — rewrites start right away.
+    if (seoMode !== "minimal") await prefetchSeo(selectedTours.map(t => t.tour_id));
 
     const workerCount = Math.min(3, queueRef.current.length);
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));

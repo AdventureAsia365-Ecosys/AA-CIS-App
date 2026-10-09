@@ -287,6 +287,8 @@ def _mark_day_ratio_skipped(state: dict, day_num) -> None:
     correct (they read these records, not the LLM-call log)."""
     for r in state.get("itinerary_day_ratios") or []:
         if r.get("day") == day_num:
+            if r.get("nudged"):
+                return  # generate_node already nudged this day — keep that record intact
             r["nudged"] = False
             r["skipped_reason"] = NUDGE_SKIP_REASON
             return

@@ -334,6 +334,13 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
     buy_ids = {s["tour_id"] for s in buy}
     for i in range(0, len(todo), PREFETCH_COMMIT_BATCH):
         chunk = todo[i:i + PREFETCH_COMMIT_BATCH]
+        # A rewrite that hit its wait cap may have bought this tour's SEO itself meanwhile —
+        # re-check freshness per chunk so the same tour is never bought twice in one wave.
+        now_fresh = await fresh_tour_ids(conn, [s["tour_id"] for s in chunk])
+        if now_fresh:
+            summary["reused"] += len(now_fresh)
+            done += len(now_fresh)
+            chunk = [s for s in chunk if s["tour_id"] not in now_fresh]
         chunk_buy = [s for s in chunk if s["tour_id"] in buy_ids]
         bought: dict[str, list[dict]] = {}
         for dfs_batch in plan_batches(chunk_buy):
