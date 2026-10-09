@@ -27,10 +27,11 @@ export function Topbar({ onOpenSearch, onOpenMenu }: { onOpenSearch: () => void;
 
   return (
     <header
+      className="aa-topbar"
       style={{
         height: 60, flexShrink: 0, background: K.card, borderBottom: `1px solid ${K.line}`,
         display: "flex", alignItems: "center", gap: 16, padding: "0 24px",
-        position: "sticky", top: 0, zIndex: 20, fontFamily: sans,
+        position: "sticky", top: 0, zIndex: 20, fontFamily: sans, minWidth: 0,
       }}
     >
       {/* Mobile hamburger — opens the drawer (< 768px only). */}
@@ -47,11 +48,11 @@ export function Topbar({ onOpenSearch, onOpenMenu }: { onOpenSearch: () => void;
         <MenuIcon size={20} />
       </button>
 
-      {/* Breadcrumb */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2 }}>Admin</span>
-        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2 }}>/</span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{title}</span>
+      {/* Breadcrumb (truncates when space is tight). */}
+      <div className="aa-topbar-crumb" style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
+        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2, flexShrink: 0 }}>Admin</span>
+        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2, flexShrink: 0 }}>/</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
       </div>
 
       {/* Search trigger (full pill on desktop) */}
@@ -270,7 +271,7 @@ function AccountMenu() {
           width: 28, height: 28, borderRadius: "50%", background: K.accent,
           display: "grid", placeItems: "center", color: "var(--aa-on-accent)", fontWeight: 700, fontSize: 12,
         }}>{userName.charAt(0).toUpperCase()}</span>
-        <span style={{ fontSize: 13, fontWeight: 500, color: K.ink, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span className="aa-topbar-account-name" style={{ fontSize: 13, fontWeight: 500, color: K.ink, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {userName}
         </span>
         <ChevronDown size={14} style={{ color: K.muted2 }} />

@@ -208,20 +208,56 @@ export async function assertMobileLayout(page: Page, label: string): Promise<voi
 
   const metrics = await page.evaluate(() => {
     const doc = document.documentElement;
+    const innerWidth = window.innerWidth;
     // The admin main container is tagged `.aa-admin-main` (sibling of the sidebar).
     const main = document.querySelector('.aa-admin-main') as HTMLElement | null;
     const mainLeft = main ? main.getBoundingClientRect().left : 0;
+
+    // AA-752 (feedback 1): when the page overflows, list the elements whose right edge is past the
+    // viewport and that are NOT inside an overflow-x:auto/hidden ancestor (those scroll internally,
+    // so they are allowed). The failure message then explains itself.
+    const scrollable = (el: HTMLElement): boolean => {
+      let node: HTMLElement | null = el.parentElement;
+      while (node && node !== document.documentElement) {
+        const ox = getComputedStyle(node).overflowX;
+        if (ox === 'auto' || ox === 'hidden' || ox === 'scroll') return true;
+        node = node.parentElement;
+      }
+      return false;
+    };
+    const offenders: { tag: string; cls: string; testid: string; width: number; right: number }[] = [];
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>('*'))) {
+      const r = el.getBoundingClientRect();
+      if (r.right <= innerWidth + 1) continue;
+      if (r.width === 0 || r.height === 0) continue;
+      if (scrollable(el)) continue;
+      offenders.push({
+        tag: el.tagName.toLowerCase(),
+        cls: (typeof el.className === 'string' ? el.className : '').slice(0, 48),
+        testid: el.getAttribute('data-testid') ?? '',
+        width: Math.round(r.width),
+        right: Math.round(r.right),
+      });
+    }
+    // Keep the widest / furthest-right few so the message stays readable.
+    offenders.sort((a, b) => b.right - a.right);
     return {
       scrollWidth: doc.scrollWidth,
-      innerWidth: window.innerWidth,
+      innerWidth,
       mainLeft,
       hasMain: Boolean(main),
+      offenders: offenders.slice(0, 12),
     };
   });
 
+  const offenderText = metrics.offenders
+    .map((o) => `    <${o.tag} class="${o.cls}" data-testid="${o.testid}"> width=${o.width} right=${o.right}`)
+    .join('\n');
+
   expect(
     metrics.scrollWidth,
-    `${label}: page-level horizontal overflow at 390px (scrollWidth ${metrics.scrollWidth} > innerWidth ${metrics.innerWidth}). Wide content must scroll inside its own container, not the page.`,
+    `${label}: page-level horizontal overflow at 390px (scrollWidth ${metrics.scrollWidth} > innerWidth ${metrics.innerWidth}). ` +
+      `Wide content must scroll inside its own container, not the page. Offenders (right > innerWidth, not in an overflow-x ancestor):\n${offenderText || '    (none found — overflow may be from a scrollWidth-only element)'}`,
   ).toBeLessThanOrEqual(metrics.innerWidth + 1);
 
   if (metrics.hasMain) {

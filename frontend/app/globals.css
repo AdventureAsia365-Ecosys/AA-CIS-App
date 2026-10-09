@@ -470,9 +470,12 @@ body {
   }
 
   /* Topbar element swap: hide the full search pill + the "Admin /" crumb root, show the mobile
-     hamburger + search icon + the flex spacer that keeps the right cluster right-aligned. */
+     hamburger + search icon + the flex spacer that keeps the right cluster right-aligned. Tighten
+     the gap + padding and hide the account name so the fixed items fit within 390px (AA-752 fb1). */
+  .aa-topbar { gap: 6px !important; padding: 0 10px !important; }
   .aa-topbar-search,
-  .aa-topbar-crumb-root { display: none !important; }
+  .aa-topbar-crumb-root,
+  .aa-topbar-account-name { display: none !important; }
   .aa-topbar-menu,
   .aa-topbar-search-icon { display: inline-flex !important; }
   .aa-topbar-spacer { display: block !important; }

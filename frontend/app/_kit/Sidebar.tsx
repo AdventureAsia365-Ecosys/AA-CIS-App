@@ -69,6 +69,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   return (
     <aside
       className={`aa-admin-sidebar aa-shell-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
+      data-testid="admin-sidebar"
       data-collapsed={collapsed ? "true" : "false"}
       style={{
         width: collapsed ? 68 : 236, flexShrink: 0,
@@ -83,6 +84,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       <div style={{ paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <button
           onClick={() => go("/admin/overview")}
+          data-testid="sidebar-logo"
           title="Adventure Asia — Overview"
           aria-label="Adventure Asia CIS Admin — go to Overview"
           style={{
@@ -139,6 +141,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         />
         <button
           onClick={() => setCollapsed(!collapsed)}
+          data-testid="sidebar-collapse"
           title={collapsed ? "Expand sidebar ([)" : "Collapse sidebar ([)"}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           style={{

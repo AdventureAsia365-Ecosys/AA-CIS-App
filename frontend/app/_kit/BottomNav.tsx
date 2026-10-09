@@ -35,7 +35,7 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
   const pending = reviewTotal?.pagination?.total ?? reviewTotal?.total;
 
   return (
-    <nav className="aa-bottom-nav" aria-label="Primary (mobile)">
+    <nav className="aa-bottom-nav" data-testid="admin-bottom-nav" aria-label="Primary (mobile)">
       {ITEMS.map((it) => {
         const Icon = it.icon;
         const active = navActive({ href: it.href }, pathname);
