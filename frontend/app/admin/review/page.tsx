@@ -12,12 +12,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { A, serif, mono, sans, Btn } from "../_components/adminUi";
+import { A, mono, sans, Btn } from "../_components/adminUi";
 import {
   Badge,
   type ColumnDef,
   DataTable,
   Drawer,
+  PageHeader,
   StatusBadge,
   ToastProvider,
   useToast,
@@ -388,34 +389,29 @@ function ReviewQueueInner() {
     <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "32px 36px 56px" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin .8s linear infinite}`}</style>
 
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-        <div>
-          <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
-            Review Queue
+      <PageHeader
+        title="Review Queue"
+        description="Edit, re-validate, then approve. Select rows to regenerate in bulk; regenerate runs in the background without freezing the screen."
+        actions={
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontFamily: sans,
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 22,
+                fontWeight: 600,
+                color: A.gold,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {total}
+            </div>
+            <div style={{ fontSize: 11, color: A.muted }}>
+              {filterStatus === "all" ? "Total" : filterStatus[0].toUpperCase() + filterStatus.slice(1)}
+            </div>
           </div>
-          <div style={{ fontSize: 13, color: A.muted, marginTop: 4 }}>
-            Edit, re-validate, then approve. Select rows to regenerate in bulk; regenerate runs in the
-            background without freezing the screen.
-          </div>
-        </div>
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              fontFamily: sans,
-              fontVariantNumeric: "tabular-nums",
-              fontSize: 22,
-              fontWeight: 600,
-              color: A.gold,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {total}
-          </div>
-          <div style={{ fontSize: 11, color: A.muted }}>
-            {filterStatus === "all" ? "Total" : filterStatus[0].toUpperCase() + filterStatus.slice(1)}
-          </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* status/country/score filters — rendered as DataTable toolbarExtra */}
       {tourFilter && (

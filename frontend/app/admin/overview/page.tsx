@@ -18,6 +18,7 @@ import {
   apiGet,
   Badge,
   ErrorState,
+  formatDateTime,
   K,
   LoadingScreen,
   mono,
@@ -539,7 +540,7 @@ export default function OverviewPage() {
                             {a.entity_id ? ` · ${a.entity_id}` : ""}
                           </span>
                           <span style={{ marginLeft: "auto", fontSize: 11, color: K.muted2 }}>
-                            {new Date(a.created_at).toLocaleString()}
+                            {formatDateTime(a.created_at)}
                           </span>
                         </div>
                       );

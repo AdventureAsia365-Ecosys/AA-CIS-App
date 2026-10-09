@@ -10,6 +10,7 @@ import {
   A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
 } from "../_components/adminUi";
+import { PageHeader, formatDateTime } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -263,7 +264,7 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
         )}
         {seo.updated_at && (
           <span style={{ fontSize: 11, color: A.muted2, marginLeft: "auto" }}>
-            Last saved: {new Date(seo.updated_at).toLocaleString()}
+            Last saved: {formatDateTime(seo.updated_at)}
           </span>
         )}
       </div>
@@ -461,7 +462,7 @@ function ModelRow({ row, onSaved }: { row: StageConfigRow; onSaved: (r: StageCon
         {savedFlash && <span style={{ fontSize: 11.5, color: A.green, fontWeight: 600 }}>Saved ✓</span>}
         {error && <span style={{ fontSize: 11.5, color: A.red }}>{error}</span>}
         <span style={{ fontSize: 10.5, color: A.muted2 }}>
-          {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"} · {row.updated_by}
+          {row.updated_at ? formatDateTime(row.updated_at) : "—"} · {row.updated_by}
         </span>
         <Btn variant="secondary" size="sm" disabled={!dirty || saving} onClick={() => setConfirming(true)}>
           {saving ? <Spinner size={12} /> : <Save size={12} />}
@@ -737,23 +738,10 @@ function SettingsPageInner() {
   return (
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 9,
-            background: alpha(A.accent, 8), color: A.accent,
-            display: "grid", placeItems: "center",
-          }}>
-            <Settings size={18} />
-          </div>
-          <div>
-            <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>
-              Settings
-            </h1>
-            <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>
-              Pipeline gates, brand identity, SEO config, models per stage, and tenant info for aa_internal
-            </div>
-          </div>
-        </div>
+        <PageHeader
+          title="Settings"
+          description="Pipeline gates, brand identity, SEO config, models per stage, and tenant info for aa_internal"
+        />
 
         {loading && <LoadingScreen msg="Loading settings…" />}
 

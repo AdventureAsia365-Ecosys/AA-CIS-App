@@ -45,6 +45,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadCsv, toCsv } from "./csv";
 import { K, RADIUS, sans } from "./tokens";
 import { EmptyState, TableSkeleton } from "./primitives";
+import { useIsPhone } from "./useMediaQuery";
 import {
   deleteView,
   listViews,
@@ -174,6 +175,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const [showViews, setShowViews] = useState(false);
   const [views, setViews] = useState<SavedView<PersistedState>[]>([]);
   const [pageSizeState, setPageSizeState] = useState(pageSize);
+
+  // AA-752 — phone card mode (< 768px): render each row as a card (first column = title, the rest
+  // as label/value rows) instead of a horizontally-scrolling table.
+  const isPhone = useIsPhone();
 
   // Load saved views once on mount (client only).
   useEffect(() => {
@@ -487,6 +492,81 @@ export function DataTable<T>(props: DataTableProps<T>) {
         </div>
       ) : totalFiltered === 0 ? (
         <EmptyState title={emptyTitle} description={emptyDescription} />
+      ) : isPhone ? (
+        // AA-752 — phone card mode (< 768px). First visible non-select column is the card title;
+        // the remaining visible columns render as label/value rows. The selection checkbox (if on)
+        // sits top-right of each card, so bulk selection + row actions still work.
+        <div data-testid="kit-datatable-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Title cells are written for a narrow desktop column (one line + ellipsis); on a card the
+              title is the main content, so let it wrap. */}
+          <style>{`.aa-dt-card-title, .aa-dt-card-title * { white-space: normal !important; max-width: none !important; overflow-wrap: anywhere; }`}</style>
+          {pageRows.map((row) => {
+            const cells = row.getVisibleCells();
+            const titleCell = cells.find((c) => c.column.id !== "__select");
+            const selectCell = cells.find((c) => c.column.id === "__select");
+            const restCells = cells.filter(
+              (c) => c.column.id !== "__select" && c.column.id !== titleCell?.column.id,
+            );
+            return (
+              <div
+                key={row.id}
+                data-testid="kit-datatable-row"
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                style={{
+                  border: `1px solid ${row.getIsSelected() ? K.accentBorder : K.line}`,
+                  borderRadius: RADIUS.lg,
+                  background: row.getIsSelected() ? K.accentTint : K.card,
+                  padding: "12px 14px",
+                  cursor: onRowClick ? "pointer" : undefined,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div
+                    className="aa-dt-card-title"
+                    style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: K.ink }}
+                  >
+                    {titleCell && flexRender(titleCell.column.columnDef.cell, titleCell.getContext())}
+                  </div>
+                  {selectCell && (
+                    <div style={{ flexShrink: 0 }}>
+                      {flexRender(selectCell.column.columnDef.cell, selectCell.getContext())}
+                    </div>
+                  )}
+                </div>
+                {restCells.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                    {restCells.map((cell) => {
+                      const header = cell.column.columnDef.header;
+                      const label = typeof header === "string" ? header : cell.column.id;
+                      return (
+                        <div
+                          key={cell.id}
+                          style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.06em",
+                              color: K.muted,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {label}
+                          </span>
+                          <span style={{ fontSize: 13, color: K.body, minWidth: 0, textAlign: "right" }}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div
           style={{

@@ -12,6 +12,7 @@ import {
   Card, SLabel, Badge, Btn, LoadingScreen,
   TH, TD,
 } from "../_components/adminUi";
+import { PageHeader, formatDate } from "../../_kit";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
 import { Pagination } from "../_components/Pagination";
@@ -31,7 +32,7 @@ function relativeTime(isoStr: string | null | undefined): string {
   if (diff < 60) return "Just now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return new Date(isoStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return formatDate(isoStr);
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -672,25 +673,25 @@ export default function S1RewritePage() {
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, padding: "24px 36px 56px", overflowY: "auto" }}>
 
           {/* Header */}
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
-            <div>
-              <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em" }}>
-                S1 Rewrite
-              </div>
-              <div style={{ fontSize: 13, color: A.muted, marginTop: 4 }}>
-                {tours.length} tours total — select to rewrite with AI
-              </div>
-              {seoPrefetch && (
-                <div style={{ fontSize: 12, marginTop: 6,
-                  color: seoPrefetch.state === "failed" ? A.red : seoPrefetch.state === "done" ? A.green : A.gold }}>
-                  {seoPrefetch.text}
-                </div>
-              )}
-            </div>
-            <Btn size="sm" variant="ghost" onClick={handleRefresh} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <RefreshCw size={13} /> Refresh
-            </Btn>
-          </div>
+          <PageHeader
+            title="S1 Rewrite"
+            description={
+              <>
+                <span style={{ display: "block" }}>{tours.length} tours total — select to rewrite with AI</span>
+                {seoPrefetch && (
+                  <span style={{ display: "block", fontSize: 12, marginTop: 6,
+                    color: seoPrefetch.state === "failed" ? A.red : seoPrefetch.state === "done" ? A.green : A.gold }}>
+                    {seoPrefetch.text}
+                  </span>
+                )}
+              </>
+            }
+            actions={
+              <Btn size="sm" variant="ghost" onClick={handleRefresh} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <RefreshCw size={13} /> Refresh
+              </Btn>
+            }
+          />
 
           {/* Filter bar */}
           <Card style={{ marginBottom: 16, padding: "12px 16px" }}>

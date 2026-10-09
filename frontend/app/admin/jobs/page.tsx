@@ -5,8 +5,9 @@
 // near-release flags, and a detail drawer (lifecycle, cost split, LLM calls, what the job wrote).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ListChecks, RefreshCw } from "lucide-react";
-import { A, alpha, serif, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { RefreshCw } from "lucide-react";
+import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { PageHeader, useIsPhone } from "../../_kit";
 import JobDrawer from "./JobDrawer";
 import WorkerHealth from "./WorkerHealth";
 import {
@@ -61,6 +62,7 @@ export default function JobsPage() {
   const [now, setNow] = useState(() => Date.now());
   const samples = useRef<Map<string, Sample>>(new Map());
   const [etas, setEtas] = useState<Record<string, string | null>>({});
+  const isPhone = useIsPhone();
 
   // AA-687 deep links from domain pages: ?job=<id> opens its drawer; ?kind= / ?status= /
   // ?tour_id= pre-filter the list. Read once on mount (no useSearchParams, same as review/page.tsx).
@@ -148,36 +150,31 @@ export default function JobsPage() {
 
   return (
       <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: alpha(A.accent, 8), color: A.accent, display: "grid", placeItems: "center" }}>
-            <ListChecks size={18} />
-          </div>
-          <div>
-            <h1 style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: A.ink, letterSpacing: "-0.02em", margin: 0 }}>Jobs</h1>
-            <div style={{ fontSize: 11.5, color: A.muted2, marginTop: 2 }}>
-              Background work that survives deploys — queued, running, finished. Refreshes every 10 s.
-            </div>
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-            <select value={kind} onChange={e => setKind(e.target.value)} aria-label="Kind"
-                    style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3 }}>
-              <option value="">All kinds</option>
-              {kinds.map(k => <option key={k.kind} value={k.kind}>{k.kind}</option>)}
-            </select>
-            <select value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"
-                    style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3 }}>
-              <option value="">All statuses</option>
-              {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            {tourId && (
-              <button onClick={() => setTourId("")} title="Clear the tour filter"
-                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
-                tour {tourId.slice(0, 8)} ×
-              </button>
-            )}
-            <Btn size="sm" onClick={load}><RefreshCw size={12} style={{ marginRight: 4 }} />Refresh</Btn>
-          </div>
-        </div>
+        <PageHeader
+          title="Jobs"
+          description="Background work that survives deploys — queued, running, finished. Refreshes every 10 s."
+          actions={
+            <>
+              <select value={kind} onChange={e => setKind(e.target.value)} aria-label="Kind"
+                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3 }}>
+                <option value="">All kinds</option>
+                {kinds.map(k => <option key={k.kind} value={k.kind}>{k.kind}</option>)}
+              </select>
+              <select value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"
+                      style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3 }}>
+                <option value="">All statuses</option>
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {tourId && (
+                <button onClick={() => setTourId("")} title="Clear the tour filter"
+                        style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.accent}`, borderRadius: 6, background: A.card, color: A.ink3, cursor: "pointer", fontFamily: mono }}>
+                  tour {tourId.slice(0, 8)} ×
+                </button>
+              )}
+              <Btn size="sm" onClick={load}><RefreshCw size={12} style={{ marginRight: 4 }} />Refresh</Btn>
+            </>
+          }
+        />
 
         {error && (
           <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: A.redSoft, color: A.red, border: `1px solid ${A.redBorder}`, fontSize: 12.5 }}>
@@ -204,6 +201,67 @@ export default function JobsPage() {
           {jobs.length === 0 ? (
             <div style={{ padding: 28, textAlign: "center", color: A.muted, fontSize: 13 }}>
               No jobs match these filters yet.
+            </div>
+          ) : isPhone ? (
+            // AA-752 — phone card list (< 768px): one card per job (kind + status as title, the
+            // rest as label/value rows), keeping the row click (open drawer) and the cancel/retry
+            // actions. Replaces the horizontal-scroll table on narrow screens.
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {jobs.map(j => {
+                const secs = runSeconds(j, now);
+                const exp = expected(j.kind);
+                const slow = j.status === "running" && exp != null && secs != null && secs > exp;
+                const rel = releases(j);
+                const eta = etas[j.id] ?? null;
+                const row = (label: string, children: React.ReactNode) => (
+                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: A.muted, flexShrink: 0 }}>{label}</span>
+                    <span style={{ fontSize: 12.5, color: A.body, minWidth: 0, textAlign: "right" }}>{children}</span>
+                  </div>
+                );
+                return (
+                  <div
+                    key={j.id}
+                    onClick={() => setOpen(j.id)}
+                    style={{
+                      border: `1px solid ${open === j.id ? A.accentBorder : A.line}`,
+                      borderRadius: 12, background: open === j.id ? A.accentTint : A.card,
+                      padding: "12px 14px", cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                      <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: A.ink }}>{j.kind}</span>
+                      <Badge color={STATUS_COLOR[j.status] ?? "gray"}>{j.status}</Badge>
+                      {j.cancel_requested && j.status === "running" && <span style={{ fontSize: 11, color: A.muted }}>cancelling…</span>}
+                      {slow && <span title={`Expected under ${fmtSeconds(exp!)}`}><Badge color="amber">slow</Badge></span>}
+                      {rel > 0 && (j.status === "running" || j.status === "queued") && (
+                        <span title="Handed back to the queue by a deploy/restart">
+                          <Badge color={rel >= maxReleases - 1 ? "red" : "gray"}>released {rel}/{maxReleases}</Badge>
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {row("Created", fmtTime(j.created_at))}
+                      {row("Attempt", <span style={{ fontFamily: mono }}>{j.attempt}/{j.max_attempts}</span>)}
+                      {row("Progress", j.error && j.status !== "succeeded" ? <span style={{ color: A.red }}>{j.error}</span> : progressCell(j, eta))}
+                      {row("Duration", <span style={{ fontFamily: mono, color: slow ? A.amber : undefined }}>{secs == null ? "—" : fmtSeconds(secs)}</span>)}
+                      {row("Cost", <span style={{ fontFamily: mono }}>{usd(j.cost_usd)}</span>)}
+                      {row("By", j.created_by ?? "—")}
+                    </div>
+                    {((j.status === "queued" || (j.status === "running" && !j.cancel_requested)) ||
+                      (j.status === "failed" || j.status === "stopped_budget" || j.status === "cancelled")) && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }} onClick={e => e.stopPropagation()}>
+                        {(j.status === "queued" || (j.status === "running" && !j.cancel_requested)) && (
+                          <Btn size="sm" variant="danger" disabled={busy === j.id} onClick={() => act(j, "cancel")}>Cancel</Btn>
+                        )}
+                        {(j.status === "failed" || j.status === "stopped_budget" || j.status === "cancelled") && (
+                          <Btn size="sm" disabled={busy === j.id} onClick={() => act(j, "retry")}>Retry</Btn>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div style={{ overflowX: "auto" }}>

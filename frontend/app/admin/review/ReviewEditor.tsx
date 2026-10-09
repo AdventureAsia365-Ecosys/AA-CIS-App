@@ -7,6 +7,7 @@
 import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
 import { A, mono, sans, Btn } from "../_components/adminUi";
+import { formatDateTime } from "../../_kit";
 import {
   AREA_FIELDS,
   FIELD_LABEL,
@@ -228,7 +229,7 @@ export function ReviewEditor({
         {item.human_edited && (
           <span style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
             <Edit3 size={11} /> Edited
-            {item.edited_at ? ` · ${new Date(item.edited_at).toLocaleString()}` : ""}
+            {item.edited_at ? ` · ${formatDateTime(item.edited_at)}` : ""}
             {item.reviewed_by ? ` · ${item.reviewed_by}` : ""}
           </span>
         )}

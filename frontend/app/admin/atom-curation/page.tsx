@@ -49,8 +49,9 @@ import {
   Trash2, ChevronDown, ChevronRight, Layers, Milestone,
 } from "lucide-react";
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
-import { A, serif, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
+import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
+import { PageHeader, formatDateTime } from "../../_kit";
 
 const MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"];
 
@@ -972,7 +973,7 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
               sortValue: r => (r.ordered_segment_ids || []).length,
             },
             { key: "score", label: "Score", render: r => fmtScore(r.score), sortValue: r => r.score },
-            { key: "created", label: "Created", render: r => new Date(r.created_at).toLocaleString(), sortValue: r => r.created_at },
+            { key: "created", label: "Created", render: r => formatDateTime(r.created_at), sortValue: r => r.created_at },
           ] as Col<RouteRow>[]} />
           {expandedRouteId && <RouteDayBreakdown routeId={expandedRouteId} />}
           {!hasFocus && <PageFooter total={data.total} offset={offset} pageSize={PAGE_SIZE} onOffset={setOffset} />}
@@ -994,8 +995,8 @@ function RouteHubSection({ tourId, market, focusRouteId, onClearFocus, onNavigat
             { key: "hub", label: "Hub name", render: r => r.hub_name },
             { key: "tours", label: "Tours", render: r => (r.tour_names && r.tour_names.length > 0) ? r.tour_names.join(", ") : "—" },
             { key: "routes", label: "Routes", render: r => r.route_count },
-            { key: "created", label: "Created", render: r => new Date(r.created_at).toLocaleString() },
-            { key: "updated", label: "Updated", render: r => new Date(r.updated_at).toLocaleString() },
+            { key: "created", label: "Created", render: r => formatDateTime(r.created_at) },
+            { key: "updated", label: "Updated", render: r => formatDateTime(r.updated_at) },
           ] as Col<HubRow>[]} />
           <PageFooter total={hubFetch.data.total} offset={hubOffset} pageSize={PAGE_SIZE} onOffset={setHubOffset} />
         </>
@@ -1235,7 +1236,7 @@ function SlateSection() {
           ),
           sortValue: r => slateTopicTitle(r), filterValue: r => `${slateTopicTitle(r)} ${r.tour_name ?? ""}`,
         },
-        { key: "created", label: "Proposed", render: r => new Date(r.created_at).toLocaleString(),
+        { key: "created", label: "Proposed", render: r => formatDateTime(r.created_at),
           sortValue: r => r.created_at },
       ] as Col<SlateRow>[]} />
     </>
@@ -1310,18 +1311,18 @@ function AtomCurationDashboard() {
   return (
       <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-            <div>
-              <h1 style={{ fontFamily: serif, fontSize: 26, fontWeight: 500, color: A.ink, margin: 0 }}>
-                Social Content
-              </h1>
-              <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>
+          <PageHeader
+            title="Social Content"
+            description={
+              <>
                 Platform-wide monitoring — Atomize is the only section AA acts on; 02–05 show what
                 the pipeline has already produced across ALL tours, not just one. Per-tenant
                 write/review/publish activity moved to{" "}
                 <a href="/admin/tenant-activity" style={{ color: A.gold }}>Content Trace</a>.
-              </div>
-            </div>
+              </>
+            }
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, color: A.muted }}>Tour:</span>
               <select
