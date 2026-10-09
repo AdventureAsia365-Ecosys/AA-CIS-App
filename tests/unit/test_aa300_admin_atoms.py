@@ -490,7 +490,10 @@ class TestAtomsSummary:
     async def test_breakdown_and_totals_independent_of_list_filters(self):
         conn = AsyncMock()
         conn.fetch.side_effect = [
-            [{"distinctiveness": "LOW", "c": 230}, {"distinctiveness": "HIGH", "c": 5}],
+            # AA-749 (option b) — the breakdown query now groups by a `bucket` column
+            # (owner_scope='platform' -> 'NOT_SCORED', else the distinctiveness value).
+            [{"bucket": "LOW", "c": 230}, {"bucket": "HIGH", "c": 5},
+             {"bucket": "NOT_SCORED", "c": 500}],
             [
                 {"tour_id": uuid.uuid4(), "tour_name": "Sapa Valley Trek",
                  "atom_count": 4, "unreviewed_count": 4, "atomized_at": None,
@@ -502,14 +505,15 @@ class TestAtomsSummary:
                  "owner_scopes": ["platform"]},
             ],
         ]
-        conn.fetchrow.return_value = {"total": 235, "reviewed": 12}
+        conn.fetchrow.return_value = {"total": 735, "reviewed": 12}
         pool = _make_pool(conn)
         request = _make_request(pool)
 
         result = await admin_atoms.atoms_summary(request, owner_scope=None)
 
-        assert result["distinctiveness_breakdown"] == {"HIGH": 5, "MED": 0, "LOW": 230}
-        assert result["total_count"] == 235
+        assert result["distinctiveness_breakdown"] == {
+            "HIGH": 5, "MED": 0, "LOW": 230, "NOT_SCORED": 500}
+        assert result["total_count"] == 735
         assert result["reviewed_count"] == 12
 
     @pytest.mark.asyncio

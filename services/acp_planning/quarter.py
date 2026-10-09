@@ -193,7 +193,17 @@ def compute_quarter_plan(
             1 for m in q_months for mk in markets if runway.stage(dest, mk, m) in ("BOFU", "MOFU")
         ) / (len(q_months) * len(markets) or 1)
         richness = min(len(atoms) / 10, 1.0)
-        dist = sum(SIGNAL_SCORE_MAP[a.distinctiveness] for a in atoms) / (len(atoms) or 1)
+        # AA-749 (option b) — a platform atom's distinctiveness is a stored default, not a
+        # measurement, so it must not be read as one. Average only the atoms that were actually
+        # scored (owner_scope != 'platform', the T5 score_distinctiveness path); a trip with no
+        # scored atom scores 0 for this term (no signal), instead of the old flat MED a pool of
+        # all-platform atoms produced. Ranking of today's data is unchanged: every platform atom
+        # was MED, so this term was a constant across trips and never moved the order.
+        scored_atoms = [a for a in atoms if a.owner_scope != "platform"]
+        dist = (
+            sum(SIGNAL_SCORE_MAP[a.distinctiveness] for a in scored_atoms) / len(scored_atoms)
+            if scored_atoms else 0.0
+        )
         dfs_score = SIGNAL_SCORE_MAP[dfs_relevance_by_trip.get(t.id, "MED")]
         # AA-448 round 6 — engagement_adjustment: avg atom.weight (aamc-style [0.25, 2.0] range,
         # 1.0 = neutral/no feedback yet) normalized so weight=1.0 -> exactly 0.5, matching the
@@ -272,7 +282,7 @@ def compute_quarter_plan(
 
 
 _ATOM_ROW_QUERY = """
-    SELECT atom_id, tour_id, text, activity_type, distinctiveness,
+    SELECT atom_id, tour_id, text, activity_type, distinctiveness, owner_scope,
            deleted, weight, cooldown_until, usage_log
     FROM acp_contract.tour_atoms
     WHERE owner_scope = $1 AND NOT deleted AND NOT is_empty_marker
@@ -294,6 +304,7 @@ def _row_to_atom(row) -> AtomRecord:
         atom_id=row["atom_id"], trip_id=row["tour_id"], text=row["text"],
         activity_type=row["activity_type"],
         distinctiveness=row["distinctiveness"] or "LOW",
+        owner_scope=row["owner_scope"],
         deleted=row["deleted"], weight=float(row["weight"]),
         cooldown_until=_parse_jsonb(row["cooldown_until"], {}),
         usage_log=_parse_jsonb(row["usage_log"], []),
