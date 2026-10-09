@@ -69,6 +69,20 @@ async def remove_tour_from_caches(conn, tour_id: str) -> dict:
     return out
 
 
+# S219: the A3 / recompute jobs used to run on ONE asyncpg connection (_SingleConnAsPool). Ranking,
+# landing and segment matching ask Jev through decide() up to 8 at a time; each decide() reads its
+# config / cache on `pool.acquire()`, so on a single connection they collided ("another operation is
+# in progress", thousands per recompute in CloudWatch) and failed open: no transit / demand / landing
+# verdict, a different exclusion set on every run, routes flipping versions (up to 14). A small real
+# pool gives each concurrent decide() its own connection.
+JOB_POOL_MAX = 5
+
+
+async def open_job_pool():
+    """A small asyncpg pool owned by one job run (close it when done)."""
+    return await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=JOB_POOL_MAX)
+
+
 async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
                                         segment_ids: list[str] | None = None) -> dict:
     """AA-713 — re-run platform-wide Score + Route only (no per-tour segment matching).
@@ -183,10 +197,9 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
     Returns {"segment_score_route": "ok" | "failed: <error>"} so the job result shows a failed
     Segment/Score/Route step (S218: it failed silently for every tour from 05/10)."""
     outcome = {"segment_score_route": "not_run"}
-    conn = await asyncpg.connect(get_database_url(), ssl="require")
+    pool = await open_job_pool()
     try:
         from services.acp_produce.tenant_pipeline import run_t5_atomize
-        pool = _SingleConnAsPool(conn)
         result = await run_t5_atomize(
             "platform", tour_id, rewritten, pool,
             country=country, version_id=version_id,
@@ -215,9 +228,9 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             from services.jobs.recompute_job import WAVE_DEBOUNCE_S, enqueue_recompute
             segment_result = await run_segment_matching(tour_id, pool)
             logger.info("segment_matching_done", tour_id=tour_id, result=segment_result)
-            segment_ids = await tour_segment_ids(conn, tour_id)
+            segment_ids = await tour_segment_ids(pool, tour_id)
             job_id, created = await enqueue_recompute(
-                conn, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
+                pool, scope="platform", reason=f"a3_atomize:{tour_id}", segment_ids=segment_ids,
                 debounce_s=WAVE_DEBOUNCE_S, created_by="a3_atomize")
             outcome["segment_score_route"] = "ok"
             outcome["segments"] = len(segment_ids)
@@ -238,7 +251,7 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
         if reraise:
             raise
     finally:
-        await conn.close()
+        await pool.close()
     return outcome
 
 # AA-476: terminal raw_tours.pipeline_status values that mean "this tour will never publish,

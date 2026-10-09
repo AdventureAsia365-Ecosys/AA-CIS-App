@@ -144,21 +144,19 @@ async def run(ctx: JobContext) -> dict:
     result: dict = {}
 
     def _in_own_loop() -> None:
-        import asyncpg
-        from shared.secrets import get_database_url
-        from services.export.handler import _SingleConnAsPool
+        from services.export.handler import open_job_pool
 
         async def _body():
-            conn = await asyncpg.connect(get_database_url(), ssl="require")
+            # S219: a real pool, not one shared connection — concurrent decide() calls collided.
+            own_pool = await open_job_pool()
             try:
-                own_pool = _SingleConnAsPool(conn)
                 if scope == "tour":
                     return await recompute_segment_score_route(
                         tour_id, own_pool, log_tour_id=tour_id, progress=_report)
                 return await recompute_rankings_and_routes(own_pool, log_reason=reason,
                                                             segment_ids=segment_ids)
             finally:
-                await conn.close()
+                await own_pool.close()
 
         result.update(asyncio.run(_body()) or {})
 
