@@ -56,8 +56,10 @@ test.describe('AA-752 — admin shell', () => {
       await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(rail).toBeVisible({ timeout: 10000 });
       await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
-      const widthAfterReload = await rail.evaluate((el) => Math.round(el.getBoundingClientRect().width));
-      expect(widthAfterReload).toBeLessThan(expandedWidth - 50);
+      // Poll the width (the 0.18s transition can be mid-flight on a single read).
+      await expect
+        .poll(async () => rail.evaluate((el) => Math.round(el.getBoundingClientRect().width)), { timeout: 5000 })
+        .toBeLessThan(expandedWidth - 50);
     } finally {
       await context.close();
     }
