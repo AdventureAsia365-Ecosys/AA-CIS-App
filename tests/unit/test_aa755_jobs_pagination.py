@@ -69,11 +69,12 @@ async def test_list_jobs_uses_limit_offset_and_order_by():
     await queue.list_jobs(pool, kind="a3_atomize", status="running", limit=25, offset=50,
                           tour_id="t1", sort="cost_usd", sort_dir="asc")
     sql, *args = pool.fetch.call_args[0]
-    assert "LIMIT $4 OFFSET $5" in sql
+    # limit/offset are $8/$9 after the 7 shared filter params.
+    assert "LIMIT $8 OFFSET $9" in sql
     # ORDER BY carries the whitelisted expression + the id tie-break.
     assert "ORDER BY" in sql and "j.id ASC" in sql
-    # args: kind, status, tour_id, limit, offset
-    assert args == ["a3_atomize", "running", "t1", 25, 50]
+    # args: kind, status, tour_id, since, until, created_by, q, limit, offset
+    assert args == ["a3_atomize", "running", "t1", None, None, None, None, 25, 50]
 
 
 @pytest.mark.asyncio
@@ -91,6 +92,21 @@ async def test_list_jobs_rejects_unknown_sort():
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_passes_since_until_created_by_q():
+    import datetime as _dt
+    pool = _pool()
+    since = _dt.datetime(2026, 10, 1)
+    until = _dt.datetime(2026, 10, 9)
+    await queue.list_jobs(pool, since=since, until=until, created_by="system:a3_publish", q="a3")
+    sql, *args = pool.fetch.call_args[0]
+    # created_at range, exact created_by, and the free-text q are all in the WHERE.
+    assert "j.created_at >= $4" in sql and "j.created_at < $5" in sql
+    assert "j.created_by = $6" in sql
+    assert "j.id::text LIKE $7" in sql and "j.kind ILIKE" in sql
+    assert args[3] == since and args[4] == until and args[5] == "system:a3_publish" and args[6] == "a3"
+
+
+@pytest.mark.asyncio
 async def test_count_jobs_shares_the_list_where_clause():
     pool = _pool(fetchval_return=7)
     total = await queue.count_jobs(pool, kind="a3_atomize", status=None, tour_id=None)
@@ -98,7 +114,18 @@ async def test_count_jobs_shares_the_list_where_clause():
     sql, *args = pool.fetchval.call_args[0]
     assert "count(*)" in sql
     assert queue._LIST_WHERE in sql
-    assert args == ["a3_atomize", None, None]
+    # Same fixed 7-arg filter order as list_jobs (so `total` counts exactly the paged rows).
+    assert args == ["a3_atomize", None, None, None, None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_count_jobs_uses_the_same_filters_as_list():
+    import datetime as _dt
+    pool = _pool(fetchval_return=3)
+    since = _dt.datetime(2026, 10, 1)
+    await queue.count_jobs(pool, created_by="me", q="atom", since=since)
+    args = list(pool.fetchval.call_args[0][1:])
+    assert args == [None, None, None, since, None, "me", "atom"]
 
 
 # ── router: page→offset math + 422s ───────────────────────────────────────────────────────────
@@ -128,6 +155,7 @@ async def test_router_translates_page_to_offset_and_returns_pagination(monkeypat
     out = await admin_job_runner.list_jobs(
         _make_request(MagicMock()), kind=None, status=None, limit=50,
         page=3, page_size=25, sort="cost_usd", sort_dir="asc", tour_id=None,
+        since=None, until=None, created_by=None, q=None,
     )
     # page 3 (1-based) at size 25 → offset 50
     assert seen["offset"] == 50
@@ -135,6 +163,52 @@ async def test_router_translates_page_to_offset_and_returns_pagination(monkeypat
     assert seen["sort"] == "cost_usd" and seen["sort_dir"] == "asc"
     assert out["total"] == 120
     assert out["pagination"] == {"page": 3, "page_size": 25, "total": 120, "pages": 5}
+
+
+@pytest.mark.asyncio
+async def test_router_passes_the_new_filters_and_parses_dates(monkeypatch):
+    from api.routers import admin_job_runner
+
+    seen_list, seen_count = {}, {}
+
+    async def fake_list(pool, **kw):
+        seen_list.update(kw)
+        return []
+
+    async def fake_count(pool, **kw):
+        seen_count.update(kw)
+        return 0
+
+    monkeypatch.setattr(queue, "list_jobs", fake_list)
+    monkeypatch.setattr(queue, "count_jobs", fake_count)
+
+    await admin_job_runner.list_jobs(
+        _make_request(MagicMock()), kind=None, status=None, limit=100,
+        page=1, page_size=100, sort="created_at", sort_dir="desc", tour_id=None,
+        since="2026-10-01", until="2026-10-09T12:00:00", created_by="  me  ", q="  atom  ",
+    )
+    import datetime as _dt
+    assert seen_list["since"] == _dt.datetime(2026, 10, 1)
+    assert seen_list["until"] == _dt.datetime(2026, 10, 9, 12, 0, 0)
+    assert seen_list["created_by"] == "  me  "   # exact match kept as given
+    assert seen_list["q"] == "atom"              # q trimmed
+    # count_jobs must see the SAME filters so `total` matches the page.
+    assert {k: seen_count[k] for k in ("since", "until", "created_by", "q")} == \
+        {k: seen_list[k] for k in ("since", "until", "created_by", "q")}
+
+
+@pytest.mark.asyncio
+async def test_router_rejects_a_bad_date(monkeypatch):
+    from fastapi import HTTPException
+    from api.routers import admin_job_runner
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_job_runner.list_jobs(
+            _make_request(MagicMock()), kind=None, status=None, limit=50,
+            page=1, page_size=None, sort="created_at", sort_dir="desc", tour_id=None,
+            since="not-a-date",
+        )
+    assert exc.value.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -156,6 +230,7 @@ async def test_router_page_size_defaults_to_limit_when_omitted(monkeypatch):
     await admin_job_runner.list_jobs(
         _make_request(MagicMock()), kind=None, status=None, limit=100,
         page=1, page_size=None, sort="created_at", sort_dir="desc", tour_id=None,
+        since=None, until=None, created_by=None, q=None,
     )
     assert seen["limit"] == 100 and seen["offset"] == 0
 

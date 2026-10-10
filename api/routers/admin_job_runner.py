@@ -12,6 +12,7 @@ Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, 
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 import structlog
@@ -39,6 +40,17 @@ def _iso(d: dict) -> dict:
     return d
 
 
+def _parse_dt(value: Optional[str], field: str) -> Optional[datetime]:
+    """AA-755 — parse an ISO-8601 datetime filter (or a plain date). 422 on a bad value so a typo in
+    the URL is a clear error, not a silently-ignored filter."""
+    if value is None or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{field} must be an ISO-8601 datetime")
+
+
 @router.get("/jobs", summary="AA-650 — list jobs")
 async def list_jobs(request: Request, kind: Optional[str] = None,
                     status: Optional[str] = Query(None, description="|".join(_STATUSES)),
@@ -48,19 +60,28 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
                                                      description="AA-755: rows per page; overrides limit"),
                     sort: str = Query("created_at", description="AA-755: " + "|".join(queue.JOB_SORTS)),
                     sort_dir: str = Query("desc", description="asc|desc"),
-                    tour_id: Optional[str] = Query(None, description="AA-687: jobs whose payload names this tour")):
+                    tour_id: Optional[str] = Query(None, description="AA-687: jobs whose payload names this tour"),
+                    since: Optional[str] = Query(None, description="AA-755: created_at >= this ISO datetime"),
+                    until: Optional[str] = Query(None, description="AA-755: created_at < this ISO datetime"),
+                    created_by: Optional[str] = Query(None, description="AA-755: exact created_by match"),
+                    q: Optional[str] = Query(None, description="AA-755: id prefix / kind / created_by search")):
     if status is not None and status not in _STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {_STATUSES}")
     if sort not in queue.JOB_SORTS:
         raise HTTPException(status_code=422, detail=f"sort must be one of {sorted(queue.JOB_SORTS)}")
     if sort_dir.lower() not in ("asc", "desc"):
         raise HTTPException(status_code=422, detail="sort_dir must be 'asc' or 'desc'")
+    since_dt = _parse_dt(since, "since")
+    until_dt = _parse_dt(until, "until")
+    q_clean = q.strip() if q and q.strip() else None
     size = page_size or limit
     offset = (page - 1) * size
     pool = request.app.state.pool
-    rows = await queue.list_jobs(pool, kind=kind, status=status, limit=size, offset=offset,
-                                 tour_id=tour_id, sort=sort, sort_dir=sort_dir)
-    total = await queue.count_jobs(pool, kind=kind, status=status, tour_id=tour_id)
+    filters = dict(kind=kind, status=status, tour_id=tour_id, since=since_dt, until=until_dt,
+                   created_by=created_by, q=q_clean)
+    rows = await queue.list_jobs(pool, limit=size, offset=offset, sort=sort, sort_dir=sort_dir,
+                                 **filters)
+    total = await queue.count_jobs(pool, **filters)
     return {
         "jobs": [_iso(r) for r in rows],
         "total": total,

@@ -33,6 +33,7 @@ export interface JobsTableProps {
   total: number;
   supportsServer: boolean;
   onPageChange: (pageIndex: number, pageSize: number) => void;
+  pageSizeOptions: number[];
   // Server sort (AA-755). `sort`/`sortDir` reflect the current server order.
   sort: string;
   sortDir: "asc" | "desc";
@@ -40,8 +41,17 @@ export interface JobsTableProps {
   // Filters rendered in the toolbar.
   kind: string;
   status: string;
+  createdBy: string;
+  createdByOptions: string[];
+  since: string;
+  until: string;
+  q: string;
   onKindChange: (k: string) => void;
   onStatusChange: (s: string) => void;
+  onCreatedByChange: (v: string) => void;
+  onSinceChange: (v: string) => void;
+  onUntilChange: (v: string) => void;
+  onQChange: (v: string) => void;
   onRowClick: (id: string) => void;
   onAct: (job: Job, action: "cancel" | "retry") => void;
   loading: boolean;
@@ -52,11 +62,17 @@ export interface JobsTableProps {
 export default function JobsTable(props: JobsTableProps) {
   const {
     jobs, kinds, etas, now, maxReleases, busyId,
-    page, pageSize, total, supportsServer, onPageChange,
+    page, pageSize, pageSizeOptions, total, supportsServer, onPageChange,
     sort, sortDir, onSortChange,
-    kind, status, onKindChange, onStatusChange,
+    kind, status, createdBy, createdByOptions, since, until, q,
+    onKindChange, onStatusChange, onCreatedByChange, onSinceChange, onUntilChange, onQChange,
     onRowClick, onAct, loading, error, onRetry,
   } = props;
+
+  const inputStyle: React.CSSProperties = {
+    fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6,
+    background: A.card, color: A.ink3, minWidth: 0,
+  };
 
   const columns = useMemo<ColumnDef<Job, unknown>[]>(() => {
     const expected = (k: string) => kinds.find(x => x.kind === k)?.expected_seconds;
@@ -202,13 +218,13 @@ export default function JobsTable(props: JobsTableProps) {
       loading={loading}
       error={error}
       onRetry={onRetry}
-      searchable
+      searchable={!supportsServer}
       searchPlaceholder="Search this page…"
       enableSavedViews
       enableCsv
       csvFilename="jobs"
       pageSize={pageSize}
-      pageSizeOptions={[25, 50, 100]}
+      pageSizeOptions={pageSizeOptions}
       serverPagination={serverPagination}
       manualSorting={supportsServer}
       sorting={sorting}
@@ -220,17 +236,37 @@ export default function JobsTable(props: JobsTableProps) {
       emptyDescription="Background work shows here as it is enqueued."
       onRowClick={(j) => onRowClick(j.id)}
       toolbarExtra={
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {/* Server-side search (id prefix / kind / created_by). In the fallback (no server total)
+              the DataTable's own client search box is used instead (searchable above). */}
+          {supportsServer && (
+            <input value={q} onChange={e => onQChange(e.target.value)} aria-label="Search jobs"
+                   placeholder="Search id / kind / by…" style={{ ...inputStyle, minWidth: 180 }} />
+          )}
           <select value={kind} onChange={e => onKindChange(e.target.value)} aria-label="Kind"
-                  style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3, maxWidth: 220, minWidth: 0 }}>
+                  style={{ ...inputStyle, maxWidth: 220 }}>
             <option value="">All kinds</option>
             {kinds.map(k => <option key={k.kind} value={k.kind}>{k.kind}</option>)}
           </select>
           <select value={status} onChange={e => onStatusChange(e.target.value)} aria-label="Status"
-                  style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink3 }}>
+                  style={inputStyle}>
             <option value="">All statuses</option>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          {/* Created by: free text with a datalist of the distinct values on the current page. */}
+          <input value={createdBy} onChange={e => onCreatedByChange(e.target.value)} aria-label="Created by"
+                 list="jobs-created-by" placeholder="Created by…" style={{ ...inputStyle, maxWidth: 180 }} />
+          <datalist id="jobs-created-by">
+            {createdByOptions.map(o => <option key={o} value={o} />)}
+          </datalist>
+          <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            Since
+            <input type="date" value={since} onChange={e => onSinceChange(e.target.value)} aria-label="Created since" style={inputStyle} />
+          </label>
+          <label style={{ fontSize: 11, color: A.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            Until
+            <input type="date" value={until} onChange={e => onUntilChange(e.target.value)} aria-label="Created until" style={inputStyle} />
+          </label>
         </div>
       }
     />

@@ -1,26 +1,18 @@
 "use client";
-// app/admin/jobs/QueuePanel.tsx — AA-755. The "Workers & queue" tab: the worker-liveness panel
-// (separate aa-cis-dev-worker ECS service, AA-687) over the registered-kind table. Split out of
-// page.tsx so the jobs table and the operational view live in two tabs instead of one long scroll.
-// Pure view — the page owns the 10 s poll and hands the panels their data.
+// app/admin/jobs/QueuePanel.tsx — AA-755. The "Queue & workers" tab: the worker-liveness panel
+// (separate aa-cis-dev-worker ECS service, AA-687) plus the queue-by-kind view it already renders.
+// Split out of page.tsx; the registered-kind table ("Job kinds") is now its own third tab, so this
+// panel is just the worker/queue view. Pure view — the page owns the 10 s poll.
 
 import WorkerHealth from "./WorkerHealth";
-import JobKinds from "./JobKinds";
-import type { Count, Kind, WorkerHealthResp } from "./jobsShared";
+import type { Kind, WorkerHealthResp } from "./jobsShared";
 
 export default function QueuePanel({
-  health, kinds, counts, now, onPick,
+  health, kinds, now,
 }: {
   health: WorkerHealthResp | null;
   kinds: Kind[];
-  counts: Count[];
   now: number;
-  onPick: (kind: string, status: string) => void;
 }) {
-  return (
-    <div>
-      <WorkerHealth health={health} kinds={kinds} now={now} />
-      <JobKinds kinds={kinds} counts={counts} onPick={onPick} />
-    </div>
-  );
+  return <WorkerHealth health={health} kinds={kinds} now={now} />;
 }

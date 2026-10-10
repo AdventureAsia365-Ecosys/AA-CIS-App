@@ -685,8 +685,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: K.muted }}>
             <span>
-              {pageIndex * effPageSize + 1}–{Math.min((pageIndex + 1) * effPageSize, totalFiltered)} of{" "}
-              {totalFiltered}
+              {(pageIndex * effPageSize + 1).toLocaleString()}–
+              {Math.min((pageIndex + 1) * effPageSize, totalFiltered).toLocaleString()} of{" "}
+              {totalFiltered.toLocaleString()}
             </span>
             <select
               value={effPageSize}

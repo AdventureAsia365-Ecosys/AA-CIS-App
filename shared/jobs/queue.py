@@ -325,10 +325,25 @@ JOB_SORTS: dict[str, str] = {
 }
 
 # Shared WHERE for list + count so the paged total matches exactly what the page can scroll through.
+# Built once from the same filter set (AA-755: + since/until/created_by/q) so `total` always counts
+# exactly the rows the list pages through. The $N order is fixed and shared by both queries; list
+# appends its own LIMIT/OFFSET params ($8/$9) after these.
 _LIST_WHERE = (
-    "($1::text IS NULL OR kind = $1) AND ($2::text IS NULL OR status = $2) "
-    "AND ($3::text IS NULL OR payload->>'tour_id' = $3 OR payload->>'published_tour_id' = $3)"
+    "($1::text IS NULL OR kind = $1) "
+    "AND ($2::text IS NULL OR status = $2) "
+    "AND ($3::text IS NULL OR payload->>'tour_id' = $3 OR payload->>'published_tour_id' = $3) "
+    "AND ($4::timestamptz IS NULL OR j.created_at >= $4) "
+    "AND ($5::timestamptz IS NULL OR j.created_at < $5) "
+    "AND ($6::text IS NULL OR j.created_by = $6) "
+    # q: free-text match on id prefix, kind substring, or created_by substring (case-insensitive).
+    "AND ($7::text IS NULL OR j.id::text LIKE $7 || '%' "
+    "     OR j.kind ILIKE '%' || $7 || '%' OR j.created_by ILIKE '%' || $7 || '%')"
 )
+
+
+def _filter_args(kind, status, tour_id, since, until, created_by, q) -> list:
+    """The positional args for `_LIST_WHERE`, in a fixed order shared by list_jobs + count_jobs."""
+    return [kind, status, tour_id, since, until, created_by, q]
 
 
 def _order_by(sort: str, sort_dir: str) -> str:
@@ -345,28 +360,36 @@ def _order_by(sort: str, sort_dir: str) -> str:
 
 async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
                     limit: int = 50, offset: int = 0, tour_id: Optional[str] = None,
+                    since: Optional[datetime] = None, until: Optional[datetime] = None,
+                    created_by: Optional[str] = None, q: Optional[str] = None,
                     sort: str = "created_at", sort_dir: str = "desc") -> list[dict]:
     """`tour_id` (AA-687) matches the payload's tour: a3_atomize / segment work (`tour_id`) and
-    tenant rewrites of it (t2_rewrite's `published_tour_id`). AA-755: `sort`/`sort_dir` select a
-    whitelisted ORDER BY (unknown key → ValueError), `offset`/`limit` page the result."""
+    tenant rewrites of it (t2_rewrite's `published_tour_id`). AA-755: `since`/`until` bound
+    created_at, `created_by` is an exact match, `q` is a free-text match on id prefix / kind /
+    created_by; `sort`/`sort_dir` select a whitelisted ORDER BY (unknown key → ValueError),
+    `offset`/`limit` page the result."""
     order_by = _order_by(sort, sort_dir)
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
     rows = await pool.fetch(
         f"""
         SELECT {_LIST_COLUMNS} FROM shared.job j
         WHERE {_LIST_WHERE}
-        ORDER BY {order_by} LIMIT $4 OFFSET $5
+        ORDER BY {order_by} LIMIT $8 OFFSET $9
         """,
-        kind, status, tour_id, limit, offset,
+        *args, limit, offset,
     )
     return [_row_dict(r) for r in rows]
 
 
 async def count_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
-                     tour_id: Optional[str] = None) -> int:
+                     tour_id: Optional[str] = None, since: Optional[datetime] = None,
+                     until: Optional[datetime] = None, created_by: Optional[str] = None,
+                     q: Optional[str] = None) -> int:
     """AA-755 — total rows matching the same filters as list_jobs, for the page's pagination total."""
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
     return int(await pool.fetchval(
         f"SELECT count(*)::int FROM shared.job j WHERE {_LIST_WHERE}",
-        kind, status, tour_id,
+        *args,
     ))
 
 
