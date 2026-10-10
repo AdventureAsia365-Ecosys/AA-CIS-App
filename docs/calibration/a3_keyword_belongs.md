@@ -144,3 +144,10 @@ Rule from the design doc (§5): review ≥ 20% at random plus every agent-vs-Jev
 - [x] Nghiệp reviewed A + B; overturned **2 / 69** (< 10%).
 - [x] Enforce `a3_keyword_belongs` with **reject ceiling 0.30**, accept floor 0.95, `calibration_ref docs/calibration/a3_keyword_belongs.md`, threshold v1.
 - [ ] After the first enforced research run: read the rejected keywords on /admin/decisions (Verdicts → question, zone Reject) and confirm there is no false reject. If there is one, lower the ceiling toward Ms. Thư's 0.15.
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+reject_ceiling 0.30 → **0.45** (precision 99%, caught 67%); accept_floor 0.95 → **0.85** (precision 96%, caught 86%). Live: reject 24.5% → 30.5%, accept 28.9% → 48.6%.
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.

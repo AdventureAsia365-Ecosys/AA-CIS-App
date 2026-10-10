@@ -35,3 +35,10 @@ Known accept-side misses (irrelevant to a reject-only gate): #130 Dochu La ↔ "
   ticket" stays 1 (Angkor Wat is on the circuit); #5 Phuket free time ↔ "Phuket hotels" stays 0 (lodging intent).
 - [x] **Enforce `a3_demand_belongs`: reject_ceiling 0.40**, no accept floor (Dev, S205, 30/09/2026).
   Reject ≤ 0.40: 88 / 88 correct; catches 88 of 137 bad claims (64%).
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+reject_ceiling 0.40 → **0.70**. Sample (200, 30/09): precision 100% → 98%, negatives caught 64% → 85%. Live act rate (30 days, latest per subject): 63.2% → 77.9%.
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.

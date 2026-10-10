@@ -71,3 +71,10 @@ times in other units (`1h30m` = 90-minute, `2hr 30min` = 2.5-hour), clock format
 - [ ] Reject side: below 95% on non-numeric sentences (both misses are table-shaped sources). Collect
   low-p non-numeric sentences from the rerun's decision_log and re-pose with the table lesson before
   any reject floor.
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+accept_floor 0.90 → **0.85**. Sample (200): precision 100% → 97%, supported sentences cleared 43% → 52%. Live accept rate: 31.1% → 41.9%. Reject ceiling still NULL: reject ≤ 0.30 would hold 97% precision and catch 81% of unsupported sentences on the sample, but flag 19.5% of live sentences — measured offline on the next wave from logged probabilities before any change (Nghiệp, S223).
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.

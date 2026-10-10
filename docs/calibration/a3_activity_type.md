@@ -51,3 +51,10 @@ keeps confusing free time and plain meals/overnights with experiences.
   (treated as a plain meal → transit).
 - [x] **Enforce `a3_activity_type`: accept_floor 0.95**, no reject ceiling (choice question), Dev, S205
   (30/09/2026). At ≥ 0.95: 81/81 correct; decides 217 of 400 disputed moments, the rest keep the rule.
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+accept_floor 0.95 → **0.90**. Sample (160): pick accuracy 100% (81 picks) → 98% (92 picks).
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.
