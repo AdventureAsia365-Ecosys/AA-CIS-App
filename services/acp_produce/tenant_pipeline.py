@@ -50,6 +50,7 @@ from services.acp_shared.atom_extraction import (
     SYSTEM_PROMPT as _SYSTEM_PROMPT,
     build_day_user_prompt as _build_day_user_prompt,
     checkable_evidence as _checkable_evidence,
+    is_logistics_atom as _is_logistics_atom,
     build_user_prompt as _build_user_prompt,
     content_hash_atom_id as _content_hash_atom_id,
     day_fingerprint as _day_fingerprint,
@@ -516,6 +517,7 @@ async def _atomize_whole_tour_legacy(
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.error("t5_atomize_parse_failed", tour_id=tour_id, tenant_id=tenant_id, error=str(e))
         return {"status": "failed", "error": f"invalid atom JSON from model: {e}"}
+    atoms = [a for a in atoms if not _is_logistics_atom(a.get("place") or "", a.get("action") or "")]  # S224
 
     # AA-754 — distinctiveness scoring was removed end-to-end. The competitor-index build +
     # score_distinctiveness() call (and its acp_shared.competitor_index_cache /
@@ -698,6 +700,7 @@ async def _atomize_per_day(
             days_failed.append(day_num)
             continue
 
+        atoms = [a for a in atoms if not _is_logistics_atom(a.get("place") or "", a.get("action") or "")]  # S224
         atoms = await ground_day_atoms(atoms, day, tenant_id, tour_id, day_num, pool)   # AA-694 A3-1
 
         new_atom_ids = []

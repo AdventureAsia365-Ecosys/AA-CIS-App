@@ -95,7 +95,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "t10_judge":          StageConfig("t10_judge", "judge", "openai", "gpt-5.6-luna", "acc3",
                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-619: Sonnet->Haiku — A/B proved equal atom quality, ~4x cheaper (see migration 155).
-    "t5_atomize":         StageConfig("t5_atomize", "writer", "claude", "haiku", "acc3"),
+    # AA-757 / ADR 0008: Haiku->GPT-6 Luna as a validate stage (extraction the judge never scores);
+    # S224 offline A/B on 477 days: 0 errors, no invented detail, ~6x cheaper. Haiku is the fallback.
+    "t5_atomize":         StageConfig("t5_atomize", "validate", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("haiku",)),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
     # SAFE_DEFAULTS here and deleted from shared.llm_role_config by migration 207.
