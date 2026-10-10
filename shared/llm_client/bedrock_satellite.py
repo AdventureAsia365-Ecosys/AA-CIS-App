@@ -261,6 +261,7 @@ def invoke_claude(
     system: Optional[str] = None,
     account: str = "acc1",
     on_delta: Optional[Callable[[str], None]] = None,
+    temperature: Optional[float] = None,
 ) -> BedrockInvokeResult:
     """
     model: "sonnet" (editorial, S1 rewrite) | "haiku" (schema/fast tasks)
@@ -296,6 +297,10 @@ def invoke_claude(
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if temperature is not None:
+            # S224: before this, a temperature set on an LLMRequest never reached Claude on the
+            # satellite path (the S1 writer always ran at the Bedrock default 1.0).
+            body_dict["temperature"] = temperature
         if system:
             # AA-324: was a plain string -- Anthropic's Bedrock InvokeModel body (this
             # exact "anthropic_version": "bedrock-2023-05-31" shape, NOT the Converse API)
