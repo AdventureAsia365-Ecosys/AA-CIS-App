@@ -2629,7 +2629,65 @@ async def admin_approve_review(
 ):
     verify_admin_secret(x_admin_secret)
     from api.routers.v1_pipeline import approve_review
-    return await approve_review(review_id=review_id, request=request, tenant=None)
+    result = await approve_review(review_id=review_id, request=request, tenant=None)
+    # AA-756 — best-effort: after the approve commits, stamp the ground truth for grounding. Every
+    # grounded sentence of the approved master version is now human-confirmed as supported, so
+    # a1_claim_supported truth=True for each. Never block or fail the approve on this.
+    if result.get("status") == "approved":
+        try:
+            await _record_grounding_approved_outcome(request.app.state.pool, review_id)
+        except Exception:
+            logger.warning("approve_grounding_outcome_failed", review_id=review_id, exc_info=True)
+    return result
+
+
+# AA-756 — the raw source fields that _execute_run_tour builds the grounding `tour` dict from, in
+# the same shape (so source_text() reproduces the exact `source` the S1 run judged against).
+_GROUNDING_OUTCOME_SQL = """
+    SELECT rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
+           rt.src_itineraries, rt.country, rt.duration, rt.price_raw, rt.inclusions, rt.exclusions,
+           gc.aa_subtitle, gc.aa_summary, gc.aa_highlights, gc.aa_itineraries
+    FROM silver_aa_internal.review_queue rq
+    JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+    JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
+    WHERE rq.id = $1::uuid
+"""
+
+
+async def _record_grounding_approved_outcome(pool, review_id: str) -> None:
+    """Build the raw `tour` dict (SOURCE_FIELDS shape) and the approved grounded fields, then stamp
+    a1_claim_supported truth=True per sentence (grounding.record_approved_outcome). Best-effort."""
+    from services.content_generation import grounding as gr
+
+    row = await pool.fetchrow(_GROUNDING_OUTCOME_SQL, review_id)
+    if row is None:
+        return
+    highlights = row["src_highlights"]
+    if not isinstance(highlights, list):
+        highlights = json.loads(highlights) if highlights else []
+    tour = {
+        "name":        row["src_name"],
+        "subtitle":    row["src_subtitle"],
+        "summary":     row["src_summary"],
+        "description": row["src_description"],
+        "highlights":  highlights,
+        "itineraries": row["src_itineraries"],
+        "country":     row["country"],
+        "duration":    row["duration"],
+        "price":       row["price_raw"],
+        "inclusions":  row["inclusions"],
+        "exclusions":  row["exclusions"],
+    }
+    aa_highlights = row["aa_highlights"]
+    if isinstance(aa_highlights, str):
+        aa_highlights = json.loads(aa_highlights) if aa_highlights else []
+    generated = {
+        "subtitle":    row["aa_subtitle"],
+        "summary":     row["aa_summary"],
+        "highlights":  aa_highlights,
+        "itineraries": row["aa_itineraries"],
+    }
+    await gr.record_approved_outcome(pool, tour, generated)
 
 
 @router.post("/review-queue/{review_id}/reject")

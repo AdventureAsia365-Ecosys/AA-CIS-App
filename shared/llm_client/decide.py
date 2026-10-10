@@ -420,6 +420,51 @@ async def maybe_alert_jev_credit(conn, *, source: str) -> bool:
         return False
 
 
+# AA-756 — write back the ground truth a later human action establishes, so Jev precision can be
+# measured per question without a manual labelling sample. `outcome` is a JSON object stored in the
+# decision_log.outcome column:
+#     {"truth": <bool>, "source": <str>, "ref": <str|null>, "at": <iso now>}
+# `truth` is the answer to the question as asked (e.g. a1_claim_supported truth=True = "the sentence
+# IS supported"). All logged rows of that (question_key, subject_key) are stamped — a later action
+# simply overwrites an earlier one. See GET /admin/decisions/outcomes/summary (admin_decisions.py).
+#
+# NOTE (schema): decision_log.outcome is a TEXT column (migration 181), not jsonb; the object is
+# stored as a JSON string (json.dumps) and read with `outcome::jsonb` casts. No schema change.
+_OUTCOME_SQL = """
+    UPDATE shared.decision_log
+       SET outcome = $3
+     WHERE question_key = $1 AND subject_key = $2
+"""
+
+
+async def record_outcome(conn_or_pool, question_key: str, subject_key: str, truth: bool,
+                         source: str, ref: Optional[str] = None) -> int:
+    """Stamp `outcome` on every decision_log row of (question_key, subject_key) with the truth a
+    human later established. Returns the number of rows updated.
+
+    Best-effort by contract: never raises into the caller's request and never blocks the user action
+    (log + return 0 on any failure). No Jev call. `conn_or_pool` may be an asyncpg Pool/_SingleConn
+    (anything with `.acquire()`) or a bare connection."""
+    outcome = json.dumps({
+        "truth": bool(truth),
+        "source": source,
+        "ref": ref,
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        if hasattr(conn_or_pool, "acquire"):
+            async with conn_or_pool.acquire() as conn:
+                tag = await conn.execute(_OUTCOME_SQL, question_key, subject_key, outcome)
+        else:
+            tag = await conn_or_pool.execute(_OUTCOME_SQL, question_key, subject_key, outcome)
+        # asyncpg returns a command tag like "UPDATE 7"; the trailing integer is the row count.
+        return int(tag.rsplit(" ", 1)[-1]) if isinstance(tag, str) and tag else 0
+    except Exception as exc:
+        logger.warning("record_outcome_failed", question_key=question_key, subject=subject_key,
+                       error=str(exc)[:200])
+        return 0
+
+
 async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: list[str],
                   tenant_id: Optional[str], use_cache: bool = True) -> Decision:
     """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while

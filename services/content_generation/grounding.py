@@ -374,3 +374,31 @@ def regrounding(state: dict) -> Optional[dict]:
     except Exception as exc:
         logger.warning("regrounding_failed", error=str(exc)[:200])
         return None
+
+
+async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> int:
+    """AA-756 — a human approved this master version in the Review Queue, so every grounded sentence
+    is now known-supported truth. Stamp `a1_claim_supported` truth=True on each sentence unit's
+    decision_log rows, keyed by the SAME subject_key the S1 run used.
+
+    `tour` is the raw source dict (the SOURCE_FIELDS shape built in _execute_run_tour); `generated`
+    is the approved version's grounded fields (keys subtitle/summary/highlights/itineraries). Uses
+    the same `source_text` + `sentence_units` + `subject_key` as the grounding run, so an approved
+    sentence maps to exactly the row Jev wrote. Best-effort: never raises, returns rows updated."""
+    from shared.llm_client.decide import record_outcome
+
+    try:
+        source = source_text(tour or {})
+        units = sentence_units(generated or {})
+    except Exception as exc:
+        logger.warning("record_approved_outcome_build_failed", error=str(exc)[:200])
+        return 0
+    if not source or not units:
+        return 0
+    updated = 0
+    for u in units:
+        updated += await record_outcome(
+            conn_or_pool, QUESTION, subject_key(source, u["sentence"]),
+            truth=True, source="review_approve")
+    logger.info("record_approved_outcome", units=len(units), rows_updated=updated)
+    return updated

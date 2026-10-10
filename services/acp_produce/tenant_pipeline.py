@@ -578,21 +578,30 @@ ATOM_STAGE = "a3_atomize"
 ATOM_Q = "a3_atom_in_text"
 
 
+def atom_subject_key(day_text: str, place: str, action: str) -> str:
+    """The subject_key the a3_atom_in_text verdict is logged under: `atom:<md5(day_text)[:10]>:<label>`
+    where label = derive_atom_text(place, action)[:200]. The single builder for this format — reused
+    by ground_day_atoms (write) and the AA-756 atom soft-delete outcome hook (read)."""
+    import hashlib
+
+    text_key = hashlib.md5((day_text or "").strip().encode("utf-8")).hexdigest()[:10]
+    label = _derive_atom_text(place or "", action or "")
+    return f"atom:{text_key}:{label[:200]}"
+
+
 async def ground_day_atoms(atoms: list[dict], day: dict, owner_scope: str, tour_id: str, day_num: int,
                            pool) -> list[dict]:
     """The atoms Jev does not confidently reject for this day's text (all of them in shadow)."""
     if not atoms:
         return atoms
-    import hashlib
 
     day_text = f"{day.get('title') or ''}\n{day.get('body') or ''}".strip()
-    text_key = hashlib.md5(day_text.encode("utf-8")).hexdigest()[:10]
     tenant = _llm_log_tenant_id(owner_scope)
 
     async def _keep(atom: dict) -> bool:
-        label = _derive_atom_text(atom.get("place") or "", atom.get("action") or "")
-        dec = await decide(ATOM_STAGE, f"atom:{text_key}:{label[:200]}", {"day_text": day_text, "atom": label},
-                           [ATOM_Q], tenant_id=tenant, pool=pool)
+        key = atom_subject_key(day_text, atom.get("place") or "", atom.get("action") or "")
+        dec = await decide(ATOM_STAGE, key, {"day_text": day_text, "atom": _derive_atom_text(
+            atom.get("place") or "", atom.get("action") or "")}, [ATOM_Q], tenant_id=tenant, pool=pool)
         return not dec.rejected(ATOM_Q)
 
     keep = await asyncio.gather(*[_keep(a) for a in atoms])
