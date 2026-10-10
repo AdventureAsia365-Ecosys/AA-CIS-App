@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import structlog
 from json_repair import repair_json
@@ -342,6 +343,21 @@ def _build_brand_diff_block(state: ContentState) -> str:
     byte-identical system prompts. Thin re-export kept so existing importers/tests still resolve here."""
     return build_brand_diff_block(state)
 
+def _writer_sampling() -> dict:
+    """S224 (AA-748 follow-up): the S1 writer has always run at the provider default temperature
+    (1.0 for Claude on Bedrock), the likely source of the large run-to-run variance in grounding
+    hits and judge scores. `S1_WRITER_TEMPERATURE` (env, unset by default) sets it for an A/B;
+    unset or invalid -> no temperature field, so the request is exactly as before."""
+    raw = os.environ.get("S1_WRITER_TEMPERATURE", "").strip()
+    if not raw:
+        return {}
+    try:
+        value = float(raw)
+    except ValueError:
+        return {}
+    return {"temperature": value} if 0.0 <= value <= 1.0 else {}
+
+
 def generate_node(state: ContentState) -> ContentState:
     """Node 1: Generate content via LLMClient."""
     client = LLMClient()
@@ -408,6 +424,7 @@ def generate_node(state: ContentState) -> ContentState:
         model_tier=state.get("model_tier"),
         stage=gen_stage,  # AA-620: t2_generate for tenant, s1_generate for A1 admin
         max_tokens=GENERATE_MAX_TOKENS,  # AA-639
+        **_writer_sampling(),
     )
 
     resp = None
