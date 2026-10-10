@@ -17,7 +17,7 @@ import {
 
 // The columns that map to a server sort key (AA-755: queue.JOB_SORTS). Clicking any other header is
 // a no-op (enableSorting:false). TanStack sends the column id; we translate it to sort/sort_dir.
-const SERVER_SORT_IDS = new Set(["kind", "status", "cost_usd", "duration", "created_at"]);
+const SERVER_SORT_IDS = new Set(["kind", "status", "attempt", "cost_usd", "duration", "created_at", "created_by"]);
 
 export interface JobsTableProps {
   jobs: Job[];
@@ -113,9 +113,8 @@ export default function JobsTable(props: JobsTableProps) {
       },
     },
     {
-      id: "attempt",
+      accessorKey: "attempt",
       header: "Attempt",
-      enableSorting: false,
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt}/{c.row.original.max_attempts}</span>,
     },
     {
@@ -168,7 +167,6 @@ export default function JobsTable(props: JobsTableProps) {
     {
       accessorKey: "created_by",
       header: "By",
-      enableSorting: false,
       cell: (c) => <span style={{ color: A.muted }}>{c.row.original.created_by ?? "—"}</span>,
     },
     {
