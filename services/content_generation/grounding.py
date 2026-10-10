@@ -39,6 +39,10 @@ logger = structlog.get_logger()
 
 STAGE = "s1_grounding"
 QUESTION = "a1_claim_supported"
+# AA-756 (S224): asked in the same Jev call as QUESTION, shadow only. a1_claim_supported mixes
+# allowed place background (type A) with forbidden tour promises (type B, writer rule 6); this one
+# isolates B so the writer policy (#629) can be measured. Same state, so it adds only its wording.
+PROMISE_QUESTION = "a1_promise_unsupported"
 GROUNDED_FIELDS = ("subtitle", "summary", "highlights", "itineraries")
 SOURCE_FIELDS = ("name", "subtitle", "summary", "description", "highlights", "itineraries",
                  "country", "duration", "price", "inclusions", "exclusions")
@@ -264,7 +268,8 @@ async def _judge_all(units: list[dict], sources: dict[int, str]) -> dict[int, An
     async def one(i: int, u: dict, src: str):
         async with sem:
             d = await decide(STAGE, subject_key(src, u["sentence"]),
-                             {"source": src, "sentence": u["sentence"]}, [QUESTION], pool=pool)
+                             {"source": src, "sentence": u["sentence"]}, [QUESTION, PROMISE_QUESTION],
+                             pool=pool)
             return i, d.verdicts.get(QUESTION)
 
     try:

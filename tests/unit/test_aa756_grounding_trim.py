@@ -184,3 +184,28 @@ def test_estimate_no_markers_falls_back_to_full_source():
     assert stats["units"] == len(units)
     assert stats["chars_after"] == len(full) * len(units)
     assert stats["chars_before"] == stats["chars_after"]
+
+
+# ── a1_promise_unsupported (S224) ─────────────────────────────────────────────────────────────
+
+def test_judge_all_asks_the_promise_question_in_the_same_call(monkeypatch):
+    """The type-B question rides in the same decide() call; grounding still keys on QUESTION only."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    asked = []
+
+    async def fake_decide(stage, subject, state, keys, pool=None):
+        asked.append(keys)
+        return SimpleNamespace(verdicts={gr.QUESTION: "claim-verdict", gr.PROMISE_QUESTION: "promise-verdict"})
+
+    pool = MagicMock()
+    pool.close = AsyncMock()
+    monkeypatch.setattr("shared.llm_client.decide.decide", fake_decide)
+    monkeypatch.setattr("asyncpg.create_pool", AsyncMock(return_value=pool))
+    monkeypatch.setattr("shared.secrets.get_database_url", lambda: "postgres://x")
+    units = [{"field": "summary", "sentence": "A journey across Paro and Thimphu.", "day": None}]
+    out = asyncio.run(gr._judge_all(units, {0: "SOURCE"}))
+    assert asked == [[gr.QUESTION, gr.PROMISE_QUESTION]]
+    assert out == {0: "claim-verdict"}
