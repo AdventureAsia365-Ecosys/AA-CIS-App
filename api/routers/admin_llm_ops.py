@@ -126,7 +126,8 @@ def _route_view(row: dict, models: Optional[list]) -> dict:
 def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
     """AA-659: every stage now runs through the gateway route, so availability depends only on
     the catalog row and the writer/judge vendor rule (ADR-2026-014/027): writers are Anthropic,
-    judges are never Anthropic."""
+    judges are never Anthropic. ADR 0008: `validate` stages (extraction/checks the judge never
+    scores, e.g. s1_source_facts) may use any vendor."""
     options = []
     for m in models:
         # AA-685: embedding stages only offer embedding models, and text stages never do.
@@ -141,7 +142,7 @@ def _catalog_options(role: str, stage: str, models: list) -> list[dict]:
             reason = "Model này không gọi được qua gateway"
         elif role == "judge" and m.vendor == "anthropic":
             reason = "Judge phải khác vendor với writer (writer là Anthropic)"
-        elif role != "judge" and m.vendor != "anthropic":
+        elif role == "writer" and m.vendor != "anthropic":
             reason = "Writer và judge phải khác vendor (judge là OpenAI)"
         opt = {"model_id": m.model_key, "label": m.label, "via": model_via(m),
                "available": reason is None}
