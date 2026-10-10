@@ -56,6 +56,10 @@ stages/atoms.py):
   words — that is not evidence, it is a second copy of the same two fields.
 - If one sentence covers several atoms, each of those atoms may quote the same (or an
   overlapping) span — evidence is not required to be unique per atom.
+- Quote only the day's text: never include the "Day N — title" line or the "DAY N (...)" label
+  of the input in `evidence`.
+- `action` uses the specific activity the text names ("swim", "snorkel", "draw omikuji
+  fortunes"), not a generic "visit" when the text says what is done there.
 
 Respond with ONLY a JSON object matching this exact contract:
 {
@@ -200,6 +204,45 @@ def derive_atom_text(place: str, action: str) -> str:
     return f"{place} — {action}"
 
 
+# S224 (AA-757): models sometimes quote the prompt's own day labels into `evidence`
+# ("Day 4 — Khe Sanh to Xepon" / "DAY 4 (extract atoms only from this section):"), which made a
+# verbatim quote fail the check and fall back to the whole day body.
+_EVIDENCE_LABEL_RE = re.compile(r"^\s*(DAY\s+\d+\s*\(extract atoms only from this section\):?|Day\s+\d+\s*[—–-].*)\s*$",
+                                re.IGNORECASE)
+
+
+def clean_evidence(evidence: str) -> str:
+    """Drop prompt day-label lines from a quoted `evidence`; the rest is left as quoted."""
+    if not evidence:
+        return evidence
+    kept = [ln for ln in evidence.splitlines() if not _EVIDENCE_LABEL_RE.match(ln)]
+    return "\n".join(kept).strip() or evidence
+
+
+# S224 (AA-757): pure logistics are not moments a traveller searches for or a post is written
+# about ("check in at your hotel", "depart the airport", "stay overnight"). Measured on 477 days:
+# drops 3.9% of Haiku atoms and 10.8% of GPT-6 Luna atoms, all of this kind.
+_LOGISTICS_ACTION_RE = re.compile(
+    r"^(arrive|arrival|depart|departure|check[- ]?in|check[- ]?out|stay( overnight| the night)?|"
+    r"overnight( stay)?|spend the night|sleep|rest|return( to)?|settle( in| into)?|transfer|"
+    r"be transferred|meet|freshen up|end the (day|walk|tour))\b", re.IGNORECASE)
+_GENERIC_PLACE_RE = re.compile(
+    r"^(the |your |a |our )?(hotel|resort|guest ?house|lodge|accommodation|room|airport|station|"
+    r"pier|camp|ger camp|tented camp|homestay|town|city)s?$", re.IGNORECASE)
+_BARE_LOGISTICS_RE = re.compile(
+    r"^(arrive|depart|overnight|stay overnight|stay|rest|return to (the )?hotel|settle in(to)?|"
+    r"check[- ]?in)$", re.IGNORECASE)
+
+
+def is_logistics_atom(place: str, action: str) -> bool:
+    """True for a pure-logistics atom: a short logistics verb on a generic place (hotel, airport,
+    camp…) or a bare logistics verb (arrive / stay overnight / check in) on any place."""
+    act = (action or "").strip()
+    if not _LOGISTICS_ACTION_RE.match(act) or len(act.split()) > 6:
+        return False
+    return bool(_GENERIC_PLACE_RE.match((place or "").strip()) or _BARE_LOGISTICS_RE.match(act))
+
+
 def checkable_evidence(evidence: str, day_body: str) -> str | None:
     """AA-610 — port of Ms. Thư's `_checkable_evidence()` (aa-social-media stages/atoms.py):
     `evidence` is only trustworthy as a `said` signal if it is genuinely a verbatim quote from
@@ -218,6 +261,7 @@ def checkable_evidence(evidence: str, day_body: str) -> str | None:
     """
     if not evidence or not evidence.strip():
         return day_body
+    evidence = clean_evidence(evidence)
     haystack = re.sub(r"\s+", " ", (day_body or "")).strip().lower()
     needle = re.sub(r"\s+", " ", evidence).strip().lower()
     if needle and needle in haystack:

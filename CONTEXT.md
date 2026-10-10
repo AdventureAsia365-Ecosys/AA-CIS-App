@@ -105,8 +105,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
   - `t2_generate` (T2 tenant rewrite, AA-620) = Sonnet — follows a tenant's brand style guide
     noticeably better, at ~11-13x Haiku's cost per call.
-  - `t5_atomize` (A3 atomize, AA-619) = Haiku — same atom count and grounding as Sonnet at ~1/4
-    the cost; Sonnet atomize had been ~82% of the acc3 bill.
+  - `t5_atomize` (A3 atomize — the stage key is a pre-AA-526 name) = **GPT-6 Luna as a `validate`
+    stage, Haiku fallback** (AA-757, migration 213, ADR 0008): S224 offline A/B on 477 days, no
+    invented detail, ~6x cheaper than Haiku. History: Sonnet → Haiku at AA-619 (same quality, ~1/4
+    the cost). Atomize goes through the gateway since AA-757 (#642); before that it called
+    `invoke_claude` directly.
   - Judges = OpenAI models (a deliberately different vendor from the Anthropic writer): GPT-5.6 Luna
     on Bedrock acc3 for the judges, GPT-4.1 on the OpenAI API for brand audit (see Stage Route).
   - Tour writer output ceiling is `GENERATE_MAX_TOKENS=8192` (AA-639); at 4096 long tours were
@@ -578,6 +581,17 @@ _Avoid_: block (alone), delete, filter.
   atomize step; AA-526 (05/09/2026) moved atom generation to A3 (platform-wide, admin side, see
   above) and removed the tenant-triggered endpoint entirely. Do not build anything new against
   "T5" as a tenant-facing stage.
+
+> **⚠ Naming trap — atomize is A3 platform only (Nghiệp, S224).** A tour is atomized **once, when
+> it is published to Master** (`a3_atomize` job from `process_export`), or when an admin re-runs it
+> (`POST /admin/atoms/atomize`). Tenants **never** atomize: a tenant rewrites a tour (T2/T3) and then
+> uses the **platform** atoms, Segments, routes and hubs of that tour to plan topics and angles and
+> write social content. Adding or removing a tour only **recomputes** Segment/Score/Route/Hub — it
+> does not re-atomize. Names that still say otherwise are leftovers from before AA-526:
+> `services/acp_produce/tenant_pipeline.py::run_t5_atomize(tenant_id, …)` (only ever called with
+> `"platform"`), the LLM stage key `t5_atomize`, and the `tenant_tour_version_id` column of
+> `atomize_day_fingerprint` (holds `generated_content.id`). Verify a pipeline claim by grepping the
+> real callers, not by reading names (S224 lesson). Rename tracked on AA-757.
 - **T6 — Atom Curation**: **historical label, superseded.** Was a tenant-facing atom star/delete
   UI (`/portal/t6-atoms`); removed at AA-527, replaced by the admin-only `/admin/atom-curation`
   page (platform-scope atoms only — this is exactly the page AA-527 built into the wrong role
