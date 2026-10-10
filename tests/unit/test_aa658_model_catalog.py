@@ -249,6 +249,15 @@ def test_judge_stages_offer_non_anthropic_models(stage):
     assert "vendor" in sonnet5["reason"]
 
 
+def test_validate_stage_may_use_any_vendor():
+    # ADR 0008 (AA-748): a validate stage (extraction the judge never scores) is not bound by the
+    # writer/judge vendor rule.
+    from api.routers.admin_llm_ops import _catalog_options
+    opts = _catalog_options("validate", "s1_source_facts", ALL)
+    assert {"haiku", "sonnet-5", "gpt-4.1", "gpt-5.6-luna"} <= _available(opts)
+    assert all("vendor" not in (o.get("reason") or "") for o in opts)
+
+
 def test_catalog_unreachable_falls_back_to_static_lists():
     from api.routers.admin_llm_ops import _options_for
     assert _available(_options_for("writer", "t9_write", None)) == {"haiku", "sonnet"}

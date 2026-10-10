@@ -85,7 +85,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "s1_itinerary_nudge": StageConfig("s1_itinerary_nudge", "writer", "claude", "haiku", "acc3"),
     # AA-748: extract per-day source facts for the S1 writer (behind S1_STRUCTURED_FACTS). Cheap
     # structured-extraction task, seeded Haiku like the other S1 writer stages. See migration 210.
-    "s1_source_facts":    StageConfig("s1_source_facts", "writer", "claude", "haiku", "acc3"),
+    # AA-748 / ADR 0008: extraction, not prose — a validate stage, so it may run on GPT-6 Luna
+    # (10x cheaper than Haiku); Haiku stays as the fallback.
+    "s1_source_facts":    StageConfig("s1_source_facts", "validate", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("haiku",)),
     "s1_atom_writer":     StageConfig("s1_atom_writer", "writer", "claude", "sonnet", "acc3"),
     "t8_angle_gen":       StageConfig("t8_angle_gen", "writer", "claude", "sonnet", "acc3"),
     "t9_write":           StageConfig("t9_write", "writer", "claude", "sonnet", "acc3"),
