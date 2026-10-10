@@ -241,6 +241,80 @@ async def summary(request: Request, days: int = Query(7, ge=1, le=90), x_admin_s
     }
 
 
+# AA-756 — per question, how Jev's zone compared with the human-established truth now stored in
+# decision_log.outcome. `outcome` is a TEXT column holding a JSON object (see
+# shared/llm_client/decide.py::record_outcome); `outcome::jsonb->>'truth'` reads the stored bool.
+# Agreement is judged on the confident zones only:
+#   agree    = (accept & truth) OR (reject & !truth)   — Jev was confident and right
+#   disagree = (accept & !truth) OR (reject & truth)   — Jev was confident and wrong
+#   grey     = the zone was grey (Jev was not confident)   — neither agree nor disagree
+# accept/reject with truth=NULL (an unparseable outcome) count only in `with_outcome`.
+_OUTCOMES_SUMMARY_SQL = """
+    WITH o AS (
+        SELECT l.question_key, l.stage, l.zone,
+               (l.outcome::jsonb ->> 'truth')::boolean AS truth,
+               l.outcome::jsonb ->> 'source' AS src
+        FROM shared.decision_log l
+        WHERE l.outcome IS NOT NULL
+          AND l.created_at >= now() - make_interval(days => $1)
+    )
+    SELECT q.question_key, q.stage, q.mode,
+           count(o.*)::int AS with_outcome,
+           count(o.*) FILTER (WHERE o.truth IS TRUE)::int  AS truth_true,
+           count(o.*) FILTER (WHERE o.truth IS FALSE)::int AS truth_false,
+           count(o.*) FILTER (WHERE o.zone = 'grey')::int AS grey,
+           count(o.*) FILTER (WHERE
+               (o.zone = 'accept' AND o.truth IS TRUE) OR (o.zone = 'reject' AND o.truth IS FALSE)
+           )::int AS agree,
+           count(o.*) FILTER (WHERE
+               (o.zone = 'accept' AND o.truth IS FALSE) OR (o.zone = 'reject' AND o.truth IS TRUE)
+           )::int AS disagree,
+           count(o.*) FILTER (WHERE o.zone = 'accept')::int AS accept,
+           count(o.*) FILTER (WHERE o.zone = 'reject')::int AS reject
+    FROM shared.decision_question q
+    LEFT JOIN o ON o.question_key = q.question_key
+    GROUP BY q.question_key, q.stage, q.mode
+    HAVING count(o.*) > 0
+    ORDER BY q.stage, q.question_key
+"""
+
+# Outcomes written against a question_key that is not (or no longer) in decision_question.
+_OUTCOMES_ORPHAN_SQL = """
+    SELECT l.question_key, l.stage, count(*)::int AS with_outcome, max(l.created_at) AS last_at
+    FROM shared.decision_log l
+    LEFT JOIN shared.decision_question q ON q.question_key = l.question_key
+    WHERE l.outcome IS NOT NULL
+      AND l.created_at >= now() - make_interval(days => $1)
+      AND q.question_key IS NULL
+    GROUP BY l.question_key, l.stage
+    ORDER BY with_outcome DESC
+"""
+
+
+@router.get("/outcomes/summary", summary="AA-756 — per question, Jev zone vs. human-established truth")
+async def outcomes_summary(request: Request, days: int = Query(90, ge=1, le=365),
+                           x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    rows, orphan_rows = await asyncio.gather(
+        pool.fetch(_OUTCOMES_SUMMARY_SQL, days),
+        pool.fetch(_OUTCOMES_ORPHAN_SQL, days),
+    )
+    questions = []
+    for r in rows:
+        d = dict(r)
+        decided = d["agree"] + d["disagree"]
+        # Precision among the confident verdicts that have a human truth (grey excluded).
+        d["precision"] = round(d["agree"] / decided, 4) if decided else None
+        questions.append(d)
+    return {
+        "days": days,
+        "questions": questions,
+        "unregistered": [_iso(dict(r), "last_at") for r in orphan_rows],
+        "total_with_outcome": sum(q["with_outcome"] for q in questions),
+    }
+
+
 _SORTS = {"created_at": "l.created_at", "probability": "l.probability", "latency_ms": "l.latency_ms",
           "cost_usd": "l.cost_usd"}
 _LOG_WHERE = """

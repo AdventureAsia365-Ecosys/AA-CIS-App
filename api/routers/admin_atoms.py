@@ -494,7 +494,49 @@ async def patch_atom(
             _recompute_logger.warning("atom_delete_recompute_enqueue_failed", atom_id=atom_id,
                                       exc_info=True)
 
+        # AA-756 — best-effort: a soft-delete / undo is a human verdict on a3_atom_in_text. deleted
+        # = the atom is NOT in the day's text (truth=False); undo (deleted=false) = it IS (truth
+        # =True). Stamp decision_log.outcome on the rows Jev wrote for this atom, keyed by the SAME
+        # subject_key the a3_atomize run used. Never block or fail the PATCH on this.
+        try:
+            await _record_atom_delete_outcome(pool, str(row["tour_id"]), atom_id, bool(body.deleted))
+        except Exception:
+            _recompute_logger.warning("atom_delete_outcome_failed", atom_id=atom_id, exc_info=True)
+
     return _safe(row)
+
+
+# AA-756 — the master itinerary source that a3_atomize derived the atom's day_text from (so the
+# subject_key can be rebuilt). The published tour's generated version holds aa_itineraries; the atom
+# carries its place/action/itinerary_day.
+_ATOM_OUTCOME_SQL = """
+    SELECT ta.place, ta.action, ta.itinerary_day, gc.aa_itineraries
+    FROM acp_contract.tour_atoms ta
+    JOIN gold_aa_internal.published_tours pt ON pt.tour_id = ta.tour_id
+    JOIN silver_aa_internal.generated_content gc ON gc.id = pt.generated_content_id
+    WHERE ta.atom_id = $1 AND ta.tour_id = $2::uuid
+"""
+
+
+async def _record_atom_delete_outcome(pool, tour_id: str, atom_id: str, deleted: bool) -> None:
+    """Rebuild the a3_atom_in_text subject_key from the atom's day text + place/action (the single
+    builder in tenant_pipeline.atom_subject_key) and stamp the outcome. truth = not deleted."""
+    from services.acp_produce.tenant_pipeline import ATOM_Q, atom_subject_key
+    from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
+    from shared.llm_client.decide import record_outcome
+
+    row = await pool.fetchrow(_ATOM_OUTCOME_SQL, atom_id, tour_id)
+    if row is None or row["itinerary_day"] is None:
+        return
+    days = parse_canonical_itinerary_days(row["aa_itineraries"] or "")
+    day = days.get(int(row["itinerary_day"])) if days else None
+    if not day:
+        return
+    day_text = f"{day.get('title') or ''}\n{day.get('body') or ''}".strip()
+    key = atom_subject_key(day_text, row["place"] or "", row["action"] or "")
+    updated = await record_outcome(pool, ATOM_Q, key, truth=(not deleted), source="admin_atom_delete")
+    _recompute_logger.info("atom_delete_outcome", atom_id=atom_id, truth=(not deleted),
+                           rows_updated=updated)
 
 
 # ── GET /admin/atoms/unatomized-tours + POST /admin/atoms/atomize ──────────────
