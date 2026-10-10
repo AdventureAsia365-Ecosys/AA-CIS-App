@@ -80,11 +80,16 @@ class TestAtomizeForPlatformScope:
         pool.acquire = MagicMock(return_value=ctx)
 
         fake_llm_result = MagicMock(
-            text='{"atoms": []}', model_used="sonnet", usage={}, stop_reason="end_turn",
+            content='{"atoms": []}', model_used="satellite-haiku-4-5", input_tokens=10,
+            output_tokens=5, cost_usd=0.0, stop_reason="end_turn", satellite_account="acc3",
+            fallback_used=False, provider="bedrock-satellite",
         )
-        with patch("services.acp_produce.tenant_pipeline.invoke_claude", return_value=fake_llm_result), \
+        fake_client = MagicMock()
+        fake_client.generate = MagicMock(return_value=fake_llm_result)
+        with patch("services.acp_produce.tenant_pipeline.LLMClient", return_value=fake_client), \
              patch("services.acp_produce.tenant_pipeline.get_stage_config",
-                   AsyncMock(return_value=MagicMock(model_id="sonnet", account_route="acc3"))), \
+                   AsyncMock(return_value=MagicMock(model_id="haiku", account_route="acc3",
+                                                     role="writer"))), \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
             result = await tenant_pipeline._atomize_per_day(
                 "platform", TOUR_ID, GC_ID, row, days, "somehash", pool, "Vietnam",
@@ -105,14 +110,19 @@ class TestAtomizeForPlatformScope:
         pool.acquire = MagicMock(return_value=ctx)
 
         fake_llm_result = MagicMock(
-            text='{"atoms": [{"place": "Old town", "action": "walk"}]}',
-            model_used="sonnet", usage={}, stop_reason="end_turn",
+            content='{"atoms": [{"place": "Old town", "action": "walk"}]}',
+            model_used="satellite-haiku-4-5", input_tokens=10, output_tokens=5, cost_usd=0.0,
+            stop_reason="end_turn", satellite_account="acc3", fallback_used=False,
+            provider="bedrock-satellite",
         )
         row = {"id": TOUR_ID, "name": "Tour", "aa_summary": "s", "aa_highlights": [],
                "itinerary_source": ""}
-        with patch("services.acp_produce.tenant_pipeline.invoke_claude", return_value=fake_llm_result), \
+        fake_client = MagicMock()
+        fake_client.generate = MagicMock(return_value=fake_llm_result)
+        with patch("services.acp_produce.tenant_pipeline.LLMClient", return_value=fake_client), \
              patch("services.acp_produce.tenant_pipeline.get_stage_config",
-                   AsyncMock(return_value=MagicMock(model_id="sonnet", account_route="acc3"))), \
+                   AsyncMock(return_value=MagicMock(model_id="haiku", account_route="acc3",
+                                                     role="writer"))), \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
             result = await tenant_pipeline._atomize_whole_tour_legacy(
                 "platform", TOUR_ID, row, "somehash", pool, "Vietnam",

@@ -13,12 +13,17 @@ content_hash_atom_id()'s signature/argument order to the build prompt's literal 
 (owner_scope, tour_id, day, place, action) — see that task's implementation notes Decision 2/4.
 
 Drives the real coroutine (services.acp_produce.tenant_pipeline.run_t5_atomize), same mocking
-shape as test_aa445_t5_distinctiveness.py (pool.acquire() fake, invoke_claude patched at its
-import site) — `itineraries` here is in the canonical "Day N — Title\\nBody" format (T4 reuses
+shape as test_aa445_t5_distinctiveness.py (pool.acquire() fake, the gateway LLMClient patched at
+its import site) — `itineraries` here is in the canonical "Day N — Title\\nBody" format (T4 reuses
 T2's engine, graph.py's generate_node/_process_itineraries, which always emits this) so these
 tests exercise _atomize_per_day(), not the legacy whole-tour fallback
 (test_aa445_t5_distinctiveness.py's empty-string `itineraries` already covers that path and is
 untouched by this change).
+
+AA-757 moved atomize onto the gateway (LLMClient.generate, stage "t5_atomize"), so these tests
+now patch tenant_pipeline.LLMClient and build the fake as an LLMResponse-shaped object (`.content`
+instead of `.text`, flat token/cost fields instead of a `.usage` dict). The assertions are
+unchanged.
 """
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -66,16 +71,32 @@ def _fake_conn(existing_fingerprints=None):
 
 
 class _FakeLLMResult:
-    def __init__(self, text, model_used="sonnet-4-6", usage=None, stop_reason="end_turn"):
-        self.text = text
-        # AA-518/AA-505 — record_call_with_pool() (the new per-day/per-tour persist-log call)
-        # reads both of these; a real BedrockInvokeResult always has them (see its dataclass in
-        # shared/llm_client/bedrock_satellite.py), this fake just needed to catch up.
+    """AA-757 — LLMClient.generate() returns an LLMResponse. The atomize code reads
+    `.content` (JSON text), the flat token/cost fields, `.model_used`, `.stop_reason`, and the
+    routing fields (`.satellite_account`, `.fallback_used`, `.provider`) for the cost log."""
+    def __init__(self, content, model_used="satellite-haiku-4-5", input_tokens=100,
+                 output_tokens=50, cost_usd=0.001, stop_reason="end_turn",
+                 satellite_account="acc3", fallback_used=False, provider="bedrock-satellite"):
+        self.content = content
         self.model_used = model_used
-        self.usage = usage or {"input_tokens": 100, "output_tokens": 50}
-        # AA-493 — record_call_with_pool() now also reads .stop_reason; a real BedrockInvokeResult
-        # always has it.
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cost_usd = cost_usd
         self.stop_reason = stop_reason
+        self.satellite_account = satellite_account
+        self.fallback_used = fallback_used
+        self.provider = provider
+
+
+def _patch_gateway(*, return_value=None, side_effect=None):
+    """Patch tenant_pipeline.LLMClient so LLMClient().generate(...) yields the fake response(s).
+    Returns the `generate` MagicMock so a test can assert call count exactly as it did on
+    invoke_claude before AA-757."""
+    gen = MagicMock(return_value=return_value, side_effect=side_effect)
+    client = MagicMock()
+    client.generate = gen
+    cm = patch("services.acp_produce.tenant_pipeline.LLMClient", return_value=client)
+    return cm, gen
 
 
 def _day1_atoms_json(place="Old Quarter", action="walk"):
@@ -97,9 +118,10 @@ async def test_first_atomize_reads_every_day_content_hash_ids():
     day1_place, day1_action = "Old Quarter", "walk"
     day2_place, day2_action = "Halong Bay", "kayak through limestone caves"
 
-    with patch("services.acp_produce.tenant_pipeline.invoke_claude",
-               side_effect=[_FakeLLMResult(_day1_atoms_json(day1_place, day1_action)),
-                            _FakeLLMResult(_day2_atoms_json(day2_place, day2_action))]):
+    cm, _ = _patch_gateway(side_effect=[
+        _FakeLLMResult(_day1_atoms_json(day1_place, day1_action)),
+        _FakeLLMResult(_day2_atoms_json(day2_place, day2_action))])
+    with cm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -168,7 +190,8 @@ async def test_rerun_unchanged_skips_every_day_zero_llm_calls():
     ])
     pool = _pool_ctx(conn)
 
-    with patch("services.acp_produce.tenant_pipeline.invoke_claude") as m_llm:
+    cm, m_llm = _patch_gateway(return_value=_FakeLLMResult("{}"))
+    with cm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -203,8 +226,9 @@ async def test_one_day_changed_only_that_day_reatomizes_other_kept():
 
     new_day1_place, new_day1_action = "Old Quarter market", "visit at dawn"
 
-    with patch("services.acp_produce.tenant_pipeline.invoke_claude",
-               return_value=_FakeLLMResult(_day1_atoms_json(new_day1_place, new_day1_action))) as m_llm:
+    cm, m_llm = _patch_gateway(
+        return_value=_FakeLLMResult(_day1_atoms_json(new_day1_place, new_day1_action)))
+    with cm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -237,9 +261,10 @@ async def test_llm_failure_on_one_day_keeps_other_days_committed():
     conn = _fake_conn(existing_fingerprints=[])
     pool = _pool_ctx(conn)
 
-    with patch("services.acp_produce.tenant_pipeline.invoke_claude",
-               side_effect=[RuntimeError("BedrockError: throttled"),
-                            _FakeLLMResult(_day2_atoms_json())]):
+    cm, _ = _patch_gateway(side_effect=[
+        RuntimeError("BedrockError: throttled"),
+        _FakeLLMResult(_day2_atoms_json())])
+    with cm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -271,9 +296,10 @@ async def test_zero_atom_day_writes_deterministic_marker_not_random():
     conn = _fake_conn(existing_fingerprints=[])
     pool = _pool_ctx(conn)
 
-    with patch("services.acp_produce.tenant_pipeline.invoke_claude",
-               side_effect=[_FakeLLMResult(json.dumps({"atoms": []})),
-                            _FakeLLMResult(_day2_atoms_json())]):
+    cm, _ = _patch_gateway(side_effect=[
+        _FakeLLMResult(json.dumps({"atoms": []})),
+        _FakeLLMResult(_day2_atoms_json())])
+    with cm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
