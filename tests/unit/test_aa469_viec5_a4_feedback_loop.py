@@ -1,16 +1,13 @@
 """
-tests/unit/test_aa469_viec5_a4_feedback_loop.py — AA-469 Việc 5: A4 feedback loop for T5/T9/T10.
+tests/unit/test_aa469_viec5_a4_feedback_loop.py — AA-469 Việc 5: A4 feedback loop for T9/T10.
 
-Two real gaps closed, per docs/claude_audit/AA-469-viec5-step0-a4-feedback-loop-investigation.md:
-- T5 (atomize) failures now persist to silver_aa_internal.review_queue (same table/shape T3's
-  escalate_t3_failure() already writes to and A4's existing GET /admin/a4/review-log already
-  reads) — services/acp_produce/tenant_pipeline.py::escalate_t5_atomize_failure(). No new A4
-  endpoint needed for this half.
+The A3-atomize-failure half of this file (TestEscalateT5AtomizeFailure, which covered
+escalate_t5_atomize_failure) was removed at AA-757 (S224): atomize moved to
+services/acp_contract/a3_atomize.py and the escalate helper was deleted (no live caller — atomize
+now runs as the durable `a3_atomize` job, so failures retry and show on the Jobs page). What
+remains here is the T9/T10 half:
 - T9/T10 (content_piece.gate_ledger/held_reason) gets its first-ever A4 read route —
   api/routers/admin_a4.py::get_content_log(), new GET /admin/a4/content-log.
-
-T2 (already A4-reachable) and T6/T7 (confirmed not LLM-related) are untouched — this file covers
-only the 2 real gaps this pass closed.
 """
 import json
 import uuid
@@ -53,61 +50,6 @@ TOUR_ID = str(uuid.uuid4())
 VERSION_ID = str(uuid.uuid4())
 PIECE_ID = str(uuid.uuid4())
 REQUEST_ID = str(uuid.uuid4())
-
-
-# ── services.acp_produce.tenant_pipeline.escalate_t5_atomize_failure ────────────
-
-@pytest.mark.asyncio
-class TestEscalateT5AtomizeFailure:
-    async def test_writes_same_shape_as_t3_escalate(self):
-        """Same table, same 5 columns, same escalate_detail item shape as escalate_t3_failure()
-        — confirmed by direct comparison, not just asserted separately."""
-        from services.acp_produce.tenant_pipeline import escalate_t5_atomize_failure
-
-        pool, conn = _make_pool()
-        await escalate_t5_atomize_failure(
-            pool, TENANT_ID, TOUR_ID, VERSION_ID, "BedrockError: boom",
-        )
-
-        conn.execute.assert_awaited_once()
-        sql, *params = conn.execute.call_args[0]
-        assert "INSERT INTO silver_aa_internal.review_queue" in sql
-        assert "(tour_id, tenant_id, tenant_tour_version_id, failure_summary, escalate_detail)" in sql
-        assert params[0] == TOUR_ID
-        assert params[1] == TENANT_ID
-        assert params[2] == VERSION_ID
-        assert "T5 atomize failed" in params[3]
-
-        detail = json.loads(params[4])
-        assert len(detail) == 1
-        item = detail[0]
-        assert set(item.keys()) == {"check_id", "field", "description", "source_span", "suggested_fix"}
-        assert item["check_id"] == "t5_atomize:BedrockError"
-        assert item["description"] == "BedrockError: boom"
-
-    async def test_check_id_falls_back_to_failed_when_no_colon(self):
-        """A T5 error string with no ':' (not the usual f'{type}: {msg}' shape) must not crash
-        the check_id extraction — falls back to a generic category."""
-        from services.acp_produce.tenant_pipeline import escalate_t5_atomize_failure
-
-        pool, conn = _make_pool()
-        await escalate_t5_atomize_failure(pool, TENANT_ID, TOUR_ID, VERSION_ID, "something broke")
-
-        _sql, *params = conn.execute.call_args[0]
-        detail = json.loads(params[4])
-        assert detail[0]["check_id"] == "t5_atomize:failed"
-
-    async def test_this_is_the_exact_table_a4_review_log_already_reads(self):
-        """Confirms the join key (tenant_tour_version_id) is populated — GET /admin/a4/review-log
-        filters WHERE tenant_tour_version_id IS NOT NULL, so a NULL here would silently exclude
-        a T5 row from A4 even though the INSERT itself succeeded."""
-        from services.acp_produce.tenant_pipeline import escalate_t5_atomize_failure
-
-        pool, conn = _make_pool()
-        await escalate_t5_atomize_failure(pool, TENANT_ID, TOUR_ID, VERSION_ID, "X: y")
-
-        _sql, *params = conn.execute.call_args[0]
-        assert params[2] == VERSION_ID  # tenant_tour_version_id — never None
 
 
 # ── api.routers.admin_a4.get_content_log ────────────────────────────────────────

@@ -55,7 +55,7 @@ async def test_reraise_propagates_an_atomize_error():
     from services.export import handler
     pool = AsyncMock()   # S219: the job owns a small real pool, closed even when atomize raises
     with patch.object(handler, "open_job_pool", AsyncMock(return_value=pool)), \
-         patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock(side_effect=RuntimeError("bedrock"))):
+         patch("services.acp_contract.a3_atomize.run_a3_atomize", AsyncMock(side_effect=RuntimeError("bedrock"))):
         with pytest.raises(RuntimeError):
             await handler._run_a3_atomize_background("t-1", {}, "", "v-1", reraise=True)
     pool.close.assert_awaited_once()

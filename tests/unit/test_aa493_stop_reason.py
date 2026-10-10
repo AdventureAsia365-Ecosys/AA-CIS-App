@@ -101,7 +101,7 @@ async def test_record_call_with_pool_forwards_stop_reason_to_insert():
     pool.acquire = MagicMock(return_value=ctx)
 
     await call_log.record_call_with_pool(
-        pool, stage="t5_atomize", role="writer", model="sonnet-4-6",
+        pool, stage="a3_atomize", role="writer", model="sonnet-4-6",
         tokens_in=100, tokens_out=50, cost_usd=0.01,
         quality_signal={"ok": True}, stop_reason="end_turn",
     )

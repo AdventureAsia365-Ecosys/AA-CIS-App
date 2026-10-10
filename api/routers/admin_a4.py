@@ -31,10 +31,11 @@ is the one action this issue scoped in.
 AA-469 Việc 5 (30/08/2026) added a 4th use case: `GET /content-log` — T9/T10's quality-gate
 outcomes (`acp_shared.content_piece.gate_ledger`/`held_reason`, `status IN ('held','failed')`),
 the stage with the best structured error data of any LLM-using T-step but zero prior A4 path
-(STEP0: docs/claude_audit/AA-469-viec5-step0-a4-feedback-loop-investigation.md). T5 (atomize)
-failures did NOT need a new endpoint — they write into the SAME `review-log` table/join key as T3
-(see `services/acp_produce/tenant_pipeline.py::escalate_t5_atomize_failure()`), so they surface
-through the existing `/review-log` endpoint above automatically.
+(STEP0: docs/claude_audit/AA-469-viec5-step0-a4-feedback-loop-investigation.md). A3 atomize
+failures did NOT need a new endpoint — the escalate helper (removed with the rename at AA-757, as
+it had no live caller; atomize now runs as the durable `a3_atomize` job, so failures retry and
+show on the Jobs page) wrote into the SAME `review-log` table/join key as T3, so any such row
+surfaces through the existing `/review-log` endpoint above automatically.
 
 AA-464 (06/09/2026) — nối dây `suggest_ramp_transition()`, per Nghiep's explicit follow-up
 confirmation (S159) to AA-437 decision #2 above. `GET /trust-ramp` gains 4 fields per row

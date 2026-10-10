@@ -13,7 +13,7 @@ SCANNED_ROOTS = ("services", "api", "shared")
 GATEWAY = Path("shared/llm_client")
 RAW_BEDROCK_METHODS = {"invoke_model", "invoke_model_with_response_stream", "converse", "converse_stream"}
 # AA-757 (S224): the gateway's own low-level helpers. Calling them from outside skips the route,
-# fallback, shadow and JSON check even though the call is logged — t5_atomize did exactly that.
+# fallback, shadow and JSON check even though the call is logged — a3_atomize (then stage t5_atomize) did exactly that.
 GATEWAY_INTERNALS = {"invoke_claude", "get_satellite_client"}
 
 # path -> reason. Keep this short; a new entry needs a reason a reviewer can check.

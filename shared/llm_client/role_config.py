@@ -97,7 +97,10 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # AA-619: Sonnet->Haiku — A/B proved equal atom quality, ~4x cheaper (see migration 155).
     # AA-757 / ADR 0008: Haiku->GPT-6 Luna as a validate stage (extraction the judge never scores);
     # S224 offline A/B on 477 days: 0 errors, no invented detail, ~6x cheaper. Haiku is the fallback.
-    "t5_atomize":         StageConfig("t5_atomize", "validate", "openai", "gpt-6-luna", "acc3",
+    # AA-757 (S224) — stage key renamed t5_atomize -> a3_atomize (atomize is A3 platform only;
+    # the old key was a pre-AA-526 name). Historical llm_call_log rows keep `t5_atomize`; any
+    # UI/report grouping by stage treats both as the same stage (label "A3 atomize").
+    "a3_atomize":         StageConfig("a3_atomize", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("haiku",)),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from

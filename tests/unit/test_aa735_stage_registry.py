@@ -280,7 +280,7 @@ async def test_a3_atomize_path_runs_segment_matching_once_through_run_stages():
     seg = AsyncMock(return_value={"segment_rows": 3})
     enqueue = AsyncMock(return_value=("job-9", True))
 
-    with patch("services.acp_produce.tenant_pipeline.run_t5_atomize",
+    with patch("services.acp_contract.a3_atomize.run_a3_atomize",
                AsyncMock(return_value={"atoms": 1})), \
          patch("services.acp_contract.segment_matching.run_segment_matching", seg), \
          patch("services.export.handler.tour_segment_ids",

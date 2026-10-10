@@ -107,7 +107,10 @@ export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = 
     stages: ["s1_generate", "s1_judge", "s1_brand_audit", "s1_flag_fix", "s1_itinerary_nudge", "s1_atom_writer"],
   },
   { key: "t2", label: "T2 tenant rewrite writer (own model — AA-620)", stages: ["t2_generate"] },
-  { key: "t5", label: "T5 — Atomize", stages: ["t5_atomize"] },
+  // AA-757 (S224): stage key renamed t5_atomize -> a3_atomize (atomize is A3 platform only).
+  // Historical llm_call_log rows keep t5_atomize, so both keys map to this one "A3 atomize"
+  // group/label.
+  { key: "a3", label: "A3 — Atomize", stages: ["a3_atomize", "t5_atomize"] },
   { key: "t8", label: "T8 — Angle generation", stages: ["t8_angle_gen"] },
   { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
   // AA-685: call sites that bypassed the gateway before.
@@ -128,7 +131,8 @@ export const STAGE_LABELS: Record<string, string> = {
   s1_itinerary_nudge: "Itinerary day nudge",
   s1_atom_writer: "Atom-based writer",
   t2_generate: "Tenant content generate",
-  t5_atomize: "Atomize tour",
+  a3_atomize: "A3 atomize",
+  t5_atomize: "A3 atomize",  // AA-757: historical rows under the old stage key — same stage.
   t8_angle_gen: "Angle generation",
   t9_write: "Content write",
   t10_judge: "Quality judge (F8+F9)",

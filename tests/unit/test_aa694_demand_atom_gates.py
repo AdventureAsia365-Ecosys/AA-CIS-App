@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from services.acp_contract import atom_ranking as ar
-from services.acp_produce import tenant_pipeline as tp
+from services.acp_contract import a3_atomize as a3
 from shared.llm_client.decide import Decision, Verdict
 
 
@@ -63,16 +63,16 @@ async def test_ground_day_atoms_drops_enforced_rejects_only():
 
     async def fake(stage, subject, state, keys, **kw):
         asked.append((state["atom"], kw.get("tenant_id")))
-        return _dec(tp.ATOM_Q, reject="Punakha" in state["atom"])
+        return _dec(a3.ATOM_Q, reject="Punakha" in state["atom"])
 
-    with patch.object(tp, "decide", new=fake):
-        kept = await tp.ground_day_atoms(atoms, day, "platform", "t1", 3, None)
+    with patch.object(a3, "decide", new=fake):
+        kept = await a3.ground_day_atoms(atoms, day, "platform", "t1", 3, None)
     assert kept == [atoms[0]]
     assert len(asked) == 2 and all(t is None for _, t in asked)     # platform content → no tenant id
 
     async def shadow(*a, **kw):
-        return _dec(tp.ATOM_Q, reject=True, mode="shadow")
+        return _dec(a3.ATOM_Q, reject=True, mode="shadow")
 
-    with patch.object(tp, "decide", new=shadow):
-        assert await tp.ground_day_atoms(atoms, day, "platform", "t1", 3, None) == atoms
-    assert await tp.ground_day_atoms([], day, "platform", "t1", 3, None) == []
+    with patch.object(a3, "decide", new=shadow):
+        assert await a3.ground_day_atoms(atoms, day, "platform", "t1", 3, None) == atoms
+    assert await a3.ground_day_atoms([], day, "platform", "t1", 3, None) == []

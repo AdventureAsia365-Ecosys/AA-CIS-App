@@ -6,12 +6,12 @@ atomize_version() endpoint). Covers:
      task (strong-ref pattern) right after a tour is marked 'published' — not awaited inline,
      so a slow multi-day atomize run never adds latency to the admin action that calls
      process_export() directly.
-  2. _run_a3_atomize_background() itself: calls run_t5_atomize() with owner_scope='platform'
-     (not a tenant UUID) and the right `rewritten` shape built from generated_content's own
-     columns.
-  3. _SingleConnAsPool — the thin adapter that lets run_t5_atomize()'s pool.acquire() calls work
+  2. _run_a3_atomize_background() itself: calls run_a3_atomize() (owner_scope is always
+     'platform' inside it, AA-757) with the right `rewritten` shape built from generated_content's
+     own columns.
+  3. _SingleConnAsPool — the thin adapter that lets run_a3_atomize()'s pool.acquire() calls work
      against a single bare asyncpg.Connection.
-  4. _llm_log_tenant_id() (services/acp_produce/tenant_pipeline.py) — the real bug this build
+  4. _llm_log_tenant_id() (services/acp_contract/a3_atomize.py) — the real bug this build
      found: record_call_with_pool()'s tenant_id is cast `$1::uuid`, so passing the literal string
      "platform" straight through (as every pre-AA-526 caller's real tenant UUID always did
      safely) would silently fail that INSERT on every single atomize LLM call.
@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.acp_produce.tenant_pipeline import _llm_log_tenant_id
+from services.acp_contract.a3_atomize import _llm_log_tenant_id
 from services.export import handler as export_handler
 
 TOUR_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -53,14 +53,14 @@ class TestLlmLogTenantId:
 
 @pytest.mark.asyncio
 class TestAtomizeForPlatformScope:
-    """AA-526/AA-754 — run_t5_atomize("platform", ...) must atomize cleanly for the shared A3
+    """AA-526/AA-754 — run_a3_atomize(...) (owner_scope="platform") must atomize cleanly for the shared A3
     pool. AA-526 originally crashed here because the (tenant-only) competitor-index fetch cast
     `tenant_id = $1::uuid` on the literal 'platform'; AA-754 removed the distinctiveness feature
     (and its competitor-index fetch) entirely, so there is no tenant-only lookup left to crash.
     These tests keep the platform-scope atomize paths covered."""
 
     async def test_atomize_per_day_succeeds_for_platform_scope(self):
-        from services.acp_produce import tenant_pipeline
+        from services.acp_contract import a3_atomize
         from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
 
         row = {
@@ -86,19 +86,19 @@ class TestAtomizeForPlatformScope:
         )
         fake_client = MagicMock()
         fake_client.generate = MagicMock(return_value=fake_llm_result)
-        with patch("services.acp_produce.tenant_pipeline.LLMClient", return_value=fake_client), \
-             patch("services.acp_produce.tenant_pipeline.get_stage_config",
+        with patch("services.acp_contract.a3_atomize.LLMClient", return_value=fake_client), \
+             patch("services.acp_contract.a3_atomize.get_stage_config",
                    AsyncMock(return_value=MagicMock(model_id="haiku", account_route="acc3",
                                                      role="writer"))), \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
-            result = await tenant_pipeline._atomize_per_day(
-                "platform", TOUR_ID, GC_ID, row, days, "somehash", pool, "Vietnam",
+            result = await a3_atomize._atomize_per_day(
+                TOUR_ID, GC_ID, row, days, "somehash", pool, "Vietnam",
             )
 
         assert result["status"] == "success"
 
     async def test_atomize_whole_tour_legacy_succeeds_for_platform_scope(self):
-        from services.acp_produce import tenant_pipeline
+        from services.acp_contract import a3_atomize
 
         conn = AsyncMock()
         conn.fetchval.return_value = None  # no prior source_hash
@@ -119,13 +119,13 @@ class TestAtomizeForPlatformScope:
                "itinerary_source": ""}
         fake_client = MagicMock()
         fake_client.generate = MagicMock(return_value=fake_llm_result)
-        with patch("services.acp_produce.tenant_pipeline.LLMClient", return_value=fake_client), \
-             patch("services.acp_produce.tenant_pipeline.get_stage_config",
+        with patch("services.acp_contract.a3_atomize.LLMClient", return_value=fake_client), \
+             patch("services.acp_contract.a3_atomize.get_stage_config",
                    AsyncMock(return_value=MagicMock(model_id="haiku", account_route="acc3",
                                                      role="writer"))), \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
-            result = await tenant_pipeline._atomize_whole_tour_legacy(
-                "platform", TOUR_ID, row, "somehash", pool, "Vietnam",
+            result = await a3_atomize._atomize_whole_tour_legacy(
+                TOUR_ID, row, "somehash", pool, "Vietnam",
             )
 
         assert result["status"] == "success"
@@ -174,7 +174,7 @@ class TestSingleConnAsPool:
 
 @pytest.mark.asyncio
 class TestRunA3AtomizeBackground:
-    async def test_calls_run_t5_atomize_with_platform_owner_scope(self):
+    async def test_calls_run_a3_atomize_platform_only(self):
         conn = AsyncMock()
         conn.close = AsyncMock()
         rewritten = {"name": "Tour", "summary": "s", "highlights": "[]", "itineraries": "Day 1..."}
@@ -182,7 +182,7 @@ class TestRunA3AtomizeBackground:
         with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
-                 "services.acp_produce.tenant_pipeline.run_t5_atomize",
+                 "services.acp_contract.a3_atomize.run_a3_atomize",
                  AsyncMock(return_value={"status": "success", "atom_count": 3}),
              ) as m_atomize, \
              patch("services.acp_contract.segment_matching.run_segment_matching", AsyncMock()), \
@@ -196,9 +196,10 @@ class TestRunA3AtomizeBackground:
 
         m_atomize.assert_awaited_once()
         args, kwargs = m_atomize.call_args
-        assert args[0] == "platform"  # owner_scope — NOT a tenant UUID
-        assert args[1] == TOUR_ID
-        assert args[2] == rewritten
+        # AA-757 — run_a3_atomize no longer takes an owner_scope/tenant_id arg; owner_scope is
+        # always "platform" inside the function (atomize is A3 platform only).
+        assert args[0] == TOUR_ID
+        assert args[1] == rewritten
         assert kwargs["country"] == "Vietnam"
         assert kwargs["version_id"] == GC_ID
         conn.close.assert_awaited_once()
@@ -213,7 +214,7 @@ class TestRunA3AtomizeBackground:
         with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
-                 "services.acp_produce.tenant_pipeline.run_t5_atomize",
+                 "services.acp_contract.a3_atomize.run_a3_atomize",
                  AsyncMock(side_effect=RuntimeError("boom")),
              ):
             await export_handler._run_a3_atomize_background(
@@ -254,7 +255,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
-                 "services.acp_produce.tenant_pipeline.run_t5_atomize",
+                 "services.acp_contract.a3_atomize.run_a3_atomize",
                  AsyncMock(return_value={"status": "success", "atom_count": 3}),
              ), \
              patch("services.acp_contract.segment_matching.run_segment_matching",
@@ -286,7 +287,7 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
              patch("services.export.handler.get_database_url", MagicMock(return_value="postgresql://fake")), \
              patch(
-                 "services.acp_produce.tenant_pipeline.run_t5_atomize",
+                 "services.acp_contract.a3_atomize.run_a3_atomize",
                  AsyncMock(return_value={"status": "success", "atom_count": 1}),
              ), \
              patch(

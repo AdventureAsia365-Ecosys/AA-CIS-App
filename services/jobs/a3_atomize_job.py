@@ -6,7 +6,7 @@ the admin "atomize un-atomized tours" action, one long task looping over N tours
 killed it mid-tour; from the export Lambda it died with the Lambda. It is now a durable job:
 enqueued in the same transaction scope as the publish, run by the ECS worker.
 
-Re-running is safe and cheap: run_t5_atomize() skips days whose fingerprint is unchanged (no LLM
+Re-running is safe and cheap: run_a3_atomize() skips days whose fingerprint is unchanged (no LLM
 call) and UPSERTs atoms (ON CONFLICT (atom_id)).
 
 Payload: {"tour_id", "version_id", "country", "rewritten": {name, summary, highlights, itineraries}}
