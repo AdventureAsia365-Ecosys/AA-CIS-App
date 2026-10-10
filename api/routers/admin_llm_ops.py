@@ -369,7 +369,7 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
 
       * s1_judge / t2_judge*       — brand-fit JSON: numeric `brand_fit_score`, pass derived from it.
       * s1_brand_audit             — {"brand_audit": {"status": ...}} (or flat `status`); pass/fail only.
-      * t10_judge / n7_judge       — rubric `items[].score` (1/0) and/or `status`: score = pass fraction.
+      * t10_judge                  — rubric `items[].score` (1/0) and/or `status`: score = pass fraction.
     """
     if not raw or not raw.strip():
         return None
@@ -388,7 +388,7 @@ def _parse_judge_output(stage: str, raw: Optional[str]) -> Optional[dict]:
     score: Optional[float] = None
     passed: Optional[bool] = None
 
-    # Rubric judges (F8/F9, t10/n7): list of items each scored 1/0.
+    # Rubric judges (F8/F9, t10): list of items each scored 1/0.
     items = data.get("items")
     if isinstance(items, list) and items:
         scored = [str(i.get("score")) for i in items if isinstance(i, dict)]
