@@ -1141,7 +1141,7 @@ _ATOM_CONTEXT_QUERY = """
 
 async def _fetch_atom_context(tenant_id: UUID, atom_id: str, pool) -> Optional[dict]:
     """Atom context for the review screen (AA-501) — text/activity_type/emotional_hook/
-    season_note only, the fields the build task asked for (distinctiveness/persona_fit/media are
+    season_note only, the fields the build task asked for (persona_fit/media are
     AA-internal signals, out of scope here). AA-567: `owner_scope IN ('platform', tenant_id)`,
     not tenant-only — same fix, same reasoning as this module's own `_fetch_atom_text()` /
     `acp_angle_gate.service._fetch_atom_for_tenant()`."""

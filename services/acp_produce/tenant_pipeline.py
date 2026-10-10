@@ -428,13 +428,9 @@ async def run_t5_atomize(
     (same value, already selected alongside published_tours.id in
     trigger_rewrite()), not tenant_tour_versions.id or published_tours.id.
 
-    AA-445-02 — country: the tour's raw_tours.country (caller already has tour_dict["country"]
-    in scope), used to look up this tenant's declared competitor domains for score_distinctiveness()
-    (acp_silver_s2.competitor_inputs is (tenant_id, country)-scoped). Only wired here (T5,
-    owner_scope=tenant_id) — NOT at N2's platform-scope decompose — see AA-445-02 implementation
-    notes Decision 1 for why (CompetitorIndex is tenant-relative; platform atoms have no single
-    owning tenant). An empty/unresolvable country just yields an empty CompetitorIndex
-    (score_distinctiveness() already handles that — returns MED), not an error.
+    AA-445-02 / AA-754 — country: the tour's raw_tours.country. It used to drive the
+    competitor-index lookup for distinctiveness scoring; AA-754 removed that end-to-end, so the
+    param is now retained only for call-site compatibility and is no longer read.
 
     AA-508 — dispatches to one of two paths, per STEP0/STEP0b (docs/claude_audit/AA-508-step0*.md):
 
@@ -450,9 +446,9 @@ async def run_t5_atomize(
       "cannot determine", not "zero days", per its own docstring — e.g. older/legacy rewritten
       content) or `version_id` is omitted (defensive: a future caller that forgets it gets the old
       whole-tour behavior, not a mis-atomize where everything is silently attributed to day
-      None). Kept verbatim, not merged into the new path, specifically so this codebase's own
-      pre-existing tests (test_aa445_t5_distinctiveness.py, both cases pass `itineraries=""`)
-      keep exercising the real function unchanged.
+      None). Kept verbatim, not merged into the new path (its original AA-445 tests, both passing
+      `itineraries=""`, were removed with the distinctiveness feature in AA-754; the whole-tour
+      path is still covered by test_aa526_a3_atomize_trigger.py).
     """
     row = {
         "id": tour_id,
@@ -519,26 +515,10 @@ async def _atomize_whole_tour_legacy(
         logger.error("t5_atomize_parse_failed", tour_id=tour_id, tenant_id=tenant_id, error=str(e))
         return {"status": "failed", "error": f"invalid atom JSON from model: {e}"}
 
-    # AA-445-02 (B4/score_distinctiveness()) — build the CompetitorIndex once per call
-    # (not once per atom) and reuse it across every atom this tour produces; the corpus
-    # itself is cache-backed (acp_shared.competitor_index_cache, 24h TTL) so this is a DB
-    # read on a cache hit, not a re-fetch of every competitor homepage per tour.
-    #
-    # AA-526 — the real bug this build found live: competitor_index.py's own queries cast
-    # `tenant_id = $1::uuid` (competitor_inputs/competitor_index_cache are BOTH genuinely
-    # tenant-scoped, never platform-scoped — see that module's own docstring, which already
-    # correctly excluded the old platform-scope N2 decompose endpoint from ever calling this).
-    # owner_scope="platform" is not a valid UUID literal — crashed this call outright on every
-    # single A3 atomize (confirmed via a real live-verify run, 05/09/2026), never reaching the
-    # atom-insert loop below at all. Skip the fetch entirely for a non-tenant owner_scope —
-    # score_distinctiveness()'s own empty-index fallback (returns "MED") is exactly the
-    # documented, correct behavior here, not a workaround.
-    from services.acp_shared.competitor_index import CompetitorIndex, build_competitor_index, score_distinctiveness
-    if atoms and _llm_log_tenant_id(tenant_id) is not None:
-        competitor_idx = await build_competitor_index(tenant_id, country, pool)
-    else:
-        competitor_idx = CompetitorIndex() if atoms else None
-
+    # AA-754 — distinctiveness scoring was removed end-to-end. The competitor-index build +
+    # score_distinctiveness() call (and its acp_shared.competitor_index_cache /
+    # acp_silver_s2.competitor_inputs reads) are gone; atoms no longer carry a distinctiveness
+    # value. The `country` param is retained for call-site compatibility but no longer read here.
     inserted = 0
     async with pool.acquire() as conn:
         if atoms:
@@ -547,20 +527,19 @@ async def _atomize_whole_tour_legacy(
                 place = atom.get("place") or ""
                 action = _strip_atom_action(atom.get("action") or "", forbidden_words)   # S218 audit
                 text = _derive_atom_text(place, action)
-                distinctiveness = score_distinctiveness(text, competitor_idx)
                 await conn.execute("""
                     INSERT INTO acp_contract.tour_atoms
                         (atom_id, tour_id, owner_scope, text, place, action, activity_type,
                          emotional_hook, visual_potential, persona_fit, season_note, starred,
-                         deleted, weight, source_hash, itinerary_day, distinctiveness,
+                         deleted, weight, source_hash, itinerary_day,
                          created_at, updated_at)
                     VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13,
-                            $14, $15, $16, $17, now(), now())
+                            $14, $15, $16, now(), now())
                 """, atom_id, tour_id, tenant_id, text, place or None, action or None,
                     atom.get("activity_type"), atom.get("emotional_hook"),
                     atom.get("visual_potential", 1), json.dumps(atom.get("persona_fit") or []),
                     atom.get("season_note"), False, False, 1.0, source_hash,
-                    atom.get("itinerary_day"), distinctiveness)
+                    atom.get("itinerary_day"))
                 inserted += 1
         else:
             marker_id = f"atom_marker_{uuid.uuid4().hex[:10]}"
@@ -674,17 +653,10 @@ async def _atomize_per_day(
             "days_total": len(days), "days_read": 0, "days_skipped": len(days),
         }
 
-    # AA-445-02 (B4/score_distinctiveness()) — built once for the whole call, reused across
-    # every day that gets read, same reasoning as the legacy path's own comment.
-    #
-    # AA-526 — same real, live-confirmed bug as the legacy path above: skip the (genuinely
-    # tenant-only) competitor fetch for a non-tenant owner_scope, fall back to the documented
-    # empty-index "MED" default instead of crashing on the ::uuid cast.
-    from services.acp_shared.competitor_index import CompetitorIndex, build_competitor_index, score_distinctiveness
-    if _llm_log_tenant_id(tenant_id) is not None:
-        competitor_idx = await build_competitor_index(tenant_id, country, pool)
-    else:
-        competitor_idx = CompetitorIndex()
+    # AA-754 — distinctiveness scoring was removed end-to-end; the competitor-index build +
+    # score_distinctiveness() call that used to run here (and its competitor_index_cache /
+    # competitor_inputs reads) are gone. Atoms no longer carry a distinctiveness value. The
+    # `country` param is retained for call-site compatibility but no longer read here.
 
     # AA-619 — _t5_cfg already resolved at the top of this function (used to key the fingerprint
     # above); reused here for the actual call + cost so the fingerprint model and the call model
@@ -728,7 +700,6 @@ async def _atomize_per_day(
                     # check out against it, per its own docstring — never None here.
                     evidence = _checkable_evidence(atom.get("evidence") or "", day["body"])
                     atom_id = _content_hash_atom_id(tenant_id, tour_id, day_num, place, action)
-                    distinctiveness = score_distinctiveness(text, competitor_idx)
                     # ON CONFLICT never touches starred/weight — starred is a human curation
                     # flag, weight is content_metrics.py's own learned value (usage-log-derived).
                     # An UPSERT that reset either on every re-atomize would silently erase both
@@ -738,9 +709,9 @@ async def _atomize_per_day(
                             (atom_id, tour_id, owner_scope, text, place, action, evidence,
                              activity_type, emotional_hook, visual_potential, persona_fit,
                              season_note, starred, deleted, weight, source_hash, itinerary_day,
-                             distinctiveness, created_at, updated_at)
+                             created_at, updated_at)
                         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12,
-                                $13, $14, $15, $16, $17, $18, now(), now())
+                                $13, $14, $15, $16, $17, now(), now())
                         ON CONFLICT (atom_id) DO UPDATE SET
                             text = excluded.text, place = excluded.place,
                             action = excluded.action, evidence = excluded.evidence,
@@ -750,13 +721,12 @@ async def _atomize_per_day(
                             persona_fit = excluded.persona_fit,
                             season_note = excluded.season_note,
                             source_hash = excluded.source_hash,
-                            distinctiveness = excluded.distinctiveness,
                             deleted = false, updated_at = now()
                     """, atom_id, tour_id, tenant_id, text, place or None, action or None,
                         evidence, atom.get("activity_type"), atom.get("emotional_hook"),
                         atom.get("visual_potential", 1),
                         json.dumps(atom.get("persona_fit") or []), atom.get("season_note"),
-                        False, False, 1.0, source_hash, day_num, distinctiveness)
+                        False, False, 1.0, source_hash, day_num)
                     new_atom_ids.append(atom_id)
                     inserted += 1
             else:

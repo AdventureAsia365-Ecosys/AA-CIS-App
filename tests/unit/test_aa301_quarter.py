@@ -30,9 +30,9 @@ def _trip(**over):
     return Trip(**base)
 
 
-def _atom(trip_id, distinctiveness="HIGH", atom_id=None):
+def _atom(trip_id, atom_id=None):
     return AtomRecord(atom_id=atom_id or f"atom_{uuid.uuid4().hex[:8]}", trip_id=trip_id,
-                       text="atom text", distinctiveness=distinctiveness)
+                       text="atom text")
 
 
 class TestFuzzyMatchB4:
@@ -156,62 +156,52 @@ class TestScoreReasonTieBreak:
     case, "Balanced" for a genuine nonzero tie, and the correct single
     dominant factor otherwise."""
 
-    # AA-448 round 1 — _score_reason() gained a 4th positional arg (dfs_score). Round 6 — a 5th
-    # (engagement_score). Weights now come from QUARTER_SCORE_WEIGHTS (constants.py:
-    # runway_fit=0.30, richness=0.20, distinctiveness=0.20, dfs_relevance=0.15,
-    # engagement_adjustment=0.15 — was 0.4/0.3/0.3 pre-AA-448, then 0.32/0.24/0.24/0.20 after
-    # round 1, now this). Every call below carries both new args; 0.0 in the original 3-factor
-    # tests keeps them isolating exactly the same comparison they always did (a 0.0 term
-    # contributes nothing). 2 new tests at the bottom cover dfs_relevance's and
-    # engagement_adjustment's own dominance cases — the two genuinely new behaviors AA-448 adds.
+    # AA-448 round 1 — _score_reason() gained a dfs_score factor. Round 6 — engagement_score.
+    # AA-754 — the distinctiveness (`dist`) factor was removed; the signature is now
+    # (runway_fit, richness, dfs_score, engagement_score, forced). Weights come from
+    # QUARTER_SCORE_WEIGHTS (constants.py: runway_fit=0.375, richness=0.25, dfs_relevance=0.1875,
+    # engagement_adjustment=0.1875 — the pre-AA-754 0.30/0.20/0.15/0.15 re-normalized to sum 1.0
+    # after dropping the 0.20 distinctiveness term). A 0.0 term contributes nothing, isolating
+    # exactly the comparison each test means to make.
 
     def test_forced_short_circuits_before_any_contribution_check(self):
-        assert _score_reason(0.9, 0.9, 0.9, 0.9, 0.9, forced=True) == "Manually added"
+        assert _score_reason(0.9, 0.9, 0.9, 0.9, forced=True) == "Manually added"
 
     def test_all_zero_no_longer_defaults_to_first_key(self):
-        """The exact real-world case round 5 found: runway_fit=richness=dist=0.0
+        """The exact real-world case round 5 found: runway_fit=richness=0.0
         (no BOFU/MOFU window yet, no curated atoms) must NOT read as
         'High runway fit' — the literal opposite of what 0.0 means."""
-        reason = _score_reason(0.0, 0.0, 0.0, 0.0, 0.0, forced=False)
+        reason = _score_reason(0.0, 0.0, 0.0, 0.0, forced=False)
         assert reason != "High runway fit (BOFU/MOFU window this quarter)"
         assert reason == "No runway or atom signal yet this quarter"
 
     def test_genuine_runway_fit_dominance_still_labeled_correctly(self):
-        # runway_fit*0.30=0.30, richness*0.20=0.10, dist*0.20=0.04, dfs*0.15=0.0,
-        # engagement*0.15=0.0 -> runway_fit wins
-        reason = _score_reason(1.0, 0.5, 0.2, 0.0, 0.0, forced=False)
+        # runway_fit*0.375=0.375 beats richness*0.25=0.125, dfs*0.1875=0.0, engagement*0.1875=0.0
+        reason = _score_reason(1.0, 0.5, 0.0, 0.0, forced=False)
         assert reason == "High runway fit (BOFU/MOFU window this quarter)"
 
     def test_genuine_richness_dominance_labeled_correctly(self):
-        # richness*0.20=0.20 beats runway_fit*0.30=0.06, dist*0.20=0.02, dfs*0.15=0.0,
-        # engagement*0.15=0.0
-        reason = _score_reason(0.2, 1.0, 0.1, 0.0, 0.0, forced=False)
+        # richness*0.25=0.25 beats runway_fit*0.375=0.075, dfs*0.1875=0.0, engagement*0.1875=0.0
+        reason = _score_reason(0.2, 1.0, 0.0, 0.0, forced=False)
         assert reason == "Rich atom pool"
 
-    def test_genuine_distinctiveness_dominance_labeled_correctly(self):
-        # dist*0.20=0.20 beats runway_fit*0.30=0.06, richness*0.20=0.02, dfs*0.15=0.0,
-        # engagement*0.15=0.0
-        reason = _score_reason(0.2, 0.1, 1.0, 0.0, 0.0, forced=False)
-        assert reason == "High-distinctiveness atoms"
-
     def test_genuine_dfs_relevance_dominance_labeled_correctly(self):
-        # AA-448 round 1 axis. dfs*0.15=0.15 beats runway_fit*0.30=0.06, richness*0.20=0.02,
-        # dist*0.20=0.02, engagement*0.15=0.0.
-        reason = _score_reason(0.2, 0.1, 0.1, 1.0, 0.0, forced=False)
+        # AA-448 axis. dfs*0.1875=0.1875 beats runway_fit*0.375=0.075, richness*0.25=0.025,
+        # engagement*0.1875=0.0.
+        reason = _score_reason(0.2, 0.1, 1.0, 0.0, forced=False)
         assert reason == "Strong search demand (DFS)"
 
     def test_genuine_engagement_adjustment_dominance_labeled_correctly(self):
-        # AA-448 round 6 axis. engagement*0.15=0.15 beats runway_fit*0.30=0.06,
-        # richness*0.20=0.02, dist*0.20=0.02, dfs*0.15=0.0.
-        reason = _score_reason(0.2, 0.1, 0.1, 0.0, 1.0, forced=False)
+        # AA-448 round 6 axis. engagement*0.1875=0.1875 beats runway_fit*0.375=0.075,
+        # richness*0.25=0.025, dfs*0.1875=0.0.
+        reason = _score_reason(0.2, 0.1, 0.0, 1.0, forced=False)
         assert reason == "Strong real engagement (feedback)"
 
     def test_nonzero_tie_reads_as_balanced_not_first_key(self):
-        # richness*0.20 == dist*0.20 == 0.20 (same multiplier applied to the same
-        # value 1.0, so this is an EXACT float tie, not just close) -> both
-        # beat runway_fit*0.30=0.0, dfs*0.15=0.0, engagement*0.15=0.0 -> a real tie between two
-        # nonzero factors.
-        reason = _score_reason(0.0, 1.0, 1.0, 0.0, 0.0, forced=False)
+        # dfs*0.1875 == engagement*0.1875 == 0.1875 (same multiplier applied to the same value
+        # 1.0, an EXACT float tie) -> both beat runway_fit*0.375=0.0 and richness*0.25=0.0 -> a
+        # real tie between two nonzero factors.
+        reason = _score_reason(0.0, 0.0, 1.0, 1.0, forced=False)
         assert reason == "Balanced score (multiple factors tied)"
 
 
@@ -262,7 +252,7 @@ class TestParseJsonb:
         row = {
             "atom_id": "atom_x", "tour_id": trip_id, "text": "some atom text",
             "activity_type": "trek",
-            "distinctiveness": "HIGH", "owner_scope": "platform", "deleted": False, "weight": 1.5,
+            "owner_scope": "platform", "deleted": False, "weight": 1.5,
             "cooldown_until": '{"blog": "2026-08-01"}', "usage_log": '["a", "b"]',
         }
         atom = _row_to_atom(row)
@@ -276,7 +266,7 @@ class TestParseJsonb:
         row = {
             "atom_id": "atom_y", "tour_id": trip_id, "text": "atom text",
             "activity_type": None,
-            "distinctiveness": "LOW", "owner_scope": "platform", "deleted": False, "weight": 1.0,
+            "owner_scope": "platform", "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }
         atom = _row_to_atom(row)  # must not raise pydantic_core.ValidationError
@@ -295,7 +285,7 @@ class TestFetchAtomsByTripDbWrapper:
         conn.fetch.return_value = [{
             "atom_id": "atom_z", "tour_id": trip_id, "text": "text",
             "activity_type": "food",
-            "distinctiveness": "MED", "owner_scope": "platform", "deleted": False, "weight": 1.0,
+            "owner_scope": "platform", "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }]
         ctx = AsyncMock()

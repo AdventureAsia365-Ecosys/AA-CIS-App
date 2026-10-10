@@ -32,7 +32,7 @@ def _trip(tenant_label, **over):
 
 def _atoms(trip_id, n=8):
     return [AtomRecord(atom_id=f"atom_{i}_{uuid.uuid4().hex[:6]}", trip_id=trip_id,
-                       text=f"atom {i}", distinctiveness="HIGH") for i in range(n)]
+                       text=f"atom {i}") for i in range(n)]
 
 
 class TestRunwayMapIsolation:

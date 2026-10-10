@@ -91,9 +91,7 @@ interface TourSummary {
 }
 
 interface Summary {
-  // AA-749 (option b) — breakdown gains a NOT_SCORED bucket (platform atoms, never scored);
-  // HIGH/MED/LOW now count only tenant-scored atoms.
-  distinctiveness_breakdown: { HIGH: number; MED: number; LOW: number; NOT_SCORED: number };
+  // AA-754 — the distinctiveness breakdown was removed with the signal itself.
   total_count: number;
   reviewed_count: number;
   by_tour: TourSummary[];
@@ -138,9 +136,8 @@ interface Atom {
   tour_name: string;
   text: string;
   activity_type: string | null;
-  // AA-749 (option b) — a platform atom is never scored for distinctiveness; the API now
-  // returns null for it, which renders as a neutral "Not scored" badge (see DIST_LABEL below).
-  distinctiveness: "HIGH" | "MED" | "LOW" | null;
+  // AA-754 — the per-atom distinctiveness field was removed end-to-end; the API no longer
+  // returns it.
   deleted: boolean;
   unreviewed: boolean;
   segment_id: string | null;
@@ -282,8 +279,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
             {[
               ["Total atoms", totalAtoms, A.gold],
               ["Reviewed", reviewedAtoms, A.green],
-              // AA-749 — no distinctiveness here: platform atoms are never scored (only the tenant
-              // T5 path has a competitor set) and the source repo dropped the concept.
+              // AA-754 — no distinctiveness KPI here: the signal was removed end-to-end.
             ].map(([label, value, accent]) => (
               <Card key={label as string} style={{ padding: "14px 16px" }}>
                 <div style={{ fontSize: 11.5, color: A.muted, marginBottom: 6 }}>{label}</div>

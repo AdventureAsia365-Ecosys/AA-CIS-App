@@ -127,9 +127,11 @@ def _eligible_atoms(atoms: list[AtomRecord], channel: str, used_this_month: set[
             continue
         # AA-609: the old `starred` 1.5x boost was removed — "star" was a curation flag with no
         # live effect (the only reader was here, and compute_slot_grid() has no production caller;
-        # the repo now ranks by deterministic score, not a human star). Weight + distinctiveness
-        # only.
-        w = a.weight * {"HIGH": 1.5, "MED": 1.0, "LOW": 0.6}[a.distinctiveness]
+        # the repo now ranks by deterministic score, not a human star).
+        # AA-754: the per-atom distinctiveness multiplier (HIGH 1.5 / MED 1.0 / LOW 0.6) was
+        # removed with the distinctiveness signal itself — eligibility now ranks on atom.weight
+        # alone (the feedback-derived value).
+        w = a.weight
         pool.append((w, a))
     return [a for _, a in sorted(pool, key=lambda x: -x[0])]
 

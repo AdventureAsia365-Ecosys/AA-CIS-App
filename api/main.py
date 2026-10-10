@@ -24,7 +24,6 @@ from api.routers.v1_route_hub import router as v1_route_hub_router
 from api.routers.v1_angle_gate import router as v1_angle_gate_router
 from api.routers.v1_content_writing import router as v1_content_writing_router
 from api.routers.v1_pipeline import router as v1_pipeline_router
-from api.routers.v1_competitors import router as v1_competitors_router
 from api.routers.v1_publish import router as v1_publish_router
 from api.routers.v1_integrations import router as v1_integrations_router
 from api.routers.v1_trip_page import router as v1_trip_page_router  # AA-482
@@ -191,7 +190,6 @@ app.include_router(v1_content_writing_router)  # AA-450 — T9 Content Writing +
 # AA-579: v1_exports_router (POST /v1/exports) removed — S8/S9 tàn dư (21/04/2026), 0 traffic
 # tenant thật trong 14 ngày CloudWatch, 0 UI caller. Xem AA-579 (Linear) trước khi khôi phục.
 app.include_router(v1_pipeline_router)
-app.include_router(v1_competitors_router)
 app.include_router(v1_publish_router)  # AA-455 bước 1 — tenant self-unpublish (publish_log)
 app.include_router(v1_integrations_router)  # AA-457 [T11 PR1] — tenant WordPress credentials
 app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, public page data

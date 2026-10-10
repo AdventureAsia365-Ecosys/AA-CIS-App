@@ -51,33 +51,31 @@ ATOM_COOLDOWN_WEEKS = 6
 THIN_TRIP_MAX_SHARE = 0.15
 
 # AA-448 — shared HIGH/MED/LOW -> numeric mapping. Was inline in quarter.py's
-# compute_quarter_plan() (one dict literal, only used for `distinctiveness`); pulled out here
-# so the SAME 3-bucket numeric ladder is reused for the new `dfs_relevance` term (AA-448,
-# services/acp_shared/dfs_relevance.py) instead of that formula inventing its own scale — a
-# "MED" atom and a "MED" tour-demand signal now contribute the same fractional weight.
+# compute_quarter_plan(); pulled out here so the SAME 3-bucket numeric ladder is reused for the
+# `dfs_relevance` term (AA-448, services/acp_shared/dfs_relevance.py) instead of that formula
+# inventing its own scale — a "MED" tour-demand signal contributes the same fractional weight
+# everywhere it is read.
 SIGNAL_SCORE_MAP = {"HIGH": 1.0, "MED": 0.5, "LOW": 0.1}
 
-# AA-448 — N5 quarter-plan scoring weights. Round 1 took this from 3 terms (runway_fit/richness/
-# distinctiveness, original 0.4/0.3/0.3) to 4 (added dfs_relevance, ADR-2026-038 §0.4 — ADD not
-# replace runway_fit, see docs/implementation-notes/AA-448-t7-content-planning.md "Decision 3"
-# for the reasoning). Round 6 adds a 5th term, `engagement_adjustment` (real post-publish
-# feedback, confidence-gated atom.weight rolled up to trip level — a NEW extension beyond
-# aa-marketing-v2's own Module H, which never fed back into quarter-level trip selection at all,
-# see that same file's "round 6" section) — done ONCE, in the same pass as this comment, per
-# Nghiep's explicit instruction not to re-derive the weights a second time after dfs_relevance
-# had already shipped. runway_fit stays the largest single term (the most concrete, deterministic
-# signal); richness/distinctiveness equal at 0.20 each; dfs_relevance and engagement_adjustment
-# both at 0.15 — smaller than the 3 established terms since both are newer/less-calibrated
-# signals (dfs_relevance's thresholds are explicitly "chưa hiệu chỉnh" per the ADR; engagement
-# feedback is sparse/confidence-gated early on, most trips will score the neutral 0.5 midpoint
-# for a while). Kept named/importable (not inline) so `_score_reason()` and
-# `compute_quarter_plan()` share one source of truth and can't drift out of sync.
+# AA-448 — N5 quarter-plan scoring weights. History: round 1 took this from 3 terms
+# (runway_fit/richness/distinctiveness, original 0.4/0.3/0.3) to 4 (added dfs_relevance,
+# ADR-2026-038 §0.4 — ADD not replace runway_fit); round 6 added a 5th term,
+# `engagement_adjustment` (real post-publish feedback, atom.weight rolled up to trip level).
+#
+# AA-754 — the `distinctiveness` term (atom-level competitor-overlap score) is REMOVED
+# end-to-end: it was only ever a real measurement for tenant-scored atoms via the T5
+# competitor-index path, which this task also removes, so every atom now carries only the
+# stored default. The remaining 4 terms are RE-NORMALIZED to sum to 1.0 by dividing each by the
+# old 0.80 non-distinctiveness total, which keeps their RELATIVE proportions exactly as they
+# were (runway_fit stays the largest term, richness second, dfs_relevance/engagement equal and
+# smallest) — the trip ranking is unchanged for today's data, where every platform atom scored a
+# constant MED distinctiveness and so the term never moved the order. Kept named/importable (not
+# inline) so `_score_reason()` and `compute_quarter_plan()` share one source of truth.
 QUARTER_SCORE_WEIGHTS = {
-    "runway_fit": 0.30,
-    "richness": 0.20,
-    "distinctiveness": 0.20,
-    "dfs_relevance": 0.15,
-    "engagement_adjustment": 0.15,
+    "runway_fit": 0.375,
+    "richness": 0.25,
+    "dfs_relevance": 0.1875,
+    "engagement_adjustment": 0.1875,
 }
 
 # AA-603 (21/09/2026) — the feedback-loop constants (CONFIDENCE_ATOM_MIN_POSTS, ATOM_WEIGHT_MIN,

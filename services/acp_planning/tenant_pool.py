@@ -14,7 +14,7 @@ own `gold_aa_internal.tenant_tour_versions` (latest version per tour) and their 
 **Not a literal call to `GET /v1/marketplace`** — that endpoint returns an aggregate rollup
 (atom_count/high_atom_count only) built for a browse UI; `compute_quarter_plan()`/
 `compute_slot_grid()` need full `Trip`/`AtomRecord` rows (period, itinerary_source, per-atom
-distinctiveness/weight/cooldown_until/usage_log, etc.) that an aggregate can't supply. This
+weight/cooldown_until/usage_log, etc.) that an aggregate can't supply. This
 module re-derives from the SAME two source tables/join key instead
 (`tenant_tour_versions.tenant_id` for trips, `tour_atoms.owner_scope` for atoms) — if the two
 queries' idea of "which tenant_tour_versions rows count as this tenant's current tours" ever
@@ -71,7 +71,7 @@ _TENANT_TRIP_QUERY = """
 """
 
 _TENANT_ATOM_QUERY = """
-    SELECT atom_id, tour_id, text, activity_type, distinctiveness, owner_scope,
+    SELECT atom_id, tour_id, text, activity_type, owner_scope,
            deleted, weight, cooldown_until, usage_log
     FROM acp_contract.tour_atoms
     WHERE owner_scope = $1 AND NOT deleted AND NOT is_empty_marker
