@@ -118,6 +118,9 @@ export function TabBar({ tabs, active, onChange }: {
     <div style={{
       display: "flex", gap: 4, padding: "4px",
       background: A.line2, borderRadius: 10, width: "fit-content",
+      // S224: on a phone a long tab list scrolls inside the bar instead of widening the page
+      // (Settings' 7 tabs made the whole admin main scroll sideways at 390px).
+      maxWidth: "100%", overflowX: "auto",
     }}>
       {tabs.map(t => (
         <button key={t.key} onClick={() => onChange(t.key)} style={{
@@ -125,7 +128,7 @@ export function TabBar({ tabs, active, onChange }: {
           background: active === t.key ? A.card : "transparent",
           color: active === t.key ? A.ink : A.muted,
           fontSize: 13, fontWeight: active === t.key ? 600 : 400,
-          cursor: "pointer", fontFamily: sans,
+          cursor: "pointer", fontFamily: sans, whiteSpace: "nowrap", flexShrink: 0,
           boxShadow: active === t.key ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
           transition: "all .15s",
         }}>{t.label}</button>
