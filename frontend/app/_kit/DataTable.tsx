@@ -117,6 +117,14 @@ export type DataTableProps<T> = {
    * horizontally with a visible scrollbar, instead of squeezing columns and clipping their content. */
   tableMinWidth?: number;
 
+  /** AA-755 — opt-in controlled + server-side sorting. When `onSortingChange` is given the caller
+   * owns the sort state (`sorting`), the table never sorts the rows itself (`manualSorting`), and a
+   * header click is reported to the caller to re-fetch the page from the server. Omit all three for
+   * the default client-side multi-sort used everywhere else (no behaviour change). */
+  sorting?: SortingState;
+  onSortingChange?: (next: SortingState) => void;
+  manualSorting?: boolean;
+
   /** Optional: make rows clickable (e.g. open a detail drawer). Cells that stopPropagation (like
    * an actions cell) won't trigger it. */
   onRowClick?: (row: T) => void;
@@ -164,9 +172,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
     maxBodyHeight,
     tableMinWidth,
     onRowClick,
+    sorting: controlledSorting,
+    onSortingChange: controlledOnSortingChange,
+    manualSorting = false,
   } = props;
 
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [internalSorting, setInternalSorting] = useState<SortingState>([]);
+  // AA-755 — when the caller controls sorting (server-side), use its state + handler; otherwise the
+  // table owns it (default client-side multi-sort, unchanged for every other page).
+  const sortingControlled = controlledOnSortingChange != null;
+  const sorting = sortingControlled ? (controlledSorting ?? []) : internalSorting;
+  const setSorting = sortingControlled ? undefined : setInternalSorting;
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [globalFilter, setGlobalFilter] = useState("");
@@ -246,7 +262,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
     getRowId: (row) => getRowId(row),
     enableRowSelection: enableSelection,
     enableMultiSort: true,
-    onSortingChange: setSorting,
+    manualSorting,
+    onSortingChange: (updater) => {
+      const next = typeof updater === "function" ? updater(sorting) : updater;
+      if (controlledOnSortingChange) controlledOnSortingChange(next);
+      else setSorting?.(next);
+    },
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     onGlobalFilterChange: setGlobalFilter,
@@ -268,7 +289,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   // ── Saved views ──
   const applyView = (v: SavedView<PersistedState>) => {
-    setSorting(v.state.sorting ?? []);
+    const nextSorting = v.state.sorting ?? [];
+    if (controlledOnSortingChange) controlledOnSortingChange(nextSorting);
+    else setSorting?.(nextSorting);
     setColumnVisibility(v.state.columnVisibility ?? {});
     setColumnFilters(v.state.columnFilters ?? []);
     setGlobalFilter(v.state.globalFilter ?? "");
@@ -662,8 +685,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: K.muted }}>
             <span>
-              {pageIndex * effPageSize + 1}–{Math.min((pageIndex + 1) * effPageSize, totalFiltered)} of{" "}
-              {totalFiltered}
+              {(pageIndex * effPageSize + 1).toLocaleString()}–
+              {Math.min((pageIndex + 1) * effPageSize, totalFiltered).toLocaleString()} of{" "}
+              {totalFiltered.toLocaleString()}
             </span>
             <select
               value={effPageSize}

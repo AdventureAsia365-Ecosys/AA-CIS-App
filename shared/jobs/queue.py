@@ -308,20 +308,89 @@ async def get(pool, job_id: str) -> Optional[dict]:
     return _row_dict(row) if row else None
 
 
+# AA-755 — server-side sort whitelist. The page only ever asks for one of these keys; the value is
+# a trusted SQL expression (never built from user input), so the column name can never be injected.
+# `id` is appended as a final tie-break on every sort so OFFSET pages are stable across equal keys.
+# Duration = finished_at - started_at (a running/queued job has no end, so it sorts NULLs last).
+# Cost reuses the same read-side expression the list already shows (j.cost_usd + summed LLM log).
+JOB_SORTS: dict[str, str] = {
+    "created_at": "j.created_at",
+    "started_at": "j.started_at",
+    "finished_at": "j.finished_at",
+    "kind": "j.kind",
+    "status": "j.status",
+    "attempt": "j.attempt",
+    "cost_usd": f"(j.cost_usd + {LLM_COST_SQL})",
+    "duration": "(j.finished_at - j.started_at)",
+}
+
+# Shared WHERE for list + count so the paged total matches exactly what the page can scroll through.
+# Built once from the same filter set (AA-755: + since/until/created_by/q) so `total` always counts
+# exactly the rows the list pages through. The $N order is fixed and shared by both queries; list
+# appends its own LIMIT/OFFSET params ($8/$9) after these.
+_LIST_WHERE = (
+    "($1::text IS NULL OR kind = $1) "
+    "AND ($2::text IS NULL OR status = $2) "
+    "AND ($3::text IS NULL OR payload->>'tour_id' = $3 OR payload->>'published_tour_id' = $3) "
+    "AND ($4::timestamptz IS NULL OR j.created_at >= $4) "
+    "AND ($5::timestamptz IS NULL OR j.created_at < $5) "
+    "AND ($6::text IS NULL OR j.created_by = $6) "
+    # q: free-text match on id prefix, kind substring, or created_by substring (case-insensitive).
+    "AND ($7::text IS NULL OR j.id::text LIKE $7 || '%' "
+    "     OR j.kind ILIKE '%' || $7 || '%' OR j.created_by ILIKE '%' || $7 || '%')"
+)
+
+
+def _filter_args(kind, status, tour_id, since, until, created_by, q) -> list:
+    """The positional args for `_LIST_WHERE`, in a fixed order shared by list_jobs + count_jobs."""
+    return [kind, status, tour_id, since, until, created_by, q]
+
+
+def _order_by(sort: str, sort_dir: str) -> str:
+    """SQL ORDER BY for a whitelisted `sort` key. Raises ValueError on an unknown key so the router
+    can answer 422 (never silently fall back, which would hide a client bug)."""
+    expr = JOB_SORTS.get(sort)
+    if expr is None:
+        raise ValueError(f"unknown sort key: {sort!r}")
+    direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    nulls = "NULLS FIRST" if direction == "ASC" else "NULLS LAST"
+    # j.id tie-break keeps OFFSET pages stable when the primary key ties.
+    return f"{expr} {direction} {nulls}, j.id {direction}"
+
+
 async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
-                    limit: int = 50, tour_id: Optional[str] = None) -> list[dict]:
+                    limit: int = 50, offset: int = 0, tour_id: Optional[str] = None,
+                    since: Optional[datetime] = None, until: Optional[datetime] = None,
+                    created_by: Optional[str] = None, q: Optional[str] = None,
+                    sort: str = "created_at", sort_dir: str = "desc") -> list[dict]:
     """`tour_id` (AA-687) matches the payload's tour: a3_atomize / segment work (`tour_id`) and
-    tenant rewrites of it (t2_rewrite's `published_tour_id`)."""
+    tenant rewrites of it (t2_rewrite's `published_tour_id`). AA-755: `since`/`until` bound
+    created_at, `created_by` is an exact match, `q` is a free-text match on id prefix / kind /
+    created_by; `sort`/`sort_dir` select a whitelisted ORDER BY (unknown key → ValueError),
+    `offset`/`limit` page the result."""
+    order_by = _order_by(sort, sort_dir)
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
     rows = await pool.fetch(
         f"""
         SELECT {_LIST_COLUMNS} FROM shared.job j
-        WHERE ($1::text IS NULL OR kind = $1) AND ($2::text IS NULL OR status = $2)
-          AND ($4::text IS NULL OR payload->>'tour_id' = $4 OR payload->>'published_tour_id' = $4)
-        ORDER BY created_at DESC LIMIT $3
+        WHERE {_LIST_WHERE}
+        ORDER BY {order_by} LIMIT $8 OFFSET $9
         """,
-        kind, status, limit, tour_id,
+        *args, limit, offset,
     )
     return [_row_dict(r) for r in rows]
+
+
+async def count_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] = None,
+                     tour_id: Optional[str] = None, since: Optional[datetime] = None,
+                     until: Optional[datetime] = None, created_by: Optional[str] = None,
+                     q: Optional[str] = None) -> int:
+    """AA-755 — total rows matching the same filters as list_jobs, for the page's pagination total."""
+    args = _filter_args(kind, status, tour_id, since, until, created_by, q)
+    return int(await pool.fetchval(
+        f"SELECT count(*)::int FROM shared.job j WHERE {_LIST_WHERE}",
+        *args,
+    ))
 
 
 async def latest(pool, kind: str, statuses: tuple = ()) -> Optional[dict]:
