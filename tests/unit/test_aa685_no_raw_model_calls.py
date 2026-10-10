@@ -12,20 +12,29 @@ REPO = Path(__file__).resolve().parents[2]
 SCANNED_ROOTS = ("services", "api", "shared")
 GATEWAY = Path("shared/llm_client")
 RAW_BEDROCK_METHODS = {"invoke_model", "invoke_model_with_response_stream", "converse", "converse_stream"}
+# AA-757 (S224): the gateway's own low-level helpers. Calling them from outside skips the route,
+# fallback, shadow and JSON check even though the call is logged — t5_atomize did exactly that.
+GATEWAY_INTERNALS = {"invoke_claude", "get_satellite_client"}
 
 # path -> reason. Keep this short; a new entry needs a reason a reviewer can check.
-ALLOWED = {
-    # _invoke_judge_legacy() and its three backends: only reached with an explicit `model=` or
-    # without `stage=`, i.e. the AA-351 comparison scripts. All 5 production call sites pass
-    # stage= and go through LLMClient (AA-659).
-    "services/acp_produce/judge_client.py": "legacy judge path for comparison scripts",
-}
+# (AA-757 emptied it: judge_client's legacy paths were removed.)
+ALLOWED: dict[str, str] = {}
 
 
 def _raw_calls(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     hits = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(a.name in GATEWAY_INTERNALS for a in node.names):
+            hits.append(f"{path.relative_to(REPO)}:{node.lineno} import "
+                        + ", ".join(a.name for a in node.names if a.name in GATEWAY_INTERNALS))
+            continue
+        if isinstance(node, ast.Call):
+            name = (node.func.id if isinstance(node.func, ast.Name)
+                    else node.func.attr if isinstance(node.func, ast.Attribute) else None)
+            if name in GATEWAY_INTERNALS:
+                hits.append(f"{path.relative_to(REPO)}:{node.lineno} {name}()")
+                continue
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         attr = node.func.attr

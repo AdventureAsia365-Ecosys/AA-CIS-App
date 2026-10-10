@@ -229,26 +229,24 @@ def test_converse_schema_without_tool_call_raises():
 
 # ── judge call sites ──────────────────────────────────────────────────────────────────────────
 
-def test_invoke_judge_with_stage_goes_through_the_route():
+def test_invoke_judge_goes_through_the_route():
     from services.acp_produce import judge_client
     fake = MagicMock()
     fake.generate.return_value = _resp("satellite-gpt-5.6-luna", input_tokens=3, output_tokens=4,
                                        cost_usd=0.01, satellite_account="acc3", fallback_used=False)
-    with patch("shared.llm_client.client.LLMClient", return_value=fake), \
-            patch.object(judge_client, "_invoke_judge_legacy") as legacy:
+    with patch("shared.llm_client.client.LLMClient", return_value=fake):
         raw = judge_client.invoke_judge("sys", "user", stage="t10_judge")
-    legacy.assert_not_called()
     req = fake.generate.call_args.args[0]
     assert req.stage == "t10_judge" and req.temperature == 0 and req.model_tier is None
     assert raw["model_used"] == "satellite-gpt-5.6-luna"
     assert raw["account"] == "acc3" and raw["cost_usd"] == 0.01
 
 
-def test_invoke_judge_explicit_model_keeps_legacy_path():
+def test_invoke_judge_requires_a_stage():
+    import pytest
     from services.acp_produce import judge_client
-    with patch.object(judge_client, "_invoke_judge_legacy", return_value={"text": "{}"}) as legacy:
-        judge_client.invoke_judge("sys", "user", model="gpt41", stage="t10_judge")
-    legacy.assert_called_once()
+    with pytest.raises(TypeError):
+        judge_client.invoke_judge("sys", "user")
 
 
 def test_brand_fit_no_longer_pins_gpt41():

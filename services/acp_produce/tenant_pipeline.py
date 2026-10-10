@@ -60,10 +60,10 @@ from services.acp_shared.atom_extraction import (
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
 from services.content_generation.seo_meta_utils import SEO_TITLE_MAX, fit_seo_meta, fit_seo_title  # noqa: F401
-from shared.llm_client.bedrock_satellite import invoke_claude
+from shared.llm_client.client import LLMClient
+from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
 from shared.llm_client.call_log import record_call_with_pool
-from shared.llm_client.pricing import calc_cost
 from shared.llm_client.decide import decide
 
 logger = structlog.get_logger()
@@ -72,9 +72,9 @@ TENANT_QA_MAX_REPAIRS = 2  # AA-425 — separate from acp_produce.models.REPAIR_
 
 # AA-508/AA-619 — the day-fingerprint's "model" input is now read from the live t5_atomize stage
 # config (_t5_cfg.model_id) at the top of _atomize_per_day(), NOT a hardcoded constant here. That
-# keeps the fingerprint's model and the actual invoke_claude() model always identical within a run
-# (the old `_T5_MODEL_TIER = "sonnet"` constant could drift from the DB config — e.g. after AA-619
-# switched the config to haiku — leaving stale-model atoms un-invalidated). Constant removed.
+# keeps the fingerprint's model and the actual LLMClient.generate() model always identical within
+# a run (the old `_T5_MODEL_TIER = "sonnet"` constant could drift from the DB config — e.g. after
+# AA-619 switched the config to haiku — leaving stale-model atoms un-invalidated). Constant removed.
 
 # AA-526 — run_t5_atomize()'s own `tenant_id` param doubles as BOTH the free-text owner_scope
 # value (any string is valid, tour_atoms.owner_scope has no type/FK constraint) AND the value
@@ -419,7 +419,8 @@ async def run_t5_atomize(
     services/acp_shared/atom_extraction.py (AA-475 — moved out of the deleted
     api/routers/v1_atoms.py, the old platform-scope N2 atomize endpoint this module
     never called directly, only imported these pure helpers from)
-    (_build_user_prompt, _SYSTEM_PROMPT, _strip_json_fence, invoke_claude) — the
+    (_build_user_prompt, _SYSTEM_PROMPT, _strip_json_fence) and the gateway
+    (LLMClient.generate) — the
     two changes AA-425 asks for: (1) `row` built from T4 output, not a
     v_trip_registry SELECT (raw source); (2) owner_scope=tenant_id, not 'platform'.
 
@@ -493,16 +494,17 @@ async def _atomize_whole_tour_legacy(
         return {"status": "skipped", "atom_count": 0}
 
     prompt = _build_user_prompt(row)
-    # AA-518 — "t5_atomize" stage config (seeded sonnet/acc3). account="acc3" is now EXPLICIT
-    # (was previously omitted here, silently defaulting to invoke_claude()'s own 'acc1' default —
-    # unintentional drift every sibling Mechanism-B call site didn't have, flagged in AA-518.md
-    # round 2 STEP0; fixed here rather than in a separate follow-up since this task already
-    # touches this exact call site to wire config + persist-log).
+    # AA-757 — atomize now runs through the gateway (LLMClient.generate), stage "t5_atomize", so
+    # the admin stage route (fallback + shadow) applies and a non-Claude model can be selected.
+    # No model_tier is passed: the stage config decides the model (behaviour unchanged on today's
+    # haiku config). _t5_cfg is still read for the day-fingerprint key (per-day path) and the
+    # record_call role; the call itself no longer reads account_route (the gateway owns routing).
     _t5_cfg = await get_stage_config("t5_atomize")
     try:
         llm_result = await asyncio.to_thread(
-            invoke_claude, prompt, model=_t5_cfg.model_id, max_tokens=4096, system=_SYSTEM_PROMPT,
-            account=_t5_cfg.account_route or "acc3",
+            LLMClient().generate,
+            LLMRequest(system_prompt=_SYSTEM_PROMPT, user_prompt=prompt,
+                       stage="t5_atomize", max_tokens=4096),
         )
     except Exception as e:
         logger.error("t5_atomize_llm_failed", tour_id=tour_id, tenant_id=tenant_id,
@@ -510,7 +512,7 @@ async def _atomize_whole_tour_legacy(
         return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
 
     try:
-        atoms = json.loads(_strip_json_fence(llm_result.text))["atoms"]
+        atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.error("t5_atomize_parse_failed", tour_id=tour_id, tenant_id=tenant_id, error=str(e))
         return {"status": "failed", "error": f"invalid atom JSON from model: {e}"}
@@ -556,17 +558,17 @@ async def _atomize_whole_tour_legacy(
     # AA-505 — real, computed quality_signal: how many atoms this exact call actually produced
     # vs. a zero-atom marker (a real, meaningful proxy for a stage with no judge — see decision 1,
     # docs/implementation-notes/AA-518.md).
+    # AA-757 — cost/model/account/fallback/provider all come from the gateway response now
+    # (LLMClient.generate computes cost + routing), not recomputed here from _t5_cfg.
     await record_call_with_pool(
-        pool, stage="t5_atomize", role="writer", model=llm_result.model_used,
-        tokens_in=llm_result.usage.get("input_tokens"), tokens_out=llm_result.usage.get("output_tokens"),
-        cost_usd=calc_cost(_t5_cfg.model_id, llm_result.usage.get("input_tokens", 0),
-                            llm_result.usage.get("output_tokens", 0),
-                            cache_read=llm_result.usage.get("cache_read_input_tokens", 0) or 0,
-                            cache_write=llm_result.usage.get("cache_creation_input_tokens", 0) or 0),
+        pool, stage="t5_atomize", role=_t5_cfg.role, model=llm_result.model_used,
+        tokens_in=llm_result.input_tokens, tokens_out=llm_result.output_tokens,
+        cost_usd=llm_result.cost_usd,
         tenant_id=_llm_log_tenant_id(tenant_id),
         quality_signal={"atoms_extracted": inserted, "is_empty_marker": inserted == 0},
         stop_reason=llm_result.stop_reason,
-        account=_t5_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
+        account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
+        provider=llm_result.provider,
     )
     return {"status": "success", "atom_count": inserted}
 
@@ -668,17 +670,20 @@ async def _atomize_per_day(
     # `country` param is retained for call-site compatibility but no longer read here.
 
     # AA-619 — _t5_cfg already resolved at the top of this function (used to key the fingerprint
-    # above); reused here for the actual call + cost so the fingerprint model and the call model
-    # can never drift within a single run.
+    # above); reused here for the record_call role so the fingerprint model and the logged role
+    # stay consistent within a single run.
     inserted = 0
     days_read = 0
     days_failed = []
     for day_num, day, fp in to_ask:
         prompt = _build_day_user_prompt(row, day_num, day["title"], day["body"])
         try:
+            # AA-757 — through the gateway: stage "t5_atomize" (admin route/fallback/shadow), no
+            # model_tier so the stage config picks the model. Behaviour unchanged on haiku config.
             llm_result = await asyncio.to_thread(
-                invoke_claude, prompt, model=_t5_cfg.model_id, max_tokens=4096, system=_SYSTEM_PROMPT,
-                account=_t5_cfg.account_route or "acc3",
+                LLMClient().generate,
+                LLMRequest(system_prompt=_SYSTEM_PROMPT, user_prompt=prompt,
+                           stage="t5_atomize", max_tokens=4096),
             )
         except Exception as e:
             logger.error("t5_atomize_day_llm_failed", tour_id=tour_id, version_id=version_id,
@@ -686,7 +691,7 @@ async def _atomize_per_day(
             days_failed.append(day_num)
             continue
         try:
-            atoms = json.loads(_strip_json_fence(llm_result.text))["atoms"]
+            atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logger.error("t5_atomize_day_parse_failed", tour_id=tour_id, version_id=version_id,
                          day_number=day_num, error=str(e))
@@ -774,19 +779,18 @@ async def _atomize_per_day(
             """, version_id, day_num, fp)
         days_read += 1
         # AA-505 — per-day atom count, real and immediate (same reasoning as the legacy path).
+        # AA-757 — cost/model/account/fallback/provider from the gateway response.
         await record_call_with_pool(
-            pool, stage="t5_atomize", role="writer", model=llm_result.model_used,
-            tokens_in=llm_result.usage.get("input_tokens"),
-            tokens_out=llm_result.usage.get("output_tokens"),
-            cost_usd=calc_cost(_t5_cfg.model_id, llm_result.usage.get("input_tokens", 0),
-                                llm_result.usage.get("output_tokens", 0),
-                                cache_read=llm_result.usage.get("cache_read_input_tokens", 0) or 0,
-                                cache_write=llm_result.usage.get("cache_creation_input_tokens", 0) or 0),
+            pool, stage="t5_atomize", role=_t5_cfg.role, model=llm_result.model_used,
+            tokens_in=llm_result.input_tokens,
+            tokens_out=llm_result.output_tokens,
+            cost_usd=llm_result.cost_usd,
             tenant_id=_llm_log_tenant_id(tenant_id),
             quality_signal={"atoms_extracted": len(new_atom_ids), "day_number": day_num,
                              "is_empty_marker": not atoms},
             stop_reason=llm_result.stop_reason,
-            account=_t5_cfg.account_route or "acc3", fallback_used=False, provider="bedrock-satellite",
+            account=llm_result.satellite_account, fallback_used=llm_result.fallback_used,
+            provider=llm_result.provider,
         )
 
     result = {
