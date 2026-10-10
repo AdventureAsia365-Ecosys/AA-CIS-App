@@ -43,12 +43,30 @@ def _iso(d: dict) -> dict:
 async def list_jobs(request: Request, kind: Optional[str] = None,
                     status: Optional[str] = Query(None, description="|".join(_STATUSES)),
                     limit: int = Query(50, ge=1, le=200),
+                    page: int = Query(1, ge=1, description="AA-755: 1-based page (with page_size)"),
+                    page_size: Optional[int] = Query(None, ge=1, le=200,
+                                                     description="AA-755: rows per page; overrides limit"),
+                    sort: str = Query("created_at", description="AA-755: " + "|".join(queue.JOB_SORTS)),
+                    sort_dir: str = Query("desc", description="asc|desc"),
                     tour_id: Optional[str] = Query(None, description="AA-687: jobs whose payload names this tour")):
     if status is not None and status not in _STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {_STATUSES}")
-    rows = await queue.list_jobs(request.app.state.pool, kind=kind, status=status, limit=limit,
-                                 tour_id=tour_id)
-    return {"jobs": [_iso(r) for r in rows]}
+    if sort not in queue.JOB_SORTS:
+        raise HTTPException(status_code=422, detail=f"sort must be one of {sorted(queue.JOB_SORTS)}")
+    if sort_dir.lower() not in ("asc", "desc"):
+        raise HTTPException(status_code=422, detail="sort_dir must be 'asc' or 'desc'")
+    size = page_size or limit
+    offset = (page - 1) * size
+    pool = request.app.state.pool
+    rows = await queue.list_jobs(pool, kind=kind, status=status, limit=size, offset=offset,
+                                 tour_id=tour_id, sort=sort, sort_dir=sort_dir)
+    total = await queue.count_jobs(pool, kind=kind, status=status, tour_id=tour_id)
+    return {
+        "jobs": [_iso(r) for r in rows],
+        "total": total,
+        "pagination": {"page": page, "page_size": size, "total": total,
+                       "pages": max(1, (total + size - 1) // size)},
+    }
 
 
 @router.get("/summary", summary="AA-650 — counts per kind/status + registered kinds")
