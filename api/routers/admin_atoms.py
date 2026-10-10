@@ -53,7 +53,7 @@ _recompute_logger = structlog.get_logger()
 #
 # Before this, every endpoint here was x-admin-secret only (module header comment,
 # AA-300 STEP 0 decision) — fine while the only UI was /admin/curation (staff-only,
-# platform-owned atoms). AA-425's T5 (services/acp_produce/tenant_pipeline.py)
+# platform-owned atoms). AA-425's atomize (now services/acp_contract/a3_atomize.py)
 # started writing atoms with owner_scope = <tenant_id> (a TENANT's own atoms, from
 # their own rewritten content) alongside the pre-existing owner_scope = 'platform'
 # rows — but nothing here ever filtered by owner_scope, and there was no tenant-JWT
@@ -520,8 +520,8 @@ _ATOM_OUTCOME_SQL = """
 
 async def _record_atom_delete_outcome(pool, tour_id: str, atom_id: str, deleted: bool) -> None:
     """Rebuild the a3_atom_in_text subject_key from the atom's day text + place/action (the single
-    builder in tenant_pipeline.atom_subject_key) and stamp the outcome. truth = not deleted."""
-    from services.acp_produce.tenant_pipeline import ATOM_Q, atom_subject_key
+    builder in a3_atomize.atom_subject_key) and stamp the outcome. truth = not deleted."""
+    from services.acp_contract.a3_atomize import ATOM_Q, atom_subject_key
     from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
     from shared.llm_client.decide import record_outcome
 
@@ -600,7 +600,7 @@ async def trigger_atomize(
 
     AA-652 — enqueues one durable `a3_atomize` job per tour (returned as `job_ids`, visible on the
     admin Jobs page). The kind runs one at a time, so tours still atomize SEQUENTIALLY —
-    `run_t5_atomize()` can issue several Bedrock calls per tour and "all" has no cap. The client
+    `run_a3_atomize()` can issue several LLM calls per tour and "all" has no cap. The client
     can still poll `GET /admin/atoms/unatomized-tours` (or `/admin/atoms/summary`) until the
     tour(s) drop off / gain a real atom_count."""
     verify_admin_secret(x_admin_secret)

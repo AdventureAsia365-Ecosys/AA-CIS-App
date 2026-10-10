@@ -5,7 +5,7 @@ Covers:
     works with both a pool-like (has .acquire) and a bare connection.
   - grounding.record_approved_outcome(): reuses source_text + sentence_units + subject_key so an
     approved sentence stamps exactly the subject_key the S1 run judged.
-  - tenant_pipeline.atom_subject_key(): the single builder for the a3_atom_in_text key format
+  - a3_atomize.atom_subject_key(): the single builder for the a3_atom_in_text key format
     (atom:<md5(day_text)[:10]>:<label[:200]>), identical to what ground_day_atoms uses.
 Mock-only: no TypeSafe call, no DB."""
 import hashlib
@@ -151,7 +151,7 @@ async def test_record_approved_outcome_noop_on_empty_input():
 # ── atom_subject_key — the single a3_atom_in_text key builder ─────────────────────────────────────
 
 def test_atom_subject_key_matches_the_a3_run_format():
-    from services.acp_produce.tenant_pipeline import atom_subject_key
+    from services.acp_contract.a3_atomize import atom_subject_key
     from services.acp_shared.atom_extraction import derive_atom_text
 
     day = {"title": "Day 2 — Tiger's Nest", "body": "Hike to Taktsang Monastery through pine forest."}
@@ -166,7 +166,7 @@ def test_atom_subject_key_matches_the_a3_run_format():
 
 
 def test_atom_subject_key_strips_day_text_before_hashing():
-    from services.acp_produce.tenant_pipeline import atom_subject_key
+    from services.acp_contract.a3_atomize import atom_subject_key
     a = atom_subject_key("  Day 1\nBody text  ", "P", "a")
     b = atom_subject_key("Day 1\nBody text", "P", "a")
     assert a == b

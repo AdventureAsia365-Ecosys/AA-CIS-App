@@ -1,10 +1,10 @@
 """AA-469 Việc 1 — split T4 (save to My Catalog) / T5 (atomize) into 2 independent triggers.
 
 STEP0 (docs/claude_audit/AA-469-viec1-step0-t4-t5-split-investigation.md) confirmed the real
-bug: run_t5_atomize() used to run UNCONDITIONALLY right after T4's UPDATE inside
+bug: run_a3_atomize() (then named run_t5_atomize) used to run UNCONDITIONALLY right after T4's UPDATE inside
 trigger_rewrite()'s _do_rewrite_and_save() closure (api/routers/v1_tours.py) — including when
 T3's QA gate failed both repair rounds and got auto-passed (qa_auto_passed=True, AA-436). The
-fix: the closure no longer calls run_t5_atomize() at all, on EITHER the real-pass or the
+fix: the closure no longer calls run_a3_atomize() at all, on EITHER the real-pass or the
 auto-pass path — driven end-to-end (mocks only at the LLM/DB boundary, same shape as
 test_aa445_t5_distinctiveness.py's pool fake) rather than asserted via source inspection, since
 the call site is a nested closure with no other seam to test through.
@@ -93,7 +93,7 @@ async def _drive_trigger_rewrite(qa_result: dict):
     with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock(return_value=REWRITE_RESULT)) as m_rewrite, \
          patch("services.acp_produce.tenant_pipeline.run_t3_qa_gate", AsyncMock(return_value=qa_result)) as m_qa, \
          patch("services.acp_produce.tenant_pipeline.escalate_t3_failure", AsyncMock()) as m_escalate, \
-         patch("services.acp_produce.tenant_pipeline.run_t5_atomize", AsyncMock()) as m_atomize, \
+         patch("services.acp_contract.a3_atomize.run_a3_atomize", AsyncMock()) as m_atomize, \
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock()) as m_ranking, \
          patch("shared.jobs.registry.enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue, \
          patch("services.seo_intelligence.s1_prefetch.tenant_market_seo",
@@ -141,7 +141,7 @@ async def test_real_qa_pass_does_not_auto_atomize():
 async def test_qa_auto_pass_does_not_auto_atomize():
     """THE original bug's exact repro condition (STEP0): T3 exhausts both repair rounds
     (passed=False) and gets auto-passed (AA-436) — escalate_t3_failure() still fires (A4 must
-    still see it), but run_t5_atomize() must NOT."""
+    still see it), but run_a3_atomize() must NOT."""
     qa_result = {
         "result": {**REWRITE_RESULT, "quality_score": 6.0},
         "passed": False, "attempts": 2,

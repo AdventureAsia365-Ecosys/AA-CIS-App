@@ -213,12 +213,13 @@ function ReviewLogSection() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
         <div>
           <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-            Review Log — T3/T5 Escalations
+            Review Log — T3 / A3 atomize Escalations
           </h2>
           <div style={{ fontSize: 12, color: A.muted }}>
-            T3 QA-gate failures (auto-passed to the tenant, logged here for pattern review) and T5
-            atomize failures (check_id prefixed t5_atomize: — filterable via the Checks badges
-            below) — neither is a queue to action, both are post-hoc pattern review.
+            T3 QA-gate failures (auto-passed to the tenant, logged here for pattern review) and A3
+            atomize failures (check_id prefixed t5_atomize: — the historical stage key, filterable
+            via the Checks badges below) — neither is a queue to action, both are post-hoc pattern
+            review.
           </div>
         </div>
         <input

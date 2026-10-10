@@ -208,7 +208,7 @@ function AtomizeSection({ summary, summaryLoading, selectedTour, onTourChange, o
         "all" in target ? `Atomizing ${body.tour_ids.length} tours…` : "Atomizing…",
       );
       // Poll until every accepted tour has dropped off the unatomized list (or ~10 min elapses —
-      // run_t5_atomize() can take a while, up to one Bedrock call per itinerary day, per tour).
+      // run_a3_atomize() can take a while, up to one LLM call per itinerary day, per tour).
       const pending = new Set(body.tour_ids);
       let attempts = 0;
       const poll = setInterval(async () => {

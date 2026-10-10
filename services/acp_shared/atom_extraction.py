@@ -2,8 +2,8 @@
 
 Extracted from api/routers/v1_atoms.py (AA-475 — that router, the old platform-scope N2 atomize
 endpoint, was deleted). These 4 pieces were never specific to that endpoint: they are the pure
-prompt-build/parse/hash logic AA-299 proved, and `services/acp_produce/tenant_pipeline.py::
-run_t5_atomize` (T5, the current owner_scope=tenant_id atomize pipeline) already depended on them
+prompt-build/parse/hash logic AA-299 proved, and `services/acp_contract/a3_atomize.py::
+run_a3_atomize` (A3 platform atomize, owner_scope="platform") already depended on them
 directly — moved here so T5 doesn't reach into a deleted router module.
 """
 import hashlib
@@ -120,7 +120,7 @@ def build_user_prompt(row: dict) -> str:
 
 def build_day_user_prompt(row: dict, day_number: int, day_title: str, day_body: str) -> str:
     """AA-508 — per-day variant of build_user_prompt(). Same TOUR/SUMMARY/HIGHLIGHTS preamble for
-    context, but ITINERARY is scoped to this one day instead of the whole trip, so run_t5_atomize()
+    context, but ITINERARY is scoped to this one day instead of the whole trip, so run_a3_atomize()
     can call the model (and fingerprint/cache the result) per day instead of once for the whole
     tour. SYSTEM_PROMPT (what counts as an atom, how decompose works) is untouched by this — only
     what the model is shown changes, never what it's asked to do with it.
@@ -273,7 +273,7 @@ def day_fingerprint(day_title: str, day_body: str, model: str) -> str:
     """What one day's atomize reading depends on (AA-508) — mirrors aa-social-media's own
     _fingerprint() (src/aa_social/stages/atoms.py): the day's own text, the decompose instruction
     (SYSTEM_PROMPT), and the model. Change any of the three and the fingerprint changes — a
-    matching fingerprint means run_t5_atomize() would get the exact same reading calling the model
+    matching fingerprint means run_a3_atomize() would get the exact same reading calling the model
     again, so it doesn't."""
     joined = "\n\0".join((day_title or "", day_body or "", SYSTEM_PROMPT, model))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()

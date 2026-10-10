@@ -13,15 +13,14 @@ logger = structlog.get_logger()
 class _SingleConnAsPool:
     """AA-526 — process_export() (and this class's other user, _run_a3_atomize_background()
     below) each own exactly ONE asyncpg.Connection, Lambda-handler style — no asyncpg.Pool in
-    scope the way every other real caller of services.acp_produce.tenant_pipeline.run_t5_atomize()
-    has (T5's tenant-facing endpoint, api/routers/v1_tours.py, always runs inside a FastAPI
-    request with request.app.state.pool). run_t5_atomize()/atom_extraction.py are reused
-    UNCHANGED (AA-526's own instruction) rather than reworked to accept a bare Connection — this
-    thin adapter exposes the one `.acquire()` async-context-manager shape they call, yielding the
-    SAME connection every time. Safe here specifically because every real call path into
-    run_t5_atomize() (_atomize_whole_tour_legacy/_atomize_per_day) acquires-and-releases
-    sequentially, never concurrently (that module's own docstring: "Days are read SEQUENTIALLY,
-    not concurrently") — a real pool with >1 physical connection is never required."""
+    scope the way other callers (e.g. a FastAPI request with request.app.state.pool) have.
+    services.acp_contract.a3_atomize.run_a3_atomize()/atom_extraction.py are reused UNCHANGED
+    rather than reworked to accept a bare Connection — this thin adapter exposes the one
+    `.acquire()` async-context-manager shape they call, yielding the SAME connection every time.
+    Safe here specifically because every real call path into run_a3_atomize()
+    (_atomize_whole_tour_legacy/_atomize_per_day) acquires-and-releases sequentially, never
+    concurrently (that module's own docstring: "Days are read SEQUENTIALLY, not concurrently") —
+    a real pool with >1 physical connection is never required."""
 
     def __init__(self, conn):
         self._conn = conn
@@ -135,8 +134,8 @@ async def recompute_segment_score_route(tour_id: str, pool, *, log_tour_id: str 
 async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str, version_id: str,
                                       reraise: bool = False, progress=None) -> dict:
     """AA-526 — the actual A3 atomize call, launched fire-and-forget from process_export() so a
-    slow multi-day LLM atomize run (services.acp_produce.tenant_pipeline.run_t5_atomize(), up to
-    one invoke_claude() call per itinerary day) never adds latency to — or risks an API Gateway
+    slow multi-day LLM atomize run (services.acp_contract.a3_atomize.run_a3_atomize(), up to
+    one LLM call per itinerary day) never adds latency to — or risks an API Gateway
     504 on — the admin action that triggers publish (api/routers/admin_pipeline.py /
     v1_pipeline.py, both `await process_export(...)` directly in their own request handler).
     Opens its OWN connection (process_export()'s own `conn` is closed in its `finally` block
@@ -157,9 +156,9 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
     outcome = {"segment_score_route": "not_run"}
     pool = await open_job_pool()
     try:
-        from services.acp_produce.tenant_pipeline import run_t5_atomize
-        result = await run_t5_atomize(
-            "platform", tour_id, rewritten, pool,
+        from services.acp_contract.a3_atomize import run_a3_atomize
+        result = await run_a3_atomize(
+            tour_id, rewritten, pool,
             country=country, version_id=version_id,
         )
         logger.info("a3_atomize_done", tour_id=tour_id, result=result)
