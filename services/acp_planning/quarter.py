@@ -106,16 +106,16 @@ def _cap_thin_trip_shares(
     return capped, notes
 
 
-def _score_reason(runway_fit: float, richness: float, dist: float, dfs_score: float,
+def _score_reason(runway_fit: float, richness: float, dfs_score: float,
                    engagement_score: float, forced: bool) -> str:
     """AA-323 Gap 1 — short English label naming the dominant scoring factor.
     Weights mirror compute_quarter_plan()'s own score formula (QUARTER_SCORE_WEIGHTS,
     constants.py) so the label reflects what actually drove the ranking, not raw component
     values a reviewer would have to interpret themselves.
 
-    AA-448 round 1 — added `dfs_score` as a 4th labelable factor. Round 6 — added
-    `engagement_score` (real post-publish feedback, rolled up from tour_atoms.weight) as a 5th,
-    same tie-break logic below unchanged either time.
+    AA-448 round 1 — added `dfs_score` as a labelable factor. Round 6 — added `engagement_score`
+    (real post-publish feedback, rolled up from tour_atoms.weight). AA-754 — removed the
+    `dist` (distinctiveness) factor; the tie-break logic below is otherwise unchanged.
 
     AA-323 round 6, Phần C — fixed a tie-break bug found in round 5's live
     audit: plain `max(contributions, key=...)` always resolves a tie to the
@@ -132,7 +132,6 @@ def _score_reason(runway_fit: float, richness: float, dist: float, dfs_score: fl
     contributions = {
         "High runway fit (BOFU/MOFU window this quarter)": runway_fit * QUARTER_SCORE_WEIGHTS["runway_fit"],
         "Rich atom pool": richness * QUARTER_SCORE_WEIGHTS["richness"],
-        "High-distinctiveness atoms": dist * QUARTER_SCORE_WEIGHTS["distinctiveness"],
         "Strong search demand (DFS)": dfs_score * QUARTER_SCORE_WEIGHTS["dfs_relevance"],
         "Strong real engagement (feedback)": engagement_score * QUARTER_SCORE_WEIGHTS["engagement_adjustment"],
     }
@@ -183,7 +182,7 @@ def compute_quarter_plan(
     excludes = excludes or set()
     dfs_relevance_by_trip = dfs_relevance_by_trip or {}
 
-    scored: list[tuple[float, Trip, bool, float, float, float, float, float, bool]] = []
+    scored: list[tuple[float, Trip, bool, float, float, float, float, bool]] = []
     for t in trips:
         if t.lifecycle_stage == "retired":
             continue
@@ -193,17 +192,6 @@ def compute_quarter_plan(
             1 for m in q_months for mk in markets if runway.stage(dest, mk, m) in ("BOFU", "MOFU")
         ) / (len(q_months) * len(markets) or 1)
         richness = min(len(atoms) / 10, 1.0)
-        # AA-749 (option b) — a platform atom's distinctiveness is a stored default, not a
-        # measurement, so it must not be read as one. Average only the atoms that were actually
-        # scored (owner_scope != 'platform', the T5 score_distinctiveness path); a trip with no
-        # scored atom scores 0 for this term (no signal), instead of the old flat MED a pool of
-        # all-platform atoms produced. Ranking of today's data is unchanged: every platform atom
-        # was MED, so this term was a constant across trips and never moved the order.
-        scored_atoms = [a for a in atoms if a.owner_scope != "platform"]
-        dist = (
-            sum(SIGNAL_SCORE_MAP[a.distinctiveness] for a in scored_atoms) / len(scored_atoms)
-            if scored_atoms else 0.0
-        )
         dfs_score = SIGNAL_SCORE_MAP[dfs_relevance_by_trip.get(t.id, "MED")]
         # AA-448 round 6 — engagement_adjustment: avg atom.weight (aamc-style [0.25, 2.0] range,
         # 1.0 = neutral/no feedback yet) normalized so weight=1.0 -> exactly 0.5, matching the
@@ -214,20 +202,19 @@ def compute_quarter_plan(
         score = (
             runway_fit * QUARTER_SCORE_WEIGHTS["runway_fit"]
             + richness * QUARTER_SCORE_WEIGHTS["richness"]
-            + dist * QUARTER_SCORE_WEIGHTS["distinctiveness"]
             + dfs_score * QUARTER_SCORE_WEIGHTS["dfs_relevance"]
             + engagement_score * QUARTER_SCORE_WEIGHTS["engagement_adjustment"]
             + (1.0 if forced else 0.0)
         )
         is_excluded = t.id in excludes
-        scored.append((score, t, forced, runway_fit, richness, dist, dfs_score, engagement_score, is_excluded))
+        scored.append((score, t, forced, runway_fit, richness, dfs_score, engagement_score, is_excluded))
 
-    eligible = [x for x in scored if not x[8]]
+    eligible = [x for x in scored if not x[7]]
     eligible.sort(key=lambda x: -x[0])
 
     max_trips = max(2, min(len(eligible), capacity_posts_per_week + 1))
     chosen = eligible[:max_trips]
-    chosen_ids = {t.id for _, t, _, _, _, _, _, _, _ in chosen}
+    chosen_ids = {t.id for _, t, _, _, _, _, _, _ in chosen}
     capacity_note = None
     if len(eligible) > max_trips:
         capacity_note = (
@@ -238,29 +225,29 @@ def compute_quarter_plan(
         TripScore(
             trip_id=t.id, name=t.name, destination=t.destination,
             score=round(score, 3), runway_fit=round(runway_fit, 3),
-            richness=round(richness, 3), distinctiveness_score=round(dist, 3),
+            richness=round(richness, 3),
             dfs_relevance_score=round(dfs_score, 3),
             engagement_adjustment_score=round(engagement_score, 3),
             forced=forced, selected=(t.id in chosen_ids and not is_excluded),
-            reason=_score_reason(runway_fit, richness, dist, dfs_score, engagement_score, forced),
+            reason=_score_reason(runway_fit, richness, dfs_score, engagement_score, forced),
         )
-        for score, t, forced, runway_fit, richness, dist, dfs_score, engagement_score, is_excluded in
+        for score, t, forced, runway_fit, richness, dfs_score, engagement_score, is_excluded in
         sorted(scored, key=lambda x: -x[0])
     ]
 
     plan = QuarterPlan(
         tenant_id=tenant_id, year=year, quarter=quarter,
-        trip_ids=[t.id for _, t, _, _, _, _, _, _, _ in chosen],
-        forced_specials=[t.id for _, t, forced, _, _, _, _, _, _ in chosen if forced],
+        trip_ids=[t.id for _, t, _, _, _, _, _, _ in chosen],
+        forced_specials=[t.id for _, t, forced, _, _, _, _, _ in chosen if forced],
         capacity_note=capacity_note,
         trips_hash=compute_trips_hash(trips),
         trip_scores=trip_scores,
     )
 
-    total_score = sum(s for s, _, _, _, _, _, _, _, _ in chosen) or 1
+    total_score = sum(s for s, _, _, _, _, _, _, _ in chosen) or 1
     raw_shares: dict[str, float] = {}
     dest_atom_counts: dict[str, int] = {}
-    for s, t, _, _, _, _, _, _, _ in chosen:
+    for s, t, _, _, _, _, _, _ in chosen:
         dest = t.destination or t.name
         raw_shares[dest] = raw_shares.get(dest, 0.0) + s / total_score
         dest_atom_counts[dest] = dest_atom_counts.get(dest, 0) + len(atoms_by_trip.get(t.id, []))
@@ -269,8 +256,12 @@ def compute_quarter_plan(
     plan.destination_shares = {k: round(v, 2) for k, v in capped_shares.items()}
     plan.thin_trip_notes = thin_notes
 
-    for _, t, _, _, _, _, _, _, _ in chosen[:3]:
-        highs = [a for a in atoms_by_trip.get(t.id, []) if a.distinctiveness == "HIGH" and not a.usage_log]
+    for _, t, _, _, _, _, _, _ in chosen[:3]:
+        # AA-754 — big rocks were previously the trip's unused HIGH-distinctiveness atoms; with
+        # distinctiveness removed, a trip's big-rock candidates are simply its atoms not yet used
+        # (no usage_log). Preserves the "surface the trip's untapped atoms" intent without the
+        # dropped signal.
+        highs = [a for a in atoms_by_trip.get(t.id, []) if not a.usage_log]
         if len(highs) >= 2:
             plan.big_rocks.append(BigRock(
                 rock_id=f"rock_{uuid.uuid4().hex[:10]}", trip_id=t.id,
@@ -282,7 +273,7 @@ def compute_quarter_plan(
 
 
 _ATOM_ROW_QUERY = """
-    SELECT atom_id, tour_id, text, activity_type, distinctiveness, owner_scope,
+    SELECT atom_id, tour_id, text, activity_type, owner_scope,
            deleted, weight, cooldown_until, usage_log
     FROM acp_contract.tour_atoms
     WHERE owner_scope = $1 AND NOT deleted AND NOT is_empty_marker
@@ -303,7 +294,6 @@ def _row_to_atom(row) -> AtomRecord:
     return AtomRecord(
         atom_id=row["atom_id"], trip_id=row["tour_id"], text=row["text"],
         activity_type=row["activity_type"],
-        distinctiveness=row["distinctiveness"] or "LOW",
         owner_scope=row["owner_scope"],
         deleted=row["deleted"], weight=float(row["weight"]),
         cooldown_until=_parse_jsonb(row["cooldown_until"], {}),

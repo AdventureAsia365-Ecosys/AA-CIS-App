@@ -23,7 +23,7 @@ def _fresh_plan(trip_ids):
         tenant_id=TENANT, year=2026, quarter=2, trip_ids=list(trip_ids),
         trip_scores=[
             TripScore(trip_id=t, name="T", score=0.5, runway_fit=0.5, richness=0.5,
-                      distinctiveness_score=0.5, forced=False, selected=True, reason="x")
+                      forced=False, selected=True, reason="x")
             for t in trip_ids
         ],
     )

@@ -52,17 +52,14 @@ class TestLlmLogTenantId:
 
 
 @pytest.mark.asyncio
-class TestAtomizeSkipsCompetitorIndexForNonTenantScope:
-    """AA-526 — the real bug this build's OWN live-verify caught (unit tests alone missed it,
-    since every existing test mocks build_competitor_index rather than exercising its real
-    ::uuid cast): services/acp_shared/competitor_index.py's queries cast `tenant_id = $1::uuid`
-    — genuinely tenant-only by that module's own docstring (never wired for platform-scope
-    atoms). Calling run_t5_atomize("platform", ...) crashed this on every single call, before
-    a single atom was ever inserted. Confirmed live (05/09/2026, real HTTP admin approve -> real
-    process_export() -> real a3_atomize_failed log: "invalid input for query argument $1:
-    'platform' (invalid UUID...)"). Fixed by skipping the fetch for a non-tenant owner_scope."""
+class TestAtomizeForPlatformScope:
+    """AA-526/AA-754 — run_t5_atomize("platform", ...) must atomize cleanly for the shared A3
+    pool. AA-526 originally crashed here because the (tenant-only) competitor-index fetch cast
+    `tenant_id = $1::uuid` on the literal 'platform'; AA-754 removed the distinctiveness feature
+    (and its competitor-index fetch) entirely, so there is no tenant-only lookup left to crash.
+    These tests keep the platform-scope atomize paths covered."""
 
-    async def test_atomize_per_day_skips_competitor_fetch_for_platform_scope(self):
+    async def test_atomize_per_day_succeeds_for_platform_scope(self):
         from services.acp_produce import tenant_pipeline
         from services.content_generation.itinerary_utils import parse_canonical_itinerary_days
 
@@ -88,16 +85,14 @@ class TestAtomizeSkipsCompetitorIndexForNonTenantScope:
         with patch("services.acp_produce.tenant_pipeline.invoke_claude", return_value=fake_llm_result), \
              patch("services.acp_produce.tenant_pipeline.get_stage_config",
                    AsyncMock(return_value=MagicMock(model_id="sonnet", account_route="acc3"))), \
-             patch("services.acp_shared.competitor_index.build_competitor_index", AsyncMock()) as m_build, \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
             result = await tenant_pipeline._atomize_per_day(
                 "platform", TOUR_ID, GC_ID, row, days, "somehash", pool, "Vietnam",
             )
 
-        m_build.assert_not_awaited()  # the actual regression guard
         assert result["status"] == "success"
 
-    async def test_atomize_whole_tour_legacy_skips_competitor_fetch_for_platform_scope(self):
+    async def test_atomize_whole_tour_legacy_succeeds_for_platform_scope(self):
         from services.acp_produce import tenant_pipeline
 
         conn = AsyncMock()
@@ -118,13 +113,11 @@ class TestAtomizeSkipsCompetitorIndexForNonTenantScope:
         with patch("services.acp_produce.tenant_pipeline.invoke_claude", return_value=fake_llm_result), \
              patch("services.acp_produce.tenant_pipeline.get_stage_config",
                    AsyncMock(return_value=MagicMock(model_id="sonnet", account_route="acc3"))), \
-             patch("services.acp_shared.competitor_index.build_competitor_index", AsyncMock()) as m_build, \
              patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()):
             result = await tenant_pipeline._atomize_whole_tour_legacy(
                 "platform", TOUR_ID, row, "somehash", pool, "Vietnam",
             )
 
-        m_build.assert_not_awaited()  # the actual regression guard
         assert result["status"] == "success"
         assert result["atom_count"] == 1
 

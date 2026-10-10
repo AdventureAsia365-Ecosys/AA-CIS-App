@@ -58,7 +58,6 @@ interface TripScore {
   score: number;
   runway_fit: number;
   richness: number;
-  distinctiveness_score: number;
   dfs_relevance_score: number;
   engagement_adjustment_score: number;
   forced: boolean;

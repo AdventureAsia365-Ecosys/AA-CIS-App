@@ -1,14 +1,12 @@
 """
 services.acp_shared.dfs_relevance — AA-448, tour-level DataForSEO search-demand signal.
 
-ADR-2026-038 §0.4 (per AA-445-01's citation): `dfs_relevance` is a SEPARATE axis from
-`distinctiveness` (services/acp_shared/competitor_index.py — atom-level, competitor
-token-overlap). This one is TOUR-level, from real search demand
-(`silver_aa_internal.seo_context.keyword_ideas[].search_volume`), used to filter/prioritize
-TOURS at T1 (browse pool — not wired by this task, flagged as an open item in the STEP0
-investigation) and T7 (quarter plan, this task) — never attached to an individual atom
-(§0.4 point 2, and confirmed live: `distinctiveness` stays purely atom-level in
-`compute_quarter_plan()`'s existing `dist` term, this module never touches it).
+ADR-2026-038 §0.4 (per AA-445-01's citation): `dfs_relevance` was a SEPARATE axis from the
+former atom-level `distinctiveness` signal (removed end-to-end in AA-754 together with the
+services/acp_shared/competitor_index.py module). `dfs_relevance` is TOUR-level, from real search
+demand (`silver_aa_internal.seo_context.keyword_ideas[].search_volume`), used to filter/prioritize
+TOURS at T1 (browse pool — not wired by this task) and T7 (quarter plan) — never attached to an
+individual atom (§0.4 point 2).
 
 Confirmed via grep before writing this file: `dfs_relevance` had ZERO hits anywhere in this
 repo before this task (AA-445-01/AA-448-00 STEP0 both independently found this) — this is a
@@ -29,10 +27,9 @@ from uuid import UUID
 
 Relevance = Literal["HIGH", "MED", "LOW"]
 
-# Same 3-bucket shape as services.acp_shared.competitor_index's Distinctiveness ("HIGH"/"MED"/
-# "LOW") — kept as a separate Literal, not the same type alias, because the two are a
-# deliberately SEPARATE axis (ADR §0.4 point 1) and importing one module's type into the other
-# would blur that boundary for no benefit (they are not interchangeable values).
+# 3-bucket HIGH/MED/LOW shape, kept as its own Literal. (It once mirrored the former
+# atom-level distinctiveness bucket type; that signal and its module were removed in AA-754, so
+# this is now simply the DFS-relevance scale.)
 
 
 @dataclass(frozen=True)
@@ -65,9 +62,7 @@ def score_dfs_relevance(
     (a) no seo_context row exists yet for this tour (T2 DFS was never run against it), and
     (b) a row exists but every one of its keyword_ideas has search_volume=None (a real, live
     case AA-439-05 already found — DataForSEO can return volume=null per keyword). MED is an
-    honest "no signal either way" default, matching `score_distinctiveness()`'s own
-    "MED-when-empty... deliberate honest-middle default, not a bug" convention
-    (services/acp_shared/competitor_index.py) — not LOW, which would silently punish a tour AA
+    honest "no signal either way" default — not LOW, which would silently punish a tour AA
     simply hasn't run DataForSEO against yet."""
     if not search_volumes:
         return "MED"

@@ -181,13 +181,8 @@ _LIST_FROM = """
 _LIST_SELECT_COLS = """
     SELECT ta.atom_id, ta.tour_id, rt.src_name AS tour_name, ta.text,
            ta.activity_type, ta.emotional_hook, ta.visual_potential,
-           -- AA-749 (option b) — a platform atom (owner_scope='platform') is never scored for
-           -- distinctiveness: its stored value is a default, not a measurement, so surface it as
-           -- NULL ("not scored") rather than the misleading MED it carries in the column. Only a
-           -- tenant atom (owner_scope = a tenant id, written through the T5 score_distinctiveness
-           -- path) has a real HIGH/MED/LOW to show.
-           CASE WHEN ta.owner_scope = 'platform' THEN NULL
-                ELSE ta.distinctiveness END AS distinctiveness,
+           -- AA-754 — the per-atom `distinctiveness` column is no longer surfaced (the signal was
+           -- removed end-to-end; the DB column still exists but is a stale default).
            ta.media, ta.deleted,
            ta.created_at, ta.updated_at,
            (ta.updated_at = ta.created_at) AS unreviewed,
@@ -211,13 +206,6 @@ async def list_atoms(
     tour_id: Optional[str] = Query(None),
     tour_ids: Optional[str] = Query(None),
     atom_ids: Optional[str] = Query(None),
-    distinctiveness: Optional[str] = Query(
-        None, pattern="^(HIGH|MED|LOW|NOT_SCORED)$",
-        description="AA-749 (option b) — HIGH/MED/LOW match only tenant-scored atoms "
-                    "(owner_scope != 'platform'); NOT_SCORED matches the platform atoms "
-                    "(owner_scope = 'platform') whose stored distinctiveness is a default, not a "
-                    "measurement, and so is surfaced as null.",
-    ),
     unreviewed_only: bool = Query(False),
     thin_only: bool = Query(False),
     include_deleted: bool = Query(False),
@@ -297,13 +285,6 @@ async def list_atoms(
         atom_id_list = [a.strip() for a in atom_ids.split(",") if a.strip()]
         if atom_id_list:
             _add("ta.atom_id = ANY(${n})", atom_id_list)
-    if distinctiveness:
-        # AA-749 (option b) — NOT_SCORED == platform atoms (their stored distinctiveness is a
-        # default, never a measurement); HIGH/MED/LOW only ever match a tenant-scored atom.
-        if distinctiveness == "NOT_SCORED":
-            clauses.append("ta.owner_scope = 'platform'")
-        else:
-            _add("ta.distinctiveness = ${n} AND ta.owner_scope != 'platform'", distinctiveness)
     if not include_deleted:
         clauses.append("NOT ta.deleted")
     if unreviewed_only:
@@ -358,15 +339,6 @@ async def atoms_summary(
     scope_clause_ta = "AND ta.owner_scope = $1" if owner_scope is not None else ""
 
     async with pool.acquire() as conn:
-        breakdown_rows = await conn.fetch(f"""
-            SELECT
-                CASE WHEN owner_scope = 'platform' THEN 'NOT_SCORED'
-                     ELSE distinctiveness END AS bucket,
-                count(*) AS c
-            FROM acp_contract.tour_atoms
-            WHERE NOT deleted AND NOT is_empty_marker {scope_clause}
-            GROUP BY 1
-        """, *scope_params)
         totals = await conn.fetchrow(f"""
             SELECT count(*) AS total,
                    count(*) FILTER (WHERE updated_at != created_at) AS reviewed
@@ -399,13 +371,7 @@ async def atoms_summary(
             ORDER BY rt.src_name
         """, *scope_params)
 
-    # AA-749 (option b) — HIGH/MED/LOW count only tenant-scored atoms; platform atoms (never
-    # scored) land in their own NOT_SCORED bucket instead of being miscounted as MED.
-    breakdown = {"HIGH": 0, "MED": 0, "LOW": 0, "NOT_SCORED": 0}
-    for r in breakdown_rows:
-        if r["bucket"] in breakdown:
-            breakdown[r["bucket"]] = r["c"]
-
+    # AA-754 — the distinctiveness breakdown was removed with the signal itself.
     by_tour = [
         {
             "tour_id": str(r["tour_id"]), "tour_name": r["tour_name"],
@@ -432,7 +398,6 @@ async def atoms_summary(
     ]
 
     return {
-        "distinctiveness_breakdown": breakdown,
         "total_count": totals["total"] if totals else 0,
         "reviewed_count": totals["reviewed"] if totals else 0,
         "by_tour": by_tour,
@@ -494,7 +459,7 @@ async def patch_atom(
         UPDATE acp_contract.tour_atoms
         SET {", ".join(sets)}
         WHERE atom_id = ${atom_id_idx}{scope_clause} AND NOT is_empty_marker
-        RETURNING atom_id, tour_id, text, distinctiveness, deleted,
+        RETURNING atom_id, tour_id, text, deleted,
                   visual_potential, media, created_at, updated_at
     """
 

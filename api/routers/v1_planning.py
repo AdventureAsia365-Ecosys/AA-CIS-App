@@ -31,7 +31,8 @@ tables (never the live T-series `acp_shared.content_piece`), never ran against r
 (0 rows, every `tour_atoms.weight` still 1.0), and its FE was already torn out at AA-519.
 `suggest_trip_reallocation()`/`confirm_trip_reallocation()` (the live quarterly-reallocation
 panel below) are KEPT — they no longer receive a feedback-adjusted weight, so
-`compute_quarter_plan()`'s scoring is now purely runway/richness/distinctiveness/DFS.
+`compute_quarter_plan()`'s scoring is now purely runway/richness/DFS/engagement (AA-754 removed
+the distinctiveness term).
 """
 from __future__ import annotations
 

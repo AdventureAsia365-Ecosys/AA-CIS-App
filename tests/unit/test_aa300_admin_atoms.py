@@ -83,7 +83,7 @@ def _atom_row(**over):
     base = {
         "atom_id": "atom_abc1234567", "tour_id": uuid.uuid4(), "tour_name": "Sapa Valley Trek",
         "text": "Crossing the bamboo bridge at Ta Van village", "activity_type": "trek",
-        "emotional_hook": None, "visual_potential": 2, "distinctiveness": "LOW",
+        "emotional_hook": None, "visual_potential": 2,
         "media": '{"has_photo": false, "has_video": false, "media_refs": []}',
         "deleted": False,
         "created_at": "2026-07-01T00:00:00", "updated_at": "2026-07-01T00:00:00",
@@ -152,7 +152,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         result = await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=False,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=False,
             thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
@@ -171,7 +171,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         result = await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=False,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=False,
             thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
@@ -187,7 +187,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=True,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=True,
             thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
@@ -204,29 +204,13 @@ class TestListAtoms:
         from services.acp_shared.atom_constants import THIN_TRIP_ATOM_MIN
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=False,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=False,
             thin_only=True, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
         query, *params = conn.fetch.call_args[0]
         assert "tc.atom_count <" in query
         assert THIN_TRIP_ATOM_MIN in params
-
-    @pytest.mark.asyncio
-    async def test_distinctiveness_filter(self):
-        conn = AsyncMock()
-        conn.fetch.return_value = []
-        pool = _make_pool(conn)
-        request = _make_request(pool)
-
-        await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness="HIGH", unreviewed_only=False,
-            thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
-            owner_scope=None,
-        )
-        query, *params = conn.fetch.call_args[0]
-        assert "ta.distinctiveness =" in query
-        assert "HIGH" in params
 
     @pytest.mark.asyncio
     async def test_deleted_excluded_by_default(self):
@@ -236,7 +220,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=False,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=False,
             thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
@@ -251,7 +235,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None, unreviewed_only=False,
+            request, tour_id=None, tour_ids=None, atom_ids=None, unreviewed_only=False,
             thin_only=False, include_deleted=True, owner_scope_class=None, lifecycle_stage=None, limit=50, offset=0,
             owner_scope=None,
         )
@@ -268,7 +252,7 @@ class TestListAtoms:
         ids = [str(uuid.uuid4()), str(uuid.uuid4())]
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=",".join(ids), atom_ids=None, distinctiveness=None,
+            request, tour_id=None, tour_ids=",".join(ids), atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=None,
         )
@@ -285,7 +269,7 @@ class TestListAtoms:
         ids = [str(uuid.uuid4())]
 
         await admin_atoms.list_atoms(
-            request, tour_id="some-other-id", tour_ids=ids[0], atom_ids=None, distinctiveness=None,
+            request, tour_id="some-other-id", tour_ids=ids[0], atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=None,
         )
@@ -318,7 +302,7 @@ class TestListAtoms:
         single_id = str(uuid.uuid4())
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=single_id, atom_ids=None, distinctiveness=None,
+            request, tour_id=None, tour_ids=single_id, atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=None,
         )
@@ -336,7 +320,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         await admin_atoms.list_atoms(
-            request, tour_id="abc-123", tour_ids=None, atom_ids=None, distinctiveness=None,
+            request, tour_id="abc-123", tour_ids=None, atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=None,
         )
@@ -354,7 +338,7 @@ class TestListAtoms:
         tenant_id = str(uuid.uuid4())
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None,
+            request, tour_id=None, tour_ids=None, atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=tenant_id,
         )
@@ -370,7 +354,7 @@ class TestListAtoms:
         request = _make_request(pool)
 
         await admin_atoms.list_atoms(
-            request, tour_id=None, tour_ids=None, atom_ids=None, distinctiveness=None,
+            request, tour_id=None, tour_ids=None, atom_ids=None,
             unreviewed_only=False, thin_only=False, include_deleted=False, owner_scope_class=None, lifecycle_stage=None,
             limit=50, offset=0, owner_scope=None,
         )
@@ -489,11 +473,9 @@ class TestAtomsSummary:
     @pytest.mark.asyncio
     async def test_breakdown_and_totals_independent_of_list_filters(self):
         conn = AsyncMock()
+        # AA-754 — the distinctiveness breakdown query was removed; atoms_summary now runs only
+        # the totals (fetchrow) and the by_tour (fetch) queries.
         conn.fetch.side_effect = [
-            # AA-749 (option b) — the breakdown query now groups by a `bucket` column
-            # (owner_scope='platform' -> 'NOT_SCORED', else the distinctiveness value).
-            [{"bucket": "LOW", "c": 230}, {"bucket": "HIGH", "c": 5},
-             {"bucket": "NOT_SCORED", "c": 500}],
             [
                 {"tour_id": uuid.uuid4(), "tour_name": "Sapa Valley Trek",
                  "atom_count": 4, "unreviewed_count": 4, "atomized_at": None,
@@ -511,8 +493,7 @@ class TestAtomsSummary:
 
         result = await admin_atoms.atoms_summary(request, owner_scope=None)
 
-        assert result["distinctiveness_breakdown"] == {
-            "HIGH": 5, "MED": 0, "LOW": 230, "NOT_SCORED": 500}
+        assert "distinctiveness_breakdown" not in result
         assert result["total_count"] == 735
         assert result["reviewed_count"] == 12
 
@@ -521,7 +502,6 @@ class TestAtomsSummary:
         from services.acp_shared.atom_constants import THIN_TRIP_ATOM_MIN
         conn = AsyncMock()
         conn.fetch.side_effect = [
-            [],
             [
                 {"tour_id": uuid.uuid4(), "tour_name": "Ha Giang Loop",
                  "atom_count": 4, "unreviewed_count": 4, "atomized_at": None,  # < THIN_TRIP_ATOM_MIN=5 -> thin
@@ -553,7 +533,6 @@ class TestAtomsSummary:
         ts = datetime.datetime(2026, 8, 9, 6, 14, 45, tzinfo=datetime.timezone.utc)
         conn = AsyncMock()
         conn.fetch.side_effect = [
-            [],
             [{"tour_id": uuid.uuid4(), "tour_name": "Classic Laos",
               "atom_count": 48, "unreviewed_count": 0, "atomized_at": ts,
               "used_atom_count": 0, "lifecycle_stage": "active",
@@ -575,7 +554,6 @@ class TestAtomsSummary:
         conn = AsyncMock()
         legacy_tenant = str(uuid.uuid4())
         conn.fetch.side_effect = [
-            [],
             [
                 {"tour_id": uuid.uuid4(), "tour_name": "Sri Lanka Highlands",
                  "atom_count": 108, "unreviewed_count": 108, "atomized_at": None,
@@ -601,7 +579,6 @@ class TestAtomsSummary:
     async def test_atomized_at_null_when_no_atoms_have_a_timestamp(self):
         conn = AsyncMock()
         conn.fetch.side_effect = [
-            [],
             [{"tour_id": uuid.uuid4(), "tour_name": "Untouched Tour",
               "atom_count": 0, "unreviewed_count": 0, "atomized_at": None,
               "used_atom_count": 0, "lifecycle_stage": "active",
@@ -619,9 +596,9 @@ class TestAtomsSummary:
     # TestResolveAtomOwnerScope.
 
     @pytest.mark.asyncio
-    async def test_tenant_owner_scope_adds_filter_to_all_three_queries(self):
+    async def test_tenant_owner_scope_adds_filter_to_both_queries(self):
         conn = AsyncMock()
-        conn.fetch.side_effect = [[], []]
+        conn.fetch.side_effect = [[]]
         conn.fetchrow.return_value = {"total": 0, "reviewed": 0}
         pool = _make_pool(conn)
         request = _make_request(pool)
@@ -629,10 +606,10 @@ class TestAtomsSummary:
 
         await admin_atoms.atoms_summary(request, owner_scope=tenant_id)
 
-        breakdown_query, *breakdown_params = conn.fetch.call_args_list[0][0]
-        by_tour_query, *by_tour_params = conn.fetch.call_args_list[1][0]
+        # AA-754 — the distinctiveness breakdown query was removed; atoms_summary now runs the
+        # totals (fetchrow) and the by_tour (fetch) queries, both tenant-scoped.
+        by_tour_query, *by_tour_params = conn.fetch.call_args_list[0][0]
         totals_query, *totals_params = conn.fetchrow.call_args[0]
-        assert "owner_scope = $1" in breakdown_query and tenant_id in breakdown_params
         assert "owner_scope = $1" in by_tour_query and tenant_id in by_tour_params
         assert "owner_scope = $1" in totals_query and tenant_id in totals_params
 
