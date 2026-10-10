@@ -238,8 +238,51 @@ def strip_itinerary_meal_metadata(itinerary: str) -> str:
     return cleaned.strip()
 
 
+# AA-748: fields of a per-day fact (from source_facts.extract_day_facts) rendered into the writer
+# prompt, in order, with a human label. Kept here (not imported from source_facts) so prompts.py
+# stays import-light and the field order is co-located with the prompt text it feeds.
+_SOURCE_FACT_FIELD_LABELS = (
+    ("places", "places"), ("activities", "activities"), ("transport", "transport"),
+    ("distances", "distances"), ("durations", "durations"), ("altitudes", "altitudes"),
+    ("times", "times"), ("meals", "meals"), ("other_numbers", "other numbers"),
+)
+
+
+def _render_source_facts_block(structured_facts: dict | None) -> str:
+    """AA-748: render the SOURCE FACTS BY DAY block (compact, one line per non-empty field per day)
+    plus the honesty rule. Returns "" when there are no facts, so the prompt is byte-identical to
+    today with the flag off. The returned string begins and ends with a newline so it slots between
+    the TOUR DATA block and PER-DAY SOURCE LENGTH keeping the surrounding blank-line spacing."""
+    days = (structured_facts or {}).get("days") or []
+    day_lines = []
+    for day in days:
+        if not isinstance(day, dict):
+            continue
+        field_parts = []
+        for key, label in _SOURCE_FACT_FIELD_LABELS:
+            values = [str(v).strip() for v in (day.get(key) or []) if str(v).strip()]
+            if values:
+                field_parts.append(f"  {label}: {', '.join(values)}")
+        if field_parts:
+            day_lines.append(f"Day {day.get('day')}:\n" + "\n".join(field_parts))
+    if not day_lines:
+        return ""
+    body = "\n".join(day_lines)
+    return (
+        "\nSOURCE FACTS BY DAY (extracted from the source; the ONLY place numbers, distances,"
+        " durations, altitudes, clock-times and meals may come from):\n"
+        f"{body}\n\n"
+        "SOURCE FACTS RULE: numbers, distances, durations, altitudes, clock-times and meals may"
+        " appear in a day's output ONLY if they are listed in SOURCE FACTS for that day. Each day's"
+        " places and activities come from that day's facts. The raw itinerary above gives prose"
+        " detail; the facts constrain what is factually asserted — do not add a figure, time or meal"
+        " the facts do not list.\n"
+    )
+
+
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
-                         subtitle_focus: str = "standard", per_day_targets: bool = False) -> str:
+                         subtitle_focus: str = "standard", per_day_targets: bool = False,
+                         structured_facts: dict = None) -> str:
     few_shot_text = ""
     if few_shots:
         examples = "\n\n".join([
@@ -285,6 +328,13 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
             f"Day {d}: {w} words" for d, w in sorted(_day_counts["day_word_counts"].items())
         ) + _fallback_note
 
+    # AA-748: when S1_STRUCTURED_FACTS is on and facts were extracted, add a compact SOURCE FACTS
+    # BY DAY block (one line per field per day) plus an explicit honesty rule, before PER-DAY
+    # SOURCE LENGTH. structured_facts is None/empty by default -> _source_facts_block is "" and the
+    # prompt is byte-identical to today (the raw itinerary stays in the prompt either way; the
+    # facts only constrain, they do not replace it).
+    _source_facts_block = _render_source_facts_block(structured_facts)
+
     return f"""Rewrite the following tour content for a master content catalog.
 {few_shot_text}
 TOUR DATA:
@@ -297,7 +347,7 @@ TOUR DATA:
 - Itineraries: {itineraries_for_prompt}
 - Inclusions: {tour.get('inclusions')}
 - Exclusions: {tour.get('exclusions')}
-
+{_source_facts_block}
 PER-DAY SOURCE LENGTH (word count of the source above, one per day — use as the basis for each
 day's target length per rule 5; aim roughly 0.7x-1.3x of that day's number, not a fixed length
 applied to every day):

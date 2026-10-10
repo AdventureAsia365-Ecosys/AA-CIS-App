@@ -136,6 +136,9 @@ def build_s1_user_prompt(state: dict) -> str:
         subtitle_focus=state.get("subtitle_focus", "standard"),
         # AA-747: OFF by default; a tenant flag wins over the S1_PER_DAY_TARGETS env var.
         per_day_targets=s1_per_day_targets_enabled(state.get("tenant_flags")),
+        # AA-748: per-day source facts, threaded in behind S1_STRUCTURED_FACTS by generate_node.
+        # None on the Bedrock Batch path (no live extraction) -> prompt as today, byte-identical.
+        structured_facts=state.get("structured_facts"),
     )
     style_guide = state.get("brand_style_guide", "") or ""
     if style_guide:
