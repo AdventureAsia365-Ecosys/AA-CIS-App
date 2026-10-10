@@ -30,7 +30,7 @@ def _make_request(pool):
 async def test_llm_usage_tree_passes_through_truncated_count():
     row = {
         "tenant_id": None, "tenant_label": "aa_internal", "model": "sonnet-4-6",
-        "stage": "n7_draft", "role": "writer", "call_count": 10, "total_cost_usd": 1.23,
+        "stage": "t9_write", "role": "writer", "call_count": 10, "total_cost_usd": 1.23,
         "ok_count": 8, "ok_eligible_count": 10, "avg_atoms_extracted": None,
         "avg_output_len_chars": None, "truncated_count": 3, "last_call_at": None,
     }
@@ -44,7 +44,7 @@ async def test_llm_usage_tree_passes_through_truncated_count():
 async def test_llm_usage_tree_truncated_count_zero_for_clean_branch():
     row = {
         "tenant_id": None, "tenant_label": "aa_internal", "model": "sonnet-4-6",
-        "stage": "n7_draft", "role": "writer", "call_count": 10, "total_cost_usd": 1.23,
+        "stage": "t9_write", "role": "writer", "call_count": 10, "total_cost_usd": 1.23,
         "ok_count": 10, "ok_eligible_count": 10, "avg_atoms_extracted": None,
         "avg_output_len_chars": None, "truncated_count": 0, "last_call_at": None,
     }
@@ -57,7 +57,7 @@ async def test_llm_usage_tree_truncated_count_zero_for_clean_branch():
 @pytest.mark.asyncio
 async def test_llm_usage_calls_passes_through_stop_reason():
     row = {
-        "id": "abc", "tenant_id": None, "stage": "n7_draft", "role": "writer",
+        "id": "abc", "tenant_id": None, "stage": "t9_write", "role": "writer",
         "model": "sonnet-4-6", "tokens_in": 100, "tokens_out": 50, "cost_usd": 0.01,
         "quality_signal": {}, "content_piece_id": None, "angle_gate_request_id": None,
         "stop_reason": "max_tokens", "created_at": None,
