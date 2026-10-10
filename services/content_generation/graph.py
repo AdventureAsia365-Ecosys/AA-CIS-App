@@ -273,6 +273,11 @@ class ContentState(TypedDict):
     # (T2) rewrite, "s1_generate" for A1 admin. Only the generate node reads it; s1_flag_fix /
     # s1_itinerary_nudge stay shared (not split — see AA-620). None -> falls back to s1_generate.
     generate_stage:         Optional[str]
+    # AA-748: per-day source facts (source_facts.extract_day_facts) threaded into the writer prompt
+    # behind S1_STRUCTURED_FACTS. generate_node extracts them once (one s1_source_facts LLM call)
+    # and stores them here before building the prompt. Declared so LangGraph keeps the field; absent
+    # with the flag off (and on the Bedrock Batch path) -> prompt byte-identical to today.
+    structured_facts:       Optional[dict]
     # AA-691: A1 grounding against the raw source (grounding.py). Declared so LangGraph keeps them.
     grounding_ran:              bool
     grounding_found:            list   # violations before the sentence repair
@@ -347,6 +352,14 @@ def generate_node(state: ContentState) -> ContentState:
     gen_stage = state.get("generate_stage") or "s1_generate"
     # AA-620: real tenant for a T2 rewrite, None for A1 admin (its s1_generate writes stay NULL).
     tenant_id = state.get("tenant_id")
+
+    # AA-748: behind S1_STRUCTURED_FACTS (default OFF, tenant-flag override), extract per-day source
+    # facts once (one s1_source_facts LLM call) and thread them into the writer prompt so numbers/
+    # meals are constrained to what the source lists. Fails open: no facts -> prompt as today. Only
+    # the A1 admin path extracts here; the Bedrock Batch materializer stays I/O-free (facts absent).
+    from .source_facts import extract_day_facts, s1_structured_facts_enabled
+    if "structured_facts" not in state and s1_structured_facts_enabled(state.get("tenant_flags")):
+        state = {**state, "structured_facts": extract_day_facts(state.get("tour", {}), client=client)}
 
     # AA-606: attempt-1 (system, user) prompt is materialized by the SAME builder the Bedrock Batch
     # manifest uses (services/content_generation/batch_prompt), so batch and sync writes never drift.
