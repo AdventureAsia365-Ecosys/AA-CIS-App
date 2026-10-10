@@ -19,7 +19,8 @@ from shared.jobs import queue
 # ── sort whitelist (queue.JOB_SORTS / _order_by) ────────────────────────────────────────────────
 
 def test_sort_whitelist_has_the_columns_the_page_shows():
-    for key in ("created_at", "started_at", "finished_at", "kind", "status", "cost_usd", "duration"):
+    for key in ("created_at", "started_at", "finished_at", "kind", "status", "attempt", "cost_usd", "duration",
+                "created_by"):
         assert key in queue.JOB_SORTS
 
 

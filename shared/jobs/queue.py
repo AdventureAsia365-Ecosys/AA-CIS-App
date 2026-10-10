@@ -320,6 +320,7 @@ JOB_SORTS: dict[str, str] = {
     "kind": "j.kind",
     "status": "j.status",
     "attempt": "j.attempt",
+    "created_by": "j.created_by",
     "cost_usd": f"(j.cost_usd + {LLM_COST_SQL})",
     "duration": "(j.finished_at - j.started_at)",
 }
