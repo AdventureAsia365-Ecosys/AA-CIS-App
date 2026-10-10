@@ -15,11 +15,13 @@ sends anything still unsupported to manual_check (ADR 0007: block unpublished co
 Only A1 runs this — a T2 tenant rewrite is grounded against master content by T3.
 
 AA-756 (grounding token trim): `a1_claim_supported` was 80% of Jev spend because every sentence was
-sent with the WHOLE tour source (avg 2,408 input tokens). Two changes cut that: (1) an itinerary
-sentence is now asked against a per-unit source (`unit_source`) — a compact header + its own day's
-source + the neighbouring days + inclusions/exclusions — not the whole tour; (2) a unit with
-nothing checkable (no digit, no capitalised word after the first, no promise cue) is skipped and
-never asked. The numeric deterministic check still runs against the FULL source (unchanged).
+sent with the WHOLE tour source (avg 2,408 input tokens). An itinerary sentence is now asked against
+a per-unit source (`unit_source`) — a compact header + its own day's source + the neighbouring days
++ inclusions/exclusions — not the whole tour (measured −62% source chars on 50 real India tours).
+Every unit with ≥ MIN_WORDS words is still asked: a keyword "skip" rule missed exactly the tour
+promises the policy forbids (background about a named place is allowed, a promise the source never
+states is not), so there is no skip. The numeric deterministic check still runs against the FULL
+source (unchanged).
 """
 from __future__ import annotations
 
@@ -43,17 +45,6 @@ SOURCE_FIELDS = ("name", "subtitle", "summary", "description", "highlights", "it
 MIN_WORDS = 4                 # shorter units ("Day 3 — Paro") carry no checkable claim
 CONCURRENCY = 4
 POOL_SIZE = 2                 # _decide holds one connection at a time; 2 is plenty for 4 in flight
-
-# AA-756 skip rule: a unit is only skipped when it has no digit, no capitalised word after the first
-# word, AND none of these promise cues (meals, transport, services, scenery, logistics live here).
-# Conservative on purpose — a false skip would silently stop checking a real claim.
-_SKIP_PROMISE_CUES = frozenset(
-    "taste sample try dine dinner lunch breakfast meal chai tea coffee guide guided transfer train "
-    "flight bus boat jeep drive car hotel stay overnight lodge camp view views sunrise sunset spot "
-    "see watch included include orientation support upgrade private minute hour hours km".split())
-_WORD_RE = re.compile(r"[A-Za-z]+")
-_DIGIT_RE = re.compile(r"\d")
-_CAP_WORD_RE = re.compile(r"\b[A-Z][a-zA-Z]*")
 
 # Same sentence boundary T3 uses (tenant_pipeline._SENT_SPLIT_RE).
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
@@ -216,20 +207,6 @@ def unit_source(tour: dict, unit: dict) -> str:
     return "\n\n".join(parts)
 
 
-def should_skip(sentence: str) -> bool:
-    """AA-756: skip a unit (never ask Jev) only when it carries nothing to check — conservative.
-    True only when the sentence has NO digit, NO capitalised word after the first word, AND none of
-    the promise cues (meals, transport, services, scenery, logistics). Any one of those keeps it."""
-    if _DIGIT_RE.search(sentence):
-        return False
-    words = _WORD_RE.findall(sentence)
-    if any(_CAP_WORD_RE.match(w) for w in words[1:]):   # a proper noun after the first word
-        return False
-    if any(w.lower() in _SKIP_PROMISE_CUES for w in words):
-        return False
-    return True
-
-
 def classify(units: list[dict], numeric: dict[int, list[str]], verdicts: dict[int, Any]) -> dict:
     """Merge the two signals. `numeric[i]` = novel numbers of unit i; `verdicts[i]` = its Jev Verdict
     (or None when Jev was not asked). Returns {violations, notes}.
@@ -312,24 +289,22 @@ def judge_units(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
 
 
 def check_grounding(generated: dict, tour: dict, *, use_jev: bool = True) -> dict:
-    """Run both signals over `generated`. Returns {violations, notes, units, jev_asked,
-    units_skipped}. The numeric check stays on the FULL source (unchanged); Jev is asked per unit
-    against its per-unit source (`unit_source`), and a unit with nothing to check is skipped
-    (`should_skip`) and never asked (AA-756)."""
+    """Run both signals over `generated`. Returns {violations, notes, units, jev_asked}. The numeric
+    check stays on the FULL source (unchanged); Jev is asked per unit against its per-unit source
+    (`unit_source`) — every unit with ≥ MIN_WORDS words is asked (AA-756: no skip rule; a keyword
+    skip missed exactly the tour promises the policy forbids)."""
     tour = tour or {}
     units = sentence_units(generated or {})
     source_parts = source_number_parts(tour)
     numeric = {i: n for i, u in enumerate(units) if (n := find_novel_numeric_claims(u["sentence"], source_parts))}
-    skipped = {i for i, u in enumerate(units) if should_skip(u["sentence"])}
     if use_jev and source_text(tour):
-        sources = {i: unit_source(tour, u) for i, u in enumerate(units) if i not in skipped}
+        sources = {i: unit_source(tour, u) for i, u in enumerate(units)}
         verdicts = judge_units(units, sources)
     else:
         verdicts = {}
     out = classify(units, numeric, verdicts)
     out["units"] = len(units)
     out["jev_asked"] = len(verdicts)
-    out["units_skipped"] = len(skipped)
     return out
 
 
@@ -467,8 +442,7 @@ def grounding_node(state: dict) -> dict:
     except Exception as exc:                       # never break the rewrite
         logger.warning("grounding_node_failed", error=str(exc)[:200])
         return {**state, "grounding_ran": False}
-    logger.info("grounding_done", units=first["units"], jev_asked=first["jev_asked"],
-                units_skipped=first["units_skipped"], found=len(found),
+    logger.info("grounding_done", units=first["units"], jev_asked=first["jev_asked"], found=len(found),
                 repaired_fields=fields, remaining=len(violations), notes=len(notes))
     return {
         **state,
@@ -480,7 +454,6 @@ def grounding_node(state: dict) -> dict:
         "grounding_repaired_fields": fields,
         "grounding_violations": violations,
         "grounding_notes": notes,
-        "grounding_units_skipped": first["units_skipped"],
     }
 
 
@@ -502,10 +475,9 @@ async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> 
 
     `tour` is the raw source dict (the SOURCE_FIELDS shape built in _execute_run_tour); `generated`
     is the approved version's grounded fields (keys subtitle/summary/highlights/itineraries). Uses
-    the SAME per-unit source (`unit_source`) + skip rule (`should_skip`) + `subject_key` as the
-    grounding run (AA-756), so an approved sentence maps to exactly the row Jev wrote. A unit that
-    the run skipped (never asked) is skipped here too, so no stray key is stamped. Best-effort:
-    never raises, returns rows updated."""
+    the SAME per-unit source (`unit_source`) + `subject_key` as the grounding run (AA-756), so an
+    approved sentence maps to exactly the row Jev wrote. Best-effort: never raises, returns rows
+    updated."""
     from shared.llm_client.decide import record_outcome
 
     try:
@@ -518,8 +490,6 @@ async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> 
         return 0
     updated = 0
     for u in units:
-        if should_skip(u["sentence"]):
-            continue
         updated += await record_outcome(
             conn_or_pool, QUESTION, subject_key(unit_source(tour or {}, u), u["sentence"]),
             truth=True, source="review_approve")

@@ -1,15 +1,14 @@
-"""AA-756 — grounding token trim: per-unit source + skip rule.
+"""AA-756 — grounding token trim: per-unit source (no skip rule).
 
 Covers (mock-only, no DB / no network):
   - sentence_units() carries the source day number for itinerary units.
   - unit_source(): day-slice (prev/this/next) + header + inclusions/exclusions for an itinerary
     unit; full source for subtitle/summary/highlights and for the fallback / no-day cases.
-  - should_skip(): conservative — only skips a unit with no digit, no capitalised word after the
-    first, and no promise cue.
-  - check_grounding(): asks Jev per unit (per-unit source), skips the uncheckable, reports
-    units_skipped, and the numeric check still runs on the FULL source.
-  - scripts/aa756_grounding_tokens.estimate(): before/after on a clean-day-marker tour and a
-    no-marker (fallback) tour.
+  - check_grounding(): asks Jev for EVERY unit (per-unit source, no skip rule — the removed keyword
+    skip missed exactly the tour promises the policy forbids); the numeric check still runs on the
+    FULL source.
+  - scripts/aa756_grounding_tokens.estimate(): source chars before/after on a clean-day-marker tour
+    and a no-marker (fallback) tour.
 """
 from services.content_generation import grounding as gr
 from scripts.aa756_grounding_tokens import estimate
@@ -113,34 +112,9 @@ def test_unit_source_full_source_when_unit_has_no_day():
     assert gr.unit_source(TOUR_DAYS, unit) == gr.source_text(TOUR_DAYS)
 
 
-# ── should_skip ───────────────────────────────────────────────────────────────────────────────
+# ── check_grounding — every unit asked, per-unit source, no skip ─────────────────────────────────
 
-def test_should_skip_true_only_when_nothing_to_check():
-    # no digit, no cap after first word, no promise cue → skip
-    assert gr.should_skip("The journey continues gently onward.") is True
-    assert gr.should_skip("A relaxed and unhurried morning follows.") is True
-
-
-def test_should_skip_false_on_digit():
-    assert gr.should_skip("The walk takes about 40 minutes.") is False
-
-
-def test_should_skip_false_on_proper_noun_after_first_word():
-    assert gr.should_skip("Continue toward Thimphu in the morning.") is False
-    # a capitalised first word alone does not keep it
-    assert gr.should_skip("Gentle walking is the order of the day.") is True
-
-
-def test_should_skip_false_on_any_promise_cue():
-    for s in ("A warm dinner is served.", "Transfer continues at ease.",
-              "The views open up slowly.", "A guide walks alongside.",
-              "An overnight follows the walk."):
-        assert gr.should_skip(s) is False, s
-
-
-# ── check_grounding ───────────────────────────────────────────────────────────────────────────
-
-def test_check_grounding_reports_units_skipped_and_asks_per_unit_source(monkeypatch):
+def test_check_grounding_asks_every_unit_with_per_unit_source(monkeypatch):
     captured = {}
 
     def fake_judge(units, sources):
@@ -150,17 +124,26 @@ def test_check_grounding_reports_units_skipped_and_asks_per_unit_source(monkeypa
     monkeypatch.setattr(gr, "judge_units", fake_judge)
     res = gr.check_grounding(GEN_DAYS, TOUR_DAYS)
     units = gr.sentence_units(GEN_DAYS)
-    skipped = {i for i, u in enumerate(units) if gr.should_skip(u["sentence"])}
     assert res["units"] == len(units)
-    assert res["units_skipped"] == len(skipped)
-    # Jev is asked only for the non-skipped units …
-    assert set(captured["sources"]) == set(range(len(units))) - skipped
+    assert "units_skipped" not in res                         # the skip rule is gone
+    # every unit is asked (no skip rule) …
+    assert set(captured["sources"]) == set(range(len(units)))
     # … and an itinerary unit is asked against its per-unit source, not the whole tour.
     full = gr.source_text(TOUR_DAYS)
-    itin_idx = [i for i, u in enumerate(units)
-                if u["field"] == "itineraries" and i not in skipped]
+    itin_idx = [i for i, u in enumerate(units) if u["field"] == "itineraries"]
     assert itin_idx and all(captured["sources"][i] != full for i in itin_idx)
     assert all(len(captured["sources"][i]) < len(full) for i in itin_idx)
+
+
+def test_check_grounding_asks_descriptive_cue_free_sentence(monkeypatch):
+    # the kind of sentence the removed keyword skip wrongly dropped (a forbidden tour promise with
+    # no digit, no proper noun, no cue word) must still be asked.
+    captured = {}
+    monkeypatch.setattr(gr, "judge_units",
+                        lambda units, sources: captured.setdefault("sources", sources) or {})
+    gen = {"summary": "A full-day excursion to two medieval centers follows."}
+    gr.check_grounding(gen, TOUR_DAYS)
+    assert len(captured["sources"]) == len(gr.sentence_units(gen)) == 1
 
 
 def test_check_grounding_numeric_still_runs_on_full_source(monkeypatch):
@@ -188,9 +171,7 @@ GEN_NO_MARKERS = {
 
 def test_estimate_clean_day_markers_cuts_source_chars():
     stats = estimate([{"tour": TOUR_DAYS, "generated": GEN_DAYS}])
-    assert stats["units_before"] == len(gr.sentence_units(GEN_DAYS))
-    assert stats["units_after"] <= stats["units_before"]
-    assert stats["units_skipped"] == stats["units_before"] - stats["units_after"]
+    assert stats["units"] == len(gr.sentence_units(GEN_DAYS))
     # with day slices the per-unit source totals fewer chars than the whole-tour source per unit
     assert stats["chars_after"] < stats["chars_before"]
 
@@ -198,9 +179,8 @@ def test_estimate_clean_day_markers_cuts_source_chars():
 def test_estimate_no_markers_falls_back_to_full_source():
     stats = estimate([{"tour": TOUR_NO_MARKERS, "generated": GEN_NO_MARKERS}])
     units = gr.sentence_units(GEN_NO_MARKERS)
-    asked = [u for u in units if not gr.should_skip(u["sentence"])]
     full = gr.source_text(TOUR_NO_MARKERS)
-    # no day markers → every asked unit uses the FULL source, so after == full * asked-count
-    assert stats["units_before"] == len(units)
-    assert stats["units_after"] == len(asked)
-    assert stats["chars_after"] == len(full) * len(asked)
+    # no day markers → every unit uses the FULL source, so after == full * unit-count (no saving)
+    assert stats["units"] == len(units)
+    assert stats["chars_after"] == len(full) * len(units)
+    assert stats["chars_before"] == stats["chars_after"]
