@@ -20,9 +20,10 @@ class _Conn:
     async def fetch(self, sql, *args):
         if "v_active_tour_atoms" in sql:
             return [{"atom_id": "atomX", "tour_id": TOUR, "itinerary_day": 1, "place": "Kyoto", "action": "walk",
-                     "country": "Japan"}]
+                     "activity_type": "culture", "country": "Japan"}]
         if "FROM acp_contract.atom_segment asg" in sql:
-            return [{"segment_id": s, "canonical_place": "Gion", "canonical_action": "stroll", "country": "Japan"}
+            return [{"segment_id": s, "canonical_place": "Gion", "canonical_action": "stroll", "country": "Japan",
+                     "member_types": ["culture"]}
                     for s in ("old1", "old2")]
         return []
 

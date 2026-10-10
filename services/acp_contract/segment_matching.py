@@ -53,6 +53,13 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import NamedTuple
 
+# AA-695 (GO item 1) — the SAME exclusion rule and the SAME transit-vote helper ranking uses, not a
+# copy (lessons.md: "loại trừ theo luật ở một bước mới phải khớp quyết định CUỐI của bước sau").
+# `atom_ranking` imports only `atom_matching`/`ranking_reference`/`decide` — none of which import
+# this module — so this is not an import cycle (checked S223; `recompute/stages.py` is the one
+# importer of segment_matching and atom_ranking does not touch it).
+from services.acp_contract.atom_ranking import atoms_say_transit, classify_exclusion
+
 # ── reference table, ported from Ms. Thư's aa-social-media (reference/action-verbs.toml) ───
 # Deliberately narrow (see that file's own comment) — only add a class when a real export shows
 # two itineraries splitting one moment across two words. Not re-derived here; copied verbatim.
@@ -105,6 +112,11 @@ class SegmentAtom:
     # AA-695 — the tour's country. A real place is in one country, so atoms of different countries
     # never share a Segment. Empty = unknown (joins anything, as before).
     country: str = ""
+    # AA-695 (GO item 1) — the atom's own activity_type (`a3_atomize`). Decides, together with the
+    # rule verdict, whether a rule-"transit" atom is excluded from Segments: a rule-transit atom
+    # typed something else (culture/trek/stay/food/…) is a moment ranking keeps, not transit.
+    # None = untyped. Empty default so existing callers/tests that do not pass it are unchanged.
+    activity_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +143,35 @@ def may_join(left: SegmentAtom, right: SegmentAtom, apart: frozenset = frozenset
     if left.country and right.country and left.country != right.country:
         return False
     return place_pair(left.place, right.place) not in apart
+
+
+def forms_segment(atom: SegmentAtom) -> bool:
+    """AA-695 (GO item 1) — whether this atom may form or join a Segment at all.
+
+    Transit and unnamed-place atoms stay atoms but never belong to a Segment — EXCEPT a
+    rule-"transit" moment that ranking still treats as an experience. Ranking does not take
+    `classify_exclusion()` alone: `atom_ranking.exclusion_after_pick`/`resolve_exclusions`
+    (AA-694) let Jev rescue rule-transit moments whose `activity_type` says they are something
+    else (199 live Segments ride on that — "Nanta — attend a nonverbal show", "Negombo beach —
+    attend a private candle-lit dinner"). To keep this deterministic (no Jev call here) and still
+    match ranking's final decision, an atom is excluded ONLY when:
+      - `classify_exclusion(place, action) == "unnamed_place"` (never a moment), or
+      - it is rule-"transit" AND its own `activity_type` is "transit" or NULL (the atom itself
+        agrees, or offers no second opinion).
+    A rule-transit atom typed anything else (`culture`, `trek`, `stay`, `food`, `bike`, `other`,
+    … — there is no literal "experience" type) still forms/joins Segments; ranking keeps deciding
+    it, exactly as `atoms_say_transit([...])` would (an untyped atom does not vote itself transit,
+    so an atom typed something non-transit is kept).
+    """
+    reason = classify_exclusion(atom.place, atom.action)
+    if reason == "unnamed_place":
+        return False
+    if reason == "transit":
+        # The atom's own type is the only vote here (a single atom); `atoms_say_transit` keeps the
+        # "untyped does not count" rule and makes "most typed atoms are transit" true for the one
+        # atom when it is typed transit. A NULL type leaves the rule verdict standing (excluded).
+        return bool(atom.activity_type) and not atoms_say_transit([atom.activity_type])
+    return True
 
 
 def pairs_to_ask(atoms: list[SegmentAtom], new_ids: set[str]) -> dict[frozenset, tuple[str, str, str]]:
@@ -491,6 +532,25 @@ def _candidate_pseudo_atoms(new_atoms: list[SegmentAtom], pseudo_atoms: list[Seg
     return out
 
 
+def _existing_forms_segment(row) -> bool:
+    """AA-695 (GO item 1) — whether an EXISTING Segment may be a join candidate for a new atom.
+
+    The Segment-level counterpart of `forms_segment()`, over a Segment's canonical place/action
+    and its member atoms' types (`member_types`, loaded in the same query): skip it only when its
+    canonical place/action is `unnamed_place`, or `transit` by rule AND `atoms_say_transit(member
+    types)` is true or no member is typed. A rule-transit Segment whose typed members say
+    otherwise (a rescued experience) stays a candidate — the same verdict ranking reaches, reusing
+    `atoms_say_transit`, not a copy of it.
+    """
+    reason = classify_exclusion(row["canonical_place"] or "", row["canonical_action"] or "")
+    if reason == "unnamed_place":
+        return False
+    if reason == "transit":
+        types = [t for t in (row["member_types"] or []) if t]
+        return bool(types) and not atoms_say_transit(types)
+    return True
+
+
 # S218 — re-point a losing Segment's members as insert-then-delete, never a bare UPDATE. An atom
 # can already be a member of the surviving Segment (or of two losers that merge into the same
 # target in one run); `UPDATE ... SET segment_id = target` then hits atom_segment_member_pkey and
@@ -537,6 +597,7 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     async with pool.acquire() as conn:
         atom_rows = await conn.fetch("""
             SELECT ta.atom_id, ta.tour_id, ta.itinerary_day, ta.place, ta.action,
+                   ta.activity_type,
                    coalesce(rt.country, '') AS country
             FROM acp_contract.v_active_tour_atoms ta
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
@@ -560,7 +621,8 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         tour_country = atom_rows[0]["country"] or ""
         existing_rows = await conn.fetch("""
             SELECT asg.segment_id, asg.canonical_place, asg.canonical_action,
-                   coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') AS country
+                   coalesce(mode() WITHIN GROUP (ORDER BY rt.country), '') AS country,
+                   array_remove(array_agg(ta.activity_type), NULL) AS member_types
             FROM acp_contract.atom_segment asg
             JOIN acp_contract.atom_segment_member asm ON asm.segment_id = asg.segment_id
             LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = asm.atom_id
@@ -572,22 +634,39 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
 
     new_atoms = [
         SegmentAtom(r["atom_id"], str(r["tour_id"]), r["itinerary_day"], r["place"], r["action"],
-                    r["country"])
+                    r["country"], r["activity_type"])
         for r in atom_rows
     ]
+    # AA-695 (GO item 1) — transit / unnamed-place atoms stay atoms but never form or join a
+    # Segment. Filter THIS tour's atoms before derive_segments: an excluded atom gets no
+    # atom_segment_member row. Its prior membership (a re-atomize that used to include it) is
+    # removed below — idempotent, how a re-atomize cleans itself up — but no atom_segment row is
+    # ever deleted (that platform cleanup is a separate approved DRY RUN; see the module docstring
+    # and the GO item 2 scope).
+    excluded_atom_ids = [a.atom_id for a in new_atoms if not forms_segment(a)]
+    forming_atoms = [a for a in new_atoms if forms_segment(a)]
+
+    # AA-695 — an existing Segment that is itself transit / unnamed-place by rule is not a join
+    # candidate either: a new atom must not glue onto a Segment that should never have formed.
+    # Mirrors ranking's final verdict without a Jev call: unnamed_place is always excluded; a
+    # rule-transit Segment is excluded when its own atoms agree (`atoms_say_transit`) or none are
+    # typed (no second opinion). A rule-transit Segment whose typed members say otherwise (a
+    # rescued experience, 199 live) stays a candidate — reuses `atoms_say_transit`, not a copy.
+    joinable_existing = [r for r in existing_rows if _existing_forms_segment(r)]
+
     pseudo_atoms = _candidate_pseudo_atoms(
-        new_atoms,
+        forming_atoms,
         [SegmentAtom(f"{_PSEUDO_PREFIX}{r['segment_id']}", "", None,
                      r["canonical_place"], r["canonical_action"], r["country"])
-         for r in existing_rows],
+         for r in joinable_existing],
         keep={f"{_PSEUDO_PREFIX}{r['segment_id']}" for r in assigned_rows},
     )
     assigned = {r["atom_id"]: r["segment_id"] for r in assigned_rows}
     for p in pseudo_atoms:
         assigned[p.atom_id] = p.atom_id[len(_PSEUDO_PREFIX):]
 
-    pool_atoms = new_atoms + pseudo_atoms
-    new_ids = frozenset(a.atom_id for a in new_atoms)
+    pool_atoms = forming_atoms + pseudo_atoms
+    new_ids = frozenset(a.atom_id for a in forming_atoms)
     apart, asked = await _apart_pairs(pool_atoms, set(new_ids), pool)   # AA-695
     derived = derive_segments(pool_atoms, apart, involving=new_ids)
     segments, aliases = reconcile_ids(derived, assigned)
@@ -637,6 +716,17 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
                         canonical_action = excluded.canonical_action
                 """, list(segment_rows.values()))
             await _repoint_members(conn, alias_rows)
+            # AA-695 (GO item 1) — a previously-formed membership of an atom now excluded from
+            # Segments (a re-atomize that used to type it an experience, now transit/unnamed, or
+            # the first run after this rule shipped) is removed so the re-run is idempotent. Only
+            # THIS tour's own excluded atoms, only the member rows — the atom_segment row stays
+            # (never deleted here; the platform-wide empty/transit Segment cleanup is a separate
+            # approved DRY RUN, GO item 2). Other tours are untouched.
+            if excluded_atom_ids:
+                await conn.execute("""
+                    DELETE FROM acp_contract.atom_segment_member
+                    WHERE atom_id = ANY($1::text[])
+                """, excluded_atom_ids)
             if to_write:
                 await conn.executemany("""
                     INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id)
@@ -669,4 +759,5 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
     return {
         "segments_written": len(to_write), "atoms": len(new_atoms), "aliases": len(alias_rows),
         "existing_segments": len(existing_rows), "same_place_asked": asked, "kept_apart": len(apart),
+        "excluded_atoms": len(excluded_atom_ids),
     }
