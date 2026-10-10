@@ -568,6 +568,15 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     return decision
 
 
+async def _insert_logs(conn, rows, hit_rows) -> None:
+    """Ledger rows + cache-hit counts in one transaction, so a retry never writes either twice."""
+    async with conn.transaction():
+        if rows:
+            await conn.executemany(_LOG_SQL, rows)
+        if hit_rows:
+            await conn.executemany(_HITS_SQL, hit_rows)
+
+
 async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, asked) -> None:
     """One ledger row per verdict that was asked, errored or skipped. A cache hit gets no row
     (AA-742): it is counted into shared.decision_cache_hits_daily, flushed in batches."""
@@ -592,16 +601,23 @@ async def _write_logs(db, stage, subject_key, tenant_id, decision: Decision, ask
     if rows or hit_rows:
         try:
             async with db.acquire() as conn:
-                if rows:
-                    await conn.executemany(_LOG_SQL, rows)
-                if hit_rows:
-                    await conn.executemany(_HITS_SQL, hit_rows)
+                await _insert_logs(conn, rows, hit_rows)
         except Exception as exc:
-            logger.warning("decision_log_write_failed", stage=stage, error=str(exc))
-            if hit_rows:                            # keep the counts for the next flush
-                with _memo_lock:
-                    for *k, n in hit_rows:
-                        _hits[tuple(k)] += n
+            # AA-756: retry once on a fresh connection — a lost row is a billed verdict that the
+            # cache never sees, so every later run asks Jev (and pays) again.
+            logger.warning("decision_log_pool_write_failed", stage=stage, error=str(exc))
+            try:
+                conn = await asyncpg.connect(get_database_url(), ssl="require")
+                try:
+                    await _insert_logs(conn, rows, hit_rows)
+                finally:
+                    await conn.close()
+            except Exception as exc2:
+                logger.warning("decision_log_write_failed", stage=stage, error=str(exc2))
+                if hit_rows:                        # keep the counts for the next flush
+                    with _memo_lock:
+                        for *k, n in hit_rows:
+                            _hits[tuple(k)] += n
     if asked and decision.model:
         zones: dict[str, int] = {}
         for v in decision.verdicts.values():

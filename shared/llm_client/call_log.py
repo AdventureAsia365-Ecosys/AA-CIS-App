@@ -129,7 +129,11 @@ async def record_call_with_pool(
 ) -> None:
     """Same as record_call() but reuses an already-open asyncpg.Pool (T5/T9's async orchestrators
     both have one in scope) instead of opening a fresh connection per call. See record_call() for
-    the AA-617 account/fallback_used/provider params."""
+    the AA-617 account/fallback_used/provider params.
+
+    AA-756: a write that fails on the shared pool is retried once on a fresh connection
+    (record_call). The call was already billed — 347k Jev calls (30/09–09/10) went unlogged when
+    a single shared connection rejected the write with "another operation is in progress"."""
     clean_model, provider = _normalize_model_provider(model, provider)
     try:
         async with pool.acquire() as conn:
@@ -139,7 +143,13 @@ async def record_call_with_pool(
                 account, fallback_used, provider, current_job_id(),
             )
     except Exception as e:
-        logger.warning("llm_call_log_write_failed", stage=stage, role=role, error=str(e))
+        logger.warning("llm_call_log_pool_write_failed", stage=stage, role=role, error=str(e))
+        await record_call(
+            stage=stage, role=role, model=model, tokens_in=tokens_in, tokens_out=tokens_out,
+            cost_usd=cost_usd, quality_signal=quality_signal, tenant_id=tenant_id,
+            content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id,
+            stop_reason=stop_reason, account=account, fallback_used=fallback_used, provider=provider,
+        )
 
 
 def record_call_sync(**kwargs) -> None:
