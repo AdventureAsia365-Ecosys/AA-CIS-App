@@ -152,10 +152,13 @@ def test_repair_zero_budget_nudges_nothing():
 
 # ── S1_PER_DAY_TARGETS flag: default OFF, prompt unchanged ───────────────────
 
-def test_per_day_targets_flag_default_off(monkeypatch):
+def test_per_day_targets_flag_default_on(monkeypatch):
+    """S223: default ON after the 10-tour A/B (compressed days 69% → 17%)."""
     monkeypatch.delenv("S1_PER_DAY_TARGETS", raising=False)
+    assert s1_per_day_targets_enabled() is True
+    assert s1_per_day_targets_enabled({}) is True
+    monkeypatch.setenv("S1_PER_DAY_TARGETS", "false")
     assert s1_per_day_targets_enabled() is False
-    assert s1_per_day_targets_enabled({}) is False
 
 
 def test_per_day_targets_flag_env_and_tenant(monkeypatch):

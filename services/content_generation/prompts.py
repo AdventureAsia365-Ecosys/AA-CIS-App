@@ -5,9 +5,10 @@ import structlog
 
 logger = structlog.get_logger()
 
-# AA-747: per-day target word counts in the main generate prompt, behind a flag that defaults OFF.
-# Follows how other S1 flags are read (os.environ.get, same as S1_SEO_REUSE_DAYS). Claude Code A/Bs
-# it on 10 tours before turning it on — do NOT enable it here. tenant-config override is read first
+# AA-747: per-day target word counts in the main generate prompt. Default ON since S223: A/B on 10
+# India tours that had > 3 compressed days (same code, flag only) — days outside the clamp band
+# 70/102 (69%) OFF → 17/102 (17%) ON, nudges 27 → 11, mean judge score 7.44 → 7.89. Set the
+# S1_PER_DAY_TARGETS env var to "false" to turn it off. tenant-config override is read first
 # (per tour's own config) and falls back to the env var.
 _S1_PER_DAY_TARGETS_ENV = "S1_PER_DAY_TARGETS"
 
@@ -17,12 +18,12 @@ def _flag_on(value) -> bool:
 
 
 def s1_per_day_targets_enabled(tenant_flags: dict | None = None) -> bool:
-    """AA-747: whether to add explicit per-day TARGET word counts to the generate prompt. OFF by
-    default. A tenant-config flag (``tenant_flags["S1_PER_DAY_TARGETS"]``) wins when present;
-    otherwise the ``S1_PER_DAY_TARGETS`` env var decides (default off)."""
+    """AA-747: whether to add explicit per-day TARGET word counts to the generate prompt. ON by
+    default (S223 A/B). A tenant-config flag (``tenant_flags["S1_PER_DAY_TARGETS"]``) wins when
+    present; otherwise the ``S1_PER_DAY_TARGETS`` env var decides (default on)."""
     if tenant_flags and _S1_PER_DAY_TARGETS_ENV in tenant_flags:
         return _flag_on(tenant_flags[_S1_PER_DAY_TARGETS_ENV])
-    return _flag_on(os.environ.get(_S1_PER_DAY_TARGETS_ENV, "false"))
+    return _flag_on(os.environ.get(_S1_PER_DAY_TARGETS_ENV, "true"))
 
 
 def _clamp_midpoint() -> float:
