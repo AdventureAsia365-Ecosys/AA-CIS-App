@@ -54,3 +54,10 @@ Known Jev misses on the accept side (do not matter for a reject-only gate): #162
 - [x] **Enforce `a3_landing_belongs`: reject_ceiling 0.30**, no accept floor, threshold v1 (Dev, 30/09/2026).
   Reject ≤ 0.30: 125 / 125 correct; catches 125 of 171 bad landings (73%). 0.30 keeps a margin below
   the lowest good landing (0.36).
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+reject_ceiling 0.30 → **0.40**. Sample (200): precision 100% → 99%, negatives caught 73% → 81%. Live act rate: 67.1% → 75.3%.
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.
