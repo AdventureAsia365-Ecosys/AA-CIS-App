@@ -402,17 +402,33 @@ _JEV_ALERT_MESSAGE = (
     "failing open (stages run on their existing rules without Jev). Top up the TypeSafe account "
     "(thu@adventure.asia); there is no balance API, so this bell is the only signal."
 )
+# AA-756 — a fixed advisory-lock key so the check-then-insert below runs one-at-a-time across
+# parallel decides. On 10/10 04:09 UTC three identical exhausted alerts landed at the same
+# millisecond: several decide() coroutines each read "no unread alert in 24h" before any of them
+# inserted (a classic check-then-insert race). pg_advisory_xact_lock serialises them within one
+# transaction; the lock is released automatically when the transaction ends. The constant is an
+# arbitrary but stable 64-bit key, distinct from the job-claim lock in shared/jobs/queue.py.
+_JEV_ALERT_LOCK_KEY = 756_020_720
 
 
 async def maybe_alert_jev_credit(conn, *, source: str) -> bool:
     """Insert a platform.jev_credit.exhausted notification unless one is already unread within 24h
     (mirrors AA-627's _maybe_alert_low_balance throttle). Returns True if a new alert was inserted.
+
+    AA-756: the check and the insert run inside one transaction holding pg_advisory_xact_lock, so
+    concurrent decides can never each see "no recent alert" and all insert — at most one alert is
+    written per 24h window even under heavy parallelism.
+
     Best-effort: a notification failure must never fail the calling stage."""
     try:
-        if await conn.fetchval(_JEV_ALERT_RECENT_SQL, JEV_CREDIT_EXHAUSTED_EVENT):
-            return False
-        payload = json.dumps({"message": _JEV_ALERT_MESSAGE, "error_type": "billing_error", "source": source})
-        await conn.execute(_JEV_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_EXHAUSTED_EVENT, payload)
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", _JEV_ALERT_LOCK_KEY)
+            if await conn.fetchval(_JEV_ALERT_RECENT_SQL, JEV_CREDIT_EXHAUSTED_EVENT):
+                return False
+            payload = json.dumps({"message": _JEV_ALERT_MESSAGE, "error_type": "billing_error",
+                                  "source": source})
+            await conn.execute(_JEV_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_EXHAUSTED_EVENT,
+                               payload)
         logger.warning("jev_credit_exhausted_alert", source=source)
         return True
     except Exception as exc:
