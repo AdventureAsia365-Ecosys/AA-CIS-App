@@ -117,8 +117,8 @@ def test_honesty_guard_drops_fabricated_number_and_meal():
     # real meal kept, fabricated meal dropped
     assert "breakfast" in days[1]["meals"]
     assert "dinner" not in days[1]["meals"]
-    # places are prose, not number-guarded — kept
-    assert days[1]["places"] == ["Paro", "Thimphu"]
+    # round 2 (S224): figures only — a stray prose field from the model is not carried
+    assert "places" not in days[1]
 
 
 def test_extract_fails_open_on_llm_error():
@@ -159,7 +159,8 @@ def test_prompt_flag_on_adds_facts_block_and_rule():
     assert "SOURCE FACTS BY DAY" in out
     assert "SOURCE FACTS RULE" in out
     assert "Day 1:" in out and "Day 2:" in out
-    assert "places: Paro, Thimphu" in out
+    assert "distances: 54 km" in out
+    assert "places:" not in out                                  # round 2: figures only
     assert "altitudes: 3120 m" in out
     # the block sits before PER-DAY SOURCE LENGTH
     assert out.index("SOURCE FACTS BY DAY") < out.index("PER-DAY SOURCE LENGTH")

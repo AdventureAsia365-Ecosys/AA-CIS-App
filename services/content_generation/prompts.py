@@ -242,7 +242,6 @@ def strip_itinerary_meal_metadata(itinerary: str) -> str:
 # prompt, in order, with a human label. Kept here (not imported from source_facts) so prompts.py
 # stays import-light and the field order is co-located with the prompt text it feeds.
 _SOURCE_FACT_FIELD_LABELS = (
-    ("places", "places"), ("activities", "activities"), ("transport", "transport"),
     ("distances", "distances"), ("durations", "durations"), ("altitudes", "altitudes"),
     ("times", "times"), ("meals", "meals"), ("other_numbers", "other numbers"),
 )
@@ -273,10 +272,10 @@ def _render_source_facts_block(structured_facts: dict | None) -> str:
         " durations, altitudes, clock-times and meals may come from):\n"
         f"{body}\n\n"
         "SOURCE FACTS RULE: numbers, distances, durations, altitudes, clock-times and meals may"
-        " appear in a day's output ONLY if they are listed in SOURCE FACTS for that day. Each day's"
-        " places and activities come from that day's facts. The raw itinerary above gives prose"
-        " detail; the facts constrain what is factually asserted — do not add a figure, time or meal"
-        " the facts do not list.\n"
+        " appear in a day's output ONLY if they are listed in SOURCE FACTS for that day — do not add"
+        " a figure, time or meal the facts do not list. This rule constrains figures only: write each"
+        " day from the raw itinerary above with the same detail, register and per-day length that"
+        " rule 5 asks for; do not shorten a day or flatten its prose because of the facts list.\n"
     )
 
 
