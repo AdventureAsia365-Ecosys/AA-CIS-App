@@ -13,6 +13,15 @@ every tenant. Two signals, per sentence of the narrative fields:
 Violations are quoted to flag_fix with the source; revalidate re-checks them after the repair and
 sends anything still unsupported to manual_check (ADR 0007: block unpublished content, never delete).
 Only A1 runs this — a T2 tenant rewrite is grounded against master content by T3.
+
+AA-756 (grounding token trim): `a1_claim_supported` was 80% of Jev spend because every sentence was
+sent with the WHOLE tour source (avg 2,408 input tokens). An itinerary sentence is now asked against
+a per-unit source (`unit_source`) — a compact header + its own day's source + the neighbouring days
++ inclusions/exclusions — not the whole tour (measured −62% source chars on 50 real India tours).
+Every unit with ≥ MIN_WORDS words is still asked: a keyword "skip" rule missed exactly the tour
+promises the policy forbids (background about a named place is allowed, a promise the source never
+states is not), so there is no skip. The numeric deterministic check still runs against the FULL
+source (unchanged).
 """
 from __future__ import annotations
 
@@ -40,6 +49,9 @@ POOL_SIZE = 2                 # _decide holds one connection at a time; 2 is ple
 # Same sentence boundary T3 uses (tenant_pipeline._SENT_SPLIT_RE).
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 _DAY_TITLE_RE = re.compile(r"^\s*Day\s+\d+\s*[—–-]")
+# Day number off a generated itinerary title line ("Day 3 — Paro to Thimphu") — maps a rewritten
+# day to its source day for unit_source. Only the leading "Day N" of a title line is read.
+_GEN_DAY_NUM_RE = re.compile(r"^\s*Day\s+(\d+)\b")
 
 
 def _as_text(value: Any) -> str:
@@ -95,24 +107,41 @@ def source_text(tour: dict) -> str:
 
 
 def sentence_units(generated: dict) -> list[dict]:
-    """Checkable units of the narrative fields: {field, sentence}. Highlights are one unit per item;
-    itinerary day-title lines ("Day 3 — Paro to Thimphu") are skipped, their bodies are split."""
+    """Checkable units of the narrative fields: {field, sentence, day}. Highlights are one unit per
+    item; itinerary day-title lines ("Day 3 — Paro to Thimphu") are skipped, their bodies are split
+    and each sentence carries the ``day`` number of the title it falls under (None for
+    subtitle/summary/highlights and for itinerary text before any day title). The day number lets
+    ``unit_source`` send only that day's source (AA-756)."""
     units: list[dict] = []
     for field in GROUNDED_FIELDS:
         value = generated.get(field)
         if not value:
             continue
         if field == "highlights" and isinstance(value, list):
-            chunks = [str(v) for v in value]
-        elif field == "itineraries":
-            lines = [ln for ln in _as_text(value).splitlines() if ln.strip() and not _DAY_TITLE_RE.match(ln)]
-            chunks = [s for ln in lines for s in _SENT_SPLIT_RE.split(ln)]
-        else:
-            chunks = _SENT_SPLIT_RE.split(_as_text(value))
-        for c in chunks:
+            for v in value:
+                s = str(v).strip()
+                if len(s.split()) >= MIN_WORDS:
+                    units.append({"field": field, "sentence": s, "day": None})
+            continue
+        if field == "itineraries":
+            day: Optional[int] = None
+            for ln in _as_text(value).splitlines():
+                if not ln.strip():
+                    continue
+                m = _GEN_DAY_NUM_RE.match(ln)
+                if m:                                   # a "Day N" title line sets the current day
+                    day = int(m.group(1))
+                    if _DAY_TITLE_RE.match(ln):         # a title line itself carries no claim
+                        continue
+                for c in _SENT_SPLIT_RE.split(ln):
+                    s = c.strip()
+                    if len(s.split()) >= MIN_WORDS:
+                        units.append({"field": field, "sentence": s, "day": day})
+            continue
+        for c in _SENT_SPLIT_RE.split(_as_text(value)):
             s = c.strip()
             if len(s.split()) >= MIN_WORDS:
-                units.append({"field": field, "sentence": s})
+                units.append({"field": field, "sentence": s, "day": None})
     return units
 
 
@@ -124,6 +153,58 @@ def subject_key(source: str, sentence: str) -> str:
     """Stable per (source, sentence): an unchanged sentence re-checked after flag_fix hits the
     Verdict cache instead of paying again."""
     return f"claim:{_h(source, 10)}:{_h(sentence, 12)}"
+
+
+_HEADER_FIELDS = (("name", "NAME"), ("country", "COUNTRY"), ("duration", "DURATION"))
+
+
+def _tour_header(tour: dict) -> str:
+    """Compact header for a per-unit source: NAME / COUNTRY / DURATION only."""
+    parts = []
+    for key, label in _HEADER_FIELDS:
+        text = _as_text(tour.get(key)).strip()
+        if text:
+            parts.append(f"{label}: {text}")
+    return "\n".join(parts)
+
+
+def _source_days(tour: dict) -> tuple[dict[int, str], bool]:
+    """Source itinerary split by day, reusing prompts.parse_source_day_word_counts (the one day
+    splitter — never a second one). Returns ({day_num: text}, used_fallback)."""
+    from .prompts import parse_source_day_word_counts
+
+    parsed = parse_source_day_word_counts(_as_text(tour.get("itineraries")), tour.get("duration") or "")
+    return parsed["day_text"], parsed["used_fallback"]
+
+
+def unit_source(tour: dict, unit: dict) -> str:
+    """AA-756: the source a single grounding unit is judged against, instead of the whole tour.
+
+    For an ``itineraries`` sentence with a known day number, send a compact tour header
+    (NAME / COUNTRY / DURATION), that day's own source text, the previous and next day's source
+    text (a writer often moves a detail one day), and INCLUSIONS / EXCLUSIONS (meals, transport,
+    services live there). If the source days cannot be split (parser fallback / even split) or the
+    unit has no day number, fall back to the full ``source_text(tour)`` — never guess a slice.
+    subtitle / summary / highlights always keep the full source."""
+    if unit.get("field") != "itineraries" or unit.get("day") is None:
+        return source_text(tour)
+    day_text, used_fallback = _source_days(tour)
+    day = unit["day"]
+    if used_fallback or day not in day_text:
+        return source_text(tour)
+    parts = []
+    header = _tour_header(tour)
+    if header:
+        parts.append(header)
+    for d in (day - 1, day, day + 1):
+        text = (day_text.get(d) or "").strip()
+        if text:
+            parts.append(f"DAY {d}:\n{text}")
+    for f in ("inclusions", "exclusions"):
+        text = _as_text(tour.get(f)).strip()
+        if text:
+            parts.append(f"{f.upper()}:\n{text}")
+    return "\n\n".join(parts)
 
 
 def classify(units: list[dict], numeric: dict[int, list[str]], verdicts: dict[int, Any]) -> dict:
@@ -163,8 +244,11 @@ def issue_lines(violations: list[dict]) -> list[str]:
     return out
 
 
-async def _judge_all(units: list[dict], source: str) -> dict[int, Any]:
-    """One Jev Noul per unit, CONCURRENCY in flight, over a small pool opened for this tour."""
+async def _judge_all(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
+    """One Jev Noul per asked unit, CONCURRENCY in flight, over a small pool opened for this tour.
+    ``sources[i]`` is the per-unit source for unit ``i`` (AA-756); a unit absent from ``sources``
+    was skipped and is not asked. The subject_key uses that same per-unit source, so a verdict
+    caches per unit."""
     import asyncpg
     from shared.llm_client.decide import decide
     from shared.secrets import get_database_url
@@ -172,23 +256,24 @@ async def _judge_all(units: list[dict], source: str) -> dict[int, Any]:
     pool = await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=POOL_SIZE)
     sem = asyncio.Semaphore(CONCURRENCY)
 
-    async def one(i: int, u: dict):
+    async def one(i: int, u: dict, src: str):
         async with sem:
-            d = await decide(STAGE, subject_key(source, u["sentence"]),
-                             {"source": source, "sentence": u["sentence"]}, [QUESTION], pool=pool)
+            d = await decide(STAGE, subject_key(src, u["sentence"]),
+                             {"source": src, "sentence": u["sentence"]}, [QUESTION], pool=pool)
             return i, d.verdicts.get(QUESTION)
 
     try:
-        return dict(await asyncio.gather(*[one(i, u) for i, u in enumerate(units)]))
+        return dict(await asyncio.gather(*[one(i, units[i], src) for i, src in sources.items()]))
     finally:
         await pool.close()
 
 
-def judge_units(units: list[dict], source: str) -> dict[int, Any]:
-    """Sync entry for the S1 graph node (runs in LangGraph's worker thread). Fails open: on any
+def judge_units(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
+    """Sync entry for the S1 graph node (runs in LangGraph's worker thread). ``sources`` maps the
+    index of each unit that should be asked to its per-unit source (AA-756). Fails open: on any
     error, or when called from a thread that already runs a loop, returns {} (no Jev signal) and the
     deterministic check still applies."""
-    if not units:
+    if not sources:
         return {}
     try:
         asyncio.get_running_loop()
@@ -197,19 +282,26 @@ def judge_units(units: list[dict], source: str) -> dict[int, Any]:
     except RuntimeError:
         pass
     try:
-        return asyncio.run(_judge_all(units, source))
+        return asyncio.run(_judge_all(units, sources))
     except Exception as exc:
         logger.warning("grounding_judge_failed", error=str(exc)[:200])
         return {}
 
 
 def check_grounding(generated: dict, tour: dict, *, use_jev: bool = True) -> dict:
-    """Run both signals over `generated`. Returns {violations, notes, units, jev_asked}."""
+    """Run both signals over `generated`. Returns {violations, notes, units, jev_asked}. The numeric
+    check stays on the FULL source (unchanged); Jev is asked per unit against its per-unit source
+    (`unit_source`) — every unit with ≥ MIN_WORDS words is asked (AA-756: no skip rule; a keyword
+    skip missed exactly the tour promises the policy forbids)."""
+    tour = tour or {}
     units = sentence_units(generated or {})
-    source = source_text(tour or {})
-    source_parts = source_number_parts(tour or {})
+    source_parts = source_number_parts(tour)
     numeric = {i: n for i, u in enumerate(units) if (n := find_novel_numeric_claims(u["sentence"], source_parts))}
-    verdicts = judge_units(units, source) if (use_jev and source) else {}
+    if use_jev and source_text(tour):
+        sources = {i: unit_source(tour, u) for i, u in enumerate(units)}
+        verdicts = judge_units(units, sources)
+    else:
+        verdicts = {}
     out = classify(units, numeric, verdicts)
     out["units"] = len(units)
     out["jev_asked"] = len(verdicts)
@@ -383,8 +475,9 @@ async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> 
 
     `tour` is the raw source dict (the SOURCE_FIELDS shape built in _execute_run_tour); `generated`
     is the approved version's grounded fields (keys subtitle/summary/highlights/itineraries). Uses
-    the same `source_text` + `sentence_units` + `subject_key` as the grounding run, so an approved
-    sentence maps to exactly the row Jev wrote. Best-effort: never raises, returns rows updated."""
+    the SAME per-unit source (`unit_source`) + `subject_key` as the grounding run (AA-756), so an
+    approved sentence maps to exactly the row Jev wrote. Best-effort: never raises, returns rows
+    updated."""
     from shared.llm_client.decide import record_outcome
 
     try:
@@ -398,7 +491,7 @@ async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> 
     updated = 0
     for u in units:
         updated += await record_outcome(
-            conn_or_pool, QUESTION, subject_key(source, u["sentence"]),
+            conn_or_pool, QUESTION, subject_key(unit_source(tour or {}, u), u["sentence"]),
             truth=True, source="review_approve")
     logger.info("record_approved_outcome", units=len(units), rows_updated=updated)
     return updated
