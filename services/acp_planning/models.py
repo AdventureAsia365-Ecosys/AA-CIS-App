@@ -28,7 +28,6 @@ FunnelStage = Literal["TOFU", "MOFU", "BOFU", "OFF"]
 Channel = Literal[
     "blog", "facebook", "tiktok", "email", "linkedin", "instagram", "landing_page", "ads",
 ]
-Distinctiveness = Literal["HIGH", "MED", "LOW"]
 LifecycleStage = Literal["active", "phasing_out", "retired"]
 
 
@@ -61,11 +60,10 @@ class AtomRecord(BaseModel):
     trip_id: UUID
     text: str
     activity_type: Optional[str] = None  # AA-379 — decompose enum (trek|bike|food|culture|stay|transit|other)
-    distinctiveness: Distinctiveness = "LOW"
-    # AA-749 (option b) — owner_scope decides whether `distinctiveness` is a real measurement. A
-    # platform atom (owner_scope='platform') is never scored (its value is a default), so quarter
-    # scoring treats it as unscored and excludes it from the distinctiveness average. A tenant
-    # atom (owner_scope = a tenant id, T5 score_distinctiveness path) carries a real HIGH/MED/LOW.
+    # AA-754 — `distinctiveness` (atom-level competitor-overlap bucket) was removed end-to-end:
+    # it was only ever a real measurement for tenant-scored atoms via the now-removed T5
+    # competitor-index path, so quarter scoring no longer reads it. The DB column still exists
+    # (no migration this PR) but is not loaded here.
     owner_scope: str = "platform"
     deleted: bool = False
     weight: float = 1.0
@@ -118,9 +116,10 @@ class TripScore(BaseModel):
     score: float
     runway_fit: float
     richness: float
-    distinctiveness_score: float
-    dfs_relevance_score: float = 0.5  # AA-448 round 1 — 4th scoring term; 0.5 = SIGNAL_SCORE_MAP["MED"]
-    engagement_adjustment_score: float = 0.5  # AA-448 round 6 — 5th term; 0.5 = no feedback data yet
+    # AA-754 — the `distinctiveness_score` term was removed from quarter scoring (see
+    # constants.QUARTER_SCORE_WEIGHTS); it is no longer surfaced here.
+    dfs_relevance_score: float = 0.5  # AA-448 round 1 — DFS scoring term; 0.5 = SIGNAL_SCORE_MAP["MED"]
+    engagement_adjustment_score: float = 0.5  # AA-448 round 6 — feedback term; 0.5 = no feedback data yet
     forced: bool
     selected: bool
     reason: str

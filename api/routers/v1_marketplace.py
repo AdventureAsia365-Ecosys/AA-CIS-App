@@ -80,15 +80,13 @@ _MARKETPLACE_QUERY = """
         lv.qa_status, lv.qa_auto_passed, lv.version_created_at,
         pt.id AS published_tour_id, pt.tour_id, pt.aa_name AS name,
         rt.country, rt.duration, rt.price_raw,
-        COALESCE(ac.atom_count, 0) AS atom_count,
-        COALESCE(ac.high_atom_count, 0) AS high_atom_count
+        COALESCE(ac.atom_count, 0) AS atom_count
     FROM latest_versions lv
     JOIN gold_aa_internal.published_tours pt ON pt.id = lv.published_tour_id
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
     LEFT JOIN (
         SELECT tour_id,
-               count(*) AS atom_count,
-               count(*) FILTER (WHERE distinctiveness = 'HIGH') AS high_atom_count
+               count(*) AS atom_count
         FROM acp_contract.tour_atoms
         WHERE owner_scope = $2 AND NOT deleted AND NOT is_empty_marker
         GROUP BY tour_id

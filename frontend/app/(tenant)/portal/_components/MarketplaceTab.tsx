@@ -32,7 +32,6 @@ interface MarketplaceTour {
   country: string | null;
   duration: string | null;
   atom_count: number;
-  high_atom_count: number;
   price_usd: number | null;
   price_available: boolean;
   runway_months: number | null;
@@ -112,7 +111,7 @@ export default function MarketplaceTab() {
                 </div>
 
                 <div style={{ display: "flex", gap: 20, flexShrink: 0, textAlign: "right" }}>
-                  <Metric label="Atoms" value={t.atom_count} sub={`${t.high_atom_count} high`} />
+                  <Metric label="Atoms" value={t.atom_count} />
                   <Metric label="Price"
                     value={t.price_available && t.price_usd != null ? `$${t.price_usd.toFixed(0)}` : "—"}
                     sub={t.price_available ? "estimated" : "on request"} />
@@ -138,12 +137,12 @@ function StatBlock({ label, value }: { label: string; value: number | string }) 
   );
 }
 
-function Metric({ label, value, sub }: { label: string; value: string | number; sub: string }) {
+function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div style={{ minWidth: 78 }}>
       <div style={{ fontSize: 10, color: T.muted2, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2, fontFamily: sans }}>{label}</div>
       <div style={{ fontFamily: mono, fontSize: 14, fontWeight: 600, color: T.ink }}>{value}</div>
-      <div style={{ fontSize: 10.5, color: T.muted2, marginTop: 1 }}>{sub}</div>
+      {sub && <div style={{ fontSize: 10.5, color: T.muted2, marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }

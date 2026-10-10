@@ -29,7 +29,6 @@ from services.acp_produce import tenant_pipeline
 from services.acp_shared.atom_extraction import (
     content_hash_atom_id, day_fingerprint, derive_atom_text, normalise,
 )
-from services.acp_shared.competitor_index import CompetitorIndex
 from shared.llm_client.role_config import SAFE_DEFAULTS
 
 # AA-619 — the day-fingerprint is now keyed on the live t5_atomize config model (was the removed
@@ -100,9 +99,7 @@ async def test_first_atomize_reads_every_day_content_hash_ids():
 
     with patch("services.acp_produce.tenant_pipeline.invoke_claude",
                side_effect=[_FakeLLMResult(_day1_atoms_json(day1_place, day1_action)),
-                            _FakeLLMResult(_day2_atoms_json(day2_place, day2_action))]), \
-         patch("services.acp_shared.competitor_index.build_competitor_index",
-               new=AsyncMock(return_value=CompetitorIndex())):
+                            _FakeLLMResult(_day2_atoms_json(day2_place, day2_action))]):
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -207,9 +204,7 @@ async def test_one_day_changed_only_that_day_reatomizes_other_kept():
     new_day1_place, new_day1_action = "Old Quarter market", "visit at dawn"
 
     with patch("services.acp_produce.tenant_pipeline.invoke_claude",
-               return_value=_FakeLLMResult(_day1_atoms_json(new_day1_place, new_day1_action))) as m_llm, \
-         patch("services.acp_shared.competitor_index.build_competitor_index",
-               new=AsyncMock(return_value=CompetitorIndex())):
+               return_value=_FakeLLMResult(_day1_atoms_json(new_day1_place, new_day1_action))) as m_llm:
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -244,9 +239,7 @@ async def test_llm_failure_on_one_day_keeps_other_days_committed():
 
     with patch("services.acp_produce.tenant_pipeline.invoke_claude",
                side_effect=[RuntimeError("BedrockError: throttled"),
-                            _FakeLLMResult(_day2_atoms_json())]), \
-         patch("services.acp_shared.competitor_index.build_competitor_index",
-               new=AsyncMock(return_value=CompetitorIndex())):
+                            _FakeLLMResult(_day2_atoms_json())]):
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -280,9 +273,7 @@ async def test_zero_atom_day_writes_deterministic_marker_not_random():
 
     with patch("services.acp_produce.tenant_pipeline.invoke_claude",
                side_effect=[_FakeLLMResult(json.dumps({"atoms": []})),
-                            _FakeLLMResult(_day2_atoms_json())]), \
-         patch("services.acp_shared.competitor_index.build_competitor_index",
-               new=AsyncMock(return_value=CompetitorIndex())):
+                            _FakeLLMResult(_day2_atoms_json())]):
         result = await tenant_pipeline.run_t5_atomize(
             TENANT_ID, TOUR_ID,
             {"name": "Sapa Trek", "summary": "s", "highlights": [], "itineraries": TWO_DAY_ITINERARY},
@@ -324,7 +315,8 @@ def test_normalise_matches_reference_repo_formula():
 
 def test_derive_atom_text_combines_place_and_action():
     """AA-509 — tour_atoms.text is derived, not LLM-written, once T5 returns place/action
-    separately; still populated (not dropped) for score_distinctiveness()/T9/research/etc."""
+    separately; still populated (not dropped) for T9/research/etc. (AA-754 removed the former
+    score_distinctiveness() reader)."""
     assert derive_atom_text("Magome", "walk to Tsumago") == "Magome — walk to Tsumago"
     assert derive_atom_text("Magome", "") == "Magome"
     assert derive_atom_text("", "walk") == "walk"

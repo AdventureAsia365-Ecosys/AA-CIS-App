@@ -79,7 +79,7 @@ class TestFetchTenantAtomsByTrip:
         trip_id = uuid.uuid4()
         pool, conn = _mock_pool([{
             "atom_id": "atom_1", "tour_id": trip_id, "text": "text", "activity_type": "trek",
-            "distinctiveness": "HIGH", "owner_scope": str(TENANT), "deleted": False, "weight": 1.0,
+            "owner_scope": str(TENANT), "deleted": False, "weight": 1.0,
             "cooldown_until": "{}", "usage_log": "[]",
         }])
 
@@ -89,7 +89,7 @@ class TestFetchTenantAtomsByTrip:
         call_args = conn.fetch.await_args.args
         assert call_args[1] == str(TENANT)  # query, owner_scope (text column -> str)
         assert trip_id in by_trip
-        assert by_trip[trip_id][0].distinctiveness == "HIGH"
+        assert by_trip[trip_id][0].activity_type == "trek"
 
     @pytest.mark.asyncio
     async def test_jsonb_string_shape_parsed_via_reused_row_to_atom(self):
@@ -99,7 +99,7 @@ class TestFetchTenantAtomsByTrip:
         trip_id = uuid.uuid4()
         pool, _ = _mock_pool([{
             "atom_id": "atom_1", "tour_id": trip_id, "text": "text", "activity_type": None,
-            "distinctiveness": "MED", "owner_scope": str(TENANT), "deleted": False, "weight": 1.5,
+            "owner_scope": str(TENANT), "deleted": False, "weight": 1.5,
             "cooldown_until": '{"blog": "2026-09-01"}', "usage_log": "[]",
         }])
         by_trip = await fetch_tenant_atoms_by_trip(TENANT, pool)

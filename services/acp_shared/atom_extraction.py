@@ -181,12 +181,14 @@ def content_hash_atom_id(
 
 def derive_atom_text(place: str, action: str) -> str:
     """AA-509 — `tour_atoms.text` stays a real, populated column (NOT dropped): it is read
-    directly by score_distinctiveness(), T9's content_seed, N7 research H2 titles,
-    slot_runner.py, and acp_angle_gate/service.py (grep-confirmed before this change, see
-    implementation notes Decision 1) — rewriting every one of those to read place+action
-    separately was real, unrequested blast radius, not this task's ask (Hướng A only asks T5's
-    decompose OUTPUT to split place/action). This derives the same combined view T5 used to get
-    straight from the LLM, now computed from the two fields it actually returns."""
+    directly by T9's content_seed, N7 research H2 titles, slot_runner.py, and
+    acp_angle_gate/service.py (grep-confirmed before this change, see implementation notes
+    Decision 1) — rewriting every one of those to read place+action separately was real,
+    unrequested blast radius, not this task's ask (Hướng A only asks T5's decompose OUTPUT to
+    split place/action). This derives the same combined view T5 used to get straight from the
+    LLM, now computed from the two fields it actually returns.
+    (AA-754 — the former score_distinctiveness() reader was removed with the distinctiveness
+    signal; the remaining readers above are unchanged.)"""
     place = (place or "").strip()
     action = (action or "").strip()
     if not place and not action:

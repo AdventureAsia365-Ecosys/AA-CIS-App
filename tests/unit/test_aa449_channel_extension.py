@@ -36,11 +36,11 @@ def _trip(**over):
     return Trip(**base)
 
 
-def _atoms(trip_id, n, distinctiveness="HIGH"):
+def _atoms(trip_id, n):
     return [AtomRecord(atom_id=f"atom_{i}_{uuid.uuid4().hex[:6]}", trip_id=trip_id,
                        text=f"atom text number {i} about limestone cliffs and rice terraces",
-                       activity_type=_ACTIVITY_TYPES[i % len(_ACTIVITY_TYPES)],
-                       distinctiveness=distinctiveness) for i in range(n)]
+                       activity_type=_ACTIVITY_TYPES[i % len(_ACTIVITY_TYPES)])
+            for i in range(n)]
 
 
 def _full_runway(destination="Ha Giang", market="US", stage="BOFU"):
