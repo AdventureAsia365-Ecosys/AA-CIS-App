@@ -56,3 +56,10 @@ with a neighbour are the known weak spot.
 - [ ] After the first enforced atom ranking: read the dropped questions on /admin/decisions
   (Verdicts → question, zone Accept for foreign / Reject for about_here) and look for border places
   like Manas. If a pattern shows, raise the foreign floor to 0.97 first.
+
+
+## Threshold v2 — S223 (10/10/2026, AA-756)
+
+`a3_question_about_here` reject_ceiling 0.20 → **0.30** (precision 132/133 → 135/137); `a3_question_foreign` accept_floor 0.95 → **0.90** (precision 115/116 → 125/129).
+
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.
