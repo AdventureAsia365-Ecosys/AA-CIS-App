@@ -6,7 +6,7 @@
 //                shadow-A/B editor (StageRouteEditor, PATCH /llm-config/{stage}/route).
 //   • Catalog  — every catalog model, editable price/source/enabled (CatalogTab).
 //   • Shadow A/B — the shadow comparison report (ShadowReportTab).
-// Dead stages (HIDDEN_STAGES, e.g. n7_judge) are not rendered in the Stages editor.
+// Dead stages (HIDDEN_STAGES) are not rendered in the Stages editor.
 // Built on the kit (Tabs/Badge/Button/ConfirmModal/DataTable/Toast) + react-query.
 
 import { useMemo, useState } from "react";

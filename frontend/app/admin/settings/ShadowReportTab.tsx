@@ -4,7 +4,7 @@
 // from GET /admin/llm-shadow/report?days=. Shows agreement %, mean |Δscore|, cost per call primary
 // vs shadow, latency p50/p95, repeat-scoring variance, and n / unparsed / errors. Every rate shows
 // its sample size next to it so a rate from 3 rows does not read like one from 3,000. A days
-// selector (7/30/90) drives the query. Dead stages (HIDDEN_STAGES, e.g. n7_judge) are not shown.
+// selector (7/30/90) drives the query. Dead stages (HIDDEN_STAGES) are not shown.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -42,7 +42,7 @@ export function ShadowReportTab() {
     queryFn: () => apiGet<ShadowReportResp>(`/api/admin/llm-shadow/report?days=${days}`, { admin: true }),
   });
 
-  // Hide dead stages (contract): n7_judge belongs to the removed N7 pipeline.
+  // Hide dead stages (contract): currently none — HIDDEN_STAGES is empty since the N7 removal.
   const groups = useMemo(
     () => (data?.groups ?? []).filter((g) => !HIDDEN_STAGES.has(g.stage)),
     [data],

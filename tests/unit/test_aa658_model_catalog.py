@@ -239,7 +239,7 @@ def test_writer_stage_offers_anthropic_converse_models_only():
     assert "cohere-embed-v4" not in reasons
 
 
-@pytest.mark.parametrize("stage", ["s1_judge", "t10_judge", "n7_judge", "s1_brand_audit"])
+@pytest.mark.parametrize("stage", ["s1_judge", "t10_judge", "s1_brand_audit"])
 def test_judge_stages_offer_non_anthropic_models(stage):
     # AA-659: judges run through the gateway route, so any enabled non-Anthropic model works.
     from api.routers.admin_llm_ops import _catalog_options
