@@ -295,6 +295,7 @@ def _build_generated_metadata(result, *, brand_rule_id, brand_name, seo_mode,
             "repaired_fields": result.get("grounding_repaired_fields") or [],
             "violations":      result.get("grounding_violations") or [],
             "notes":           result.get("grounding_notes") or [],
+            "units_skipped":   result.get("grounding_units_skipped") or 0,
         }
     _day_ratios = result.get("itinerary_day_ratios") or []
     if _day_ratios:

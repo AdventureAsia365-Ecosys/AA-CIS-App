@@ -116,9 +116,12 @@ GEN = {
 async def test_record_approved_outcome_stamps_each_unit_with_the_run_subject_key():
     from services.content_generation import grounding as gr
 
-    source = gr.source_text(TOUR)
     units = gr.sentence_units(GEN)
     assert units                                                  # the fixture produces real units
+    # AA-756: only the units the run would ask (not skipped) are stamped, each keyed by the SAME
+    # per-unit source (unit_source) the run used — not the whole-tour source.
+    asked = [u for u in units if not gr.should_skip(u["sentence"])]
+    assert asked and len(asked) < len(units)                      # the fixture has both skipped+asked
 
     seen = []
 
@@ -134,9 +137,9 @@ async def test_record_approved_outcome_stamps_each_unit_with_the_run_subject_key
     finally:
         dd.record_outcome = orig
 
-    assert n == len(units)
-    # Every stamped key is exactly subject_key(source, sentence) for a real unit — the S1-run key.
-    expected = {gr.subject_key(source, u["sentence"]) for u in units}
+    assert n == len(asked)
+    # Every stamped key is subject_key(unit_source(tour, unit), sentence) for a non-skipped unit.
+    expected = {gr.subject_key(gr.unit_source(TOUR, u), u["sentence"]) for u in asked}
     assert {s[1] for s in seen} == expected
     assert all(s[0] == "a1_claim_supported" and s[2] is True and s[3] == "review_approve" for s in seen)
 

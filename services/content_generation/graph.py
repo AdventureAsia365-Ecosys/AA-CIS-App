@@ -279,6 +279,7 @@ class ContentState(TypedDict):
     grounding_repaired_fields:  list
     grounding_violations:       list   # still unsupported after repair (→ manual_check in revalidate)
     grounding_notes:            list   # low-probability shadow/grey Jev verdicts, for the reviewer
+    grounding_units_skipped:    int    # AA-756: units with nothing to check, not asked to Jev
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {

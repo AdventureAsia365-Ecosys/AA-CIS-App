@@ -101,7 +101,7 @@ def test_grounding_node_passthrough_for_tenant_rewrite():
 
 
 def test_grounding_node_repairs_then_rechecks(monkeypatch):
-    monkeypatch.setattr(gr, "judge_units", lambda units, source: {})
+    monkeypatch.setattr(gr, "judge_units", lambda units, sources: {})
     fixed = {**GEN, "summary": "A week across Paro and Thimphu.",
              "highlights": ["Taktsang Monastery on its cliff", *GEN["highlights"][1:]],
              "itineraries": GEN["itineraries"].replace(" The fortress dates to 1646.", "")}
@@ -122,7 +122,7 @@ def test_grounding_node_repairs_then_rechecks(monkeypatch):
 
 
 def test_grounding_node_keeps_unrepaired_violations(monkeypatch):
-    monkeypatch.setattr(gr, "judge_units", lambda units, source: {})
+    monkeypatch.setattr(gr, "judge_units", lambda units, sources: {})
     monkeypatch.setattr(gr, "repair", lambda generated, violations, tour, **kw:
                         {"generated": generated, "fields": [], "cost_usd": 0.0, "error": "boom"})
     out = gr.grounding_node({"generated": GEN, "tour": TOUR, "failure_codes": []})
@@ -173,7 +173,7 @@ def test_judge_units_fails_open_on_event_loop():
     import asyncio
 
     async def inner():
-        return gr.judge_units([{"field": "summary", "sentence": "one two three four"}], "src")
+        return gr.judge_units([{"field": "summary", "sentence": "one two three four"}], {0: "src"})
 
     assert asyncio.run(inner()) == {}
 
