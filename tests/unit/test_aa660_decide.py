@@ -329,6 +329,30 @@ async def test_failed_flush_keeps_the_counts():
     conn.executemany = AsyncMock(side_effect=RuntimeError("db down"))
     with patch.object(d, "_call_jev", new=AsyncMock()), \
          patch.object(d, "record_call_with_pool", new=AsyncMock()), \
+         patch.object(d, "get_database_url", return_value="postgres://x"), \
+         patch.object(d.asyncpg, "connect", new=AsyncMock(side_effect=RuntimeError("db down"))), \
          patch.object(d, "_HITS_FLUSH_N", 1):
         await d._decide(d._SingleConn(conn), "a3_research", "kw:f", "x", ["kw_belongs"], None)
     assert sum(d._hits.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_pool_write_failure_retries_on_a_fresh_connection():
+    """AA-756: 'another operation is in progress' on the shared connection lost 347k billed verdicts.
+    A failed pool write is retried once on its own connection, and the hit counts are not re-queued."""
+    conn = _conn([_q()])
+    conn.executemany = AsyncMock(side_effect=RuntimeError("another operation is in progress"))
+    fresh = MagicMock()
+    fresh.executemany = AsyncMock()
+    fresh.close = AsyncMock()
+    jev = AsyncMock(return_value={"model": "jev", "usage": {"input_tokens": 10},
+                                  "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}})
+    with patch.object(d, "_call_jev", new=jev), patch.object(d, "_price_in_per_mtok", return_value=0.042), \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()), \
+         patch.object(d, "get_database_url", return_value="postgres://x"), \
+         patch.object(d.asyncpg, "connect", new=AsyncMock(return_value=fresh)):
+        await d._decide(d._SingleConn(conn), "a3_research", "kw:r", "x", ["kw_belongs"], None)
+    fresh.executemany.assert_awaited_once()
+    assert fresh.executemany.await_args.args[1][0][1] == "kw_belongs"
+    fresh.close.assert_awaited_once()
+    assert sum(d._hits.values()) == 0
