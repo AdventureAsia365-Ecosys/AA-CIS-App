@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from typing import Literal, Optional
 
 import structlog
@@ -20,6 +21,8 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
+from services.acp_shared.audit_log import write_audit_log
+from shared.llm_client.decide import JEV_CREDIT_EXHAUSTED_EVENT, PLATFORM_TENANT_ID
 
 logger = structlog.get_logger()
 
@@ -414,3 +417,117 @@ async def update_question(question_key: str, body: QuestionUpdate, request: Requ
     logger.info("admin_decision_question_updated", question_key=question_key, admin_user=x_admin_user_id,
                 mode=body.mode, accept_floor=body.accept_floor, reject_ceiling=body.reject_ceiling)
     return dict(row)
+
+
+# ── AA-756 — Jev (TypeSafe) credit top-ups + estimated balance ─────────────────────────────────
+# TypeSafe has no balance API; admins record each manual top-up (Ms. Thư tops up Jev by hand) so
+# Settings can show an estimate. Spend = sum(cost_usd) of shared.llm_call_log where provider =
+# 'typesafe' and created_at >= the first top-up date (includes the reconcile_s224 backfill rows,
+# see shared.llm_call_log quality_signal->>'source' = 'reconcile_s224'). Empty table → nulls, never
+# an error. The only alert is the exhausted alert (AA-720); there is no "running low" alert.
+
+_TOPUPS_SQL = """
+    SELECT id, topped_up_on, amount_usd::float AS amount_usd, note, created_by, created_at
+    FROM shared.jev_credit_topup
+    ORDER BY topped_up_on DESC, id DESC
+"""
+
+# Jev spend since the earliest top-up date. $1 is that date (NULL → no top-ups → 0 spend).
+_JEV_SPEND_SQL = """
+    SELECT coalesce(sum(cost_usd), 0)::float AS spent
+    FROM shared.llm_call_log
+    WHERE provider = 'typesafe' AND $1::date IS NOT NULL AND created_at >= $1::date
+"""
+
+# The most recent exhausted alert (AA-720), shown next to the estimate so an admin sees the signal.
+_LAST_EXHAUSTED_SQL = """
+    SELECT max(created_at) AS last_at FROM shared.notifications WHERE event_type = $1
+"""
+
+
+@router.get("/jev-credit", summary="AA-756 — Jev credit top-ups + estimated balance")
+async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    topup_rows = await pool.fetch(_TOPUPS_SQL)
+    topups = [_iso(dict(r), "created_at") for r in topup_rows]
+    for t in topups:
+        if t.get("topped_up_on") is not None:
+            t["topped_up_on"] = t["topped_up_on"].isoformat()
+    total = sum(t["amount_usd"] for t in topups) if topups else None
+    first_on = topup_rows[-1]["topped_up_on"] if topup_rows else None
+    spent_row, last_row = await asyncio.gather(
+        pool.fetchrow(_JEV_SPEND_SQL, first_on),
+        pool.fetchrow(_LAST_EXHAUSTED_SQL, JEV_CREDIT_EXHAUSTED_EVENT),
+    )
+    spent = spent_row["spent"] if first_on is not None else None
+    estimated_left = (total - spent) if (total is not None and spent is not None) else None
+    last_alert = last_row["last_at"] if last_row else None
+    return {
+        "topups": topups,
+        "total_topped_up_usd": total,
+        "first_topup_on": first_on.isoformat() if first_on else None,
+        "spent_since_first_topup_usd": spent,
+        "estimated_left_usd": estimated_left,
+        "last_exhausted_alert_at": last_alert.isoformat() if last_alert else None,
+    }
+
+
+class TopupCreate(BaseModel):
+    topped_up_on: date
+    amount_usd: float = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=2000)
+
+
+@router.post("/jev-credit/topups", summary="AA-756 — record a Jev credit top-up")
+async def create_jev_topup(body: TopupCreate, request: Request, x_admin_secret: str = Header(None),
+                           x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO shared.jev_credit_topup (topped_up_on, amount_usd, note, created_by)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, topped_up_on, amount_usd::float AS amount_usd, note, created_by, created_at
+                """,
+                body.topped_up_on, body.amount_usd, body.note, actor,
+            )
+            await write_audit_log(
+                conn, tenant_id=PLATFORM_TENANT_ID, actor=actor, action="jev_credit.topup_added",
+                resource_type="jev_credit_topup", resource_id=str(row["id"]),
+                details={"topped_up_on": body.topped_up_on.isoformat(), "amount_usd": body.amount_usd,
+                         "note": body.note},
+            )
+    logger.info("jev_credit_topup_added", topup_id=row["id"], amount_usd=body.amount_usd,
+                admin_user=x_admin_user_id)
+    out = _iso(dict(row), "created_at")
+    out["topped_up_on"] = out["topped_up_on"].isoformat()
+    return out
+
+
+@router.delete("/jev-credit/topups/{topup_id}", summary="AA-756 — delete a Jev credit top-up")
+async def delete_jev_topup(topup_id: int, request: Request, x_admin_secret: str = Header(None),
+                           x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            deleted = await conn.fetchrow(
+                "DELETE FROM shared.jev_credit_topup WHERE id = $1 "
+                "RETURNING id, topped_up_on, amount_usd::float AS amount_usd",
+                topup_id,
+            )
+            if deleted is None:
+                raise HTTPException(status_code=404, detail="unknown top-up")
+            await write_audit_log(
+                conn, tenant_id=PLATFORM_TENANT_ID, actor=actor, action="jev_credit.topup_deleted",
+                resource_type="jev_credit_topup", resource_id=str(topup_id),
+                details={"topped_up_on": deleted["topped_up_on"].isoformat(),
+                         "amount_usd": deleted["amount_usd"]},
+            )
+    logger.info("jev_credit_topup_deleted", topup_id=topup_id, admin_user=x_admin_user_id)
+    return {"id": topup_id, "deleted": True}

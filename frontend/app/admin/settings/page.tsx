@@ -8,6 +8,7 @@ import { X, Plus, Save } from "lucide-react";
 import BrandIdentityEditor from "../_components/BrandIdentityEditor";
 import SettingsKitTab from "../_components/SettingsKitTab";
 import { ModelsTab } from "./ModelsTab";
+import { JevCreditTab } from "./JevCreditTab";
 import {
   A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
@@ -370,6 +371,7 @@ const TABS = [
   { key: "brand",     label: "Brand Identity" },
   { key: "seo",       label: "SEO Config" },
   { key: "models",    label: "LLM Models" },
+  { key: "jev-credit", label: "Jev Credit" },
   { key: "tenant",    label: "Tenant Info" },
   // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
   // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
@@ -429,6 +431,7 @@ function SettingsPageInner() {
               <SeoConfigTab seo={data.seo_config} />
             )}
             {tab === "models" && <ModelsTab />}
+            {tab === "jev-credit" && <JevCreditTab />}
             {tab === "tenant" && (
               <TenantInfoTab tenant={data.tenant} plan={data.plan} />
             )}

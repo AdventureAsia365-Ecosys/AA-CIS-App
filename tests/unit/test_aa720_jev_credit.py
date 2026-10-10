@@ -59,29 +59,121 @@ def test_breaker_closes_after_cooldown_elapses():
 
 # ── alert throttle (mirrors AA-627 _maybe_alert_low_balance) ──────────────────────────────────
 
+class _AlertConn:
+    """A fake asyncpg connection for maybe_alert_jev_credit: transaction() is an async context
+    manager, the advisory-lock SELECT is a no-op, fetchval returns the configured `recent` value,
+    and INSERTs are counted. AA-756 wraps the check + insert in one locked transaction."""
+
+    def __init__(self, recent, raise_on_fetchval=False):
+        self._recent = recent
+        self._raise = raise_on_fetchval
+        self.insert_calls = 0
+
+    def transaction(self):
+        class _Tx:
+            async def __aenter__(self_):
+                return self_
+
+            async def __aexit__(self_, *exc):
+                return False
+
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        if "INSERT INTO shared.notifications" in sql:
+            self.insert_calls += 1
+        return "OK"
+
+    async def fetchval(self, sql, *args):
+        if self._raise:
+            raise RuntimeError("db down")
+        return self._recent
+
+
+def _alert_conn(recent, raise_on_fetchval=False):
+    return _AlertConn(recent, raise_on_fetchval)
+
+
 @pytest.mark.asyncio
 async def test_alert_inserts_when_none_recent():
-    conn = AsyncMock()
-    conn.fetchval = AsyncMock(return_value=None)        # no unread alert in 24h
-    conn.execute = AsyncMock()
+    conn = _alert_conn(recent=None)
     assert await d.maybe_alert_jev_credit(conn, source="decide") is True
-    conn.execute.assert_awaited_once()
+    # advisory lock + the INSERT (the check-then-insert now runs inside one locked transaction).
+    assert conn.insert_calls == 1
 
 
 @pytest.mark.asyncio
 async def test_alert_throttled_when_recent_exists():
-    conn = AsyncMock()
-    conn.fetchval = AsyncMock(return_value=1)           # an unread alert already exists
-    conn.execute = AsyncMock()
+    conn = _alert_conn(recent=1)
     assert await d.maybe_alert_jev_credit(conn, source="canary") is False
-    conn.execute.assert_not_awaited()
+    assert conn.insert_calls == 0
 
 
 @pytest.mark.asyncio
 async def test_alert_swallows_db_error():
-    conn = AsyncMock()
-    conn.fetchval = AsyncMock(side_effect=RuntimeError("db down"))
+    conn = _alert_conn(recent=None, raise_on_fetchval=True)
     assert await d.maybe_alert_jev_credit(conn, source="402_sweep") is False
+
+
+# ── AA-756: concurrent maybe_alert_jev_credit → exactly one insert ────────────────────────────
+# On 10/10 04:09 UTC three identical exhausted alerts landed in the same millisecond: several
+# decide() coroutines each read "no unread alert in 24h" before any inserted. The fix wraps the
+# check + insert in one transaction holding pg_advisory_xact_lock. This fake serialises callers on
+# that lock and shares one notifications store, so N concurrent callers insert exactly once.
+
+class _SerialisingConn:
+    """A fake asyncpg connection sharing one in-memory 'notifications' list + one advisory lock.
+    conn.transaction() acquires the shared asyncio.Lock on __aenter__ (released on __aexit__); the
+    pg_advisory_xact_lock SELECT is a no-op because the transaction already holds the lock. This
+    reproduces the real guarantee: the check-then-insert of one caller completes before the next
+    caller's check runs."""
+
+    def __init__(self, store: list, lock: "asyncio.Lock"):
+        self._store = store
+        self._lock = lock
+        self.inserts = 0
+
+    def transaction(self):
+        conn = self
+
+        class _Tx:
+            async def __aenter__(self_):
+                await conn._lock.acquire()
+                return self_
+
+            async def __aexit__(self_, *exc):
+                conn._lock.release()
+                return False
+
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        if "pg_advisory_xact_lock" in sql:
+            return "SELECT 1"
+        if "INSERT INTO shared.notifications" in sql:
+            self._store.append(args)
+            self.inserts += 1
+            return "INSERT 0 1"
+        return "OK"
+
+    async def fetchval(self, sql, *args):
+        # mirrors _JEV_ALERT_RECENT_SQL: 1 if any notification already recorded, else None.
+        return 1 if self._store else None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_alert_inserts_exactly_once():
+    import asyncio
+
+    store: list = []
+    lock = asyncio.Lock()
+    conns = [_SerialisingConn(store, lock) for _ in range(8)]
+    results = await asyncio.gather(
+        *[d.maybe_alert_jev_credit(c, source="decide") for c in conns]
+    )
+    assert sum(conns_i.inserts for conns_i in conns) == 1   # exactly one row inserted
+    assert sum(1 for r in results if r is True) == 1        # exactly one caller reports True
+    assert len(store) == 1
 
 
 # ── _decide: breaker open → TypeSafe is not called ────────────────────────────────────────────
