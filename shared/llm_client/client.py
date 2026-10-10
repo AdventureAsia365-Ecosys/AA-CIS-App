@@ -284,6 +284,8 @@ class LLMClient:
             "system": system,
             "messages": messages,
         }
+        if "temperature" in request.model_fields_set and request.temperature is not None:
+            body["temperature"] = request.temperature   # S224: was silently dropped
 
         # AA-637 — a new provider attempt: drop any partial text a failed attempt already showed.
         stream_sink.emit_restart(request.stage)
@@ -363,6 +365,8 @@ class LLMClient:
                 # AA-637 — only set when a live-progress sink streams this stage; None keeps the
                 # exact pre-AA-637 non-streaming invoke_model request.
                 on_delta=stream_sink.delta_callback(request.stage),
+                # S224: forward an explicitly requested temperature (was silently dropped).
+                temperature=(request.temperature if "temperature" in request.model_fields_set else None),
             )
         except BedrockUnavailable as e:
             raise RuntimeError(f"Satellite Bedrock failed: {e}") from e
