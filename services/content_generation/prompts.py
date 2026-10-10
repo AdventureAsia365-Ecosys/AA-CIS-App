@@ -242,7 +242,6 @@ def strip_itinerary_meal_metadata(itinerary: str) -> str:
 # prompt, in order, with a human label. Kept here (not imported from source_facts) so prompts.py
 # stays import-light and the field order is co-located with the prompt text it feeds.
 _SOURCE_FACT_FIELD_LABELS = (
-    ("places", "places"), ("activities", "activities"), ("transport", "transport"),
     ("distances", "distances"), ("durations", "durations"), ("altitudes", "altitudes"),
     ("times", "times"), ("meals", "meals"), ("other_numbers", "other numbers"),
 )

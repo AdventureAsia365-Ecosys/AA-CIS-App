@@ -31,9 +31,11 @@ logger = structlog.get_logger()
 STAGE = "s1_source_facts"
 
 # The per-day fact fields the extractor returns and the prompt renders, in render order.
+# AA-748 round 2 (S224): figures only. The SOURCE FACTS rule constrains numbers/times/meals; asking
+# for places/activities/transport tripled the output tokens (Haiku bills output at 5x) and the
+# round-1 rule that took places/activities from the list made itineraries thinner.
 FACT_FIELDS = (
-    "places", "activities", "transport", "distances", "durations",
-    "altitudes", "times", "meals", "other_numbers",
+    "distances", "durations", "altitudes", "times", "meals", "other_numbers",
 )
 # Fields whose values are checked by the number/time honesty guard (a value that introduces a
 # number the source never states is dropped). places/activities are prose, not number-bearing.
@@ -59,9 +61,6 @@ _SCHEMA = {
                     "type": "object",
                     "properties": {
                         "day": {"type": "integer"},
-                        "places": {"type": "array", "items": {"type": "string"}},
-                        "activities": {"type": "array", "items": {"type": "string"}},
-                        "transport": {"type": "array", "items": {"type": "string"}},
                         "distances": {"type": "array", "items": {"type": "string"}},
                         "durations": {"type": "array", "items": {"type": "string"}},
                         "altitudes": {"type": "array", "items": {"type": "string"}},
@@ -118,14 +117,12 @@ def _extract_prompt(day_text: dict) -> str:
     return (
         "Extract facts for each day below. For every day return an object with the day number and "
         f"these fields (each a list of short strings, empty if the day states none): {fields}.\n"
-        "- places: named places/sites visited that day.\n"
-        "- activities: concrete activities (hike, cycle, visit, cruise), without added detail.\n"
-        "- transport: transport modes/vehicles named.\n"
         "- distances / durations / altitudes / times: copy the exact figure+unit from the source.\n"
         "- meals: only meals the source literally names for that day.\n"
         "- other_numbers: any other source number with its unit.\n\n"
         + "\n\n".join(blocks)
-        + '\n\nReturn JSON: {"days": [{"day": 1, "places": [...], ...}, ...]}.'
+        + '\n\nReturn JSON: {"days": [{"day": 1, "distances": [...], ...}, ...]}. Omit a field that is'
+        + " empty and omit a day with no figures at all."
     )
 
 
@@ -231,7 +228,7 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
     fabricated number/time/meal. Fails open: any missing source, parser fallback, or extraction
     error returns no facts so the writer prompt stays exactly as today.
 
-    Returns ``{"days": [{"day", "places", "activities", "transport", "distances", "durations",
+    Returns ``{"days": [{"day", "distances", "durations",
     "altitudes", "times", "meals", "other_numbers"}], "used_fallback": bool}``."""
     tour = tour or {}
     day_text, used_fallback = _source_days(tour)
