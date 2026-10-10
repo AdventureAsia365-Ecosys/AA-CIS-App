@@ -255,7 +255,7 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
         days = _normalize_days(parsed.get("days") if parsed else None)
         days = _apply_honesty_guard(days, tour)
         record_call_sync(
-            stage=STAGE, role="writer", model=resp.model_used,
+            stage=STAGE, role="validate", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, tenant_id=None,
             quality_signal={"source": "s1_source_facts", "days": len(days)},
