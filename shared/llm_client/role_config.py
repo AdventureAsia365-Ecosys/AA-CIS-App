@@ -90,12 +90,9 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-619: Sonnet->Haiku — A/B proved equal atom quality, ~4x cheaper (see migration 155).
     "t5_atomize":         StageConfig("t5_atomize", "writer", "claude", "haiku", "acc3"),
-    "n7_draft":           StageConfig("n7_draft", "writer", "claude", "sonnet", "acc3"),
-    "n7_adapt":           StageConfig("n7_adapt", "writer", "claude", "sonnet", "acc3"),
-    "n7_faq":             StageConfig("n7_faq", "writer", "claude", "sonnet", "acc3"),
-    "n7_repair":          StageConfig("n7_repair", "writer", "claude", "sonnet", "acc3"),
-    "n7_gap_research":    StageConfig("n7_gap_research", "validate", "claude", "haiku", "acc3"),
-    "n7_judge":           StageConfig("n7_judge", "judge", "openai", "gpt-4.1", None),
+    # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
+    # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
+    # SAFE_DEFAULTS here and deleted from shared.llm_role_config by migration 207.
     # AA-685 (migration 172) — call sites that bypassed the gateway before.
     "a0_column_map":      StageConfig("a0_column_map", "writer", "claude", "haiku", "acc3"),
     "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),

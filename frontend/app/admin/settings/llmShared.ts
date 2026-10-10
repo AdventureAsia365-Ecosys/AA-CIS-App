@@ -86,10 +86,12 @@ export interface ShadowGroup {
 }
 
 // ── Dead stages (contract) ────────────────────────────────────────────────────
-// n7_judge belongs to the removed N7 pipeline (0 calls in 90 days, no live caller) — never shown
-// in the route editor or the A/B report. Keep this list tiny and commented; add a stage here only
-// when it is genuinely dead, not merely unused this week.
-export const HIDDEN_STAGES: ReadonlySet<string> = new Set(["n7_judge"]);
+// A tiny allow-list of stages the route editor and A/B report must never render, even if the API
+// still returns a row for them. Empty since AA-753 (10/10/2026) removed the N7 produce pipeline:
+// its last hidden stage, n7_judge, was dropped from shared.llm_role_config (migration 207) and
+// from the code SAFE_DEFAULTS, so there is nothing left to hide. The mechanism stays — add a
+// stage here only when it is genuinely dead, not merely unused this week.
+export const HIDDEN_STAGES: ReadonlySet<string> = new Set<string>([]);
 
 // "GPT-6 Luna · Bedrock acc3" vs "GPT-6 Luna (OpenAI) · OpenAI API" — the same model can run on
 // two providers, so the provider is always shown next to the name.
@@ -108,13 +110,6 @@ export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = 
   { key: "t5", label: "T5 — Atomize", stages: ["t5_atomize"] },
   { key: "t8", label: "T8 — Angle generation", stages: ["t8_angle_gen"] },
   { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
-  // n7_judge is intentionally omitted from this group (HIDDEN_STAGES); the rest of the N7 group
-  // still renders if the API returns those rows.
-  {
-    key: "n7",
-    label: "N7 — Production pipeline (blog/social)",
-    stages: ["n7_draft", "n7_adapt", "n7_faq", "n7_repair", "n7_gap_research", "n7_judge"],
-  },
   // AA-685: call sites that bypassed the gateway before.
   { key: "a0", label: "A0 — Excel column auto-detect", stages: ["a0_column_map"] },
   { key: "embed", label: "Embeddings (question/atom matching)", stages: ["f10_embed"] },
@@ -137,12 +132,6 @@ export const STAGE_LABELS: Record<string, string> = {
   t8_angle_gen: "Angle generation",
   t9_write: "Content write",
   t10_judge: "Quality judge (F8+F9)",
-  n7_draft: "Draft (E2)",
-  n7_adapt: "Channel adapt (E3)",
-  n7_faq: "FAQ answer (E4)",
-  n7_repair: "Repair (E5)",
-  n7_gap_research: "Competitor gap research",
-  n7_judge: "Framework/brand judge",
   a0_column_map: "Column mapping",
   f10_embed: "Content embedding",
   tp_compose: "Trip plan compose",
