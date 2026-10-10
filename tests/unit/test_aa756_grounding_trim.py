@@ -76,11 +76,11 @@ def test_unit_source_sends_only_the_day_slice_and_header_for_itinerary_units():
     # compact header, not the whole tour
     assert "NAME: Bhutan Cultural Journey" in src
     assert "COUNTRY: Bhutan" in src and "DURATION: 3 days" in src
-    # day 2 and its neighbours (1 and 3) are present; the summary field is not
+    # day 2 and its neighbours (1 and 3) are present, plus the source summary (S224)
     assert "Drive to Thimphu and visit the dzong." in src          # day 2 own text
     assert "Arrive in Paro and transfer to the hotel." in src      # day 1 (previous)
     assert "Hike to the temple above the valley." in src           # day 3 (next)
-    assert "Three days across Paro and Thimphu." not in src        # the summary is excluded
+    assert "SUMMARY:\nThree days across Paro and Thimphu." in src   # tour-wide facts live there
     # inclusions / exclusions always ride along (meals/transport/services live there)
     assert "INCLUSIONS:" in src and "one lunch" in src
     assert "EXCLUSIONS:" in src and "International flights." in src

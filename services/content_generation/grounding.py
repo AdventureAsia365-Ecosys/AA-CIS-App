@@ -181,10 +181,12 @@ def unit_source(tour: dict, unit: dict) -> str:
     """AA-756: the source a single grounding unit is judged against, instead of the whole tour.
 
     For an ``itineraries`` sentence with a known day number, send a compact tour header
-    (NAME / COUNTRY / DURATION), that day's own source text, the previous and next day's source
-    text (a writer often moves a detail one day), and INCLUSIONS / EXCLUSIONS (meals, transport,
-    services live there). If the source days cannot be split (parser fallback / even split) or the
-    unit has no day number, fall back to the full ``source_text(tour)`` — never guess a slice.
+    (NAME / COUNTRY / DURATION), the source SUMMARY (S224: writers lift tour-wide details from it;
+    a temple's altitude stated only there was flagged as unsupported), that day's own source text,
+    the previous and next day's source text (a writer often moves a detail one day), and
+    INCLUSIONS / EXCLUSIONS (meals, transport, services live there). If the source days cannot be
+    split (parser fallback / even split) or the unit has no day number, fall back to the full
+    ``source_text(tour)`` — never guess a slice.
     subtitle / summary / highlights always keep the full source."""
     if unit.get("field") != "itineraries" or unit.get("day") is None:
         return source_text(tour)
@@ -196,6 +198,9 @@ def unit_source(tour: dict, unit: dict) -> str:
     header = _tour_header(tour)
     if header:
         parts.append(header)
+    summary = _as_text(tour.get("summary")).strip()
+    if summary:
+        parts.append(f"SUMMARY:\n{summary}")
     for d in (day - 1, day, day + 1):
         text = (day_text.get(d) or "").strip()
         if text:
