@@ -162,7 +162,14 @@ STRICT RULES:
    THAT day's own source length — a day with a lot of source detail should read fuller than a
    simple transit/rest day. Do NOT normalize every day to the same length regardless of source;
    that is the single most common mistake on this task.
-6. Do not make factual claims you cannot verify from the source data
+6. SOURCE FIDELITY — what you may and may not add beyond the source:
+   ALLOWED: short, well-known background about a place the source names (what it is, its era,
+   architecture or setting), e.g. "Hawa Mahal, the five-storey pink sandstone palace".
+   FORBIDDEN: anything that promises the traveller something about THIS tour that the source does
+   not state — activities or experiences, food and drink (tastings, chai, dinners), services
+   (guides, orientation, support team, upgrades), transport mode or travel time, clock-times,
+   views or wildlife sightings, accommodation features, inclusions. If the source does not say it
+   happens on this tour, do not say it does.
 7. seo_meta must NOT contain budget travel language: "hostel", "budget", "public transport",
    "cheap", "backpacker", "dorm" — this base catalog reads as premium editorial regardless of
    price point; a specific tenant brand's own forbidden-word list (if any) applies on top.
