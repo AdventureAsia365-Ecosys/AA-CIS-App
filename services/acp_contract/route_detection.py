@@ -162,10 +162,17 @@ def families(tours: Mapping[str, set[str]], share: float = SHARED_ENOUGH) -> dic
     ordered = sorted(tours)
     for index, one in enumerate(ordered):
         for other in ordered[index + 1:]:
-            smaller = min(len(tours[one]), len(tours[other]))
-            if not smaller:
+            # AA-758 — Jaccard over the UNION, not over min(). The original min() denominator
+            # (ported from the origin, tuned on one brand's ~400 tours) made any tour sharing a
+            # single segment with a 1-segment tour join (|∩|=1, min=1 → 1.0). On the full
+            # platform catalog that chains transitively through union-find: tour A joins B joins
+            # C … into one giant family (455 tours collapsed onto one hub, every route stamped
+            # with one journey name — the 862-on-one bug). Jaccard over the union only joins two
+            # tours that genuinely share enough of their COMBINED segment set.
+            union = len(tours[one] | tours[other])
+            if not union:
                 continue
-            if len(tours[one] & tours[other]) / smaller >= share:
+            if len(tours[one] & tours[other]) / union >= share:
                 left, right = find(one), find(other)
                 if left != right:
                     parent[max(left, right)] = min(left, right)

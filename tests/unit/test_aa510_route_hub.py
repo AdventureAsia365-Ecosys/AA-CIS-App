@@ -128,16 +128,17 @@ def test_families_groups_tours_sharing_enough_segments():
     assert "tour-c" not in result  # a family of one is not a family
 
 
-def test_families_ratio_is_over_the_smaller_set():
-    # tour-big shares 1 of its 10 segments with tour-small's only segment -- ratio over the
-    # SMALLER set (tour-small, size 1) is 1/1 = 1.0, clears SHARED_ENOUGH even though tour-big's
-    # own overlap fraction (1/10) would not.
+def test_families_ratio_is_over_the_union_not_the_smaller_set():
+    """AA-758 — overlap is Jaccard over the UNION now (was min(), which collapsed the platform
+    catalog into one giant transitive family). tour-big shares 1 of its 11 segments with
+    tour-small's only segment: union = 11, ratio 1/11 = 0.09 < SHARED_ENOUGH, so they do NOT
+    join. (Under the old min() denominator this was 1/1 = 1.0 and they wrongly joined.)"""
     tours = {
         "tour-big": {f"seg{i}" for i in range(10)} | {"shared"},
         "tour-small": {"shared"},
     }
     result = families(tours)
-    assert result["tour-big"] == result["tour-small"]
+    assert "tour-big" not in result and "tour-small" not in result
 
 
 def test_families_below_threshold_stays_separate():
@@ -169,6 +170,33 @@ def test_families_transitive_union_find():
 
 def test_shared_enough_is_030():
     assert SHARED_ENOUGH == 0.3
+
+
+def test_families_single_shared_segment_chain_does_not_collapse_catalog():
+    """AA-758 regression — the 862-on-one bug. Many tours that each share only ONE segment with a
+    neighbour must NOT transitively chain into one giant family. Under the old min() denominator,
+    a 1-segment overlap scored 1.0 and union-find chained A-B-C-D-… into a single family that one
+    hub then absorbed (455 tours → one hub → one journey name on 862 routes). With Jaccard over
+    the union, a single shared segment out of several is below SHARED_ENOUGH, so no chain forms."""
+    tours = {
+        "a": {"s1", "a2", "a3", "a4"},
+        "b": {"s1", "b2", "b3", "b4"},   # shares only s1 with a → 1/7 ≈ 0.14 < 0.3
+        "c": {"b2", "c2", "c3", "c4"},   # shares only b2 with b → below threshold
+        "d": {"c2", "d2", "d3", "d4"},   # shares only c2 with c → below threshold
+    }
+    result = families(tours)
+    # none genuinely shares enough with another → no family forms at all
+    assert result == {}
+
+
+def test_families_genuine_overlap_still_groups():
+    """The fix must not stop real families: two tours sharing most of their segments still join."""
+    tours = {
+        "x": {"s1", "s2", "s3"},
+        "y": {"s1", "s2", "s3", "s4"},   # ∩=3, ∪=4 → 0.75 ≥ 0.3
+    }
+    result = families(tours)
+    assert result["x"] == result["y"]
 
 
 # ── stops (Subject snapshot presentation) ───────────────────────────────────────────────────
