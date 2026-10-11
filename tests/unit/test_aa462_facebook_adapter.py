@@ -89,3 +89,36 @@ class TestFacebookAdapter:
         sent_payload = session.post.call_args.kwargs["data"]
         assert sent_payload["link"] == "https://example.com/tour"
         assert sent_payload["message"] == "msg"
+
+
+def _mock_get_session(resp):
+    ctx = _mock_session(resp)
+    session = ctx.__aenter__.return_value
+    session.get = session.post
+    return ctx
+
+
+@pytest.mark.asyncio
+class TestFacebookFindRecentPost:
+    """AA-726 read-before-retry — the Page feed is searched for the exact message."""
+
+    async def test_finds_post_with_same_message(self):
+        resp = _mock_response(200, {"data": [{"id": "1_1", "message": "Other"},
+                                             {"id": "1_2", "message": "Hello world\n"}]})
+        adapter = FacebookAdapter(page_id="1", page_access_token="tok")
+        with patch("aiohttp.ClientSession", return_value=_mock_get_session(resp)):
+            found = await adapter.find_recent_post("Hello world")
+        assert found.post_id == "1_2"
+
+    async def test_none_when_not_in_feed(self):
+        resp = _mock_response(200, {"data": [{"id": "1_1", "message": "Other"}, {"id": "1_3"}]})
+        adapter = FacebookAdapter(page_id="1", page_access_token="tok")
+        with patch("aiohttp.ClientSession", return_value=_mock_get_session(resp)):
+            assert await adapter.find_recent_post("Hello world") is None
+
+    async def test_raises_when_feed_unreadable(self):
+        resp = _mock_response(400, {"error": {"code": 190, "message": "bad token"}})
+        adapter = FacebookAdapter(page_id="1", page_access_token="tok")
+        with patch("aiohttp.ClientSession", return_value=_mock_get_session(resp)):
+            with pytest.raises(RuntimeError, match="feed lookup 400"):
+                await adapter.find_recent_post("Hello world")

@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from api.routers import v1_publish as mod
 from services.acp_s4_blog.cms.base import BlogContent
+from services.acp_publish.idempotency import Claim
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
 
 TENANT = {"sub": str(uuid.uuid4()), "role": "tenant"}
@@ -181,6 +182,13 @@ async def test_publish_502_when_secret_read_fails():
 
 
 # ── publish() — real success/failure paths ───────────────────────────────────
+# AA-726: publish() now claims a publish_log row (services/acp_publish/idempotency.claim, covered
+# against real Postgres in tests/integration/test_aa726_publish_idempotency.py) and finishes it
+# with one UPDATE ... RETURNING (the last fetchrow). These tests stub the claim.
+
+def _claimed(prior_attempt=False, publish_id=None):
+    return AsyncMock(return_value=Claim("claimed", publish_id=publish_id or str(uuid.uuid4()),
+                                        prior_attempt=prior_attempt))
 
 def _piece_row():
     return {"piece_id": str(PIECE_ID), "content_text": "## Hello\nReal content.",
@@ -205,24 +213,31 @@ async def test_publish_success_writes_published_row():
     fake_result = CMSPostResult(post_id=42, post_url="https://tenant-blog.com/p/42",
                                  status="publish", cms_type="wordpress")
 
+    create = AsyncMock(return_value=fake_result)
+    claim = _claimed()
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://tenant-blog.com", "username": "admin", "app_password": "pw"}), \
-         patch.object(WordPressAdapter, "create_post", AsyncMock(return_value=fake_result)):
+         patch.object(mod, "claim", claim), \
+         patch.object(WordPressAdapter, "create_post", create):
         result = await mod.publish(PIECE_ID, req, TENANT)
 
     assert result["success"] is True
     assert result["status"] == "published"
     assert result["external_id"] == "42"
     assert result["external_url"] == "https://tenant-blog.com/p/42"
+    assert result["replayed"] is False
 
-    # confirm the INSERT (no prior failed row) carried the real values, channel='blog'
-    insert_call = conn.fetchrow.call_args_list[-1]
-    insert_sql = insert_call[0][0]
-    assert "INSERT INTO acp_shared.publish_log" in insert_sql
-    params = insert_call[0][1:]
-    assert params[2] == "blog"      # channel
-    assert params[3] == "published"  # status
-    assert params[4] == "42"         # external_id
+    # claimed for channel='blog' with a revision key, then the claimed row was finished
+    assert claim.call_args.kwargs["channel"] == "blog"
+    assert claim.call_args.kwargs["key"].startswith(f"{PIECE_ID}:blog:")
+    finish_call = conn.fetchrow.call_args_list[-1]
+    assert "UPDATE acp_shared.publish_log" in finish_call[0][0]
+    params = finish_call[0][1:]
+    assert params[2] == "published"  # status
+    assert params[3] == "42"         # external_id
+    # the WordPress slug carries the revision, so a lost post can be found again
+    sent = create.call_args[0][0]
+    assert sent.slug.startswith("the-chosen-angle-") and len(sent.slug.rsplit("-", 1)[-1]) == 8
 
     # AA-497 — the piece-lookup SELECT (first fetchrow call) joins angle_name via the
     # denormalized FK first, same fix as list_pending()'s above.
@@ -244,6 +259,7 @@ async def test_publish_failure_writes_failed_row_not_published():
 
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://example.com", "username": "admin", "app_password": "pw"}), \
+         patch.object(mod, "claim", _claimed()), \
          patch.object(WordPressAdapter, "create_post",
                       AsyncMock(side_effect=RuntimeError("WP API returned an unexpected response"))):
         result = await mod.publish(PIECE_ID, req, TENANT)
@@ -253,37 +269,152 @@ async def test_publish_failure_writes_failed_row_not_published():
     assert result["external_id"] is None
     assert result["external_url"] is None
 
-    insert_call = conn.fetchrow.call_args_list[-1]
-    params = insert_call[0][1:]
-    assert params[3] == "failed"
-    assert params[4] is None  # external_id must be None, never fabricated
-    assert params[6] is not None  # last_error present
+    finish_call = conn.fetchrow.call_args_list[-1]
+    params = finish_call[0][1:]
+    assert params[2] == "failed"
+    assert params[3] is None  # external_id must be None, never fabricated
+    assert params[5] is not None  # last_error present
 
 
 @pytest.mark.asyncio
-async def test_publish_retry_updates_existing_failed_row_not_duplicate():
-    existing_publish_id = str(uuid.uuid4())
-    write_result = {"publish_id": existing_publish_id, "status": "published",
+async def test_publish_retry_after_lost_response_finds_the_post_and_does_not_post_again():
+    """AA-726 Done-when: WordPress returned 201 but the response was lost (attempt recorded as
+    failed/requested). The retry looks the revision slug up first, finds the post, and records
+    it — exactly one post on the site."""
+    publish_id = str(uuid.uuid4())
+    write_result = {"publish_id": publish_id, "status": "published",
                      "external_id": "99", "external_url": "https://tenant-blog.com/p/99",
                      "published_at": datetime(2026, 8, 25, tzinfo=timezone.utc), "last_error": None}
-    pool, conn = _sequential_pool(_piece_row(), _integ_row(), write_result,
-                                   fetchval_return=existing_publish_id)
+    pool, conn = _sequential_pool(_piece_row(), _integ_row(), write_result)
     req = _make_request(pool)
 
     from services.acp_s4_blog.cms.base import CMSPostResult
-    fake_result = CMSPostResult(post_id=99, post_url="https://tenant-blog.com/p/99",
-                                 status="publish", cms_type="wordpress")
-
+    existing = CMSPostResult(post_id=99, post_url="https://tenant-blog.com/p/99",
+                             status="publish", cms_type="wordpress")
+    create = AsyncMock()
+    lookup = AsyncMock(return_value=existing)
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://tenant-blog.com", "username": "admin", "app_password": "pw"}), \
-         patch.object(WordPressAdapter, "create_post", AsyncMock(return_value=fake_result)):
+         patch.object(mod, "claim", _claimed(prior_attempt=True, publish_id=publish_id)), \
+         patch.object(WordPressAdapter, "find_post_by_slug", lookup), \
+         patch.object(WordPressAdapter, "create_post", create):
         result = await mod.publish(PIECE_ID, req, TENANT)
 
+    assert result["success"] is True and result["external_id"] == "99"
+    create.assert_not_called()
+    assert lookup.call_args[0][0].startswith("the-chosen-angle-")
+    finish_call = conn.fetchrow.call_args_list[-1]
+    assert finish_call[0][1] == publish_id
+
+
+@pytest.mark.asyncio
+async def test_publish_retry_posts_when_lookup_finds_nothing():
+    write_result = {"publish_id": str(uuid.uuid4()), "status": "published", "external_id": "5",
+                     "external_url": "https://b.com/5", "published_at": None, "last_error": None}
+    pool, _ = _sequential_pool(_piece_row(), _integ_row(), write_result)
+    from services.acp_s4_blog.cms.base import CMSPostResult
+    create = AsyncMock(return_value=CMSPostResult(post_id=5, post_url="https://b.com/5",
+                                                  status="publish", cms_type="wordpress"))
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://b.com", "username": "admin", "app_password": "pw"}), \
+         patch.object(mod, "claim", _claimed(prior_attempt=True)), \
+         patch.object(WordPressAdapter, "find_post_by_slug", AsyncMock(return_value=None)), \
+         patch.object(WordPressAdapter, "create_post", create):
+        result = await mod.publish(PIECE_ID, _make_request(pool), TENANT)
     assert result["success"] is True
-    # the retry path UPDATEs the existing failed row rather than inserting a new one
-    update_call = conn.fetchrow.call_args_list[-1]
-    assert "UPDATE acp_shared.publish_log" in update_call[0][0]
-    assert update_call[0][1] == existing_publish_id
+    create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_retry_does_not_post_blind_when_lookup_fails():
+    write_result = {"publish_id": str(uuid.uuid4()), "status": "failed", "external_id": None,
+                     "external_url": None, "published_at": None, "last_error": "lookup"}
+    pool, conn = _sequential_pool(_piece_row(), _integ_row(), write_result)
+    create = AsyncMock()
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://b.com", "username": "admin", "app_password": "pw"}), \
+         patch.object(mod, "claim", _claimed(prior_attempt=True)), \
+         patch.object(WordPressAdapter, "find_post_by_slug",
+                      AsyncMock(side_effect=RuntimeError("WP API lookup 503"))), \
+         patch.object(WordPressAdapter, "create_post", create):
+        result = await mod.publish(PIECE_ID, _make_request(pool), TENANT)
+    assert result["success"] is False
+    create.assert_not_called()
+    assert conn.fetchrow.call_args_list[-1][0][3] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_publish_same_revision_already_published_is_replayed_without_remote_call():
+    row = {"publish_id": str(uuid.uuid4()), "status": "published", "external_id": "7",
+           "external_url": "https://b.com/7", "published_at": datetime(2026, 10, 1, tzinfo=timezone.utc),
+           "last_error": None, "idempotency_key": "k"}
+    pool, _ = _sequential_pool(_piece_row(), _integ_row())
+    create = AsyncMock()
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://b.com", "username": "admin", "app_password": "pw"}), \
+         patch.object(mod, "claim",
+                      AsyncMock(return_value=Claim("published", publish_id=row["publish_id"], row=row))), \
+         patch.object(WordPressAdapter, "create_post", create):
+        result = await mod.publish(PIECE_ID, _make_request(pool), TENANT)
+    assert result["replayed"] is True and result["external_id"] == "7" and result["success"] is True
+    create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_publish_409_while_another_call_is_in_flight():
+    pool, _ = _sequential_pool(_piece_row(), _integ_row())
+    create = AsyncMock()
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://b.com", "username": "admin", "app_password": "pw"}), \
+         patch.object(mod, "claim", AsyncMock(return_value=Claim("in_progress"))), \
+         patch.object(WordPressAdapter, "create_post", create):
+        with pytest.raises(HTTPException) as exc_info:
+            await mod.publish(PIECE_ID, _make_request(pool), TENANT)
+    assert exc_info.value.status_code == 409
+    create.assert_not_called()
+
+
+def test_publish_key_changes_with_text_and_channel():
+    from services.acp_publish.idempotency import blog_slug, publish_key
+    a = publish_key(PIECE_ID, "blog", "text")
+    assert a == publish_key(PIECE_ID, "blog", "text")
+    assert a != publish_key(PIECE_ID, "blog", "text edited")
+    assert a != publish_key(PIECE_ID, "facebook", "text")
+    assert blog_slug("Ha Long Bay — 3 days!", a) == f"ha-long-bay-3-days-{a.rsplit(':', 1)[-1][:8]}"
+    assert blog_slug("", a).startswith("post-")
+
+
+# ── WordPressAdapter.find_post_by_slug() (AA-726) ─────────────────────────────
+
+def _mock_get_response(status: int, content_type: str = "application/json", body_text: str = ""):
+    factory = _mock_post_response(status, content_type, body_text)
+    session = factory.return_value.__aenter__.return_value
+    session.get = session.post
+    return factory
+
+
+@pytest.mark.asyncio
+async def test_find_post_by_slug_returns_existing_post():
+    adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
+    body = json.dumps([{"id": 9, "link": "https://b.com/p/9", "status": "publish"}])
+    with patch("aiohttp.ClientSession", _mock_get_response(200, body_text=body)):
+        found = await adapter.find_post_by_slug("x-1234abcd")
+    assert found.post_id == 9 and found.post_url == "https://b.com/p/9"
+
+
+@pytest.mark.asyncio
+async def test_find_post_by_slug_none_when_empty_list():
+    adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
+    with patch("aiohttp.ClientSession", _mock_get_response(200, body_text="[]")):
+        assert await adapter.find_post_by_slug("x-1234abcd") is None
+
+
+@pytest.mark.asyncio
+async def test_find_post_by_slug_raises_on_html_challenge_page():
+    adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
+    with patch("aiohttp.ClientSession", _mock_get_response(200, content_type="text/html", body_text="<html>")):
+        with pytest.raises(RuntimeError, match="unexpected response"):
+            await adapter.find_post_by_slug("x-1234abcd")
 
 
 # ── WordPressAdapter.create_post() — the AA-460 lesson applied here ──────────

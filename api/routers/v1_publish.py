@@ -36,6 +36,7 @@ read it as a content/ownership problem.
 from __future__ import annotations
 
 import json
+from typing import Optional
 from uuid import UUID
 
 import boto3
@@ -49,6 +50,7 @@ from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_publish.base import SocialPost
 from services.acp_publish.facebook import FacebookAdapter
+from services.acp_publish.idempotency import blog_slug, claim, finish, publish_key
 from services.acp_s4_blog.cms.base import BlogContent
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
 
@@ -148,7 +150,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
                 OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
                     AND ago.chosen = true)
             LEFT JOIN acp_shared.publish_log pl
-                ON pl.piece_id = cp.piece_id AND pl.status = 'published'
+                ON pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
             WHERE cp.tenant_id = $1::uuid
               AND cp.status = 'approved'
               AND COALESCE(cp.channel, agr.channel) = ANY($2::text[])
@@ -185,7 +187,28 @@ def _connect_action_verb(channel: str) -> str:
     return {"blog": "WordPress", "facebook": "Facebook"}.get(channel, channel.title())
 
 
-async def _call_adapter(channel: str, creds: dict, piece) -> tuple:
+def _wordpress(creds: dict) -> WordPressAdapter:
+    return WordPressAdapter(wp_url=creds["wp_url"], username=creds["username"], app_password=creds["app_password"])
+
+
+def _facebook(creds: dict) -> FacebookAdapter:
+    return FacebookAdapter(page_id=creds["page_id"], page_access_token=creds["page_access_token"])
+
+
+def _slug(piece, key: str) -> str:
+    return blog_slug(piece.get("slug") or piece.get("angle_name") or "", key)
+
+
+async def _find_remote(channel: str, creds: dict, piece, key: str) -> Optional[tuple]:
+    """AA-726 — (external_id, external_url) of a post an earlier attempt already created, or None."""
+    if channel == "blog":
+        result = await _wordpress(creds).find_post_by_slug(_slug(piece, key))
+    else:
+        result = await _facebook(creds).find_recent_post(piece["content_text"])
+    return (str(result.post_id), result.post_url) if result else None
+
+
+async def _call_adapter(channel: str, creds: dict, piece, key: str) -> tuple:
     """Returns (external_id, external_url) on success, raises on any failure — one branch per
     supported channel, each building its own adapter from that channel's own creds shape and
     relying on the adapter's own AA-460-lesson validation (never trusts a bare success status
@@ -198,18 +221,11 @@ async def _call_adapter(channel: str, creds: dict, piece) -> tuple:
         # chrome; the standalone-document mode is for tenant download, not publish).
         content = BlogContent(
             title=title, content_html=render_content_text_to_fragment(piece["content_text"]),
-            slug="", seo_title=title, seo_meta="", status="publish",
+            slug=_slug(piece, key), seo_title=title, seo_meta="", status="publish",
         )
-        adapter = WordPressAdapter(
-            wp_url=creds["wp_url"], username=creds["username"], app_password=creds["app_password"],
-        )
-        result = await adapter.create_post(content)
+        result = await _wordpress(creds).create_post(content)
     else:  # channel == "facebook" — the only 2 branches _SUPPORTED_CHANNELS allows through
-        post = SocialPost(message=piece["content_text"])
-        adapter = FacebookAdapter(
-            page_id=creds["page_id"], page_access_token=creds["page_access_token"],
-        )
-        result = await adapter.create_post(post)
+        result = await _facebook(creds).create_post(SocialPost(message=piece["content_text"]))
     return str(result.post_id), result.post_url
 
 
@@ -227,14 +243,20 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
 
     AA-469 Việc 4 — same cp.channel-first (COALESCE onto agr.channel) read as list_pending()
     above, same reason (angle_gate_request.channel is no longer stable after a piece is
-    written — see set_channel())."""
+    written — see set_channel()).
+
+    AA-726 — idempotent: a 'requested' row is written before the remote call (one per piece
+    revision + channel, services/acp_publish/idempotency.py). The same revision already published
+    is replayed from publish_log (no second post); one in flight returns 409; a retry after a
+    lost response looks the post up on the remote first (WordPress by revision slug, Facebook by
+    message) before posting."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
     async with pool.acquire() as conn:
         piece = await conn.fetchrow(
             """
-            SELECT cp.piece_id, cp.content_text, cp.status,
+            SELECT cp.piece_id, cp.content_text, cp.status, cp.slug,
                    COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
@@ -282,8 +304,32 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
                      secret_key=integ["secret_key"], error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
 
+    key = publish_key(piece_id, channel, piece["content_text"])
+    async with pool.acquire() as conn:
+        claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key)
+
+    if claimed.state == "in_progress":
+        raise HTTPException(status_code=409,
+                            detail="This piece is already being published — refresh in a minute.")
+    if claimed.state == "published":
+        # AA-726 — same revision already on the channel: answer from the stored row, never post twice.
+        row = claimed.row
+        logger.info("channel_publish_replayed", tenant_id=tenant_id, piece_id=str(piece_id),
+                    channel=channel, publish_id=row["publish_id"])
+        return _publish_response(row, success=True, replayed=True)
+
     try:
-        external_id, external_url = await _call_adapter(channel, creds, piece)
+        found = None
+        if claimed.prior_attempt:
+            # AA-726 read-before-retry — an earlier attempt may have posted although its
+            # response was lost. A lookup that fails raises, so we never post blind.
+            found = await _find_remote(channel, creds, piece, key)
+        if found:
+            external_id, external_url = found
+            logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id),
+                        channel=channel, external_id=external_id)
+        else:
+            external_id, external_url = await _call_adapter(channel, creds, piece, key)
         success = True
         error_msg = None
     except Exception as exc:  # noqa: BLE001 — the adapter already validated the response shape
@@ -294,38 +340,9 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         external_url = None
         error_msg = str(exc)[:500]
 
-    new_status = "published" if success else "failed"
-
     async with pool.acquire() as conn:
-        existing_failed = await conn.fetchval(
-            "SELECT publish_id FROM acp_shared.publish_log "
-            "WHERE piece_id = $1::uuid AND tenant_id = $2::uuid AND status = 'failed'",
-            piece_id, tenant_id,
-        )
-        if existing_failed:
-            row = await conn.fetchrow(
-                """
-                UPDATE acp_shared.publish_log
-                SET status = $3, external_id = $4, external_url = $5,
-                    published_at = CASE WHEN $3 = 'published' THEN now() ELSE published_at END,
-                    last_error = $6
-                WHERE publish_id = $1 AND tenant_id = $2::uuid
-                RETURNING publish_id::text, status, external_id, external_url, published_at, last_error
-                """,
-                existing_failed, tenant_id, new_status, external_id, external_url, error_msg,
-            )
-        else:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO acp_shared.publish_log
-                    (piece_id, tenant_id, channel, status, external_id, external_url,
-                     published_at, last_error)
-                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6,
-                        CASE WHEN $4 = 'published' THEN now() ELSE NULL END, $7)
-                RETURNING publish_id::text, status, external_id, external_url, published_at, last_error
-                """,
-                piece_id, tenant_id, channel, new_status, external_id, external_url, error_msg,
-            )
+        row = await finish(conn, publish_id=claimed.publish_id, tenant_id=tenant_id, success=success,
+                           external_id=external_id, external_url=external_url, error=error_msg)
 
     logger.info("channel_publish", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
                 success=success, external_id=external_id, error=error_msg)
@@ -345,6 +362,10 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     except Exception as exc:
         logger.warning("publish_audit_log_failed", tenant_id=tenant_id, piece_id=str(piece_id), error=str(exc))
 
+    return _publish_response(row, success=success)
+
+
+def _publish_response(row: dict, *, success: bool, replayed: bool = False) -> dict:
     return {
         "publish_id": row["publish_id"],
         "success": success,
@@ -353,6 +374,7 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         "external_url": row["external_url"],
         "published_at": row["published_at"].isoformat() if row["published_at"] else None,
         "last_error": row["last_error"],
+        "replayed": replayed,
     }
 
 

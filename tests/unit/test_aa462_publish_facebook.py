@@ -12,6 +12,7 @@ import pytest
 from api.routers import v1_publish as mod
 from services.acp_publish.base import SocialPostResult
 from services.acp_publish.facebook import FacebookAdapter
+from services.acp_publish.idempotency import Claim
 
 TENANT = {"sub": str(uuid.uuid4()), "role": "tenant"}
 PIECE_ID = uuid.uuid4()
@@ -44,6 +45,14 @@ def _fb_integ_row():
     return {"secret_key": "acp/social/tenant-x"}
 
 
+@pytest.fixture(autouse=True)
+def _claimed():
+    """AA-726 — publish() claims a publish_log row first; stubbed here (real-DB coverage in
+    tests/integration/test_aa726_publish_idempotency.py). The last fetchrow is finish()."""
+    with patch.object(mod, "claim", AsyncMock(return_value=Claim("claimed", publish_id=str(uuid.uuid4())))):
+        yield
+
+
 @pytest.mark.asyncio
 class TestPublishFacebook:
     async def test_publish_422_when_facebook_not_connected(self):
@@ -73,10 +82,10 @@ class TestPublishFacebook:
         assert result["external_id"] == "1_2"
         assert result["external_url"] == "https://www.facebook.com/1_2"
 
-        insert_call = conn.fetchrow.call_args_list[-1]
-        params = insert_call[0][1:]
-        assert params[2] == "facebook"   # channel written to publish_log
-        assert params[3] == "published"
+        finish_call = conn.fetchrow.call_args_list[-1]
+        params = finish_call[0][1:]
+        assert params[2] == "published"
+        assert mod.claim.call_args.kwargs["channel"] == "facebook"
 
         # integration lookup queried integration_type = 'facebook', not 'wordpress'
         integ_call = conn.fetchrow.call_args_list[1]
