@@ -4768,8 +4768,8 @@ async def update_brand_identity(
     tenant_id: str = Depends(_resolve_brand_tenant_id),
 ):
     import json as _json
-    # AA-487: this is a MORE direct prompt-injection surface than the DOCX Lambda
-    # (services/acp_brand_brief_parser/) — BrandTab.tsx lets a tenant type system_prompt/
+    # AA-487: a direct prompt-injection surface (the DOCX brand-brief Lambda was retired in
+    # AA-750) — BrandTab.tsx lets a tenant type system_prompt/
     # style_guide straight into a textarea and POST here, with no parsing step at all in
     # between. Sanitize the same way (shared.validators.prompt_sanitize, same module the Lambda
     # fix uses) before it lands in the column every future LLM call for this tenant replays.
