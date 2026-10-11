@@ -1,7 +1,6 @@
 # api/routers/admin.py
 # P2-S5 — Multi-tenant onboarding + billing metrics
 import hashlib
-import io
 import json
 import os
 import secrets
@@ -9,8 +8,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Optional
 import asyncpg
-import boto3
-from fastapi import APIRouter, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from services.notifications import NotificationService, EventType
@@ -1032,67 +1030,9 @@ async def generate_api_key(
     )
 
 
-# ── POST /admin/tenants/{id}/brand-brief ─────────────────────────────────────
-
-_BRAND_BRIEF_BUCKET = "acp-bronze-867490540162"
-_BRAND_BRIEF_LAMBDA = "acp-brand-brief-parser"
-_MAX_DOCX_BYTES = 5 * 1024 * 1024  # 5 MB
-
-
-@router.post("/tenants/{tenant_id}/brand-brief", summary="Upload and parse brand brief DOCX")
-async def upload_brand_brief(
-    tenant_id: str,
-    request: Request,
-    file: UploadFile = File(...),
-    x_admin_secret: str = Header(None),
-):
-    verify_admin_secret(x_admin_secret)
-
-    content_type = file.content_type or ""
-    if "officedocument.wordprocessingml" not in content_type and not file.filename.endswith(".docx"):
-        raise HTTPException(status_code=400, detail="File must be a .docx document")
-
-    data = await file.read()
-    if len(data) > _MAX_DOCX_BYTES:
-        raise HTTPException(status_code=400, detail="File exceeds 5 MB limit")
-
-    iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    s3_key = f"brand-briefs/{tenant_id}/{iso_ts}.docx"
-
-    s3 = boto3.client("s3", region_name="us-west-1")
-    try:
-        s3.upload_fileobj(io.BytesIO(data), _BRAND_BRIEF_BUCKET, s3_key)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"S3 upload failed: {e}")
-
-    lam = boto3.client("lambda", region_name="us-west-1")
-    payload = json.dumps({
-        "tenant_id": tenant_id,
-        "s3_bucket": _BRAND_BRIEF_BUCKET,
-        "s3_key": s3_key,
-    }).encode()
-    try:
-        resp = lam.invoke(
-            FunctionName=_BRAND_BRIEF_LAMBDA,
-            InvocationType="RequestResponse",
-            Payload=payload,
-        )
-        result = json.loads(resp["Payload"].read())
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Lambda invoke failed: {e}")
-
-    if result.get("status") == "error":
-        raise HTTPException(status_code=422, detail=result.get("warnings", ["Unknown parse error"]))
-
-    # Persist S3 key for brand brief reuse on next S0 run (M1)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE shared.tenants SET last_brand_brief_s3_key=$2, updated_at=NOW() WHERE tenant_id=$1::uuid",
-            tenant_id, s3_key,
-        )
-
-    return {**result, "brand_brief_s3_key": s3_key}
+# AA-750: POST /admin/tenants/{id}/brand-brief (DOCX upload → acc1 Lambda acp-brand-brief-parser) was
+# removed — it pointed at acc1 resources destroyed in AA-271 and no page called it. Tenants edit the
+# brand in BrandTab → /brand-identity (sanitized in-process, shared/validators/prompt_sanitize.py).
 
 
 # ── POST /admin/tenants/{id}/offboard — GDPR offboard ────────────────────────

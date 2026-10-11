@@ -310,34 +310,6 @@ jobs:
 
           [ "$fail" = "0" ] && echo "All smoke checks passed" || (echo "Smoke checks failed" && exit 1)
 
-  deploy-lambdas:
-    name: Deploy Lambda Functions
-    runs-on: ubuntu-latest
-    environment: dev
-    needs: build-and-push
-    steps:
-      - uses: actions/checkout@v5
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Package and deploy Lambdas
-        run: |
-          bash scripts/package_lambdas.sh
-          for fn in ingestion seo validation export content brand-brief-parser; do
-            ZIP="dist/lambdas/${fn}.zip"
-            if [ -f "$ZIP" ]; then
-              echo "Deploying $fn..."
-              aws lambda update-function-code                 --function-name aa-cis-dev-${fn}                 --zip-file fileb://${ZIP}                 --region ${{ env.AWS_REGION }}                 --output text --query 'FunctionArn'
-            fi
-          done
-          echo "Lambda deploy complete"
-
   deploy-vercel:
     name: Deploy Frontend to Vercel
     runs-on: ubuntu-latest

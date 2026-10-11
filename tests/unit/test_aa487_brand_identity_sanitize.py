@@ -1,6 +1,6 @@
 """AA-487 — api/routers/admin_pipeline.py::update_brand_identity() sanitizes tenant-typed
 system_prompt/style_guide/forbidden_words before persisting, closing the SAME injection surface
-as the DOCX Lambda fix (services/acp_brand_brief_parser/sanitize.py) but for the more direct
+as the (since retired, AA-750) DOCX brand-brief Lambda, but for the more direct
 path: BrandTab.tsx lets a tenant type these fields straight into a textarea, no parsing step at
 all in between.
 
