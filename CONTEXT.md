@@ -23,6 +23,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Ownership split**: this repo owns its application code and its DB schemas/migrations
   (`acp_*`, `*_aa_internal`, `acp_shared.*`, `acp_contract.*`). AWS resources (VPC/RDS/ECS/ALB/
   API GW/Lambda/OIDC) are owned by **AA-CIS-Infra** — "App owns code, Infra owns resources."
+  Owner per schema and per `shared.*` table (CIS also owns `shared.destinations` since ADR 0002):
+  `AA-Ecosys/docs/database/schema-ownership.md`. A migration here is applied to Dev from its
+  identical copy in `AA-CIS-Infra/db/migrations/cis/` by the **DB Migrate** workflow, before the
+  code that needs it merges.
 
 ## Architecture at a glance
 
