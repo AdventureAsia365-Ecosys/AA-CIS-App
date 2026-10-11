@@ -12,6 +12,7 @@ pass `status="publish"`.
 import base64
 import json
 import logging
+from typing import Optional
 
 import aiohttp
 
@@ -80,3 +81,30 @@ class WordPressAdapter(CMSAdapter):
             status=parsed_body.get("status", content.status),
             cms_type="wordpress",
         )
+
+    async def find_post_by_slug(self, slug: str) -> Optional[CMSPostResult]:
+        """AA-726 read-before-retry: the post a previous attempt created, if any. Publish sets a
+        slug unique to the piece revision, so a match means the earlier call reached WordPress
+        even though its response was lost. Raises on anything that is not a real WordPress list
+        response — the caller must not post again when it cannot tell."""
+        params = {"slug": slug, "status": "publish,future,draft,pending,private", "context": "edit"}
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.get(f"{self.api_base}/posts", params=params, headers=self._headers()) as resp:
+                status_code = resp.status
+                content_type = resp.headers.get("content-type", "")
+                body_text = await resp.text()
+
+        parsed_body = None
+        if status_code == 200 and content_type.startswith("application/json"):
+            try:
+                parsed_body = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError):
+                parsed_body = None
+        if not isinstance(parsed_body, list):
+            raise RuntimeError(f"WP API lookup {status_code} returned an unexpected response: {body_text[:300]}")
+
+        for post in parsed_body:
+            if isinstance(post, dict) and "id" in post and "link" in post:
+                return CMSPostResult(post_id=post["id"], post_url=post["link"],
+                                     status=post.get("status", ""), cms_type="wordpress")
+        return None

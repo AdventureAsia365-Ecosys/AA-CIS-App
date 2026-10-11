@@ -28,6 +28,7 @@ site (`aa-wordpress.rf.gd`, anti-bot-blocked). Positive-path proof here is unit-
 Page + Page Access Token.
 """
 import json
+from typing import Optional
 
 import aiohttp
 
@@ -76,3 +77,31 @@ class FacebookAdapter(SocialAdapter):
             post_url=f"https://www.facebook.com/{post_id}",
             platform="facebook",
         )
+
+    async def find_recent_post(self, message: str) -> Optional[SocialPostResult]:
+        """AA-726 read-before-retry: a Page feed post carrying exactly this message, created by a
+        previous attempt whose response was lost. Graph API has no client idempotency key, so
+        the last 25 feed posts are matched on the full message text. Raises when the feed
+        cannot be read — the caller must not post again when it cannot tell."""
+        params = {"fields": "id,message", "limit": "25", "access_token": self.access_token}
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.get(f"{self.api_base}/{self.page_id}/feed", params=params) as resp:
+                status_code = resp.status
+                content_type = resp.headers.get("content-type", "")
+                body_text = await resp.text()
+
+        parsed_body = None
+        if content_type.startswith("application/json"):
+            try:
+                parsed_body = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError):
+                parsed_body = None
+        if status_code != 200 or not (isinstance(parsed_body, dict) and isinstance(parsed_body.get("data"), list)):
+            raise RuntimeError(f"Facebook feed lookup {status_code}: {body_text[:300]}")
+
+        wanted = message.strip()
+        for post in parsed_body["data"]:
+            if isinstance(post, dict) and "id" in post and (post.get("message") or "").strip() == wanted:
+                return SocialPostResult(post_id=post["id"], post_url=f"https://www.facebook.com/{post['id']}",
+                                        platform="facebook")
+        return None
