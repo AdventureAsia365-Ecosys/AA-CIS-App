@@ -37,15 +37,9 @@ export default function LoginPage() {
         return;
       }
 
-      // AA-435: /api/auth/login no longer returns `token` for admin/reviewer
-      // logins (the JWT lives only in the httpOnly cis_admin_token cookie
-      // set server-side) — this branch now only ever fires for the content
-      // role, whose login is a separate, already-accepted-risk path (AA-253)
-      // this fix deliberately left untouched. See docs/implementation-notes/
-      // AA-435.md.
-      if (data.token) {
-        document.cookie = `cis_api_token=${encodeURIComponent(data.token)}; path=/; max-age=86400`;
-      }
+      // AA-656: no login returns a token any more (the JWT lives only in the httpOnly
+      // cis_admin_token cookie). cis_role / cis_user are display hints for the UI; access is
+      // decided from the verified token (middleware.ts, lib/rbac.ts).
       document.cookie = `cis_role=${data.role}; path=/; max-age=86400`;
       document.cookie = `cis_user=${encodeURIComponent(data.name)}; path=/; max-age=86400`;
 

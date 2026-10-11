@@ -14,6 +14,7 @@ from api.routers.auth import (
     TenantLoginRequest, TenantLoginResponse,
     _verify_password, _create_admin_jwt,
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
+    STAFF_ROLES,
 )
 from api.routers.v1_tours import router as v1_tours_router
 from api.routers.v1_tours import quota_router as v1_quota_router
@@ -313,7 +314,7 @@ async def verify_admin(request: Request):
     """
     body = await request.json()
     payload = verify_jwt(body.get("token", ""))
-    if payload.get("role") not in ("admin", "reviewer"):
+    if payload.get("role") not in STAFF_ROLES:
         # Explicit whitelist — same secret/alg means a tenant JWT would decode fine here.
         raise HTTPException(status_code=401, detail="Not an admin token")
     return VerifyAdminResponse(

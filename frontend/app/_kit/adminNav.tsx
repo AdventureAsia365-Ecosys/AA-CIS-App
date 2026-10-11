@@ -4,18 +4,18 @@
 // CommandPalette (Pages group) and BottomNav. Groups/items/roles are identical to the AA-663
 // information architecture that lived in AdminSidebar before the shell: Overview · Content ·
 // Intelligence · Tenants · Operations, plus the standalone Settings entry. Visibility follows
-// middleware.ts PROTECTED_ROUTES (adminOnly items render for role "admin" only).
+// lib/rbac.ts PAGE_RULES (AA-656): an item renders only when the role may open its page.
 
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon,
 } from "lucide-react";
+import { canSeePage } from "@/lib/rbac";
 
 export interface NavEntry {
   href: string;
   icon: React.ReactNode;
   label: string;
-  adminOnly?: boolean;
   /** Other routes that belong to this entry (its sub-nav pages) — used for active-state matching. */
   also?: string[];
 }
@@ -27,27 +27,27 @@ export interface NavGroup {
 
 export const NAV_GROUPS: NavGroup[] = [
   { label: "Overview", items: [
-    { href: "/admin/overview", icon: <Gauge size={16} />, label: "Overview", adminOnly: true },
+    { href: "/admin/overview", icon: <Gauge size={16} />, label: "Overview" },
   ] },
   { label: "Content", items: [
     { href: "/admin/upload",         icon: <Upload size={16} />,        label: "Upload (S0)" },
     { href: "/admin/s1-rewrite",     icon: <Wand2 size={16} />,         label: "Rewrite (S1)" },
     { href: "/admin/review",         icon: <ClipboardList size={16} />, label: "Review Queue" },
     { href: "/admin/master-content", icon: <Library size={16} />,       label: "Master Content" },
-    { href: "/admin/photos",         icon: <ImageIcon size={16} />,     label: "Photos", adminOnly: true },
+    { href: "/admin/photos",         icon: <ImageIcon size={16} />,     label: "Photos" },
   ] },
   { label: "Intelligence", items: [
-    { href: "/admin/atom-curation", icon: <Puzzle size={16} />, label: "Social Content", adminOnly: true,
+    { href: "/admin/atom-curation", icon: <Puzzle size={16} />, label: "Social Content",
       also: ["/admin/tenant-activity", "/admin/platform-stats"] },
-    { href: "/admin/seo-intelligence", icon: <Search size={16} />, label: "SEO Intelligence", adminOnly: true },
+    { href: "/admin/seo-intelligence", icon: <Search size={16} />, label: "SEO Intelligence" },
   ] },
   { label: "Tenants", items: [
-    { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants", adminOnly: true },
+    { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants" },
   ] },
   { label: "Operations", items: [
-    { href: "/admin/llm-usage", icon: <Wallet size={16} />,     label: "External Spend", adminOnly: true },
-    { href: "/admin/jobs",      icon: <ListChecks size={16} />, label: "Jobs",           adminOnly: true },
-    { href: "/admin/decisions", icon: <Scale size={16} />,      label: "Jev Decisions",  adminOnly: true },
+    { href: "/admin/llm-usage", icon: <Wallet size={16} />,     label: "External Spend" },
+    { href: "/admin/jobs",      icon: <ListChecks size={16} />, label: "Jobs" },
+    { href: "/admin/decisions", icon: <Scale size={16} />,      label: "Jev Decisions" },
   ] },
 ];
 
@@ -63,14 +63,14 @@ export function navActive(entry: Pick<NavEntry, "href" | "also">, pathname: stri
 }
 
 /** Flat list of every entry (incl. Settings), filtered by role. */
-export function allEntries(isAdmin: boolean): NavEntry[] {
+export function allEntries(role: string): NavEntry[] {
   const out: NavEntry[] = [];
   for (const g of NAV_GROUPS) {
     for (const it of g.items) {
-      if (isAdmin || !it.adminOnly) out.push(it);
+      if (canSeePage(role, it.href)) out.push(it);
     }
   }
-  out.push(SETTINGS_ENTRY);
+  if (canSeePage(role, SETTINGS_ENTRY.href)) out.push(SETTINGS_ENTRY);
   return out;
 }
 

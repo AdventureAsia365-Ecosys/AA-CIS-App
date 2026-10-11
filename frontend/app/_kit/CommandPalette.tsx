@@ -44,7 +44,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
 function PaletteDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const { isAdmin } = useAdminIdentity();
+  const { role } = useAdminIdentity();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selected, setSelected] = useState(0);
@@ -75,7 +75,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const groups = useMemo(() => {
     const q = debounced.toLowerCase();
     const pageEntries: NavEntry[] = q
-      ? allEntries(isAdmin).filter((e) => e.label.toLowerCase().includes(q))
+      ? allEntries(role).filter((e) => e.label.toLowerCase().includes(q))
       : [];
     const pages: Row[] = pageEntries.map((e) => ({
       kind: "page" as const, label: e.label, href: e.href, icon: e.icon,
@@ -104,7 +104,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       { title: "Tenants", rows: tenants },
       { title: "Jobs", rows: jobs },
     ].filter((g) => g.rows.length > 0);
-  }, [data, debounced, isAdmin]);
+  }, [data, debounced, role]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
 

@@ -3,6 +3,7 @@
 // any request reaches the backend.
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
+import { API_RULES } from "@/lib/rbac";
 
 const API_URL      = process.env.API_URL      ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET  ?? "";
@@ -12,7 +13,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireAdmin(req);
+  const auth = await requireAdmin(req, API_RULES.tourFull);
   if (!auth.ok) return auth.response;
 
   const { id } = await params;

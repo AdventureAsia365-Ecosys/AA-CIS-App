@@ -23,6 +23,11 @@
 // fetch() response. Fixed by dropping `token` from this response entirely —
 // see docs/implementation-notes/AA-435.md for the call-site audit that
 // confirmed no live admin flow actually needs the JSON-body token anymore.
+//
+// AA-656: the separate content login (username "content" checked against the
+// CONTENT_PASSWORD env var, no JWT) is removed. Content staff are rows in
+// shared.admin_users with role 'content' (migration 218) and log in here like
+// admin/reviewer, so every staff session carries a verifiable JWT.
 import { NextRequest, NextResponse } from "next/server";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
@@ -32,18 +37,6 @@ export async function POST(req: NextRequest) {
 
   if (!username || !password) {
     return NextResponse.json({ detail: "Missing credentials" }, { status: 400 });
-  }
-
-  // Content staff login — unchanged, verified against CONTENT_PASSWORD env var
-  if (username === "content") {
-    const contentPassword = process.env.CONTENT_PASSWORD;
-    if (!contentPassword) {
-      return NextResponse.json({ detail: "Content login not configured" }, { status: 503 });
-    }
-    if (password !== contentPassword) {
-      return NextResponse.json({ detail: "Invalid credentials" }, { status: 401 });
-    }
-    return NextResponse.json({ token: password, role: "content", name: "Content" });
   }
 
   // ── AA-232: real per-user JWT login (only path — AA-252 retired the
@@ -71,7 +64,7 @@ export async function POST(req: NextRequest) {
     // admin_id are not secrets (used only for UI display + redirect), the
     // JWT itself now lives ONLY in the httpOnly cookie below.
     const response = NextResponse.json({
-      role: data.role,   // 'admin' | 'reviewer'
+      role: data.role,   // 'admin' | 'reviewer' | 'content'
       name: data.username,
       admin_id: data.admin_id,
     });

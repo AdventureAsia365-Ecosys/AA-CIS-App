@@ -32,7 +32,8 @@
 // access through this proxy, or was the old pass-through itself the bug).
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { requireAdmin } from "@/lib/auth-server";
+import { requireAdmin, requireTenant } from "@/lib/auth-server";
+import { API_RULES } from "@/lib/rbac";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -42,13 +43,14 @@ async function handler(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const cookieStore = await cookies();
-  const role        = cookieStore.get("cis_role")?.value ?? "";
-  const isStaff     = role === "admin" || role === "content";
+  // AA-656: staff vs tenant is decided by which session token is present, not by the
+  // client-writable cis_role cookie; requireAdmin() then verifies the token and its role.
+  const isStaff     = Boolean(cookieStore.get("cis_admin_token")?.value);
 
   const headers: Record<string, string> = {};
 
   if (isStaff) {
-    const auth = await requireAdmin(req);
+    const auth = await requireAdmin(req, API_RULES.tenantProxy);
     if (!auth.ok) return auth.response;
 
     if (!ADMIN_SECRET) {
@@ -57,10 +59,10 @@ async function handler(
     headers["x-admin-secret"] = ADMIN_SECRET;
     headers["x-admin-user-id"] = auth.adminId;
   } else {
+    // AA-656: verify the tenant JWT before forwarding it (was: presence only).
+    const auth = await requireTenant(req);
+    if (!auth.ok) return auth.response;
     const tenantToken = cookieStore.get("cis_tenant_token")?.value ?? "";
-    if (!tenantToken) {
-      return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
-    }
     headers["Authorization"] = `Bearer ${tenantToken}`;
   }
 

@@ -5,6 +5,7 @@
 // proxies, not requireTenant().
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
+import { API_RULES } from "@/lib/rbac";
 
 const API_URL      = process.env.API_URL      ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET  ?? "";
@@ -19,7 +20,7 @@ function apiHeaders(extra: Record<string, string> = {}): Record<string, string> 
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAdmin(req);
+  const auth = await requireAdmin(req, API_RULES.brandIdentity);
   if (!auth.ok) return auth.response;
 
   const res = await fetch(`${API_URL}/admin/brand-identity`, {
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdmin(req);
+  const auth = await requireAdmin(req, API_RULES.brandIdentity);
   if (!auth.ok) return auth.response;
 
   const body = await req.json();

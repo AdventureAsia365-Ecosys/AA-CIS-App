@@ -31,6 +31,7 @@
 // mechanism (redundant round trips) rather than only widening the timeout,
 // which would lower the odds without removing the cause.
 import { NextRequest, NextResponse } from "next/server";
+import { STAFF_ROLES, type StaffRole } from "./rbac";
 
 const VERIFY_CACHE_TTL_MS = 20_000;
 
@@ -82,11 +83,29 @@ function unauthorized(): NextResponse {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 
+function forbidden(): NextResponse {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+}
+
 export type RequireAdminResult =
   | { ok: true; adminId: string; role: string }
   | { ok: false; response: NextResponse };
 
-export async function requireAdmin(request: NextRequest): Promise<RequireAdminResult> {
+// AA-656 — `roles` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
+// the verified JWT; the `cis_role` cookie is never consulted. A valid staff token with a role not in
+// `roles` gets 403 (not 401) so the UI can tell "log in again" from "not allowed".
+export async function requireAdmin(
+  request: NextRequest,
+  roles: readonly StaffRole[] = STAFF_ROLES,
+): Promise<RequireAdminResult> {
+  const result = await verifyStaff(request);
+  if (result.ok && !(roles as readonly string[]).includes(result.role)) {
+    return { ok: false, response: forbidden() };
+  }
+  return result;
+}
+
+async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
   const token = request.cookies.get("cis_admin_token")?.value;
   if (!token) {
     return { ok: false, response: unauthorized() };
