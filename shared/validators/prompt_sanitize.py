@@ -9,8 +9,9 @@ form (`BrandTab.tsx`) POSTs `system_prompt`/`style_guide` directly as free text.
 
 (The DOCX brand-brief Lambda that also used this sanitizer was retired in AA-750.)
 
-This is self-injection containment (a tenant can only attack their own future generations), not general-purpose prompt-injection defense (unsolved in general) — it
-strips the common attack shapes and caps field length.
+This is self-injection containment (a tenant can only attack their own future generations),
+not general-purpose prompt-injection defense (unsolved in general) — it strips the common attack
+shapes and caps field length.
 """
 import re
 
