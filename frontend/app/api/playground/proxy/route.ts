@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { requireTenant } from "@/lib/auth-server";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 
@@ -22,11 +23,11 @@ function isAllowed(endpoint: string): boolean {
 
 export async function POST(req: NextRequest) {
   // Auth — reuse the same cookie-based pattern as /api/tenant/[...path]
+  // AA-656: verify the tenant JWT here too (was: token presence only), like every other BFF proxy.
+  const auth = await requireTenant(req);
+  if (!auth.ok) return auth.response;
   const cookieStore = await cookies();
   const token = cookieStore.get("cis_tenant_token")?.value;
-  if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   let body: { endpoint: string; params?: Record<string, string>; method?: string };
   try {

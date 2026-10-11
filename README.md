@@ -90,7 +90,7 @@ Names only — values come from Secrets Manager / the ECS task definition (AA-CI
 | Jobs | `JOB_WORKER_IN_API`, `JOB_WORKER_MAX_PARALLEL`, `JOB_WORKER_TASK_REVISION` |
 | Storage / photos | `BRONZE_BUCKET`, `PHOTO_BUCKET`, `GDRIVE_API_KEY` / `SECRET_GDRIVE_ID`, `PUBLIC_API_BASE` |
 | Ops / alerts | `ALERT_TOPIC_ARN`, `SWEEPER_ALERT_SNS_ARN`, `SWEEPER_SLA_HOURS`, `DFS_BALANCE_ALERT_THRESHOLD_USD`, `JEV_CREDIT_COOLDOWN_MIN`, `ECS_CLUSTER`, `ECS_SERVICE`, `RDS_INSTANCE_ID`, `NAT_INSTANCE_ID`, `REDIS_CLUSTER_ID` |
-| Frontend (Vercel) | `API_URL`, `NEXT_PUBLIC_API_URL`, `ADMIN_SECRET`, `INTERNAL_API_KEY`, `CONTENT_PASSWORD` |
+| Frontend (Vercel) | `API_URL`, `NEXT_PUBLIC_API_URL`, `ADMIN_SECRET`, `INTERNAL_API_KEY` |
 
 Some legacy variables (SQS queue URLs, Chroma, Langfuse) are still read by old code paths and are
 not set on Dev.

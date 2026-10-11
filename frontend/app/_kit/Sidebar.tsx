@@ -21,6 +21,7 @@ import { A, alpha, serif, sans } from "../admin/_components/adminUi";
 import { LOGO_SRC } from "../_brand/tokens";
 import { NAV_GROUPS, SETTINGS_ENTRY, navActive, type NavEntry } from "./adminNav";
 import { useSidebarCollapsed } from "./useSidebar";
+import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { apiGet } from "./api";
 
@@ -32,7 +33,7 @@ interface ReviewTotal {
 export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () => void; drawerOpen?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAdmin } = useAdminIdentity();
+  const { role } = useAdminIdentity();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
 
   // `[` toggles collapse, ignored while typing in an input/textarea/select or contenteditable.
@@ -109,7 +110,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       {/* Nav */}
       <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20 }}>
         {NAV_GROUPS.map((group) => {
-          const items = group.items.filter((n) => isAdmin || !n.adminOnly);
+          const items = group.items.filter((n) => canSeePage(role, n.href));
           if (!items.length) return null;
           return (
             <div key={group.label}>

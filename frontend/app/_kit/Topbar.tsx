@@ -12,6 +12,7 @@ import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu a
 import { K, sans, serif, alpha, formatDateTime } from "./tokens";
 import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
+import { ROLE_LABEL, isStaffRole } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { pageTitle } from "./adminNav";
 
@@ -234,7 +235,7 @@ function Notifications() {
 // ── Account menu (avatar → Settings, Sign out) ──────────────────────────────
 function AccountMenu() {
   const router = useRouter();
-  const { userName, isAdmin } = useAdminIdentity();
+  const { userName, role } = useAdminIdentity();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -284,7 +285,7 @@ function AccountMenu() {
         }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${K.line}` }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif }}>{userName}</div>
-            <div style={{ fontSize: 11, color: K.muted }}>{isAdmin ? "Administrator" : "Content Team"}</div>
+            <div style={{ fontSize: 11, color: K.muted }}>{isStaffRole(role) ? ROLE_LABEL[role] : ""}</div>
           </div>
           <MenuRow icon={<Settings size={15} />} label="Settings" onClick={() => { setOpen(false); router.push("/admin/settings"); }} />
           <MenuRow icon={<LogOut size={15} />} label="Sign out" onClick={logout} />

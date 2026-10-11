@@ -281,6 +281,31 @@ and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only 
 enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
 waves (`/admin/waves`, AA-727).
 
+## Staff roles and permissions (AA-656)
+
+One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
+`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218) and logs in through
+`/auth/admin-login`, which returns a signed JWT kept in the httpOnly `cis_admin_token` cookie. Access
+is decided from the **verified** token role (`/auth/verify-admin`), never from the `cis_role` cookie
+(that cookie is a display hint only). Tenants are separate (`cis_tenant_token`, role `tenant`).
+
+The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
+(`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
+shows only when the role may open its page).
+
+| Area | admin | reviewer | content | tenant |
+|---|---|---|---|---|
+| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
+| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions | ✓ | — | — | — |
+| Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
+| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
+| `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
+
+AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
+`content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
+so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
+can open are narrowed); the backend sees only `x-admin-user-id`.
+
 ## Boundaries — what this repo does NOT do
 
 - It does not provision AWS resources or OIDC roles (that is AA-CIS-Infra).

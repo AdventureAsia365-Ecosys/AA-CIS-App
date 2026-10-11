@@ -18,6 +18,7 @@
 // request got here.
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
+import { API_RULES } from "@/lib/rbac";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -26,7 +27,7 @@ async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
-  const auth = await requireAdmin(req);
+  const auth = await requireAdmin(req, API_RULES.admin);
   if (!auth.ok) return auth.response;
 
   if (!ADMIN_SECRET) {

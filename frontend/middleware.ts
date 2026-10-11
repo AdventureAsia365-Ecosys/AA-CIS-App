@@ -32,74 +32,19 @@
 // lists; anything it forgets to list is open by default. This file now uses
 // an allow-list instead — every protected prefix declares exactly which
 // roles may reach it, and anything not listed (or reached with a role not on
-// its list) is denied by default. See PROTECTED_ROUTES below.
+// its list) is denied by default. See PAGE_RULES in lib/rbac.ts.
 //
-// Known limitation, kept as-is (not in AA-252 scope, no new exposure):
-// the "content" role (login/route.ts CONTENT_PASSWORD check) has no JWT/
-// token and nothing re-verifies it after the initial login — the cis_role
-// cookie is trusted at face value, same as before this fix. Tracked for a
-// real fix under AA-253 (see also: the BFF proxy routes under /api/admin,
-// /api/pipeline, /api/tour-full, /api/tenant/pipeline are not covered by
-// this middleware's matcher at all — a separate, deeper gap also tracked
-// under AA-253, out of scope here).
+// AA-656: every staff role (admin, reviewer, content) now carries a signed JWT and the allow-list
+// lives in lib/rbac.ts (PAGE_RULES), shared with the BFF proxies and the nav. The role that is
+// checked comes from the VERIFIED token, never from the `cis_role` cookie — before this, a reviewer
+// with a valid token could set `cis_role=admin` by hand and open admin-only pages, and the content
+// role had no token at all.
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { adminVerifyCache, tenantVerifyCache } from "./lib/auth-server";
+import { isStaffRole, landingPage, pageRule } from "./lib/rbac";
 
 const PUBLIC_PATHS = ["/login", "/tenant-login"];
-
-// AA-252: allow-list. Every protected path is declared here with the exact
-// roles permitted to reach it. First-match-wins by prefix; prefixes are
-// disjoint so order doesn't matter in practice. A path that matches
-// config.matcher but has no entry here is denied by default (see the
-// `!route` branch in middleware()) — this is what closes #4/#5.
-const PROTECTED_ROUTES: { prefix: string; roles: string[] }[] = [
-  // Admin-only (was ADMIN_PATHS)
-  { prefix: "/admin/tenants", roles: ["admin"] },
-  // AA-664 — Overview dashboard: whole-system view incl. cost vs budget. Admin-only.
-  { prefix: "/admin/overview", roles: ["admin"] },
-  // AA-505 — LLM cost/quality monitoring (Tenant->Model->Stage). Admin-only, same tier as
-  // tenants above — this shows real per-call spend + Việc C's model choice is
-  // reached via /admin/settings (already admin+reviewer+content, unchanged).
-  { prefix: "/admin/llm-usage", roles: ["admin"] },
-  // AA-650 — durable job queue (cancel/retry of paid background work). Admin-only.
-  { prefix: "/admin/jobs", roles: ["admin"] },
-  // AA-660 — Jev decision layer (question modes/floors can change pipeline behaviour). Admin-only.
-  { prefix: "/admin/decisions", roles: ["admin"] },
-  // AA-708 — photo sync (enqueues jobs, assigns photos)
-  { prefix: "/admin/photos", roles: ["admin"] },
-  // AA-705 — SEO Intelligence (demand/keywords/PAA/gaps/spend). Admin-only.
-  { prefix: "/admin/seo-intelligence", roles: ["admin"] },
-  // AA-527 — Atom Curation, replacing the removed tenant-facing T6 (AA-526): admin decides which
-  // atoms are good to use, same admin-only tier as llm-usage above (Nghiệp's
-  // explicit choice among 2 options presented, 05/09/2026), not the broader content-team tier.
-  { prefix: "/admin/atom-curation", roles: ["admin"] },
-  // AA-551 — split out of Atom Curation (06-08, per-Tour tenant activity, moved to its own page/
-  // URL so the Admin/Tenant boundary AA-550 flagged is visible in the nav, not just a comment).
-  // Same admin-only tier.
-  { prefix: "/admin/tenant-activity", roles: ["admin"] },
-  // AA-560 — "07 · Platform Stats": Review Log + Trust Ramp (moved from a4-oversight) + a new
-  // real backend gate/error aggregate. Same admin-only tier, same Social Content sub-nav grouping
-  // as tenant-activity above.
-  { prefix: "/admin/platform-stats", roles: ["admin"] },
-  // Internal staff pages (was INTERNAL_PATHS) — admin/reviewer get real JWT
-  // verification; content is the known-limitation carve-out described above.
-  // AA-722 — /admin/dashboard was retired. Its request is handled by the
-  // role-aware redirect at the top of middleware() below (admin → Overview,
-  // reviewer/content → Review Queue), so it is intentionally no longer an
-  // allow-list entry here.
-  { prefix: "/admin/upload", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/pipeline", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/master-content", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/review", roles: ["admin", "reviewer", "content"] },
-  { prefix: "/admin/s1-rewrite", roles: ["admin", "reviewer", "content"] }, // #4
-  { prefix: "/admin/settings", roles: ["admin", "reviewer", "content"] },   // #4
-  // AA-663 — /upload, /review, /catalog, /brand and /admin/brand are redirects now
-  // (next.config.ts); the legacy (internal) pages behind them are deleted.
-  // Tenant portal (was TENANT_PATHS) — admin now goes through the same real
-  // verifyAdminToken() as every other admin route, no bypass (#3).
-  { prefix: "/portal", roles: ["admin", "tenant"] },
-];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
 
@@ -113,20 +58,20 @@ export async function middleware(request: NextRequest) {
   // AA-722 — the legacy /admin/dashboard page is retired. Route old bookmarks
   // and the login redirect to the role's landing page: admin → Overview
   // (admin-only), reviewer/content → Review Queue. This must run BEFORE the
-  // allow-list lookup below: /admin/dashboard is no longer in PROTECTED_ROUTES,
+  // allow-list lookup below: /admin/dashboard is not in PAGE_RULES,
   // so it would otherwise hit the deny-by-default branch and bounce to /login.
   // A static next.config redirect to Overview would 403/redirect reviewer and
   // content back to /login (Overview is admin-only), hence the cookie-aware
   // branch here. No token verification needed — the redirect only picks a
-  // destination; the destination's own PROTECTED_ROUTES entry still enforces
+  // destination; the destination's own PAGE_RULES entry still enforces
   // auth on the follow-up request.
   if (pathname === "/admin/dashboard" || pathname.startsWith("/admin/dashboard/")) {
+    // Destination only; the landing page's own rule enforces auth on the follow-up request.
     const dashRole = request.cookies.get("cis_role")?.value;
-    const target = dashRole === "admin" ? "/admin/overview" : "/admin/review";
-    return NextResponse.redirect(new URL(target, request.url));
+    return NextResponse.redirect(new URL(landingPage(dashRole), request.url));
   }
 
-  const route = PROTECTED_ROUTES.find(r => pathname.startsWith(r.prefix));
+  const route = pageRule(pathname);
   if (!route) {
     // AA-252 #4/#5: reached middleware (config.matcher matched) but isn't in
     // the allow-list — fail closed instead of silently falling through.
@@ -134,35 +79,44 @@ export async function middleware(request: NextRequest) {
   }
 
   const loginPath = route.prefix === "/portal" ? "/tenant-login" : "/login";
-  const role = request.cookies.get("cis_role")?.value;
+  const allowed = route.roles as string[];
 
-  if (!role || !route.roles.includes(role)) {
-    return NextResponse.redirect(new URL(loginPath, request.url));
-  }
-
-  if (role === "admin" || role === "reviewer") {
-    const verifyResult = await verifyAdminToken(request);
-    if (verifyResult) return verifyResult; // redirect — invalid/expired/missing token
+  // AA-656: identity comes from whichever session token is present, verified server-side.
+  if (request.cookies.get("cis_admin_token")?.value) {
+    const verified = await verifyAdminToken(request);
+    if (verified instanceof NextResponse) return verified; // invalid/expired token
+    if (!isStaffRole(verified.role)) {
+      const response = NextResponse.redirect(new URL("/login", request.url));
+      response.cookies.delete("cis_role");
+      response.cookies.delete("cis_admin_token");
+      return response;
+    }
+    if (!allowed.includes(verified.role)) {
+      // Real staff session, page not allowed for its role → its own landing page, not /login.
+      // Every role's landing page is allowed for that role, so this cannot loop.
+      return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
+    }
     return NextResponse.next();
   }
 
-  if (role === "tenant") {
+  if (request.cookies.get("cis_tenant_token")?.value && allowed.includes("tenant")) {
     const verifyResult = await verifyTenantToken(request);
     if (verifyResult) return verifyResult;
     return NextResponse.next();
   }
 
-  // role === "content" — known limitation, see file header. Not hardened in
-  // this PR; behavior is unchanged from before AA-252.
-  return NextResponse.next();
+  // No token (a bare or forged cis_role cookie proves nothing) → log in.
+  const response = NextResponse.redirect(new URL(loginPath, request.url));
+  response.cookies.delete("cis_role");
+  return response;
 }
 
 // ── AA-232 helper — verify cis_admin_token ──────────────────────────────────
-// Returns a NextResponse (redirect) if verification fails, or null if it
-// passed (caller continues). A missing token always fails closed (AA-252
+// Returns a NextResponse (redirect) if verification fails, or the verified
+// role if it passed (caller checks it against the page rule). A missing token always fails closed (AA-252
 // #1). Only the /auth/verify-admin network-failure case below keeps the
 // fail-open-in-dev / fail-closed-in-prod policy, matching the tenant helper.
-async function verifyAdminToken(request: NextRequest): Promise<NextResponse | null> {
+async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { role: string }> {
   const token = request.cookies.get("cis_admin_token")?.value;
   if (!token) {
     // AA-252: no JWT present → fail closed. The legacy ADMIN_SECRET fallback
@@ -180,7 +134,8 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | nu
   // same 3s-timeout /auth/verify-admin round trip for a token issued
   // milliseconds earlier — under any transient backend latency this could
   // lose the race and bounce the fresh login straight back to /login.
-  if (adminVerifyCache.get(token)) return null;
+  const cached = adminVerifyCache.get(token);
+  if (cached) return { role: cached.role };
 
   try {
     const res = await fetch(`${API_URL}/auth/verify-admin`, {
@@ -198,14 +153,14 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | nu
     }
     const data = await res.json();
     adminVerifyCache.set(token, { adminId: data.admin_id, role: data.role });
-    return null;
+    return { role: data.role };
   } catch {
     const isDev = process.env.NODE_ENV === "development";
     if (!isDev) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
     console.warn("[middleware] Admin JWT verify failed — dev mode, allowing through");
-    return null;
+    return { role: request.cookies.get("cis_role")?.value ?? "" };
   }
 }
 
