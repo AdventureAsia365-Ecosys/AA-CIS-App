@@ -232,6 +232,34 @@ def journey_name(places: Sequence[str], limit: int = 4) -> str:
     return " → ".join(trimmed) if trimmed else "Untitled journey"
 
 
+def best_hub_match(
+    member_tours: set[str], old_hub_tours: Mapping[str, set[str]]
+) -> tuple[str | None, float]:
+    """Pick the existing hub a new family should reuse, by tour-set overlap.
+
+    AA-758 — overlap is **Jaccard over the UNION** (|∩| / |∪|), NOT over min(|a|, |b|). The old
+    min() denominator made any single-tour hub score a perfect 1.0 against a family that merely
+    shared that one tour (|∩|=1, min=1 → 1.0 ≥ SHARED_ENOUGH), so unrelated families all collapsed
+    onto a tiny set of hubs and one hub absorbed hundreds of routes (the 862-on-one / 405-orphan
+    bug). Jaccard over the union only clears SHARED_ENOUGH when the two tour-sets genuinely overlap.
+
+    Returns (hub_id, ratio) of the best match, or (None, 0.0) if none overlaps at all. The caller
+    reuses only when ratio ≥ SHARED_ENOUGH. Tie-break is fully deterministic — highest ratio, then
+    largest absolute overlap, then hub_id — so no single arbitrary hub wins on dict iteration order.
+    """
+    best_hub_id: str | None = None
+    best_ratio = 0.0
+    best_overlap = 0
+    for hub_id, old_tours in old_hub_tours.items():
+        inter = len(member_tours & old_tours)
+        if not inter:
+            continue
+        ratio = inter / len(member_tours | old_tours)
+        if (ratio, inter, hub_id) > (best_ratio, best_overlap, best_hub_id or ""):
+            best_hub_id, best_ratio, best_overlap = hub_id, ratio, inter
+    return best_hub_id, best_ratio
+
+
 # ── DB-facing wrappers (impure) ─────────────────────────────────────────────────────────────
 
 async def run_route_detection(pool) -> dict:
@@ -349,14 +377,14 @@ async def run_route_detection(pool) -> dict:
             # reshuffle, unlike segment_id sets. hub_name equality is checked as a tie-break
             # only when tour-set overlap alone doesn't clear the bar (implementation notes
             # Decision 7).
-            best_hub_id, best_ratio = None, 0.0
-            for hub_id, old_tours in old_hub_tours.items():
-                smaller = min(len(member_tours), len(old_tours))
-                if not smaller:
-                    continue
-                ratio = len(member_tours & old_tours) / smaller
-                if ratio > best_ratio:
-                    best_hub_id, best_ratio = hub_id, ratio
+            # AA-758 — overlap is Jaccard over the UNION, not over min(). Using min() made any
+            # single-tour old hub score 1.0 against a family that merely shared that one tour
+            # (|∩|=1, min=1 → 1.0 ≥ SHARED_ENOUGH), so unrelated families all collapsed onto a
+            # tiny set of hubs and one hub absorbed hundreds of routes (862-on-one, 405 orphans).
+            # Jaccard over the union only reaches SHARED_ENOUGH when the two tour-sets genuinely
+            # overlap. Tie-break is deterministic (largest absolute overlap, then hub_id) so no
+            # single arbitrary hub wins on dict order.
+            best_hub_id, best_ratio = best_hub_match(member_tours, old_hub_tours)
 
             candidates = routes_by_tour.get(family_key, [])
             if candidates:
@@ -382,12 +410,29 @@ async def run_route_detection(pool) -> dict:
                 )
                 hubs_reused += 1
             else:
-                new_hub_id = await conn.fetchval("""
-                    INSERT INTO acp_contract.hub (hub_name)
-                    VALUES ($1) RETURNING hub_id
-                """, name)
-                resolved_hub[family_key] = (str(new_hub_id), name)
-                hubs_created += 1
+                # AA-758 — before minting a brand-new hub, reuse an existing hub row of the SAME
+                # name if one is free (not already claimed by another family this run). The INSERT
+                # has no unique key on hub_name, so without this every rebuild that doesn't match
+                # on tour-overlap minted a fresh UUID for the same journey name, accumulating
+                # orphan hubs. Deterministic pick (oldest hub_id) keeps reruns stable.
+                reused_id = await conn.fetchval("""
+                    SELECT hub_id FROM acp_contract.hub
+                    WHERE hub_name = $1 AND hub_id <> ALL($2::uuid[])
+                    ORDER BY created_at, hub_id LIMIT 1
+                """, name, [h for h, _ in resolved_hub.values()])
+                if reused_id is not None:
+                    await conn.execute(
+                        "UPDATE acp_contract.hub SET updated_at = now() WHERE hub_id = $1::uuid",
+                        reused_id)
+                    resolved_hub[family_key] = (str(reused_id), name)
+                    hubs_reused += 1
+                else:
+                    new_hub_id = await conn.fetchval("""
+                        INSERT INTO acp_contract.hub (hub_name)
+                        VALUES ($1) RETURNING hub_id
+                    """, name)
+                    resolved_hub[family_key] = (str(new_hub_id), name)
+                    hubs_created += 1
 
     finished: list[Route] = []
     for route in routes:
