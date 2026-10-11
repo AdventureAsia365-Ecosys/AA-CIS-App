@@ -264,6 +264,23 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
   drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.
 
+## Contracts with other apps
+
+CIS is the content system of record (ADR 0001 / 0002). Other apps read what it publishes; they never
+write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.md`.
+
+| Consumer | Reads from CIS | Writes into shared | How it is granted |
+|---|---|---|---|
+| AA-TripPlanner-Web | `gold_aa_internal.published_tours` (tenant RLS, AA tenant), `acp_contract.v_active_tour_atoms` (place/activity columns), `shared.destinations` (read-only), photo views `shared.v_destination_photos` / `v_tour_photos` | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migrations 173 (gateway tables + log), 180 / 216 (atoms), 201 (destinations read-only, photo views) to role `tripplanner` |
+| AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
+| AA-Booking (planned) | Catalog: tour templates, activities, destinations through catalog views + an outbox (`catalog.tour.*`, idempotent by `external_ref`, AA-679) | its own `booking.*` | not built yet |
+| Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
+
+Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
+and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
+enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
+waves (`/admin/waves`, AA-727).
+
 ## Boundaries — what this repo does NOT do
 
 - It does not provision AWS resources or OIDC roles (that is AA-CIS-Infra).
