@@ -37,10 +37,12 @@ def test_siblings_capped():
 async def test_atom_seed_text_reads_atom_and_siblings():
     conn = AsyncMock()
     conn.fetchrow.return_value = {"text": "Label", "evidence": "Own source.", "emotional_hook": None,
-                                  "season_note": "Best Oct–Nov"}
+                                  "season_note": "Best Oct–Nov", "place": "Pawangka Monastery",
+                                  "country": "Tibet"}
     conn.fetch.return_value = [{"evidence": "B sibling."}, {"evidence": "A sibling."}]
     seed = await atom_seed_text(conn, "a1", "t1")
-    assert seed == ("Label\nSource itinerary: Own source.\nSeason: Best Oct–Nov\n"
+    assert seed == ("Label\nLocation: Pawangka Monastery, Tibet (do not name any other country or region for it)\n"
+                    "Source itinerary: Own source.\nSeason: Best Oct–Nov\n"
                     "Other itineraries with the same moment:\n- A sibling.\n- B sibling.")
     assert conn.fetchrow.call_args.args[1:] == ("a1", "t1")
     assert "atom_segment_member" in conn.fetch.call_args.args[0]
@@ -52,3 +54,8 @@ async def test_atom_seed_text_none_when_not_visible():
     conn.fetchrow.return_value = None
     assert await atom_seed_text(conn, "a1", "t1") is None
     conn.fetch.assert_not_called()
+
+
+def test_location_line_needs_a_country():
+    assert "Location" not in compose_seed("x", None, None, None, [], place="P", country=None)
+    assert "Location: Bhutan (" in compose_seed("x", None, None, None, [], place=None, country="Bhutan")
