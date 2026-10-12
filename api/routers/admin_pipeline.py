@@ -3825,11 +3825,24 @@ async def revalidate_generated_content(
     from shared.jobs.registry import enqueue
 
     # AA-723: on the durable runner + worker; survives deploys, shows on /admin/job-runner.
-    job_id, created = await enqueue(
-        request.app.state.pool, "revalidate",
-        {"content_id": content_id, "tour_id": tour_id},
-        idempotency_key=f"revalidate:{content_id}",
-        created_by="admin:revalidate")
+    # AA-741 (S229): dedupe against an ACTIVE revalidate of this version only. The old key
+    # `revalidate:{content_id}` is unique for ever in shared.job, so a version could be
+    # revalidated exactly once: a second human edit + Revalidate got the first (finished) job
+    # back and the UI showed its stale result as if it had just run.
+    pool = request.app.state.pool
+    active = await pool.fetchval("""
+        SELECT id FROM shared.job
+        WHERE kind = 'revalidate' AND payload->>'content_id' = $1
+          AND status IN ('queued', 'running')
+        ORDER BY created_at DESC LIMIT 1
+    """, content_id)
+    if active:
+        job_id, created = str(active), False
+    else:
+        job_id, created = await enqueue(
+            pool, "revalidate",
+            {"content_id": content_id, "tour_id": tour_id},
+            created_by="admin:revalidate")
     return JSONResponse(status_code=202, content={
         "job_id": job_id, "status": "queued" if created else "running",
         "dedup": not created, "poll_url": f"/admin/jobs/{job_id}",
