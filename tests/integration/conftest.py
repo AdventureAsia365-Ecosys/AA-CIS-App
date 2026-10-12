@@ -61,12 +61,19 @@ def _apply_schema(conn):
     migrations_dir = os.path.join(
         os.path.dirname(__file__), '..', '..', 'api', 'migrations'
     )
-    # Create app_user role required by GRANT statements in migrations
+    # Create the roles required by GRANT statements in migrations. aa_app_user (AA-741, S231):
+    # without it migration 203 (acp_contract.v_active_tour_atoms) and the other ~50 GRANTs to it
+    # failed silently, so no integration test ever ran against that view.
     cur.execute("""
         DO $$ BEGIN
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
                 CREATE ROLE app_user;
             END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'aa_app_user') THEN
+                CREATE ROLE aa_app_user;
+            END IF;
+        EXCEPTION WHEN insufficient_privilege THEN
+            NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
     """)
     # AA-412: pre-create acp_deliver/acp_contract (real owner: migration 078) so migrations that

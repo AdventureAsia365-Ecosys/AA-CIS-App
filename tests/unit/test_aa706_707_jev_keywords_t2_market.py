@@ -51,15 +51,21 @@ async def test_jev_enforced_accept_adds_synonym_and_reject_drops():
 
 
 class _Conn:
-    def __init__(self, demand):
-        self.demand = demand
+    def __init__(self, demand, name="Paro Taktsang Hike", places=()):
+        self.demand, self.name, self.places = demand, name, places
+        self.terms = None
 
     async def fetchrow(self, sql, *a):
-        return {"tour_id": "t1", "src_name": "Paro Taktsang Hike", "country": "Bhutan", "activities": None}
+        return {"tour_id": "t1", "src_name": self.name, "country": "Bhutan", "activities": None}
 
     async def fetch(self, sql, *a):
-        assert a[0] == "UK"                     # tenant market, not US
-        return self.demand
+        if "v_active_tour_atoms" in sql:
+            return [{"p": p} for p in self.places]
+        if "search_demand" in sql:
+            assert a[0] == "UK"                 # tenant market, not US
+            self.terms = a[1]
+            return self.demand
+        return []                               # shared.destinations (foreign places)
 
 
 @pytest.mark.asyncio
@@ -82,6 +88,22 @@ async def test_t2_market_without_cache_returns_none():
                AsyncMock(return_value=cfg)):
         market, seo = await P.tenant_market_seo(_Conn([]), "tenant-1", "t1")
     assert market == "UK" and seo is None
+
+
+@pytest.mark.asyncio
+async def test_t2_matches_on_atom_places_not_only_the_title():
+    """S231 pilot (AA-741): "CULINARY GEMS OF BHUTAN" gave title places ["culinary"], nothing in
+    search_demand matched, and every pilot T2 fell back to the admin US keywords. The research is
+    bought per atom place, so those places must be match terms too."""
+    demand = [{"keyword": "paro bhutan", "search_volume": 900, "people_also_ask": "[]"},
+              {"keyword": "punakha dzong", "search_volume": 400, "people_also_ask": "[]"}]
+    conn = _Conn(demand, name="CULINARY GEMS OF BHUTAN", places=["paro", "punakha dzong"])
+    cfg = SimpleNamespace(target_market={"countries": ["UK"]})
+    with patch("shared.services.tenant_config_service.TenantConfigService.get_seo_config",
+               AsyncMock(return_value=cfg)):
+        market, seo = await P.tenant_market_seo(conn, "tenant-1", "t1")
+    assert "%paro%" in conn.terms and "%punakha dzong%" in conn.terms
+    assert market == "UK" and set(seo["top_keywords"]) == {"paro bhutan", "punakha dzong"}
 
 
 def test_migration_196_seeds_shadow_question():
