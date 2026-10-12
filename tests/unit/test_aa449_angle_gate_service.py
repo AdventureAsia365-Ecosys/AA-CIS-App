@@ -74,6 +74,11 @@ class _StatefulAngleOptionConn:
     of this file uses (which only checks call counts/args, not resulting DB state). Needed here
     because the fix's correctness is specifically about final state after 2 calls, not just
     which queries fire once."""
+
+    async def fetchval(self, *args, **kwargs):
+        # AA-764 — fetch_request() reads the latest t8_angles job status; none in these tests.
+        return None
+
     def __init__(self):
         self.options = {0: False, 1: False, 2: False}
         self.request_status = "pending_choice"
@@ -460,5 +465,3 @@ class TestFetchRequest:
         result = await service.fetch_request(TENANT_ID, REQUEST_ID, pool)
 
         assert result["dfs_paa_snapshot"] is None
-
-

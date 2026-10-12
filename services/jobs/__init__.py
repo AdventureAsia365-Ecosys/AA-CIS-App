@@ -9,3 +9,5 @@ from . import s1_rewrite_job  # noqa: F401  AA-723
 from . import revalidate_job  # noqa: F401  AA-723
 from . import s1_batch_ingest_job  # noqa: F401  AA-723
 from . import recompute_job  # noqa: F401  AA-723 PR2
+from . import t8_angles_job  # noqa: F401  AA-764
+from . import t7_slate_job  # noqa: F401  AA-764

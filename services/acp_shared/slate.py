@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Optional
 from uuid import UUID
 
 import structlog
@@ -403,8 +404,9 @@ def _choose(
 async def propose_slate(tenant_id: UUID, pool) -> dict:
     """Recompute what clears each Channel's Bar right now, and persist it (AA-511's `run()`).
 
-    Runs on every `GET /v1/slate` (matches the origin: "Storing is deterministic and always
-    runs... the evidence a Subject carries has to be able to grow"). A row already `picked`/
+    AA-764 — runs in a `t7_slate` job (services/jobs/t7_slate_job.py), enqueued by
+    request_slate_proposal(); it used to run inside every `GET /v1/slate` (origin: "Storing is
+    deterministic and always runs... the evidence a Subject carries has to be able to grow"). A row already `picked`/
     `used`/`cut` is NEVER touched by this function — only rows still sitting at `proposed` are
     refreshed or removed. A candidate that no longer clears the Bar, or was cleared but lost its
     `_choose()` seat this run (de-dup'd on place, or its hub is over `most_per_hub` — Gap B), has
@@ -499,6 +501,75 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         "segments_seen": len(segments), "routes_seen": len(routes),
         "unmatched_markets": unmatched_markets,
     }
+
+
+T7_SLATE_KIND = "t7_slate"
+# AA-764 — a proposal older than this is refreshed on the next GET /v1/slate (in the background).
+SLATE_STALE_AFTER_HOURS = 24
+
+
+async def latest_slate_job(tenant_id: UUID, conn) -> Optional[dict]:
+    """AA-764 — the tenant's most recent `t7_slate` job (any status), or None if never proposed."""
+    row = await conn.fetchrow(
+        """
+        SELECT id, status, result, created_at, finished_at FROM shared.job
+        WHERE kind = $1 AND payload->>'tenant_id' = $2
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        T7_SLATE_KIND, str(tenant_id),
+    )
+    if row is None:
+        return None
+    d = dict(row)
+    if isinstance(d["result"], str):
+        d["result"] = json.loads(d["result"])
+    return d
+
+
+async def last_proposal(tenant_id: UUID, conn) -> Optional[dict]:
+    """AA-764 — the result of the tenant's latest SUCCEEDED proposal (unmatched_markets etc.)."""
+    row = await conn.fetchrow(
+        """
+        SELECT result, finished_at FROM shared.job
+        WHERE kind = $1 AND payload->>'tenant_id' = $2 AND status = 'succeeded'
+        ORDER BY finished_at DESC LIMIT 1
+        """,
+        T7_SLATE_KIND, str(tenant_id),
+    )
+    if row is None:
+        return None
+    result = row["result"]
+    if isinstance(result, str):
+        result = json.loads(result)
+    return {"result": result or {}, "finished_at": row["finished_at"]}
+
+
+async def request_slate_proposal(tenant_id: UUID, pool, *, only_if_stale: bool) -> dict:
+    """AA-764 (G5, ADR 0003) — enqueue a `t7_slate` job (services/jobs/t7_slate_job.py) unless
+    one is already queued/running for this tenant. propose_slate() runs Debate (Jev + LLM brand
+    fit) and took 2′48″–4′+ in the S231 pilot — it used to run inside every GET /v1/slate and
+    504 at the gateway. `only_if_stale` (the GET path): enqueue only when the tenant has never
+    had a successful proposal or the last one is older than SLATE_STALE_AFTER_HOURS. A tenant
+    advisory lock serializes the check-then-enqueue so two loads never start two proposals.
+    Returns the latest job row (the new one, the in-flight one, or the last finished one)."""
+    from shared.jobs.registry import enqueue  # local: keeps this module importable without the runner
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"{T7_SLATE_KIND}:{tenant_id}")
+            latest = await latest_slate_job(tenant_id, conn)
+            if latest and latest["status"] in ("queued", "running"):
+                return latest
+            if only_if_stale:
+                last = await last_proposal(tenant_id, conn)
+                fresh = last is not None and last["finished_at"] is not None and await conn.fetchval(
+                    "SELECT $1::timestamptz > now() - make_interval(hours => $2)",
+                    last["finished_at"], SLATE_STALE_AFTER_HOURS,
+                )
+                if fresh:
+                    return latest
+            await enqueue(conn, T7_SLATE_KIND, {"tenant_id": str(tenant_id)},
+                          created_by=f"tenant:{tenant_id}")
+            return await latest_slate_job(tenant_id, conn)
 
 
 async def fetch_slate(tenant_id: UUID, pool) -> dict:
@@ -738,5 +809,6 @@ async def _resolve_representative_atom(
 __all__ = [
     "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS",
     "Candidate", "propose_slate", "fetch_slate", "pick_subject",
+    "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
 ]

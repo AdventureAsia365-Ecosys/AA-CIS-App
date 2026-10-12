@@ -221,6 +221,66 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     return await fetch_request(tenant_id, request_id, pool)
 
 
+T8_ANGLES_KIND = "t8_angles"
+
+
+async def start_goal_generation(tenant_id: UUID, request_id: UUID, goal_key: str, pool) -> dict:
+    """AA-764 (G5, ADR 0003) — the HTTP half of POST .../goal: validate, record the goal and
+    enqueue a `t8_angles` job (services/jobs/t8_angles_job.py), which runs
+    set_goal_and_generate() on the worker. Before this the LLM + Jev calls ran inside the request
+    (15–19 s in the S231 pilot, one 502 at API Gateway's 29 s limit in S229).
+
+    "Generating" needs no new status: status stays 'pending_goal' and `goal` is set — a
+    pending_goal request otherwise always has goal NULL (only set_goal_and_generate() writes it,
+    together with 'pending_choice'). The conditional UPDATE and the enqueue share one transaction,
+    so a double click gets 409 and a crash between the two cannot leave a request "generating"
+    with no job. The job's on_terminal hook clears `goal` again so the tenant can retry."""
+    req = await _fetch_request_row(tenant_id, request_id, pool)
+    if req["status"] != "pending_goal":
+        raise WrongStatusError(
+            f"request_id={request_id} is status={req['status']!r}, expected 'pending_goal' — "
+            "a goal has already been set for this request."
+        )
+    if get_goal(goal_key) is None:
+        raise InvalidGoalError(f"Unknown goal key: {goal_key!r}")
+
+    from shared.jobs.registry import enqueue  # local: keeps this module importable without the runner
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            claimed = await conn.fetchval(
+                """
+                UPDATE acp_shared.angle_gate_request SET goal = $3, updated_at = now()
+                WHERE request_id = $1 AND tenant_id = $2 AND status = 'pending_goal' AND goal IS NULL
+                RETURNING request_id
+                """,
+                request_id, tenant_id, goal_key,
+            )
+            if claimed is None:
+                raise WrongStatusError(
+                    f"request_id={request_id} is already generating angles — wait for it to finish."
+                )
+            job_id, _ = await enqueue(
+                conn, T8_ANGLES_KIND,
+                {"request_id": str(request_id), "tenant_id": str(tenant_id), "goal": goal_key},
+                created_by=f"tenant:{tenant_id}",
+            )
+    logger.info("angle_gate_generation_enqueued", request_id=str(request_id), goal=goal_key, job_id=job_id)
+    return await fetch_request(tenant_id, request_id, pool)
+
+
+async def clear_failed_generation(request_id: str, pool) -> None:
+    """AA-764 — on_terminal for a `t8_angles` job that ended without success: drop the in-flight
+    goal so the request is back to a plain 'pending_goal' and the tenant can choose again."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE acp_shared.angle_gate_request SET goal = NULL, updated_at = now()
+            WHERE request_id = $1::uuid AND status = 'pending_goal'
+            """,
+            request_id,
+        )
+
+
 async def reopen_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
     """AA-497 (AA-494 Decision 3) — the tenant-triggered action that moves an 'approved' request
     back to 'reusable', unlocking choose_angle() below to re-point `chosen` at a different one of
@@ -324,6 +384,16 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
                 """,
                 req["subject_id"],
             )
+        # AA-764 — outcome of the latest angle-generation job, so the portal can tell
+        # "still generating" from "failed, choose again" without a tenant job endpoint.
+        last_generation = await conn.fetchval(
+            """
+            SELECT status FROM shared.job
+            WHERE kind = $1 AND payload->>'request_id' = $2
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            T8_ANGLES_KIND, str(request_id),
+        )
     # AA-501 — dfs_paa_snapshot (migration 127) arrives as a raw JSON string (no jsonb codec
     # registered on this app's connections, same gap admin_a4.py's _parse_jsonb already works
     # around for gate_ledger/escalate_detail) — parse defensively, NULL stays None.
@@ -355,6 +425,12 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
         "goal": req["goal"],
         "cta": req["cta"],
         "status": req["status"],
+        # AA-764 — angles are being generated on the worker (see start_goal_generation()).
+        "generating": req["status"] == "pending_goal" and req["goal"] is not None,
+        "generation_failed": (
+            req["status"] == "pending_goal" and req["goal"] is None
+            and last_generation in ("failed", "cancelled", "stopped_budget")
+        ),
         "dfs_paa_snapshot": snapshot,
         "route_segment_ids": route_segment_ids,
         "created_at": req["created_at"].isoformat(),
@@ -373,5 +449,6 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
 
 __all__ = [
     "AngleGateError", "AtomNotFoundError", "RequestNotFoundError", "InvalidGoalError",
-    "WrongStatusError", "set_goal_and_generate", "choose_angle", "reopen_request", "fetch_request",
+    "WrongStatusError", "set_goal_and_generate", "start_goal_generation", "clear_failed_generation",
+    "T8_ANGLES_KIND", "choose_angle", "reopen_request", "fetch_request",
 ]
