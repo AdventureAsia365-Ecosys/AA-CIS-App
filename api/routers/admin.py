@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from services.notifications import NotificationService, EventType
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
+    MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
 )
 from services.acp_planning.tenant_config import (
     TenantNotFoundError,
@@ -912,20 +913,27 @@ async def update_tenant_brand_identity(
     verify_admin_secret(x_admin_secret)
     tenant_id_s = str(tenant_id)
 
+    # AA-741 (S229): same rules as the tenant's own path — reject over-long, never cut silently.
+    too_long = brand_length_errors(body.model_dump())
+    if too_long:
+        raise HTTPException(status_code=422, detail="Some brand fields are too long — "
+                            + "; ".join(too_long))
     system_prompt = sanitize_text(body.system_prompt, MAX_SYSTEM_PROMPT_LEN)
-    style_guide = sanitize_text(body.writing_style or body.style_guide, MAX_LONG_FIELD_LEN)
+    style_guide = sanitize_text(body.writing_style or body.style_guide, MAX_BRAND_LONG_LEN)
     forbidden_words = sanitize_list(body.forbidden_words or [], MAX_SHORT_FIELD_LEN, max_items=20)
     brand_name = sanitize_text(body.brand_name, MAX_SHORT_FIELD_LEN) or "default"
     brand_type = sanitize_text(body.brand_type, MAX_SHORT_FIELD_LEN)
-    core_idea = sanitize_text(body.core_idea, MAX_LONG_FIELD_LEN)
-    customer_segment = sanitize_text(body.customer_segment, MAX_LONG_FIELD_LEN)
-    customer_mindset = sanitize_text(body.customer_mindset, MAX_LONG_FIELD_LEN)
+    core_idea = sanitize_text(body.core_idea, MAX_BRAND_MEDIUM_LEN)
+    customer_segment = sanitize_text(body.customer_segment, MAX_BRAND_MEDIUM_LEN)
+    customer_mindset = sanitize_text(body.customer_mindset, MAX_BRAND_MEDIUM_LEN)
     tone_of_voice = sanitize_list(body.tone_of_voice or [], MAX_SHORT_FIELD_LEN, max_items=20)
-    good_examples = sanitize_text(body.good_examples, MAX_LONG_FIELD_LEN)
+    good_examples = sanitize_text(body.good_examples, MAX_BRAND_LONG_LEN)
     target_markets = sanitize_list(body.target_markets or [], MAX_SHORT_FIELD_LEN, max_items=20)
+    from services.brand_intake.markets import target_market_json
+    market_json = target_market_json(target_markets)
 
     pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         tenant_exists = await conn.fetchval(
             "SELECT 1 FROM shared.tenants WHERE tenant_id = $1", tenant_id_s
         )
@@ -947,7 +955,16 @@ async def update_tenant_brand_identity(
         """, tenant_id_s, brand_name, brand_type, core_idea, customer_segment, customer_mindset,
             json.dumps(tone_of_voice), style_guide, good_examples, system_prompt,
             json.dumps(forbidden_words), target_markets, current + 1)
-    return {"status": "updated", "version": current + 1}
+        if tenant_id_s != "00000000-0000-0000-0000-000000000001":
+            # AA-741 (S229): the brand's markets drive T2/T7 (tenant_seo_config.target_market).
+            await conn.execute("""
+                INSERT INTO shared.tenant_seo_config (tenant_id, target_market)
+                VALUES ($1::uuid, $2::jsonb)
+                ON CONFLICT (tenant_id) DO UPDATE
+                    SET target_market = EXCLUDED.target_market, updated_at = now()
+            """, tenant_id_s, json.dumps(market_json))
+    return {"status": "updated", "version": current + 1,
+            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
 
 
 # ── GET /admin/tenants/{id}/rewrite-activity ─────────────────────────────────

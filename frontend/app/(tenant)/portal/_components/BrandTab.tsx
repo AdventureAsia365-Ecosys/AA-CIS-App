@@ -83,7 +83,11 @@ export default function BrandTab() {
   const [dirty, setDirty]     = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [viewingV, setViewingV] = useState<number | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "done" | "stored" | "error">("idle");
+  // AA-741 (S229): what the brief upload found, and what the last save did with the markets.
+  const [briefNotes, setBriefNotes] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [marketNote, setMarketNote] = useState<{ countries: string[]; unsupported: string[]; unknown: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Form state
@@ -129,7 +133,7 @@ export default function BrandTab() {
   function markDirty() { setDirty(true); setSaved(false); }
 
   async function save() {
-    setSaving(true); setSaved(false);
+    setSaving(true); setSaved(false); setSaveError(null);
     try {
       const r = await fetch("/api/tenant/admin/brand-identity", {
         method: "POST",
@@ -148,7 +152,17 @@ export default function BrandTab() {
           good_examples: goodExamples,
         }),
       });
-      if (r.ok) { setSaved(true); setDirty(false); setViewingV(null); await load(); }
+      const body = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setSaved(true); setDirty(false); setViewingV(null); setBriefNotes([]);
+        setMarketNote(body.markets ?? null);
+        await load();
+      } else {
+        // AA-741 (S229): was silently ignored — the tenant saw nothing when a save failed.
+        setSaveError(typeof body.detail === "string" ? body.detail : "Could not save. Please try again.");
+      }
+    } catch {
+      setSaveError("Could not save. Please check your connection and try again.");
     } finally { setSaving(false); }
   }
 
@@ -158,13 +172,51 @@ export default function BrandTab() {
     setDirty(true); setSaved(false); setViewingV(v.version);
   }
 
+  // AA-741 (S229): a .docx brief is READ and pre-fills the form for review (nothing is saved until
+  // the tenant presses Save). Before, the upload only stored the file and the form stayed empty.
+  // The original file is still archived; a PDF is archived only (automatic reading is .docx).
   async function handleUpload(file: File) {
-    setUploadStatus("uploading");
+    setUploadStatus("uploading"); setBriefNotes([]);
+    const isDocx = file.name.toLowerCase().endsWith(".docx");
     try {
+      const archive = new FormData(); archive.append("file", file);
+      const stored = fetch("/api/tenant/admin/brand-identity/upload", { method: "POST", body: archive })
+        .catch(() => null);
+      if (!isDocx) {
+        const r = await stored;
+        setUploadStatus(r?.ok ? "stored" : "error");
+        return;
+      }
       const fd = new FormData(); fd.append("file", file);
-      const r = await fetch("/api/tenant/admin/brand-identity/upload", { method: "POST", body: fd });
-      setUploadStatus(r.ok ? "done" : "error");
-      if (r.ok) await load();
+      const r = await fetch("/api/tenant/admin/brand-identity/parse", { method: "POST", body: fd });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setUploadStatus("error");
+        setBriefNotes([typeof body.detail === "string" ? body.detail : "Could not read this file."]);
+        return;
+      }
+      const f = body.fields ?? {};
+      if (f.brand_name) setBrandName(f.brand_name);
+      if (f.brand_type) setBrandType(f.brand_type);
+      if (f.core_idea) setCoreIdea(f.core_idea);
+      if (f.target_markets?.length) setTargetMarkets(f.target_markets.join(", "));
+      if (f.customer_segment) setCustomerSegment(f.customer_segment);
+      if (f.customer_mindset) setCustomerMindset(f.customer_mindset);
+      if (f.tone_of_voice?.length) setToneOfVoice(f.tone_of_voice.join(", "));
+      if (f.style_guide) setSg(f.style_guide);
+      if (f.good_examples) setGoodExamples(f.good_examples);
+      if (f.forbidden_words?.length) setFw(f.forbidden_words.join(", "));
+      const notes: string[] = [...(body.warnings ?? [])];
+      const m = body.markets;
+      if (m?.unsupported?.length) {
+        notes.push(`Market research is not available yet for: ${m.unsupported.join(", ")}. Content `
+          + `for these is written with keywords from ${m.supported?.length ? m.supported.join(", ") : "the US"}.`);
+      }
+      if (m?.unknown?.length) notes.push(`Not recognised as a market: ${m.unknown.join(", ")}.`);
+      setBriefNotes(notes);
+      setUploadStatus("done");
+      markDirty();
+      await stored;               // keep the original file archived
     } catch { setUploadStatus("error"); }
   }
 
@@ -222,7 +274,7 @@ export default function BrandTab() {
             value={coreIdea} onChange={v => { setCoreIdea(v); markDirty(); }}
           />
           <TagListField label="Target Markets" value={targetMarkets} onChange={v => { setTargetMarkets(v); markDirty(); }}
-            placeholder="US, UK" hint="Comma-separated. Used to filter content by market." />
+            placeholder="US, UK, Europe" hint="Comma-separated countries or regions. Europe = UK, Germany, France, Netherlands. Sets the keywords and research your content is written for." />
           <Field
             label="Customer Segment" rows={2}
             placeholder="Who buys this — demographics, income, travel habits."
@@ -295,7 +347,8 @@ export default function BrandTab() {
             <Upload size={24} color={T.gold} style={{ margin: "0 auto 10px" }} />
             <div style={{ fontSize: 13.5, color: T.ink, fontWeight: 500 }}>
               {uploadStatus === "uploading" ? "Uploading…" :
-               uploadStatus === "done"      ? "Uploaded — AI extracting rules" :
+               uploadStatus === "done"      ? "Brief read — review the fields above, then save" :
+               uploadStatus === "stored"    ? "PDF stored — automatic reading works with .docx; fill in the fields above" :
                uploadStatus === "error"     ? "⚠ Upload failed — try again" :
                "Drag PDF or DOCX brand guide here"}
             </div>
@@ -303,13 +356,29 @@ export default function BrandTab() {
           </div>
         </div>
 
+        {briefNotes.length > 0 && (
+          <div role="status" style={{ padding: "12px 14px", marginBottom: 16, background: T.amberSoft, border: "1px solid #F1DDB4", borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: T.amber, marginBottom: 6 }}>Check before saving</div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: T.body, lineHeight: 1.6 }}>
+              {briefNotes.map(n => <li key={n}>{n}</li>)}
+            </ul>
+          </div>
+        )}
+
         {/* Save row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <Btn variant="primary" size="lg" disabled={saving || !dirty} onClick={save}>
             {saving ? "Saving…" : "Save as New Version"}
           </Btn>
           {saved && <span style={{ fontSize: 13, color: T.green, fontWeight: 600 }}><Check size={14} style={{ display: "inline" }} /> Saved — active on next pipeline run</span>}
-          {dirty && !saved && <span style={{ fontSize: 13, color: T.amber }}>● Unsaved changes</span>}
+          {dirty && !saved && !saveError && <span style={{ fontSize: 13, color: T.amber }}>● Unsaved changes</span>}
+          {saveError && <span role="alert" style={{ fontSize: 13, color: T.red }}>{saveError}</span>}
+          {saved && marketNote && (
+            <span style={{ fontSize: 12.5, color: T.muted, width: "100%" }}>
+              Markets in use: {marketNote.countries.filter(c => !marketNote.unsupported.includes(c)).join(", ") || "US (default)"}
+              {marketNote.unsupported.length > 0 && ` · research not available yet for ${marketNote.unsupported.join(", ")}`}
+            </span>
+          )}
         </div>
       </div>
 

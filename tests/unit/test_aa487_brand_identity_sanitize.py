@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from fastapi import HTTPException
+
 from api.routers import admin_pipeline
 
 TENANT = str(uuid.uuid4())
@@ -36,6 +38,14 @@ def _make_conn(current_version=0):
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=current_version)
     conn.execute = AsyncMock(return_value=None)
+
+    class _Txn:  # AA-741: the brand save is one transaction (brand row + tenant markets)
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+    conn.transaction = MagicMock(return_value=_Txn())
     return conn
 
 
@@ -52,7 +62,8 @@ async def test_update_brand_identity_strips_injection_from_system_prompt():
 
     # second conn.execute call is the INSERT; system_prompt is the 3rd bind param (after
     # tenant_id, then $1=tenant_id,$2=system_prompt in the SQL — see call args below)
-    insert_call = conn.execute.call_args_list[-1]
+    insert_call = next(c for c in conn.execute.call_args_list
+                       if "INSERT INTO shared.tenant_brand_rules" in c.args[0])
     persisted_system_prompt = insert_call.args[2]
     assert "ignore all previous instructions" not in persisted_system_prompt.lower()
     assert "you are now" not in persisted_system_prompt.lower()
@@ -68,11 +79,12 @@ async def test_update_brand_identity_caps_style_guide_length():
         style_guide="A" * 5000,
         forbidden_words=None,
     )
-    await admin_pipeline.update_brand_identity(body, _make_request(pool), tenant_id=TENANT)
-
-    insert_call = conn.execute.call_args_list[-1]
-    persisted_style_guide = insert_call.args[3]
-    assert len(persisted_style_guide) <= admin_pipeline.MAX_LONG_FIELD_LEN
+    # AA-741 (S229): over-long is REJECTED (422), never silently cut (300 chars dropped ~70%
+    # of a real brief's style guide).
+    with pytest.raises(HTTPException) as e:
+        await admin_pipeline.update_brand_identity(body, _make_request(pool), tenant_id=TENANT)
+    assert e.value.status_code == 422
+    conn.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -87,7 +99,8 @@ async def test_update_brand_identity_sanitizes_forbidden_words_list():
     await admin_pipeline.update_brand_identity(body, _make_request(pool), tenant_id=TENANT)
 
     import json
-    insert_call = conn.execute.call_args_list[-1]
+    insert_call = next(c for c in conn.execute.call_args_list
+                       if "INSERT INTO shared.tenant_brand_rules" in c.args[0])
     persisted_forbidden = json.loads(insert_call.args[4])
     assert "cheap" in persisted_forbidden
     assert not any("ignore previous instructions" in w.lower() for w in persisted_forbidden)
@@ -104,6 +117,7 @@ async def test_update_brand_identity_normal_content_passes_through():
     )
     await admin_pipeline.update_brand_identity(body, _make_request(pool), tenant_id=TENANT)
 
-    insert_call = conn.execute.call_args_list[-1]
+    insert_call = next(c for c in conn.execute.call_args_list
+                       if "INSERT INTO shared.tenant_brand_rules" in c.args[0])
     assert insert_call.args[2] == "Write in a warm, family-friendly voice for adventure travel."
     assert insert_call.args[3] == "Short sentences, active voice."
