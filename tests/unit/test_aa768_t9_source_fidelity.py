@@ -203,3 +203,27 @@ class TestSeoFit:
         title = "Kyichu Lhakhang and the Paro Valley: a quiet guide for Bhutan travellers"
         out = service._fit_seo_meta({"seo_title": title}, keyword="bhutan travellers")
         assert out["seo_title"] == title or "bhutan travellers" in out["seo_title"].lower()
+
+
+def test_round5_rules_reach_writer_and_judge():
+    """AA-768 round 5 (Nghiệp: combine all three) — background allowed, scene detail and other
+    locations forbidden, in both the writer prompt and the F9 judge rule."""
+    assert "invented scene detail" in SYSTEM_PROMPT and "LOCATION:" in SYSTEM_PROMPT
+    assert "who founded it" in SYSTEM_PROMPT
+    data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
+            "failure_codes": [], "flagged_phrases": [], "notes": ""}
+    with patch.object(qg, "invoke_judge", return_value=_judge(**data)) as mock_judge:
+        qg.gate_brand_voice("piece", "Book", "rubric", source_text="seed")
+    prompt = mock_judge.call_args[0][1]
+    assert "who founded it" in prompt and "other than the SOURCE's Location" in prompt
+    assert "invented scene detail" in prompt
+
+
+def test_blog_prompt_asks_for_rhythm_f3_checks():
+    prompt = build_user_prompt(
+        content_seed="seed", goal={"name": "g", "description": "d", "logic": "l", "key": "k"},
+        channel_style={"channel": "blog", "display_name": "Blog", "use_when": "u",
+                       "structure": "s", "style": "st", "avoid": "a"},
+        brand_audience={}, angle={"name": "a", "why_it_works": "w", "best_final_style": "b"}, cta="Book",
+    )
+    assert "a single sentence" in prompt and "at most one" in prompt and "half as" in prompt

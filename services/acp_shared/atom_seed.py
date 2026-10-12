@@ -18,10 +18,13 @@ from typing import Optional
 
 MAX_SIBLINGS = 4
 
+# AA-768 round 5 — + the atom's place and its source tour's country: without them the writer
+# guessed where a place is (Pawangka, near Lhasa, written as "above Luang Prabang" and "Ladakh").
 _ATOM_QUERY = """
-    SELECT text, evidence, emotional_hook, season_note
-    FROM acp_contract.tour_atoms
-    WHERE atom_id = $1 AND owner_scope IN ('platform', $2) AND NOT deleted AND NOT is_empty_marker
+    SELECT ta.text, ta.evidence, ta.emotional_hook, ta.season_note, ta.place, rt.country
+    FROM acp_contract.tour_atoms ta
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE ta.atom_id = $1 AND ta.owner_scope IN ('platform', $2) AND NOT ta.deleted AND NOT ta.is_empty_marker
 """
 
 # Other live atoms of the same Segment (any tour), same visibility rule as the atom itself.
@@ -38,10 +41,14 @@ _SIBLING_EVIDENCE_QUERY = """
 
 
 def compose_seed(text: str, evidence: Optional[str], hook: Optional[str], season: Optional[str],
-                 sibling_evidence: list[str]) -> str:
+                 sibling_evidence: list[str], *, place: Optional[str] = None,
+                 country: Optional[str] = None) -> str:
     """Pure: the seed block from an atom's fields. Empty fields are left out; sibling evidence is
     de-duplicated against this atom's own and capped at MAX_SIBLINGS."""
     lines = [text.strip()]
+    if country and country.strip():
+        where = f"{place.strip()}, {country.strip()}" if place and place.strip() else country.strip()
+        lines.append(f"Location: {where} (do not name any other country or region for it)")
     if evidence and evidence.strip():
         lines.append(f"Source itinerary: {evidence.strip()}")
     if hook and hook.strip():
@@ -69,4 +76,5 @@ async def atom_seed_text(conn, atom_id: str, tenant_id: str) -> Optional[str]:
         return None
     siblings = [r["evidence"] for r in await conn.fetch(_SIBLING_EVIDENCE_QUERY, atom_id, str(tenant_id))]
     siblings.sort()  # deterministic choice of which siblings make the cap
-    return compose_seed(row["text"], row["evidence"], row["emotional_hook"], row["season_note"], siblings)
+    return compose_seed(row["text"], row["evidence"], row["emotional_hook"], row["season_note"], siblings,
+                        place=row["place"], country=row["country"])

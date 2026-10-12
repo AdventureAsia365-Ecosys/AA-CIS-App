@@ -45,6 +45,9 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
   exactly "## FAQ", followed by one or more Q/A pairs in this exact format and nothing else:
   **Q: <question>**
   A: <answer>
+- Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
+  bulleted list, and give the richest moment (or section) clearly more depth — at least half as
+  long again as any other section.
 - Immediately after every sentence that uses a specific fact, number, or detail drawn from the
   content seed, append the tag [R:{atom_id}] (this literal id, no spaces inside the brackets). A
   sentence with no such detail needs no tag. This tag is internal provenance markup that will be
@@ -68,6 +71,9 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
   exactly "## FAQ", followed by one or more Q/A pairs in this exact format and nothing else:
   **Q: <question>**
   A: <answer>
+- Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
+  bulleted list, and give the richest moment (or section) clearly more depth — at least half as
+  long again as any other section.
 - The CONTENT SEED below is organized into several moments along the route, each preceded by its
   own citation id (shown as "[Moment id=<id>]"). Immediately after every sentence that uses a
   specific fact, number, or detail drawn from one of these moments, append the tag [R:<id>] using
@@ -144,11 +150,18 @@ Rules:
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
 - SOURCE FIDELITY (AA-768, same policy as the tour writer):
-  ALLOWED: short, well-known background about a place the content seed names (what it is, its
-  setting, why it matters) — written in words, without numbers.
+  ALLOWED: short, widely known background about a place the content seed names — what it is,
+  its history and era, who founded it, its religious or cultural role, whether it is still in
+  use — written in words, without numbers unless the seed has them.
   FORBIDDEN: anything that promises the reader something about THIS trip that the content seed
   does not state — activities, food, services, guides, transport or travel times, clock-times,
   views or wildlife sightings, accommodation features, inclusions.
+  FORBIDDEN: invented scene detail — what the place looks, sounds or smells like, the state of
+  its paths, steps or roads, how it is reached, how crowded it is, what "most visitors" do —
+  unless the content seed says it. Make the piece vivid with the seed's own details and the
+  place's real background instead.
+  LOCATION: name only the location the seed gives (its "Location" line); never place it in
+  another town, region or country.
   NUMBERS: write a number (height, distance, year, decade, century, age, day count, duration,
   price, fee, processing time, group size) ONLY if that exact number appears in the content
   seed, its FACTS section, the TRIP name or the AUDIENCE line. Otherwise say it without the
