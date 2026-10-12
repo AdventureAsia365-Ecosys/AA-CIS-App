@@ -325,13 +325,9 @@ async def start_write(
     # write/rewrite call AND fold into the grounding-gate's own `atom_text` argument — see this
     # module's own AA-529 comments below for why it's merged there rather than threaded as a
     # wholly separate pipeline.
-    facts = await fetch_facts_for_writing(tenant_id, pool)
-    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
-        facts, moment=atom_text, angle=chosen, trip=trip_name or destination, tenant_id=tenant_id,
-    )
-    if facts_left_out:
-        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
-    facts_text = format_facts_block(facts)
+    # AA-764 — Facts are fetched and Jev-filtered in the t9_write job (resolve_facts(), called
+    # first thing in run_write_background()), not here: select_relevant_facts() makes one Jev call
+    # per fact and this is still the HTTP request.
 
     context = {
         "atom_text": atom_text, "goal": goal, "channel_style": channel_style,
@@ -340,7 +336,8 @@ async def start_write(
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
-        "facts_text": facts_text,  # AA-529 — "" (not None) when no Facts Entry exists yet
+        "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
+        "facts_pending": True,  # AA-764
         # AA-485 — route_hub_name/route_segment_count weren't previously carried in `context`
         # (only used inline, at the placeholder INSERT above) because nothing needed them again
         # afterward. The buffer-retry path (run_write_background()'s own trailing step) inserts
@@ -408,6 +405,25 @@ async def _insert_placeholder_piece(
     return _row_to_dict(row)
 
 
+async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
+    """AA-764 (G5) — the T9 fact-select step (AA-529 Facts + AA-700 Jev relevance filter), moved
+    out of start_write() so its Jev calls run in the t9_write job, not in the HTTP request.
+    Fills `context["facts_text"]` in place, once (the buffer retry reuses the same context).
+    A context without `facts_pending` (built before AA-764, or by a test) is left untouched."""
+    if not context.get("facts_pending"):
+        return
+    tenant_id = UUID(context["tenant_id"])
+    facts = await fetch_facts_for_writing(tenant_id, pool)
+    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
+        facts, moment=context["atom_text"], angle=context["chosen"],
+        trip=context.get("trip_name") or context.get("destination"), tenant_id=tenant_id,
+    )
+    if facts_left_out:
+        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
+    context["facts_text"] = format_facts_block(facts)
+    context["facts_pending"] = False
+
+
 async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, pool) -> None:
     """The write/rewrite + T10-check loop — UNCHANGED body from the pre-AA-466 single-function
     write_and_check(), just reading its inputs from `context` (built by start_write()) instead
@@ -419,6 +435,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     (Bedrock throttle, network error, anything) BEFORE producing real content — written back as
     status='failed', distinct from status='held' (a real, complete, gate-blocked outcome with
     real content_text) — see migration 118's header for why these must not be conflated."""
+    await resolve_facts(request_id, context, pool)  # AA-764 — Jev fact-select runs here, in the job
     atom_text, goal, channel_style = context["atom_text"], context["goal"], context["channel_style"]
     brand_audience, chosen, cta = context["brand_audience"], context["chosen"], context["cta"]
     destination, trip_name = context["destination"], context["trip_name"]

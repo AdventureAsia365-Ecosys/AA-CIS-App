@@ -176,7 +176,8 @@ class TestBuildUserPromptFactsIntegration:
 
 @pytest.mark.asyncio
 class TestStartWriteFactsIntegration:
-    """service.py::start_write() must fetch Facts once and carry them in `context`."""
+    """start_write() marks Facts pending; resolve_facts() (run in the t9_write job, AA-764)
+    fetches them once and carries them in `context`."""
 
     async def test_facts_text_landed_in_context(self):
         conn = AsyncMock()
@@ -193,7 +194,11 @@ class TestStartWriteFactsIntegration:
              patch.object(service, "fetch_brand_rubric_text", new=AsyncMock(return_value="rubric")), \
              patch.object(service, "get_goal", return_value=GOAL):
             result = await service.start_write(TENANT_ID, REQUEST_ID, pool)
+        assert result["context"]["facts_pending"] is True  # AA-764 — not selected in the request
+        assert result["context"]["facts_text"] is None
+        await service.resolve_facts(REQUEST_ID, result["context"], pool)
 
+        assert result["context"]["facts_pending"] is False
         assert "[Fact id=fact_price100]" in result["context"]["facts_text"]
         assert "About $100 for 5 days" in result["context"]["facts_text"]
         # ALL platform + own-tenant facts, never another tenant's — enforced by the query itself
@@ -213,6 +218,7 @@ class TestStartWriteFactsIntegration:
              patch.object(service, "fetch_brand_rubric_text", new=AsyncMock(return_value="rubric")), \
              patch.object(service, "get_goal", return_value=GOAL):
             result = await service.start_write(TENANT_ID, REQUEST_ID, pool)
+        await service.resolve_facts(REQUEST_ID, result["context"], pool)  # AA-764
 
         assert result["context"]["facts_text"] == ""
 

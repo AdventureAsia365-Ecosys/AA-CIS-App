@@ -95,7 +95,11 @@ interface SlateResponse {
   // doesn't support yet (a tenant who declared nothing at all never sees this — that case's US
   // default is a legitimate product choice, not something to warn about).
   unmatched_markets?: string[];
+  // AA-764 — the Slate is proposed by a background job; `refreshing` while it runs.
+  refresh?: { status: string; refreshing: boolean; finished_at: string | null };
 }
+
+const SLATE_REFRESH_POLL_MS = 15_000;
 
 // Order: 5 weekly-rhythm tabs first, then the 3 on-demand ones — matches the build prompt's own
 // "5 tab nhịp tuần + 3 tab theo yêu cầu" grouping. `group` drives the tab-strip divider + icon
@@ -136,6 +140,29 @@ export default function SlateTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  // AA-764 — GET /v1/slate only reads now; while a background proposal runs, re-read quietly
+  // (no skeleton) until it finishes so new topics appear on their own.
+  const refreshing = !!data?.refresh?.refreshing;
+  useEffect(() => {
+    if (!refreshing) return;
+    const id = setInterval(() => {
+      fetch("/api/tenant/v1/slate")
+        .then(r => (r.ok ? r.json() : null))
+        .then((d: SlateResponse | null) => { if (d) setData(d); })
+        .catch(() => { /* transient — next tick */ });
+    }, SLATE_REFRESH_POLL_MS);
+    return () => clearInterval(id);
+  }, [refreshing]);
+
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const requestRefresh = useCallback(() => {
+    setRefreshError(null);
+    fetch("/api/tenant/v1/slate/refresh", { method: "POST" })
+      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then((d: { refresh: SlateResponse["refresh"] }) => setData(prev => (prev ? { ...prev, refresh: d.refresh } : prev)))
+      .catch(e => setRefreshError(e.detail ?? "Couldn't start a refresh — try again."));
+  }, []);
+
   const active = data?.channels[activeChannel];
 
   return (
@@ -168,6 +195,29 @@ export default function SlateTab() {
           measured demand and questions to answer; attention-led Channels need enough of the
           journey actually described. Sorted strongest first. Pick one to start writing.
         </p>
+
+        {/* AA-764 — proposal state: topics are re-ranked in the background, never on page load. */}
+        {data && (
+          <div style={{
+            marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            fontSize: 12, color: T.muted,
+          }}>
+            {refreshing ? (
+              <span role="status">Updating topics in the background — new ones appear here when it finishes (a few minutes).</span>
+            ) : (
+              <span>
+                {data.refresh?.finished_at
+                  ? <>Topics last updated {new Date(data.refresh.finished_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}.</>
+                  : <>Topics haven&rsquo;t been ranked yet.</>}
+                {data.refresh?.status === "failed" && <> The last update didn&rsquo;t finish.</>}
+              </span>
+            )}
+            <Btn variant="secondary" disabled={refreshing} onClick={requestRefresh}>
+              {refreshing ? "Updating…" : "Update topics"}
+            </Btn>
+            {refreshError && <span style={{ color: T.red }}>{refreshError}</span>}
+          </div>
+        )}
 
         {/* AA-629 — explicit notice instead of silently showing US-market ranking data for a
             tenant whose declared markets aren't supported yet. */}
