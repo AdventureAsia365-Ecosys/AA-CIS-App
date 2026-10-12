@@ -203,18 +203,18 @@ Return JSON ONLY, no markdown, exactly:
 {{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "feedback": "<string>"}}"""
 
 
-def score_candidate_fit(brand_profile: dict, candidate: dict) -> BrandFitResult:
+def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s1_judge") -> BrandFitResult:
     """Debate's brand-fit call (AA-631): same stage route, temperature/seed and result shape as
     `score_brand_fit()`, but scores a candidate topic from raw evidence instead of finished copy.
     `candidate` = {"place", "action", "evidence": [str, ...]}. There is no mission axis — nothing
     has been written yet — so `mission_present` is always True and never caps the score.
     Raises on any failure, like `score_brand_fit()`."""
     return _judge(CANDIDATE_JUDGE_SYSTEM, _build_candidate_prompt(brand_profile, candidate),
-                  mission_absent_cap=None)
+                  mission_absent_cap=None, stage=stage)
 
 
 def score_brand_fit(
-    brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0,
+    brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
 ) -> BrandFitResult:
     """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
     (same system prompt, same model_tier pin, same temperature/seed, same score-combining
@@ -233,13 +233,13 @@ def score_brand_fit(
     """
     system_prompt = JUDGE_SYSTEM
     user_prompt = _build_judge_prompt(brand_profile, generated)
-    first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap)
+    first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
 
     lo, hi = _REPEAT_BAND
     if _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
         return first
 
-    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap)
+    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
                          for _ in range(_REPEAT_EXTRA)]
     brand_fits = [r.brand_fit_score for r in results]
     distincts = [r.cross_brand_distinct for r in results]
@@ -273,13 +273,15 @@ def _seeded_model(model_used: Optional[str]) -> bool:
     return True if m is None else bool(m.supports_temperature)
 
 
-def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None) -> BrandFitResult:
+def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None,
+           stage: str = "s1_judge") -> BrandFitResult:
     request = LLMRequest(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         # AA-659 / ADR 0006: the model comes from the "s1_judge" stage route. The judge-vendor ≠
         # writer-vendor rule (ADR-2026-014/027) is enforced when the route is saved in admin.
-        stage="s1_judge",
+        # AA-763: T2 passes "t2_judge", Debate "t7_debate_judge" (same route, own key).
+        stage=stage,
         temperature=_JUDGE_TEMPERATURE,
         seed=_JUDGE_SEED,
     )

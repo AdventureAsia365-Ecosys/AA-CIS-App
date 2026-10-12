@@ -6,6 +6,7 @@ import asyncio
 import json
 import structlog
 import asyncpg
+from services.content_generation.stages import stage_for
 from json_repair import repair_json
 
 from shared.secrets import get_database_url
@@ -204,7 +205,8 @@ Preserve all product facts. Return strict JSON only."""
 _META_REREPAIR_MAX_ATTEMPTS = 3
 
 
-def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None) -> str:
+def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None,
+                   stage: str = "s1_flag_fix") -> str:
     """AA-205 / AA-608: bounded RETRY loop that rewrites seo_meta until it lands in
     [SEO_META_MIN, SEO_META_MAX] as a complete sentence, or the attempt budget is spent.
 
@@ -241,7 +243,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 + "- Return JSON: {\"seo_meta\": \"...\"}"
             )
             resp = LLMClient().generate(LLMRequest(
-                system_prompt=FIX_SYSTEM, user_prompt=prompt, model_tier=model_tier, stage="s1_flag_fix",
+                system_prompt=FIX_SYSTEM, user_prompt=prompt, model_tier=model_tier, stage=stage,
             ))
             raw = resp.content.strip()
             fence = chr(96) * 3
@@ -255,7 +257,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
             guarded = _best(candidate, best, forbidden=forbidden)
             landed = _in_band(guarded, forbidden)
             record_call_sync(
-                stage="s1_flag_fix", role="writer", model=resp.model_used,
+                stage=stage, role="writer", model=resp.model_used,
                 tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
                 cost_usd=resp.cost_usd,
                 quality_signal={"meta_landed_in_band": landed, "candidate_len": len(guarded),
@@ -355,13 +357,14 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
             continue
         new_title, new_body, resp = nudge_itinerary_day(
             client, source_text, days[day_num]["title"], days[day_num]["body"], target_words,
+            stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
         )
         extra_cost += resp.cost_usd
         nudges_used += 1
         new_ratio = len(new_body.split()) / target_words
         in_clamp = ITINERARY_CLAMP_MIN <= new_ratio <= ITINERARY_CLAMP_MAX
         record_call_sync(
-            stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
+            stage=stage_for(state, "s1_itinerary_nudge"), role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd,
             quality_signal={"landed_in_clamp": in_clamp, "ratio_after_nudge": round(new_ratio, 3)},
@@ -530,7 +533,7 @@ Keep all other fields unchanged."""
             # file's own AA-518 comment). No explicit tier here (this is always a repair pass,
             # never AA-237's auto-upgrade target), so config now drives it directly.
             model_tier=state.get("model_tier"),
-            stage="s1_flag_fix",
+            stage=stage_for(state, "s1_flag_fix"),  # AA-763: t2_flag_fix on a tenant rewrite
         )
         resp = llm_client.generate(request)
 
@@ -557,9 +560,8 @@ Keep all other fields unchanged."""
                 logger.warning("flag_fix_json_unrecoverable", raw_len=len(raw))
                 raise
         record_call_sync(
-            # AA-620: s1_flag_fix stays SHARED between A1 and T2 (not split — Haiku is fine for
-            # both, see AA-620). Only tenant_id is threaded so a T2 fix-pass logs its real tenant.
-            stage="s1_flag_fix", role="writer", model=resp.model_used,
+            # AA-763 (G4) reverses AA-620's "shared": T2 logs and routes as t2_flag_fix (same route).
+            stage=stage_for(state, "s1_flag_fix"), role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, tenant_id=state.get("tenant_id"),  # AA-620
             quality_signal={"fields_fixed": len(fix_keys), "fields_requested": sorted(fix_keys)},
@@ -600,6 +602,7 @@ Keep all other fields unchanged."""
                 _guarded = _rerepair_meta(
                     _post_meta, tour, new_generated, state.get("model_tier"),
                     intent_clue=_clue, forbidden=_meta_forbidden,
+                    stage=stage_for(state, "s1_flag_fix"),  # AA-763
                 )
             # AA-608 (H3 finding): if STILL out of band after the bounded re-repair loop,
             # keep the best candidate but DO NOT escalate to manual_check. A meta length

@@ -203,7 +203,7 @@ async def test_apply_debate_brand_fit_cache_miss_calls_llm_and_stores(_no_llm_ca
     conn.execute.assert_called_once()  # cache write
     assert out == [candidate]
     log = _no_llm_call_log_writes.call_args.kwargs
-    assert log["stage"] == "s1_judge" and log["quality_signal"]["source"] == "debate"
+    assert log["stage"] == "t7_debate_judge" and log["quality_signal"]["source"] == "debate"  # AA-763
     assert log["cost_usd"] == 0.001 and log["tenant_id"]
 
 
