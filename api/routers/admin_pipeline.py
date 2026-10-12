@@ -4843,17 +4843,23 @@ async def update_brand_identity(
             "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
 
 
-_BRAND_UPLOAD_MAX_BYTES = 10 * 1024 * 1024  # 10MB — matches BrandTab.tsx's own stated limit
+_BRIEF_PARSE_MAX_BYTES = 5 * 1024 * 1024   # base64 adds ~33%; API Gateway caps a request at 10 MB
 _BRAND_UPLOAD_ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
 }
 
 
+class BrandFileUpload(BaseModel):
+    filename: str = "brand.docx"
+    content_type: str
+    file_base64: str
+
+
 @router.post("/brand-identity/upload")
 async def upload_brand_file(
+    body: BrandFileUpload,
     tenant_id: str = Depends(_resolve_brand_tenant_id),
-    file: UploadFile = File(...),
 ):
     """AA-441 (bug #4): was a JSON-body endpoint that only ever handed back a presigned S3 PUT
     URL — the client was expected to PUT the file directly to S3 afterward, but no code
@@ -4872,20 +4878,25 @@ async def upload_brand_file(
     import uuid as _uuid2
     import re as _re2
 
-    if file.content_type not in _BRAND_UPLOAD_ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type: {file.content_type}")
+    # AA-741 (S229): base64 JSON, not multipart. The REST API Gateway in front of the API has no
+    # binaryMediaTypes, so multipart bytes were corrupted in transit — every brand file stored
+    # here before was damaged (verified: a 15,191-byte .docx arrived as 25,187 bytes).
+    if body.content_type not in _BRAND_UPLOAD_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: {body.content_type}")
+    try:
+        contents = base64.b64decode(body.file_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="The file could not be read (invalid encoding)")
+    if len(contents) > _BRIEF_PARSE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 5MB limit")
 
-    contents = await file.read()
-    if len(contents) > _BRAND_UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 10MB limit")
-
-    safe_name = _re2.sub(r'[^a-zA-Z0-9._-]', '_', file.filename or "brand.pdf")
+    safe_name = _re2.sub(r'[^a-zA-Z0-9._-]', '_', body.filename or "brand.pdf")
     s3_key    = f"brand-identity/{tenant_id}/{_uuid2.uuid4()}_{safe_name}"
     bucket    = os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-867490540162")
 
     s3 = _boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1"))
     try:
-        s3.put_object(Bucket=bucket, Key=s3_key, Body=contents, ContentType=file.content_type)
+        s3.put_object(Bucket=bucket, Key=s3_key, Body=contents, ContentType=body.content_type)
     except Exception as e:
         logger.error("brand_identity_upload_failed", tenant_id=tenant_id, s3_key=s3_key, error=str(e))
         raise HTTPException(status_code=502, detail="Upload to storage failed")
@@ -4893,23 +4904,36 @@ async def upload_brand_file(
     return {"status": "uploaded", "s3_key": s3_key}
 
 
+
+
+class ParseBriefRequest(BaseModel):
+    filename: str = "brief.docx"
+    file_base64: str
+
+
 @router.post("/brand-identity/parse")
 async def parse_brand_brief(
+    body: ParseBriefRequest,
     tenant_id: str = Depends(_resolve_brand_tenant_id),
-    file: UploadFile = File(...),
 ):
-    """AA-741 (S229) — T0: read an uploaded brand brief (.docx) and return the Brand Identity form
-    fields for the tenant to REVIEW. Nothing is saved here; the tenant saves through
+    """AA-741 (S229) — T0: read a brand brief (.docx) and return the Brand Identity form fields
+    for the tenant to REVIEW. Nothing is saved here; the tenant saves through
     POST /admin/brand-identity after checking the form. Same auth as the form (tenant JWT, or the
-    admin secret for aa_internal)."""
-    if file.content_type != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" \
-            and not (file.filename or "").lower().endswith(".docx"):
+    admin secret for aa_internal).
+
+    The file comes as base64 JSON, not multipart: the REST API Gateway in front of the API has no
+    binaryMediaTypes, so a multipart body is treated as text and its bytes are corrupted on the
+    way in ("Bad offset for central directory")."""
+    if not (body.filename or "").lower().endswith(".docx"):
         raise HTTPException(status_code=415, detail="Upload the brief as a Word .docx file")
-    contents = await file.read()
-    if len(contents) > _BRAND_UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 10MB limit")
+    try:
+        contents = base64.b64decode(body.file_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="The file could not be read (invalid encoding)")
+    if len(contents) > _BRIEF_PARSE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="The brief is larger than 5 MB")
     out = _parse_brief_or_400(contents)
-    logger.info("brand_brief_parsed", tenant_id=tenant_id, filename=file.filename,
+    logger.info("brand_brief_parsed", tenant_id=tenant_id, filename=body.filename,
                 fields=sorted(k for k, v in out["fields"].items() if v), warnings=len(out["warnings"]))
     return {"fields": out["fields"], "warnings": out["warnings"], "markets": out["markets"]}
 

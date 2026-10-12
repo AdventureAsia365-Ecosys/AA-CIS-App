@@ -75,6 +75,15 @@ function TagListField({ label, value, onChange, placeholder, hint }: {
   );
 }
 
+function toBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function BrandTab() {
   const [data, setData]     = useState<BrandData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,16 +188,28 @@ export default function BrandTab() {
     setUploadStatus("uploading"); setBriefNotes([]);
     const isDocx = file.name.toLowerCase().endsWith(".docx");
     try {
-      const archive = new FormData(); archive.append("file", file);
-      const stored = fetch("/api/tenant/admin/brand-identity/upload", { method: "POST", body: archive })
-        .catch(() => null);
+      if (file.size > 5 * 1024 * 1024) {
+        setUploadStatus("error"); setBriefNotes(["The file is larger than 5 MB."]);
+        return;
+      }
+      // Sent as base64 JSON, not multipart: the API Gateway in front of the API corrupts binary
+      // multipart bodies (AA-741, S229).
+      const file_base64 = await toBase64(file);
+      const payload = { filename: file.name, content_type: file.type || (isDocx
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf"),
+        file_base64 };
+      const stored = fetch("/api/tenant/admin/brand-identity/upload", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      }).catch(() => null);
       if (!isDocx) {
         const r = await stored;
         setUploadStatus(r?.ok ? "stored" : "error");
         return;
       }
-      const fd = new FormData(); fd.append("file", file);
-      const r = await fetch("/api/tenant/admin/brand-identity/parse", { method: "POST", body: fd });
+      const r = await fetch("/api/tenant/admin/brand-identity/parse", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, file_base64 }),
+      });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) {
         setUploadStatus("error");
@@ -352,7 +373,7 @@ export default function BrandTab() {
                uploadStatus === "error"     ? "⚠ Upload failed — try again" :
                "Drag PDF or DOCX brand guide here"}
             </div>
-            <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, marginTop: 6 }}>PDF · DOCX · Max 10MB</div>
+            <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, marginTop: 6 }}>DOCX is read automatically · PDF is stored only · Max 5MB</div>
           </div>
         </div>
 

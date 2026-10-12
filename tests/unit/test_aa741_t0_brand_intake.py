@@ -142,3 +142,41 @@ async def test_aa_internal_markets_stay_owned_by_admin_settings():
     await admin_pipeline.update_brand_identity(body, _request(_pool(conn)),
                                                tenant_id=admin_pipeline._AA_INTERNAL_TENANT_ID)
     assert not any("tenant_seo_config" in c.args[0] for c in conn.execute.call_args_list)
+
+
+# ── parse endpoint: base64 JSON (API Gateway corrupts binary multipart) ────────────────────
+
+def _docx_bytes(paragraphs):
+    import io
+    from docx import Document
+    d = Document()
+    for p in paragraphs:
+        d.add_paragraph(p)
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_parse_endpoint_reads_a_base64_docx():
+    import base64
+    from api.routers import admin_pipeline
+    raw = _docx_bytes(BRIEF)
+    out = await admin_pipeline.parse_brand_brief(
+        admin_pipeline.ParseBriefRequest(filename="b.docx", file_base64=base64.b64encode(raw).decode()),
+        tenant_id="t-1")
+    assert out["fields"]["brand_type"] == "Young active adventure travel brand"
+    assert out["markets"]["unsupported"] == ["CA", "SG"]
+
+
+@pytest.mark.asyncio
+async def test_parse_endpoint_rejects_non_docx_and_bad_encoding():
+    from api.routers import admin_pipeline
+    with pytest.raises(HTTPException) as e:
+        await admin_pipeline.parse_brand_brief(
+            admin_pipeline.ParseBriefRequest(filename="b.pdf", file_base64="AAAA"), tenant_id="t-1")
+    assert e.value.status_code == 415
+    with pytest.raises(HTTPException) as e2:
+        await admin_pipeline.parse_brand_brief(
+            admin_pipeline.ParseBriefRequest(filename="b.docx", file_base64="not base64!"), tenant_id="t-1")
+    assert e2.value.status_code == 400
