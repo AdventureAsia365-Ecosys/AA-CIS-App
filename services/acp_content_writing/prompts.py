@@ -160,6 +160,9 @@ Rules:
   its paths, steps or roads, how it is reached, how crowded it is, what "most visitors" do —
   unless the content seed says it. Make the piece vivid with the seed's own details and the
   place's real background instead.
+  FORBIDDEN: contrast claims whose other half the seed does not state — "not by X but by Y",
+  "unlike most …", "older than …", "few visitors …" — say what the seed says, without the
+  invented comparison.
   LOCATION: name only the location the seed gives (its "Location" line); never place it in
   another town, region or country.
   NUMBERS: write a number (height, distance, year, decade, century, age, day count, duration,
