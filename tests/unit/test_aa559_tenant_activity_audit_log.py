@@ -238,9 +238,11 @@ class _FakeRewriteRequest:
 
 async def _drive_trigger_rewrite():
     conn = AsyncMock()
-    # AA-640: plan quota is a fetchrow (plan + membership_plans quota) ahead of the others
-    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, REWRITE_PT_ROW, None, REWRITE_EXISTING_SEO_ROW]
-    conn.fetchval.side_effect = [1, 1, REWRITE_VERSION_ID]
+    conn.transaction = MagicMock(return_value=_TxnCM())
+    # AA-741 pre-audit order: the tour lookup comes first, then the in-flight check, and the plan
+    # quota (fetchrow plan + fetchval usage) only after both pass.
+    conn.fetchrow.side_effect = [REWRITE_PT_ROW, {"plan": "starter", "quota": 50}]
+    conn.fetchval.side_effect = [None, 1, 1, REWRITE_VERSION_ID]  # in-flight, usage, next ver, id
     pool = _rewrite_pool_ctx(conn)
     request = _FakeRewriteRequest(pool)
     tenant = {"sub": REWRITE_TENANT_ID}
@@ -260,8 +262,9 @@ class TestTriggerRewriteAuditLog:
         resp, conn = await _drive_trigger_rewrite()
 
         assert resp["status"] == "pending"
-        query, *params = conn.execute.call_args_list[0][0]
-        assert "INSERT INTO acp_shared.audit_log" in query
+        audit = [c for c in conn.execute.call_args_list if "INSERT INTO acp_shared.audit_log" in c[0][0]]
+        assert len(audit) == 1
+        query, *params = audit[0][0]
         assert params[0] == REWRITE_TENANT_ID
         assert params[1] == f"tenant:{REWRITE_TENANT_ID}"
         assert params[2] == "tour.rewrite_triggered"

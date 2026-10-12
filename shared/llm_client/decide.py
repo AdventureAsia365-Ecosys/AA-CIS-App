@@ -220,8 +220,23 @@ async def _load_config(conn) -> None:
         _allowlist_loaded_at = now
 
 
-def tenant_allowed(tenant_id: Optional[str]) -> bool:
-    return tenant_id is None or str(tenant_id) == PLATFORM_TENANT_ID or str(tenant_id) in _allowlist
+def _is_tenant_stage(stage: Optional[str]) -> bool:
+    """T-series stages (`t2_…`, `t3_…`, `t10_…`) judge tenant content by definition."""
+    return bool(stage) and len(stage) > 1 and stage[0] == "t" and stage[1].isdigit()
+
+
+def tenant_allowed(tenant_id: Optional[str], stage: Optional[str] = None) -> bool:
+    """May `tenant_id`'s content be sent to TypeSafe (DPA guard, at-series-v2 C2)?
+
+    No tenant means platform content — EXCEPT on a T-series stage, where a missing tenant is a
+    caller bug (the content is still a tenant's). That case fails closed (AA-741 pre-audit):
+    before, `tenant_allowed(None)` was True and a call site that forgot `tenant_id=` sent a
+    non-allow-listed tenant's text to Jev. `"None"`/`""` (a `str(None)` at a call site) count as
+    missing."""
+    t = None if tenant_id is None or str(tenant_id) in ("", "None") else str(tenant_id)
+    if t is None:
+        return not _is_tenant_stage(stage)
+    return t == PLATFORM_TENANT_ID or t in _allowlist
 
 
 # ── the call ──────────────────────────────────────────────────────────────────────────────────
@@ -503,8 +518,13 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
             decision.verdicts[key] = Verdict(key, "off", "error", error="unknown question")
         elif q.mode == "off":
             decision.verdicts[key] = Verdict(key, "off", "skipped")
-        elif not tenant_allowed(tenant_id):
-            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error="tenant not on Jev allow-list")
+        elif not tenant_allowed(tenant_id, stage):
+            if tenant_id is None or str(tenant_id) in ("", "None"):
+                logger.warning("decide_tenant_stage_without_tenant", stage=stage, subject=subject_key[:120])
+                err = "tenant stage called without tenant_id"
+            else:
+                err = "tenant not on Jev allow-list"
+            decision.verdicts[key] = Verdict(key, q.mode, "skipped", error=err)
         else:
             asked[key] = q
 

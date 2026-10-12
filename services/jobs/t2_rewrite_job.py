@@ -65,66 +65,68 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     # brand voice guidance at all and reliably drifted into generic marketing adjectives that
     # happen to be on graph.py's own forbidden-word list, escalating every rewrite to
     # review_queue. Removed the leaked acquire; only the real query below remains.
-    brand_rules = {}
-    try:
-        async with pool.acquire() as _conn2:
-            # AA-612a: T2 (tenant rewrite) shares build_graph with admin S1, whose judge
-            # brand-fit gate (judge_node.has_brand_signals) keys off core_idea /
-            # customer_mindset / voice_examples. This SELECT used to omit those brand-diff
-            # columns, so brand_rules never carried them → the graph state's brand_* fields were
-            # always empty → judge_skipped(no_brand_profile) even for a tenant WITH a real brand
-            # (the exact case that SHOULD be judged on brand-fit). Fetch the same brand-diff
-            # columns admin_pipeline._BRAND_RULE_COLS does so a real tenant brand is judged.
-            _br = await _conn2.fetchrow("""
-                SELECT system_prompt, style_guide, forbidden_words,
-                       core_idea, customer_segment, customer_mindset, voice_examples, good_examples
-                FROM shared.tenant_brand_rules
-                WHERE tenant_id = $1::uuid AND is_active = true
-                ORDER BY version DESC LIMIT 1
-            """, tenant_id)
-        if _br:
-            # AA-425 fix (found via hash-diff forensic comparison against a direct-call harness
-            # using the exact same tenant/tour): asyncpg has no jsonb codec registered on this
-            # app's connections (same gap AA-314 already found/fixed elsewhere, api/routers/
-            # v1_tours.py's own src_highlights handling) -- forbidden_words arrives as a raw
-            # JSON-encoded STRING, not a parsed list. `list(_br["forbidden_words"] or [])` was
-            # calling list() on that STRING, splitting it into individual characters
-            # (['[', '"', 'l', 'u', 'x', ...]) instead of parsing it -- every tenant rewrite's
-            # system prompt carried a garbled "FORBIDDEN WORDS: [, ", l, u, x, ..." instruction
-            # instead of the tenant's real word list. Confirmed via SHA-256 hash comparison: the
-            # user_prompt and tour_dict hashes matched byte-for-byte between this endpoint and a
-            # direct _rewrite_tour() call using identical inputs, but brand_rules.forbidden_words
-            # diverged at exactly this line.
-            import json as _json2
-            _fw_raw = _br["forbidden_words"]
-            if isinstance(_fw_raw, str):
-                _fw_raw = _json2.loads(_fw_raw) if _fw_raw else []
-            # AA-612a: voice_examples has the same asyncpg no-jsonb-codec gotcha as
-            # forbidden_words above — it arrives as a JSON-encoded string, so parse it before
-            # list() (mirrors admin_pipeline._execute_run_tour's own handling).
-            _voice_raw = _br["voice_examples"]
-            if isinstance(_voice_raw, str):
-                _voice_raw = _json2.loads(_voice_raw) if _voice_raw else []
-            brand_rules = {
-                "system_prompt":    _br["system_prompt"] or "",
-                "style_guide":      _br["style_guide"] or "",
-                "forbidden_words":  list(_fw_raw or []),
-                "rewrite_language": rewrite_language,
-                # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
-                # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
-                "core_idea":        _br["core_idea"] or "",
-                "customer_segment": _br["customer_segment"] or "",
-                "customer_mindset": _br["customer_mindset"] or "",
-                "voice_examples":   list(_voice_raw or []),
-                "good_examples":    _br["good_examples"] or "",
-            }
-    except Exception:
-        brand_rules = {"rewrite_language": rewrite_language}
+    # AA-741 pre-audit: brand_rules ALWAYS carries rewrite_language (the no-row path used to drop
+    # it), and a DB error is no longer swallowed into an unbranded rewrite (the AA-425 failure
+    # mode: job "succeeded" with no voice and no forbidden words). It raises so the job retries;
+    # after the last attempt on_terminal marks the version failed.
+    brand_rules = {"rewrite_language": rewrite_language, "_brand_loaded": False}
+    async with pool.acquire() as _conn2:
+        # AA-612a: T2 (tenant rewrite) shares build_graph with admin S1, whose judge
+        # brand-fit gate (judge_node.has_brand_signals) keys off core_idea /
+        # customer_mindset / voice_examples. This SELECT used to omit those brand-diff
+        # columns, so brand_rules never carried them → the graph state's brand_* fields were
+        # always empty → judge_skipped(no_brand_profile) even for a tenant WITH a real brand
+        # (the exact case that SHOULD be judged on brand-fit). Fetch the same brand-diff
+        # columns admin_pipeline._BRAND_RULE_COLS does so a real tenant brand is judged.
+        _br = await _conn2.fetchrow("""
+            SELECT system_prompt, style_guide, forbidden_words,
+                   core_idea, customer_segment, customer_mindset, voice_examples, good_examples
+            FROM shared.tenant_brand_rules
+            WHERE tenant_id = $1::uuid AND is_active = true
+            ORDER BY version DESC LIMIT 1
+        """, tenant_id)
+    if _br:
+        # AA-425 fix (found via hash-diff forensic comparison against a direct-call harness
+        # using the exact same tenant/tour): asyncpg has no jsonb codec registered on this
+        # app's connections (same gap AA-314 already found/fixed elsewhere, api/routers/
+        # v1_tours.py's own src_highlights handling) -- forbidden_words arrives as a raw
+        # JSON-encoded STRING, not a parsed list. `list(_br["forbidden_words"] or [])` was
+        # calling list() on that STRING, splitting it into individual characters
+        # (['[', '"', 'l', 'u', 'x', ...]) instead of parsing it -- every tenant rewrite's
+        # system prompt carried a garbled "FORBIDDEN WORDS: [, ", l, u, x, ..." instruction
+        # instead of the tenant's real word list. Confirmed via SHA-256 hash comparison: the
+        # user_prompt and tour_dict hashes matched byte-for-byte between this endpoint and a
+        # direct _rewrite_tour() call using identical inputs, but brand_rules.forbidden_words
+        # diverged at exactly this line.
+        import json as _json2
+        _fw_raw = _br["forbidden_words"]
+        if isinstance(_fw_raw, str):
+            _fw_raw = _json2.loads(_fw_raw) if _fw_raw else []
+        # AA-612a: voice_examples has the same asyncpg no-jsonb-codec gotcha as
+        # forbidden_words above — it arrives as a JSON-encoded string, so parse it before
+        # list() (mirrors admin_pipeline._execute_run_tour's own handling).
+        _voice_raw = _br["voice_examples"]
+        if isinstance(_voice_raw, str):
+            _voice_raw = _json2.loads(_voice_raw) if _voice_raw else []
+        brand_rules = {
+            "system_prompt":    _br["system_prompt"] or "",
+            "style_guide":      _br["style_guide"] or "",
+            "forbidden_words":  list(_fw_raw or []),
+            "rewrite_language": rewrite_language,
+            # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
+            # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
+            "core_idea":        _br["core_idea"] or "",
+            "customer_segment": _br["customer_segment"] or "",
+            "customer_mindset": _br["customer_mindset"] or "",
+            "voice_examples":   list(_voice_raw or []),
+            "good_examples":    _br["good_examples"] or "",
+            "_brand_loaded":    True,
+        }
     return tour_dict, brand_rules
 
 
 async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant_id: str,
-                            version_id: str, published_tour_id: str) -> None:
+                            version_id: str, published_tour_id: str) -> dict:
     """SEO lookup, rewrite, T3 QA gate, save — unchanged from the pre-AA-652 router closure
     except that a failure raises (so the job retries) instead of silently marking the version."""
     from api.routers.v1_pipeline import _rewrite_tour as _do_rewrite
@@ -135,6 +137,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     # per tour, outside every spend budget). A tour with no row is rewritten without SEO keywords
     # and logged (`t2_seo_context_missing`) so admin research can cover it.
     seo_data: dict = {}
+    # AA-741 pre-audit: which SEO the rewrite actually used, returned into job.result (a lookup
+    # failure used to be a log line only — the rewrite silently ran keyword-less).
+    diag = {"seo_source": "none", "market": None}
     try:
         async with pool.acquire() as _conn_seo:
             _existing = await _conn_seo.fetchrow("""
@@ -157,9 +162,13 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
         from services.seo_intelligence.s1_prefetch import tenant_market_seo
         async with pool.acquire() as _conn_mkt:
             _market, _mkt_seo = await tenant_market_seo(_conn_mkt, tenant_id, str(pt["tour_id"]))
+        diag["market"] = _market
         if _mkt_seo:
             seo_data = _mkt_seo
+            diag["seo_source"] = "tenant_market"
         else:
+            if seo_data:
+                diag["seo_source"] = "admin_us_fallback"
             import structlog as _sl_mkt
             _sl_mkt.get_logger().info("t2_market_seo_fallback", tour_id=pt["tour_id"],
                                       tenant_id=tenant_id, market=_market,
@@ -171,6 +180,8 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     except Exception as _seo_err:
         import structlog as _sl_seo
         _sl_seo.get_logger().warning("t2_seo_step_failed", tour_id=pt["tour_id"], error=str(_seo_err))
+        diag["seo_source"] = "error"
+        diag["seo_error"] = str(_seo_err)[:300]
 
     try:
         result = await _do_rewrite(
@@ -297,6 +308,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
     except Exception:
         progress_fail()  # AA-637
         raise
+    return diag
 
 
 async def mark_version_failed(pool, job_row: dict) -> None:
@@ -334,6 +346,9 @@ async def run(ctx: JobContext) -> dict:
         raise NonRetryable(f"published tour {published_tour_id} not found")
 
     tour_dict, brand_rules = await _prepare(pool, pt, tenant_id, p.get("rewrite_language") or "EN-US")
+    brand_loaded = bool(brand_rules.pop("_brand_loaded", False))
+    if not brand_loaded:
+        logger.warning("t2_rewrite_without_brand", tenant_id=tenant_id, version_id=version_id)
 
     # AA-637 — live progress (steps + streamed tour fields), read by GET /v1/progress/tour/{id}.
     progress = WritingProgress(
@@ -346,8 +361,8 @@ async def run(ctx: JobContext) -> dict:
     await ctx.progress(phase="writing", version_id=version_id)
     try:
         with stream_sink.bind(progress):
-            await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
-                                    published_tour_id)
+            diag = await _rewrite_and_save(pool, pt, tour_dict, brand_rules, tenant_id, version_id,
+                                           published_tour_id)
     except Exception:
         progress.fail()
         raise
@@ -361,4 +376,4 @@ async def run(ctx: JobContext) -> dict:
             "gold_aa_internal.tenant_tour_versions WHERE id = $1::uuid", version_id)
     await ctx.progress(phase="done")
     return {"version_id": version_id, "version_status": final["status"], "score": final["score"],
-            "qa_status": final["qa_status"]}
+            "qa_status": final["qa_status"], "brand_loaded": brand_loaded, **(diag or {})}

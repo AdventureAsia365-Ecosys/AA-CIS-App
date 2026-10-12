@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from pydantic import BaseModel as _BM
-from api.routers.auth import verify_jwt
+from api.routers.auth import verify_tenant_jwt
 from api.routers.admin import PLAN_LIMITS
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -18,7 +18,11 @@ security = HTTPBearer()
 
 def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
-        return verify_jwt(credentials.credentials)
+        return verify_tenant_jwt(credentials.credentials)
+    except HTTPException as exc:
+        if exc.status_code == 403:      # a valid staff token is not a tenant (AA-741 pre-audit)
+            raise
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -400,12 +404,12 @@ async def trigger_rewrite(
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
 
-    async with pool.acquire() as conn:
-        # AA-489/AA-640 — count this rewrite against the monthly plan quota. Over-quota rewrites
-        # are allowed and billed as overage (trial phase) — see the helper's comment block.
-        await _check_and_consume_rewrite_quota(conn, tenant_id)
-
-        # Check published tour exists
+    # AA-741 pre-audit: validate first, charge last, all in ONE transaction. Before, the quota was
+    # consumed (autocommit) before the tour was even looked up, so a 404, an inactive Master or a
+    # double-click each billed a rewrite; and the tour was not checked against the same
+    # active-Master gate the pool list applies (`list_pool`: master_status='active' AND
+    # deleted_at IS NULL), so a tenant could rewrite a withdrawn tour by id.
+    async with pool.acquire() as conn, conn.transaction():
         pt = await conn.fetchrow("""
             SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle,
                    pt.aa_summary, pt.aa_description, pt.aa_highlights,
@@ -415,9 +419,27 @@ async def trigger_rewrite(
             FROM gold_aa_internal.published_tours pt
             LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
             WHERE pt.id = $1::uuid
+              AND pt.master_status = 'active' AND pt.deleted_at IS NULL
         """, published_tour_id)
         if not pt:
             raise HTTPException(status_code=404, detail="Tour not found in pool")
+
+        # One rewrite in flight per (tenant, tour): serialise concurrent clicks on this pair, then
+        # refuse a second pending version instead of billing and writing it twice.
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           f"t2_rewrite:{tenant_id}:{published_tour_id}")
+        in_flight = await conn.fetchval("""
+            SELECT id FROM gold_aa_internal.tenant_tour_versions
+            WHERE tenant_id = $1::uuid AND published_tour_id = $2::uuid AND status = 'pending'
+            ORDER BY created_at DESC LIMIT 1
+        """, tenant_id, published_tour_id)
+        if in_flight:
+            raise HTTPException(status_code=409,
+                                detail="A rewrite of this tour is already in progress")
+
+        # AA-489/AA-640 — count this rewrite against the monthly plan quota. Over-quota rewrites
+        # are allowed and billed as overage (trial phase) — see the helper's comment block.
+        await _check_and_consume_rewrite_quota(conn, tenant_id)
 
         # Get next version number
         next_ver = await conn.fetchval("""
@@ -564,12 +586,22 @@ async def retry_rewrite(version_id: str, request: Request, tenant=Depends(get_te
         raise HTTPException(status_code=404, detail="Version not found")
     if row["status"] != "failed" or row["job_id"] is None:
         raise HTTPException(status_code=409, detail="Only a failed AI rewrite can be retried")
+    # AA-741 pre-audit: flip the version to pending BEFORE re-queueing. The job skips any version
+    # that is not 'pending', so a worker that claimed the re-queued job before this UPDATE landed
+    # finished it as {"skipped": true} and the version stayed failed.
+    async with pool.acquire() as conn:
+        flipped = await conn.fetchval(
+            "UPDATE gold_aa_internal.tenant_tour_versions SET status = 'pending' "
+            "WHERE id = $1::uuid AND status = 'failed' RETURNING id", version_id)
+    if not flipped:
+        raise HTTPException(status_code=409, detail="This rewrite is already running")
     if not await job_queue.retry(pool, str(row["job_id"])):
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE gold_aa_internal.tenant_tour_versions SET status = 'failed' "
+                "WHERE id = $1::uuid AND status = 'pending'", version_id)
         raise HTTPException(status_code=409, detail="This rewrite is already running")
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE gold_aa_internal.tenant_tour_versions SET status = 'pending' "
-            "WHERE id = $1::uuid AND status = 'failed'", version_id)
         await write_audit_log(
             conn, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
             action=TenantAuditAction.TOUR_REWRITE_TRIGGERED, resource_type="tenant_tour_version",
@@ -593,7 +625,7 @@ async def get_tour_full(
         tenant_id = "00000000-0000-0000-0000-000000000001"
     elif credentials:
         try:
-            payload = verify_jwt(credentials.credentials)
+            payload = verify_tenant_jwt(credentials.credentials)
             tenant_id = payload["sub"]
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid or expired token")

@@ -58,7 +58,8 @@ def _norm_clock(text: str) -> str:
     return re.sub(r"\s+", "", text.lower())
 
 
-def meal_time_claims_supported(itin_text: str, tour: dict) -> bool:
+def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | None = None,
+                               is_tenant_rewrite: bool = False) -> bool:
     """AA-692 A1-3: True when every meal/clock-time hit in the rewrite is backed by the raw source.
 
     S205 measure: the regex fired on 41/125 master tours, and most hits were the source's own
@@ -77,12 +78,19 @@ def meal_time_claims_supported(itin_text: str, tour: dict) -> bool:
     units = [u for u in g.sentence_units({"itineraries": itin_text}) if ITIN_MEAL_INVENTED.search(u["sentence"])]
     if not units:
         return False
-    verdicts = g.judge_units(units, source)
+    if is_tenant_rewrite and not tenant_id:
+        return False            # tenant text with no owner → never sent to Jev; keep the code
+    # AA-741 pre-audit: judge_units takes {unit index: per-unit source} since #631; passing the
+    # whole source string made every call fail open, so this code fired on every meal mention.
+    # Per-unit source = the same subject key grounding uses → normally a cache hit.
+    sources = {i: g.unit_source(tour, u) for i, u in enumerate(units)}
+    verdicts = g.judge_units(units, sources, tenant_id=tenant_id if is_tenant_rewrite else None)
     return all(getattr(verdicts.get(i), "enforced", False) and getattr(verdicts.get(i), "zone", None) == "accept"
                for i in range(len(units)))
 
 
-def pre_audit_checks(generated: dict, tour: dict | None = None) -> list[str]:
+def pre_audit_checks(generated: dict, tour: dict | None = None, *, tenant_id: str | None = None,
+                     is_tenant_rewrite: bool = False) -> list[str]:
     codes = []
     name = (generated.get("name") or "")
     subtitle = (generated.get("subtitle") or "")
@@ -121,7 +129,8 @@ def pre_audit_checks(generated: dict, tour: dict | None = None) -> list[str]:
     itin_text = str(itineraries)
     if ITIN_MEAL_INVENTED.search(itin_text) or ITIN_CLOCK_TIME.search(itin_text):
         # AA-692 A1-3: no code when the source itself states these logistics (needs the source tour).
-        if not (tour and meal_time_claims_supported(itin_text, tour)):
+        if not (tour and meal_time_claims_supported(itin_text, tour, tenant_id=tenant_id,
+                                                     is_tenant_rewrite=is_tenant_rewrite)):
             codes.append("ITINERARY_MEAL_TIME_INVENTED")
     if ITIN_DAY_TITLE_GENERIC.search(itin_text):
         codes.append("ITINERARY_DAY_TITLE_GENERIC")
@@ -218,7 +227,8 @@ def _audit_from_judge(state: dict, generated: dict) -> dict:
     """AA-206: build the brand-audit result from the GPT-4.1 judge fields instead of a second LLM
     call. Deterministic pre-audit codes still fire (they drive flag_fix's field targeting) and the
     judge's feedback is surfaced as an issue so flag_fix has context for the repair pass."""
-    pre_codes = pre_audit_checks(generated, state.get("tour"))
+    pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
+                                 is_tenant_rewrite=bool(state.get("is_tenant_rewrite")))
     judge_feedback = (state.get("judge_feedback") or "").strip()
     issues = [judge_feedback] if judge_feedback else []
     # S218 audit: same status rule as the LLM audit path (derive_status). This path used its own
@@ -261,7 +271,8 @@ def brand_audit_node(state: dict) -> dict:
         return _audit_from_judge(state, generated)
 
     try:
-        pre_codes = pre_audit_checks(generated, state.get("tour"))
+        pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
+                                 is_tenant_rewrite=bool(state.get("is_tenant_rewrite")))
 
         system_prompt = AA_BRAND_IDENTITY_PROMPT + "\n\n" + AA_COWORK_STRUCTURE_PROMPT
 

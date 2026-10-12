@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from typing import Awaitable, Callable, Optional, List
 
 from api.routers.admin import verify_admin_secret
-from api.routers.auth import verify_jwt
+from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -4668,7 +4668,7 @@ def _resolve_brand_tenant_id(
 ) -> str:
     if credentials is not None:
         try:
-            payload = verify_jwt(credentials.credentials)
+            payload = verify_tenant_jwt(credentials.credentials)   # staff JWT → 403, never a tenant
         except HTTPException:
             raise
         except Exception:

@@ -81,6 +81,17 @@ def verify_jwt(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
+def verify_tenant_jwt(token: str) -> dict:
+    """A TENANT JWT only. Staff JWTs share JWT_SECRET (AA-656) and carry sub = admin_users.id, so a
+    plain verify_jwt() let a staff token act as a "tenant" whose id is a staff user's — reads
+    came back empty and writes (brand rules, rewrites) landed on a tenant that does not exist
+    (AA-741 pre-audit). Tenant tokens always carry role='tenant' (_create_jwt)."""
+    payload = verify_jwt(token)
+    if payload.get("role") != "tenant":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant token required")
+    return payload
+
+
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @router.post("/tenant-login", response_model=TenantLoginResponse, deprecated=True)

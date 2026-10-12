@@ -39,7 +39,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
-from api.routers.auth import verify_jwt
+from api.routers.auth import verify_tenant_jwt
 from services.acp_shared.atom_constants import THIN_TRIP_ATOM_MIN
 
 router = APIRouter(prefix="/admin", tags=["admin-atoms"])
@@ -79,7 +79,7 @@ def _resolve_atom_owner_scope(
     None for a staff/admin caller (no filter — sees platform + every tenant)."""
     if credentials is not None:
         try:
-            payload = verify_jwt(credentials.credentials)
+            payload = verify_tenant_jwt(credentials.credentials)
         except HTTPException:
             raise
         except Exception:
