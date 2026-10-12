@@ -36,7 +36,7 @@ import structlog
 
 from shared.secrets import get_database_url, get_typesafe_api_key
 
-from .call_log import current_job_id, record_call_with_pool
+from .call_log import current_job_id, record_call_with_pool, resolve_tenant
 from .catalog import get_model_sync
 
 logger = structlog.get_logger()
@@ -501,7 +501,11 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
     """`db` is a pool (or `_SingleConn`). A connection is held only while reading config and while
     writing logs — never across the Jev HTTP call and never two at once. Holding one across the
     whole call and then acquiring a second for llm_call_log deadlocked a pool under concurrent
-    decides (S203: 8 parallel calls on a 4-connection pool hung until timeout)."""
+    decides (S203: 8 parallel calls on a 4-connection pool hung until timeout).
+
+    AA-741 G1: no tenant from the caller → the bound job's tenant (call_log.bind_tenant), so the
+    allow-list guard, cache scope and decision_log/llm_call_log rows see the real tenant."""
+    tenant_id = resolve_tenant(tenant_id)
     decision = Decision()
     try:
         async with db.acquire() as conn:

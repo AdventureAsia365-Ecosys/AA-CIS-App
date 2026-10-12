@@ -342,7 +342,7 @@ Return JSON only per schema."""
 
         record_call_sync(
             stage="s1_brand_audit", role="judge", model=resp.model_used,
-            tokens_in=in_tok, tokens_out=out_tok, cost_usd=cost, tenant_id=None,
+            tokens_in=in_tok, tokens_out=out_tok, cost_usd=cost,
             quality_signal={"status": result["status"], "failure_code_count": len(all_codes)},
             stop_reason=stop_reason, account=resp.satellite_account,
             fallback_used=resp.fallback_used, provider=resp.provider,

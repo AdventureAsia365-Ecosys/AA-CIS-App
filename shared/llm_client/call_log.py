@@ -54,6 +54,41 @@ def bind_job(job_id: Optional[str]) -> Iterator[None]:
         _current_job_id.reset(token)
 
 
+# AA-741 G1 — the tenant whose content the running job is producing, bound by the job worker
+# from the job payload (same propagation as `_current_job_id`). A record_call*() / decide() whose
+# caller passes no tenant_id falls back to it, so deep stages that run for both platform and
+# tenant content (S1 judge, brand audit, flag_fix, grounding, source facts, T10 judge, F10 embed)
+# attribute tenant cost without threading tenant_id through every signature. Never bound for
+# platform (aa_internal) jobs — platform rows stay tenant_id NULL, as before.
+PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"  # aa_internal
+_current_tenant_id: ContextVar[Optional[str]] = ContextVar("llm_call_log_tenant_id", default=None)
+
+
+def current_tenant_id() -> Optional[str]:
+    return _current_tenant_id.get()
+
+
+@contextmanager
+def bind_tenant(tenant_id: Optional[str]) -> Iterator[None]:
+    token = _current_tenant_id.set(_clean_tenant(tenant_id))
+    try:
+        yield
+    finally:
+        _current_tenant_id.reset(token)
+
+
+def _clean_tenant(tenant_id) -> Optional[str]:
+    """`None`, `""` and `"None"` (a `str(None)` at a call site) all mean no tenant."""
+    if tenant_id is None or str(tenant_id) in ("", "None"):
+        return None
+    return str(tenant_id)
+
+
+def resolve_tenant(tenant_id) -> Optional[str]:
+    """The caller's tenant when it passed one, else the bound job's tenant."""
+    return _clean_tenant(tenant_id) or current_tenant_id()
+
+
 def _normalize_model_provider(model: str, provider: Optional[str]) -> tuple[str, Optional[str]]:
     """AA-617 — central place so no call site has to know the model-string conventions.
 
@@ -109,7 +144,8 @@ async def record_call(
         conn = await asyncpg.connect(get_database_url(), ssl="require")
         try:
             await conn.execute(
-                _INSERT_SQL, tenant_id, stage, role, clean_model, tokens_in, tokens_out, cost_usd,
+                _INSERT_SQL, resolve_tenant(tenant_id), stage, role, clean_model, tokens_in,
+                tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
                 account, fallback_used, provider, current_job_id(),
             )
@@ -138,7 +174,8 @@ async def record_call_with_pool(
     try:
         async with pool.acquire() as conn:
             await conn.execute(
-                _INSERT_SQL, tenant_id, stage, role, clean_model, tokens_in, tokens_out, cost_usd,
+                _INSERT_SQL, resolve_tenant(tenant_id), stage, role, clean_model, tokens_in,
+                tokens_out, cost_usd,
                 json.dumps(quality_signal), content_piece_id, angle_gate_request_id, stop_reason,
                 account, fallback_used, provider, current_job_id(),
             )

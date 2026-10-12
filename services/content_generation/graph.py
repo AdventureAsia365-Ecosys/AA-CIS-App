@@ -148,7 +148,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
         record_call_sync(
             stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd,
             quality_signal={
                 "landed_in_clamp": ITINERARY_CLAMP_MIN <= record["ratio_after_nudge"] <= ITINERARY_CLAMP_MAX,
                 "ratio_after_nudge": record["ratio_after_nudge"],

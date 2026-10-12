@@ -257,7 +257,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
             record_call_sync(
                 stage="s1_flag_fix", role="writer", model=resp.model_used,
                 tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-                cost_usd=resp.cost_usd, tenant_id=None,
+                cost_usd=resp.cost_usd,
                 quality_signal={"meta_landed_in_band": landed, "candidate_len": len(guarded),
                                 "attempt": attempt},
                 stop_reason=getattr(resp, "stop_reason", None),
@@ -363,7 +363,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
         record_call_sync(
             stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd,
             quality_signal={"landed_in_clamp": in_clamp, "ratio_after_nudge": round(new_ratio, 3)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),

@@ -153,7 +153,7 @@ def judge_node(state: dict) -> dict:
         record_call_sync(
             stage="s1_judge", role="judge", model=result.model_used,
             tokens_in=result.input_tokens, tokens_out=result.output_tokens,
-            cost_usd=result.cost_usd, tenant_id=None,
+            cost_usd=result.cost_usd,
             quality_signal={
                 "judge_score": judge_score, "brand_fit_score": result.brand_fit_score,
                 "cross_brand_distinct": result.cross_brand_distinct,
