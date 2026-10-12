@@ -42,13 +42,12 @@ from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
-    _SEO_TITLE_MAX_CHARS,
+    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS,
 )
-from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing import sentence_repair
-from services.acp_content_writing.generate import (SentenceRepairError, repair_sentences, rewrite_with_feedback,
-                                                   write_content)
+from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
+                                                   rewrite_with_feedback, write_content)
 from services.acp_content_writing.jev_observe import observe_t10
 from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, run_quality_gates,
                                                           strip_citation_tags)
@@ -206,29 +205,46 @@ def _grounding_text(context: dict) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-def _fit_seo_meta(seo_meta: dict, keyword: Optional[str]) -> dict:
-    """AA-768 — fit an over-long blog SEO title / meta description without an LLM call, the same
-    deterministic fit A1/T2 already use (AA-639/AA-641/AA-740, seo_meta_utils). S232 re-runs: the
-    writer's meta landed at 162–177 chars (band 120–158) and its title at 64–65 (max 60) on both
-    attempts, holding pieces that passed every content gate. A fitted value is kept only if it
-    lands in the T10 band and keeps the keyword the original had; otherwise the original stays
-    and F4 reports it as before."""
-    if not seo_meta:
-        return seo_meta
+def _seo_title_ok(title, keyword: Optional[str]) -> bool:
     kw = (keyword or "").lower()
+    return (isinstance(title, str) and _SEO_TITLE_MIN_CHARS <= len(title) <= _SEO_TITLE_MAX_CHARS
+            and (not kw or kw in title.lower()))
+
+
+def _meta_ok(meta, keyword: Optional[str]) -> bool:
+    kw = (keyword or "").lower()
+    return (isinstance(meta, str) and _META_MIN_CHARS <= len(meta) <= _META_MAX_CHARS
+            and meta.rstrip().endswith((".", "!", "?")) and (not kw or kw in meta.lower()))
+
+
+async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, context: dict,
+                        request_id) -> tuple[dict, float]:
+    """AA-768 (S233) — when the blog writer's title or meta is outside the T10 band, regenerate
+    both with one short call (generate.fit_seo_fields) instead of cutting the string. The S232
+    deterministic cut (fit_seo_title, built for tour names) turned "Bhutan's Craft Bazaar:
+    Thimphu's Weekend Market…" into the 21-char "Bhutan's Craft Bazaar" on 6/20 blogs and cut
+    metas mid-phrase. A new value is kept only if it is inside the band and keeps the keyword;
+    otherwise the writer's own stays and F4 reports it. Returns (seo_meta, cost)."""
+    if not seo_meta or (_seo_title_ok(seo_meta.get("seo_title"), keyword)
+                        and _meta_ok(seo_meta.get("meta_description"), keyword)):
+        return seo_meta, 0.0
+    audience = context.get("brand_audience") or {}
+    try:
+        fitted, cost = await asyncio.to_thread(
+            fit_seo_fields, body=body, seo_title=seo_meta.get("seo_title"),
+            meta_description=seo_meta.get("meta_description"), keyword=keyword,
+            brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
+            angle_gate_request_id=str(request_id),
+        )
+    except Exception as e:  # soft-fail: F4 reports the writer's own values
+        logger.warning("t9_seo_fit_failed", request_id=str(request_id), error=str(e)[:200])
+        return seo_meta, 0.0
     out = dict(seo_meta)
-    title = out.get("seo_title")
-    if isinstance(title, str) and len(title) > _SEO_TITLE_MAX_CHARS:
-        fitted = fit_seo_title(title, _SEO_TITLE_MAX_CHARS)
-        if len(fitted) <= _SEO_TITLE_MAX_CHARS and (not kw or kw not in title.lower() or kw in fitted.lower()):
-            out["seo_title"] = fitted
-    meta = out.get("meta_description")
-    if isinstance(meta, str) and not (_META_MIN_CHARS <= len(meta) <= _META_MAX_CHARS):
-        fitted = fit_seo_meta_final(meta)
-        if (_META_MIN_CHARS <= len(fitted) <= _META_MAX_CHARS
-                and (not kw or kw not in meta.lower() or kw in fitted.lower())):
-            out["meta_description"] = fitted
-    return out
+    if not _seo_title_ok(out.get("seo_title"), keyword) and _seo_title_ok(fitted.get("seo_title"), keyword):
+        out["seo_title"] = fitted["seo_title"]
+    if not _meta_ok(out.get("meta_description"), keyword) and _meta_ok(fitted.get("meta_description"), keyword):
+        out["meta_description"] = fitted["meta_description"]
+    return out, cost
 
 
 def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
@@ -591,7 +607,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         facts_text=facts_text,
                     )
             total_cost += cost
-            seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768 — deterministic SEO length fit
+            seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text,
+                                                     context=context, request_id=request_id)
+            total_cost += seo_cost
 
             # AA-484 — cross-tenant cannibalization check, done HERE (before run_quality_gates(),
             # which stays synchronous/pool-free — see quality_gates.gate_cannibalization()'s own
@@ -919,7 +937,8 @@ async def _run_buffer_retry_attempt(
         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
         facts_text=facts_text,
     )
-    seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768
+    seo_meta, _ = await _fit_seo_meta(seo_meta, keyword, body=content_text, context=context,
+                                      request_id=request_id)  # AA-768
     outcome = await asyncio.to_thread(
         run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
         goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,

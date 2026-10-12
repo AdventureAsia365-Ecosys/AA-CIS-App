@@ -153,7 +153,8 @@ class TestRunQualityGatesChannelDispatch:
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F8_framework", "F9_cta_fact", "F9_brand_style",
+            "promises_an_option", "F4_extreme_length", "F0_complete", "F8_framework", "F9_cta_fact",
+            "F9_brand_style",
         ]
 
     def test_blog_channel_runs_all_12_gates(self):
@@ -174,7 +175,7 @@ class TestRunQualityGatesChannelDispatch:
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F4_seo_surface",
+            "promises_an_option", "F4_extreme_length", "F0_complete", "F4_seo_surface",
             "F5_atom_density", "F3_structural_variance", "F7_faq_dedup",
             "F8_framework", "F9_cta_fact", "F9_brand_style",
         ]
