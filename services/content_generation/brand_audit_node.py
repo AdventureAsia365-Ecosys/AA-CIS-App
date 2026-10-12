@@ -4,6 +4,7 @@ import json
 import os
 import re
 import structlog
+from services.content_generation.stages import stage_for
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
@@ -319,7 +320,7 @@ Return JSON only per schema."""
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.1,
-            stage="s1_brand_audit",
+            stage=stage_for(state, "s1_brand_audit"),  # AA-763
             json_schema={"name": "brand_audit_result", "schema": BRAND_AUDIT_SCHEMA},
         ))
         result = json.loads(resp.content)["brand_audit"]
@@ -341,7 +342,7 @@ Return JSON only per schema."""
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
 
         record_call_sync(
-            stage="s1_brand_audit", role="judge", model=resp.model_used,
+            stage=stage_for(state, "s1_brand_audit"), role="judge", model=resp.model_used,
             tokens_in=in_tok, tokens_out=out_tok, cost_usd=cost,
             quality_signal={"status": result["status"], "failure_code_count": len(all_codes)},
             stop_reason=stop_reason, account=resp.satellite_account,

@@ -18,6 +18,7 @@ try/except around the whole thing — none of which Debate needs or wants.
 
 import structlog
 
+from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
     _JUDGE_SEED, _JUDGE_TEMPERATURE, has_brand_signals, score_brand_fit,
 )
@@ -128,7 +129,8 @@ def judge_node(state: dict) -> dict:
         return state
 
     try:
-        result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP)
+        result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
+                                 stage=stage_for(state, "s1_judge"))  # AA-763
         judge_score = a1_judge_score(result) if not state.get("is_tenant_rewrite") else result.judge_score
         tiebreak = None
         if in_tie_band(judge_score, validate_score):
@@ -151,7 +153,7 @@ def judge_node(state: dict) -> dict:
                     distinct_gates=bool(state.get("is_tenant_rewrite")))
 
         record_call_sync(
-            stage="s1_judge", role="judge", model=result.model_used,
+            stage=stage_for(state, "s1_judge"), role="judge", model=result.model_used,
             tokens_in=result.input_tokens, tokens_out=result.output_tokens,
             cost_usd=result.cost_usd,
             quality_signal={

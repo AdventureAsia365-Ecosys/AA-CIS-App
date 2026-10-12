@@ -83,6 +83,16 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     "s1_flag_fix":        StageConfig("s1_flag_fix", "writer", "claude", "haiku", "acc3"),
     "s1_itinerary_nudge": StageConfig("s1_itinerary_nudge", "writer", "claude", "haiku", "acc3"),
+    # AA-763 (G4): T-series twins of the shared-graph stages — same routes as their A1 twin,
+    # own keys so T cost / routing / shadow can be read and set apart from A1. See migration 219.
+    "t2_judge":           StageConfig("t2_judge", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    "t2_brand_audit":     StageConfig("t2_brand_audit", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    "t2_flag_fix":        StageConfig("t2_flag_fix", "writer", "claude", "haiku", "acc3"),
+    "t2_itinerary_nudge": StageConfig("t2_itinerary_nudge", "writer", "claude", "haiku", "acc3"),
+    "t7_debate_judge":    StageConfig("t7_debate_judge", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-748: extract per-day source facts for the S1 writer (behind S1_STRUCTURED_FACTS). Cheap
     # structured-extraction task, seeded Haiku like the other S1 writer stages. See migration 210.
     # AA-748 / ADR 0008: extraction, not prose — a validate stage, so it may run on GPT-6 Luna
