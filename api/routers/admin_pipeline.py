@@ -24,6 +24,7 @@ from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
+    MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
 )
 
 logger = structlog.get_logger()
@@ -4425,67 +4426,35 @@ async def parse_brand_docx(
     body: ParseDocxRequest,
     x_admin_secret: str = Header(None),
 ):
-    """Parse a brand brief DOCX (base64-encoded JSON) and return pre-filled brand fields."""
+    """Parse a brand brief DOCX (base64-encoded JSON) and return pre-filled brand fields.
+    AA-741 (S229): same parser as the tenant upload (services/brand_intake/brief.py) — the old
+    inline parser folded "Should Not Write" into "Should Write"; one parser, never two."""
     verify_admin_secret(x_admin_secret)
     try:
-        from docx import Document  # type: ignore
-        import io
         content = base64.b64decode(body.file_base64)
-        doc = Document(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
+    out = _parse_brief_or_400(content)
+    return {"parsed": out["fields"], "warnings": out["warnings"], "markets": out["markets"],
+            "filename": body.filename}
+
+
+def _parse_brief_or_400(content: bytes) -> dict:
+    from services.brand_intake.brief import parse_brief_docx
+    from services.brand_intake.markets import normalize_markets
+    try:
+        out = parse_brief_docx(content)
     except ImportError:
         raise HTTPException(status_code=501, detail="python-docx not installed on this server")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse DOCX: {e}")
-
-    _FIELD_KEYS = {
-        "brand name": "brand_name",
-        "brand type": "brand_type",
-        "core idea": "core_idea",
-        "target market": "target_markets",
-        "customer segment": "customer_segment",
-        "customer mindset": "customer_mindset",
-        "tone of voice": "tone_of_voice",
-        "tone": "tone_of_voice",
-        "writing style": "writing_style",
-        "good example": "good_examples",
-        "should write": "should_write",
-        "forbidden word": "forbidden_words",
-        "forbidden": "forbidden_words",
-    }
-    _LIST_FIELDS = {"target_markets", "tone_of_voice", "forbidden_words"}
-
-    result: dict = {}
-    current_field: str | None = None
-    buffer: list[str] = []
-
-    def _flush():
-        if current_field and buffer:
-            text = "\n".join(buffer).strip()
-            if current_field in _LIST_FIELDS:
-                items = [line.lstrip("-•·*").strip() for line in text.splitlines() if line.strip()]
-                result[current_field] = items or [text]
-            else:
-                result[current_field] = text
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-        lower = text.lower().rstrip(":").strip()
-        matched = next((v for k, v in _FIELD_KEYS.items() if lower == k or lower.startswith(k)), None)
-        if matched or para.style.name.startswith("Heading"):
-            _flush()
-            buffer = []
-            current_field = matched or current_field
-            inline = text.split(":", 1)[1].strip() if ":" in text else ""
-            if inline:
-                buffer.append(inline)
-        else:
-            buffer.append(text)
-
-    _flush()
-
-    return {"parsed": result, "filename": body.filename}
+        raise HTTPException(status_code=400, detail=f"Could not read this .docx file: {e}")
+    m = normalize_markets(out["fields"].get("target_markets"))
+    out["markets"] = {k: m[k] for k in ("supported", "unsupported", "unknown")}
+    too_long = brand_length_errors(out["fields"])
+    if too_long:
+        out["warnings"].append("Some sections are longer than the form allows — shorten them before "
+                               "saving: " + "; ".join(too_long))
+    return out
 
 
 @router.get("/brands/{brand_name}")
@@ -4805,23 +4774,33 @@ async def update_brand_identity(
     # style_guide straight into a textarea and POST here, with no parsing step at all in
     # between. Sanitize the same way (shared.validators.prompt_sanitize, same module the Lambda
     # fix uses) before it lands in the column every future LLM call for this tenant replays.
+    # AA-741 (S229): reject over-long fields with a clear message instead of cutting them silently.
+    too_long = brand_length_errors(body.model_dump())
+    if too_long:
+        raise HTTPException(status_code=422, detail="Some brand fields are too long — "
+                            + "; ".join(too_long))
     system_prompt = sanitize_text(body.system_prompt, MAX_SYSTEM_PROMPT_LEN)
-    style_guide = sanitize_text(body.writing_style or body.style_guide, MAX_LONG_FIELD_LEN)
+    style_guide = sanitize_text(body.writing_style or body.style_guide, MAX_BRAND_LONG_LEN)
     forbidden_words = sanitize_list(body.forbidden_words or [], MAX_SHORT_FIELD_LEN, max_items=20)
     # AA-557 J.23 — extended fields, same sanitize_text/sanitize_list guards as the pre-existing
     # 3; brand_name falls back to 'default' (the single-brand-per-tenant sentinel this file
     # already uses elsewhere, _resolve_brand_rule) when the tenant hasn't named their brand yet.
     brand_name = sanitize_text(body.brand_name, MAX_SHORT_FIELD_LEN) or "default"
     brand_type = sanitize_text(body.brand_type, MAX_SHORT_FIELD_LEN)
-    core_idea = sanitize_text(body.core_idea, MAX_LONG_FIELD_LEN)
-    customer_segment = sanitize_text(body.customer_segment, MAX_LONG_FIELD_LEN)
-    customer_mindset = sanitize_text(body.customer_mindset, MAX_LONG_FIELD_LEN)
+    core_idea = sanitize_text(body.core_idea, MAX_BRAND_MEDIUM_LEN)
+    customer_segment = sanitize_text(body.customer_segment, MAX_BRAND_MEDIUM_LEN)
+    customer_mindset = sanitize_text(body.customer_mindset, MAX_BRAND_MEDIUM_LEN)
     tone_of_voice = sanitize_list(body.tone_of_voice or [], MAX_SHORT_FIELD_LEN, max_items=20)
-    good_examples = sanitize_text(body.good_examples, MAX_LONG_FIELD_LEN)
+    good_examples = sanitize_text(body.good_examples, MAX_BRAND_LONG_LEN)
     target_markets = sanitize_list(body.target_markets or [], MAX_SHORT_FIELD_LEN, max_items=20)
+    # AA-741 (S229): the form's markets are THE tenant markets. T2/T7 read
+    # tenant_seo_config.target_market, which no tenant could write, so every tenant silently
+    # wrote for the US default. Normalise and sync it in the same transaction as the brand row.
+    from services.brand_intake.markets import target_market_json
+    market_json = target_market_json(target_markets)
 
     pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         # NOT scoped by brand_name — this tenant-facing endpoint keeps its pre-existing invariant
         # (AA-424: exactly one active row per tenant_id at a time, regardless of brand_name) so a
         # tenant editing their own brand_name mid-flow can't leave 2 simultaneously-active rows
@@ -4852,7 +4831,16 @@ async def update_brand_identity(
         """, tenant_id, system_prompt, style_guide, _json.dumps(forbidden_words), current + 1,
             brand_name, brand_type, core_idea, customer_segment, customer_mindset,
             _json.dumps(tone_of_voice), good_examples, target_markets)
-    return {"status": "updated", "version": current + 1}
+        if tenant_id != _AA_INTERNAL_TENANT_ID:
+            # aa_internal's markets stay owned by PATCH /admin/settings/seo (admin research).
+            await conn.execute("""
+                INSERT INTO shared.tenant_seo_config (tenant_id, target_market)
+                VALUES ($1::uuid, $2::jsonb)
+                ON CONFLICT (tenant_id) DO UPDATE
+                    SET target_market = EXCLUDED.target_market, updated_at = now()
+            """, tenant_id, _json.dumps(market_json))
+    return {"status": "updated", "version": current + 1,
+            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
 
 
 _BRAND_UPLOAD_MAX_BYTES = 10 * 1024 * 1024  # 10MB — matches BrandTab.tsx's own stated limit
@@ -4903,6 +4891,27 @@ async def upload_brand_file(
         raise HTTPException(status_code=502, detail="Upload to storage failed")
 
     return {"status": "uploaded", "s3_key": s3_key}
+
+
+@router.post("/brand-identity/parse")
+async def parse_brand_brief(
+    tenant_id: str = Depends(_resolve_brand_tenant_id),
+    file: UploadFile = File(...),
+):
+    """AA-741 (S229) — T0: read an uploaded brand brief (.docx) and return the Brand Identity form
+    fields for the tenant to REVIEW. Nothing is saved here; the tenant saves through
+    POST /admin/brand-identity after checking the form. Same auth as the form (tenant JWT, or the
+    admin secret for aa_internal)."""
+    if file.content_type != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" \
+            and not (file.filename or "").lower().endswith(".docx"):
+        raise HTTPException(status_code=415, detail="Upload the brief as a Word .docx file")
+    contents = await file.read()
+    if len(contents) > _BRAND_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 10MB limit")
+    out = _parse_brief_or_400(contents)
+    logger.info("brand_brief_parsed", tenant_id=tenant_id, filename=file.filename,
+                fields=sorted(k for k, v in out["fields"].items() if v), warnings=len(out["warnings"]))
+    return {"fields": out["fields"], "warnings": out["warnings"], "markets": out["markets"]}
 
 
 # ── GET /admin/billing ────────────────────────────────────────────────────────

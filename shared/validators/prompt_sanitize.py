@@ -46,6 +46,34 @@ MAX_LONG_FIELD_LEN = 300     # style_guide free-text body
 # injection payload".
 MAX_SYSTEM_PROMPT_LEN = 2000
 
+# AA-741 (S229): brand fields a tenant fills from a real brief. MAX_LONG_FIELD_LEN (300) silently
+# cut ~70% of a real style guide (briefs run ~1,000-1,200 chars, incl. the "Avoid" rules). These
+# limits leave headroom, and the brand endpoints REJECT anything longer (422, named fields) instead
+# of truncating without telling the tenant.
+MAX_BRAND_LONG_LEN = 2500     # style_guide, good_examples
+MAX_BRAND_MEDIUM_LEN = 1000   # core_idea, customer_segment, customer_mindset
+BRAND_FIELD_LIMITS = {
+    "system_prompt": MAX_SYSTEM_PROMPT_LEN,
+    "style_guide": MAX_BRAND_LONG_LEN,
+    "writing_style": MAX_BRAND_LONG_LEN,
+    "good_examples": MAX_BRAND_LONG_LEN,
+    "core_idea": MAX_BRAND_MEDIUM_LEN,
+    "customer_segment": MAX_BRAND_MEDIUM_LEN,
+    "customer_mindset": MAX_BRAND_MEDIUM_LEN,
+    "brand_name": MAX_SHORT_FIELD_LEN,
+    "brand_type": MAX_SHORT_FIELD_LEN,
+}
+
+
+def brand_length_errors(values: dict) -> list[str]:
+    """Human-readable errors for brand fields longer than their limit (empty = all fine)."""
+    errors = []
+    for field, limit in BRAND_FIELD_LIMITS.items():
+        v = values.get(field)
+        if isinstance(v, str) and len(v.strip()) > limit:
+            errors.append(f"{field.replace('_', ' ')}: {len(v.strip())} characters (max {limit})")
+    return errors
+
 
 def _strip_control_chars(text: str) -> str:
     # Drop non-printable/control characters (keep \n, \t) that could be used to obscure a
