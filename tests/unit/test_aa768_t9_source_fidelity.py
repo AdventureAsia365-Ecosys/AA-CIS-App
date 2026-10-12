@@ -130,3 +130,15 @@ class TestRepairFeedback:
             await service.run_write_background(uuid4(), uuid4(), context, pool=MagicMock())
         assert mock_rw.call_args.kwargs["revision_feedback"] == [
             "F1_grounding: number 900", "F9_cta_fact: audit manual_check: FACT_CHECK_MANUAL_CHECK"]
+
+
+def test_f9_rule_excludes_opinions_brand_approach_and_cta():
+    """AA-768 round 2 — live re-run: the judge flagged rhetoric and the brand's own approach."""
+    data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
+            "failure_codes": [], "flagged_phrases": [], "notes": ""}
+    with patch.object(qg, "invoke_judge", return_value=_judge(**data)) as mock_judge:
+        qg.gate_brand_voice("piece", "Book", "rubric", source_text="seed")
+    prompt = mock_judge.call_args[0][1]
+    assert "checkable statement of fact" in prompt
+    for excluded in ("opinions", "rhetorical", "describing its own approach", "required call to action"):
+        assert excluded in prompt
