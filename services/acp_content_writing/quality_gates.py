@@ -601,6 +601,11 @@ def gate_brand_voice(
         "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING/"
                              "FACT_CHECK_MANUAL_CHECK code above — [] if none is used"],
         "notes": "str",
+        # AA-768 round 4 — only used when a SOURCE is given (see below).
+        **({"unsupported_claims": [{"sentence": "exact sentence from the piece",
+                                    "claim": "the specific checkable fact it asserts",
+                                    "why_not_in_source": "what the SOURCE says instead, or that it is silent"}]}
+           if source_text else {}),
     }, indent=1)
     if source_text:
         source_block = f"SOURCE (everything the writer was given as fact):\n{source_text}\n\n"
@@ -618,7 +623,10 @@ def gate_brand_voice(
             "or values (as in the BRAND RUBRIC), and the required call to action. Short, "
             "well-known background about a place the SOURCE names (what it is, its setting, why "
             "it matters) is also allowed. If no sentence is an unsupported checkable fact, do "
-            "not use the code."
+            "not use the code. For every FACT_CHECK_MANUAL_CHECK flag, list the claim in "
+            "unsupported_claims with why the SOURCE does not support it. A claim the SOURCE "
+            "states — even in other words — is supported: never list it. No entry in "
+            "unsupported_claims means no FACT_CHECK_MANUAL_CHECK."
         )
     else:
         source_block = ""
@@ -653,6 +661,19 @@ def gate_brand_voice(
     failure_codes = [c for c in (data.get("failure_codes") or []) if c in _BRAND_VOICE_FAILURE_CODES]
     notes = data.get("notes") or ""
     phrases = [p for p in (data.get("flagged_phrases") or []) if isinstance(p, str) and p.strip()]
+    # AA-768 round 4 — with a SOURCE, a FACT_CHECK flag counts only when the judge names the
+    # unsupported claim and why. Round-3 re-run: the judge flagged sentences the SOURCE states
+    # verbatim ("Pawangka was built by … Songtsen Gampo"). A flag it cannot justify is dropped;
+    # a justified one is quoted to the rewrite as claim + reason.
+    claims = []
+    if source_text:
+        claims = [c for c in (data.get("unsupported_claims") or [])
+                  if isinstance(c, dict) and str(c.get("claim") or "").strip()
+                  and str(c.get("why_not_in_source") or "").strip()]
+        if "FACT_CHECK_MANUAL_CHECK" in failure_codes and not claims:
+            failure_codes = [c for c in failure_codes if c != "FACT_CHECK_MANUAL_CHECK"]
+            if not failure_codes and status != "pass":
+                status = "pass"  # the only reason to fail was an unjustified fact flag
 
     # AA-613 — split the single F9 judge call into TWO gate results by failure class, so the
     # T10 loop can treat them differently (Nghiệp's 3-tier severity model):
@@ -673,6 +694,10 @@ def gate_brand_voice(
         if not hit:
             return []
         reason = ", ".join(hit)
+        if claims and "FACT_CHECK_MANUAL_CHECK" in hit:
+            return [f"audit {status}: {reason} — unsupported claim(s): " + "; ".join(
+                f'"{c.get("sentence") or c["claim"]}" (claims: {c["claim"]}; source: {c["why_not_in_source"]})'
+                for c in claims)]
         # AA-768 — FACT_CHECK quotes its claim too, so the rewrite knows which sentence to fix.
         if phrases and set(hit) & (_BRAND_STYLE_CODES | {"FACT_CHECK_MANUAL_CHECK"}):
             reason += " — exact flagged phrase(s): " + "; ".join(f'"{p}"' for p in phrases)
