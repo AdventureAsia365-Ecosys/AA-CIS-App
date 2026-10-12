@@ -153,15 +153,26 @@ class LLMClient:
     def _start_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
                       primary_acct: str, fallback_acct: str) -> None:
         # A plain thread does not inherit contextvars, so the shadow never writes to the
-        # live-progress stream sink bound to the primary call.
+        # live-progress stream sink bound to the primary call. The job id and tenant ARE carried
+        # over explicitly (AA-741 G1) so the shadow's llm_call_log row is attributed like the
+        # primary's.
+        from .call_log import current_job_id, current_tenant_id
         threading.Thread(
             target=self._run_shadow,
-            args=(request.model_copy(), cfg, primary, primary_acct, fallback_acct),
+            args=(request.model_copy(), cfg, primary, primary_acct, fallback_acct,
+                  current_job_id(), current_tenant_id()),
             daemon=True,
         ).start()
 
     def _run_shadow(self, request: LLMRequest, cfg, primary: LLMResponse,
-                    primary_acct: str, fallback_acct: str) -> None:
+                    primary_acct: str, fallback_acct: str,
+                    job_id: Optional[str] = None, tenant_id: Optional[str] = None) -> None:
+        from .call_log import bind_job, bind_tenant
+        with bind_job(job_id), bind_tenant(tenant_id):
+            self._run_shadow_bound(request, cfg, primary, primary_acct, fallback_acct)
+
+    def _run_shadow_bound(self, request: LLMRequest, cfg, primary: LLMResponse,
+                          primary_acct: str, fallback_acct: str) -> None:
         from .shadow import record_shadow_sync
         t0 = time.monotonic()
         resp, error = None, None

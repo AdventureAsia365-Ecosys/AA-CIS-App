@@ -154,3 +154,31 @@ async def test_decide_refuses_a_bound_tenant_not_on_the_allow_list():
     m_call.assert_not_awaited()
     v = dec.verdicts["kw_belongs"]
     assert v.zone == "skipped" and v.error == "tenant not on Jev allow-list"
+
+
+# ── shadow calls run on a plain thread: job + tenant are carried over explicitly ───────────────
+
+def test_shadow_thread_keeps_the_job_and_tenant():
+    import threading
+    from unittest.mock import patch as _patch
+    from shared.llm_client.client import LLMClient
+    from shared.llm_client.models import LLMRequest, LLMResponse
+    from shared.llm_client.role_config import StageConfig
+
+    with _patch("shared.llm_client.client.boto3"), _patch("shared.llm_client.client.openai"):
+        c = LLMClient()
+    cfg = StageConfig("s1_judge", "judge", "openai", "gpt-5.6-luna", None, shadow_model_id="gpt-4.1")
+    primary = LLMResponse(content="{}", model_used="satellite-gpt-5.6-luna", provider="p")
+    seen, done = {}, threading.Event()
+
+    def _rec(**_kw):
+        seen["job"], seen["tenant"] = call_log.current_job_id(), call_log.current_tenant_id()
+        done.set()
+
+    with _patch.object(c, "_call_key", return_value=primary), \
+            _patch("shared.llm_client.shadow.record_shadow_sync", side_effect=_rec):
+        with call_log.bind_job("11111111-1111-1111-1111-111111111111"), call_log.bind_tenant(TENANT):
+            c._start_shadow(LLMRequest(system_prompt="s", user_prompt="u", stage="s1_judge"),
+                            cfg, primary, "acc3", "acc1")
+        assert done.wait(5)
+    assert seen == {"job": "11111111-1111-1111-1111-111111111111", "tenant": TENANT}
