@@ -216,4 +216,55 @@ def rewrite_with_feedback(
     return content, resp.cost_usd, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
-__all__ = ["SeoEnvelopeError", "write_content", "rewrite_with_feedback"]
+_REPAIR_SYSTEM = """You fix single sentences inside a finished piece of travel content.
+For each numbered sentence you get the problem a fact-checker found. Return a replacement that
+keeps the sentence's role, tone and flow in the piece but removes the unsupported claim or number:
+use only what the SOURCE states, or widely known background about a place it names. Never add a
+new claim, number, place, scene detail or promise. If nothing true is left to say, return "" to
+delete the sentence. Return ONLY JSON: {"replacements": ["...", "..."]} — one string per numbered
+sentence, in the same order."""
+
+
+def repair_sentences(
+    *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
+    channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
+) -> tuple[list[str], float]:
+    """AA-768 — attempt-2 sentence-level repair (see sentence_repair.py). `sentences` items carry
+    "sentence" and "problem". Returns (replacements in the same order, cost). Raises
+    SentenceRepairError when the reply cannot be parsed into exactly one string per sentence —
+    the caller then falls back to the full rewrite."""
+    source = content_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
+    numbered = "\n".join(
+        f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}" for i, it in enumerate(sentences, 1)
+    )
+    request = LLMRequest(system_prompt=_REPAIR_SYSTEM,
+                         user_prompt=f"SOURCE:\n{source}\n\nSENTENCES TO FIX:\n{numbered}",
+                         stage="t9_write", max_tokens=_MAX_TOKENS)
+    resp = LLMClient().generate(request)
+    record_call_sync(
+        stage="t9_write", role="writer", model=resp.model_used,
+        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+        quality_signal={"channel": channel, "attempt": 2, "mode": "sentence_repair",
+                        "sentences": len(sentences)},
+        stop_reason=getattr(resp, "stop_reason", None),
+        account=getattr(resp, "satellite_account", None),
+        fallback_used=getattr(resp, "fallback_used", None),
+    )
+    text = _strip_fences(resp.content)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = repair_json(text, return_objects=True)
+    reps = data.get("replacements") if isinstance(data, dict) else None
+    if not isinstance(reps, list) or len(reps) != len(sentences) or not all(isinstance(r, str) for r in reps):
+        raise SentenceRepairError(f"bad sentence-repair reply: {resp.content[:200]!r}")
+    return reps, resp.cost_usd
+
+
+class SentenceRepairError(Exception):
+    """The sentence-repair reply was not one string per sentence — fall back to the full rewrite."""
+
+
+__all__ = ["SeoEnvelopeError", "SentenceRepairError", "write_content", "rewrite_with_feedback",
+           "repair_sentences"]
