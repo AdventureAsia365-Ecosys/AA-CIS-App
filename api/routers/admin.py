@@ -1093,7 +1093,7 @@ async def offboard_tenant(
                 """
                 INSERT INTO acp_shared.audit_log
                     (tenant_id, actor, action, resource_type, resource_id, details)
-                VALUES ($1, 'admin_api', 'agency.offboard', 'tenant', $1, $2::jsonb)
+                VALUES ($1::text, 'admin_api', 'agency.offboard', 'tenant', $1::text, $2::jsonb)
                 """,
                 tenant_id, json.dumps({
                     "reason": body.reason,
@@ -1101,6 +1101,9 @@ async def offboard_tenant(
                     "note": "S3 data deletion: acp-cis-*/{tenant_id}/ — schedule Lambda after 14d",
                 }),
             )
+            # AA-741 (S229): an offboarded tenant's content must never reach Jev again.
+            await conn.execute(
+                "DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid", tenant_id)
 
     return {
         "tenant_id": tenant_id,
