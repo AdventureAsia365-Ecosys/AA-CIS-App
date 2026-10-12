@@ -33,6 +33,7 @@ from services.acp_angle_gate.generate import generate_angles
 from services.acp_angle_gate.goals import get_goal
 from services.acp_angle_gate.ranking import rank_angles, verify_answers
 from services.acp_planning.tenant_pool import fetch_tenant_trips
+from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_shared.dfs_relevance import fetch_search_demand_signal
 from services.acp_shared.piece_history import fetch_piece_history
 
@@ -83,9 +84,12 @@ async def _fetch_atom_for_tenant(tenant_id: UUID, atom_id: str, pool) -> dict:
     atom acceptable too, unchanged from before."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_ATOM_QUERY, atom_id, str(tenant_id))
+        # AA-768 — angles are generated from the same rich seed T9 writes from (evidence, hook,
+        # Segment siblings), not the atom's short label.
+        seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
         raise AtomNotFoundError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
-    return {"atom_id": row["atom_id"], "trip_id": row["tour_id"], "text": row["text"]}
+    return {"atom_id": row["atom_id"], "trip_id": row["tour_id"], "text": seed or row["text"]}
 
 
 async def _fetch_request_row(tenant_id: UUID, request_id: UUID, pool):
