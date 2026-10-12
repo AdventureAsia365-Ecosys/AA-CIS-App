@@ -388,6 +388,9 @@ TOUR_STEPS = [
 TOUR_STAGE_STEPS = {
     "s1_judge": "check", "s1_brand_audit": "check",
     "s1_flag_fix": "polish", "s1_itinerary_nudge": "polish",
+    # AA-763 — T2's own keys for the same steps.
+    "t2_judge": "check", "t2_brand_audit": "check",
+    "t2_flag_fix": "polish", "t2_itinerary_nudge": "polish",
 }
 
 

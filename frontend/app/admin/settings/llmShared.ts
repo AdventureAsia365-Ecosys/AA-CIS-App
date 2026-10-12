@@ -100,13 +100,18 @@ export const withVia = (label: string, via?: string | null) => (via ? `${label} 
 // Human label + display grouping — a pure presentation layer over the stage rows the API returns.
 export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = [
   // AA-620: s1_generate = A1 admin writer only; the tenant (T2) writer is its own t2_generate
-  // stage (own group below). flag_fix/itinerary_nudge are shared by A1 and T2.
+  // stage (own group below). AA-763: T2's judge/audit/repair calls have their own t2_* keys too.
   {
     key: "s1",
-    label: "S1 rewrite — A1 admin writer + shared repair/judge",
+    label: "S1 rewrite — A1 admin writer, judge and repair",
     stages: ["s1_generate", "s1_judge", "s1_brand_audit", "s1_flag_fix", "s1_itinerary_nudge", "s1_atom_writer"],
   },
-  { key: "t2", label: "T2 tenant rewrite writer (own model — AA-620)", stages: ["t2_generate"] },
+  {
+    key: "t2",
+    label: "T2 tenant rewrite — writer, judge and repair (AA-620, AA-763)",
+    stages: ["t2_generate", "t2_judge", "t2_brand_audit", "t2_flag_fix", "t2_itinerary_nudge"],
+  },
+  { key: "t7", label: "T7 — Slate Debate brand-fit judge", stages: ["t7_debate_judge"] },
   // AA-757 (S224): stage key renamed t5_atomize -> a3_atomize (atomize is A3 platform only).
   // Historical llm_call_log rows keep t5_atomize, so both keys map to this one "A3 atomize"
   // group/label.
@@ -131,6 +136,11 @@ export const STAGE_LABELS: Record<string, string> = {
   s1_itinerary_nudge: "Itinerary day nudge",
   s1_atom_writer: "Atom-based writer",
   t2_generate: "Tenant content generate",
+  t2_judge: "Tenant brand-fit judge",
+  t2_brand_audit: "Tenant brand audit",
+  t2_flag_fix: "Tenant flag-fix repair",
+  t2_itinerary_nudge: "Tenant itinerary day nudge",
+  t7_debate_judge: "Debate brand-fit judge",
   a3_atomize: "A3 atomize",
   t5_atomize: "A3 atomize",  // AA-757: historical rows under the old stage key — same stage.
   t8_angle_gen: "Angle generation",

@@ -2,6 +2,8 @@ import json
 import os
 import re
 import structlog
+
+from services.content_generation.stages import stage_for
 from json_repair import repair_json
 from typing import TypedDict, Annotated, Optional
 from langgraph.graph import StateGraph, END
@@ -38,7 +40,7 @@ MIN_QUALITY = 7.0
 
 
 def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
-                         nudge_budget: int = MAX_NUDGES_PER_TOUR) -> dict:
+                         nudge_budget: int = MAX_NUDGES_PER_TOUR, *, stage: str = "s1_itinerary_nudge") -> dict:
     """AA-353: validate the model's structured ``itineraries`` array against its own PER-DAY
     SOURCE LENGTH target, auto-nudge (once, non-repeating) any day outside the hard clamp, then
     serialize the array back to the pre-existing canonical "Day N — Title\\nBody" string format —
@@ -133,6 +135,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
         new_title, new_body, resp = nudge_itinerary_day(
             client, m["source_text"] or itineraries_raw,
             str(day_item.get("title") or ""), str(day_item.get("body") or ""), source_words,
+            stage=stage,
         )
         extra_cost += resp.cost_usd
         extra_read += resp.cache_read_tokens
@@ -146,7 +149,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
         # AA-505 — quality_signal = did the nudge actually land inside clamp? Real,
         # computed right here, not a fabricated placeholder.
         record_call_sync(
-            stage="s1_itinerary_nudge", role="writer", model=resp.model_used,
+            stage=stage, role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd,
             quality_signal={
@@ -271,8 +274,8 @@ class ContentState(TypedDict):
     # NULL (A1 admin leaves this None — its writes stay tenant_id NULL by design).
     tenant_id:              Optional[str]
     # AA-620: which llm_role_config stage the WRITE node resolves — "t2_generate" for a tenant
-    # (T2) rewrite, "s1_generate" for A1 admin. Only the generate node reads it; s1_flag_fix /
-    # s1_itinerary_nudge stay shared (not split — see AA-620). None -> falls back to s1_generate.
+    # (T2) rewrite, "s1_generate" for A1 admin. None -> falls back to s1_generate. AA-763: the
+    # other shared-graph calls derive their t2_* twin from is_tenant_rewrite (stages.stage_for).
     generate_stage:         Optional[str]
     # AA-748: per-day source facts (source_facts.extract_day_facts) threaded into the writer prompt
     # behind S1_STRUCTURED_FACTS. generate_node extracts them once (one s1_source_facts LLM call)
@@ -470,7 +473,8 @@ def generate_node(state: ContentState) -> ContentState:
         _apply_seo_meta_fit(generated, state)
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
-        _itin_result = _process_itineraries(generated, state.get("tour", {}), client)
+        _itin_result = _process_itineraries(generated, state.get("tour", {}), client,
+                                            stage=stage_for(state, "s1_itinerary_nudge"))  # AA-763
         # AA-738: strip forbidden words deterministically before validate scores them — after the
         # itinerary nudge, so its output is covered too.
         _apply_forbidden_strip(generated, state)
@@ -647,7 +651,8 @@ def seed_generated_node(state: ContentState) -> ContentState:
     _apply_seo_meta_fit(generated, state)  # AA-724: same deterministic seo_meta fit as the live path
     # Reuse the exact itinerary clamp/nudge + serialize the sync path runs. LLMClient() is only used
     # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
-    _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient())
+    _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient(),
+                                        stage=stage_for(state, "s1_itinerary_nudge"))  # AA-763
     _apply_forbidden_strip(generated, state)  # AA-738: same deterministic strip as the live path
     logger.info("s1_batch_seeded", tour_id=state.get("tour_id"),
                 model=state.get("model_used", "batch-haiku"))

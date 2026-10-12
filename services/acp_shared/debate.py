@@ -30,6 +30,8 @@ import json
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from services.content_generation.stages import T7_DEBATE_JUDGE
+
 import structlog
 
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
@@ -257,11 +259,12 @@ async def apply_debate(
                     # call already has platform-wide, not a new regression introduced by Debate;
                     # a cache HIT (the expected steady state after brand_version stabilizes) never
                     # reaches this line at all.
-                    result = score_candidate_fit(brand_profile, topic)
+                    # AA-763 (G4): own stage key, same route as s1_judge.
+                    result = score_candidate_fit(brand_profile, topic, stage=T7_DEBATE_JUDGE)
                     # AA-685 — this call used to write no llm_call_log row (judge_node.py logs its
                     # own use of the same helper).
                     await record_call(
-                        stage="s1_judge", role="judge", model=result.model_used,
+                        stage=T7_DEBATE_JUDGE, role="judge", model=result.model_used,
                         tokens_in=result.input_tokens, tokens_out=result.output_tokens,
                         cost_usd=result.cost_usd, tenant_id=str(tenant_id),
                         quality_signal={

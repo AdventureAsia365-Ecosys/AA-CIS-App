@@ -63,7 +63,7 @@ def in_clamp(ratio: float) -> bool:
 
 
 def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: str,
-                         current_body: str, target_word_count: int):
+                         current_body: str, target_word_count: int, *, stage: str = "s1_itinerary_nudge"):
     """AA-353: single targeted rewrite of one day that clamped outside [ITINERARY_CLAMP_MIN,
     ITINERARY_CLAMP_MAX] of its source word count. One attempt — callers do not loop this
     themselves (graph.py's generate_node never retries it; flag_fix_node.py's AA-329c repair
@@ -90,7 +90,7 @@ on-brand."""
         user_prompt=user_prompt,
         # AA-518: was a hardcoded "haiku" literal — now admin-configurable via the
         # "s1_itinerary_nudge" stage (seeded to haiku, matching this exact prior value).
-        stage="s1_itinerary_nudge",
+        stage=stage,  # AA-763: "t2_itinerary_nudge" on a tenant rewrite
     )
     resp = client.generate(request)
     raw = resp.content.strip()
