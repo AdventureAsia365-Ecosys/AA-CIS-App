@@ -214,14 +214,17 @@ async def _call_adapter(channel: str, creds: dict, piece, key: str) -> tuple:
     relying on the adapter's own AA-460-lesson validation (never trusts a bare success status
     itself). Unknown channels never reach here — publish() already 404s before calling this."""
     if channel == "blog":
-        title = piece["angle_name"] or "Untitled"
+        # AA-768 (S233) — the T9 blog's own SEO title/meta (fitted to the 45-60 / 140-155 band)
+        # instead of the internal angle name and an empty meta.
+        title = piece.get("seo_title") or piece["angle_name"] or "Untitled"
         # AA-613 — content_text is markdown (T9's blog prompt writes `## ` H2s, `**bold**`, FAQ
         # pairs). Publishing it raw into content_html made WordPress show literal `##`/`**`.
         # Render the markdown to a bare <article> fragment first (the CMS supplies the page
         # chrome; the standalone-document mode is for tenant download, not publish).
         content = BlogContent(
             title=title, content_html=render_content_text_to_fragment(piece["content_text"]),
-            slug=_slug(piece, key), seo_title=title, seo_meta="", status="publish",
+            slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
+            status="publish",
         )
         result = await _wordpress(creds).create_post(content)
     else:  # channel == "facebook" — the only 2 branches _SUPPORTED_CHANNELS allows through
@@ -256,7 +259,7 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     async with pool.acquire() as conn:
         piece = await conn.fetchrow(
             """
-            SELECT cp.piece_id, cp.content_text, cp.status, cp.slug,
+            SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
                    COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id

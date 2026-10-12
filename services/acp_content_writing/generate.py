@@ -29,16 +29,47 @@ from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
+from services.acp_content_writing.quality_gates import strip_citation_tags
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
 
-# Same ceiling class as T8's angle-gen call (max_tokens=2048 for 3 short structured angles) and
-# the project-wide "max_tokens=4096, not 2000" JSON-truncation rule — sized generously for the
-# longest real channel example seen in this codebase (the old, not-reused acp_s4_social's
-# newsletter ceiling, ~600 words ≈ 800 output tokens) with real margin, not tuned per channel
-# (STEP0 confirmed no per-channel number has a real source to tune against yet).
-_MAX_TOKENS = 2048
+# AA-768 (S233) — output ceiling per channel. A single 2048 cap cut 20/92 t9_write calls in the
+# S232 runs (stop_reason=max_tokens), all of them blogs: the blog JSON envelope + a 4,700-13,000
+# char body + citation tags needs far more. Short channels keep head-room above their own bands.
+_MAX_TOKENS_BY_CHANNEL = {"blog": 8000}
+_MAX_TOKENS_DEFAULT = 3000
+# One retry with more room when the model still stops on the ceiling (rare after the raise).
+_TRUNCATION_RETRY_FACTOR = 1.5
+_TRUNCATION_RETRY_CAP = 16000
+# Anthropic/Converse report "max_tokens"; OpenAI-compatible routes report "length".
+_TRUNCATED_STOP_REASONS = {"max_tokens", "length"}
+_MAX_TOKENS = 2048  # sentence repair + SEO fit: short JSON replies
+
+
+def max_tokens_for(channel: str) -> int:
+    return _MAX_TOKENS_BY_CHANNEL.get(channel, _MAX_TOKENS_DEFAULT)
+
+
+def _generate_full(request: LLMRequest, channel: str, *, attempt: int, tenant_id,
+                   angle_gate_request_id):
+    """Run the writer call; when it stops on the token ceiling, log that call and run it once
+    more with a larger ceiling. Returns (resp, cost of every call made). A reply that is still
+    cut after the retry is returned as-is — the F0_complete gate then reports it."""
+    client = LLMClient()
+    resp = client.generate(request)
+    _record_t9_write_call(resp, channel, attempt=attempt,
+                           tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
+    cost = resp.cost_usd
+    if getattr(resp, "stop_reason", None) in _TRUNCATED_STOP_REASONS:
+        bigger = min(int(request.max_tokens * _TRUNCATION_RETRY_FACTOR), _TRUNCATION_RETRY_CAP)
+        retry = LLMRequest(system_prompt=request.system_prompt, user_prompt=request.user_prompt,
+                           stage=request.stage, max_tokens=bigger)
+        resp = client.generate(retry)
+        _record_t9_write_call(resp, channel, attempt=attempt, tenant_id=tenant_id,
+                               angle_gate_request_id=angle_gate_request_id, truncation_retry=True)
+        cost += resp.cost_usd
+    return resp, cost
 
 
 class SeoEnvelopeError(Exception):
@@ -147,20 +178,20 @@ def write_content(
         destination=destination, trip_name=trip_name, atom_id=atom_id,
         route_segments=route_segments, keyword=keyword, facts_text=facts_text,
     )
-    client = LLMClient()
+    channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
-                          stage="t9_write", max_tokens=_MAX_TOKENS)
-    resp = client.generate(request)
-    _record_t9_write_call(resp, channel_style["channel"], attempt=1,
-                           tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
-    if channel_style["channel"] == "blog":
+                          stage="t9_write", max_tokens=max_tokens_for(channel))
+    resp, cost = _generate_full(request, channel, attempt=1,
+                                tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
+    if channel == "blog":
         body, seo_meta, summary = _parse_blog_envelope(resp.content)
-        return body, resp.cost_usd, seo_meta, summary
+        return body, cost, seo_meta, summary
     content, summary = _extract_summary(_strip_fences(resp.content))
-    return content, resp.cost_usd, {"seo_title": None, "meta_description": None, "slug": None}, summary
+    return content, cost, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
-def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_gate_request_id) -> None:
+def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_gate_request_id,
+                          truncation_retry: bool = False) -> None:
     """AA-505 — shared by write_content()/rewrite_with_feedback(). Lightweight, real, immediate
     heuristic (output length is non-trivial) — the MEANINGFUL quality signal for this piece
     (whether it actually passed T10) is logged separately by quality_gates.py's own "t10_judge"
@@ -171,7 +202,8 @@ def _record_t9_write_call(resp, channel: str, *, attempt: int, tenant_id, angle_
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd,
         tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        quality_signal={"channel": channel, "attempt": attempt, "output_len_chars": len(resp.content)},
+        quality_signal={"channel": channel, "attempt": attempt, "output_len_chars": len(resp.content),
+                        **({"truncation_retry": True} if truncation_retry else {})},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
@@ -203,17 +235,16 @@ def rewrite_with_feedback(
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text,
     )
-    client = LLMClient()
+    channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
-                          stage="t9_write", max_tokens=_MAX_TOKENS)
-    resp = client.generate(request)
-    _record_t9_write_call(resp, channel_style["channel"], attempt=2,
-                           tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
-    if channel_style["channel"] == "blog":
+                          stage="t9_write", max_tokens=max_tokens_for(channel))
+    resp, cost = _generate_full(request, channel, attempt=2,
+                                tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
+    if channel == "blog":
         body, seo_meta, summary = _parse_blog_envelope(resp.content)
-        return body, resp.cost_usd, seo_meta, summary
+        return body, cost, seo_meta, summary
     content, summary = _extract_summary(_strip_fences(resp.content))
-    return content, resp.cost_usd, {"seo_title": None, "meta_description": None, "slug": None}, summary
+    return content, cost, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
 _REPAIR_SYSTEM = """You fix single sentences inside a finished piece of travel content.
@@ -266,5 +297,58 @@ class SentenceRepairError(Exception):
     """The sentence-repair reply was not one string per sentence — fall back to the full rewrite."""
 
 
-__all__ = ["SeoEnvelopeError", "SentenceRepairError", "write_content", "rewrite_with_feedback",
+_SEO_FIT_SYSTEM = """You write the search-result title and meta description for a finished blog post.
+Rules:
+- Title: 45-60 characters, contains the target keyword verbatim, names the place the post is about,
+  reads as one natural headline (never a fragment cut at a colon).
+- Meta description: 140-155 characters, ONE complete sentence ending in '.', contains the target
+  keyword verbatim, says what the reader gets from the post.
+- Use only places and facts that appear in the post. No new claims, numbers or promises.
+Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}"""
+
+
+def fit_seo_fields(
+    *, body: str, seo_title: str | None, meta_description: str | None, keyword: str | None,
+    brand_name: str | None = None, tenant_id: str | None = None,
+    angle_gate_request_id: str | None = None,
+) -> tuple[dict, float]:
+    """AA-768 (S233) — regenerate an out-of-band blog SEO title/meta with one short call instead
+    of cutting the string (PR #670 cut "Bhutan's Craft Bazaar: Thimphu's Weekend Market…" at the
+    colon → a 21-char stub on 6/20 blogs). Returns ({"seo_title", "meta_description"} — a key is
+    None when the reply did not give a usable string) and the cost. The caller validates the
+    lengths and keeps the writer's own value when the new one is not inside the band."""
+    parts = [f"TARGET SEO KEYWORD: {keyword}" if keyword else "No target keyword — write naturally."]
+    if brand_name:
+        parts.append(f"BRAND (never name another brand): {brand_name}")
+    parts.append(f"CURRENT TITLE ({len(seo_title or '')} chars): {seo_title or '(none)'}")
+    parts.append(f"CURRENT META ({len(meta_description or '')} chars): {meta_description or '(none)'}")
+    parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
+    request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
+                         stage="t9_write", max_tokens=_MAX_TOKENS)
+    resp = LLMClient().generate(request)
+    record_call_sync(
+        stage="t9_write", role="writer", model=resp.model_used,
+        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+        quality_signal={"channel": "blog", "mode": "seo_fit"},
+        stop_reason=getattr(resp, "stop_reason", None),
+        account=getattr(resp, "satellite_account", None),
+        fallback_used=getattr(resp, "fallback_used", None),
+    )
+    text = _strip_fences(resp.content)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = repair_json(text, return_objects=True)
+    if not isinstance(data, dict):
+        data = {}
+    out = {}
+    for key in ("seo_title", "meta_description"):
+        val = data.get(key)
+        out[key] = " ".join(val.split()) if isinstance(val, str) and val.strip() else None
+    return out, resp.cost_usd
+
+
+__all__ = ["SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError", "write_content",
+           "rewrite_with_feedback",
            "repair_sentences"]

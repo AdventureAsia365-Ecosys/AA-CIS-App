@@ -99,6 +99,9 @@ _HEDGE_PHRASES = frozenset({
 # AA-514 — exact numeric thresholds ported verbatim from the origin's own
 # `reference/gate-thresholds.toml` (not invented), for gate_seo_surface().
 _SEO_TITLE_MAX_CHARS = 60
+# AA-768 (S233) — a title under 45 chars is a stub, not a headline (S232: 21-char
+# "Bhutan's Craft Bazaar" shipped on 6/20 blogs, two of them approved).
+_SEO_TITLE_MIN_CHARS = 45
 _META_DESCRIPTION_MIN_CHARS = 120
 _META_DESCRIPTION_MAX_CHARS = 158
 _SLUG_MAX_CHARS = 60
@@ -448,6 +451,38 @@ def gate_extreme_length(content_text: str, channel: Optional[str] = None) -> Gat
     return _result("F4_extreme_length", [])
 
 
+# ---------------------------------------------------------------- F0: complete text (AA-768, S233)
+
+# Prose that stops on a letter, digit, comma, connector or a stray backslash was cut by the
+# token ceiling (S232: 5/20 final blogs, one approved, ended "...unobstructed t" / "starting" /
+# a literal "\\"). json_repair turns a cut blog envelope into a body that looks finished, so the
+# check reads the text itself; the writer also retries a ceiling stop (generate._generate_full).
+_END_OK_RE = re.compile(r"""[.!?…)"'\u201d\u2019\]*]\s*$""")
+
+
+def _last_prose_line(text: str) -> Optional[str]:
+    for line in reversed((text or "").strip().splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # hashtag lines, list items, headings and bare links end without a full stop by design
+        if stripped.startswith(("#", "- ", "* ", "http")) or re.match(r"^\d+[.)]\s", stripped):
+            return None
+        return stripped
+    return None
+
+
+def gate_complete(content_text: str) -> GateResultLite:
+    """F0_complete — blocking, repairable: the piece must not end mid-sentence."""
+    text = strip_citation_tags(content_text).rstrip()
+    if text.endswith("\\"):
+        return _result("F0_complete", ["the text ends with a stray backslash — it was cut off"])
+    last = _last_prose_line(text)
+    if last is not None and not _END_OK_RE.search(last):
+        return _result("F0_complete", [f"the text stops mid-sentence: '...{last[-80:]}'"])
+    return _result("F0_complete", [])
+
+
 # ---------------------------------------------------------------- F4 family: SEO surface (new, AA-514, blog only)
 
 def gate_seo_surface(
@@ -473,6 +508,11 @@ def gate_seo_surface(
         if len(seo_title) > _SEO_TITLE_MAX_CHARS:
             violations.append(
                 f"SEO title is {len(seo_title)} characters — it truncates above {_SEO_TITLE_MAX_CHARS}"
+            )
+        elif len(seo_title) < _SEO_TITLE_MIN_CHARS:
+            violations.append(
+                f"SEO title is {len(seo_title)} characters — a stub; write {_SEO_TITLE_MIN_CHARS}-"
+                f"{_SEO_TITLE_MAX_CHARS} characters"
             )
         if kw and kw not in seo_title.lower():
             violations.append(f"SEO title does not contain the keyword '{keyword}'")
@@ -923,6 +963,7 @@ def run_quality_gates(
         # AA-531 — channel-aware length band (blog gets its own wider band, see
         # _length_bounds_for_channel()); the other 7 channels are unaffected.
         gate_extreme_length(length_check_text, channel),
+        gate_complete(content_text),  # AA-768 (S233) — a cut-off piece never ships as finished
     ]
     if channel == "blog":
         gate_ledger += [
@@ -954,7 +995,7 @@ def run_quality_gates(
 __all__ = [
     "GateResultLite", "QualityCheckOutcome", "TAG_RE", "ATOM_DENSITY_WORDS",
     "strip_citation_tags", "deep_strip_citation_tags", "gate_cta_present", "gate_grounding",
-    "gate_banned_patterns", "gate_cannibalization", "gate_promises_an_option", "gate_extreme_length",
+    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates",
 ]

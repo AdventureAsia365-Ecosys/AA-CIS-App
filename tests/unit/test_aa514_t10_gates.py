@@ -65,12 +65,20 @@ class TestGateSeoSurface:
 
     def test_valid_fields_pass(self):
         result = qg.gate_seo_surface(
-            seo_title="Wat Sisaket Travel Guide",
+            seo_title="Wat Sisaket Travel Guide: Vientiane's Oldest Temple",
             meta_description="x" * 130 + " for your Laos trip today.",
             slug="wat-sisaket-guide",
             keyword=None,
         )
         assert result["passed"] is True
+
+    def test_stub_title_fails(self):
+        # AA-768 (S233) — "Bhutan's Craft Bazaar" (21 chars) shipped on 6/20 S232 blogs
+        result = qg.gate_seo_surface(
+            seo_title="Bhutan's Craft Bazaar", meta_description="x" * 130 + ".", slug="a-slug", keyword=None,
+        )
+        assert result["passed"] is False
+        assert "stub" in result["violations"][0]
 
     def test_title_too_long_fails(self):
         result = qg.gate_seo_surface(

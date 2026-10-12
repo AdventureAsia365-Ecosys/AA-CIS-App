@@ -246,7 +246,8 @@ class TestRunQualityGates:
         # AA-484: + F10_cannibalization_cross_tenant (runs for every channel, no match here since
         # this call passes no cannibalization_match — always passes with 0 violations).
         # AA-613: F9 now yields TWO results (F9_cta_fact + F9_brand_style), so 9 not 8.
-        assert len(outcome["gate_ledger"]) == 9  # cta+grounding+banned+cannib+promises+length+f8+f9_cta_fact+f9_brand_style
+        # AA-768 (S233): + F0_complete.
+        assert len(outcome["gate_ledger"]) == 10  # cta+grounding+banned+cannib+promises+length+f0+f8+f9x2
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
