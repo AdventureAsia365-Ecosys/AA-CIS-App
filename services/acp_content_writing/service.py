@@ -40,6 +40,11 @@ from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text
+from services.acp_content_writing.quality_gates import (
+    _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
+    _SEO_TITLE_MAX_CHARS,
+)
+from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing.generate import rewrite_with_feedback, write_content
 from services.acp_content_writing.jev_observe import observe_t10
@@ -197,6 +202,31 @@ def _grounding_text(context: dict) -> str:
     if context.get("destination"):
         parts.append(f"DESTINATION: {context['destination']}")
     return "\n\n".join(p for p in parts if p)
+
+
+def _fit_seo_meta(seo_meta: dict, keyword: Optional[str]) -> dict:
+    """AA-768 — fit an over-long blog SEO title / meta description without an LLM call, the same
+    deterministic fit A1/T2 already use (AA-639/AA-641/AA-740, seo_meta_utils). S232 re-runs: the
+    writer's meta landed at 162–177 chars (band 120–158) and its title at 64–65 (max 60) on both
+    attempts, holding pieces that passed every content gate. A fitted value is kept only if it
+    lands in the T10 band and keeps the keyword the original had; otherwise the original stays
+    and F4 reports it as before."""
+    if not seo_meta:
+        return seo_meta
+    kw = (keyword or "").lower()
+    out = dict(seo_meta)
+    title = out.get("seo_title")
+    if isinstance(title, str) and len(title) > _SEO_TITLE_MAX_CHARS:
+        fitted = fit_seo_title(title, _SEO_TITLE_MAX_CHARS)
+        if len(fitted) <= _SEO_TITLE_MAX_CHARS and (not kw or kw not in title.lower() or kw in fitted.lower()):
+            out["seo_title"] = fitted
+    meta = out.get("meta_description")
+    if isinstance(meta, str) and not (_META_MIN_CHARS <= len(meta) <= _META_MAX_CHARS):
+        fitted = fit_seo_meta_final(meta)
+        if (_META_MIN_CHARS <= len(fitted) <= _META_MAX_CHARS
+                and (not kw or kw not in meta.lower() or kw in fitted.lower())):
+            out["meta_description"] = fitted
+    return out
 
 
 def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
@@ -540,6 +570,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     facts_text=facts_text,
                 )
             total_cost += cost
+            seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768 — deterministic SEO length fit
 
             # AA-484 — cross-tenant cannibalization check, done HERE (before run_quality_gates(),
             # which stays synchronous/pool-free — see quality_gates.gate_cannibalization()'s own
@@ -867,6 +898,7 @@ async def _run_buffer_retry_attempt(
         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
         facts_text=facts_text,
     )
+    seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768
     outcome = await asyncio.to_thread(
         run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
         goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,
