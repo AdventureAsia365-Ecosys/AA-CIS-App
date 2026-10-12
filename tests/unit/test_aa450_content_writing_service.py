@@ -443,7 +443,9 @@ class TestRunWriteBackground:
 
         mock_write.assert_called_once()
         mock_rewrite.assert_called_once()
-        assert mock_rewrite.call_args.kwargs["revision_feedback"] == ["F2_banned_patterns violation"]
+        # AA-768 — feedback carries the gate name (every blocking failure, see _repair_feedback).
+        assert mock_rewrite.call_args.kwargs["revision_feedback"] == [
+            "F2_banned_patterns: F2_banned_patterns violation"]
         assert mock_fin.call_args.kwargs["status"] == "approved"
         assert mock_fin.call_args.kwargs["attempt_number"] == 2
 

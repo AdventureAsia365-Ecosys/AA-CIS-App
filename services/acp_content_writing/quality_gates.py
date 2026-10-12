@@ -575,7 +575,9 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
 
-def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> list[GateResultLite]:
+def gate_brand_voice(
+    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
     judgment, since T9's CTA is a free-text tenant value, not N7's one fixed brand phrase — no
@@ -583,17 +585,40 @@ def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> lis
 
     AA-613 — returns a LIST of two results from ONE judge call (Nghiệp's 3-tier severity split):
     `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK) and `F9_brand_style` (non-blocking
-    warn: off-brand voice / generic AI wording). See the split logic below."""
+    warn: off-brand voice / generic AI wording). See the split logic below.
+
+    AA-768 — `source_text` (the writer's own source: seed + Facts + audience/trip lines, the same
+    text gate_grounding() checks against) is shown to the judge. Before this the judge saw only
+    the piece and was told "when uncertain about a factual claim: manual_check" — with nothing to
+    check against, every fact-bearing piece came back FACT_CHECK_MANUAL_CHECK and no rewrite
+    could fix it (S231 pilot: 5/5 held). The judge must now quote the claim it flags, so the
+    repair round gets a sentence to fix instead of a bare code. `None` keeps the old prompt for
+    any caller without a source."""
     contract = json.dumps({
         "status": "pass|flagged|manual_check",
         **{f: "1|0" for f in _BRAND_VOICE_FIELDS},
         "failure_codes": [f"subset of {_BRAND_VOICE_FAILURE_CODES}"],
-        "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING "
-                             "code above — [] if neither code is used"],
+        "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING/"
+                             "FACT_CHECK_MANUAL_CHECK code above — [] if none is used"],
         "notes": "str",
     }, indent=1)
+    if source_text:
+        source_block = f"SOURCE (everything the writer was given as fact):\n{source_text}\n\n"
+        fact_rule = (
+            "FACT_CHECK_MANUAL_CHECK: use it ONLY for a specific claim about this trip or its "
+            "travellers (an activity, service, inclusion, time, price, number or promise) that "
+            "the SOURCE above does not support or contradicts, and quote that exact sentence in "
+            "flagged_phrases. Short, well-known background about a place the SOURCE names "
+            "(what it is, its setting, why it matters) is allowed and is NOT grounds for "
+            "FACT_CHECK_MANUAL_CHECK. If every claim is supported or is such background, do not "
+            "use the code."
+        )
+    else:
+        source_block = ""
+        fact_rule = "When uncertain about a factual claim: status=manual_check + FACT_CHECK_MANUAL_CHECK."
     user_prompt = (
         f"PIECE:\n{content_text}\n\n"
+        f"{source_block}"
         f"REQUIRED CALL TO ACTION FOR THIS PIECE: {cta}\n\n"
         f"BRAND RUBRIC:\n{brand_rubric_text}\n"
         f"{_GENERIC_AI_WORDING_ANCHOR}\n"
@@ -602,8 +627,7 @@ def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> lis
         f"failure codes: {_BRAND_VOICE_FAILURE_CODES}. If you use SUMMARY_OFF_BRAND or "
         "GENERIC_AI_WORDING, you MUST quote the exact offending phrase in flagged_phrases. The "
         "required CTA text itself is never grounds for SUMMARY_OFF_BRAND or GENERIC_AI_WORDING "
-        "on its own — do not flag it. When uncertain about a factual claim: "
-        "status=manual_check + FACT_CHECK_MANUAL_CHECK.\n\n"
+        f"on its own — do not flag it. {fact_rule}\n\n"
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
@@ -642,7 +666,8 @@ def gate_brand_voice(content_text: str, cta: str, brand_rubric_text: str) -> lis
         if not hit:
             return []
         reason = ", ".join(hit)
-        if phrases and (codes & _BRAND_STYLE_CODES):
+        # AA-768 — FACT_CHECK quotes its claim too, so the rewrite knows which sentence to fix.
+        if phrases and set(hit) & (_BRAND_STYLE_CODES | {"FACT_CHECK_MANUAL_CHECK"}):
             reason += " — exact flagged phrase(s): " + "; ".join(f'"{p}"' for p in phrases)
         return [f"audit {status}: {reason}"]
 
@@ -867,7 +892,7 @@ def run_quality_gates(
     # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
     # returns TWO results (blocking F9_cta_fact + non-blocking F9_brand_style), spread in here.
     gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
-    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text)
+    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text, source_text=atom_text)
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
     # considers a BLOCKING gate now; a failed non-blocking gate (currently only
     # promises_an_option) never holds/repairs a piece, but its result is still in gate_ledger AND
