@@ -78,13 +78,22 @@ async def _drive_trigger_rewrite(qa_result: dict):
     from shared.jobs.registry import JobContext
 
     conn = AsyncMock()
-    # Endpoint: quota plan fetchrow, PT_ROW. Job: PT_ROW again, brand rules (none), existing SEO,
-    # then the final version row.
-    conn.fetchrow.side_effect = [{"plan": "starter", "quota": 50}, PT_ROW,
+
+    class _Txn:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    conn.transaction = MagicMock(return_value=_Txn())
+    # Endpoint (AA-741 order): PT_ROW, then quota plan. Job: PT_ROW again, brand rules (none),
+    # existing SEO, then the final version row.
+    conn.fetchrow.side_effect = [PT_ROW, {"plan": "starter", "quota": 50},
                                  PT_ROW, None, EXISTING_SEO_ROW,
                                  {"status": "ai_generated", "score": 8.5, "qa_status": "passed"}]
-    # Endpoint: quota used, next_ver, INSERT id. Job: version status, source_score.
-    conn.fetchval.side_effect = [1, 1, VERSION_ID, "pending", 5.0]
+    # Endpoint: in-flight (none), quota used, next_ver, INSERT id. Job: version status, source_score.
+    conn.fetchval.side_effect = [None, 1, 1, VERSION_ID, "pending", 5.0]
     pool = _pool_ctx(conn)
     request = _FakeRequest(pool)
     tenant = {"sub": TENANT_ID}

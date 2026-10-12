@@ -196,7 +196,7 @@ def test_judge_all_asks_the_promise_question_in_the_same_call(monkeypatch):
 
     asked = []
 
-    async def fake_decide(stage, subject, state, keys, pool=None):
+    async def fake_decide(stage, subject, state, keys, pool=None, tenant_id=None):
         asked.append(keys)
         return SimpleNamespace(verdicts={gr.QUESTION: "claim-verdict", gr.PROMISE_QUESTION: "promise-verdict"})
 

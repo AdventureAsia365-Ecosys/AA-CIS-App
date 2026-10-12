@@ -106,7 +106,7 @@ async def observe_t10(*, tenant_id: Optional[str], attempt_key: str, content_tex
         await asyncio.gather(*[one(*a) for a in asks[1:]])
         asked = len(asks)
         if (nearest_other and pool is not None and (nearest_other.get("similarity") or 0) >= SAME_PIECE_FLOOR
-                and tenant_allowed(nearest_other.get("tenant_id"))):
+                and tenant_allowed(nearest_other.get("tenant_id"), STAGE)):  # no owner → never sent
             other = await _other_piece_text(pool, nearest_other["piece_id"])
             if other:
                 piece = strip_citation_tags(content_text or "")[:_PIECE_CHARS]

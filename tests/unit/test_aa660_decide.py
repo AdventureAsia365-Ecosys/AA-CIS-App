@@ -129,16 +129,30 @@ async def test_non_allowlisted_tenant_is_skipped_without_calling_jev():
 
 @pytest.mark.asyncio
 async def test_allowlisted_tenant_and_platform_are_asked():
-    for tenant in (TEST_TENANT, PLATFORM, None):
+    # (tenant, stage): an allow-listed / platform tenant on a T stage, and no tenant on a
+    # PLATFORM stage. No tenant on a T stage is refused (AA-741, next test).
+    for tenant, stage in ((TEST_TENANT, "t3"), (PLATFORM, "t3"), (None, "a3_research")):
         conn = _conn([_q()], allowlist=[TEST_TENANT])
         answer = {"model": "jev", "usage": {"input_tokens": 1},
                   "answers": {"kw_belongs": {"type": "noul", "noul": 0.9}}}
         with patch.object(d, "_call_jev", new=AsyncMock(return_value=answer)) as m_call, \
              patch.object(d, "_price_in_per_mtok", return_value=0.042), \
              patch.object(d, "record_call_with_pool", new=AsyncMock()):
-            dec = await d._decide(d._SingleConn(conn), "t3", "piece:1", "text", ["kw_belongs"], tenant)
+            dec = await d._decide(d._SingleConn(conn), stage, "piece:1", "text", ["kw_belongs"], tenant)
         m_call.assert_awaited_once()
         assert dec.accepted("kw_belongs")
+
+
+@pytest.mark.asyncio
+async def test_tenant_stage_without_a_tenant_is_refused():
+    """AA-741 pre-audit: a T-stage call that forgot tenant_id used to be treated as platform
+    content and sent to Jev — for a tenant possibly not on the allow-list (DPA guard, C2)."""
+    conn = _conn([_q()], allowlist=[TEST_TENANT])
+    with patch.object(d, "_call_jev", new=AsyncMock()) as m_call, \
+         patch.object(d, "record_call_with_pool", new=AsyncMock()):
+        dec = await d._decide(d._SingleConn(conn), "t3", "piece:1", "text", ["kw_belongs"], None)
+    m_call.assert_not_awaited()
+    assert dec.verdicts["kw_belongs"].zone == "skipped"
 
 
 @pytest.mark.asyncio

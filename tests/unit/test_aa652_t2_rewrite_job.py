@@ -86,13 +86,34 @@ async def test_retry_requeues_the_job_and_resets_the_version():
     from api.routers import v1_tours
     conn = AsyncMock()
     conn.fetchrow.return_value = {"id": VERSION_ID, "status": "failed", "job_id": "job-9"}
+    order = []
+    conn.fetchval.side_effect = lambda *a, **k: order.append("flip") or VERSION_ID
     pool = _pool(conn)
-    with patch("shared.jobs.queue.retry", AsyncMock(return_value=True)) as m_retry, \
+
+    async def _retry(*a):
+        order.append("requeue")
+        return True
+    with patch("shared.jobs.queue.retry", AsyncMock(side_effect=_retry)) as m_retry, \
          patch.object(v1_tours, "write_audit_log", AsyncMock()):
         out = await v1_tours.retry_rewrite(VERSION_ID, _request(pool), {"sub": "t-1"})
     assert out == {"version_id": VERSION_ID, "status": "pending", "job_id": "job-9"}
     m_retry.assert_awaited_once_with(pool, "job-9")
-    assert "SET status = 'pending'" in conn.execute.call_args.args[0]
+    assert "SET status = 'pending'" in conn.fetchval.call_args.args[0]
+    # AA-741 pre-audit: the version is pending BEFORE the job can be claimed again.
+    assert order == ["flip", "requeue"]
+
+
+@pytest.mark.asyncio
+async def test_retry_reverts_the_flip_when_the_job_cannot_be_requeued():
+    from api.routers import v1_tours
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"id": VERSION_ID, "status": "failed", "job_id": "job-9"}
+    conn.fetchval.return_value = VERSION_ID
+    with patch("shared.jobs.queue.retry", AsyncMock(return_value=False)), \
+         pytest.raises(HTTPException) as e:
+        await v1_tours.retry_rewrite(VERSION_ID, _request(_pool(conn)), {"sub": "t-1"})
+    assert e.value.status_code == 409
+    assert "SET status = 'failed'" in conn.execute.call_args.args[0]
 
 
 @pytest.mark.asyncio

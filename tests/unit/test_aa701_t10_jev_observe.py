@@ -52,7 +52,7 @@ def _run(zone_first="grey", other_allowed=True, similarity=0.9):
         return "Another tenant's post about the hot stone bath."
 
     with patch("shared.llm_client.decide.decide", fake), \
-         patch("shared.llm_client.decide.tenant_allowed", lambda t: other_allowed), \
+         patch("shared.llm_client.decide.tenant_allowed", lambda t, stage=None: other_allowed), \
          patch.object(jo, "_other_piece_text", other_text):
         out = asyncio.run(jo.observe_t10(
             tenant_id="t-1", attempt_key="r:1", content_text=BLOG, atom_text=OFFERED_ATOM, goal_key="inspire",

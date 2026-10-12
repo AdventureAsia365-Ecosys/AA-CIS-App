@@ -253,7 +253,8 @@ def issue_lines(violations: list[dict]) -> list[str]:
     return out
 
 
-async def _judge_all(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
+async def _judge_all(units: list[dict], sources: dict[int, str],
+                     tenant_id: str | None = None) -> dict[int, Any]:
     """One Jev Noul per asked unit, CONCURRENCY in flight, over a small pool opened for this tour.
     ``sources[i]`` is the per-unit source for unit ``i`` (AA-756); a unit absent from ``sources``
     was skipped and is not asked. The subject_key uses that same per-unit source, so a verdict
@@ -269,7 +270,7 @@ async def _judge_all(units: list[dict], sources: dict[int, str]) -> dict[int, An
         async with sem:
             d = await decide(STAGE, subject_key(src, u["sentence"]),
                              {"source": src, "sentence": u["sentence"]}, [QUESTION, PROMISE_QUESTION],
-                             pool=pool)
+                             tenant_id=tenant_id, pool=pool)
             return i, d.verdicts.get(QUESTION)
 
     try:
@@ -278,13 +279,18 @@ async def _judge_all(units: list[dict], sources: dict[int, str]) -> dict[int, An
         await pool.close()
 
 
-def judge_units(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
+def judge_units(units: list[dict], sources: dict[int, str], *,
+                tenant_id: str | None = None) -> dict[int, Any]:
     """Sync entry for the S1 graph node (runs in LangGraph's worker thread). ``sources`` maps the
     index of each unit that should be asked to its per-unit source (AA-756). Fails open: on any
     error, or when called from a thread that already runs a loop, returns {} (no Jev signal) and the
     deterministic check still applies."""
     if not sources:
         return {}
+    if not isinstance(sources, dict):
+        # AA-741 pre-audit: a caller passing the whole source string (pre-#631 signature) used to
+        # crash inside the pool and fail open silently ({} → no Jev signal, ever).
+        raise TypeError("judge_units: sources must map unit index -> per-unit source")
     try:
         asyncio.get_running_loop()
         logger.warning("grounding_judge_on_event_loop")
@@ -292,7 +298,7 @@ def judge_units(units: list[dict], sources: dict[int, str]) -> dict[int, Any]:
     except RuntimeError:
         pass
     try:
-        return asyncio.run(_judge_all(units, sources))
+        return asyncio.run(_judge_all(units, sources, tenant_id))
     except Exception as exc:
         logger.warning("grounding_judge_failed", error=str(exc)[:200])
         return {}
