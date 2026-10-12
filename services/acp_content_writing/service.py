@@ -44,7 +44,8 @@ from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS,
 )
-from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
+from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
+from services.acp_shared.place_cards import ensure_place_cards
 from services.acp_content_writing import sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
@@ -87,7 +88,7 @@ class MissingCTAError(ContentWritingError):
 
 
 _ATOM_TEXT_QUERY = """
-    SELECT text FROM acp_contract.tour_atoms
+    SELECT text FROM acp_contract.v_active_tour_atoms
     WHERE atom_id = $1 AND owner_scope IN ('platform', $2) AND NOT deleted AND NOT is_empty_marker
 """
 
@@ -126,7 +127,7 @@ async def _tenant_missing_brand_rules(tenant_id: str, pool) -> bool:
 _ROUTE_SEGMENT_TEXT_QUERY = """
     SELECT m.atom_id, ta.text
     FROM acp_contract.atom_segment_member m
-    JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
+    JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
     WHERE m.segment_id = $1 AND ta.tour_id = $2::uuid
       AND ta.owner_scope IN ('platform', $3::text)
       AND NOT m.is_alias AND NOT ta.deleted AND NOT ta.is_empty_marker
@@ -181,6 +182,37 @@ async def _fetch_route_segments(
             f"{trip_id!r} — the Route was rebuilt away. Refresh the Slate and pick again."
         )
     return segments
+
+
+_SCOPE_QUERY = """
+    SELECT atom_id, itinerary_day, place FROM acp_contract.v_active_tour_atoms
+    WHERE atom_id = ANY($1::text[])
+"""
+
+
+async def _scope_line(atom_ids: list[str], pool) -> Optional[str]:
+    """S233 — what part of the trip this piece covers. S232: 10/10 Terra blogs promised "Laos to
+    Vietnam / to Hanoi" in the title while every seed moment was in Laos; 10/10 A&H blogs said
+    "east to west" on a Thimphu/Paro-only seed."""
+    try:
+        async with pool.acquire() as conn:
+            rows = {r["atom_id"]: r for r in await conn.fetch(_SCOPE_QUERY, [a for a in atom_ids if a])}
+    except Exception as e:  # noqa: BLE001 — a scope line is an aid, never a reason to fail a write
+        logger.warning("t9_scope_line_failed", error=str(e)[:200])
+        return None
+    moments = [rows[a] for a in atom_ids if a in rows]
+    if not moments:
+        return None
+    days = sorted({m["itinerary_day"] for m in moments if m["itinerary_day"]})
+    places = list(dict.fromkeys(m["place"] for m in moments if m["place"]))
+    if len(moments) == 1:
+        where = f" (day {days[0]})" if days else ""
+        return (f"SCOPE: this piece is about one moment of the trip{where}: {places[0] if places else 'the seed'}. "
+                "Do not promise, name or imply any other part of the trip in the title, headings or body.")
+    span = f"days {days[0]}–{days[-1]}" if len(days) > 1 else (f"day {days[0]}" if days else "part")
+    return (f"SCOPE: this piece covers {span} of the trip, in this order: {' → '.join(places)}. "
+            "The title, headings, meta description and body must not promise, name or imply any "
+            "place, leg or direction of travel outside these moments, even if the TRIP name does.")
 
 
 def _held_reason_from(first_failure: dict) -> str:
@@ -336,6 +368,7 @@ async def start_write(
         atom_text = "\n\n".join(text for _, text in route_segments)
     else:
         atom_text = await _fetch_atom_text(tenant_id, req["atom_id"], pool)
+    scope = await _scope_line([a for a, _ in route_segments] if route_segments else [req["atom_id"]], pool)
     goal = get_goal(req["goal"])
     if goal is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown goal={req['goal']!r}")
@@ -405,6 +438,7 @@ async def start_write(
         "destination": destination, "trip_name": trip_name,
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
+        "scope": scope,  # S233
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
         "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
         "facts_pending": True,  # AA-764
@@ -476,20 +510,35 @@ async def _insert_placeholder_piece(
 
 
 async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
-    """AA-764 (G5) — the T9 fact-select step (AA-529 Facts + AA-700 Jev relevance filter), moved
-    out of start_write() so its Jev calls run in the t9_write job, not in the HTTP request.
-    Fills `context["facts_text"]` in place, once (the buffer retry reuses the same context).
-    A context without `facts_pending` (built before AA-764, or by a test) is left untouched."""
+    """AA-764 (G5) — the T9 source step, run in the t9_write job (not the HTTP request). Fills
+    `context` in place, once (the buffer retry reuses the same context); a context without
+    `facts_pending` (built before AA-764, or by a test) is left untouched.
+
+    S233: (1) place cards (AA-772) are built for the piece's atoms if missing, and the seed is
+    re-read so it carries them; (2) Facts are the platform + tenant facts for the trip's country
+    (facts.country), with no per-fact Jev call (S232: no Jev on the T axis)."""
     if not context.get("facts_pending"):
         return
     tenant_id = UUID(context["tenant_id"])
-    facts = await fetch_facts_for_writing(tenant_id, pool)
-    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
-        facts, moment=context["atom_text"], angle=context["chosen"],
-        trip=context.get("trip_name") or context.get("destination"), tenant_id=tenant_id,
-    )
-    if facts_left_out:
-        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
+    route_segments = context.get("route_segments")
+    atom_ids = [a for a, _ in route_segments] if route_segments else [context.get("atom_id")]
+    try:
+        built = await ensure_place_cards([a for a in atom_ids if a], pool)
+    except Exception as e:  # noqa: BLE001 — cards are an aid, never a reason to fail a write
+        logger.warning("t9_place_cards_failed", request_id=str(request_id), error=str(e)[:200])
+        built = 0
+    if built:
+        async with pool.acquire() as conn:
+            if route_segments:
+                fresh = []
+                for atom_id, text in route_segments:
+                    fresh.append((atom_id, await atom_seed_text(conn, atom_id, str(tenant_id)) or text))
+                context["route_segments"] = fresh
+                context["atom_text"] = "\n\n".join(text for _, text in fresh)
+            else:
+                context["atom_text"] = await atom_seed_text(conn, context["atom_id"], str(tenant_id)) \
+                    or context["atom_text"]
+    facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"))
     context["facts_text"] = format_facts_block(facts)
     context["facts_pending"] = False
 
@@ -573,7 +622,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     write_content, content_seed=atom_text, goal=goal, channel_style=channel_style,
                     brand_audience=brand_audience, angle=chosen, cta=cta,
-                    destination=destination, trip_name=trip_name, atom_id=atom_id,
+                    destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
                     facts_text=facts_text,
@@ -609,7 +658,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
                         brand_audience=brand_audience, angle=chosen, cta=cta,
                         revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
-                        destination=destination, trip_name=trip_name, atom_id=atom_id,
+                        destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
                         facts_text=facts_text,
@@ -941,7 +990,7 @@ async def _run_buffer_retry_attempt(
         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
         brand_audience=brand_audience, angle=chosen, cta=cta,
         revision_feedback=original_violations,
-        destination=destination, trip_name=trip_name, atom_id=atom_id,
+        destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
         route_segments=route_segments, keyword=keyword,
         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
         facts_text=facts_text,

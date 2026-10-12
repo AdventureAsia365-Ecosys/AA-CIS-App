@@ -93,9 +93,10 @@ class TestFetchFactsForWriting:
             {"fact_id": "fact_1", "scope": "platform", "tenant_id": None,
              "title": "Visa", "body": "E-visa costs $30.", "stated_on": None, "provenance": "Admin"},
         ]
-        query, tenant_arg = conn.fetch.call_args.args
+        query, tenant_arg, country_arg = conn.fetch.call_args.args
         assert "scope = 'platform'" in query
         assert "scope = 'tenant' AND tenant_id = $1" in query
+        assert "lower(country) = lower($2::text)" in query and country_arg is None
         # AA-501-class "uuid = text" bug this codebase already hit once — the real UUID object is
         # passed, not str(tenant_id), and it's the ONLY thing bound to $1 in this query (no reuse
         # against a text column), so no ambiguity to repeat that bug here.

@@ -30,15 +30,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
+# S233 — facts.country (migration 220): a fact about one country is offered only to pieces about
+# that country (the S232 Laos e-visa fact reached Tibet posts). NULL = any country. Replaces the
+# per-fact Jev relevance call on the T axis (S232: no Jev on T).
 _FACTS_QUERY = """
-    SELECT fact_id, scope, tenant_id, title, body, stated_on, provenance
+    SELECT fact_id, scope, tenant_id, title, body, stated_on, provenance, country
     FROM acp_shared.facts
-    WHERE scope = 'platform' OR (scope = 'tenant' AND tenant_id = $1)
+    WHERE (scope = 'platform' OR (scope = 'tenant' AND tenant_id = $1))
+      AND (country IS NULL OR $2::text IS NULL OR lower(country) = lower($2::text))
     ORDER BY scope, stated_on DESC NULLS LAST, fact_id
 """
 
 
-async def fetch_facts_for_writing(tenant_id: UUID, pool) -> list[dict]:
+async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = None) -> list[dict]:
     """ALL scope='platform' facts + the given tenant's own scope='tenant' facts — never another
     tenant's (the `scope = 'tenant' AND tenant_id = $1` half of the WHERE is what enforces that; a
     platform fact matches on `scope = 'platform'` alone, regardless of $1). `tenant_id` is passed
@@ -49,7 +53,7 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool) -> list[dict]:
     written yet for anyone) — never an error, same soft-fail convention every other optional T9
     signal (DFS keyword, brand rubric) already follows."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_FACTS_QUERY, tenant_id)
+        rows = await conn.fetch(_FACTS_QUERY, tenant_id, country)
     return [dict(r) for r in rows]
 
 
