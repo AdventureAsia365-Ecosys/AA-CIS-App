@@ -399,6 +399,23 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
     return summary
 
 
+ATOM_PLACES_SQL = """
+    SELECT DISTINCT lower(place) AS p FROM acp_contract.v_active_tour_atoms
+    WHERE tour_id = $1::uuid AND owner_scope = 'platform' AND place IS NOT NULL AND length(place) >= 4
+"""
+
+
+async def atom_places(conn, tour_id: str) -> list[str]:
+    """Lowercase place names of the tour's active platform atoms (≥4 chars). Empty on any error —
+    the title places still apply."""
+    try:
+        rows = await conn.fetch(ATOM_PLACES_SQL, tour_id)
+        return sorted(r["p"] for r in rows)
+    except Exception as e:
+        logger.warning("atom_places_unavailable", tour_id=tour_id, error=str(e)[:200])
+        return []
+
+
 async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, dict | None]:
     """AA-707 — T2 keywords for the tenant's OWN buyer market, from the research cache only (a
     tenant action never buys DataForSEO). Returns (market, seo_data | None when the cache has nothing
@@ -420,6 +437,10 @@ async def tenant_market_seo(conn, tenant_id: str, tour_id: str) -> tuple[str, di
         return market, None
     spec = tour_spec(dict(row))
     spec["foreign"] = await foreign_places(conn, spec["country"])
+    # AA-741 (S231 pilot): title words alone ("CULINARY GEMS OF BHUTAN" → ["culinary"]) matched
+    # nothing in search_demand, so all 12 pilot T2 runs fell back to the admin US keywords. The
+    # per-market research is bought per atom place (segment_research), so match on those too.
+    spec["places"] = list(dict.fromkeys(spec["places"] + await atom_places(conn, tour_id)))
     terms = strong_terms(spec["places"]) + spec["activity"]
     if not terms:
         return market, None
