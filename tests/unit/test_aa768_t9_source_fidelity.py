@@ -142,3 +142,16 @@ def test_f9_rule_excludes_opinions_brand_approach_and_cta():
     assert "checkable statement of fact" in prompt
     for excluded in ("opinions", "rhetorical", "describing its own approach", "required call to action"):
         assert excluded in prompt
+
+
+def test_brand_name_reaches_prompt_and_gate_source():
+    """S232 re-run: Trail Pulse pieces called the brand 'Adventure Airlines' — the name was never given."""
+    kwargs = dict(content_seed="seed", goal={"name": "g", "description": "d", "logic": "l", "key": "k"},
+                  channel_style={"channel": "linkedin", "display_name": "LinkedIn", "use_when": "u",
+                                 "structure": "s", "style": "st", "avoid": "a"},
+                  angle={"name": "a", "why_it_works": "w", "best_final_style": "b"}, cta="Book")
+    prompt = build_user_prompt(brand_audience={"brand_name": "Trail Pulse"}, **kwargs)
+    assert "BRAND NAME (the only name to use for the brand — never invent another): Trail Pulse" in prompt
+    assert "BRAND NAME" not in build_user_prompt(brand_audience={}, **kwargs)
+    assert "BRAND: Trail Pulse" in service._grounding_text(
+        {"atom_text": "seed", "brand_audience": {"brand_name": "Trail Pulse"}})
