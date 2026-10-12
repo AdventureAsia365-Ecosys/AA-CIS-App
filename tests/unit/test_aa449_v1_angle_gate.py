@@ -14,7 +14,6 @@ from fastapi import HTTPException
 
 from api.routers import v1_angle_gate
 from services.acp_angle_gate import service
-from services.acp_angle_gate.generate import AngleGenerationError
 
 TENANT_ID = str(uuid.uuid4())
 REQUEST_ID = uuid.uuid4()
@@ -39,7 +38,7 @@ class TestSetGoal:
     async def test_wrong_status_409(self):
         body = v1_angle_gate.SetGoalBody(goal="promotion")
         with patch.object(
-            v1_angle_gate.service, "set_goal_and_generate",
+            v1_angle_gate.service, "start_goal_generation",
             new=AsyncMock(side_effect=service.WrongStatusError("already set")),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -50,7 +49,7 @@ class TestSetGoal:
     async def test_invalid_goal_422(self):
         body = v1_angle_gate.SetGoalBody(goal="not_a_goal")
         with patch.object(
-            v1_angle_gate.service, "set_goal_and_generate",
+            v1_angle_gate.service, "start_goal_generation",
             new=AsyncMock(side_effect=service.InvalidGoalError("bad goal")),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -58,25 +57,15 @@ class TestSetGoal:
         assert exc.value.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_llm_failure_502(self):
-        body = v1_angle_gate.SetGoalBody(goal="promotion")
-        with patch.object(
-            v1_angle_gate.service, "set_goal_and_generate",
-            new=AsyncMock(side_effect=AngleGenerationError("bad json")),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await v1_angle_gate.set_goal(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
-        assert exc.value.status_code == 502
-
-    @pytest.mark.asyncio
     async def test_success(self):
         body = v1_angle_gate.SetGoalBody(goal="promotion")
         with patch.object(
-            v1_angle_gate.service, "set_goal_and_generate",
-            new=AsyncMock(return_value={"status": "pending_choice", "angles": [1, 2, 3]}),
+            v1_angle_gate.service, "start_goal_generation",
+            new=AsyncMock(return_value={"status": "pending_goal", "generating": True, "angles": []}),
         ):
             result = await v1_angle_gate.set_goal(REQUEST_ID, body, _make_request(), tenant={"sub": TENANT_ID})
-        assert result["status"] == "pending_choice"
+        # AA-764 — angles arrive from the t8_angles job; the POST only records the goal.
+        assert result["generating"] is True
 
 
 class TestGetRequest:
@@ -156,5 +145,3 @@ class TestReopen:
             with pytest.raises(HTTPException) as exc:
                 await v1_angle_gate.reopen(REQUEST_ID, _make_request(), tenant={"sub": TENANT_ID})
         assert exc.value.status_code == 404
-
-

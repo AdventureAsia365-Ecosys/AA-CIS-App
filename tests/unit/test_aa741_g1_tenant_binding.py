@@ -75,6 +75,8 @@ async def test_pool_path_uses_the_binding():
 @pytest.mark.parametrize("payload,expected", [
     ({"tenant_id": TENANT, "version_id": "v"}, TENANT),                       # T2
     ({"request_id": "r", "context": {"tenant_id": TENANT}}, TENANT),          # T9 nested
+    ({"request_id": "r", "tenant_id": TENANT, "goal": "promotion"}, TENANT),  # T8 angles (AA-764)
+    ({"tenant_id": TENANT}, TENANT),                                          # T7 slate (AA-764)
     ({"tenant_id": call_log.PLATFORM_TENANT_ID, "tour_id": "t"}, None),       # S1 platform
     ({"tour_ids": ["t"]}, None),                                              # no tenant
     ({"tenant_id": None}, None),

@@ -74,12 +74,38 @@ class TestF9SeesSource:
 
     def test_fact_check_violation_quotes_the_claim(self):
         data = {**self._pass, "status": "manual_check", "failure_codes": ["FACT_CHECK_MANUAL_CHECK"],
-                "flagged_phrases": ["Every guest gets a private chef."]}
+                "flagged_phrases": ["Every guest gets a private chef."],
+                "unsupported_claims": [{"sentence": "Every guest gets a private chef.",
+                                        "claim": "a private chef is included",
+                                        "why_not_in_source": "the source lists no meals"}]}
         with patch.object(qg, "invoke_judge", return_value=_judge(**data)):
             results = qg.gate_brand_voice("piece", "Book", "rubric", source_text="seed")
         cta_fact = next(r for r in results if r["gate"] == "F9_cta_fact")
         assert cta_fact["passed"] is False
         assert "Every guest gets a private chef." in cta_fact["violations"][0]
+        assert "the source lists no meals" in cta_fact["violations"][0]
+
+    def test_unjustified_fact_flag_is_dropped(self):
+        """Round 3: the judge flagged a sentence the SOURCE states verbatim, with no claim/reason."""
+        data = {**self._pass, "status": "manual_check", "failure_codes": ["FACT_CHECK_MANUAL_CHECK"],
+                "flagged_phrases": ["Pawangka was built by Songtsen Gampo."], "unsupported_claims": []}
+        with patch.object(qg, "invoke_judge", return_value=_judge(**data)):
+            results = qg.gate_brand_voice("piece", "Book", "rubric", source_text="built by Songtsen Gampo")
+        assert next(r for r in results if r["gate"] == "F9_cta_fact")["passed"] is True
+
+    def test_dropped_fact_flag_keeps_other_codes(self):
+        data = {**self._pass, "status": "flagged", "failure_codes": ["FACT_CHECK_MANUAL_CHECK", "CTA_NOT_REFLECTED"],
+                "unsupported_claims": [{"claim": "x"}]}  # no reason -> not justified
+        with patch.object(qg, "invoke_judge", return_value=_judge(**data)):
+            results = qg.gate_brand_voice("piece", "Book", "rubric", source_text="seed")
+        assert next(r for r in results if r["gate"] == "F9_cta_fact")["violations"] == [
+            "audit flagged: CTA_NOT_REFLECTED"]
+
+    def test_without_source_fact_flag_is_not_second_guessed(self):
+        data = {**self._pass, "status": "manual_check", "failure_codes": ["FACT_CHECK_MANUAL_CHECK"]}
+        with patch.object(qg, "invoke_judge", return_value=_judge(**data)):
+            results = qg.gate_brand_voice("piece", "Book", "rubric")
+        assert next(r for r in results if r["gate"] == "F9_cta_fact")["passed"] is False
 
     def test_cta_only_failure_does_not_get_phrases(self):
         data = {**self._pass, "status": "flagged", "failure_codes": ["CTA_NOT_REFLECTED"],
@@ -142,3 +168,38 @@ def test_f9_rule_excludes_opinions_brand_approach_and_cta():
     assert "checkable statement of fact" in prompt
     for excluded in ("opinions", "rhetorical", "describing its own approach", "required call to action"):
         assert excluded in prompt
+
+
+def test_brand_name_reaches_prompt_and_gate_source():
+    """S232 re-run: Trail Pulse pieces called the brand 'Adventure Airlines' — the name was never given."""
+    kwargs = dict(content_seed="seed", goal={"name": "g", "description": "d", "logic": "l", "key": "k"},
+                  channel_style={"channel": "linkedin", "display_name": "LinkedIn", "use_when": "u",
+                                 "structure": "s", "style": "st", "avoid": "a"},
+                  angle={"name": "a", "why_it_works": "w", "best_final_style": "b"}, cta="Book")
+    prompt = build_user_prompt(brand_audience={"brand_name": "Trail Pulse"}, **kwargs)
+    assert "BRAND NAME (the only name to use for the brand — never invent another): Trail Pulse" in prompt
+    assert "BRAND NAME" not in build_user_prompt(brand_audience={}, **kwargs)
+    assert "BRAND: Trail Pulse" in service._grounding_text(
+        {"atom_text": "seed", "brand_audience": {"brand_name": "Trail Pulse"}})
+
+
+class TestSeoFit:
+    def test_long_meta_and_title_are_fitted_into_band(self):
+        meta = ("Discover Bhutan's craft bazaar and textile traditions in Thimphu on a private journey; "
+                "meet weavers, see the Textile Museum, and taste the farmers market at your own pace.")
+        assert len(meta) > 158
+        out = service._fit_seo_meta({"seo_title": "Bhutan Craft Bazaar Guide — Textiles, Weavers and Markets | Atlas",
+                                     "meta_description": meta, "slug": "s"}, keyword="bhutan")
+        assert len(out["seo_title"]) <= 60 and "bhutan" in out["seo_title"].lower()
+        assert 120 <= len(out["meta_description"]) <= 158 or out["meta_description"] == meta
+        assert out["slug"] == "s"
+
+    def test_in_band_values_untouched(self):
+        meta = "A" * 130 + "."
+        assert service._fit_seo_meta({"seo_title": "Short", "meta_description": meta}, None) == {
+            "seo_title": "Short", "meta_description": meta}
+
+    def test_fit_that_drops_keyword_is_rejected(self):
+        title = "Kyichu Lhakhang and the Paro Valley: a quiet guide for Bhutan travellers"
+        out = service._fit_seo_meta({"seo_title": title}, keyword="bhutan travellers")
+        assert out["seo_title"] == title or "bhutan travellers" in out["seo_title"].lower()

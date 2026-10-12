@@ -45,7 +45,8 @@ from api.routers.v1_tours import get_tenant
 from services.acp_planning.tenant_config import TenantNotFoundError, fetch_tenant_planning_config
 from services.acp_planning.trip_reallocation import confirm_trip_reallocation, suggest_trip_reallocation
 from services.acp_shared.slate import (SubjectNotEligibleError, SubjectNotFoundError,
-                                        cut_subject, fetch_slate, pick_subject, propose_slate)
+                                        cut_subject, fetch_slate, last_proposal, pick_subject,
+                                        request_slate_proposal)
 
 router = APIRouter(prefix="/v1/planning", tags=["tenant-planning"])
 
@@ -56,13 +57,30 @@ router = APIRouter(prefix="/v1/planning", tags=["tenant-planning"])
 slate_router = APIRouter(prefix="/v1", tags=["slate"])
 
 
+def _refresh_state(job: dict | None) -> dict:
+    """AA-764 — the Slate's background-proposal state for the portal (no raw job fields)."""
+    if job is None:
+        return {"status": "none", "refreshing": False, "finished_at": None}
+    return {
+        "status": job["status"],
+        "refreshing": job["status"] in ("queued", "running"),
+        "finished_at": job["finished_at"].isoformat() if job.get("finished_at") else None,
+    }
+
+
 @slate_router.get("/slate", summary="AA-511 — this tenant's Slate: every Subject that has cleared a Channel's Bar")
 async def get_slate(request: Request, tenant=Depends(get_tenant)):
+    """AA-764 — read-only. Proposing (T7 + Debate: Jev and LLM calls, minutes) runs in a
+    `t7_slate` job; this call enqueues one only when the tenant has no proposal yet or the last
+    one is older than SLATE_STALE_AFTER_HOURS, and returns what is on the Slate now plus
+    `refresh` so the portal can show "updating…" and re-load when it finishes."""
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
-    propose_result = await propose_slate(tenant_id, pool)
+    job = await request_slate_proposal(tenant_id, pool, only_if_stale=True)
     config = await _resolve_config(tenant_id, pool)
     channels = await fetch_slate(tenant_id, pool)
+    async with pool.acquire() as conn:
+        last = await last_proposal(tenant_id, conn)
     return {
         "channels": channels,
         "posts_per_week": config.capacity_posts_per_week,
@@ -70,8 +88,18 @@ async def get_slate(request: Request, tenant=Depends(get_tenant)):
         # DFS_LOCATION_MAP doesn't support yet (never for a tenant who declared nothing at all).
         # The FE shows this as an explicit "market not supported yet" notice instead of silently
         # rendering ranking data computed for a market the tenant never asked for.
-        "unmatched_markets": propose_result.get("unmatched_markets", []),
+        # AA-764 — taken from the latest successful proposal job.
+        "unmatched_markets": (last["result"].get("unmatched_markets") if last else None) or [],
+        "refresh": _refresh_state(job),
     }
+
+
+@slate_router.post("/slate/refresh", status_code=202,
+                   summary="AA-764 — re-propose this tenant's Slate in the background (t7_slate job)")
+async def post_slate_refresh(request: Request, tenant=Depends(get_tenant)):
+    tenant_id = UUID(tenant["sub"])
+    job = await request_slate_proposal(tenant_id, request.app.state.pool, only_if_stale=False)
+    return {"refresh": _refresh_state(job)}
 
 
 @slate_router.post("/subjects/{subject_id}/pick", summary="AA-511 — pick a Subject, create its T8 angle_gate_request")

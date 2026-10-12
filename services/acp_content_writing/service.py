@@ -39,6 +39,12 @@ from services.acp_angle_gate import service as angle_gate_service
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
+from services.acp_shared.atom_seed import atom_seed_text
+from services.acp_content_writing.quality_gates import (
+    _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
+    _SEO_TITLE_MAX_CHARS,
+)
+from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing.generate import rewrite_with_feedback, write_content
 from services.acp_content_writing.jev_observe import observe_t10
@@ -94,9 +100,11 @@ async def _fetch_atom_text(tenant_id: UUID, atom_id: str, pool) -> str:
     field, not the full atom dict T8's version returns."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_ATOM_TEXT_QUERY, atom_id, str(tenant_id))
+        # AA-768 — the atom's evidence/hook + Segment siblings' evidence, not just its short label.
+        seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
         raise ContentWritingError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
-    return row["text"]
+    return seed or row["text"]
 
 
 async def _tenant_missing_brand_rules(tenant_id: str, pool) -> bool:
@@ -163,7 +171,9 @@ async def _fetch_route_segments(
         for segment_id in segment_ids:
             row = await conn.fetchrow(_ROUTE_SEGMENT_TEXT_QUERY, segment_id, trip_id, str(tenant_id))
             if row is not None:
-                segments.append((row["atom_id"], row["text"]))
+                # AA-768 — each moment's full seed (evidence/hook/siblings), not just its label.
+                seed = await atom_seed_text(conn, row["atom_id"], str(tenant_id))
+                segments.append((row["atom_id"], seed or row["text"]))
     if not segments:
         raise ContentWritingError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
@@ -183,6 +193,8 @@ def _grounding_text(context: dict) -> str:
     states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot)."""
     parts = [context["atom_text"], context.get("facts_text") or ""]
     audience = context.get("brand_audience") or {}
+    if audience.get("brand_name"):
+        parts.append(f"BRAND: {audience['brand_name']}")
     if audience.get("customer_segment"):
         parts.append(f"AUDIENCE: {audience['customer_segment']}")
     if context.get("trip_name"):
@@ -190,6 +202,31 @@ def _grounding_text(context: dict) -> str:
     if context.get("destination"):
         parts.append(f"DESTINATION: {context['destination']}")
     return "\n\n".join(p for p in parts if p)
+
+
+def _fit_seo_meta(seo_meta: dict, keyword: Optional[str]) -> dict:
+    """AA-768 — fit an over-long blog SEO title / meta description without an LLM call, the same
+    deterministic fit A1/T2 already use (AA-639/AA-641/AA-740, seo_meta_utils). S232 re-runs: the
+    writer's meta landed at 162–177 chars (band 120–158) and its title at 64–65 (max 60) on both
+    attempts, holding pieces that passed every content gate. A fitted value is kept only if it
+    lands in the T10 band and keeps the keyword the original had; otherwise the original stays
+    and F4 reports it as before."""
+    if not seo_meta:
+        return seo_meta
+    kw = (keyword or "").lower()
+    out = dict(seo_meta)
+    title = out.get("seo_title")
+    if isinstance(title, str) and len(title) > _SEO_TITLE_MAX_CHARS:
+        fitted = fit_seo_title(title, _SEO_TITLE_MAX_CHARS)
+        if len(fitted) <= _SEO_TITLE_MAX_CHARS and (not kw or kw not in title.lower() or kw in fitted.lower()):
+            out["seo_title"] = fitted
+    meta = out.get("meta_description")
+    if isinstance(meta, str) and not (_META_MIN_CHARS <= len(meta) <= _META_MAX_CHARS):
+        fitted = fit_seo_meta_final(meta)
+        if (_META_MIN_CHARS <= len(fitted) <= _META_MAX_CHARS
+                and (not kw or kw not in meta.lower() or kw in fitted.lower())):
+            out["meta_description"] = fitted
+    return out
 
 
 def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
@@ -280,6 +317,13 @@ async def start_write(
     if channel_style is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown channel={req['channel']!r}")
     brand_audience = await fetch_brand_audience(tenant_id, pool)
+    # AA-768 — the writer never got the tenant's own name and made one up in the S232 re-run
+    # ("Adventure Airlines" for Trail Pulse). Carried inside brand_audience so it reaches every
+    # prompt (write, rewrite, buffer retry) without a new parameter.
+    async with pool.acquire() as conn:
+        brand_name = await conn.fetchval("SELECT name FROM shared.tenants WHERE tenant_id = $1", tenant_id)
+    if isinstance(brand_name, str) and brand_name.strip():
+        brand_audience = {**brand_audience, "brand_name": brand_name.strip()}
 
     destination = trip_name = None
     if req["trip_id"]:
@@ -325,13 +369,9 @@ async def start_write(
     # write/rewrite call AND fold into the grounding-gate's own `atom_text` argument — see this
     # module's own AA-529 comments below for why it's merged there rather than threaded as a
     # wholly separate pipeline.
-    facts = await fetch_facts_for_writing(tenant_id, pool)
-    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
-        facts, moment=atom_text, angle=chosen, trip=trip_name or destination, tenant_id=tenant_id,
-    )
-    if facts_left_out:
-        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
-    facts_text = format_facts_block(facts)
+    # AA-764 — Facts are fetched and Jev-filtered in the t9_write job (resolve_facts(), called
+    # first thing in run_write_background()), not here: select_relevant_facts() makes one Jev call
+    # per fact and this is still the HTTP request.
 
     context = {
         "atom_text": atom_text, "goal": goal, "channel_style": channel_style,
@@ -340,7 +380,8 @@ async def start_write(
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
-        "facts_text": facts_text,  # AA-529 — "" (not None) when no Facts Entry exists yet
+        "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
+        "facts_pending": True,  # AA-764
         # AA-485 — route_hub_name/route_segment_count weren't previously carried in `context`
         # (only used inline, at the placeholder INSERT above) because nothing needed them again
         # afterward. The buffer-retry path (run_write_background()'s own trailing step) inserts
@@ -408,6 +449,25 @@ async def _insert_placeholder_piece(
     return _row_to_dict(row)
 
 
+async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
+    """AA-764 (G5) — the T9 fact-select step (AA-529 Facts + AA-700 Jev relevance filter), moved
+    out of start_write() so its Jev calls run in the t9_write job, not in the HTTP request.
+    Fills `context["facts_text"]` in place, once (the buffer retry reuses the same context).
+    A context without `facts_pending` (built before AA-764, or by a test) is left untouched."""
+    if not context.get("facts_pending"):
+        return
+    tenant_id = UUID(context["tenant_id"])
+    facts = await fetch_facts_for_writing(tenant_id, pool)
+    facts, facts_left_out = await select_relevant_facts(          # AA-700 T9-1
+        facts, moment=context["atom_text"], angle=context["chosen"],
+        trip=context.get("trip_name") or context.get("destination"), tenant_id=tenant_id,
+    )
+    if facts_left_out:
+        logger.info("t9_facts_left_out", request_id=str(request_id), left_out=facts_left_out, kept=len(facts))
+    context["facts_text"] = format_facts_block(facts)
+    context["facts_pending"] = False
+
+
 async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, pool) -> None:
     """The write/rewrite + T10-check loop — UNCHANGED body from the pre-AA-466 single-function
     write_and_check(), just reading its inputs from `context` (built by start_write()) instead
@@ -419,6 +479,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     (Bedrock throttle, network error, anything) BEFORE producing real content — written back as
     status='failed', distinct from status='held' (a real, complete, gate-blocked outcome with
     real content_text) — see migration 118's header for why these must not be conflated."""
+    await resolve_facts(request_id, context, pool)  # AA-764 — Jev fact-select runs here, in the job
     atom_text, goal, channel_style = context["atom_text"], context["goal"], context["channel_style"]
     brand_audience, chosen, cta = context["brand_audience"], context["chosen"], context["cta"]
     destination, trip_name = context["destination"], context["trip_name"]
@@ -509,6 +570,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     facts_text=facts_text,
                 )
             total_cost += cost
+            seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768 — deterministic SEO length fit
 
             # AA-484 — cross-tenant cannibalization check, done HERE (before run_quality_gates(),
             # which stays synchronous/pool-free — see quality_gates.gate_cannibalization()'s own
@@ -836,6 +898,7 @@ async def _run_buffer_retry_attempt(
         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
         facts_text=facts_text,
     )
+    seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768
     outcome = await asyncio.to_thread(
         run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
         goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,

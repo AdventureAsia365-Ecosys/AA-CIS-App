@@ -1,5 +1,6 @@
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+markers = ["real_atom_seed: run with the real AA-768 atom seed helper (no conftest stub)"]
 
 [tool.coverage.run]
 omit = [

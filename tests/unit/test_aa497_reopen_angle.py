@@ -85,6 +85,11 @@ class _StatefulReopenConn:
     """Same spirit as test_aa449_angle_gate_service.py's _StatefulAngleOptionConn, extended with
     a real 'reusable' transition (reopen_request()'s own UPDATE) so this test exercises the ACTUAL
     guard/status logic end-to-end, not a bypass."""
+
+    async def fetchval(self, *args, **kwargs):
+        # AA-764 — fetch_request() reads the latest t8_angles job status; none in these tests.
+        return None
+
     def __init__(self):
         self.options = {0: True, 1: False, 2: False}  # idx 0 chosen from the "first" pick
         self.request_status = "approved"

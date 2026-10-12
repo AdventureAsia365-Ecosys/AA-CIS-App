@@ -249,6 +249,8 @@ def build_user_prompt(
         "",
         f"AUDIENCE: {segment}",
         f"AUDIENCE MINDSET: {mindset}",
+        *([f"BRAND NAME (the only name to use for the brand — never invent another): "
+           f"{brand_audience['brand_name']}"] if brand_audience.get("brand_name") else []),
         "",
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",
