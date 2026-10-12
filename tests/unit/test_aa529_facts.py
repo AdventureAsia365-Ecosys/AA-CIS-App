@@ -256,4 +256,8 @@ class TestRunWriteBackgroundFactsIntegration:
                 REQUEST_ID, PIECE_ID, _write_context(facts_text=""), pool=MagicMock(),
             )
 
-        assert mock_gates.call_args.kwargs["atom_text"] == _write_context()["atom_text"]
+        # AA-768 — the gate text now also carries the audience/trip lines (service._grounding_text);
+        # with no Facts it is still the atom text first, and no Facts block is added.
+        gate_atom_text = mock_gates.call_args.kwargs["atom_text"]
+        assert gate_atom_text.startswith(_write_context()["atom_text"])
+        assert "[Fact id=" not in gate_atom_text

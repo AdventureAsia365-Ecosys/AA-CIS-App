@@ -143,6 +143,18 @@ Rules:
   writing method, and the chosen angle every time. Do not write from channel style alone.
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
+- SOURCE FIDELITY (AA-768, same policy as the tour writer):
+  ALLOWED: short, well-known background about a place the content seed names (what it is, its
+  setting, why it matters) — written in words, without numbers.
+  FORBIDDEN: anything that promises the reader something about THIS trip that the content seed
+  does not state — activities, food, services, guides, transport or travel times, clock-times,
+  views or wildlife sightings, accommodation features, inclusions.
+  NUMBERS: write a number (height, distance, year, decade, century, age, day count, duration,
+  price, fee, processing time, group size) ONLY if that exact number appears in the content
+  seed, its FACTS section, the TRIP name or the AUDIENCE line. Otherwise say it without the
+  number ("high on a cliff face", not "900 metres up"; "for decades", not "since the 1970s").
+- Every sentence must still be true of the content seed when read by an editor who has only the
+  content seed in front of them.
 - Include the given call to action, worked naturally into the piece — not pasted on as a bare
   final sentence unless the channel's own style calls for that.
 - Avoid generic AI-style writing: no vague benefit stacks, no fake urgency, no unsupported
@@ -255,6 +267,12 @@ def build_user_prompt(
         lines.append(
             "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW — fix EXACTLY these issues, preserve "
             "everything else that was already working:\n- " + "\n- ".join(revision_feedback)
+            # AA-768 — the pilot's rewrites swapped one unsupported number for another; say how
+            # a grounding/fact-check failure is fixed, not just that it failed.
+            + "\nFor a sentence flagged as stating a number or claim the content seed does not "
+            "contain: remove that number or claim (rewrite the sentence without it). Never "
+            "replace it with a different number or claim that is also missing from the content "
+            "seed, and do not add new numbers anywhere else in the piece."
         )
     prompt = "\n".join(lines)
     if channel_style["channel"] == "blog":

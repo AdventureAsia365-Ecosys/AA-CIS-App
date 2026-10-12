@@ -176,6 +176,33 @@ def _held_reason_from(first_failure: dict) -> str:
     return f"{first_failure['gate']}: {'; '.join(first_failure['violations'][:3])}"
 
 
+def _grounding_text(context: dict) -> str:
+    """AA-768 — the gates' view of what the writer was given as fact: the seed (atom or joined
+    route moments) + the Facts block + the audience and trip lines build_user_prompt() also
+    shows the writer. The audience/trip lines were missing before, so a number the brand itself
+    states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot)."""
+    parts = [context["atom_text"], context.get("facts_text") or ""]
+    audience = context.get("brand_audience") or {}
+    if audience.get("customer_segment"):
+        parts.append(f"AUDIENCE: {audience['customer_segment']}")
+    if context.get("trip_name"):
+        parts.append(f"TRIP: {context['trip_name']}")
+    if context.get("destination"):
+        parts.append(f"DESTINATION: {context['destination']}")
+    return "\n\n".join(p for p in parts if p)
+
+
+def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
+    """AA-768 — every failed BLOCKING gate's violations, each prefixed with its gate, for the
+    rewrite. Before this only `first_failure` was sent, so a piece failing F1 + F4 + F3 + F9 got
+    one gate fixed per attempt and held on the rest (S231 pilot, atlas-hearth blog)."""
+    return [
+        f"{g['gate']}: {v}"
+        for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+        for v in g["violations"]
+    ]
+
+
 async def start_write(
     tenant_id: UUID, request_id: UUID, pool, cta_override: Optional[str] = None,
 ) -> dict:
@@ -414,7 +441,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # write_content()/rewrite_with_feedback() below (those get `facts_text=facts_text` as its own
     # argument instead, appended once inside build_user_prompt()) — this avoids the Facts block
     # appearing twice in what the model actually reads.
-    grounding_text = f"{atom_text}\n\n{facts_text}" if facts_text else atom_text
+    grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
 
     attempt = 1  # bound before the try block so the except handler always has a real value
     try:
@@ -475,7 +502,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
                     brand_audience=brand_audience, angle=chosen, cta=cta,
-                    revision_feedback=repair_log[-1]["violations"],
+                    revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
                     destination=destination, trip_name=trip_name, atom_id=atom_id,
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
@@ -543,6 +570,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             repair_log.append({
                 "attempt": attempt, "gate_targeted": first_failure["gate"],
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
+                # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
+                "feedback": _repair_feedback(gate_ledger),
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
@@ -760,7 +789,7 @@ async def _maybe_buffer_retry_held_piece(
         route_hub_name=context.get("route_hub_name"), route_segment_count=context.get("route_segment_count"),
     )
     new_piece_id = UUID(new_piece["piece_id"])
-    original_violations = repair_log[-1]["violations"]
+    original_violations = repair_log[-1].get("feedback") or repair_log[-1]["violations"]  # AA-768
     logger.info(
         "t9_buffer_retry_triggered", request_id=str(request_id), held_piece_id=str(held_piece_id),
         new_piece_id=str(new_piece_id),
@@ -796,7 +825,7 @@ async def _run_buffer_retry_attempt(
     # rewrite call so the retry sees the same Facts as every other attempt, and folded into the
     # gate's atom_text so a Facts-sourced claim still passes grounding on this retry too.
     facts_text = context.get("facts_text") or ""
-    grounding_text = f"{atom_text}\n\n{facts_text}" if facts_text else atom_text
+    grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
 
     content_text, cost, seo_meta, summary = await asyncio.to_thread(
         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
