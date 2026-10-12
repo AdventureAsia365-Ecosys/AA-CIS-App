@@ -976,7 +976,9 @@ async def _revalidate_tour(content_id: str) -> dict:
                    gc.aa_highlights, gc.aa_itineraries, gc.mobile_card_text,
                    gc.seo_title, gc.seo_meta, gc.seo_keywords_used, gc.og_tags,
                    gc.brand_rules_version, gc.metadata,
-                   rt.src_name, rt.country, rt.duration
+                   rt.src_name, rt.country, rt.duration,
+                   rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
+                   rt.src_itineraries, rt.price_raw, rt.inclusions, rt.exclusions
             FROM silver_aa_internal.generated_content gc
             JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
             WHERE gc.id = $1::uuid
@@ -1032,7 +1034,24 @@ async def _revalidate_tour(content_id: str) -> dict:
             "seo_keywords_used": _jsonb(gc["seo_keywords_used"]) or [],
             "og_tags":      _jsonb(gc["og_tags"]) or {},
         }
-        tour = {"name": gc["src_name"], "country": gc["country"], "duration": gc["duration"]}
+        # AA-741 (S229): the revalidation graph judges the edit AGAINST THE SOURCE (judge, brand
+        # audit, A1-3 meal/time grounding). It used to get name/country/duration only, so every
+        # source-grounded check compared to an empty source: Jev answered "not in the source"
+        # (p~0.03) for meals the source states verbatim and the version stayed flagged. Same
+        # tour shape as the write path (`_execute_run_tour`).
+        tour = {
+            "name":        gc["src_name"],
+            "subtitle":    gc["src_subtitle"],
+            "summary":     gc["src_summary"],
+            "description": gc["src_description"],
+            "highlights":  _jsonb(gc["src_highlights"]) or [],
+            "itineraries": gc["src_itineraries"],
+            "country":     gc["country"],
+            "duration":    gc["duration"],
+            "price":       gc["price_raw"],
+            "inclusions":  gc["inclusions"],
+            "exclusions":  gc["exclusions"],
+        }
 
         initial_state = {
             "tour": tour, "seo": seo, "generated": generated,

@@ -47,6 +47,11 @@ def _gc_row():
         "brand_rules_version": 1,
         "metadata": json.dumps({"brand_name": "AA"}),
         "src_name": "Test Tour", "country": "Vietnam", "duration": "5 days",
+        # AA-741 (S229): the source the edit is judged against
+        "src_subtitle": "Src subtitle", "src_summary": "Src summary", "src_description": None,
+        "src_highlights": json.dumps(["Src highlight"]),
+        "src_itineraries": "Day 1: Arrive. Dinner at the lodge.", "price_raw": None,
+        "inclusions": "Breakfast and dinner daily", "exclusions": None,
     }
 
 
@@ -163,3 +168,13 @@ def test_missing_seo_context_row_yields_empty_seo_without_crash():
         asyncio.run(admin_pipeline._revalidate_tour(FAKE_UUID))
 
     assert captured["state"]["seo"] == {}
+
+
+def test_source_tour_is_passed_to_the_graph():
+    """AA-741 (S229): before, `tour` had name/country/duration only, so every source-grounded
+    check (judge, brand audit, A1-3 meal/time) judged the edit against an EMPTY source."""
+    tour = _run()["tour"]
+    assert tour["itineraries"] == "Day 1: Arrive. Dinner at the lodge."
+    assert tour["inclusions"] == "Breakfast and dinner daily"
+    assert tour["summary"] == "Src summary"
+    assert tour["highlights"] == ["Src highlight"]
