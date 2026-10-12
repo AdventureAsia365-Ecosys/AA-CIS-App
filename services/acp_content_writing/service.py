@@ -46,7 +46,9 @@ from services.acp_content_writing.quality_gates import (
 )
 from services.content_generation.seo_meta_utils import fit_seo_meta_final, fit_seo_title
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
-from services.acp_content_writing.generate import rewrite_with_feedback, write_content
+from services.acp_content_writing import sentence_repair
+from services.acp_content_writing.generate import (SentenceRepairError, repair_sentences, rewrite_with_feedback,
+                                                   write_content)
 from services.acp_content_writing.jev_observe import observe_t10
 from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, run_quality_gates,
                                                           strip_citation_tags)
@@ -560,15 +562,34 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     "content_text": content_text, "gate_ledger": gate_ledger, "seo_meta": seo_meta,
                     "summary": summary, "embedding": embedding,
                 }
-                content_text, cost, seo_meta, summary = await asyncio.to_thread(
-                    rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
-                    brand_audience=brand_audience, angle=chosen, cta=cta,
-                    revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
-                    destination=destination, trip_name=trip_name, atom_id=atom_id,
-                    route_segments=route_segments, keyword=keyword,
-                    tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                    facts_text=facts_text,
-                )
+                # AA-768 — when attempt 1 failed only on quoted invented facts, fix just those
+                # sentences (sentence_repair.py) so the rewrite cannot invent new ones; anything
+                # else, or a failed repair call, takes the full rewrite as before.
+                repair_items = sentence_repair.plan(content_text, gate_ledger)
+                replacements = None
+                if repair_items:
+                    try:
+                        replacements, cost = await asyncio.to_thread(
+                            repair_sentences, sentences=repair_items, content_seed=grounding_text,
+                            facts_text=None, channel=channel, tenant_id=tenant_id,
+                            angle_gate_request_id=str(request_id),
+                        )
+                    except SentenceRepairError as e:
+                        logger.warning("t9_sentence_repair_failed", request_id=str(request_id), error=str(e)[:200])
+                if replacements is not None:
+                    content_text = sentence_repair.splice(content_text, repair_items, replacements)
+                    repair_log[-1]["repair_mode"] = "sentences"
+                    repair_log[-1]["sentences_repaired"] = len(repair_items)
+                else:
+                    content_text, cost, seo_meta, summary = await asyncio.to_thread(
+                        rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
+                        brand_audience=brand_audience, angle=chosen, cta=cta,
+                        revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
+                        destination=destination, trip_name=trip_name, atom_id=atom_id,
+                        route_segments=route_segments, keyword=keyword,
+                        tenant_id=tenant_id, angle_gate_request_id=str(request_id),
+                        facts_text=facts_text,
+                    )
             total_cost += cost
             seo_meta = _fit_seo_meta(seo_meta, keyword)  # AA-768 — deterministic SEO length fit
 
