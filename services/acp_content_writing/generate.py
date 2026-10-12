@@ -162,6 +162,7 @@ def write_content(
     route_segments: list[tuple[str, str]] | None = None, keyword: str | None = None,
     tenant_id: str | None = None, angle_gate_request_id: str | None = None,  # AA-505, optional
     facts_text: str | None = None,  # AA-529, optional
+    scope: str | None = None,  # S233 — which part of the trip the piece covers
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 1 — SKILL_v2.md workflow step 9, fresh write. Returns (content_text, cost_usd,
     seo_meta, summary) — `seo_meta` is `{"seo_title": None, "meta_description": None, "slug":
@@ -190,7 +191,7 @@ def write_content(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, atom_id=atom_id,
-        route_segments=route_segments, keyword=keyword, facts_text=facts_text,
+        route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
     )
     channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
@@ -233,6 +234,7 @@ def rewrite_with_feedback(
     route_segments: list[tuple[str, str]] | None = None, keyword: str | None = None,
     tenant_id: str | None = None, angle_gate_request_id: str | None = None,  # AA-505, optional
     facts_text: str | None = None,  # AA-529, optional
+    scope: str | None = None,  # S233 — which part of the trip the piece covers
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 2 (the only retry — Phase 1's confirmed cap of 2 total attempts) — the SAME
     write call, with `revision_feedback` (the specific gate/violation strings T10 failed on,
@@ -249,7 +251,7 @@ def rewrite_with_feedback(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
-        atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text,
+        atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
     )
     channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,

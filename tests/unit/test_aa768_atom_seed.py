@@ -36,16 +36,21 @@ def test_siblings_capped():
 @pytest.mark.asyncio
 async def test_atom_seed_text_reads_atom_and_siblings():
     conn = AsyncMock()
-    conn.fetchrow.return_value = {"text": "Label", "evidence": "Own source.", "emotional_hook": None,
-                                  "season_note": "Best Oct–Nov", "place": "Pawangka Monastery",
-                                  "country": "Tibet"}
-    conn.fetch.return_value = [{"evidence": "B sibling."}, {"evidence": "A sibling."}]
+    conn.fetchrow.side_effect = [
+        {"text": "Label", "evidence": "Own source.", "emotional_hook": None, "season_note": "Best Oct–Nov",
+         "place": "Pawangka Monastery", "country": "Tibet", "itinerary_day": 4},
+        None,  # no place card yet
+    ]
+    conn.fetch.return_value = [{"evidence": "B sibling.", "n": 10}, {"evidence": "A sibling.", "n": 10}]
     seed = await atom_seed_text(conn, "a1", "t1")
     assert seed == ("Label\nLocation: Pawangka Monastery, Tibet (do not name any other country or region for it)\n"
-                    "Source itinerary: Own source.\nSeason: Best Oct–Nov\n"
-                    "Other itineraries with the same moment:\n- A sibling.\n- B sibling.")
-    assert conn.fetchrow.call_args.args[1:] == ("a1", "t1")
-    assert "atom_segment_member" in conn.fetch.call_args.args[0]
+                    "Day 4 of the trip\nSource itinerary: Own source.\nSeason: Best Oct–Nov\n"
+                    "Other trips that include this same moment (for context only — never promise these details "
+                    "for this trip):\n- A sibling.\n- B sibling.")
+    assert conn.fetchrow.call_args_list[0].args[1:] == ("a1", "t1")
+    sib_query = conn.fetch.call_args.args[0]
+    assert "v_active_tour_atoms" in sib_query and "NOT sib.is_alias" in sib_query
+    assert "rt.country IS NOT DISTINCT FROM mrt.country" in sib_query
 
 
 @pytest.mark.asyncio

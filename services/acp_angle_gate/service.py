@@ -28,6 +28,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
+from services.acp_shared.place_cards import ensure_place_cards
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.generate import generate_angles
 from services.acp_angle_gate.goals import get_goal
@@ -65,7 +66,7 @@ class WrongStatusError(AngleGateError):
 
 _ATOM_QUERY = """
     SELECT atom_id, tour_id, text
-    FROM acp_contract.tour_atoms
+    FROM acp_contract.v_active_tour_atoms
     WHERE atom_id = $1 AND owner_scope IN ('platform', $2) AND NOT deleted AND NOT is_empty_marker
 """
 
@@ -123,6 +124,12 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     if goal is None:
         raise InvalidGoalError(f"Unknown goal key: {goal_key!r}")
 
+    # AA-772 (S233) — the atom's place card (built here in the t8_angles job if missing) is part
+    # of the seed the angles are written from. Soft-fail: no card → the plain seed.
+    try:
+        await ensure_place_cards([req["atom_id"]], pool)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t8_place_cards_failed", request_id=str(request_id), error=str(e)[:200])
     atom = await _fetch_atom_for_tenant(tenant_id, req["atom_id"], pool)
     brand_audience = await fetch_brand_audience(tenant_id, pool)
 
