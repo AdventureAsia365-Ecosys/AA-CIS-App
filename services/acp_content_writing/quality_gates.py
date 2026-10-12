@@ -575,6 +575,12 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
 
+# AA-768 — the F9 judge now reads the source and returns unsupported_claims; on the Luna route
+# (reasoning tokens count toward the cap) 2048 ran out on a route blog: all 3 models returned
+# empty content (max_tokens / finish_reason=length) and the piece held as "judge unavailable".
+_F9_MAX_TOKENS = 8192
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
 ) -> list[GateResultLite]:
@@ -651,7 +657,7 @@ def gate_brand_voice(
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="t10_judge")
+        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, max_tokens=_F9_MAX_TOKENS, stage="t10_judge")
         data = parse_judge_json(raw["text"])
     except Exception as e:
         logger.warning("t10_f9_judge_unavailable", error=str(e))

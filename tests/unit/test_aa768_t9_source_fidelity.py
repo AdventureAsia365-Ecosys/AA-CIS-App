@@ -227,3 +227,16 @@ def test_blog_prompt_asks_for_rhythm_f3_checks():
         brand_audience={}, angle={"name": "a", "why_it_works": "w", "best_final_style": "b"}, cta="Book",
     )
     assert "a single sentence" in prompt and "at most one" in prompt and "half as" in prompt
+
+
+def test_f9_judge_gets_room_for_reasoning_and_claims():
+    """S232 round 5: a route blog's F9 call ran out of tokens on every model (empty content)."""
+    data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
+            "failure_codes": [], "flagged_phrases": [], "notes": ""}
+    with patch.object(qg, "invoke_judge", return_value=_judge(**data)) as mock_judge:
+        qg.gate_brand_voice("piece", "Book", "rubric", source_text="seed")
+    assert mock_judge.call_args.kwargs["max_tokens"] >= 8192
+
+
+def test_writer_forbids_invented_contrasts():
+    assert "contrast claims" in SYSTEM_PROMPT and "not by X but by Y" in SYSTEM_PROMPT
