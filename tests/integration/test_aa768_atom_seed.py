@@ -12,7 +12,6 @@ from services.acp_shared.atom_seed import atom_seed_text  # noqa: E402
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 
-@pytest.mark.real_atom_seed
 @pytest.mark.asyncio
 async def test_atom_seed_queries_run_on_the_real_tables():
     conn = await asyncpg.connect(DSN)
