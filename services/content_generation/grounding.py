@@ -407,7 +407,7 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
         record_call_sync(
             stage="s1_flag_fix", role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd,
             quality_signal={"source": "grounding_repair", "sentences": len(violations), "fields_changed": fields},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),

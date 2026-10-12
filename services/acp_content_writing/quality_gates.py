@@ -504,11 +504,10 @@ def gate_seo_surface(
 # ---------------------------------------------------------------- AA-505 judge call logging
 
 def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> None:
-    """Shared by gate_framework()/gate_brand_voice() below. tenant_id=None — both gate functions
-    are deliberately channel/context-agnostic (this file's own module docstring), so no piece/
-    tenant identity is threaded down into them; the same piece's t9_write row (service.py) DOES
-    carry tenant_id/angle_gate_request_id and is joinable by created_at proximity if ever needed.
-    cost_usd uses pricing.calc_cost() — accurate for the real production judge (gpt-4.1, in
+    """Shared by gate_framework()/gate_brand_voice() below. Both gate functions are deliberately
+    channel/context-agnostic (this file's own module docstring), so no tenant identity is threaded
+    down into them — the row's tenant comes from the running T9 job (call_log.bind_tenant,
+    AA-741 G1). cost_usd uses pricing.calc_cost() — accurate for the real production judge (gpt-4.1, in
     COST_TABLE); an approximation (Sonnet-tier fallback rate) for a manual nova_pro/gpt56
     override, which is not the shipped default — acceptable for an observability log, not used
     for billing."""
@@ -520,7 +519,6 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
         stage="t10_judge", role="judge", model=model,
         tokens_in=in_tok, tokens_out=out_tok,
         cost_usd=cost if cost is not None else calc_cost(model, in_tok, out_tok),
-        tenant_id=None,
         quality_signal={"gate": gate, "passed": passed, **extra},
         stop_reason=raw.get("stop_reason"),
         account=raw.get("account"), fallback_used=raw.get("fallback_used"),
@@ -567,10 +565,8 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
             violations.append(f"framework criterion '{criterion}' scored 1 with no evidence quote — treated as fail")
     if not items:
         violations.append("judge returned no rubric items — treated as fail, not a silent pass")
-    # AA-505 — real judge outcome (item-level pass ratio), not a placeholder. tenant_id=None: this
-    # function is deliberately channel/context-agnostic (module docstring) so no piece/tenant
-    # identity is threaded in here — the SAME piece's t9_write row (which does carry tenant_id/
-    # angle_gate_request_id) is joinable by created_at proximity if that's ever needed.
+    # AA-505 — real judge outcome (item-level pass ratio), not a placeholder. The tenant comes
+    # from the running job (call_log.bind_tenant), not from this context-agnostic function.
     _log_t10_judge_call(raw, gate="F8_framework", passed=not violations,
                          extra={"items_total": len(items),
                                 "items_passed": sum(1 for i in items if str(i.get("score")) == "1")})

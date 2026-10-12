@@ -257,7 +257,7 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
         record_call_sync(
             stage=STAGE, role="validate", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd, tenant_id=None,
+            cost_usd=resp.cost_usd,
             quality_signal={"source": "s1_source_facts", "days": len(days)},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),

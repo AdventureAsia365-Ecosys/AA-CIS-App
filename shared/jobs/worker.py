@@ -53,6 +53,19 @@ def ecs_task_revision() -> Optional[int]:
         return None
 
 
+def job_tenant_id(payload: Optional[dict]) -> Optional[str]:
+    """AA-741 G1 — the tenant a job works for, for call_log.bind_tenant. `shared.job` has no
+    tenant column: T2/T9/S1 payloads carry `tenant_id` (T9 also nests it in `context`).
+    The platform tenant (aa_internal) is not a customer — its LLM rows keep tenant_id NULL."""
+    if not isinstance(payload, dict):
+        return None
+    ctx = payload.get("context")
+    tid = payload.get("tenant_id") or (ctx.get("tenant_id") if isinstance(ctx, dict) else None)
+    if tid is None or str(tid) in ("", "None", call_log.PLATFORM_TENANT_ID):
+        return None
+    return str(tid)
+
+
 class Worker:
     def __init__(self, pool, *, worker_id: Optional[str] = None, poll_seconds: float = 5.0,
                  lease_seconds: int = 90, heartbeat_seconds: float = 20.0,
@@ -148,8 +161,9 @@ class Worker:
             return
         log.info("job_started")
         # The task copies the context at creation, so every LLM call the handler makes (threads
-        # included) logs this job's id — its cost shows on the Jobs page (call_log.bind_job).
-        with call_log.bind_job(job.id):
+        # included) logs this job's id — its cost shows on the Jobs page (call_log.bind_job) —
+        # and, for a tenant job, the tenant (AA-741 G1, call_log.bind_tenant).
+        with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)):
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:
