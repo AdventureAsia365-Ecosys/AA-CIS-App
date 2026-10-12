@@ -29,11 +29,15 @@ class Goal(TypedDict):
     marketing_term: str
 
 
+# AA-771 (S233) — descriptions translated to English and made brand-neutral. They were the
+# Vietnamese Bang 1 text with Adventure Asia's own framing ("quan điểm AA", "năng lực thiết kế
+# route của AA", "Why AA có mặt", "Giải thích AA làm gì"), sent verbatim inside every tenant's
+# English T8/T9 prompt and shown in the tenant's goal picker. Formula logic is unchanged.
 GOALS: list[Goal] = [
     {
         "key": "promotion",
         "name": "Promotion",
-        "description": "Quảng bá điểm đến/route/trip/ưu đãi/launch/campaign",
+        "description": "Promote a destination, route, trip, offer, launch or campaign",
         "logic": "Attention-Interest-Desire-Action",
         "marketing_term": "AIDA",
     },
@@ -41,53 +45,56 @@ GOALS: list[Goal] = [
         "key": "lead_generation",
         "name": "Lead Generation",
         "description": (
-            "AIDA nếu offer tích cực; PAS nếu nỗi đau là lập kế hoạch quá tải, trip chung "
-            "chung, route kém, đông đúc, bất định"
+            "Use AIDA when the offer is positive; use PAS when the reader's pain is planning "
+            "overload, generic trips, poor routes, crowds or uncertainty"
         ),
         "logic": "Problem-Agitate-Solve",
-        "marketing_term": "AIDA hoặc PAS",
+        "marketing_term": "AIDA or PAS",
     },
     {
         "key": "conversion",
         "name": "Conversion",
-        "description": "Đẩy người đọc tới enquiry/booking/waitlist/consultation/purchase",
+        "description": "Move the reader to an enquiry, booking, waitlist, consultation or purchase",
         "logic": "Stop-Look-Act-Purchase",
         "marketing_term": "SLAP",
     },
     {
         "key": "introduction_awareness",
         "name": "Introduction / Awareness",
-        "description": "Giới thiệu quốc gia/điểm đến/route style/xu hướng/quan điểm AA",
+        "description": "Introduce a country, destination, route style, trend or the brand's own point of view",
         "logic": "Hook-Insight-CTA",
-        "marketing_term": "Hook-Insight-CTA hoặc 5W1H",
+        "marketing_term": "Hook-Insight-CTA or 5W1H",
     },
     {
         "key": "trust_building",
         "name": "Trust-building",
-        "description": "Xây niềm tin vào năng lực thiết kế route của AA",
-        "logic": "Problem-Insight-Proof-Action (Proof phải cụ thể, KHÔNG bịa claim)",
+        "description": "Build trust in how the brand plans and runs its trips, as its brand identity describes it",
+        "logic": (
+            "Problem-Insight-Proof-Action (the proof must be concrete and come from the source — "
+            "never invent a claim)"
+        ),
         "marketing_term": "FAB",
     },
     {
         "key": "engagement_conversation",
         "name": "Engagement / Conversation",
-        "description": "Mời comment/share/save/thảo luận",
-        "logic": "Hook-Value-CTA (câu hỏi có căn cứ)",
+        "description": "Invite comments, shares, saves or discussion",
+        "logic": "Hook-Value-CTA (the question must be grounded in the source)",
         "marketing_term": "BAB",
     },
     {
         "key": "event_announcement",
         "name": "Event Announcement",
-        "description": "Thông báo hội chợ/sự kiện/launch/Web Summit/gặp supplier/đối tác",
-        "logic": "What-Why-Who-Where/When-Why AA có mặt-CTA",
+        "description": "Announce a trade fair, event, launch or summit, or a meeting with suppliers or partners",
+        "logic": "What-Why-Who-Where/When-Why the brand is there-CTA",
         "marketing_term": "5W1H + AIDA",
     },
     {
         "key": "product_service_explanation",
         "name": "Product or Service Explanation",
         "description": (
-            "Giải thích AA làm gì, dịch vụ trip, itinerary design, supplier curation, "
-            "partner portal, năng lực AI/data"
+            "Explain what the brand offers and how it works — only services its brand identity "
+            "states"
         ),
         "logic": "Feature-Advantage-Benefit",
         "marketing_term": "FAB",

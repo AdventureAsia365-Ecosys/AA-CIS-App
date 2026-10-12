@@ -29,90 +29,104 @@ class ChannelStyle(TypedDict):
     avoid: str
 
 
+# AA-771 (S233) — translated to English and made brand-neutral. The Bang 2 text was Vietnamese
+# with Adventure Asia's own positioning baked in ("AA positioning", "audience AA", "premium không
+# kiêu", "điểm khác biệt AA") and went verbatim into every tenant's English writer prompt; S232
+# traced 25/29 LinkedIn posts with an invented "At <Brand>, we…" paragraph to it. Tone now comes
+# from the tenant's brand pack. `avoid` items are plain comma-separated phrases so ranking.py's
+# word-boundary match can find them in an angle (quoted/Vietnamese items never matched).
 CHANNEL_STYLES: list[ChannelStyle] = [
     {
         "channel": "linkedin",
         "display_name": "LinkedIn",
-        "use_when": "Thought leadership, founder voice, B2B/investor/partner, premium positioning",
-        "structure": "Hook insight→đoạn ngắn→1 insight rõ→AA positioning→CTA nhẹ/reflective",
-        "style": "professional, calm, insight-led, editorial, premium không kiêu",
+        "use_when": "Thought leadership, founder voice, B2B and partner audiences, considered positioning",
+        "structure": (
+            "Hook insight → short paragraphs → one clear insight → at most one sentence on how the "
+            "brand approaches it (only what its brand identity states) → light, reflective CTA"
+        ),
+        "style": "professional, calm, insight-led, editorial, confident without arrogance",
         "avoid": (
-            "emoji nhiều, travel copy chung chung, hard sell, liệt kê itinerary dài, "
-            "storytelling quá cảm xúc, cliché (\"hidden gem\", \"bucket list\", \"paradise awaits\")"
+            "many emojis, generic travel copy, hard sell, long itinerary lists, over-emotional "
+            "storytelling, hidden gem, bucket list, paradise awaits, markdown formatting"
         ),
     },
     {
         "channel": "facebook",
         "display_name": "Facebook",
-        "use_when": "Engagement, giới thiệu điểm đến, community trust, soft promotion",
+        "use_when": "Engagement, destination introductions, community trust, soft promotion",
         "structure": (
-            "Mở ấm-cụ-thể→cảm giác điểm đến+chi tiết cụ thể→ý tưởng trip thực tế→vì sao hợp "
-            "audience AA→CTA thân thiện"
+            "Warm, concrete opening → the feel of the place with concrete details from the source → "
+            "a practical trip idea → why it suits this brand's audience → friendly CTA"
         ),
-        "style": "human, warm, clear, travel-led, thoải mái hơn LinkedIn",
+        "style": "human, warm, clear, travel-led, more relaxed than LinkedIn",
         "avoid": (
-            "corporate tone, \"discover paradise\" chung chung, quá nhiều fact thiếu cảm xúc, "
-            "wording rẻ tiền, ngôn ngữ cảnh quan mơ hồ"
+            "corporate tone, discover paradise, facts with no feeling, cheap wording, vague "
+            "scenery language"
         ),
     },
     {
         "channel": "instagram",
         "display_name": "Instagram",
-        "use_when": "Visual inspiration, mood điểm đến, brand awareness, engagement ngắn",
+        "use_when": "Visual inspiration, destination mood, brand awareness, short engagement",
         "structure": (
-            "Hook giác quan ngắn→dòng dễ lướt→3-5 chi tiết cụ thể→AA positioning nhẹ→CTA đơn giản"
+            "Short sensory hook → easy-to-scan lines → 3-5 concrete details from the source → a "
+            "light brand line → simple CTA"
         ),
         "style": "visual, precise, sensory, minimal, elegant",
-        "avoid": "đoạn dài, caption mơ hồ, nhồi hashtag, tính từ chung chung, ngôn ngữ quá kịch",
+        "avoid": "long paragraphs, vague captions, hashtag stuffing, generic adjectives, over-dramatic language",
     },
     {
         "channel": "tiktok",
         "display_name": "TikTok",
-        "use_when": "Attention ngắn, tò mò, giáo dục, reframe điểm đến",
+        "use_when": "Short attention, curiosity, education, reframing a destination",
         "structure": (
-            "Câu mở sắc→setup nói chuyện đơn giản→3 điểm nhanh→tò mò không clickbait→direction "
-            "hình ảnh (tuỳ chọn)"
+            "Sharp opening line → simple spoken setup → 3 quick points → curiosity without "
+            "clickbait → optional visual direction"
         ),
         "style": "direct, clear, conversational, fast-moving, useful",
         "avoid": (
-            "hook viral rẻ tiền, phóng đại nguy hiểm, urgency giả, luxury flexing, thuật ngữ "
-            "travel phức tạp"
+            "cheap viral hooks, dangerous exaggeration, fake urgency, luxury flexing, complex "
+            "travel jargon"
         ),
     },
     {
         "channel": "email",
         "display_name": "Email / Newsletter",
         "use_when": (
-            "Nurture, trust-building, giải thích sản phẩm, thông báo trip, gợi ý theo mùa, "
-            "đối tác"
+            "Nurture, trust-building, product explanation, trip announcements, seasonal ideas, "
+            "partners"
         ),
-        "structure": "Subject rõ→mở đầu bình tĩnh→1 ý chính→giải thích editorial hữu ích→1 CTA rõ",
-        "style": "personal nhưng polished, calm, useful, trust-building, editorial",
-        "avoid": "quá nhiều link, quá nhiều CTA, ngôn ngữ promo chung chung, block text dài, urgency giả",
+        "structure": "Clear subject → calm opening → one main idea → useful editorial explanation → one clear CTA",
+        "style": "personal but polished, calm, useful, trust-building, editorial",
+        "avoid": "too many links, too many CTAs, generic promo language, long text blocks, fake urgency",
     },
     {
         "channel": "landing_page",
         "display_name": "Landing Page / Sales Page",
-        "use_when": "Conversion, giải thích sản phẩm, campaign landing, trang điểm đến/trip",
+        "use_when": "Conversion, product explanation, campaign landing, destination or trip page",
         "structure": (
-            "Value prop rõ→đối tượng phù hợp→vì sao điểm đến/trải nghiệm này quan trọng→AA xử "
-            "lý gì→trust signal/process→CTA rõ"
+            "Clear value proposition → who it suits → why this place or experience matters → what "
+            "the brand takes care of (only what its brand identity states) → trust signals or "
+            "process → clear CTA"
         ),
-        "style": "precise, benefit-led, premium, grounded, dễ scan",
+        "style": "precise, benefit-led, grounded, easy to scan",
         "avoid": (
-            "overwriting, luxury claim chung chung, superlative không có bằng chứng, itinerary "
-            "detail rối, quá nhiều brand philosophy trước khi giải thích offer"
+            "overwriting, generic luxury claims, superlatives without proof, tangled itinerary "
+            "detail, brand philosophy before the offer is explained"
         ),
     },
     {
         "channel": "ads",
         "display_name": "Ads",
-        "use_when": "Lead gen, retargeting, quảng bá điểm đến, test campaign",
-        "structure": "1 hook rõ→1 benefit theo audience→1 điểm khác biệt AA→1 CTA",
-        "style": "clear, specific, benefit-led, calm nhưng thuyết phục",
+        "use_when": "Lead generation, retargeting, destination promotion, campaign tests",
+        "structure": (
+            "One clear hook → one benefit for the audience → one thing that sets the brand apart "
+            "(from its brand identity) → one CTA"
+        ),
+        "style": "clear, specific, benefit-led, calm but persuasive",
         "avoid": (
-            "clickbait, slogan travel chung chung, quá nhiều ý trong 1 ad, urgency không có "
-            "căn cứ, over-promise"
+            "clickbait, generic travel slogans, more than one idea per ad, unfounded urgency, "
+            "over-promising"
         ),
     },
     # NEW, self-authored fallback — NOT in Bang 2 (STEP0 §5). See module docstring.
@@ -120,9 +134,12 @@ CHANNEL_STYLES: list[ChannelStyle] = [
         "channel": "blog",
         "display_name": "Blog",
         "use_when": "Long-form SEO content, hub/pillar pages, in-depth destination guides",
-        "structure": "Hook→context/why this destination→structured H2 sections→FAQ (if TOFU)→CTA",
+        "structure": (
+            "Hook → context / why this place → structured H2 sections → call-to-action paragraph "
+            "→ FAQ (if top-of-funnel)"
+        ),
         "style": "informative, structured, SEO-aware, still specific (not generic travel copy)",
-        "avoid": "keyword stuffing, generic listicle tone, no cliché superlatives without proof",
+        "avoid": "keyword stuffing, generic listicle tone, cliché superlatives without proof",
     },
 ]
 

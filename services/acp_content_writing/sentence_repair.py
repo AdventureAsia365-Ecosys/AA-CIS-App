@@ -23,7 +23,8 @@ _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', r
 _SENTENCE_TAIL_RE = re.compile(rf"[^.!?\n]*[.!?]+[\"'”’)]*(?:\s?{_TAG})*")
 _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
-_ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact"}
+_BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
+_ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name"}
 
 
 def _clean_quote(q: str) -> str:
@@ -63,7 +64,12 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     items: list[tuple[str, str]] = []
     for g in failed:
         for v in g["violations"]:
-            if g["gate"] == "F1_grounding":
+            if g["gate"] in ("F2_brand_forbidden", "F11_brand_name"):
+                m = _BRAND_QUOTE_RE.search(v)
+                if not m:
+                    return None
+                items.append((m.group(2), m.group(1)))
+            elif g["gate"] == "F1_grounding":
                 m = _F1_QUOTE_RE.search(v)
                 if not m:
                     return None

@@ -33,6 +33,7 @@ markup the writer wasn't asked for before:
 from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
+from services.acp_shared.brand_pack import render_brand_block
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 
@@ -41,8 +42,10 @@ _BLOG_FORMAT_INSTRUCTIONS = """
 BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a style suggestion):
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
-- If, and only if, the piece includes a FAQ section, put it LAST, headed by a line that is
-  exactly "## FAQ", followed by one or more Q/A pairs in this exact format and nothing else:
+- Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
+- If, and only if, the piece includes a FAQ section, put it LAST (after the call-to-action
+  paragraph), headed by a line that is exactly "## FAQ", followed by one or more Q/A pairs in
+  this exact format and nothing else — each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
@@ -67,8 +70,10 @@ _BLOG_FORMAT_INSTRUCTIONS_ROUTE = """
 BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a style suggestion):
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
-- If, and only if, the piece includes a FAQ section, put it LAST, headed by a line that is
-  exactly "## FAQ", followed by one or more Q/A pairs in this exact format and nothing else:
+- Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
+- If, and only if, the piece includes a FAQ section, put it LAST (after the call-to-action
+  paragraph), headed by a line that is exactly "## FAQ", followed by one or more Q/A pairs in
+  this exact format and nothing else — each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
@@ -140,17 +145,29 @@ def _keyword_line(keyword: str | None) -> str:
     return f"TARGET SEO KEYWORD (must appear in both seo_title and meta_description): {keyword}"
 
 
-SYSTEM_PROMPT = """You are a strategy-led English content writer for a premium travel brand.
+# AA-768 (S233) — social channels publish as plain text: markdown showed up as literal ** and
+# ## in 3/29 S232 LinkedIn posts. generate.py also strips any that slips through.
+PLAIN_TEXT_CHANNELS = {"linkedin", "facebook", "instagram", "tiktok", "ads"}
+_PLAIN_TEXT_INSTRUCTIONS = """
+
+FORMAT FOR THIS CHANNEL: plain text only — no markdown (no **bold**, no # headings, no
+[links](...)). Short paragraphs separated by a blank line. Hashtags, if the channel uses them,
+go on the last line."""
+
+
+SYSTEM_PROMPT = """You are a strategy-led English content writer for the travel brand described in the BRAND
+block below — write in its voice, for its audience, by its style guide.
 
 Write ONE finished piece of content for the exact channel, goal, and angle given below — not a
 draft with placeholders, not an outline, the actual final copy a person could post as-is.
 
 Rules:
-- Combine the brand/audience context, the channel's structure and style, the selected goal's
-  writing method, and the chosen angle every time. Do not write from channel style alone.
+- Combine the BRAND block, the channel's structure and style, the selected goal's writing method,
+  and the chosen angle every time. Do not write from channel style alone. Where the brand's
+  style guide and the channel or angle disagree, the brand's style guide wins.
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
-- SOURCE FIDELITY (AA-768, same policy as the tour writer):
+- SOURCE FIDELITY (same policy as the tour writer):
   ALLOWED: short, widely known background about a place the content seed names — what it is,
   its history and era, who founded it, its religious or cultural role, whether it is still in
   use — written in words, without numbers unless the seed has them.
@@ -220,8 +237,8 @@ def build_user_prompt(
     this covers BOTH branches with one change, since the route-aware branch otherwise ignores the
     plain `content_seed` argument entirely. `None`/empty is a no-op (no FACTS section at all),
     the normal case for a tenant/trip with no Facts Entry of either scope written yet."""
-    segment = brand_audience.get("customer_segment") or "discerning travellers"
-    mindset = brand_audience.get("customer_mindset") or "a well-travelled, detail-oriented mindset"
+    # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
+    # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
     # AA-513 — a real Route walk (>1 moment): render the CONTENT SEED as labeled moments instead
     # of the flat string, so the model can be told which moment each fact came from. Exactly 1
@@ -264,10 +281,7 @@ def build_user_prompt(
         f"GOAL: {goal['name']} — {goal['description']}",
         f"WRITING METHOD FOR THIS GOAL: {goal['logic']}",
         "",
-        f"AUDIENCE: {segment}",
-        f"AUDIENCE MINDSET: {mindset}",
-        *([f"BRAND NAME (the only name to use for the brand — never invent another): "
-           f"{brand_audience['brand_name']}"] if brand_audience.get("brand_name") else []),
+        render_brand_block(brand_audience),
         "",
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",
@@ -294,6 +308,8 @@ def build_user_prompt(
             "seed, and do not add new numbers anywhere else in the piece."
         )
     prompt = "\n".join(lines)
+    if channel_style["channel"] in PLAIN_TEXT_CHANNELS:
+        prompt += _PLAIN_TEXT_INSTRUCTIONS
     if channel_style["channel"] == "blog":
         prompt += (
             _BLOG_FORMAT_INSTRUCTIONS_ROUTE if is_route_aware
@@ -304,4 +320,4 @@ def build_user_prompt(
     return prompt
 
 
-__all__ = ["SYSTEM_PROMPT", "build_user_prompt"]
+__all__ = ["SYSTEM_PROMPT", "build_user_prompt", "PLAIN_TEXT_CHANNELS"]

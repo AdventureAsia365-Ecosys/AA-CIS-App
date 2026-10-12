@@ -268,6 +268,7 @@ interface TenantDetails {
     brand_name: string; brand_type: string; core_idea: string;
     customer_segment: string; customer_mindset: string;
     voice_examples: string[]; good_examples: string; target_markets: string[];
+    default_cta?: string;
   };
 }
 
@@ -429,6 +430,7 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
   const [customerMindset, setCustomerMindset] = useState(rules.customer_mindset);
   const [toneOfVoice, setToneOfVoice] = useState(rules.voice_examples.join(", "));
   const [goodExamples, setGoodExamples] = useState(rules.good_examples);
+  const [defaultCta, setDefaultCta] = useState(rules.default_cta ?? "");
 
   const hasAnyData = !!(rules.system_prompt || rules.style_guide || rules.forbidden_words.length > 0
     || rules.brand_name || rules.core_idea);
@@ -445,7 +447,7 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
           target_markets: targetMarkets.split(",").map(w => w.trim()).filter(Boolean),
           customer_segment: customerSegment, customer_mindset: customerMindset,
           tone_of_voice: toneOfVoice.split(",").map(w => w.trim()).filter(Boolean),
-          good_examples: goodExamples,
+          good_examples: goodExamples, default_cta: defaultCta,
         }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.detail ?? "Failed to save"); return; }
@@ -552,6 +554,7 @@ function BrandTabContent({ rules, tenantId }: { rules: TenantDetails["brand_rule
       <BrandField label="Tone of Voice (comma-separated)" value={toneOfVoice} onChange={setToneOfVoice} />
       <BrandField label="Writing Style" value={sg} onChange={setSg} rows={4} />
       <BrandField label="Good Examples" value={goodExamples} onChange={setGoodExamples} rows={3} />
+      <BrandField label="Default Call to Action" value={defaultCta} onChange={setDefaultCta} />
       <BrandField label="Should Write (System Prompt)" value={sp} onChange={setSp} rows={5} />
       <BrandField label="Forbidden Words (comma-separated)" value={fw} onChange={setFw} />
       {error && (

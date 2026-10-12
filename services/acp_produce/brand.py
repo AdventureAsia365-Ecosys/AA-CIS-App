@@ -41,12 +41,10 @@ without a cycle.
 """
 from __future__ import annotations
 
-import json
-
 import asyncpg
 import structlog
 
-from services.content_generation.brand_standards import AA_BRAND_IDENTITY_PROMPT
+from services.acp_shared.brand_pack import compile_rubric, fetch_brand_pack_conn
 
 logger = structlog.get_logger()
 
@@ -71,49 +69,38 @@ async def fetch_brand_rubric_text(db: asyncpg.Connection, tenant_id: str) -> str
     `api/__init__.py` import-cycle trap `admin_produce.py`'s own module
     docstring already documents for `slot_runner`).
 
-    Falls back to `AA_BRAND_IDENTITY_PROMPT` (unchanged) if no active
-    'default' row exists for `tenant_id`, or its `system_prompt` is empty —
-    e.g. a tenant onboarded before its brand content was populated. Logged as
-    a warning, not silent (L6 convention, same as every other "hold visible"
-    gap in this pipeline) — a tenant silently running on the generic fallback
-    is a real thing a human should notice, not an assumed-fine default."""
-    row = await db.fetchrow(
-        """
-        SELECT system_prompt, style_guide, forbidden_words, good_examples
-        FROM shared.tenant_brand_rules
-        WHERE tenant_id = $1::uuid AND is_active = true
-        -- AA-700: the tenant portal saves the brand under the tenant's own brand_name (not
-        -- 'default'); prefer 'default', else the tenant's newest active row.
-        ORDER BY (brand_name = 'default') DESC, version DESC
-        LIMIT 1
-        """,
-        tenant_id,
-    )
-    system_prompt = (row["system_prompt"] if row else None) or ""
-    if not system_prompt.strip():
-        logger.warning(
-            "brand_rubric_fallback_generic", tenant_id=tenant_id,
-            reason="no active shared.tenant_brand_rules row, or system_prompt empty",
-        )
-        return AA_BRAND_IDENTITY_PROMPT
+    AA-771 (S233): an empty `system_prompt` no longer falls back to
+    `AA_BRAND_IDENTITY_PROMPT` — the rubric head is compiled from the tenant's
+    own T0 fields (`brand_pack.compile_rubric`); with no T0 brand content at
+    all the judge gets `NEUTRAL_RUBRIC` (logged as a warning)."""
+    # AA-771 (S233) — a tenant without a hand-written system_prompt is judged against a rubric
+    # compiled from its own T0 fields, never against Adventure Asia's identity (the S232 F9
+    # judge scored every pilot tenant against AA_BRAND_IDENTITY_PROMPT). No T0 data at all →
+    # a neutral rubric that judges clarity and the CTA only.
+    pack = await fetch_brand_pack_conn(db, tenant_id)
+    head = pack.get("system_prompt") or compile_rubric(pack)
+    if not head:
+        logger.warning("brand_rubric_neutral", tenant_id=tenant_id,
+                       reason="no active shared.tenant_brand_rules row with brand content")
+        return NEUTRAL_RUBRIC
 
-    forbidden_words = row["forbidden_words"]
-    if isinstance(forbidden_words, str):
-        # asyncpg jsonb gap (no codec registered, AA-300/AA-314) — comes back as JSON text.
-        forbidden_words = json.loads(forbidden_words) if forbidden_words else []
-    forbidden_words = forbidden_words or []
-
-    parts = [system_prompt.strip()]
-    if row["style_guide"]:
-        parts.append(f"STYLE GUIDE:\n{row['style_guide'].strip()}")
-    if forbidden_words:
-        parts.append("FORBIDDEN WORDS/PHRASES: " + ", ".join(forbidden_words))
-    if row["good_examples"]:
+    parts = [head]
+    if pack.get("style_guide"):
+        parts.append(f"STYLE GUIDE:\n{pack['style_guide']}")
+    if pack.get("forbidden_words"):
+        parts.append("FORBIDDEN WORDS/PHRASES: " + ", ".join(pack["forbidden_words"]))
+    if pack.get("good_examples"):
         parts.append(
             "GOOD EXAMPLES (real, on-brand — do not flag writing like this as generic):\n"
-            f"{row['good_examples'].strip()}"
+            f"{pack['good_examples']}"
         )
     return "\n\n".join(parts)
 
 
-__all__ = ["fetch_brand_rubric_text"]
+NEUTRAL_RUBRIC = (
+    "BRAND IDENTITY — not set up for this tenant yet. Judge only clarity, specificity, honesty "
+    "and whether the call to action is clear; do not mark the piece off-brand for its voice."
+)
+
+
+__all__ = ["fetch_brand_rubric_text", "NEUTRAL_RUBRIC"]

@@ -397,6 +397,7 @@ class BrandIdentityUpdate(BaseModel):
     writing_style:     Optional[str] = None
     good_examples:     Optional[str] = None
     target_markets:    Optional[List[str]] = None
+    default_cta:       Optional[str] = None  # AA-771 (S233, migration 220)
 
 
 class CountryUpdateRequest(BaseModel):
@@ -4706,7 +4707,8 @@ async def get_brand_identity(
         "COALESCE(customer_mindset, '') AS customer_mindset, "
         "COALESCE(voice_examples, '[]'::jsonb) AS voice_examples, "
         "COALESCE(good_examples, '') AS good_examples, "
-        "COALESCE(target_markets, ARRAY[]::text[]) AS target_markets"
+        "COALESCE(target_markets, ARRAY[]::text[]) AS target_markets, "
+        "COALESCE(default_cta, '') AS default_cta"
     )
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -4722,6 +4724,7 @@ async def get_brand_identity(
                 "forbidden_words": [], "history": [], "brand_name": "", "brand_type": "",
                 "core_idea": "", "customer_segment": "", "customer_mindset": "",
                 "tone_of_voice": [], "good_examples": "", "target_markets": [],
+                "default_cta": "",
             }
         history_rows = await conn.fetch(f"""
             SELECT {_BRAND_COLS}, is_active
@@ -4759,6 +4762,7 @@ async def get_brand_identity(
         "tone_of_voice":    _parse_brand_list(row["voice_examples"]),
         "good_examples":    row["good_examples"],
         "target_markets":   list(row["target_markets"]) if row["target_markets"] else [],
+        "default_cta":      row["default_cta"],
     }
 
 
@@ -4793,6 +4797,7 @@ async def update_brand_identity(
     tone_of_voice = sanitize_list(body.tone_of_voice or [], MAX_SHORT_FIELD_LEN, max_items=20)
     good_examples = sanitize_text(body.good_examples, MAX_BRAND_LONG_LEN)
     target_markets = sanitize_list(body.target_markets or [], MAX_SHORT_FIELD_LEN, max_items=20)
+    default_cta = sanitize_text(body.default_cta, MAX_BRAND_MEDIUM_LEN)
     # AA-741 (S229): the form's markets are THE tenant markets. T2/T7 read
     # tenant_seo_config.target_market, which no tenant could write, so every tenant silently
     # wrote for the US default. Normalise and sync it in the same transaction as the brand row.
@@ -4826,11 +4831,11 @@ async def update_brand_identity(
             INSERT INTO shared.tenant_brand_rules
                 (tenant_id, system_prompt, style_guide, forbidden_words, version, is_active,
                  updated_at, brand_name, brand_type, core_idea, customer_segment,
-                 customer_mindset, voice_examples, good_examples, target_markets)
-            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+                 customer_mindset, voice_examples, good_examples, target_markets, default_cta)
+            VALUES ($1, $2, $3, $4::jsonb, $5, true, NOW(), $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
         """, tenant_id, system_prompt, style_guide, _json.dumps(forbidden_words), current + 1,
             brand_name, brand_type, core_idea, customer_segment, customer_mindset,
-            _json.dumps(tone_of_voice), good_examples, target_markets)
+            _json.dumps(tone_of_voice), good_examples, target_markets, default_cta)
         if tenant_id != _AA_INTERNAL_TENANT_ID:
             # aa_internal's markets stay owned by PATCH /admin/settings/seo (admin research).
             await conn.execute("""

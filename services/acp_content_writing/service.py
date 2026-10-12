@@ -196,6 +196,10 @@ def _grounding_text(context: dict) -> str:
     audience = context.get("brand_audience") or {}
     if audience.get("brand_name"):
         parts.append(f"BRAND: {audience['brand_name']}")
+    # AA-771 — the brand describing itself in its own words is a source, not an invented claim
+    # (S232: 4 F9 flags on the brand's own stated approach were over-strict).
+    if audience.get("core_idea"):
+        parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
     if audience.get("customer_segment"):
         parts.append(f"AUDIENCE: {audience['customer_segment']}")
     if context.get("trip_name"):
@@ -297,11 +301,15 @@ async def start_write(
         # rather than a silent fallback if that invariant is ever violated.
         raise ContentWritingError(f"request_id={request_id} is approved but has no chosen angle")
 
-    cta = req["cta"] or cta_override
+    # AA-771 (S233) — the brand pack (T0 fields) is read first: its default_cta (migration 220)
+    # is the CTA when the request and the write call carry none.
+    brand_audience = await fetch_brand_audience(tenant_id, pool)
+    cta = req["cta"] or cta_override or brand_audience.get("default_cta")
     if not cta or not cta.strip():
         raise MissingCTAError(
             f"request_id={request_id} has no CTA (angle_gate_request.cta is NULL — see "
-            "migration 114) and no cta_override was supplied in the write request."
+            "migration 114), no cta_override in the write request and no default CTA in the "
+            "tenant's brand identity."
         )
 
     # AA-511 Gap A — a Route/Blog pick carries its whole walk (`route_segment_ids`, migration
@@ -334,14 +342,14 @@ async def start_write(
     channel_style = get_channel_style(req["channel"])
     if channel_style is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown channel={req['channel']!r}")
-    brand_audience = await fetch_brand_audience(tenant_id, pool)
     # AA-768 — the writer never got the tenant's own name and made one up in the S232 re-run
-    # ("Adventure Airlines" for Trail Pulse). Carried inside brand_audience so it reaches every
-    # prompt (write, rewrite, buffer retry) without a new parameter.
-    async with pool.acquire() as conn:
-        brand_name = await conn.fetchval("SELECT name FROM shared.tenants WHERE tenant_id = $1", tenant_id)
-    if isinstance(brand_name, str) and brand_name.strip():
-        brand_audience = {**brand_audience, "brand_name": brand_name.strip()}
+    # ("Adventure Airlines" for Trail Pulse). The T0 brand name wins; the tenant account name is
+    # the fallback when T0 has none.
+    if not brand_audience.get("brand_name"):
+        async with pool.acquire() as conn:
+            brand_name = await conn.fetchval("SELECT name FROM shared.tenants WHERE tenant_id = $1", tenant_id)
+        if isinstance(brand_name, str) and brand_name.strip():
+            brand_audience = {**brand_audience, "brand_name": brand_name.strip()}
 
     destination = trip_name = None
     if req["trip_id"]:
@@ -653,6 +661,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 route_segments=route_segments, keyword=keyword,
                 seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
                 slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
+                brand_pack=brand_audience,
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -944,7 +953,7 @@ async def _run_buffer_retry_attempt(
         goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,
         route_segments=route_segments, keyword=keyword,
         seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
-        slug=seo_meta.get("slug"),
+        slug=seo_meta.get("slug"), brand_pack=brand_audience,
     )
     if outcome["passed"]:
         status, held_reason = "approved", None

@@ -750,7 +750,8 @@ async def get_tenant_details(
                 COALESCE(voice_examples, '[]'::jsonb) AS voice_examples,
                 COALESCE(good_examples, '')      AS good_examples,
                 COALESCE(rewrite_language, 'en') AS rewrite_language,
-                COALESCE(target_markets, ARRAY[]::text[]) AS target_markets
+                COALESCE(target_markets, ARRAY[]::text[]) AS target_markets,
+                COALESCE(default_cta, '')        AS default_cta
             FROM shared.tenant_brand_rules
             WHERE tenant_id = $1
             ORDER BY version DESC
@@ -870,6 +871,7 @@ async def get_tenant_details(
             "good_examples":    brand["good_examples"]    if brand else "",
             "rewrite_language": brand["rewrite_language"] if brand else "en",
             "target_markets":   list(brand["target_markets"]) if brand else [],
+            "default_cta":      brand["default_cta"]      if brand else "",
         },
     }
 
@@ -894,6 +896,7 @@ class TenantBrandIdentityUpdate(BaseModel):
     writing_style:      Optional[str] = None
     good_examples:      Optional[str] = None
     target_markets:     Optional[List[str]] = None
+    default_cta:        Optional[str] = None  # AA-771 (S233, migration 220)
 
 
 @router.put("/tenants/{tenant_id}/brand-identity")
@@ -929,6 +932,7 @@ async def update_tenant_brand_identity(
     tone_of_voice = sanitize_list(body.tone_of_voice or [], MAX_SHORT_FIELD_LEN, max_items=20)
     good_examples = sanitize_text(body.good_examples, MAX_BRAND_LONG_LEN)
     target_markets = sanitize_list(body.target_markets or [], MAX_SHORT_FIELD_LEN, max_items=20)
+    default_cta = sanitize_text(body.default_cta, MAX_BRAND_MEDIUM_LEN)
     from services.brand_intake.markets import target_market_json
     market_json = target_market_json(target_markets)
 
@@ -950,11 +954,11 @@ async def update_tenant_brand_identity(
             INSERT INTO shared.tenant_brand_rules
                 (tenant_id, brand_name, brand_type, core_idea, customer_segment,
                  customer_mindset, voice_examples, style_guide, good_examples, system_prompt,
-                 forbidden_words, target_markets, version, is_active, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb, $12, $13, true, NOW())
+                 forbidden_words, target_markets, version, is_active, updated_at, default_cta)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb, $12, $13, true, NOW(), $14)
         """, tenant_id_s, brand_name, brand_type, core_idea, customer_segment, customer_mindset,
             json.dumps(tone_of_voice), style_guide, good_examples, system_prompt,
-            json.dumps(forbidden_words), target_markets, current + 1)
+            json.dumps(forbidden_words), target_markets, current + 1, default_cta)
         if tenant_id_s != "00000000-0000-0000-0000-000000000001":
             # AA-741 (S229): the brand's markets drive T2/T7 (tenant_seo_config.target_market).
             await conn.execute("""
