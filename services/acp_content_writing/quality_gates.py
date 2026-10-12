@@ -604,14 +604,21 @@ def gate_brand_voice(
     }, indent=1)
     if source_text:
         source_block = f"SOURCE (everything the writer was given as fact):\n{source_text}\n\n"
+        # AA-768 round 2 — the first live re-run showed the judge flagging opinions and rhetoric
+        # ("This is not a performance.", "That distinction matters…") and the brand describing
+        # its own approach. Only a checkable statement of fact is in scope for this code.
         fact_rule = (
-            "FACT_CHECK_MANUAL_CHECK: use it ONLY for a specific claim about this trip or its "
-            "travellers (an activity, service, inclusion, time, price, number or promise) that "
-            "the SOURCE above does not support or contradicts, and quote that exact sentence in "
-            "flagged_phrases. Short, well-known background about a place the SOURCE names "
-            "(what it is, its setting, why it matters) is allowed and is NOT grounds for "
-            "FACT_CHECK_MANUAL_CHECK. If every claim is supported or is such background, do not "
-            "use the code."
+            "FACT_CHECK_MANUAL_CHECK: use it ONLY for a checkable statement of fact — something "
+            "that is true or false about the place, the trip, or what travellers will do, see, "
+            "get or pay (an activity, service, inclusion, time, duration, price, number, "
+            "transport, or a promise) — that the SOURCE above does not support or contradicts. "
+            "Quote that exact sentence in flagged_phrases. These are NOT factual claims and must "
+            "never get this code: opinions, impressions, mood or rhetorical sentences, "
+            "generalisations about how travellers feel, the brand describing its own approach "
+            "or values (as in the BRAND RUBRIC), and the required call to action. Short, "
+            "well-known background about a place the SOURCE names (what it is, its setting, why "
+            "it matters) is also allowed. If no sentence is an unsupported checkable fact, do "
+            "not use the code."
         )
     else:
         source_block = ""
