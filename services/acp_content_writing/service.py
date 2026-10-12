@@ -39,6 +39,7 @@ from services.acp_angle_gate import service as angle_gate_service
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
+from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block, select_relevant_facts
 from services.acp_content_writing.generate import rewrite_with_feedback, write_content
 from services.acp_content_writing.jev_observe import observe_t10
@@ -94,9 +95,11 @@ async def _fetch_atom_text(tenant_id: UUID, atom_id: str, pool) -> str:
     field, not the full atom dict T8's version returns."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_ATOM_TEXT_QUERY, atom_id, str(tenant_id))
+        # AA-768 — the atom's evidence/hook + Segment siblings' evidence, not just its short label.
+        seed = await atom_seed_text(conn, atom_id, str(tenant_id)) if row is not None else None
     if row is None:
         raise ContentWritingError(f"atom_id={atom_id!r} not found (deleted, or not a live platform/tenant atom)")
-    return row["text"]
+    return seed or row["text"]
 
 
 async def _tenant_missing_brand_rules(tenant_id: str, pool) -> bool:
@@ -163,7 +166,9 @@ async def _fetch_route_segments(
         for segment_id in segment_ids:
             row = await conn.fetchrow(_ROUTE_SEGMENT_TEXT_QUERY, segment_id, trip_id, str(tenant_id))
             if row is not None:
-                segments.append((row["atom_id"], row["text"]))
+                # AA-768 — each moment's full seed (evidence/hook/siblings), not just its label.
+                seed = await atom_seed_text(conn, row["atom_id"], str(tenant_id))
+                segments.append((row["atom_id"], seed or row["text"]))
     if not segments:
         raise ContentWritingError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
@@ -183,6 +188,8 @@ def _grounding_text(context: dict) -> str:
     states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot)."""
     parts = [context["atom_text"], context.get("facts_text") or ""]
     audience = context.get("brand_audience") or {}
+    if audience.get("brand_name"):
+        parts.append(f"BRAND: {audience['brand_name']}")
     if audience.get("customer_segment"):
         parts.append(f"AUDIENCE: {audience['customer_segment']}")
     if context.get("trip_name"):
@@ -280,6 +287,13 @@ async def start_write(
     if channel_style is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown channel={req['channel']!r}")
     brand_audience = await fetch_brand_audience(tenant_id, pool)
+    # AA-768 — the writer never got the tenant's own name and made one up in the S232 re-run
+    # ("Adventure Airlines" for Trail Pulse). Carried inside brand_audience so it reaches every
+    # prompt (write, rewrite, buffer retry) without a new parameter.
+    async with pool.acquire() as conn:
+        brand_name = await conn.fetchval("SELECT name FROM shared.tenants WHERE tenant_id = $1", tenant_id)
+    if isinstance(brand_name, str) and brand_name.strip():
+        brand_audience = {**brand_audience, "brand_name": brand_name.strip()}
 
     destination = trip_name = None
     if req["trip_id"]:

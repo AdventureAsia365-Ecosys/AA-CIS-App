@@ -35,3 +35,20 @@ def _reset_jev_decision_memo():
     decide.reset_decision_memo()
     yield
     decide.reset_decision_memo()
+
+
+async def _no_seed(conn, atom_id, tenant_id):
+    """AA-768 — T8/T9 unit tests script conn.fetchrow side-effects in call order; with no seed the
+    callers fall back to the atom label exactly as before. The real composition is tested in
+    test_aa768_atom_seed.py (marker `real_atom_seed`)."""
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _atom_seed_label_only(request, monkeypatch):
+    if "real_atom_seed" in request.keywords:
+        return
+    from services.acp_angle_gate import service as angle_service
+    from services.acp_content_writing import service as writing_service
+    monkeypatch.setattr(angle_service, "atom_seed_text", _no_seed)  # T8 falls back to row["text"]
+    monkeypatch.setattr(writing_service, "atom_seed_text", _no_seed)  # T9 falls back to the label
