@@ -324,12 +324,14 @@ function Page() {
   });
   const tenants = stats.data?.tenants ?? [];
   return (
-    <div style={{ padding: "20px 24px" }}>
+    <div style={{ padding: "20px clamp(16px, 3vw, 24px)", maxWidth: "100%", boxSizing: "border-box" }}>
       <PageHeader title="Content Quality"
         description="Every tenant's written content with the quality signals tenants never see: gate results, flagged sentences, what the writer was given, cost. Tenants always receive their content (AA-770)." />
       <div className="a527-dash-body" style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <SocialContentSubNav active="content_quality" />
-        <div data-testid="content-quality-ready" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* width/maxWidth 100%: in the phone column layout (.a527-dash-body) a flex-start child would
+            shrink-wrap to its widest row and overflow the page (UI smoke, 390px). */}
+        <div data-testid="content-quality-ready" style={{ flex: 1, minWidth: 0, width: "100%", maxWidth: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
           <Tabs tabs={TABS} active={view.tab} onChange={(k) => update({ ...EMPTY, tab: k as TabKey })} />
           {view.tab === "pieces" && <PiecesTab view={view} update={update} tenants={tenants} />}
           {view.tab === "versions" && <VersionsTab view={view} update={update} tenants={tenants} />}
