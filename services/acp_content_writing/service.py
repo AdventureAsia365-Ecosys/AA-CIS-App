@@ -1163,6 +1163,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     guarded = sum(item.get("guard") == "repeat" for item in repair_items)
                     if guarded:
                         repair_log[-1]["repeat_guard_deletes"] = guarded
+                    kept = sum(item.get("guard") == "repeat_kept" for item in repair_items)
+                    if kept:
+                        repair_log[-1]["repeat_guard_kept"] = kept
                     deduped = sum(item.get("guard") == "dedupe" for item in repair_items)
                     if deduped:
                         repair_log[-1]["dedupe_after_repair"] = True
@@ -1244,6 +1247,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # S234 round 3 (r2 §4 fix 9) — the configured CTA line, word for word, after the last edit
             content_text, cta_log = hygiene.ensure_cta(content_text, cta)
             hygiene_log += cta_log
+            # S234 round 3 review — a family brand's missing access caveat goes in from the seed, in
+            # code (no repair call that the repeat guard could turn into a cut of the anchor sentence)
+            content_text, caveat_log = trip_facts.add_family_caveats(content_text, trip_ctx, brand_ignore)
+            hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 content_text, faq_dropped = drop_restated_faq(content_text)
                 content_text, faq_unanswerable = drop_unanswerable_faq(

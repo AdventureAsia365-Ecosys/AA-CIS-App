@@ -60,7 +60,7 @@ Location: Punakha Dzong, Punakha, Punakha District, Bhutan
 Day 4 of the trip
 Source itinerary: Visit Punakha Dzong's courtyards and assembly hall.
 Place background (checked facts about the place itself — you may use these; they say nothing about what this trip does):
-- It was built in 1637–1638 by Zhabdrung Ngawang Namgyal, the unifier of Bhutan.
+- It was built in 1637–1638 by Zhabdrung Ngawang Namgyal, the unifier of Bhutan, who founded it to serve as the administrative and religious centre of the country.
 - Punakha Dzong served as the capital and seat of government of Bhutan until 1955, when the capital was moved to Thimphu.
 - It remains the winter residence of the Je Khenpo and the Central Monk Body, who relocate here from Thimphu each year."""
 
@@ -161,6 +161,18 @@ class TestPlacement:
         out = sr.splice_checked(before, [item], ["It holds 70 percent of Mongolia's fresh water."])
         assert out.count("70 percent") == 1 and item.get("guard") == "dedupe"
 
+    def test_a_repair_that_duplicates_a_later_original_is_reverted_not_deduped(self):
+        """The repair writes the figure into an EARLIER sentence: the later duplicate is the writer's own
+        line in its own section — it stays, and the repair is reverted (S234 round 3 review)."""
+        before = ("Lake Khovsgol is one of the most significant lakes in all of Asia. Summer brings visitors to its "
+                  "shore. Larch forest covers the hills. Herders graze yaks nearby. Winter freezes the surface solid. "
+                  "Roads are unpaved.\n\n## The Lake\n\nThe lake is deep and cold. Visitors note that Khovsgol "
+                  "holds 70 percent of Mongolia's fresh water, which shapes everything around it. Boats leave from "
+                  "the shore.")
+        item = {"start": 0, "end": before.index("Asia.") + 5, "sentence": "Lake Khovsgol is…", "problem": "p"}
+        out = sr.splice_checked(before, [item], ["The lake holds about 70 percent of Mongolia's fresh water."])
+        assert out == before and item["guard"] == "integrity"
+
     def test_a_repair_that_misplaces_a_moment_is_cut_when_safe_else_reverted(self):
         moments = tf.parse_moments(ROUTE_SEED)
         before = ("## Uran Togoo\n\nUran Togoo is a dormant volcano with a walkable caldera floor.\n\n"
@@ -213,6 +225,21 @@ class TestTimesAndPositions:
                                  "swimming and resting before lunch.")
         assert tf.timing_claims("Trail Pulse knows when a swim mid-morning is the right call.", kuang)
 
+    def test_a_meal_anchor_supports_a_plain_period_but_not_a_qualified_one(self):
+        """Kuang Si: 'before lunch' places the trek and the swim in the morning (S234 r1 #14, S233 #1, #10);
+        'mid-morning' still needs the source's word (r2 #11). 'arrive at the afternoon' is energy, not time."""
+        kuang = tf.parse_moments("Kuang Si Falls — swim and rest at pools\nDay 2 of the trip\nSource itinerary: A "
+                                 "short trek leads to Kuang Si Falls. Time is left for swimming and resting before "
+                                 "lunch at the View Café overlooking the cascade.")
+        for ok in ("Trail Pulse knows that a morning of trekking followed by time in the water isn't a gap.",
+                   "It's the moment the body processes the morning, recalibrates, and gets ready again.",
+                   "A morning of movement followed by cool water is recovery with context.",
+                   "The trek fills the morning, and the swim comes before lunch.",
+                   "Rest placed early means you arrive at the afternoon sharp, not already running low."):
+            assert tf.timing_claims(ok, kuang) == [], ok
+        assert tf.timing_claims("Trail Pulse knows when a swim mid-morning is the right call.", kuang)
+        assert tf.timing_claims("The swim fills the evening.", kuang)
+
     def test_source_times_and_day_numbers_are_supported(self):
         moments = tf.parse_moments(ROUTE_SEED)
         assert tf.timing_claims("That afternoon, the journey continues to Sod Camp.", moments) == []
@@ -239,6 +266,47 @@ class TestFamilyCaveat:
         said = self.PITCH + " Reaching the camps takes a multi-hour horse ride."
         assert tf.missing_family_caveat(said, moments, TERRA_AUDIENCE) == []
         assert tf.missing_family_caveat(self.PITCH, moments, AH_AUDIENCE) == []
+
+    @pytest.mark.parametrize("caveat", ["The trail crosses rough terrain.",
+                                        "The climb is challenging for young children.",
+                                        "The path can be difficult after rain."])
+    def test_the_seeds_caveat_said_verbatim_always_clears_the_rule(self, caveat):
+        seed = ("Hilltop Shrine — hike to the shrine\nLocation: Hilltop Shrine, Bhutan\nDay 2 of the trip\n"
+                "Source itinerary: Hike to the Hilltop Shrine.\nPlace background (checked facts about the place itself "
+                f"— you may use these; they say nothing about what this trip does):\n- {caveat}")
+        moments = tf.parse_moments(seed)
+        pitch = "## The Shrine\n\nFamilies hike up to the Hilltop Shrine together."
+        assert tf.missing_family_caveat(pitch, moments, TERRA_AUDIENCE)
+        assert tf.missing_family_caveat(pitch + " " + caveat, moments, TERRA_AUDIENCE) == []
+        fixed, log = tf.add_family_caveats(pitch, tf.TripFactContext(seed=seed, audience=TERRA_AUDIENCE))
+        assert fixed == pitch + " " + caveat and log
+
+    def test_the_caveat_is_added_in_code_after_the_moments_own_first_sentence(self):
+        text = ("## Day Five\n\nThe lake is wide.\n\n## The Tsaatan\n\nThe Tsaatan herd reindeer in the taiga. "
+                "Families meet them in their camps.\n\n## Plan\n\nThe route runs from the lake to the Tsaatan camps.")
+        fixed, log = tf.add_family_caveats(text, _tctx())
+        assert ("The Tsaatan herd reindeer in the taiga. Access requires a multi-hour horse or reindeer ride, often "
+                "crossing rivers and boggy forest terrain. Families meet") in fixed and len(log) == 1
+        assert tf.missing_family_caveat(fixed, tf.parse_moments(ROUTE_SEED), TERRA_AUDIENCE) == []
+        assert tf.add_family_caveats(fixed, _tctx()) == (fixed, [])
+        assert tf.add_family_caveats(text, _tctx(audience=AH_AUDIENCE)) == (text, [])
+
+    def test_an_add_one_repair_that_restates_a_neighbour_keeps_the_anchor(self):
+        """r1 #19: the caveat repair restated the access/permit neighbour and the repeat guard turned the
+        whole replacement into a DELETE of the anchor sentence."""
+        text = ("The Tsaatan herd reindeer in the taiga, and families meet them in their camps. Their territory lies "
+                "in the taiga and is typically accessed from the town of Tsagaannuur; reaching the camps requires a "
+                "permit and a multi-hour horse ride.")
+        anchor = "The Tsaatan herd reindeer in the taiga, and families meet them in their camps."
+        item = {"start": 0, "end": len(anchor), "sentence": anchor,
+                "problem": "pitches X — keep this sentence and add ONE short sentence that states that caveat"}
+        rep = anchor + " Reaching their camps requires a permit and a multi-hour horse ride from Tsagaannuur."
+        out = sr.splice(text, [item], [rep])
+        assert out == text and item["guard"] == "repeat_kept"
+        item = dict(item)
+        item.pop("guard", None)
+        ok = anchor + " Bring warm layers for the evening."
+        assert sr.splice(text, [item], [ok]).startswith(ok) and "guard" not in item
 
     def test_horseback_riding_as_a_lake_activity_is_not_the_caveat(self):
         text = ("## Day Five\n\nOptional activities include horseback riding across the surrounding terrain. "
@@ -292,6 +360,35 @@ class TestDateAuthority:
               "Administrative and spiritual life continues to honour the site. Punakha Dzong remains the winter "
               "residence of the Je Khenpo.")
         assert tf.date_authority_claims(ok, PUNAKHA_SEED) == []
+
+    @pytest.mark.parametrize("sentence", [
+        "In 1955 the capital moved to Thimphu, where it remains today.",
+        "Today Thimphu is Bhutan's capital, a short drive away.",
+        "The dzong still houses the district government offices alongside the monastic body.",
+    ])
+    def test_true_statements_about_the_current_capital_or_district_government_pass(self, sentence):
+        """S233 #12 seed: the role moved to Thimphu; Punakha is still a district seat. None of these
+        says Punakha Dzong still holds the national role."""
+        assert tf.ended_roles(PUNAKHA_SEED)[0].successor == "Thimphu"
+        assert tf.date_authority_claims(sentence, PUNAKHA_SEED) == []
+
+    def test_a_meta_naming_the_current_capital_passes(self):
+        meta = "Punakha, a short drive from Thimphu, Bhutan's capital today"
+        assert tf.date_authority_claims("", PUNAKHA_SEED, extra_texts=(("meta", meta),)) == []
+        assert tf.date_authority_claims("Punakha Dzong remains the seat of government today.", PUNAKHA_SEED)
+
+    def test_a_buildings_founding_year_is_not_the_roles_start(self):
+        seed = PUNAKHA_SEED.replace(", who founded it to serve as the administrative and religious centre of the "
+                                    "country", "")
+        assert tf.ended_roles(seed)[0].start is None
+        assert tf.date_span_lines(seed) == ["It has not served as the capital and seat of government of Bhutan "
+                                            "since 1955."]
+        assert tf.date_authority_claims("For nearly half a century it served as Bhutan's capital.", seed) == []
+        became = seed.replace("- Punakha Dzong served as the capital",
+                              "- It became the seat of government in 1907. Punakha Dzong served as the capital")
+        assert tf.ended_roles(became)[0].start == 1907
+        assert tf.date_span_lines(became)[0].startswith("It served as the capital and seat of government of Bhutan "
+                                                        "for 48 years (1907–1955);")
 
     def test_spans_are_checked_against_the_seed_dates(self):
         assert tf.date_authority_claims("For nearly three centuries it served as Bhutan's capital.", PUNAKHA_SEED)
@@ -377,11 +474,36 @@ class TestCtaLiteral:
         assert "restored" in log[0] and h.has_cta_literal(out, TERRA_CTA)
 
     def test_missing_cta_goes_before_the_faq_or_before_the_hashtags(self):
-        blog, _ = h.ensure_cta("Body.\n\nSpeak to Terra about how this works.\n\n## FAQ\n\n**Q: Why?**\nA: Because.",
-                               TERRA_CTA)
-        assert blog.index(TERRA_CTA) < blog.index("## FAQ") and "Speak to Terra" in blog
+        blog, _ = h.ensure_cta("Body.\n\nThe lake is wide.\n\n## FAQ\n\n**Q: Why?**\nA: Because.", TERRA_CTA)
+        assert blog.index(TERRA_CTA) < blog.index("## FAQ")
         post, log = h.ensure_cta("Hook.\n\nBody.\n\n#Bhutan #Punakha", "Ask WildKind Travel for the full itinerary")
         assert post.endswith("Ask WildKind Travel for the full itinerary.\n\n#Bhutan #Punakha") and log
+
+    def test_a_reworded_cta_before_the_closing_sentence_is_replaced_not_doubled(self):
+        """r2 #19: 'Speak to Terra Family Expeditions about how this journey is structured…' is the CTA
+        reworded; the piece must end with ONE CTA, not the paraphrase plus the literal line."""
+        text = ("## Plan This Journey\n\nThe route works because each day has a clear shape. Terra Family "
+                "Expeditions plans journeys for families who want active travel. Speak to Terra Family Expeditions "
+                "about how this journey is structured and what each stage involves.\n\n## FAQ\n\n**Q: Cold?**\n"
+                "A: Yes.")
+        out, log = h.ensure_cta(text, TERRA_CTA)
+        assert "Speak to Terra" not in out and out.count("Ask Terra Family Expeditions") == 1
+        assert "Terra Family Expeditions plans journeys for families" in out and "restored" in log[0]
+
+    def test_a_reworded_cta_before_a_closing_question_is_replaced_and_the_question_stays_last(self):
+        """S233 #3: the reworded CTA, then the engagement question; the literal line used to land after it."""
+        cta = "Ask WildKind Travel for the full itinerary"
+        text = ("Hook.\n\nAt WildKind Travel, we plan journeys with a light footprint.\n\nIf you want to understand "
+                "Day 4, ask WildKind Travel for the complete itinerary.\n\nWhat other places reveal their meaning "
+                "through where they were built?")
+        out, _ = h.ensure_cta(text, cta)
+        assert out.count("WildKind Travel for the") == 1 and "complete itinerary" not in out
+        assert out.endswith("Ask WildKind Travel for the full itinerary.\n\nWhat other places reveal their "
+                            "meaning through where they were built?")
+        bare = "Hook.\n\nBody line here.\n\nWhat do you think?\n\n#Bhutan"
+        out, _ = h.ensure_cta(bare, cta)
+        assert out == "Hook.\n\nBody line here.\n\nAsk WildKind Travel for the full itinerary.\n\nWhat do you think?" \
+                      "\n\n#Bhutan"
 
     def test_the_literal_line_is_left_alone_whatever_its_case_and_punctuation(self):
         text = "Body.\n\nTalk to an Atlas and Hearth travel designer about this journey!"

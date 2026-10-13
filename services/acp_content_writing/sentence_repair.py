@@ -172,6 +172,18 @@ def _neighbour_spans(text: str, start: int, end: int) -> list[dict]:
     return before + after
 
 
+def _adds_sentence(item: dict) -> bool:
+    """A repair item that asks to keep its sentence and ADD one (trip_facts family caveat)."""
+    return "add ONE" in (item.get("problem") or "")
+
+
+def _added_part(original: str, replacement: str) -> str:
+    """The sentences of `replacement` that are not the original sentence kept (copied either way)."""
+    orig = " ".join(re.sub(_TAG, " ", original or "").split())
+    spans = [s["clean"] for s in sentence_spans(replacement) if s["kind"] not in ("heading", "hashtags")]
+    return " ".join(s for s in spans if not (s == orig or copies(s, orig) or copies(orig, s)))
+
+
 def splice(content_text: str, items: list[dict], replacements: list[str], *,
            ignore: frozenset = frozenset(), guard_repeats: bool = True) -> str:
     """Put each replacement in place of its sentence (last first, so offsets stay valid). The
@@ -185,7 +197,15 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
         original = text[item["start"]:item["end"]]
         tags = _TRAILING_TAGS_RE.search(original)
         new = (new or "").strip()
-        if new and guard_repeats and repeats_neighbour(text, item["start"], item["end"], new, ignore):
+        if new and guard_repeats and _adds_sentence(item):
+            # 'keep this sentence and add ONE' (the family caveat): only the ADDED part is tested, and
+            # an added part that restates a neighbour leaves the sentence as it was — never a cut of
+            # the anchor (S234 round 3 review: r1 #19's caveat restated its access/permit neighbour)
+            added = _added_part(item.get("sentence") or original, new)
+            if added and repeats_neighbour(text, item["start"], item["end"], added, ignore):
+                item["guard"] = "repeat_kept"
+                continue
+        elif new and guard_repeats and repeats_neighbour(text, item["start"], item["end"], new, ignore):
             item["guard"] = "repeat"
             new = ""
         if new:
@@ -212,9 +232,15 @@ def drop_new_duplicates(before: str, after: str, ignore: frozenset = frozenset()
     """S234 round 3 (r2 §4 fix 2) — before a repair is reverted, delete what it duplicated: every
     sentence of `after` that is a NEW later near-duplicate (hygiene.near_duplicates), a new orphan
     line, or a new misplaced moment sentence, when deleting it orphans no pronoun. The caller keeps
-    the result only when the integrity check then passes."""
+    the result only when the integrity check then passes.
+
+    Only a sentence the repair WROTE is ever deleted (one whose text is not a sentence of `before`):
+    when the repair puts a figure into an EARLIER sentence, the later duplicate is the writer's own
+    line (often the core fact of another section) — it stays, and the integrity check reverts the
+    repair instead (S234 round 3 review)."""
     from services.acp_content_writing.hygiene import orphan_lines
     old = {d["later"]["clean"] for d in near_duplicates(before, ignore, cta)} | set(orphan_lines(before, ignore, cta))
+    old |= {sp["clean"] for sp in sentence_spans(before)}
     text = after
     for _ in range(6):
         targets = [d["later"]["clean"] for d in near_duplicates(text, ignore, cta)]

@@ -269,9 +269,11 @@ _PERIOD = r"(?:night|nights|evening|evenings|morning|mornings|afternoon|afternoo
 _TIME_RE = re.compile(
     rf"\b(?:the\s+)?{_ORDINAL}\s+{_PERIOD}\b"
     r"|\b(?:mid|early|late)[- ](?:morning|afternoon|evening)\b"
-    r"|\b(?:a|the|each|every|this|that|one)\s+(?:quiet\s+|slow\s+|early\s+|late\s+)?(?:morning|afternoon|evening|dawn"
-    r"|sunrise|sunset|dusk)\b"
-    r"|\b(?:in|by|at|until|before|after)\s+the\s+(?:morning|afternoon|evening)\b"
+    # never after 'at': no one says 'at the afternoon' of a time of day — 'you arrive at the afternoon
+    # sharp, not already running low' (S234 r1 #3, S233 #6) is energy, not a schedule
+    r"|(?<!\b[Aa]t\s)\b(?:a|the|each|every|this|that|one)\s+(?:quiet\s+|slow\s+|early\s+|late\s+)?"
+    r"(?:morning|afternoon|evening|dawn|sunrise|sunset|dusk)\b"
+    r"|\b(?:in|by|until|before|after)\s+the\s+(?:morning|afternoon|evening)\b"
     r"|\b(?:at|by|before|after)\s+(?:dawn|dusk|sunrise|sunset|noon|midday|nightfall)\b", re.I)
 _POSITION_RE = re.compile(
     r"\b(?:north|south|east|west|northern|southern|eastern|western|far|upper|lower)(?:most)?\s+"
@@ -287,6 +289,13 @@ _ORDINAL_NUM = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
 # a source time word and the words a piece may use for it ('Overnight in a ger camp' → 'the evening')
 _TIME_EQUIV = {"night": {"night", "overnight", "evening"}, "evening": {"evening", "overnight", "night"},
                "morning": {"morning"}, "afternoon": {"afternoon"}}
+# meal and day-part anchors in the trip lines that place a stretch of the day: 'Time is left for
+# swimming and resting before lunch' (Kuang Si) puts the trek and the swim in the morning, so 'a
+# morning of trekking' / 'the morning' is the source's timing (S234 r1 #14, S233 #1, #10). They
+# support a plain period only — 'mid-morning' / 'early afternoon' still need the word itself (r2 #11).
+_TIME_ANCHORS = (("before lunch", "morning"), ("breakfast", "morning"), ("after lunch", "afternoon"),
+                 ("dinner", "evening"), ("overnight", "evening"), ("overnight", "night"))
+_QUALIFIED_TIME_RE = re.compile(r"\b(?:mid|early|late)[- ]", re.I)
 
 
 def _supported_time(phrase: str, sentence: str, moments: list[Moment]) -> bool:
@@ -304,6 +313,8 @@ def _supported_time(phrase: str, sentence: str, moments: list[Moment]) -> bool:
     if not key:
         return False
     words = set(trip.split())
+    if not _QUALIFIED_TIME_RE.search(phrase):
+        words |= {period for anchor, period in _TIME_ANCHORS if f" {anchor} " in f" {trip} "}
     return bool(_TIME_EQUIV.get(key.group(0).lower(), {key.group(0).lower()}) & words)
 
 
@@ -394,10 +405,106 @@ def missing_family_caveat(text: str, moments: list[Moment], audience: Optional[s
         # the caveat must be said where the moment is: in a section (or FAQ pair) that names it — 'a
         # child who wants to be on horseback' at the lake does not tell a parent the Tsaatan ride is long
         zone = [sp for sec in sections if any(names_moment(x["clean"], m) for x in sec) for sp in sec]
-        if any(_CAVEAT_ECHO_RE.search(sp["clean"]) for sp in zone):
+        if any(_caveat_echoed(sp["clean"], caveat) for sp in zone):
             continue
         out.append({"moment": m.name, "caveat": caveat, "sentence": naming[-1]["clean"]})
     return out
+
+
+def _caveat_terms(caveat: str) -> set[str]:
+    """The caveat line's own _CAVEAT_RE terms, normalised ('multi-hour', 'boggy', 'rough terrain')."""
+    return {_norm(m.group(0)) for m in _CAVEAT_RE.finditer(caveat or "")}
+
+
+def _caveat_echoed(sentence: str, caveat: str) -> bool:
+    """Is the access caveat said in `sentence`? The generic echo words, or one of the caveat line's
+    own terms — so the seed's caveat, said in its own words, always clears the rule ('The trail
+    crosses rough terrain.' matches no generic echo, S234 round 3 review)."""
+    if _CAVEAT_ECHO_RE.search(sentence):
+        return True
+    have = f" {_norm(sentence)} "
+    return any(f" {t} " in have for t in _caveat_terms(caveat))
+
+
+_PRONOUN_OPEN_RE = re.compile(r"^(?:it|its|they|their|them|this|these|those|he|she|his|her)\b", re.I)
+# where the caveat's own clause starts inside a line that opens on a pronoun: '…, and access requires
+# a multi-hour horse or reindeer ride…'
+_CAVEAT_CLAUSE_START_RE = re.compile(r"(?:,\s+and\s+|;\s+|,\s+but\s+)")
+
+
+def caveat_sentence(caveat: str) -> Optional[str]:
+    """The sentence a piece gets for a missing access caveat, in the seed's own words: the line
+    itself when it names its subject ('The hike to the monastery … takes most visitors roughly two to
+    three hours each way, with a significant elevation gain.'); for a line that opens on a pronoun
+    ('Their territory lies deep in the taiga, …, and access requires a multi-hour horse or reindeer
+    ride, often crossing rivers and boggy forest terrain.') the clause that carries the caveat
+    ('Access requires a multi-hour horse or reindeer ride, often crossing rivers and boggy forest
+    terrain.'). None when neither reads on its own."""
+    line = " ".join((caveat or "").split()).strip()
+    if not line:
+        return None
+    if line[-1] not in ".!?":
+        line += "."
+    if not _PRONOUN_OPEN_RE.match(line):
+        return line
+    first = _CAVEAT_RE.search(line)
+    if not first:
+        return None
+    cuts = [m.end() for m in _CAVEAT_CLAUSE_START_RE.finditer(line, 0, first.start())]
+    if not cuts:
+        return None
+    clause = line[cuts[-1]:].strip()
+    if _PRONOUN_OPEN_RE.match(clause) or len(clause.split()) < 4:
+        return None
+    return clause[0].upper() + clause[1:]
+
+
+def _caveat_anchor(text: str, moment: Moment, cta: Optional[str]) -> Optional[dict]:
+    """Where the caveat goes: after the first body sentence that names the moment inside a section
+    whose heading names it (the moment's own section), else after the first body sentence that
+    names it — not a closing route summary that lists every stop."""
+    heading_names = False
+    first = own = None
+    for sp in sentence_spans(text or ""):
+        if sp["kind"] == "heading":
+            heading_names = names_moment(sp["clean"], moment)
+            continue
+        if sp["kind"] not in ("prose", "bullet") or sp["in_faq"] or _is_cta_sentence(sp["clean"], cta):
+            continue
+        if names_moment(sp["clean"], moment):
+            first = first or sp
+            if heading_names and own is None:
+                own = sp
+    return own or first
+
+
+def add_family_caveats(text: str, ctx: Optional["TripFactContext"], ignore: frozenset = frozenset()
+                       ) -> tuple[str, list[str]]:
+    """Deterministic fix for `missing_family_caveat` (S234 round 3 review): the seed's caveat
+    (`caveat_sentence`) goes in right after the last body sentence that names the moment — no LLM
+    call, and no repeat guard that could turn the 'keep this sentence and add one' repair into a cut
+    of the anchor. An insertion the integrity check rejects (a new near-duplicate of a neighbour) is
+    skipped and the finding is left to the sentence repair. Returns (text, log)."""
+    from services.acp_content_writing.hygiene import integrity_problems
+    if ctx is None:
+        return text, []
+    log: list[str] = []
+    by_name = {m.name: m for m in ctx.moments}
+    for miss in missing_family_caveat(text, ctx.moments, ctx.audience, ctx.cta):
+        add = caveat_sentence(miss["caveat"])
+        anchor = _caveat_anchor(text, by_name[miss["moment"]], ctx.cta)
+        if not add or anchor is None:
+            continue
+        end = anchor["end"]
+        tags = re.match(r"(?:\s?\[(?:R|F):[^\]]+\])+", text[end:])
+        if tags:
+            end += tags.end()
+        trial = text[:end] + " " + add + text[end:]
+        if integrity_problems(text, trial, ignore, ctx.cta):
+            continue
+        text = trial
+        log.append(f"added the source's access caveat for {miss['moment']}: '{add[:160]}'")
+    return text, log
 
 
 def _is_cta_sentence(sentence: str, cta: Optional[str]) -> bool:
@@ -509,6 +616,8 @@ def rarity_claims(text: str, source: str, cta: Optional[str] = None,
 
 _YEAR_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]{2})\b")
 _UNTIL_RE = re.compile(r"\buntil\s+(?:the\s+year\s+)?(1[0-9]{3}|20[0-9]{2})\b", re.I)
+_ROLE_START_RE = re.compile(
+    r"\b(?:from|since|became|made|declared|designated|named)\b[^.;]*?\b(1[0-9]{3})\b(?!\s*[–-])", re.I)
 _START_RE = re.compile(r"\b(?:built|founded|established|constructed|completed)\b[^.]*?\b(1[0-9]{3})\b", re.I)
 _GOV_RE = re.compile(r"\b(?:capital|seat of government|seat of power|government(?:al)?|administrative|administration"
                      r"|political)\b", re.I)
@@ -529,33 +638,51 @@ _SMALL = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven
           "ten": 10}
 
 
+# where the role went: '… until 1955, when the capital was moved to Thimphu'
+_SUCCESSOR_RE = re.compile(r"\b(?:moved|transferred|relocated|shifted)\s+to\s+([A-Z][\w’'-]+(?:\s+[A-Z][\w’'-]+)?)")
+
+
 @dataclass(frozen=True)
 class EndedRole:
     role: str       # 'the capital and seat of government of Bhutan'
     start: Optional[int]
     end: int
+    successor: Optional[str] = None  # 'Thimphu' of '… until 1955, when the capital was moved to Thimphu'
+
+
+def _role_start(lines: list[str]) -> Optional[int]:
+    """The year the governmental role began, only when the seed SAYS so in one sentence: 'from <year>'
+    or 'became … in <year>' next to the role word, or a founding year in a sentence that founds the
+    place FOR the role ('built in 1637–1638 … who founded it to serve as the administrative and
+    religious centre'). A building's founding year alone is not the role's start (S234 round 3
+    review: 'Built in 1647 … became the seat of government in 1907 … until 1955' is 48 years, not 308)."""
+    for ln in lines:
+        for sent in re.split(r"(?<=[.;])\s+", ln):
+            if not _GOV_RE.search(sent):
+                continue
+            m = _ROLE_START_RE.search(sent) or _START_RE.search(sent)
+            if m:
+                return int(m.group(1))
+    return None
 
 
 def ended_roles(seed: Optional[str]) -> list[EndedRole]:
     """Roles the seed dates as ended: a governmental role ('capital', 'seat of government',
-    'administrative') in a sentence with 'until <year>'. The start is the founding / building year
-    of the same moment block, when it has one."""
+    'administrative') in a sentence with 'until <year>'. The start is `_role_start` of the same
+    moment block (None when the seed does not date the role's beginning)."""
     out = []
     for m in parse_moments(seed):
         lines = m.lines
-        start = None
-        for ln in lines:
-            sm = _START_RE.search(ln)
-            if sm:
-                start = int(sm.group(1))
-                break
+        start = _role_start(lines)
         for ln in lines:
             um = _UNTIL_RE.search(ln)
             if not um or not _GOV_RE.search(ln[:um.start()]):
                 continue
             rm = re.search(r"\b(?:served|was|acted)\s+as\s+(.+?)\s+until\b", ln, re.I)
             role = rm.group(1).strip() if rm else "the seat of government"
-            out.append(EndedRole(role=role, start=start, end=int(um.group(1))))
+            sm = _SUCCESSOR_RE.search(ln[um.end():])
+            out.append(EndedRole(role=role, start=start, end=int(um.group(1)),
+                                 successor=sm.group(1) if sm else None))
     return out
 
 
@@ -584,7 +711,15 @@ def _seed_country(seed: Optional[str]) -> Optional[str]:
     return None
 
 
+# a district / local government is not the national role the seed dates as ended: 'The dzong still
+# houses the district government offices' is true of Punakha today (S234 round 3 review)
+_LOCAL_GOV_RE = re.compile(
+    r"\b(?:district|local|dzongkhag|provincial|regional|municipal|county|village|town)\s+(?:[\w-]+\s+)?"
+    r"(?:government(?:al)?|administration|administrative|offices?|seat)\b", re.I)
+
+
 def _gov_claim(clause: str, country: Optional[str]) -> bool:
+    clause = _LOCAL_GOV_RE.sub(" ", clause)
     if _GOV_STRONG_RE.search(clause):
         return True
     if not _GOV_WEAK_RE.search(clause):
@@ -611,6 +746,10 @@ def date_authority_claims(text: str, seed: Optional[str], cta: Optional[str] = N
     for sentence, prefix in units:
         problem = None
         for clause in _CLAUSE_SPLIT_RE.split(sentence):
+            # a clause about where the role went is about the successor, not this place: 'In 1955 the
+            # capital moved to Thimphu, where it remains today' / 'Today Thimphu is Bhutan's capital'
+            if role.successor and re.search(rf"\b{re.escape(role.successor)}\b", clause):
+                continue
             if _gov_claim(clause, country) and _PRESENT_RE.search(clause) and not _PAST_RE.search(clause):
                 problem = (f"says it still holds a role the source dates as ended ({role.role}, until {role.end}) — "
                            "put it in the past")
@@ -643,15 +782,19 @@ def _centuries_phrase(years: int) -> str:
 
 
 def date_span_lines(seed: Optional[str]) -> list[str]:
-    """Stated-fact lines the writer gets for each ended role with a start year: 'It served as the
-    capital and seat of government of Bhutan for 318 years (1637–1955), just over three centuries;
-    it has not held that role since 1955.'"""
+    """Stated-fact lines the writer gets for each ended role: with a start year the seed gives for
+    the role, 'It served as the capital and seat of government of Bhutan for 318 years (1637–1955),
+    just over three centuries; it has not held that role since 1955.'; without one, only 'It has not
+    served as … since 1955.' (no span is computed from a building's founding year)."""
     out = []
     for r in ended_roles(seed):
         if r.start and r.end > r.start:
             years = r.end - r.start
-            out.append(f"It served as {r.role} for {years} years ({r.start}–{r.end}), {_centuries_phrase(years)}; "
+            approx = f", {_centuries_phrase(years)}" if years >= 100 else ""
+            out.append(f"It served as {r.role} for {years} years ({r.start}–{r.end}){approx}; "
                        f"it has not held that role since {r.end}.")
+        else:
+            out.append(f"It has not served as {r.role} since {r.end}.")
     return out
 
 
@@ -784,7 +927,8 @@ def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_titl
 
 __all__ = [
     "EndedRole", "Moment", "OptionalActivity", "RARITY_CLAIM_RE", "TripFactContext", "audience_has_children",
-    "date_authority_claims", "date_span_lines", "ended_roles", "find_trip_fact_issues", "missing_family_caveat",
+    "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
+    "find_trip_fact_issues", "missing_family_caveat",
     "moments_named", "names_moment", "optional_activities", "optional_as_fixed", "parse_moments", "rarity_claims",
     "timing_claims", "with_date_spans",
 ]

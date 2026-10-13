@@ -1476,12 +1476,40 @@ def has_cta_literal(text: Optional[str], cta: Optional[str]) -> bool:
     return f" {want} " in f" {cta_norm(body)} "
 
 
+# an invitation verb ('ask', 'speak to', 'get in touch with' …) a few words before the brand's first
+# word: the shape of a reworded CTA ('Speak to Terra Family Expeditions about how this journey is
+# structured…', 'If you want to understand Day 4, ask WildKind Travel for the complete itinerary.')
+_INVITE_VERBS = (r"ask|speak|talk|contact|reach\s+out|get\s+in\s+touch|enquire|inquire|write|email|call|message"
+                 r"|book|request|get|plan")
+CTA_WINDOW = 3  # the closing prose sentences searched for a reworded CTA
+
+
+def _cta_brand_word(cta: Optional[str]) -> Optional[str]:
+    """The first capitalised word of the CTA after its verb ('Terra', 'WildKind', 'Atlas', 'Trail')."""
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ][\w’'-]*", cta or "")
+    return next((w for w in words[1:] if w[0].isupper()), None)
+
+
+def _is_cta_invite(sentence: str, cta: Optional[str]) -> bool:
+    """A sentence that invites the reader to contact the brand: an invitation verb, then at most four
+    words, then the CTA's brand word. The brand's own line ('Terra Family Expeditions plans journeys
+    for families…') has no invitation before the name and is not one."""
+    brand = _cta_brand_word(cta)
+    if not brand:
+        return False
+    return bool(re.search(rf"\b(?:{_INVITE_VERBS})\b(?:\s+[\w’'&-]+){{0,4}}?\s+{re.escape(brand)}\b",
+                          strip_tags(sentence or ""), re.I))
+
+
 def ensure_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
     """S234 r2 #19 paraphrased the configured CTA ('Speak to Terra Family Expeditions about how this
-    journey is structured…') and `check_cta` passed it. The literal line is restored in code: a
-    closing sentence that is the CTA reworded (≥ 60% of its words) is replaced by it; otherwise it
-    goes in as its own paragraph right before '## FAQ' (blog), or as the last prose line before the
-    hashtags (social). Returns (text, log)."""
+    journey is structured…') and `check_cta` passed it. The literal line is restored in code, and the
+    piece ends with ONE CTA: the last of the closing CTA_WINDOW prose sentences that invites the
+    reader to contact the brand (`_is_cta_invite`) — or, failing that, a closing sentence that is the
+    CTA reworded (≥ 60% of its words) — is replaced by it in place. Only when no such sentence exists
+    is the line added: as its own paragraph right before '## FAQ' (blog) or the hashtags (social),
+    and before a closing question paragraph (a post's engagement question stays last). Returns
+    (text, log)."""
     line = " ".join((cta or "").split())
     if not line or has_cta_literal(text, cta):
         return text, []
@@ -1494,12 +1522,19 @@ def ensure_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
     if tail:
         end = tail.start()
     spans = [s for s in sentence_spans(body) if s["kind"] == "prose" and s["end"] <= end and not s["in_faq"]]
-    # only the closing sentence is replaced: the brand's own line before it ('Terra Family Expeditions
-    # plans journeys for families who want…', r2 #19) shares the CTA's words too
-    if spans and _is_cta(spans[-1]["clean"], cta):
-        s = spans[-1]
-        new = body[:s["start"]] + line + body[s["end"]:]
-        return new, [f"restored the configured CTA line in place of a reworded one: '{s['clean'][:160]}'"]
+    closing = spans[-CTA_WINDOW:]
+    invites = [s for s in closing if _is_cta_invite(s["clean"], cta)]
+    # the brand's own line before the closing sentence ('Terra Family Expeditions plans journeys for
+    # families who want…', r2 #19) shares the CTA's words too, so the ≥ 60% test is for the last one only
+    target = invites[-1] if invites else (spans[-1] if spans and _is_cta(spans[-1]["clean"], cta) else None)
+    if target is not None:
+        new = body[:target["start"]] + line + body[target["end"]:]
+        return new, [f"restored the configured CTA line in place of a reworded one: '{target['clean'][:160]}'"]
+    last = spans[-1] if spans else None
+    if last is not None and last["clean"].endswith("?"):
+        para = body.rfind("\n\n", 0, last["start"])
+        if para > 0 and body[:para].strip():
+            end = para
     head = body[:end].rstrip()
     rest = body[end:].lstrip("\n")
     new = f"{head}\n\n{line}\n\n{rest}" if rest else f"{head}\n\n{line}\n"
