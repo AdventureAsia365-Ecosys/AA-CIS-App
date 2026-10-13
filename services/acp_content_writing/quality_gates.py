@@ -545,6 +545,7 @@ def keyword_covered(text: Optional[str], keyword: Optional[str]) -> bool:
     if not words:
         return True
     hay = set(re.findall(r"[a-z0-9]{3,}", _fold(text or "")))
+    hay |= {w[:-1] for w in hay if w.endswith("s")} | {w + "s" for w in hay}  # camp ~ camps
     missing = [w for w in words if w not in hay]
     return not missing or (len(words) >= 4 and len(missing) == 1)
 
