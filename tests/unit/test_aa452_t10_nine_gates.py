@@ -87,7 +87,7 @@ class TestGateFaqDedup:
         )
         result = qg.gate_faq_dedup(body)
         assert result["passed"] is False
-        assert "restates a body paragraph" in result["violations"][0]
+        assert "copies a body sentence" in result["violations"][0]
 
     def test_faq_answer_with_new_detail_passes(self):
         body = (

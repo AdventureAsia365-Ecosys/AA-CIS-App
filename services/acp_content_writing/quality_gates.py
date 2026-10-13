@@ -52,7 +52,8 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import (HygieneContext, contrast_excess, find_issues, sentence_spans,
+from services.acp_content_writing.hygiene import (HygieneContext, content_words, contrast_excess, copies,
+                                                  dangling_opener, find_issues, near_verbatim, sentence_spans,
                                                   sibling_templates)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
@@ -959,63 +960,109 @@ def gate_structural_variance(
 # ---------------------------------------------------------------- F7-adjusted (FAQ dedup, blog only)
 
 _FAQ_ANSWER_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: (.*?)(?=\n\*\*Q: |\Z)", re.DOTALL)
-_FAQ_TOKEN_RE = re.compile(r"[a-z]{5,}")
-_FAQ_DEDUP_THRESHOLD = 0.85  # ported from acp_produce/gates.py::gate_faq_dedup()
+_FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
+
+
+def _body_sentences(pre_faq: str) -> list[str]:
+    """What a FAQ answer sentence may not copy: every prose / bullet sentence of the body, and every
+    two adjacent ones joined (an answer that merges two body sentences into one, S234 r2 review)."""
+    sents = [s["clean"] for s in sentence_spans(pre_faq or "") if s["kind"] in ("prose", "bullet")]
+    return sents + [f"{a} {b}" for a, b in zip(sents, sents[1:])]
+
+
+# What is left of an answer after its copied sentences are cut must still answer the question.
+_FAQ_REST_MIN_WORDS = 4
+
+
+def strip_copied_sentences(answer: str, body_sentences: list[str]) -> tuple[Optional[str], int]:
+    """AA-768 (S234 round 2 fix) — `answer` with every sentence that copies the body cut
+    (hygiene.copies against one body sentence or two adjacent ones, `_body_sentences`). Returns
+    (answer, sentences cut); the answer is None when what is left has fewer than 4 content words
+    (the pair goes). An answer that retells a body fact in its own words keeps every sentence
+    (product rule: a FAQ may restate a body fact to answer a reader's question; S233 F7 bans copies)."""
+    text = answer or ""
+    spans = [sp for sp in sentence_spans(text) if sp["clean"].strip()]
+    is_cut = [any(copies(sp["clean"], b) for b in body_sentences) for sp in spans]
+    cut = [sp for sp, c in zip(spans, is_cut) if c]
+    if not cut:
+        return text, 0
+    # A kept sentence right after a cut one that leans on it ('It also holds…', 'This is a formal
+    # requirement…') has lost its referent: the pair goes.
+    if any(not c and i and is_cut[i - 1] and dangling_opener(spans[i]["clean"]) for i, c in enumerate(is_cut)):
+        return None, len(cut)
+    for sp in reversed(cut):
+        text = text[:sp["start"]] + text[sp["end"]:]
+    text = "\n".join(" ".join(line.split()) for line in text.split("\n"))
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(content_words(text)) < _FAQ_REST_MIN_WORDS:
+        return None, len(cut)
+    return text, len(cut)
+
+
+def answer_copies_body(answer: str, body_sentences: list[str]) -> bool:
+    """AA-768 (S234 round 2 fix) — does any sentence of a FAQ answer copy the body
+    (strip_copied_sentences would cut it). `body_sentences` comes from `_body_sentences`.
+
+    Replaces the S233 test (answer words of 5+ letters found ANYWHERE in the body > 85%), which in a
+    seed-bound blog flags every answerable question — the body already uses the seed's vocabulary —
+    and so stripped 3-4 pairs per blog (S234 r1 F7 flags; r2 F16_faq held 7/8)."""
+    return strip_copied_sentences(answer, body_sentences)[1] > 0
 
 
 def gate_faq_dedup(content_text: str) -> GateResultLite:
-    """AA-452 gate map — F7 port, channel=='blog' only (dispatch in run_quality_gates()). Ported
-    from acp_produce/gates.py::gate_faq_dedup() (referenced, not imported): does a FAQ answer
-    just restate a body paragraph within the SAME piece? INTRA-piece only, same real gap the N7
-    original documents (cross-time dedup against previously-published FAQs needs a table that
-    doesn't exist for T9 either). No-op (passed=True) when the piece has no '## FAQ' section —
-    prompts.py's blog instructions only ask for one "if the piece includes a FAQ section", most
-    blog pieces won't have one. Matches the real '**Q: ...**'/'A: ...' format prompts.py now
-    instructs the writer to use, same shape acp_produce/faq.py::render_faq_section() renders for
-    N7."""
+    """AA-452 gate map — F7 port, channel=='blog' only (dispatch in run_quality_gates()): does a FAQ
+    answer copy the body within the SAME piece? INTRA-piece only (cross-time dedup against
+    previously-published FAQs needs a table that doesn't exist for T9 either). No-op (passed=True)
+    when the piece has no '## FAQ' section. Same test as drop_restated_faq (answer_copies_body,
+    AA-768 S234 round 2), so it only fails when that auto-fix did not run."""
     body = content_text or ""
     if "## FAQ" not in body:
         return _result("F7_faq_dedup", [])
-
     pre, _, faq = body.partition("## FAQ")
-    pre_tokens = set(_FAQ_TOKEN_RE.findall(pre.lower()))
-
+    sentences = _body_sentences(pre)
     violations: list[str] = []
     for i, m in enumerate(_FAQ_ANSWER_RE.finditer(faq)):
-        answer = m.group(1).strip()
-        answer_tokens = set(_FAQ_TOKEN_RE.findall(answer.lower()))
-        if answer_tokens and len(answer_tokens & pre_tokens) / len(answer_tokens) > _FAQ_DEDUP_THRESHOLD:
+        if answer_copies_body(m.group(1).strip(), sentences):
             violations.append(
-                f"FAQ answer {i + 1} restates a body paragraph -- cut or add a detail the body lacks"
+                f"FAQ answer {i + 1} copies a body sentence -- cut or answer in other words"
             )
     return _result("F7_faq_dedup", violations)
 
 
-_FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
-
-
 def drop_restated_faq(content_text: str) -> tuple[str, int]:
-    """AA-770 (S233) — F7 auto-fix: remove FAQ pairs whose answer restates the body (same test as
-    gate_faq_dedup) instead of holding or rewriting the whole piece. Drops the "## FAQ" heading
-    too when no pair is left. Returns (text, pairs removed)."""
+    """AA-770 (S233) — F7 auto-fix instead of holding or rewriting the whole piece: every FAQ answer
+    sentence that copies the body is cut (strip_copied_sentences); a pair whose answer has too little
+    left, or none at all (a repair deleted it), goes. Drops the "## FAQ" heading too when no pair is
+    left. Returns (text, pairs removed or trimmed)."""
     body = content_text or ""
     if "## FAQ" not in body:
         return body, 0
     pre, _, faq = body.partition("## FAQ")
-    pre_tokens = set(_FAQ_TOKEN_RE.findall(pre.lower()))
-    kept, dropped = [], 0
+    sentences = _body_sentences(pre)
+    kept, changed = [], 0
     for m in _FAQ_PAIR_RE.finditer(faq):
+        pair = m.group(0).strip()
         answer = _FAQ_ANSWER_RE.match(m.group(0))
-        tokens = set(_FAQ_TOKEN_RE.findall((answer.group(1) if answer else "").lower()))
-        if tokens and len(tokens & pre_tokens) / len(tokens) > _FAQ_DEDUP_THRESHOLD:
-            dropped += 1
-        else:
-            kept.append(m.group(0).strip())
-    if not dropped:
+        if not answer:
+            kept.append(pair)
+            continue
+        if not strip_citation_tags(answer.group(1)).strip():
+            # A sentence repair that deleted the only answer sentence leaves 'A: ' under its
+            # question (S234 r2 review) — the pair goes, so F16_faq counts what a reader gets.
+            changed += 1
+            continue
+        rest, cut = strip_copied_sentences(answer.group(1), sentences)
+        if not cut:
+            kept.append(pair)
+            continue
+        changed += 1
+        if rest is not None:
+            kept.append((m.group(0)[:answer.start(1)] + rest).strip())
+    if not changed:
         return body, 0
     if not kept:
-        return pre.rstrip() + "\n", dropped
-    return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", dropped
+        return pre.rstrip() + "\n", changed
+    return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", changed
 
 
 # AA-768 (S234) — FAQ questions the seed cannot answer. S233 r1: 5/8 blogs asked about age
@@ -1070,8 +1117,10 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
                           facts_text: Optional[str] = None) -> tuple[str, list[str]]:
     """AA-768 (S234) — remove FAQ pairs whose question the source cannot answer (see
     `_FAQ_TOPICS`). `own_seed_text` must be the moment's own lines (hygiene.split_seed), never the
-    grounding text with AUDIENCE/BRAND. When fewer than 2 pairs are left, the whole FAQ goes (it is
-    optional per the prompt). Returns (text, one log line per dropped pair)."""
+    grounding text with AUDIENCE/BRAND. Every answerable pair stays; the "## FAQ" heading goes only
+    when none is left (S234 round 2 fix: the FAQ is required now — F16_faq — so a lone answerable
+    pair is kept for the contract step to build on, not thrown away). Returns (text, one log line
+    per dropped pair)."""
     body = content_text or ""
     if "## FAQ" not in body:
         return body, []
@@ -1087,9 +1136,7 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
             kept.append(m.group(0).strip())
     if not log:
         return body, []
-    if len(kept) < 2:
-        if kept:
-            log.append(f"dropped the FAQ section: only {len(kept)} answerable pair left")
+    if not kept:
         return pre.rstrip() + "\n", log
     return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", log
 
@@ -1125,6 +1172,91 @@ def replace_faq_section(content_text: str, pairs: list[tuple[str, str]]) -> str:
         head += "\n\n" + "\n\n".join(trailing)
     qa = "\n\n".join(f"**Q: {q.strip()}**\nA: {a.strip()}" for q, a in pairs if q.strip() and a.strip())
     return f"{head}\n\n## FAQ\n\n{qa}\n" if qa else head + "\n"
+
+
+# The most pairs a merged FAQ keeps (the writer's surviving pairs first, then the regenerated ones).
+FAQ_MAX_PAIRS = 5
+_FAQ_QA_RE = re.compile(r"\*\*Q:\s*(.*?)\s*\*\*\s*\nA:\s*(.*)", re.DOTALL)
+
+
+def faq_pairs(content_text: str) -> list[tuple[str, str]]:
+    """The (question, answer) pairs under "## FAQ", markup removed (the shape replace_faq_section takes).
+    An answer is its first paragraph: prose after the last pair (a CTA) is not part of it —
+    replace_faq_section moves that above the FAQ."""
+    body = content_text or ""
+    if "## FAQ" not in body:
+        return []
+    out = []
+    for m in _FAQ_PAIR_RE.finditer(body.partition("## FAQ")[2]):
+        qa = _FAQ_QA_RE.match(m.group(0).strip())
+        if qa:
+            out.append((qa.group(1).strip(), re.split(r"\n\s*\n", qa.group(2).strip(), maxsplit=1)[0].strip()))
+    return out
+
+
+def _same_question(a: tuple[str, str], b: tuple[str, str]) -> bool:
+    qa, qb = set(content_words(a[0])), set(content_words(b[0]))
+    if qa and qa == qb:
+        return True
+    if qa and qb and len(qa & qb) / len(qa | qb) >= 0.6:
+        return True
+    return near_verbatim(a[1], b[1])
+
+
+def merge_faq_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """AA-768 (S234 r2 review) — `pairs` in order (the writer's surviving pairs first, then the
+    regenerated ones), without a pair that asks an earlier question again (same question words,
+    ≥ 0.6 overlap, or a near-verbatim answer). Run it AFTER the droppers, so a dropped earlier pair
+    never shadows its kept twin."""
+    out: list[tuple[str, str]] = []
+    for pair in pairs:
+        if pair[0].strip() and pair[1].strip() and not any(_same_question(pair, o) for o in out):
+            out.append(pair)
+    return out
+
+
+# AA-768 (S234 round 2 fix) — the seed facts the post has not used yet, so the FAQ regeneration
+# answers from them first instead of re-telling the body. A line from the moment's own seed / Facts
+# is split into sentences (≥ 6 content words); it counts as unused when less than
+# _UNUSED_WORD_COVER of its content words and less than _UNUSED_TRIGRAM_COVER of its content
+# trigrams appear in the body. Measured on the S234 r2 blogs: 'Mörön has a small domestic
+# airport…' 0.27–0.33 / 0.00 and 'The lake freezes solidly in winter…' 0.20–0.27 / 0.00 (unused);
+# the facts each post builds on sit at 0.8–1.0 words. A partly told fact may still be listed — it
+# is only a preference in the prompt, the droppers decide what stays.
+_UNUSED_WORD_COVER = 0.75
+_UNUSED_TRIGRAM_COVER = 0.25
+_SEED_META_LINE_RE = re.compile(
+    r"^(?:Location|Naming|Days? \d|Thin moment|Place background|SCOPE|TRIP|AUDIENCE|BRAND|FACTS:"
+    r"|\[Moment\b|\[Fact\b|Other trips)", re.I)
+_SEED_LINE_PREFIX_RE = re.compile(r"^(?:[-*•]\s*)?(?:(?:Source itinerary|Why it matters):\s*)?")
+
+
+def _trigrams(words: list[str]) -> set:
+    return {tuple(words[i:i + 3]) for i in range(len(words) - 2)}
+
+
+def unused_source_facts(source_text: str, body: str, limit: int = 8) -> list[str]:
+    """Fact sentences of `source_text` (the moment's own seed lines + Facts block) that `body` does
+    not tell yet, least-covered first, at most `limit`. Deterministic, no model call."""
+    body_words = content_words(strip_citation_tags(body or ""))
+    word_set, body_tri = set(body_words), _trigrams(body_words)
+    scored, seen = [], set()
+    for raw in (source_text or "").splitlines():
+        line = _SEED_LINE_PREFIX_RE.sub("", raw.strip(), count=1).strip()
+        if not line or _SEED_META_LINE_RE.match(line):
+            continue
+        for span in sentence_spans(line):
+            sent = span["clean"].strip()
+            words = content_words(sent)
+            if len(words) < 6 or sent in seen:
+                continue
+            seen.add(sent)
+            cover = sum(w in word_set for w in words) / len(words)
+            tri = _trigrams(words)
+            tri_cover = len(tri & body_tri) / len(tri) if tri else 0.0
+            if cover < _UNUSED_WORD_COVER and tri_cover < _UNUSED_TRIGRAM_COVER:
+                scored.append((cover + tri_cover, len(scored), sent))
+    return [s for _, _, s in sorted(scored)[:limit]]
 
 
 def gate_faq_contract(content_text: str) -> GateResultLite:
@@ -1522,7 +1654,10 @@ __all__ = [
     "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
-    "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
+    "drop_unanswerable_faq", "unanswerable_faq_topics", "answer_copies_body", "strip_copied_sentences",
+    "unused_source_facts",
+    "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
+    "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",

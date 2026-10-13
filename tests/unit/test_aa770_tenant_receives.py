@@ -75,12 +75,13 @@ class TestGatesAdvisory:
 
 
 def test_restated_faq_pairs_are_dropped():
-    text = ("Intro about the bazaar weavers textile market thimphu.\n\n## FAQ\n\n"
-            "**Q: What?**\nA: The bazaar weavers textile market thimphu.\n\n"
+    intro = "Weavers from across the valley sell handloom textiles at the Thimphu weekend market."
+    text = (f"{intro}\n\n## FAQ\n\n"
+            "**Q: What?**\nA: Weavers from across the valley sell handloom textiles at the weekend market.\n\n"
             "**Q: When?**\nA: Weekends between Friday and Sunday mornings.\n")
     out, dropped = qg.drop_restated_faq(text)
     assert dropped == 1 and "**Q: What?**" not in out and "**Q: When?**" in out
-    only = "Intro about the bazaar weavers textile market thimphu.\n\n## FAQ\n\n**Q: What?**\nA: The bazaar weavers."
+    only = f"{intro}\n\n## FAQ\n\n**Q: What?**\nA: {intro}"
     out, dropped = qg.drop_restated_faq(only)
     assert dropped == 1 and "## FAQ" not in out
 

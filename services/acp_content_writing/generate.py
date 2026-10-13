@@ -423,28 +423,38 @@ _FAQ_SYSTEM = """You write the FAQ section that ends a finished travel blog post
 Rules:
 - Write exactly 4 question/answer pairs.
 - Each question is one a reader of this post would ask about the places in it, and its answer is a
-  fact stated in the SOURCE (keep its wording close). Never answer from general knowledge.
+  fact stated in the SOURCE. Never answer from general knowledge or add a fact the SOURCE lacks.
+- Answer first from the UNUSED FACTS (SOURCE facts the POST does not tell yet), when given. A
+  question may also cover a fact the POST already tells, answered directly in new words.
+- Never copy or closely paraphrase a sentence of the POST; write each answer in your own words.
 - Never ask about age suitability, fitness or difficulty, price or what is included, booking,
   permits, accommodation or weather unless a SOURCE line states the answer.
-- Each answer adds something the POST does not already say, in one or two sentences, in the brand's
-  plain voice. No places outside the SOURCE, no promises about the trip, no social proof.
+- One or two sentences per answer, in the brand's plain voice. No places outside the SOURCE, no
+  promises about the trip, no social proof.
 - Never mention the source, the notes, the seed or the itinerary as such.
 Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
 
 
 def write_faq(
     *, source: str, body: str, brand_name: str | None = None, tenant_id: str | None = None,
-    angle_gate_request_id: str | None = None,
+    angle_gate_request_id: str | None = None, unused_facts: list[str] | None = None,
 ) -> tuple[list[tuple[str, str]], float]:
     """AA-768 (S234 round 2) — the blog FAQ contract's one regeneration: 4 Q/A pairs answered from
     `source` (the moment's own seed lines + Facts — never the AUDIENCE / BRAND lines or another
     trip's), not restating `body`. Runs on the cheap repair route (SEO_FIT_STAGE = t9_repair;
     Haiku, about $0.004–0.008 a call on a route blog: ~4–6k input tokens). Returns ([(q, a)], cost);
-    an unusable reply gives [] (the caller keeps the old FAQ and F16_faq reports it)."""
+    an unusable reply gives [] (the caller keeps the old FAQ and F16_faq reports it).
+
+    `unused_facts` (S234 round 2 fix): SOURCE fact sentences the post does not tell yet
+    (quality_gates.unused_source_facts) — the answers start from them, so the pairs survive
+    drop_restated_faq and add something the post lacks."""
     parts = []
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
     parts.append(f"SOURCE:\n{source[:12000]}")
+    if unused_facts:
+        parts.append("UNUSED FACTS (from the SOURCE; the POST does not tell these yet):\n"
+                     + "\n".join(f"- {f}" for f in unused_facts))
     parts.append(f"POST (do not repeat what it says):\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_FAQ_SYSTEM, user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
@@ -453,7 +463,8 @@ def write_faq(
         stage=SEO_FIT_STAGE, role="writer", model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source)},
+        quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
+                        "unused_facts": len(unused_facts or [])},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),

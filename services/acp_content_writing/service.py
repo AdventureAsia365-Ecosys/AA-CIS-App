@@ -53,10 +53,12 @@ from services.acp_content_writing import hygiene, sentence_repair
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, STYLE_ONLY_GATES, deep_strip_citation_tags,
-                                                          drop_restated_faq, drop_unanswerable_faq, faq_pair_count,
-                                                          hold_failure, replace_faq_section, run_quality_gates,
-                                                          strip_citation_tags)
+from services.acp_content_writing.quality_gates import (FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
+                                                          deep_strip_citation_tags, drop_restated_faq,
+                                                          drop_unanswerable_faq, faq_pair_count, faq_pairs,
+                                                          hold_failure, merge_faq_pairs, replace_faq_section,
+                                                          run_quality_gates, strip_citation_tags,
+                                                          unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -537,29 +539,38 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     """S234 round 2 (panel §5 fix 1) — a blog must end with "## FAQ" and ≥ FAQ_MIN_PAIRS pairs, counted
     after drop_restated_faq / drop_unanswerable_faq. When short: ONE t9_repair call
     (generate.write_faq, about $0.004–0.008 on Haiku) writes a new FAQ from the moment's own seed
-    lines + Facts, the section is replaced (prose found after the old FAQ moves above it, so the CTA
-    stays before the FAQ), hygiene.autofix and both droppers run again, and the result is kept only
-    when it has more pairs than before and passes the repair integrity check. F16_faq then reports
-    whatever is still short. Returns (text, cost, log lines)."""
+    lines + Facts, answering first from the facts the body does not tell yet (unused_source_facts,
+    deterministic). The new FAQ is the writer's surviving pairs plus the regenerated ones (S234 r2
+    review: replacing the section threw away 1–2 good pairs and left the blog short again), with
+    prose found after the old FAQ moved above it (the CTA stays before the FAQ); hygiene.autofix and
+    both droppers run, then a pair that asks an earlier question again goes (merge_faq_pairs) and
+    the FAQ is capped at FAQ_MAX_PAIRS. The result is kept only when it has more pairs than before
+    and passes the repair integrity check. F16_faq then reports whatever is still short. Returns
+    (text, cost, log lines)."""
     before = faq_pair_count(content_text)
     if before >= FAQ_MIN_PAIRS:
         return content_text, 0.0, []
     own_seed = hygiene.split_seed(context.get("atom_text") or "")[0]
     facts_text = context.get("facts_text") or ""
     audience = context.get("brand_audience") or {}
+    source = own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
+    body = content_text.partition("## FAQ")[0]
     try:
         pairs, cost = await asyncio.to_thread(
-            write_faq, source=own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else ""),
-            body=content_text.partition("## FAQ")[0], brand_name=audience.get("brand_name"),
+            write_faq, source=source, body=body, brand_name=audience.get("brand_name"),
             tenant_id=context.get("tenant_id"), angle_gate_request_id=str(request_id),
+            unused_facts=unused_source_facts(source, body),
         )
     except Exception as e:  # noqa: BLE001 — F16_faq reports the short FAQ
         logger.warning("t9_faq_regen_failed", request_id=str(request_id), error=str(e)[:200])
         return content_text, 0.0, []
-    new = replace_faq_section(content_text, pairs)
+    new = replace_faq_section(content_text, faq_pairs(content_text) + list(pairs))
     new, _ = hygiene.autofix(new, hyg)
     new, _ = drop_restated_faq(new)
     new, _ = drop_unanswerable_faq(new, own_seed, facts_text)
+    merged = merge_faq_pairs(faq_pairs(new))[:FAQ_MAX_PAIRS]
+    if len(merged) != faq_pair_count(new):
+        new = replace_faq_section(new, merged)
     after = faq_pair_count(new)
     problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
     if after <= before or problems:
@@ -1031,6 +1042,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # favor of whatever attempt 2 produced) — see that fallback's own comment for why both
         # paths are needed. Stays None whenever only 1 attempt ever ran.
         discarded_attempt: dict | None = None
+        faq_repair_regen = False  # S234 r2 review — the one FAQ regeneration after a sentence repair
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if attempt == 1:
@@ -1160,7 +1172,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 content_text, faq_dropped = drop_restated_faq(content_text)
                 content_text, faq_unanswerable = drop_unanswerable_faq(
                     content_text, hygiene.split_seed(atom_text)[0], facts_text)
-                if fresh_text:  # S234 round 2 — FAQ contract: one regeneration per writer text
+                # S234 round 2 — FAQ contract: one regeneration per writer text. S234 r2 review: a
+                # sentence repair can cut a FAQ pair (a repeat-guard delete, an emptied answer, an
+                # answer that now copies the body) and F16_faq is not repairable, so a repair that took
+                # a full FAQ below FAQ_MIN_PAIRS gets one more regeneration per request.
+                faq_fell = (not fresh_text and not faq_repair_regen and prev_snapshot is not None
+                            and faq_pair_count(content_text) < FAQ_MIN_PAIRS
+                            <= faq_pair_count(prev_snapshot["content_text"]))
+                if faq_fell:
+                    faq_repair_regen = True
+                if fresh_text or faq_fell:
                     content_text, faq_cost, faq_regen = await _enforce_faq_contract(
                         content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore)
                     total_cost += faq_cost
@@ -1185,7 +1206,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
-            faq_log = ([f"{faq_dropped} FAQ pair(s) that restated the body were removed"] if faq_dropped else []) \
+            faq_log = ([f"{faq_dropped} FAQ pair(s) that copied a body sentence were removed"] if faq_dropped else []) \
                 + faq_unanswerable
             if faq_log:
                 flags.append({"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,

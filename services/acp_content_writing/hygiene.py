@@ -20,6 +20,7 @@ near-verbatim repeat); everything else is reported by `find_issues()` for the ga
 """
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -569,6 +570,104 @@ def near_verbatim(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
     if len(ca) < _REPEAT_MIN_WORDS or len(cb) < _REPEAT_MIN_WORDS:
         return False
     return len(_grams(ca, 3) & _grams(cb, 3)) >= 2 or _jaccard(ca, cb) >= 0.5
+
+
+# AA-768 (S234 round 2 fix) — a FAQ answer sentence COPIED from one body sentence: most of its
+# content words appear in that sentence IN THE SAME ORDER (difflib matching blocks). Stricter than
+# `restates` / `near_verbatim` on purpose: in a seed-bound blog the answer and the body both phrase
+# the same seed fact, so they routinely share trigrams ('central asian steppe') and most of their
+# vocabulary while answering a reader's question in other words — a normal FAQ (S233 F7 bans copies
+# only). Calibrated on the S234 r1 + r2 blogs and 8 regenerated FAQs: lightly edited copies ('The
+# crater is roughly 600 metres wide and between 50 to 60 metres deep, with a caldera floor…' against
+# the body's 'The crater is roughly 600 metres wide and 50 to 60 metres deep, and the caldera
+# floor…') reach 0.82–0.93; the same fact retold (reordered numbers, a new clause) stays ≤ 0.79.
+COPY_ORDERED_SHARE = 0.8
+_COPY_MIN_WORDS = 4
+# Containment (S234 r2 review): the answer sentence carries a whole body sentence plus a lead-in or
+# an appended clause ('…government office in Tsagaannuur, and the settlements are reached by…'), so
+# its OWN share stays low. The body side then needs ≥ 6 copy words, so a short body line ('Ask us.')
+# never makes a long answer a copy.
+_COPY_CONTAINED_MIN_WORDS = 6
+
+# Number words → digits for the copy test only, so 'six hundred metres' and '600 metres', 'fifty to
+# sixty' and '50 to 60' compare equal (S234 r2 review, 75313b8c). Digits are kept at any length
+# here ('50' would be dropped by content_words' > 2-letter rule).
+_NUM_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen".split())}
+_NUM_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+             "ninety": 90}
+_NUM_SCALES = {"hundred": 100, "thousand": 1000, "million": 1000000}
+_DIGIT_GROUP_RE = re.compile(r"(?<=\d),(?=\d{3}\b)")
+
+
+_COPY_TOKEN_RE = re.compile(r"[a-z0-9]+|[^\sa-z0-9-]")
+
+
+def _numbers_to_digits(tokens: list[str]) -> list[str]:
+    """['six', 'hundred', 'and', 'forty', 'five'] → ['645']. A number never runs across punctuation
+    (a non-alphanumeric token) or two unit words ('five six'); a lone 'one' stays a word (a pronoun as
+    often as a number); 'and' joins only inside a number ('sixteen hundred and forty-five')."""
+    out: list[str] = []
+    i, n = 0, len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t not in _NUM_UNITS and t not in _NUM_TENS and t not in _NUM_SCALES:
+            out.append(t)
+            i += 1
+            continue
+        total = current = 0
+        j, used, last = i, 0, ""
+        while j < n:
+            w = tokens[j]
+            if w in _NUM_UNITS and last not in ("unit",):
+                current += _NUM_UNITS[w]
+                last = "unit"
+            elif w in _NUM_TENS and last not in ("unit", "tens"):
+                current += _NUM_TENS[w]
+                last = "tens"
+            elif w in _NUM_SCALES:
+                scale = _NUM_SCALES[w]
+                if scale == 100:
+                    current = max(current, 1) * 100
+                else:
+                    total += max(current, 1) * scale
+                    current = 0
+                last = "scale"
+            elif (w == "and" and last == "scale" and j + 1 < n
+                  and (tokens[j + 1] in _NUM_UNITS or tokens[j + 1] in _NUM_TENS)):
+                last = "and"
+            else:
+                break
+            used += 1
+            j += 1
+        out.append(t if used == 1 and t == "one" else str(total + current))
+        i = j
+    return out
+
+
+def copy_words(sentence: str, ignore: frozenset = frozenset()) -> list[str]:
+    """content_words for the copy test: number words as digits, and every number kept."""
+    tokens = _numbers_to_digits(_COPY_TOKEN_RE.findall(_DIGIT_GROUP_RE.sub("", fold(strip_tags(sentence)))))
+    words = [w for w in tokens if w.isdigit() or (w.isalpha() and w not in _STOP and len(w) > 2 and w not in ignore)]
+    return [w[:-1] if w.endswith("s") and len(w) > 4 and not w.isdigit() else w for w in words]
+
+
+def _ordered_match(ca: list[str], cb: list[str]) -> int:
+    return sum(m.size for m in difflib.SequenceMatcher(None, ca, cb, autojunk=False).get_matching_blocks())
+
+
+def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
+    """Is sentence `a` a near-verbatim copy of `b` (one body sentence, or two adjacent ones joined):
+    ≥ COPY_ORDERED_SHARE of a's copy words appear in b in the same order, or `a` contains b — ≥
+    COPY_ORDERED_SHARE of b's copy words (b ≥ 6 of them) appear in a in the same order. `a` needs ≥ 4
+    copy words; a short answer such as 'Yes, at Sod Camp.' is never a copy."""
+    ca, cb = copy_words(a, ignore), copy_words(b, ignore)
+    if len(ca) < _COPY_MIN_WORDS or not cb:
+        return False
+    matched = _ordered_match(ca, cb)
+    return (matched / len(ca) >= COPY_ORDERED_SHARE
+            or (len(cb) >= _COPY_CONTAINED_MIN_WORDS and matched / len(cb) >= COPY_ORDERED_SHARE))
 
 
 # ---------------------------------------------------------------- leak and social proof
@@ -1466,7 +1565,8 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
 __all__ = [
     "COMMON_CAPS", "HygieneContext", "brand_words", "LEAK_RE", "SIBLING_HEADER", "SOCIAL_PROOF_RE", "ScopeLexicon",
     "autofix",
-    "build_scope_lexicon", "content_words", "expand_to_sentence", "find_issues", "find_scope_violations",
+    "build_scope_lexicon", "content_words", "copies", "copy_words", "expand_to_sentence", "find_issues",
+    "find_scope_violations",
     "is_sentence_end", "sentence_tail_end",
     "fold", "hashtag_fixes", "lev", "names_place", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns",
     "restates", "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS", "trip_name_places",
