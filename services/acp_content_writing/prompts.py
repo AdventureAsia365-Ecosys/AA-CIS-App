@@ -182,7 +182,9 @@ Rules:
   "unlike most …", "older than …", "few visitors …" — say what the seed says, without the
   invented comparison.
   LOCATION: name only the location the seed gives (its "Location" line); never place it in
-  another town, region or country.
+  another town, region or country. When the seed has a "Naming" line, follow it.
+  PLACE BACKGROUND: when the seed lists "Place background" facts, take background about that
+  place from those facts rather than from memory.
   NUMBERS: write a number (height, distance, year, decade, century, age, day count, duration,
   price, fee, processing time, group size) ONLY if that exact number appears in the content
   seed, its FACTS section, the TRIP name or the AUDIENCE line. Otherwise say it without the
@@ -207,7 +209,7 @@ def build_user_prompt(
     destination: str | None = None, trip_name: str | None = None,
     revision_feedback: list[str] | None = None, atom_id: str | None = None,
     route_segments: list[tuple[str, str]] | None = None, keyword: str | None = None,
-    facts_text: str | None = None,
+    facts_text: str | None = None, scope: str | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -296,6 +298,8 @@ def build_user_prompt(
         lines.insert(-2, f"DESTINATION: {destination}")
     if trip_name:
         lines.insert(-2, f"TRIP: {trip_name}")
+    if scope:
+        lines.insert(-2, scope)
     if revision_feedback:
         lines.append(
             "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW — fix EXACTLY these issues, preserve "

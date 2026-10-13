@@ -112,6 +112,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # UI/report grouping by stage treats both as the same stage (label "A3 atomize").
     "a3_atomize":         StageConfig("a3_atomize", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("haiku",)),
+    # AA-772 (S233, migration 220): place cards — draft on the t9_write route, fact check on the
+    # t10_judge route (another vendor).
+    "a3_place_card":      StageConfig("a3_place_card", "writer", "claude", "sonnet", "acc3"),
+    "a3_place_card_check": StageConfig("a3_place_card_check", "judge", "openai", "gpt-5.6-luna", "acc3",
+                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
     # SAFE_DEFAULTS here and deleted from shared.llm_role_config by migration 207.

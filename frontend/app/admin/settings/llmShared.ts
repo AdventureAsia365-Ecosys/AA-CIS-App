@@ -116,6 +116,8 @@ export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = 
   // Historical llm_call_log rows keep t5_atomize, so both keys map to this one "A3 atomize"
   // group/label.
   { key: "a3", label: "A3 — Atomize", stages: ["a3_atomize", "t5_atomize"] },
+  // AA-772 (S233): place cards — drafted by a writer, each fact kept only if the checker agrees.
+  { key: "a3_place", label: "A3 — Place cards", stages: ["a3_place_card", "a3_place_card_check"] },
   { key: "t8", label: "T8 — Angle generation", stages: ["t8_angle_gen"] },
   { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
   // AA-685: call sites that bypassed the gateway before.
@@ -142,6 +144,8 @@ export const STAGE_LABELS: Record<string, string> = {
   t2_itinerary_nudge: "Tenant itinerary day nudge",
   t7_debate_judge: "Debate brand-fit judge",
   a3_atomize: "A3 atomize",
+  a3_place_card: "Place card draft",
+  a3_place_card_check: "Place card fact check",
   t5_atomize: "A3 atomize",  // AA-757: historical rows under the old stage key — same stage.
   t8_angle_gen: "Angle generation",
   t9_write: "Content write",

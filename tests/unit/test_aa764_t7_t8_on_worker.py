@@ -206,10 +206,11 @@ class TestResolveFacts:
         ctx = {"facts_pending": True, "tenant_id": str(TENANT), "atom_text": "seed", "chosen": {},
                "trip_name": "Trip"}
         with patch.object(cw, "fetch_facts_for_writing", new=AsyncMock(return_value=[])) as fetch, \
-             patch.object(cw, "select_relevant_facts", new=AsyncMock(return_value=([], 0))):
+             patch.object(cw, "ensure_place_cards", new=AsyncMock(return_value=0)):
             await cw.resolve_facts(REQUEST, ctx, MagicMock())
             await cw.resolve_facts(REQUEST, ctx, MagicMock())
         fetch.assert_awaited_once()
+        assert fetch.await_args.kwargs["country"] is None  # S233 — facts scoped by the trip's country
         assert ctx["facts_pending"] is False and ctx["facts_text"] == ""
 
     async def test_pre_aa764_context_untouched(self):
