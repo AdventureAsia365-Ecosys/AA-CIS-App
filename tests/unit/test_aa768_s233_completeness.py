@@ -126,3 +126,35 @@ async def test_wordpress_publish_falls_back_to_angle_name():
     with patch.object(v1_publish, "_wordpress", return_value=wp):
         await v1_publish._call_adapter("blog", {}, piece, "k")
     assert wp.create_post.call_args.args[0].title == "Angle"
+
+
+class TestKeywordChoice:
+    def test_transactional_keywords_are_skipped(self):
+        from services.acp_content_writing.service import choose_keyword
+        kws = ["khovsgol and gobi tour mongolia price", "mongolia tour cost", "khovsgol lake mongolia"]
+        seed = "Ruins of an ancient monastery — visit\nLocation: Mongolia"
+        assert choose_keyword(kws, seed) == "khovsgol lake mongolia"
+
+    def test_prefers_a_keyword_about_the_seed_place(self):
+        from services.acp_content_writing.service import choose_keyword
+        assert choose_keyword(["bhutan travel", "punakha dzong history"], "Punakha Dzong — visit") == \
+            "punakha dzong history"
+
+    def test_none_when_all_transactional(self):
+        from services.acp_content_writing.service import choose_keyword
+        assert choose_keyword(["laos tour price", "cheap laos trip"], "seed") is None
+        assert choose_keyword([], "seed") is None
+
+
+def test_seo_failure_does_not_block_sentence_repair():
+    from services.acp_content_writing import sentence_repair
+    text = "Intro line here. The monastery sits above Luang Prabang today. End line."
+    ledger = [
+        {"gate": "F4_seo_surface", "passed": False, "blocking": True,
+         "violations": ["meta description is 164 characters"]},
+        {"gate": "F9_cta_fact", "passed": False, "blocking": True, "violations": [
+            'audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): "The monastery sits above Luang '
+            'Prabang today." (claims: Luang Prabang; source: not in seed)']},
+    ]
+    items = sentence_repair.plan(text, ledger)
+    assert items and items[0]["sentence"].startswith("The monastery sits above")

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -216,6 +217,27 @@ async def _scope_line(atom_ids: list[str], pool) -> Optional[str]:
     return (f"SCOPE: this piece covers {span} of the trip, in this order: {' → '.join(places)}. "
             "The title, headings, meta description and body must not promise, name or imply any "
             "place, leg or direction of travel outside these moments, even if the TRIP name does.")
+
+
+# S233 checkpoint: related_keywords[0] was "khovsgol and gobi tour mongolia price" for all 8
+# Mongolia blogs — titles became "…Mongolia Price of Memory" and no meta could hold it (F4).
+_TRANSACTIONAL_RE = re.compile(
+    r"\b(price|prices|cost|costs|cheap|deal|deals|discount|book|booking|fare|fares|budget|for sale)\b", re.I)
+
+
+def choose_keyword(related_keywords: list, seed_text: str) -> Optional[str]:
+    """The blog's SEO keyword: a non-transactional related keyword, preferring one that shares a
+    word with the seed (the place the piece is about). None when every keyword is transactional —
+    the writer then writes title/meta naturally."""
+    candidates = [k.strip() for k in related_keywords or [] if isinstance(k, str) and k.strip()
+                  and not _TRANSACTIONAL_RE.search(k)]
+    if not candidates:
+        return None
+    seed_words = {w for w in re.findall(r"[a-z]{4,}", (seed_text or "").lower())}
+    for k in candidates:
+        if seed_words & set(re.findall(r"[a-z]{4,}", k.lower())):
+            return k
+    return candidates[0]
 
 
 def _held_reason_from(first_failure: dict) -> str:
@@ -422,7 +444,7 @@ async def start_write(
     # `_keyword_line()` already has a no-keyword instruction for it, not a bug to work around.
     dfs_snapshot = req.get("dfs_paa_snapshot") or {}
     related_keywords = dfs_snapshot.get("related_keywords") or []
-    keyword = related_keywords[0] if related_keywords else None
+    keyword = choose_keyword(related_keywords, atom_text)
 
     # AA-529 — Facts Entry source: ALL scope='platform' facts + this tenant's own scope='tenant'
     # facts, never another tenant's (fetch_facts_for_writing()'s own WHERE clause enforces that).

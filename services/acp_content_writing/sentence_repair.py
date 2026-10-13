@@ -58,7 +58,10 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
 def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     """The sentences to repair, or None when this attempt needs the full rewrite instead.
     Each item: {"start", "end", "sentence" (tag-stripped), "problem"}."""
-    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)]
+    # F4_seo_surface is fixed by the SEO title/meta fit that runs after every attempt
+    # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233).
+    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+              and g["gate"] != "F4_seo_surface"]
     if not failed or any(g["gate"] not in _ELIGIBLE_GATES for g in failed):
         return None
     items: list[tuple[str, str]] = []
