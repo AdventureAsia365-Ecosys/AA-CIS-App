@@ -43,7 +43,7 @@ from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
-    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS,
+    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
 from services.acp_shared.place_cards import ensure_place_cards
@@ -222,7 +222,8 @@ async def _scope_line(atom_ids: list[str], pool) -> Optional[str]:
 # S233 checkpoint: related_keywords[0] was "khovsgol and gobi tour mongolia price" for all 8
 # Mongolia blogs — titles became "…Mongolia Price of Memory" and no meta could hold it (F4).
 _TRANSACTIONAL_RE = re.compile(
-    r"\b(price|prices|cost|costs|cheap|deal|deals|discount|book|booking|fare|fares|budget|for sale)\b", re.I)
+    r"\b(price|prices|cost|costs|cheap|deal|deals|discount|book|booking|fare|fares|budget|for sale|review|reviews"
+    r"|reddit|tripadvisor)\b", re.I)
 
 
 def choose_keyword(related_keywords: list, seed_text: str) -> Optional[str]:
@@ -267,15 +268,13 @@ def _grounding_text(context: dict) -> str:
 
 
 def _seo_title_ok(title, keyword: Optional[str]) -> bool:
-    kw = (keyword or "").lower()
     return (isinstance(title, str) and _SEO_TITLE_MIN_CHARS <= len(title) <= _SEO_TITLE_MAX_CHARS
-            and (not kw or kw in title.lower()))
+            and keyword_covered(title, keyword))
 
 
 def _meta_ok(meta, keyword: Optional[str]) -> bool:
-    kw = (keyword or "").lower()
     return (isinstance(meta, str) and _META_MIN_CHARS <= len(meta) <= _META_MAX_CHARS
-            and meta.rstrip().endswith((".", "!", "?")) and (not kw or kw in meta.lower()))
+            and meta.rstrip().endswith((".", "!", "?")) and keyword_covered(meta, keyword))
 
 
 async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, context: dict,

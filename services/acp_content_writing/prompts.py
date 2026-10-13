@@ -142,7 +142,8 @@ def _keyword_line(keyword: str | None) -> str:
             "No target keyword was supplied for this piece — write seo_title/meta_description "
             "naturally, without forcing one in."
         )
-    return f"TARGET SEO KEYWORD (must appear in both seo_title and meta_description): {keyword}"
+    return (f"TARGET SEO KEYWORD (a raw search query — use every content word of it in both seo_title and "
+            f"meta_description, reordered into natural English; never paste it ungrammatically): {keyword}")
 
 
 # AA-768 (S233) — social channels publish as plain text: markdown showed up as literal ** and

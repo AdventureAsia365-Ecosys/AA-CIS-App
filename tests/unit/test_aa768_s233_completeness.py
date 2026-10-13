@@ -158,3 +158,24 @@ def test_seo_failure_does_not_block_sentence_repair():
     ]
     items = sentence_repair.plan(text, ledger)
     assert items and items[0]["sentence"].startswith("The monastery sits above")
+
+
+class TestKeywordCoverage:
+    def test_raw_query_keyword_matches_natural_headline(self):
+        kw = "Khovsgol and gobi tour mongolia"
+        assert qg.keyword_covered("Mongolia Family Tour: Khövsgöl, Gobi & Ancient Ruins", kw)
+        assert qg.keyword_covered("Khövsgöl and the Gobi: a Mongolia journey for families", kw)
+
+    def test_missing_place_word_fails(self):
+        assert not qg.keyword_covered("A Mongolia journey for families", "Khovsgol and gobi tour mongolia")
+        assert not qg.keyword_covered("Explore Bhutan", "punakha dzong")
+
+    def test_seo_gate_uses_coverage(self):
+        meta = "x" * 110 + " in Khövsgöl, the Gobi and Mongolia."
+        r = qg.gate_seo_surface("Mongolia Family Tour: Khövsgöl, Gobi & Ancient Ruins", meta, "a-b",
+                                "Khovsgol and gobi tour mongolia")
+        assert r["passed"], r["violations"]
+
+    def test_reviews_keyword_is_skipped(self):
+        from services.acp_content_writing.service import choose_keyword
+        assert choose_keyword(["khovsgol and gobi tour mongolia reviews", "khovsgol lake"], "seed") == "khovsgol lake"
