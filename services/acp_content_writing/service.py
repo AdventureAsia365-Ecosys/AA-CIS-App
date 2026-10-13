@@ -292,8 +292,28 @@ def _grounding_text(context: dict) -> str:
     route moments) + the Facts block + the audience and trip lines build_user_prompt() also
     shows the writer. The audience/trip lines were missing before, so a number the brand itself
     states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot)."""
-    parts = [context["atom_text"], context.get("facts_text") or ""]
-    audience = context.get("brand_audience") or {}
+    return grounding_text_from(
+        seed=context["atom_text"], facts_text=context.get("facts_text"),
+        brand_audience=context.get("brand_audience"), trip_name=context.get("trip_name"),
+        destination=context.get("destination"),
+    )
+
+
+def grounding_from_writer_input(writer_input: dict) -> str:
+    """AA-769 (S234) — the same grounding text, rebuilt from a stored piece's `writer_input`
+    (writer_input_snapshot() below), for the admin sentence rewrite and its checks."""
+    wi = writer_input or {}
+    return grounding_text_from(
+        seed=wi.get("seed") or "", facts_text=wi.get("facts"), brand_audience=wi.get("brand_pack"),
+        trip_name=wi.get("trip"), destination=wi.get("destination"),
+    )
+
+
+def grounding_text_from(*, seed: str, facts_text: Optional[str], brand_audience: Optional[dict],
+                        trip_name: Optional[str], destination: Optional[str]) -> str:
+    """The one implementation behind _grounding_text() and grounding_from_writer_input()."""
+    parts = [seed, facts_text or ""]
+    audience = brand_audience or {}
     if audience.get("brand_name"):
         parts.append(f"BRAND: {audience['brand_name']}")
     # AA-771 — the brand describing itself in its own words is a source, not an invented claim
@@ -305,10 +325,10 @@ def _grounding_text(context: dict) -> str:
         # the segment as trip truth (S233: FAQ age answers passed on it).
         parts.append(f"AUDIENCE (who the brand writes for — not a fact about this trip): "
                      f"{audience['customer_segment']}")
-    if context.get("trip_name"):
-        parts.append(f"TRIP: {context['trip_name']}")
-    if context.get("destination"):
-        parts.append(f"DESTINATION: {context['destination']}")
+    if trip_name:
+        parts.append(f"TRIP: {trip_name}")
+    if destination:
+        parts.append(f"DESTINATION: {destination}")
     return "\n\n".join(p for p in parts if p)
 
 

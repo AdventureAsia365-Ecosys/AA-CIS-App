@@ -283,16 +283,35 @@ sentence. Never mention the source, the notes or the seed. Return ONLY JSON:
 def repair_sentences(
     *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
     channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
-    stage: str = "t9_write", mode: str = "sentence_repair", content_piece_id: str | None = None,
+    stage: str = "t9_write", mode: str = "sentence_repair", attempt: int | None = 2,
+    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS,
 ) -> tuple[list[str], float]:
     """AA-768 — attempt-2 sentence-level repair (see sentence_repair.py). `sentences` items carry
     "sentence" and "problem", and optionally "context" (the neighbouring sentences, S234). Returns
     (replacements in the same order, cost). Raises SentenceRepairError when the reply cannot be
     parsed into exactly one string per sentence — the caller then falls back to the full rewrite.
 
-    S234 (C2): `stage` / `mode` / `content_piece_id` let the AA-769 admin sentence actions reuse
-    this call on the `t9_repair` (Haiku) route; the pipeline keeps `t9_write` until the Haiku A/B
-    (PR6) flips this default."""
+    AA-769 (S234) — `stage`/`mode`/`attempt`/`content_piece_id`/`max_tokens` let the admin
+    "Rewrite" suggestion reuse this call on the cheap `t9_repair` stage, logged against the piece.
+    The defaults are the T9 attempt-2 call exactly as before; the pipeline keeps `t9_write` until
+    the Haiku A/B (PR6, plan C2) flips the default stage."""
+    reps, cost, _model = repair_sentences_detailed(
+        sentences=sentences, content_seed=content_seed, facts_text=facts_text, channel=channel,
+        tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id, stage=stage, mode=mode,
+        attempt=attempt, content_piece_id=content_piece_id, max_tokens=max_tokens,
+    )
+    return reps, cost
+
+
+def repair_sentences_detailed(
+    *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
+    channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
+    stage: str = "t9_write", mode: str = "sentence_repair", attempt: int | None = 2,
+    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS,
+) -> tuple[list[str], float, str | None]:
+    """repair_sentences() plus the model that answered (the admin suggestion shows and audits it).
+    A `sentences` item may carry "context" (its neighbouring sentences) — the same optional field
+    the AA-768 PR adds, so the two generalisations of this call are one superset signature."""
     source = content_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
     numbered = "\n".join(
         f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}"
@@ -301,14 +320,14 @@ def repair_sentences(
     )
     request = LLMRequest(system_prompt=_REPAIR_SYSTEM,
                          user_prompt=f"SOURCE:\n{source}\n\nSENTENCES TO FIX:\n{numbered}",
-                         stage=stage, max_tokens=_MAX_TOKENS)
+                         stage=stage, max_tokens=max_tokens)
     resp = LLMClient().generate(request)
     record_call_sync(
         stage=stage, role="writer", model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
         content_piece_id=content_piece_id,
-        quality_signal={"channel": channel, "attempt": 2, "mode": mode,
+        quality_signal={"channel": channel, "attempt": attempt, "mode": mode,
                         "sentences": len(sentences), "source_chars": len(source)},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
@@ -322,7 +341,7 @@ def repair_sentences(
     reps = data.get("replacements") if isinstance(data, dict) else None
     if not isinstance(reps, list) or len(reps) != len(sentences) or not all(isinstance(r, str) for r in reps):
         raise SentenceRepairError(f"bad sentence-repair reply: {resp.content[:200]!r}")
-    return reps, resp.cost_usd
+    return reps, resp.cost_usd, getattr(resp, "model_used", None)
 
 
 class SentenceRepairError(Exception):

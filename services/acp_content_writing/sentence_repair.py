@@ -14,21 +14,24 @@ located — falls back to the full rewrite, unchanged.
 S234 — `splice` refuses a replacement that restates one of its ±4 neighbouring sentences (it
 deletes the sentence instead): the S233 G7 repeats (#2/#9/#14) were repairs that re-stated the
 sentence two places earlier. F12_scope / F13_hygiene / F15_voice violations quote their sentence
-the same way F2/F11 do, so they can be repaired here once they block. `expand_to_sentence` and
-`tidy_after_cut` (hygiene.py) are re-exported for the AA-769 admin sentence actions.
+the same way F2/F11 do, so they can be repaired here once they block. The sentence primitives
+(`is_sentence_end`, `sentence_tail_end`, `expand_to_sentence`, `tidy_after_cut`) live in
+hygiene.py — one implementation — and are re-exported here for the AA-769 admin sentence actions.
 """
 from __future__ import annotations
 
 import re
 from typing import Optional
 
-from services.acp_content_writing.hygiene import expand_to_sentence, restates, sentence_spans, tidy_after_cut
+from services.acp_content_writing.hygiene import (
+    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, expand_to_sentence, is_sentence_end, restates, sentence_spans,
+    sentence_tail_end, tidy_after_cut,
+)
 
 _TAG = r"\[(?:R|F):[^\]]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
-_SENTENCE_TAIL_RE = re.compile(rf"[^.!?\n]*[.!?]+[\"'”’)]*(?:\s?{_TAG})*")
 _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
@@ -58,15 +61,12 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
     if m is None:
         return None
     end = m.end()
-    if text[end - 1] not in ".!?":
-        tail = _SENTENCE_TAIL_RE.match(text, end)
-        if tail is None:
-            return None
-        end = tail.end()
-    else:
-        trailing = re.match(rf"[\"'”’)]*(?:\s?{_TAG})*", text[end:])
-        end += trailing.end() if trailing else 0
-    return m.start(), end
+    # A quote ending on its own mark is extended from that mark (closers / tags); one ending on
+    # "12." of "12.5 km" or "Mt." is not at a sentence end and runs on to the real one.
+    tail = sentence_tail_end(text, end - 1 if text[end - 1] in _SENTENCE_END_CHARS else end)
+    if tail is None:
+        return None
+    return m.start(), max(tail, end)
 
 
 def _seo_fields_only(g: dict) -> bool:
@@ -131,25 +131,32 @@ def repeats_neighbour(text: str, start: int, end: int, replacement: str,
                       ignore: frozenset = frozenset()) -> bool:
     """Does `replacement` (for the sentence at [start, end)) restate one of the
     NEIGHBOUR_WINDOW sentences before or after it?"""
+    return any(restates(replacement, s["clean"], ignore) for s in _neighbour_spans(text, start, end))
+
+
+def _neighbour_spans(text: str, start: int, end: int) -> list[dict]:
+    """The NEIGHBOUR_WINDOW sentence spans before and after [start, end) (no headings, hashtag
+    lines or FAQ questions)."""
     spans = [s for s in sentence_spans(text) if s["kind"] not in ("heading", "hashtags", "faq_q")]
     before = [s for s in spans if s["end"] <= start][-NEIGHBOUR_WINDOW:]
     after = [s for s in spans if s["start"] >= end][:NEIGHBOUR_WINDOW]
-    return any(restates(replacement, s["clean"], ignore) for s in before + after)
+    return before + after
 
 
 def splice(content_text: str, items: list[dict], replacements: list[str], *,
-           ignore: frozenset = frozenset()) -> str:
+           ignore: frozenset = frozenset(), guard_repeats: bool = True) -> str:
     """Put each replacement in place of its sentence (last first, so offsets stay valid). The
     original sentence's trailing citation tags are kept after a non-empty replacement; an empty
     replacement deletes the sentence. S234 guard: a replacement that restates a neighbouring
     sentence is turned into a delete (the item gets `"guard": "repeat"`). `ignore`: words the
-    repeat test skips (the brand name)."""
+    repeat test skips (the brand name). `guard_repeats=False` (the AA-769 admin apply, which
+    refuses such a replacement up front in check_replacement) never turns a rewrite into a cut."""
     text = content_text
     for item, new in sorted(zip(items, replacements), key=lambda p: p[0]["start"], reverse=True):
         original = text[item["start"]:item["end"]]
         tags = _TRAILING_TAGS_RE.search(original)
         new = (new or "").strip()
-        if new and repeats_neighbour(text, item["start"], item["end"], new, ignore):
+        if new and guard_repeats and repeats_neighbour(text, item["start"], item["end"], new, ignore):
             item["guard"] = "repeat"
             new = ""
         if new:
@@ -170,5 +177,153 @@ def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
     return before + after
 
 
-__all__ = ["expand_to_sentence", "locate_sentence", "neighbours", "plan", "repeats_neighbour", "splice",
-           "tidy_after_cut"]
+# ── AA-769 (S234) — admin cut / rewrite of one flagged sentence ─────────────────────────────────
+
+def resolve_span(text: str, start: int, end: int, expected: str) -> Optional[tuple[int, int]]:
+    """Where `expected` (the span the admin saw) sits in the CURRENT text: at (start, end) when it
+    still matches there, else at its one and only occurrence. None when it is gone or ambiguous —
+    the piece changed since the drawer loaded, so nothing is cut blindly."""
+    if not expected:
+        return None
+    if 0 <= start <= end <= len(text) and text[start:end] == expected:
+        return start, end
+    if text.count(expected) == 1:
+        i = text.index(expected)
+        return i, i + len(expected)
+    return None
+
+
+def _faq_question_at(text: str, start: int, end: int) -> Optional[tuple[int, int, int, int]]:
+    """When [start, end) lies on a FAQ question line ("**Q: …?**"): (line start, line end,
+    question start, question end), else None."""
+    ls = text.rfind("\n", 0, start) + 1
+    le = text.find("\n", start)
+    le = len(text) if le < 0 else le
+    if end > le:
+        return None
+    q = _FAQ_Q_LINE_RE.fullmatch(text, ls, le)
+    return (ls, le, q.start(2), q.end(2)) if q else None
+
+
+def _faq_block_end(text: str, line_end: int) -> int:
+    """End of the answer that follows a FAQ question line ending at `line_end`: the "A:" line and
+    any non-blank lines after it, up to a blank line, the next question or a heading."""
+    pos = line_end
+    first = True
+    while pos < len(text):
+        nxt = text.find("\n", pos + 1)
+        nxt = len(text) if nxt < 0 else nxt
+        line = text[pos + 1:nxt].strip()
+        if not line or line.startswith("**Q:") or line.startswith("#") or (first and not line.startswith("A:")):
+            break
+        pos, first = nxt, False
+    return pos
+
+
+def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
+    """The piece text with text[start:end] replaced (or cut, when `replacement` is empty) through
+    splice() — trailing citation tags kept after a rewrite, no silent repeat-guard cut (the
+    caller checked the replacement) — then tidied (hygiene.tidy_after_cut: an emptied FAQ answer
+    goes with its question, an emptied bullet or section goes). A cut that empties a whole line
+    (a list item with no end mark) also takes that line's newline. The text keeps its own
+    trailing-newline state."""
+    faq_q = _faq_question_at(text, start, end)
+    if faq_q:
+        ls, le, qs, qe = faq_q
+        if not (replacement or "").strip():
+            # S234 review: a cut question takes its answer with it (never an orphaned "A:")
+            start, end = ls, _faq_block_end(text, le)
+            if text[end:end + 1] == "\n":
+                end += 1
+        else:
+            # a rewrite replaces the question text only; the "**Q: " … "**" markup stays
+            replacement = _FAQ_MARKUP_RE.sub("", replacement.strip()).strip()
+            if start <= qs and end >= qe:
+                start, end = qs, qe
+    elif not (replacement or "").strip():
+        line_start = start == 0 or text[start - 1] == "\n"
+        if line_start and text[end:end + 1] == "\n":
+            end += 1
+    out = tidy_after_cut(splice(text, [{"start": start, "end": end}], [replacement or ""], guard_repeats=False))
+    out = out.rstrip("\n")
+    return out + "\n" if text.endswith("\n") and out else out
+
+
+# "**Q: " / "Q: " / "**" an admin may type around a rewritten FAQ question (the line keeps its own)
+_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|\*+$")
+
+_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
+
+
+def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
+    """The tenant-facing clean-up the pipeline runs before it persists content_text, applied to an
+    admin replacement (lesson: a deterministic fix runs after the LAST LLM step — the suggest
+    call is now that step): drop [R:id]/[F:id] citation tags and the SOURCE's [Moment id=…] /
+    [Fact id=…] labels the model may echo, strip markdown on plain-text channels, collapse
+    whitespace."""
+    from services.acp_content_writing.generate import strip_markdown
+    from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS
+    from services.acp_content_writing.quality_gates import strip_citation_tags
+    text = _SOURCE_LABEL_RE.sub("", strip_citation_tags(replacement or ""))
+    if channel in PLAIN_TEXT_CHANNELS:
+        text = strip_markdown(text)
+    return " ".join(text.split())
+
+
+def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict], *,
+                      writer_input: Optional[dict] = None, text: Optional[str] = None,
+                      span: Optional[tuple[int, int]] = None) -> list[dict]:
+    """The deterministic checks on a replacement sentence before it is saved (lesson AA-641: a
+    repair needs a guard after it). Returns [{gate, violations, blocking}] — empty means clean.
+
+    Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2
+    banned patterns, the brand's forbidden words, F11 (no foreign brand / platform name), and a
+    near-verbatim copy of one of its ±4 neighbours (hygiene.near_verbatim — the rule the pipeline
+    auto-deletes on; `splice` would otherwise have turned it into a silent cut).
+
+    Warning only (S234 review — shown, never refused): with the piece's stored `writer_input`,
+    F12_scope (a place outside the piece's scope; the lexicon still has false positives, e.g.
+    'Mongol' on a Mongolia trip, and F12 stays warn until the replay shows none) and F13_hygiene
+    (source-notes leak, unsourced social proof); with `text` and `span`, a looser restatement of a
+    neighbour (hygiene.restates — it also matches a brand line that shares one phrase)."""
+    from services.acp_content_writing import hygiene
+    from services.acp_content_writing import quality_gates as qg
+    sentence = qg.strip_citation_tags(replacement or "").strip()
+    if not sentence:
+        return []
+    pack = brand_pack or {}
+    results = [
+        qg.gate_grounding(sentence, grounding),
+        qg.gate_banned_patterns(sentence, grounding),
+        qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
+        qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
+    ]
+    out = [{"gate": r["gate"], "violations": list(r["violations"]), "blocking": True}
+           for r in results if not r["passed"]]
+    wi = writer_input or {}
+    repeat_block: list[str] = []
+    warn_hygiene: list[str] = []
+    if wi.get("seed"):
+        ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
+                                     brand_name=pack.get("brand_name"), cta=wi.get("cta"))
+        found = hygiene.find_issues(sentence, ctx)
+        if found["scope"]:
+            out.append({"gate": "F12_scope", "violations": list(found["scope"]), "blocking": False})
+        warn_hygiene += found["hygiene"]
+    if text is not None and span is not None:
+        ignore = hygiene.brand_words(pack.get("brand_name"))
+        near = _neighbour_spans(text, span[0], span[1])
+        if any(hygiene.near_verbatim(sentence, s["clean"], ignore) for s in near):
+            repeat_block.append(f"repeats a nearby sentence almost word for word: '{sentence[:200]}'")
+        elif any(hygiene.restates(sentence, s["clean"], ignore) for s in near):
+            warn_hygiene.append(f"may restate a nearby sentence: '{sentence[:200]}'")
+    if repeat_block:
+        out.append({"gate": "F13_hygiene", "violations": repeat_block, "blocking": True})
+    if warn_hygiene:
+        out.append({"gate": "F13_hygiene", "violations": warn_hygiene, "blocking": False})
+    return out
+
+
+__all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",
+           "splice", "expand_to_sentence", "resolve_span", "tidy_after_cut", "apply_edit", "sanitize_replacement",
+           "check_replacement"]

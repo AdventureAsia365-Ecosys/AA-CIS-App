@@ -29,7 +29,35 @@ export interface Gate {
   violations: string[];
 }
 
-export interface Highlight { start: number; end: number; gate: string; blocking: boolean; problem: string }
+/** One flagged span (display). Offsets are Python code points — see toUtf16 in PieceDrawer. */
+export interface Highlight {
+  start: number; end: number; gate: string; blocking: boolean; problem: string;
+  text: string; sentence_start: number; sentence_end: number; sentence: string; key: string;
+}
+
+/** One actionable sentence (S234): every gate that flagged it, and the span Cut / Rewrite send back. */
+export interface FlaggedSentence {
+  key: string; start: number; end: number; text: string; sentence: string;
+  gates: string[]; problems: { gate: string; problem: string; blocking: boolean }[]; blocking: boolean;
+}
+
+export interface AdminEdit {
+  action: string; actor: string; created_at: string;
+  details: { before?: string; after?: string; mode?: string; gate?: string | null; published?: boolean };
+}
+
+// blocking: Apply refuses it (F1/F2/brand-forbidden/F11/near-verbatim repeat); otherwise a warning (F12/F13).
+export interface CheckFailure { gate: string; violations: string[]; blocking: boolean }
+
+export interface SuggestResponse {
+  start: number; end: number; sentence: string; replacement: string;
+  checks: CheckFailure[]; model: string | null; cost_usd: number;
+}
+
+export interface ApplyBody {
+  start: number; end: number; text: string; replacement: string; mode: "cut" | "rewrite" | "manual";
+  gate?: string; problem?: string; suggestion?: string; suggestion_model?: string | null; suggestion_cost_usd?: number;
+}
 
 export interface CostRow { stage: string; role: string; calls: number; cost_usd: number }
 
@@ -58,6 +86,9 @@ export interface PieceDetail extends Omit<PieceRow, "failed_gates" | "flag_gates
   angle_why: string | null;
   angle_style: string | null;
   highlights: Highlight[];
+  flagged_sentences: FlaggedSentence[];
+  published: boolean;
+  admin_edits: AdminEdit[];
   cost_by_stage: CostRow[];
   other_pieces_for_request: { piece_id: string; status: string; attempt_number: number; created_at: string }[];
 }
@@ -157,3 +188,14 @@ export const GATE_LABELS: Record<string, string> = {
 };
 
 export const gateLabel = (g: string) => GATE_LABELS[g] ?? g;
+
+/** Backend offsets are Python code-point indices; JS strings index UTF-16 units. Returns a mapper
+ *  from code-point index to JS index (the identity when the text has no astral chars, e.g. emoji). */
+export function codePointIndex(text: string): (cp: number) => number {
+  if (!/[\uD800-\uDBFF]/.test(text)) return (i) => i;
+  const map: number[] = [];
+  let u = 0;
+  for (const ch of text) { map.push(u); u += ch.length; }
+  map.push(u);
+  return (i) => map[Math.max(0, Math.min(i, map.length - 1))];
+}

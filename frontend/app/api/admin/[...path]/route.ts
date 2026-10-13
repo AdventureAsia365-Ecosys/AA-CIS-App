@@ -16,9 +16,13 @@
 // (POST /auth/verify-admin, signature-checked) before X-Admin-Secret is
 // ever attached to the outbound request — no assumption about how the
 // request got here.
+//
+// AA-769 (S234): non-GET requests on lib/rbac.ts API_WRITE_RULES paths (Content
+// Quality sentence cut / rewrite) need the admin role, and the verified role
+// is forwarded as x-admin-role for the backend's own check.
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
-import { API_RULES } from "@/lib/rbac";
+import { API_RULES, canWriteAdminPath } from "@/lib/rbac";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -36,6 +40,10 @@ async function handler(
 
   const { path } = await params;
   const pathStr = path.join("/");
+  // AA-769 — every staff role may read /admin/*, but edits to tenant content are admin-only.
+  if (!canWriteAdminPath(auth.role, req.method, pathStr)) {
+    return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
+  }
   const search = req.nextUrl.search;
   const url = `${API_URL}/admin/${pathStr}${search}`;
 
@@ -45,6 +53,8 @@ async function handler(
   const outHeaders: Record<string, string> = {
     "X-Admin-Secret": ADMIN_SECRET,
     "x-admin-user-id": auth.adminId,
+    // AA-769 — the verified JWT role, so the backend can re-check admin-only writes.
+    "x-admin-role": auth.role,
   };
 
   // AA-241 shim — kept for backward compat until backend reads

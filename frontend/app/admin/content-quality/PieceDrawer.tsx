@@ -3,12 +3,14 @@
 // text with every flagged sentence highlighted (red = blocking gate, amber = warning), the gate
 // ledger, what the writer was given (seed, place background, facts, brand pack, angle), the attempt
 // history and the LLM cost by stage. None of this reaches the tenant (AA-770).
+// S234: each flagged sentence can be cut or rewritten by an admin (SentenceActions.tsx).
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { Badge, Drawer, StatusBadge, apiGet } from "../../_kit";
-import { fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
+import { AdminEdits, FlaggedSentences } from "./SentenceActions";
+import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -25,20 +27,25 @@ function Pre({ text }: { text: string }) {
   );
 }
 
-/** The text split into plain and highlighted runs (overlaps keep the first highlight). */
+/** The text split into plain and highlighted runs (overlaps keep the first highlight). Backend
+ *  offsets are code points; `at` maps them to JS string (UTF-16) indices. A click on a highlight
+ *  scrolls to its row in the flagged-sentence list. */
 function HighlightedText({ text, highlights }: { text: string; highlights: Highlight[] }) {
   const runs: React.ReactNode[] = [];
+  const at = codePointIndex(text);
   let pos = 0;
   highlights.forEach((h, i) => {
-    if (h.start < pos) return;
-    if (h.start > pos) runs.push(<span key={`t${i}`}>{text.slice(pos, h.start)}</span>);
+    const start = at(h.start), end = at(h.end);
+    if (start < pos) return;
+    if (start > pos) runs.push(<span key={`t${i}`}>{text.slice(pos, start)}</span>);
     runs.push(
       <mark key={`h${i}`} title={`${gateLabel(h.gate)} (${h.gate}): ${h.problem}`}
-            style={{ background: h.blocking ? A.redSoft : A.amberSoft, color: A.ink, borderBottom: `2px solid ${h.blocking ? A.red : A.amber}`, padding: "0 1px", cursor: "help" }}>
-        {text.slice(h.start, h.end)}
+            onClick={() => document.getElementById(`hl-${h.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            style={{ background: h.blocking ? A.redSoft : A.amberSoft, color: A.ink, borderBottom: `2px solid ${h.blocking ? A.red : A.amber}`, padding: "0 1px", cursor: "pointer" }}>
+        {text.slice(start, end)}
       </mark>,
     );
-    pos = h.end;
+    pos = end;
   });
   if (pos < text.length) runs.push(<span key="end">{text.slice(pos)}</span>);
   return (
@@ -99,7 +106,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           <Section title={`Text · ${p.highlights.length} flagged span${p.highlights.length === 1 ? "" : "s"}`}>
             <div style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
               <Badge tone="danger" dot={false}>blocking</Badge><Badge tone="warning" dot={false}>warning</Badge>
-              <span>hover a highlight for the gate and reason</span>
+              <span>hover a highlight for the gate and reason, click it to jump to its actions</span>
             </div>
             <HighlightedText text={p.content_text || ""} highlights={p.highlights} />
             {p.channel === "blog" && (
@@ -110,7 +117,15 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             )}
           </Section>
 
-          <Section title="Gates (final attempt)"><GateTable gates={p.gate_ledger || []} /></Section>
+          <Section title={`Flagged sentences · ${p.flagged_sentences.length}`}>
+            <FlaggedSentences piece={p} />
+          </Section>
+
+          {p.admin_edits.length > 0 && (
+            <Section title={`Admin edits · ${p.admin_edits.length}`}><AdminEdits edits={p.admin_edits} /></Section>
+          )}
+
+          <Section title="Gates (final attempt) — as the writer produced it"><GateTable gates={p.gate_ledger || []} /></Section>
           {(p.flags || []).some((f) => !p.gate_ledger.find((g) => g.gate === f.gate)) && (
             <Section title="Other flags">
               <GateTable gates={(p.flags || []).filter((f) => !p.gate_ledger.find((g) => g.gate === f.gate))} />
@@ -153,7 +168,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           </Section>
 
           <Section title="Cost by stage">
-            {p.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>No calls linked to this job.</div> : (
+            {p.cost_by_stage.length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>No calls linked to this piece.</div> : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 16px", fontSize: 12 }}>
                 {p.cost_by_stage.map((c) => (
                   <Fragment key={`${c.stage}-${c.role}`}><span style={{ fontFamily: mono }}>{c.stage} · {c.role}</span><span>{c.calls} calls</span><span style={{ fontFamily: mono }}>{usd(c.cost_usd)}</span></Fragment>

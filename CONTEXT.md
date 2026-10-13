@@ -488,7 +488,21 @@ data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (no score / QA
 fields on tenant APIs). `writer_input` (migration 220) stores what the writer was given. Admins
 see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus Content Trace and
-Platform Stats.
+Platform Stats. An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
+an approved/held Piece from that drawer (S234): *suggest* is one cheap LLM call (stage
+`t9_repair`, logged with `content_piece_id`, nothing saved); *apply* is deterministic (span-text
+match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F11 and — with the
+stored `writer_input` — F12_scope/F13_hygiene as warnings only, a near-verbatim neighbour blocks;
+splice + tidy, using the
+same sentence primitives as the T9 hygiene in `hygiene.py`)
+and writes `content_text` plus an `acp_shared.audit_log` row
+(`content_piece.admin_sentence_cut|_rewritten|_edited`, before/after) — the audit log is the
+Piece's edit history. `gate_ledger`/`flags` stay as the writer produced them, and a published
+post is not re-synced. The replacement is cleaned like pipeline output (no citation tag, no
+markdown on plain-text channels) before it is checked and saved. An admin can also regenerate a
+request's 3 T8 angles (`POST /admin/content-quality/requests/{id}/regenerate-angles`): it clones
+the request (same tenant, atom, subject, route, channel, CTA, goal) and runs the `t8_angles` job on
+the clone, so the old request, its option rows and its pieces' angle labels never change.
 _Avoid_: post, draft, content (all used loosely elsewhere; Piece is the specific DB row).
 
 **Channel**:
