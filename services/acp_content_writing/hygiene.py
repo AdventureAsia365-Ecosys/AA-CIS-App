@@ -61,7 +61,9 @@ Day Night Morning Afternoon Evening Note Why Location Naming Source Place Season
 Moments Scope Tour Trip Journey Itinerary Guide Guides
 """.split())
 
-_CAPWORD_RE = re.compile(r"\b[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ’'\-]+(?:\s+[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ’'\-]+)*")
+# 'Erdene-Zuu' / 'Uran-Togoo' are one word: a hyphen may join two capitalised parts.
+_CAPW = r"[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ’']+(?:-[A-Za-zÀ-ÖØ-öø-ÿ’']+)*-?"
+_CAPWORD_RE = re.compile(rf"\b{_CAPW}(?:\s+{_CAPW})*")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -70,16 +72,17 @@ def phrase_tokens(phrase: str) -> list[str]:
     return [t for t in _TOKEN_RE.findall(fold(phrase)) if len(t) >= 3 and t not in COMMON_CAPS]
 
 
-def proper_nouns(text: Optional[str]) -> set[str]:
+def proper_nouns(text: Optional[str], *, keep_initial: bool = False) -> set[str]:
     """Capitalised runs ('Erdene Zuu Monastery', 'Uran Togoo') in `text`. A single capitalised
     word at the start of a sentence or line is skipped — it is capitalised for grammar, not
-    because it is a name."""
+    because it is a name — unless `keep_initial` (the allowed side of the scope lexicon, where
+    over-including only means fewer flags: 'Location: Khovsgol, …')."""
     text = text or ""
     out: set[str] = set()
     for m in _CAPWORD_RE.finditer(text):
         phrase = m.group(0).strip()
         before = text[:m.start()].rstrip(" *\"'“‘(-")
-        if len(phrase.split()) == 1 and (not before or before[-1] in ".!?:\n#—–"):
+        if not keep_initial and len(phrase.split()) == 1 and (not before or before[-1] in ".!?:\n#—–"):
             continue
         if phrase_tokens(phrase):
             out.add(phrase)
@@ -126,14 +129,40 @@ def split_seed(seed: Optional[str]) -> tuple[str, str]:
     return "\n".join(own), "\n".join(sib)
 
 
+# Words of a trip's marketing name that are never a place on their own ('Bhutan Cultural Discovery',
+# 'Best of Bhutan Adventure', 'Classic Bhutan Highlights Tour'). Folded. Review S234: keying the
+# trip name's whole capitalised run made every trip name 'out of scope'.
+TRIP_NAME_WORDS = frozenset(fold(w) for w in """
+Cultural Culture Discovery Discoveries Adventure Adventures Adventurous Highlights Highlight Classic Best
+Explorer Explorers Exploration Expedition Expeditions Escape Escapes Wonders Wonder Wild Wilds Wilderness
+Grand Ultimate Essential Essentials Treasures Treasure Hidden Gems Secrets Secret Magic Magical Mystical
+Mystic Kingdom Kingdoms Land Lands Encounter Encounters Experience Experiences Odyssey Quest Retreat
+Getaway Holiday Holidays Safari Safaris Trek Treks Trekking Hike Hikes Hiking Cycling Cycle Bike Biking
+Ride Rides Riding Overland Private Small Group Groups Luxury Deluxe Premium Signature Insight Insights
+Panorama Glimpse Glimpses Taste Tastes Flavours Flavors Nature Wildlife Nomad Nomads Nomadic Horse Horses
+Horseback Festival Festivals Teens Teen Active Soft Epic Golden Heart Soul Spirit Spirits Beauty
+Beautiful Tours Trips Nights Week Weeks Thunder Dragon Dragons Untouched Remote Authentic Unique Iconic
+Spectacular Majestic Ancient Sacred Spiritual Lakes Rivers Peaks Deserts Valleys Temples Monasteries
+Dzongs Highlands Lowlands Countryside Coast Coastal Rural Off Beaten Path Track Tracks Loop Circuit
+Combo Combined Extension Short Long Full Half Easy Gentle Moderate Challenging Introduction Intro
+Overview Story Stories Footsteps Kids Child Multi Generation Generations Wellness Yoga Photography
+Photo Photographic Food Foodie Culinary Cooking Wine Tea Coffee Homestay Homestays Camping Glamping
+""".split())
+
+_TRIP_WORD_RE = re.compile(r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ’'\-]*")
+
+
 @dataclass(frozen=True)
 class ScopeLexicon:
     """`allowed`: folded tokens/phrases of the piece's own places. `gazetteer`: folded
-    out-of-scope place → its display form. `own_text` / `sibling_text`: the seed halves."""
+    out-of-scope place (its tokens joined by one space) → its display form. `cap_only`: the
+    gazetteer keys taken from the TRIP name — they count only when written with a capital
+    ('Gobi', not 'the gobi-style dunes'). `own_text` / `sibling_text`: the seed halves."""
     allowed: frozenset
     gazetteer: dict
     own_text: str
     sibling_text: str
+    cap_only: frozenset = frozenset()
 
 
 def _near_allowed(token: str, allowed: frozenset) -> bool:
@@ -142,16 +171,47 @@ def _near_allowed(token: str, allowed: frozenset) -> bool:
     return any(abs(len(token) - len(a)) <= limit and lev(token, a) <= limit for a in allowed if " " not in a)
 
 
+def trip_name_places(trip_name: Optional[str]) -> list[list[tuple[str, str]]]:
+    """Runs of words in a trip's name that may name a place, as [(folded, display), …]: every
+    capitalised word (one right after ':' included — 'Mongolia: Gobi & Khovsgol'), minus generic
+    words (COMMON_CAPS), marketing words (TRIP_NAME_WORDS), numbers and words under 3 letters. A
+    run breaks at any of those words and at punctuation or a lower-case word ('and', 'of'), so
+    'Tiger's Nest' is one run and 'Mongolia: Gobi & Khovsgol' is three."""
+    runs: list[list[tuple[str, str]]] = []
+    cur: list[tuple[str, str]] = []
+    last_end = 0
+    text = trip_name or ""
+    for m in _TRIP_WORD_RE.finditer(text):
+        if text[last_end:m.start()].strip():
+            runs.append(cur)
+            cur = []
+        last_end = m.end()
+        for part in re.split(r"[’'\-]", m.group(0)):
+            f = fold(part)
+            if not f or (len(f) < 3 and f.isalpha() and cur):
+                continue  # the 's' of "Tiger's" does not break the run
+            if len(f) >= 3 and f.isalpha() and f not in COMMON_CAPS and f not in TRIP_NAME_WORDS:
+                cur.append((f, part))
+            else:
+                runs.append(cur)
+                cur = []
+    runs.append(cur)
+    return [r for r in runs if r]
+
+
 def build_scope_lexicon(seed: Optional[str], scope: Optional[str] = None,
                         trip_name: Optional[str] = None) -> ScopeLexicon:
-    """Allowed = the proper nouns of the moment's own lines (label, Location, Naming, Source
-    itinerary, Place background) and of the SCOPE line, plus every 'quoted' spelling in a Naming
-    line. Gazetteer = proper nouns of the TRIP name and of the sibling lines that are not allowed
-    (a romanisation variant of an allowed token is not out of scope). Matching only against this
-    gazetteer — never against "any unknown proper noun" — is what kept r1 LinkedIn at 0 hits."""
+    """Allowed = every capitalised word/run of the moment's own lines (label, Location, Naming,
+    Source itinerary, Place background) and of the SCOPE line, plus every 'quoted' spelling in a
+    Naming line. Gazetteer = (a) proper-noun phrases of the sibling lines that are not allowed and
+    (b) runs of place words of the TRIP name, split at every allowed word (`trip_name_places`;
+    marketing words never count, so 'Bhutan Cultural Discovery' adds nothing when Bhutan is the
+    moment's country, and 'Mongolia Gobi' on a Mongolia piece adds 'gobi'). A romanisation
+    variant of an allowed token is never out of scope. Matching only against this gazetteer —
+    never against "any unknown proper noun" — is what kept r1 LinkedIn at 0 hits."""
     own, sib = split_seed(seed)
     allowed: set[str] = set()
-    for p in proper_nouns(own) | proper_nouns(scope):
+    for p in proper_nouns(own, keep_initial=True) | proper_nouns(scope, keep_initial=True):
         toks = phrase_tokens(p)
         allowed |= set(toks)
         if toks:
@@ -162,22 +222,66 @@ def build_scope_lexicon(seed: Optional[str], scope: Optional[str] = None,
                 allowed |= set(phrase_tokens(quoted))
     frozen = frozenset(allowed)
     gazetteer: dict[str, str] = {}
-    for p in proper_nouns(sib) | proper_nouns(trip_name):
+    for p in proper_nouns(sib):
         toks = phrase_tokens(p)
         unknown = [t for t in toks if t not in frozen]
         if toks and unknown and not all(_near_allowed(t, frozen) for t in unknown):
             gazetteer.setdefault(" ".join(toks), " ".join(w for w in p.split() if fold(w) not in COMMON_CAPS))
-    return ScopeLexicon(allowed=frozen, gazetteer=gazetteer, own_text=own, sibling_text=sib)
+    cap_only: set[str] = set()
+    for run in trip_name_places(trip_name):
+        # an own place inside a run splits it: 'Mongolia Gobi' on a Mongolia piece → 'gobi'
+        pieces: list[list[tuple[str, str]]] = [[]]
+        for tok, disp in run:
+            if tok in frozen or _near_allowed(tok, frozen):
+                pieces.append([])
+            else:
+                pieces[-1].append((tok, disp))
+        for piece in pieces:
+            key = " ".join(t for t, _ in piece)
+            if piece and key not in gazetteer:
+                gazetteer[key] = " ".join(d for _, d in piece)
+                cap_only.add(key)
+    return ScopeLexicon(allowed=frozen, gazetteer=gazetteer, own_text=own, sibling_text=sib,
+                        cap_only=frozenset(cap_only))
 
 
-def _place_re(folded_place: str) -> re.Pattern:
-    return re.compile(rf"(?<![a-z0-9]){re.escape(folded_place)}(?![a-z0-9])")
+_NAME_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _name_tokens(text: Optional[str]) -> list[tuple[str, bool]]:
+    """(folded token, capitalised?) for the words of `text` that can be part of a place key — the
+    same filter as `phrase_tokens`, so "Tiger's Nest", "Tiger’s Nest" and 'Tiger Nest' all read
+    'tiger nest', and 'Erdene-Zuu' reads 'erdene zuu'."""
+    folded = "".join(c for c in unicodedata.normalize("NFKD", strip_tags(text))
+                     if not unicodedata.combining(c))
+    out = []
+    for m in _NAME_TOKEN_RE.finditer(folded):
+        t = m.group(0).lower()
+        if len(t) >= 3 and t not in COMMON_CAPS:
+            out.append((t, m.group(0)[0].isupper()))
+    return out
+
+
+def _has_place(tokens: list[tuple[str, bool]], key: str, cap_only: bool = False) -> bool:
+    want = key.split()
+    n = len(want)
+    for i in range(len(tokens) - n + 1):
+        if [t for t, _ in tokens[i:i + n]] == want and (not cap_only or tokens[i][1]):
+            return True
+    return False
+
+
+def names_place(text: Optional[str], key: str) -> bool:
+    """Does `text` name the gazetteer place `key` (case-insensitive, accent-folded, punctuation
+    between its words ignored)? choose_keyword uses this on lower-case DFS keywords."""
+    return _has_place(_name_tokens(text), key)
 
 
 def places_named(lex: ScopeLexicon, text: Optional[str]) -> list[str]:
-    """Display forms of the gazetteer places `text` names (word-bounded, accent-folded)."""
-    ft = fold(strip_tags(text))
-    return [disp for g, disp in sorted(lex.gazetteer.items()) if _place_re(g).search(ft)]
+    """Display forms of the gazetteer places `text` names (accent-folded, word-bounded; a
+    trip-name word only when capitalised)."""
+    toks = _name_tokens(text)
+    return [disp for g, disp in sorted(lex.gazetteer.items()) if _has_place(toks, g, g in lex.cap_only)]
 
 
 def find_scope_violations(lex: ScopeLexicon, *, title: Optional[str] = None, meta: Optional[str] = None,
@@ -629,6 +733,6 @@ __all__ = [
     "COMMON_CAPS", "HygieneContext", "brand_words", "LEAK_RE", "SIBLING_HEADER", "SOCIAL_PROOF_RE", "ScopeLexicon",
     "autofix",
     "build_scope_lexicon", "content_words", "expand_to_sentence", "find_issues", "find_scope_violations",
-    "fold", "hashtag_fixes", "lev", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns", "restates",
-    "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut",
+    "fold", "hashtag_fixes", "lev", "names_place", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns",
+    "restates", "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS", "trip_name_places",
 ]

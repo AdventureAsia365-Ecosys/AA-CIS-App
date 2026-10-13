@@ -16,7 +16,7 @@ S234 (AA-768) — the sibling lines were the source of borrowed places and facts
 Zuu' / 'thousands of monks' in 5/8 Mongolia blogs). Siblings are now added only when the place
 card has fewer than `RICH_CARD_FACTS` facts, at most `MAX_SIBLINGS` (2), and never a line naming a
 place the moment's own lines do not name. Route moments get no siblings at all
-(`route_moment_seeds`), are merged by place card (one block per place, C10), and a moment with
+(`route_moment_seeds`), are merged by place card or core place name (one block per place, C10), and a moment with
 fewer than `THIN_FACTS` facts is tagged thin so it is not made the hook.
 """
 from __future__ import annotations
@@ -206,15 +206,45 @@ def thin_note(fact_count: int) -> str:
             "one sentence at most; never make it the hook, the title or the climax.")
 
 
-def merge_key(parts: dict) -> Optional[str]:
-    """C10 — route moments about the same place merge: same place card, else the same folded
-    card display name + country. A moment with no card never merges."""
+def merge_keys(parts: dict) -> list[str]:
+    """C10 — the keys a route moment merges on: its place card id, and its card's core name (the
+    folded display-name tokens minus generic words, as a sorted set) + country. Two moments merge
+    when ANY key matches, so 'Lake Khövsgöl' and 'Khövsgöl Lake' on two different cards (S233: 5
+    Khövsgöl cards for one lake) become one block before PR1's card merge lands, while 'Sod Camp,
+    Khövsgöl Lake area' ({area, khovsgol, sod}) stays its own. A moment with no card never merges."""
     card = parts.get("card") or {}
+    keys: list[str] = []
     if card.get("card_id"):
-        return f"card:{card['card_id']}"
-    if card.get("display_name"):
-        return f"name:{fold(card['display_name'])}|{fold(card.get('country') or parts.get('country'))}"
-    return None
+        keys.append(f"card:{card['card_id']}")
+    core = sorted(set(phrase_tokens(card.get("display_name") or "")))
+    if core:
+        keys.append(f"name:{' '.join(core)}|{fold(card.get('country') or parts.get('country'))}")
+    return keys
+
+
+def group_route_moments(parts: list[dict]) -> list[list[dict]]:
+    """Route moments (day order) grouped by `merge_keys` with union-find (card id OR core name):
+    groups ordered by their first moment, members in the given order."""
+    parent = list(range(len(parts)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    owner: dict[str, int] = {}
+    for i, p in enumerate(parts):
+        for key in merge_keys(p):
+            if key in owner:
+                a, b = root(i), root(owner[key])
+                parent[max(a, b)] = min(a, b)
+            else:
+                owner[key] = i
+    groups: dict[int, list[dict]] = {}
+    for i, p in enumerate(parts):
+        groups.setdefault(root(i), []).append(p)
+    return [groups[k] for k in sorted(groups)]
 
 
 def compose_route_moment(group: list[dict]) -> str:
@@ -278,20 +308,13 @@ async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[st
     same-place moments merged into one block (C10) and no sibling lines. `atoms` is
     [(atom_id, label)]; an atom whose seed cannot be read keeps its own block with the label
     alone (the pre-S234 fallback)."""
-    groups: dict[str, list[dict]] = {}
-    order: list[str] = []
+    parts: list[dict] = []
     for atom_id, label in atoms:
         p = await atom_seed_parts(conn, atom_id, tenant_id, siblings=False)
-        if p is None:
-            p = {"atom_id": atom_id, "text": label or "", "card": None, "label_only": True}
-        key = merge_key(p) or f"atom:{atom_id}"
-        if key not in groups:
-            groups[key] = []
-            order.append(key)
-        groups[key].append(p)
+        parts.append(p if p is not None else {"atom_id": atom_id, "text": label or "", "card": None,
+                                              "label_only": True})
     out = []
-    for k in order:
-        group = groups[k]
+    for group in group_route_moments(parts):
         block = group[0]["text"] if group[0].get("label_only") else compose_route_moment(group)
         out.append((group[0]["atom_id"], block))
     return out

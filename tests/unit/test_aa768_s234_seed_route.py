@@ -9,7 +9,8 @@ import pytest
 from services.acp_content_writing import generate, service
 from services.acp_content_writing import hygiene as h
 from services.acp_shared import atom_seed as seed_mod
-from services.acp_shared.atom_seed import (MAX_SIBLINGS, compose_route_moment, compose_seed, merge_key,
+from services.acp_shared.atom_seed import (MAX_SIBLINGS, compose_route_moment, compose_seed, group_route_moments,
+                                           merge_keys,
                                            moment_fact_count, pick_siblings)
 from shared.llm_client.role_config import SAFE_DEFAULTS
 
@@ -79,10 +80,38 @@ def test_same_place_moments_merge_into_one_block():
     assert "Thin moment" not in block
 
 
-def test_merge_key_card_then_name_then_none():
-    assert merge_key({"card": {"card_id": "c1"}}) == "card:c1"
-    assert merge_key({"card": {"display_name": "Lake Khövsgöl", "country": "Mongolia"}}) == "name:lake khovsgol|mongolia"
-    assert merge_key({"card": None}) is None
+def test_merge_keys_card_and_core_name():
+    assert merge_keys({"card": {"card_id": "c1"}}) == ["card:c1"]
+    assert merge_keys({"card": {"card_id": "c1", "display_name": "Lake Khövsgöl", "country": "Mongolia"}}) == \
+        ["card:c1", "name:khovsgol|mongolia"]
+    # word order and generic words do not matter; the moment's country is the fallback
+    assert merge_keys({"card": {"display_name": "Khövsgöl Lake"}, "country": "Mongolia"}) == ["name:khovsgol|mongolia"]
+    assert merge_keys({"card": None}) == [] and merge_keys({"card": {"display_name": "Lake"}}) == []
+
+
+def _kh(atom_id, card_id, name, pct):
+    return {"atom_id": atom_id, "country": "Mongolia",
+            "card": {"card_id": card_id, "display_name": name, "country": "Mongolia",
+                     "facts": [{"text": f"It holds {pct} of the fresh water."}]}}
+
+
+def test_khovsgol_moments_on_different_cards_merge_by_core_name():
+    """S233 — five Khövsgöl moments on five cards ('Lake Khövsgöl' x3, 'Khövsgöl Lake' x2) are one
+    block without PR1's card merge; 'Sod Camp, Khövsgöl Lake area' stays its own."""
+    parts = [_kh("a1", "c1", "Lake Khövsgöl", "2%"), _kh("a2", "c2", "Khövsgöl Lake", "0.4%"),
+             _kh("sod", "c9", "Sod Camp, Khövsgöl Lake area", "x"), _kh("a3", "c3", "Lake Khövsgöl", "70%"),
+             _kh("a4", "c4", "Khövsgöl Lake", "1%"), _kh("a5", "c1", "Lake Khovsgol (old card)", "2%")]
+    groups = group_route_moments(parts)
+    assert [[p["atom_id"] for p in g] for g in groups] == [["a1", "a2", "a3", "a4", "a5"], ["sod"]]
+
+
+def test_card_id_or_name_chains_merge_transitively():
+    parts = [_kh("a1", "c1", "Lake Khövsgöl", "2%"), _kh("a2", "c2", "Khövsgöl Nuur", "1%"),
+             _kh("a3", "c2", "Khövsgöl Lake", "1%")]  # a2–a3 share c2, a3–a1 share the name
+    assert [[p["atom_id"] for p in g] for g in group_route_moments(parts)] == [["a1", "a2", "a3"]]
+    other_country = {**_kh("b1", "c7", "Lake Khövsgöl", "1%"), "country": "Russia"}
+    other_country["card"] = {**other_country["card"], "country": "Russia"}
+    assert len(group_route_moments([_kh("a1", "c1", "Lake Khövsgöl", "2%"), other_country])) == 2
 
 
 @pytest.mark.asyncio

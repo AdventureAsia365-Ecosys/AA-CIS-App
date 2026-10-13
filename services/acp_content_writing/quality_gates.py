@@ -996,17 +996,27 @@ def drop_restated_faq(content_text: str) -> tuple[str, int]:
 # suitability, fitness or price; the answers came from the brand's AUDIENCE line or were invented.
 # Each topic: (question regex, support regex). A pair is dropped when its question hits a topic
 # and neither the moment's OWN seed lines nor the FACTS block has a support term for it — the
-# "other trips" lines, AUDIENCE and BRAND never count as support.
+# "other trips" lines, AUDIENCE and BRAND never count as support. The question side asks about the
+# topic itself (review S234): a family brand names children in most questions ('What will kids
+# see at the reindeer camp?'), so bare kids/children, 'fit', 'include' or 'when should' never
+# count — only age suitability, effort level, price/inclusions and timing/season wording.
+_KIDS = r"(?:young(?:er)? |small |little )?(?:children|kids|toddlers|teens|teenagers|families)"
 _FAQ_TOPICS = {
-    "age": (r"\b(?:ages?|aged|kids?|child|children|toddlers?|teens?|teenagers?"
-            r"|young(?:er)? (?:children|travell?ers))\b",
+    "age": (r"\b(?:what|which|any) (?:ages?|age range|age group)\b|\bages?\s+(?:range|limit|groups?"
+            r"|requirements?|restrictions?)\b|\bage of (?:the )?(?:children|kids)\b|\bminimum age\b|\bhow old\b"
+            r"|\btoo young\b|\bold enough\b|\bage[- ]appropriate\b|\b(?:child|kid|family)[- ]friendly\b"
+            rf"|\bsuit(?:able|ed) (?:for|to) {_KIDS}|\b(?:good|right|ok|okay|safe|appropriate) for {_KIDS}"
+            r"|\b(?:children|kids|toddlers) (?:under|over|aged|of all ages)\b",
             r"\b(?:aged \d|ages? \d|\d+\s*(?:-|–|to)\s*\d+\s*years|minimum age|children (?:under|over|from|aged)"
             r"|suitable for (?:young )?(?:children|kids|families)|(?:child|kid|family)[- ]friendly)"),
-    "fitness": (r"\b(?:fit|fitness|physically|demanding|difficult|difficulty|strenuous|challenging|how hard"
+    "fitness": (r"\b(?:fitness|how fit|fit enough|physically|physical (?:effort|demands?|condition)|demanding"
+                r"|difficult|difficulty|strenuous|challenging|how hard|level of (?:effort|exertion)"
                 r"|altitude sickness)\b",
                 r"\b(?:strenuous|demanding|difficult|difficulty|fitness|steep|challenging|easy|gentle|moderate"
                 r"|level of exertion)\b"),
-    "price": (r"\b(?:price|prices|cost|costs|how much|budget|fees?|included|include|inclusions?)\b",
+    "price": (r"\b(?:price|prices|pricing|cost|costs|how much|budget|fees?|inclusions?)\b"
+              r"|\bwhat(?:'s| is| are)? included in the (?:price|tour|trip|package|cost)\b"
+              r"|\bwhat does the (?:price|tour|trip|package|cost) include\b",
               r"(?:\b(?:price|prices|cost|costs|usd|fees?|included|includes|inclusive)\b|[$€£])"),
     "booking": (r"\b(?:permits?|visas?|book|booking|reserve|reservations?)\b",
                 r"\b(?:permits?|visas?|book|booking|reserv\w*)\b"),
@@ -1014,7 +1024,8 @@ _FAQ_TOPICS = {
                       r"|wi-?fi|bathrooms?|showers?|toilets?)\b",
                       r"\b(?:hotels?|lodges?|ger|gers|camps?|guesthouses?|homestays?|accommodation|overnight|wi-?fi"
                       r"|bathrooms?|showers?)\b"),
-    "best_time": (r"\b(?:best time|when (?:to|should|is the best)|weather|seasons?|climate|temperatures?)\b",
+    "best_time": (r"\b(?:best time|best season|which season|what season|time of year|weather|climate|temperatures?"
+                  r"|when (?:is the best|to go|to visit|to travel))\b",
                   r"(?:^Season:|\b(?:seasons?|summer|winter|spring|autumn|monsoon|weather|climate|temperatures?"
                   r"|cold|warm|rain)\b)"),
 }

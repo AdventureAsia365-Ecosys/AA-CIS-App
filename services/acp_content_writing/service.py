@@ -262,10 +262,9 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
     the piece's own moment(s) and names no place in `out_of_scope` (folded gazetteer entries,
     hygiene.build_scope_lexicon — S234). None otherwise — the writer then writes title/meta
     naturally."""
-    banned = [re.compile(rf"(?<![a-z0-9]){re.escape(g)}(?![a-z0-9])") for g in out_of_scope]
     candidates = [k.strip() for k in related_keywords or [] if isinstance(k, str) and k.strip()
                   and not _TRANSACTIONAL_RE.search(k)
-                  and not any(b.search(_fold_kw(k)) for b in banned)]
+                  and not any(hygiene.names_place(k, g) for g in out_of_scope)]
     if not candidates:
         return None
     # Only the places of the piece's own moment(s): the "Location:" lines, minus country names and
@@ -816,7 +815,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         )
                     except SentenceRepairError as e:
                         logger.warning("t9_sentence_repair_failed", request_id=str(request_id), error=str(e)[:200])
-                if replacements is not None:
+                if repair_items == []:
+                    # S234 review — only a title/meta scope violation failed: the SEO fit below
+                    # owns it; the text stays as it is (no rewrite call).
+                    cost = 0.0
+                    repair_log[-1]["repair_mode"] = "seo_fields"
+                elif replacements is not None:
                     content_text = sentence_repair.splice(content_text, repair_items, replacements,
                                                           ignore=brand_ignore)
                     repair_log[-1]["repair_mode"] = "sentences"

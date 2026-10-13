@@ -69,13 +69,27 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
     return m.start(), end
 
 
+def _seo_fields_only(g: dict) -> bool:
+    """A failed gate the SEO title/meta fit owns: F4_seo_surface, or a quoted gate (F12_scope)
+    whose every violation is in the title or meta."""
+    if g["gate"] == "F4_seo_surface":
+        return True
+    vs = g.get("violations") or []
+    return g["gate"] in _QUOTED_GATES and bool(vs) and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
+
+
 def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
-    """The sentences to repair, or None when this attempt needs the full rewrite instead.
+    """The sentences to repair, [] when the only failures are a title/meta scope violation the SEO
+    fit owns (nothing to change in the text — the attempt re-runs the fit and the gates), or None
+    when this attempt needs the full rewrite instead.
     Each item: {"start", "end", "sentence" (tag-stripped), "problem"}."""
+    blocking = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)]
     # F4_seo_surface is fixed by the SEO title/meta fit that runs after every attempt
-    # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233).
-    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
-              and g["gate"] != "F4_seo_surface"]
+    # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
+    # the same for an F12_scope whose violations are all in the title/meta.
+    failed = [g for g in blocking if not _seo_fields_only(g)]
+    if not failed and any(g["gate"] != "F4_seo_surface" for g in blocking):
+        return []
     if not failed or any(g["gate"] not in _ELIGIBLE_GATES for g in failed):
         return None
     items: list[tuple[str, str]] = []

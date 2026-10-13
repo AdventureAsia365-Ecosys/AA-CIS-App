@@ -195,6 +195,64 @@ def test_trip_name_without_out_of_scope_place_is_kept():
     assert "Khövsgöl Lake Family Week" in text and log == []
 
 
+PARO_SEED = ("Paro Taktsang — hike to the cliffside monastery\n"
+             "Location: Paro Taktsang, Paro, Bhutan (do not place it in any other town, region or country)\n"
+             "Source itinerary: Hike to the Paro Taktsang monastery above the valley.")
+PARO_SCOPE = "SCOPE: this piece is about one moment of the trip: Paro Taktsang."
+
+
+@pytest.mark.parametrize("trip", ["Bhutan Cultural Discovery - 8 Days", "Best of Bhutan Adventure",
+                                  "Classic Bhutan Highlights Tour", "Land of the Thunder Dragon — 10 Days"])
+def test_marketing_trip_name_adds_no_place_and_is_kept(trip):
+    """Review S234: keying the trip name's whole capitalised run made every trip name 'out of
+    scope', so autofix replaced it on every channel."""
+    lex = h.build_scope_lexicon(PARO_SEED, PARO_SCOPE, trip)
+    assert lex.gazetteer == {}
+    body = f"We love the {trip} itinerary. The thunder dragon is a symbol."
+    ctx = h.HygieneContext(seed=PARO_SEED, scope=PARO_SCOPE, trip_name=trip)
+    assert h.autofix(body, ctx) == (body, [])
+    assert h.find_issues(body, ctx)["scope"] == []
+
+
+def test_trip_name_places_are_runs_including_after_a_colon():
+    assert h.trip_name_places("Mongolia: Gobi & Khovsgol") == [[("mongolia", "Mongolia")], [("gobi", "Gobi")],
+                                                               [("khovsgol", "Khovsgol")]]
+    assert h.trip_name_places("Bhutan Highlights: Paro, Punakha and Tiger's Nest — 8 Days") == [
+        [("bhutan", "Bhutan")], [("paro", "Paro")], [("punakha", "Punakha")], [("tiger", "Tiger"), ("nest", "Nest")]]
+    assert h.trip_name_places("Mongolia Gobi and Khovsgol Family Adventure") == [
+        [("mongolia", "Mongolia"), ("gobi", "Gobi")], [("khovsgol", "Khovsgol")]]
+
+
+@pytest.mark.parametrize("trip", ["Mongolia: Gobi & Khovsgol", "Mongolia Gobi and Khovsgol Family Adventure"])
+def test_bare_gobi_is_flagged_for_a_khovsgol_piece(trip):
+    lex = h.build_scope_lexicon(SEED, SCOPE, trip)
+    assert lex.cap_only == {"gobi"} and "gobi" in lex.gazetteer
+    assert h.places_named(lex, "The title says Gobi.") == ["Gobi"]
+    # a trip-name word counts only when written as a name
+    assert h.places_named(lex, "the gobi-style dunes") == []
+    ctx = _ctx(trip_name=trip)
+    text, log = h.autofix(f"The {trip} itinerary starts at Sod Camp.", ctx)
+    assert text == "This journey starts at Sod Camp." and log[0].startswith("replaced the trip name")
+
+
+PUNAKHA_SEED = ("Punakha Dzong — visit the fortress\n"
+                "Location: Punakha Dzong, Punakha, Bhutan (do not place it in any other town, region or country)\n"
+                "Source itinerary: Cross the cantilever bridge to the dzong at the confluence of two rivers.\n"
+                "Other trips that include this same moment (for context only — never promise these details for this trip):\n"
+                "- Visit Erdene-Zuu on the way.")
+
+
+def test_places_named_ignores_apostrophes_hyphens_and_colon_starts():
+    lex = h.build_scope_lexicon(PUNAKHA_SEED, None, "Bhutan Highlights: Paro, Punakha and Tiger's Nest — 8 Days")
+    assert set(lex.gazetteer) == {"paro", "tiger nest", "erdene zuu"}
+    assert h.places_named(lex, "Later the family hikes to Tiger's Nest.") == ["Tiger Nest"]
+    assert h.places_named(lex, "Later the family hikes to Tiger’s Nest.") == ["Tiger Nest"]
+    assert h.places_named(lex, "Erdene-Zuu was built long ago.") == ["Erdene-Zuu"]
+    assert h.places_named(lex, "Erdene Zuu was built long ago.") == ["Erdene-Zuu"]
+    assert h.places_named(lex, "Paro is an hour away.") == ["Paro"]
+    assert h.names_place("tigers nest paro hike", "paro") and not h.names_place("paros", "paro")
+
+
 TN_SEED = ("Tiger's Nest Monastery — hike to the cliffside monastery\n"
            "Location: Paro Taktsang, Paro, Bhutan (do not place it in any other town, region or country)\n"
            "Source itinerary: Hike to Tiger's Nest, the Paro Taktsang monastery, above the Paro valley.")
@@ -259,6 +317,21 @@ def test_plan_parses_f12_body_violations_and_skips_title():
     assert items[0]["problem"].startswith("names 'Gobi'")
 
 
+def test_plan_title_meta_only_f12_needs_no_text_repair_and_no_rewrite():
+    """Review S234: a blocking F12 whose violations are all in the title/meta is the SEO fit's —
+    plan returns [] (no rewrite call, attempt 3 still allowed), not None (full rewrite)."""
+    f12 = {"gate": "F12_scope", "passed": False, "blocking": True, "violations": [
+        "title names 'Gobi', outside this piece's scope: 'Gobi Guide'",
+        "meta names 'Gobi', outside this piece's scope: 'A guide to the Gobi.'"]}
+    f4 = {"gate": "F4_seo_surface", "passed": False, "blocking": True, "violations": ["title too short"]}
+    assert sr.plan("The lake is cold.", [f12]) == []
+    assert sr.plan("The lake is cold.", [f12, f4]) == []
+    assert sr.plan("The lake is cold.", [f4]) is None  # F4 alone: unchanged (full rewrite)
+    f1 = {"gate": "F3_structure", "passed": False, "blocking": True, "violations": ["no H2"]}
+    assert sr.plan("The lake is cold.", [f12, f1]) is None  # anything not repairable still rewrites
+    assert sr.plan("The lake is cold.", [{**f12, "blocking": False}]) is None
+
+
 def test_neighbours_gives_two_each_side():
     text = "One a b c. Two a b c. Three a b c. Four a b c. Five a b c."
     i = text.find("Three")
@@ -302,6 +375,44 @@ def test_faq_section_removed_when_under_two_pairs_left():
     own, _ = h.split_seed(SEED)
     text, log = qg.drop_unanswerable_faq(body, own)
     assert text == "Body.\n" and log[-1].startswith("dropped the FAQ section")
+
+
+PUNAKHA_OWN = ("Punakha Dzong — visit the fortress\nLocation: Punakha Dzong, Punakha, Bhutan\n"
+               "Source itinerary: Cross the cantilever bridge to the dzong at the confluence. Monks live here.")
+
+
+@pytest.mark.parametrize("q", [
+    "What will kids see at the reindeer camp?", "How do children ride the horses?",
+    "What will children notice first at the dzong?", "How do kids cross the cantilever bridge?",
+    "What does the visit include?", "What is included in the horse ride?",
+    "When should families arrive at the dzong?", "Why do the monks fit so many rooms inside?",
+])
+def test_faq_question_naming_children_or_include_is_not_a_topic(q):
+    """Review S234: a family brand names children in most questions — only age suitability,
+    effort, price/inclusions and timing wording are topics."""
+    assert qg.unanswerable_faq_topics(q, PUNAKHA_OWN) == []
+
+
+@pytest.mark.parametrize("q,topic", [
+    ("What age range is this route typically suited to?", "age"),
+    ("Is this itinerary suitable for younger children as well as teenagers?", "age"),
+    ("How old do kids need to be for the hike?", "age"),
+    ("Is the dzong safe for young children?", "age"),
+    ("How fit do families need to be?", "fitness"),
+    ("Is the climb challenging?", "fitness"),
+    ("What is included in the tour price?", "price"),
+    ("What does the trip include?", "price"),
+    ("When is the best time to visit?", "best_time"),
+])
+def test_faq_topic_questions_still_dropped_without_support(q, topic):
+    assert qg.unanswerable_faq_topics(q, PUNAKHA_OWN) == [topic]
+
+
+def test_family_faq_survives_when_the_seed_answers_it():
+    body = ("Body.\n\n## FAQ\n\n**Q: What will kids see at the dzong?**\nA: The cantilever bridge.\n\n"
+            "**Q: How do children cross the bridge?**\nA: On foot.\n\n"
+            "**Q: Who lives in the dzong?**\nA: Monks.\n")
+    assert qg.drop_unanswerable_faq(body, PUNAKHA_OWN) == (body, [])
 
 
 def test_faq_untouched_when_all_answerable():
