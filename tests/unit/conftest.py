@@ -44,6 +44,11 @@ async def _no_seed(conn, atom_id, tenant_id):
     return None
 
 
+async def _label_route_seeds(conn, atoms, tenant_id):
+    """S234 — the route walk's merged seeds, label-only: one block per atom, its label."""
+    return [(a, t) for a, t in atoms]
+
+
 @pytest.fixture(autouse=True)
 def _atom_seed_label_only(request, monkeypatch):
     if "real_atom_seed" in request.keywords:
@@ -52,3 +57,4 @@ def _atom_seed_label_only(request, monkeypatch):
     from services.acp_content_writing import service as writing_service
     monkeypatch.setattr(angle_service, "atom_seed_text", _no_seed)  # T8 falls back to row["text"]
     monkeypatch.setattr(writing_service, "atom_seed_text", _no_seed)  # T9 falls back to the label
+    monkeypatch.setattr(writing_service, "route_moment_seeds", _label_route_seeds)

@@ -236,7 +236,7 @@ class TestStartWrite:
              patch.object(service, "_fetch_route_segments", new=AsyncMock(return_value=segments)) as mock_fetch:
             result = await service.start_write(TENANT_ID, REQUEST_ID, pool)
 
-        mock_fetch.assert_called_once_with(TENANT_ID, "trip1", ["seg1", "seg2"], pool)
+        mock_fetch.assert_called_once_with(TENANT_ID, "trip1", ["seg1", "seg2"], pool, atoms_out=[])
         assert result["context"]["route_segments"] == segments
         assert result["context"]["atom_text"] == "Cross the bamboo bridge at dawn\n\nKayak the bay at sunset"
 

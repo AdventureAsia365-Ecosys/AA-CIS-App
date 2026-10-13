@@ -48,6 +48,9 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
   this exact format and nothing else — each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
+- FAQ: 2-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
+  age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
+  states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
   bulleted list, and give the richest moment (or section) clearly more depth — at least half as
   long again as any other section.
@@ -76,6 +79,9 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
   this exact format and nothing else — each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
+- FAQ: 2-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
+  age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
+  states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
   bulleted list, and give the richest moment (or section) clearly more depth — at least half as
   long again as any other section.
@@ -182,6 +188,10 @@ Rules:
   FORBIDDEN: contrast claims whose other half the seed does not state — "not by X but by Y",
   "unlike most …", "older than …", "few visitors …" — say what the seed says, without the
   invented comparison.
+  FORBIDDEN: social proof — what travellers, guests, families or children usually feel, say,
+  love or remember ("tends to stay with", "most families find", "popular with").
+  FORBIDDEN: places from the "Other trips" lines or the TRIP name that the SCOPE line does not
+  list; and never mention the content seed, source notes or itinerary as such.
   LOCATION: name only the location the seed gives (its "Location" line); never place it in
   another town, region or country. When the seed has a "Naming" line, follow it.
   PLACE BACKGROUND: when the seed lists "Place background" facts, take background about that

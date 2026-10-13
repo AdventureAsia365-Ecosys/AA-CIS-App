@@ -10,11 +10,19 @@ claims), attempt 2 instead rewrites ONLY those sentences: the writer returns one
 sentence and the code splices them in. Everything else stays byte-identical, so no new claim can
 appear. Any other failure (CTA, SEO, structure, banned words…) — or a sentence that cannot be
 located — falls back to the full rewrite, unchanged.
+
+S234 — `splice` refuses a replacement that restates one of its ±4 neighbouring sentences (it
+deletes the sentence instead): the S233 G7 repeats (#2/#9/#14) were repairs that re-stated the
+sentence two places earlier. F12_scope / F13_hygiene / F15_voice violations quote their sentence
+the same way F2/F11 do, so they can be repaired here once they block. `expand_to_sentence` and
+`tidy_after_cut` (hygiene.py) are re-exported for the AA-769 admin sentence actions.
 """
 from __future__ import annotations
 
 import re
 from typing import Optional
+
+from services.acp_content_writing.hygiene import expand_to_sentence, restates, sentence_spans, tidy_after_cut
 
 _TAG = r"\[(?:R|F):[^\]]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
@@ -24,7 +32,13 @@ _SENTENCE_TAIL_RE = re.compile(rf"[^.!?\n]*[.!?]+[\"'”’)]*(?:\s?{_TAG})*")
 _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
-_ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name"}
+_ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
+                   "F12_scope", "F13_hygiene", "F15_voice"}
+# Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
+_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F15_voice"}
+# A scope violation in the SEO title or meta is fixed by the SEO fit, not here.
+_SEO_FIELD_PREFIXES = ("title ", "meta ")
+NEIGHBOUR_WINDOW = 4
 
 
 def _clean_quote(q: str) -> str:
@@ -67,7 +81,9 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     items: list[tuple[str, str]] = []
     for g in failed:
         for v in g["violations"]:
-            if g["gate"] in ("F2_brand_forbidden", "F11_brand_name"):
+            if g["gate"] in _QUOTED_GATES:
+                if v.startswith(_SEO_FIELD_PREFIXES):
+                    continue
                 m = _BRAND_QUOTE_RE.search(v)
                 if not m:
                     return None
@@ -97,15 +113,31 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     return out or None
 
 
-def splice(content_text: str, items: list[dict], replacements: list[str]) -> str:
+def repeats_neighbour(text: str, start: int, end: int, replacement: str,
+                      ignore: frozenset = frozenset()) -> bool:
+    """Does `replacement` (for the sentence at [start, end)) restate one of the
+    NEIGHBOUR_WINDOW sentences before or after it?"""
+    spans = [s for s in sentence_spans(text) if s["kind"] not in ("heading", "hashtags", "faq_q")]
+    before = [s for s in spans if s["end"] <= start][-NEIGHBOUR_WINDOW:]
+    after = [s for s in spans if s["start"] >= end][:NEIGHBOUR_WINDOW]
+    return any(restates(replacement, s["clean"], ignore) for s in before + after)
+
+
+def splice(content_text: str, items: list[dict], replacements: list[str], *,
+           ignore: frozenset = frozenset()) -> str:
     """Put each replacement in place of its sentence (last first, so offsets stay valid). The
     original sentence's trailing citation tags are kept after a non-empty replacement; an empty
-    replacement deletes the sentence."""
+    replacement deletes the sentence. S234 guard: a replacement that restates a neighbouring
+    sentence is turned into a delete (the item gets `"guard": "repeat"`). `ignore`: words the
+    repeat test skips (the brand name)."""
     text = content_text
     for item, new in sorted(zip(items, replacements), key=lambda p: p[0]["start"], reverse=True):
         original = text[item["start"]:item["end"]]
         tags = _TRAILING_TAGS_RE.search(original)
         new = (new or "").strip()
+        if new and repeats_neighbour(text, item["start"], item["end"], new, ignore):
+            item["guard"] = "repeat"
+            new = ""
         if new:
             new = new + (tags.group(0).rstrip() if tags else "")
             text = text[:item["start"]] + new + text[item["end"]:]
@@ -115,4 +147,14 @@ def splice(content_text: str, items: list[dict], replacements: list[str]) -> str
     return text
 
 
-__all__ = ["locate_sentence", "plan", "splice"]
+def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
+    """The `n` sentences before and after a repair item (tag-stripped) — context for the repair
+    call, so it can be told not to restate them."""
+    spans = [s for s in sentence_spans(content_text) if s["kind"] not in ("heading", "hashtags")]
+    before = [s["clean"] for s in spans if s["end"] <= item["start"]][-n:]
+    after = [s["clean"] for s in spans if s["start"] >= item["end"]][:n]
+    return before + after
+
+
+__all__ = ["expand_to_sentence", "locate_sentence", "neighbours", "plan", "repeats_neighbour", "splice",
+           "tidy_after_cut"]

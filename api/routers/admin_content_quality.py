@@ -166,6 +166,17 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
+            elif gate in ("F12_scope", "F13_hygiene"):
+                # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text.
+                m = _BRAND_RE.search(v)
+                if m and not v.startswith(("title ", "meta ")):
+                    quote = m.group(2)
+                    if sentence_repair.locate_sentence(text, quote) is None and quote in text:
+                        i = text.find(quote)  # a short quote (a hashtag) is highlighted as a phrase
+                        out.append({"start": i, "end": i + len(quote), "gate": gate, "blocking": blocking,
+                                    "problem": m.group(1)[:300]})
+                    else:
+                        spans.append((quote, m.group(1)))
             elif gate == "F9_cta_fact" and "unsupported claim(s):" in v:
                 for sent, claim, why in sentence_repair._F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1]):
                     spans.append((sent, f"{claim.strip()} — {why.strip()}"))

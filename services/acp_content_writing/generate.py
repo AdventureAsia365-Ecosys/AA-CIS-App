@@ -270,35 +270,46 @@ def rewrite_with_feedback(
 _REPAIR_SYSTEM = """You fix single sentences inside a finished piece of travel content.
 For each numbered sentence you get the problem a checker found. Return a replacement that keeps
 the sentence's role, tone and flow in the piece but removes the problem — the unsupported claim
-or number, the word the brand forbids, or the wrong brand name (use the BRAND named in the SOURCE,
-or drop the self-reference). Use only what the SOURCE states, or widely known background about a
-place it names. Never add a new claim, number, place, scene detail or promise. If nothing true is
-left to say, return "" to delete the sentence. Return ONLY JSON: {"replacements": ["...", "..."]}
-— one string per numbered sentence, in the same order."""
+or number, the word the brand forbids, the wrong brand name (use the BRAND named in the SOURCE,
+or drop the self-reference), or the place outside the piece's scope. Use only what the SOURCE
+states, or widely known background about a place it names. Never add a new claim, number, place,
+scene detail, promise, or social proof (what travellers, guests or families feel, say or
+remember). The replacement must not restate any CONTEXT sentence around it; if the sentence only
+restated one of them, return "". If nothing true is left to say, return "" to delete the
+sentence. Never mention the source, the notes or the seed. Return ONLY JSON:
+{"replacements": ["...", "..."]} — one string per numbered sentence, in the same order."""
 
 
 def repair_sentences(
     *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
     channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
+    stage: str = "t9_write", mode: str = "sentence_repair", content_piece_id: str | None = None,
 ) -> tuple[list[str], float]:
     """AA-768 — attempt-2 sentence-level repair (see sentence_repair.py). `sentences` items carry
-    "sentence" and "problem". Returns (replacements in the same order, cost). Raises
-    SentenceRepairError when the reply cannot be parsed into exactly one string per sentence —
-    the caller then falls back to the full rewrite."""
+    "sentence" and "problem", and optionally "context" (the neighbouring sentences, S234). Returns
+    (replacements in the same order, cost). Raises SentenceRepairError when the reply cannot be
+    parsed into exactly one string per sentence — the caller then falls back to the full rewrite.
+
+    S234 (C2): `stage` / `mode` / `content_piece_id` let the AA-769 admin sentence actions reuse
+    this call on the `t9_repair` (Haiku) route; the pipeline keeps `t9_write` until the Haiku A/B
+    (PR6) flips this default."""
     source = content_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
     numbered = "\n".join(
-        f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}" for i, it in enumerate(sentences, 1)
+        f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}"
+        + (f"\n   CONTEXT: {' | '.join(it['context'])}" if it.get("context") else "")
+        for i, it in enumerate(sentences, 1)
     )
     request = LLMRequest(system_prompt=_REPAIR_SYSTEM,
                          user_prompt=f"SOURCE:\n{source}\n\nSENTENCES TO FIX:\n{numbered}",
-                         stage="t9_write", max_tokens=_MAX_TOKENS)
+                         stage=stage, max_tokens=_MAX_TOKENS)
     resp = LLMClient().generate(request)
     record_call_sync(
-        stage="t9_write", role="writer", model=resp.model_used,
+        stage=stage, role="writer", model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
-        quality_signal={"channel": channel, "attempt": 2, "mode": "sentence_repair",
-                        "sentences": len(sentences)},
+        content_piece_id=content_piece_id,
+        quality_signal={"channel": channel, "attempt": 2, "mode": mode,
+                        "sentences": len(sentences), "source_chars": len(source)},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
@@ -327,20 +338,31 @@ Rules:
   ONE complete sentence of about 20 words ending in '.', uses every
   content word of the target keyword in natural English, says what the reader gets from the post.
 - Use only places and facts that appear in the post. No new claims, numbers or promises.
+- Never use a word from the NEVER USE list, even if the keyword or the current title has it.
 Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}"""
+
+# S234 (C12) — the SEO fit is a short rewrite whose lengths are checked in code and whose failure
+# keeps the writer's value, so it runs on the cheap repair route (Haiku, Sonnet fallback):
+# about $0.008 → $0.003 per call. The stage row comes from migration 221; SAFE_DEFAULTS mirrors it.
+SEO_FIT_STAGE = "t9_repair"
 
 
 def fit_seo_fields(
     *, body: str, seo_title: str | None, meta_description: str | None, keyword: str | None,
     brand_name: str | None = None, tenant_id: str | None = None,
-    angle_gate_request_id: str | None = None,
+    angle_gate_request_id: str | None = None, forbidden_words: list[str] | None = None,
 ) -> tuple[dict, float]:
     """AA-768 (S233) — regenerate an out-of-band blog SEO title/meta with one short call instead
     of cutting the string (PR #670 cut "Bhutan's Craft Bazaar: Thimphu's Weekend Market…" at the
     colon → a 21-char stub on 6/20 blogs). Returns ({"seo_title", "meta_description"} — a key is
     None when the reply did not give a usable string) and the cost. The caller validates the
-    lengths and keeps the writer's own value when the new one is not inside the band."""
+    lengths and keeps the writer's own value when the new one is not inside the band.
+
+    `forbidden_words` (S234): places outside the piece's scope that the current title/meta name
+    ('Gobi' on a Khövsgöl route) — the caller rejects a fitted value that still has one."""
     parts = [f"TARGET SEO KEYWORD: {keyword}" if keyword else "No target keyword — write naturally."]
+    if forbidden_words:
+        parts.append(f"NEVER USE (outside this post's scope): {', '.join(forbidden_words)}")
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
     tl, ml = len(seo_title or ""), len(meta_description or "")
@@ -349,10 +371,10 @@ def fit_seo_fields(
                  f"{meta_description or '(none)'}")
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
-                         stage="t9_write", max_tokens=_MAX_TOKENS)
+                         stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
     resp = LLMClient().generate(request)
     record_call_sync(
-        stage="t9_write", role="writer", model=resp.model_used,
+        stage=SEO_FIT_STAGE, role="writer", model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
         quality_signal={"channel": "blog", "mode": "seo_fit"},
@@ -374,6 +396,7 @@ def fit_seo_fields(
     return out, resp.cost_usd
 
 
-__all__ = ["SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError", "write_content",
+__all__ = ["SEO_FIT_STAGE", "SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError",
+           "write_content",
            "rewrite_with_feedback",
            "repair_sentences"]
