@@ -14,7 +14,7 @@
 // API: /admin/content-quality/* via the BFF.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
@@ -56,6 +56,8 @@ function readView(): View {
     piece: p.get("piece"), version: p.get("version"),
   };
 }
+
+const noopSubscribe = () => () => {};
 
 function writeView(v: View) {
   if (typeof window === "undefined") return;
@@ -256,15 +258,16 @@ function StatsTab({ gates, tenants, loading }: { gates: GateStat[]; tenants: Ten
 }
 
 // ── Place cards ─────────────────────────────────────────────────────────────────────────────────
-// S234 (AA-772) — one duplicate cluster: pick the card to keep (default: most atoms), untick any
-// card that is really a different place ("Punakha" vs "Punakha Dzong"), then merge.
+// S234 (AA-772) — one duplicate cluster: pick the card to keep (default: most atoms), then tick
+// only the cards that are the SAME place. Nothing starts ticked: candidates include different places
+// ("Punakha" vs "Punakha Dzong", "Paro" vs "Paro Taktsang"), so a merge is always a deliberate choice.
 function DuplicateClusterRow({ cluster, onMerge, busy }: {
   cluster: DuplicateCluster; busy: boolean;
   onMerge: (keepId: string, fromIds: string[], names: string) => void;
 }) {
   const byAtoms = [...cluster.cards].sort((a, b) => b.atoms - a.atoms || b.facts - a.facts);
   const [keep, setKeep] = useState(byAtoms[0].card_id);
-  const [merge, setMerge] = useState<Set<string>>(() => new Set(cluster.cards.map((c) => c.card_id)));
+  const [merge, setMerge] = useState<Set<string>>(() => new Set());
   const fromIds = cluster.cards.filter((c) => c.card_id !== keep && merge.has(c.card_id)).map((c) => c.card_id);
   const toggle = (id: string) => setMerge((m) => { const n = new Set(m); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const keepName = cluster.cards.find((c) => c.card_id === keep)?.display_name ?? "";
@@ -420,8 +423,13 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
 }
 
 function Page() {
-  const [view, setView] = useState<View>(readView);
-  const update = (patch: Partial<View>) => setView((v) => { const n = { ...v, ...patch }; writeView(n); return n; });
+  // The server renders EMPTY; the URL is read only once hydrated (server snapshot false). Reading
+  // window.location in the first render made deep links (?piece=, ?tab=) a hydration mismatch
+  // (React #418) and the root re-render reset the dark theme.
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const [edited, setEdited] = useState<View | null>(null);
+  const view = edited ?? (hydrated ? readView() : EMPTY);
+  const update = (patch: Partial<View>) => { const n = { ...view, ...patch }; writeView(n); setEdited(n); };
   const stats = useQuery({
     queryKey: ["cq-stats"],
     queryFn: () => apiGet<{ gates: GateStat[]; tenants: TenantStat[] }>(`/api/admin/content-quality/stats?days=30`, { admin: true }),
