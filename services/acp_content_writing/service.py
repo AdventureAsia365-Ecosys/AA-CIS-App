@@ -890,6 +890,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # AA-770 (S233) — a held piece now reaches the tenant too, so it is indexed like an
             # approved one (F10 / within-tenant reuse must see it).
             content_embedding=embedding,
+            writer_input=writer_input_snapshot(context),
         )
         logger.info(
             "t9_write_and_check_done", request_id=str(request_id), status=status,
@@ -916,6 +917,24 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
 
 
+def writer_input_snapshot(context: dict) -> dict:
+    """AA-769 — what the T9 writer was given, stored on the piece for the admin Content Quality
+    page (never in a tenant projection). Admin-facing, so the brand pack is stored whole."""
+    chosen = context.get("chosen") or {}
+    goal = context.get("goal") or {}
+    return {
+        "seed": context.get("atom_text"),
+        "route_moments": [{"atom_id": a, "seed": t} for a, t in (context.get("route_segments") or [])],
+        "facts": context.get("facts_text") or "",
+        "scope": context.get("scope"),
+        "brand_pack": context.get("brand_audience") or {},
+        "brand_rubric": context.get("brand_rubric_text"),
+        "angle": {k: chosen.get(k) for k in ("name", "why_it_works", "formula_fit", "best_final_style")},
+        "goal": goal.get("key"), "channel": context.get("channel"), "keyword": context.get("keyword"),
+        "cta": context.get("cta"), "trip": context.get("trip_name"), "destination": context.get("destination"),
+    }
+
+
 async def _finalize_piece(
     pool, *, piece_id: UUID, attempt_number: int, content_text: str,
     status: str, held_reason: Optional[str], gate_ledger: list[dict], repair_log: list[dict],
@@ -924,6 +943,7 @@ async def _finalize_piece(
     slug: Optional[str] = None, content_summary: Optional[str] = None,
     content_embedding: Optional[list[float]] = None,
     discarded_attempts: Optional[list[dict]] = None,
+    writer_input: Optional[dict] = None,
 ) -> dict:
     # AA-514 — seo_title/meta_description/slug default None (the exception handler's own
     # "failed" finalize call above never has a real seo_meta to pass, and every non-blog piece
@@ -952,7 +972,8 @@ async def _finalize_piece(
                 gate_ledger = $6::jsonb, repair_log = $7::jsonb,
                 seo_title = $8, meta_description = $9, slug = $10, flags = $11::jsonb,
                 content_summary = $12, content_embedding = $13::vector,
-                discarded_attempts = $14::jsonb
+                discarded_attempts = $14::jsonb,
+                writer_input = COALESCE($15::jsonb, writer_input)  -- AA-769 (migration 220)
             WHERE piece_id = $1
             RETURNING piece_id, tenant_id, angle_gate_request_id, attempt_number, content_text,
                       status, held_reason, gate_ledger, repair_log, created_at,
@@ -962,6 +983,7 @@ async def _finalize_piece(
             piece_id, attempt_number, content_text, status, held_reason,
             json.dumps(gate_ledger), json.dumps(repair_log), seo_title, meta_description, slug,
             json.dumps(flags), content_summary, embedding_literal, json.dumps(discarded_attempts),
+            json.dumps(writer_input, default=str) if writer_input else None,
         )
 
         # AA-559 — semantic tenant-activity log: the REAL "content finished writing" event

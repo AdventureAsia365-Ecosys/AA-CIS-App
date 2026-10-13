@@ -48,6 +48,7 @@ from api.routers.admin_decisions import router as admin_decisions_router  # AA-6
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
+from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
@@ -214,6 +215,7 @@ app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev p
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(admin_waves_router)  # AA-727 — /admin/waves (expected set, report, check)
+app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-quality (T2/T9 quality, place cards)
 app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (public image redirect)
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 

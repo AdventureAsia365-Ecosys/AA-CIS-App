@@ -254,7 +254,7 @@ class TestFinalizePiecePersistsEmbeddingAsPgvectorLiteral:
         query, *params = conn.fetchrow.call_args[0]
         assert "content_embedding = $13::vector" in query
         # AA-570 — discarded_attempts ($14) is now the true last param; embedding stays $13/[-2].
-        assert params[-2] == "[0.1,0.2]"
+        assert params[12] == "[0.1,0.2]"  # $13 (AA-769 added $15 writer_input after it)
 
     async def test_finalize_piece_none_embedding_stays_none(self):
         conn = AsyncMock()
@@ -271,7 +271,7 @@ class TestFinalizePiecePersistsEmbeddingAsPgvectorLiteral:
         )
         params = conn.fetchrow.call_args[0]
         # AA-570 — discarded_attempts ($14) is now the true last param; embedding stays $13/[-2].
-        assert params[-2] is None
+        assert params[13] is None  # $13 (args[0] is the query here)
 
 
 @pytest.mark.asyncio
