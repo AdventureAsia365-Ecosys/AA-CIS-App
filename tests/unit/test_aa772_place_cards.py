@@ -163,11 +163,15 @@ def test_resolve_facts_rereads_seed_and_never_builds_cards():
 
 
 def test_resolve_facts_rereads_every_route_moment():
+    """The route re-read goes through atom_seed.route_moment_seeds (AA-768 C10 merge); a moment
+    whose seed cannot be read keeps its stored text."""
     conn = AsyncMock()
     ctx = {"facts_pending": True, "tenant_id": "00000000-0000-0000-0000-0000000000aa", "atom_id": "a1",
            "route_segments": [("a1", "m1"), ("a2", "m2")], "atom_text": "m1\n\nm2", "destination": "Laos"}
-    with patch.object(service, "atom_seed_text", new=AsyncMock(side_effect=["card m1", None])), \
+    with patch.object(service, "route_moment_seeds",
+                      new=AsyncMock(return_value=[("a1", "card m1"), ("a2", "m2")])) as rms, \
             patch.object(service, "fetch_facts_for_writing", new=AsyncMock(return_value=[])):
         asyncio.run(service.resolve_facts("r", ctx, _pool(conn)))
+    assert rms.await_args.args[1] == [("a1", "m1"), ("a2", "m2")]
     assert ctx["route_segments"] == [("a1", "card m1"), ("a2", "m2")]
     assert ctx["atom_text"] == "card m1\n\nm2"

@@ -89,6 +89,19 @@ def test_merge_keys_card_and_core_name():
     assert merge_keys({"card": None}) == [] and merge_keys({"card": {"display_name": "Lake"}}) == []
 
 
+def test_merge_keys_follow_the_place_card_identity_rule():
+    """C10 uses AA-772's place_key: a dzong is not its town, and a generic name needs a locality."""
+    town = merge_keys({"card": {"display_name": "Punakha", "country": "Bhutan"}})
+    dzong = merge_keys({"card": {"display_name": "Punakha Dzong", "country": "Bhutan"}})
+    assert town and dzong and set(town).isdisjoint(dzong)
+    assert merge_keys({"card": {"display_name": "City Palace", "country": "India"}}) == []
+    jaipur = merge_keys({"card": {"display_name": "City Palace", "locality": "Jaipur", "country": "India"}})
+    udaipur = merge_keys({"card": {"display_name": "City Palace", "locality": "Udaipur", "country": "India"}})
+    assert jaipur and udaipur and set(jaipur).isdisjoint(udaipur)
+    assert jaipur == merge_keys({"card": {"display_name": "the City Palace", "locality": "Jaipur",
+                                          "country": "India"}})
+
+
 def _kh(atom_id, card_id, name, pct):
     return {"atom_id": atom_id, "country": "Mongolia",
             "card": {"card_id": card_id, "display_name": name, "country": "Mongolia",
@@ -174,15 +187,29 @@ async def test_route_walk_keeps_everything_when_all_excluded():
 
 @pytest.mark.asyncio
 async def test_resolve_facts_rereads_merged_route_seeds_from_every_atom():
+    """T9 never drafts a card (plan C8, AA-772); it re-merges the route seeds from every kept
+    moment, so a card built since start_write reaches the merged block."""
     ctx = {"facts_pending": True, "tenant_id": str(uuid.uuid4()), "route_segments": [["a1", "old"]],
            "route_atoms": [["a1", "L1"], ["a2", "L2"]], "atom_text": "old", "destination": None}
-    with patch.object(service, "ensure_place_cards", new=AsyncMock(return_value=1)) as ens, \
-         patch.object(service, "route_moment_seeds", new=AsyncMock(return_value=[("a1", "merged")])) as rms, \
+    with patch.object(service, "route_moment_seeds", new=AsyncMock(return_value=[("a1", "merged")])) as rms, \
          patch.object(service, "fetch_facts_for_writing", new=AsyncMock(return_value=[])):
         await service.resolve_facts(uuid.uuid4(), ctx, _pool(AsyncMock()))
-    assert ens.call_args.args[0] == ["a1", "a2"]
     assert rms.call_args.args[1] == [("a1", "L1"), ("a2", "L2")]
     assert ctx["route_segments"] == [("a1", "merged")] and ctx["atom_text"] == "merged"
+    assert not hasattr(service, "ensure_place_cards")
+
+
+@pytest.mark.asyncio
+async def test_resolve_facts_without_route_atoms_rereads_from_the_segments():
+    """A context built before S234 has no route_atoms: the stored segments are the input, and an
+    empty re-read keeps them."""
+    ctx = {"facts_pending": True, "tenant_id": str(uuid.uuid4()), "route_segments": [("a1", "s1"), ("a2", "s2")],
+           "atom_text": "s1\n\ns2", "destination": None}
+    with patch.object(service, "route_moment_seeds", new=AsyncMock(return_value=[])) as rms, \
+         patch.object(service, "fetch_facts_for_writing", new=AsyncMock(return_value=[])):
+        await service.resolve_facts(uuid.uuid4(), ctx, _pool(AsyncMock()))
+    assert rms.call_args.args[1] == [("a1", "s1"), ("a2", "s2")]
+    assert ctx["route_segments"] == [("a1", "s1"), ("a2", "s2")] and ctx["atom_text"] == "s1\n\ns2"
 
 
 # ---------------------------------------------------------------- repair source / grounding

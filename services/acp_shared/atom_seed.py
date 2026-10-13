@@ -26,6 +26,8 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
+from services.acp_shared.place_cards import core_key, is_generic_name, place_key
+from services.acp_shared.place_cards import fold as place_fold
 
 MAX_SIBLINGS = 2
 MAX_EVIDENCE_CHARS = 500
@@ -207,18 +209,21 @@ def thin_note(fact_count: int) -> str:
 
 
 def merge_keys(parts: dict) -> list[str]:
-    """C10 — the keys a route moment merges on: its place card id, and its card's core name (the
-    folded display-name tokens minus generic words, as a sorted set) + country. Two moments merge
-    when ANY key matches, so 'Lake Khövsgöl' and 'Khövsgöl Lake' on two different cards (S233: 5
-    Khövsgöl cards for one lake) become one block before PR1's card merge lands, while 'Sod Camp,
-    Khövsgöl Lake area' ({area, khovsgol, sod}) stays its own. A moment with no card never merges."""
+    """C10 — the keys a route moment merges on: its place card id, and its card's identity key
+    from AA-772 (`place_cards.place_key`: core name + country, with neutral kind words cut at the
+    edges, so 'Lake Khövsgöl' == 'Khövsgöl Lake' == 'Khövsgöl Nuur'). Two moments merge when ANY
+    key matches, so the 5 S233 Khövsgöl cards become one block before the card merge/backfill
+    lands, while 'Sod Camp, Khövsgöl Lake area' stays its own and 'Punakha' != 'Punakha Dzong'.
+    A generic name ('City Palace') keys on its locality too and, with no locality, never merges
+    by name. A moment with no card never merges."""
     card = parts.get("card") or {}
     keys: list[str] = []
     if card.get("card_id"):
         keys.append(f"card:{card['card_id']}")
-    core = sorted(set(phrase_tokens(card.get("display_name") or "")))
-    if core:
-        keys.append(f"name:{' '.join(core)}|{fold(card.get('country') or parts.get('country'))}")
+    name = card.get("display_name") or ""
+    if core_key(name) and not (is_generic_name(name) and not place_fold(card.get("locality"))):
+        keys.append("name:" + place_key(name, card.get("country") or parts.get("country") or "",
+                                        card.get("locality")))
     return keys
 
 
