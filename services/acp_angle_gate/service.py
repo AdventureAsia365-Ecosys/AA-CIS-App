@@ -217,11 +217,6 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
                 """,
                 request_id, goal_key, dfs_paa_snapshot,
             )
-            # AA-769 (S234) — upsert: an admin "regenerate angles" (admin_content_quality.py)
-            # re-runs this on a request that already has its 3 rows. They are overwritten in
-            # place, not deleted: content_piece.angle_gate_option_id points at them (each piece's
-            # writer_input keeps the angle it was actually written from). A first generation has
-            # no rows, so the conflict branch never fires on the tenant path.
             for i, a in enumerate(angles):
                 evidence = ranking_evidence[i] if ranking_evidence else None
                 await conn.execute(
@@ -230,11 +225,6 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
                         (request_id, idx, name, why_it_works, formula_fit, best_final_style,
                          recommended, answers, violations)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)
-                    ON CONFLICT (request_id, idx) DO UPDATE SET
-                        name = EXCLUDED.name, why_it_works = EXCLUDED.why_it_works,
-                        formula_fit = EXCLUDED.formula_fit, best_final_style = EXCLUDED.best_final_style,
-                        recommended = EXCLUDED.recommended, chosen = false,
-                        answers = EXCLUDED.answers, violations = EXCLUDED.violations
                     """,
                     request_id, i, a["name"], a["why_it_works"], a["formula_fit"],
                     a["best_final_style"], i == recommended_index,

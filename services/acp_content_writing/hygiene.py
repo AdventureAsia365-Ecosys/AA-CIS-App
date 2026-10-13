@@ -306,26 +306,33 @@ _HEADING_RE = re.compile(r"#{1,6}\s")
 _SENT_END_RE = re.compile(rf"[.!?…]+[\"'”’)*]*(?:\s?{_TAG})*(?=\s+\S|\s*$)")
 
 # Sentence boundaries (AA-769 review, S234) — the ONE rule sentence_spans, expand_to_sentence and
-# sentence_repair.locate_sentence share: a mark is an end only when whitespace, a citation tag or
-# the end of the text follows it (never "12.5 km", "U.S."), and a period after a known
-# abbreviation ("Mt. Fuji", "St. Petersburg", "No. 5") is not one either.
-_SENTENCE_END_CHARS = ".!?"
-_CLOSERS = "\"'”’)"
-# The end mark (run), its closing quotes / brackets, and the citation tags that follow it.
-_SENTENCE_TRAILER_RE = re.compile(rf"[.!?]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
+# sentence_repair.locate_sentence share: a mark ('.', '!', '?', '…') is an end only when whitespace,
+# a citation tag or the end of the text follows it and its closers (quotes, ')' and markdown
+# '*' — "**Day one.** We drive"), never "12.5 km" / "U.S."; a period after a known abbreviation
+# ("Mt. Fuji", "St. Petersburg", "No. 5", "ft. above") is not one either.
+_SENTENCE_END_CHARS = ".!?…"
+_CLOSERS = "\"'”’)*"
+# The end mark (run), its closers, and the citation tags that follow it.
+_SENTENCE_TRAILER_RE = re.compile(
+    rf"[{re.escape(_SENTENCE_END_CHARS)}]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
 _TAG_AT_RE = re.compile(_TAG)
-_ABBREVIATIONS = frozenset({"mt", "st", "ft", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "vs",
+_ABBREVIATIONS = frozenset({"mt", "st", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "vs",
                             "approx", "ca", "e.g", "i.e"})
 # "No." is an abbreviation only before a number ("No. 5"); "Is it hard? No." ends a sentence.
 _NUMBER_ABBREVIATIONS = frozenset({"no"})
-_WORD_BEFORE_DOT_RE = re.compile(r"[A-Za-z.]+$")
+# Units: an abbreviation only when the sentence runs on in lower case or a digit ("4,000 ft. above
+# the valley"); "The pass sits at 4,000 ft. The trail is steep." ends at "ft.".
+_UNIT_ABBREVIATIONS = frozenset({"ft", "km", "mi", "hr", "hrs", "min", "mins"})
+# The word right before the dot — a whole word: "1st." / "21st." / "4ft." are not "st" / "ft".
+_WORD_BEFORE_DOT_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z.]+$")
+_NEXT_RUNS_ON_RE = re.compile(r"\s*[a-z0-9]")
 _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
 _NEXT_IS_NUMBER_RE = re.compile(r"\s*\d")
 
 
 def is_sentence_end(text: str, i: int) -> bool:
-    """True when text[i] ('.', '!' or '?') really ends a sentence: the mark run and its closing
-    quotes must be followed by whitespace, a citation tag or the end of the text — so a decimal
+    """True when text[i] ('.', '!', '?' or '…') really ends a sentence: the mark run and its closers
+    must be followed by whitespace, a citation tag or the end of the text — so a decimal
     ("12.5 km", "1.5 hours") or a dotted name ("U.S.", "e.g.") never is — and a period after a
     known abbreviation ("Mt. Fuji", "St. Petersburg", "No. 5") is not either."""
     if i < 0 or i >= len(text) or text[i] not in _SENTENCE_END_CHARS:
@@ -343,6 +350,8 @@ def is_sentence_end(text: str, i: int) -> bool:
         if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word.group(0))):
             return False
         if w in _NUMBER_ABBREVIATIONS and _NEXT_IS_NUMBER_RE.match(text, i + 1):
+            return False
+        if w in _UNIT_ABBREVIATIONS and _NEXT_RUNS_ON_RE.match(text, i + 1):
             return False
     return True
 
@@ -397,7 +406,7 @@ def sentence_spans(text: str) -> list[dict]:
         cur = line_start + lead
         line_end = line_start + len(line.rstrip())
         for m in _SENT_END_RE.finditer(line, lead):
-            if line[m.start()] != "…" and not is_sentence_end(line, m.start()):
+            if not is_sentence_end(line, m.start()):
                 continue  # "Mt. Fuji", "No. 5": not a sentence end
             end = line_start + m.end()
             if end > cur:
@@ -421,6 +430,9 @@ _TRAILING_JUNK_RE = re.compile(rf"(?:\s|[{re.escape(_CLOSERS)}]|{_TAG})*$")
 # bullet's "- " / "* " (sentence_spans starts those sentences after it the same way).
 _LINE_MARKER_RE = re.compile(r"(?:A:|[-*])[ \t]+")
 _HASHTAG_TOKEN_RE = re.compile(r"#[A-Za-z][A-Za-z0-9]*")
+# A FAQ question line "**Q: …?**": group 2 is the question text, which a rewrite replaces (the
+# markup stays, like an answer's "A: ").
+_FAQ_Q_LINE_RE = re.compile(r"([ \t]*\*\*Q:[ \t]*)(.*?\S)([ \t]*\*\*[ \t]*)")
 
 
 def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
@@ -430,10 +442,14 @@ def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
     "Mt.") or the line start — skipping a FAQ "A: " / bullet "- " marker there — and forward to
     the sentence end plus its closing quotes and trailing citation tags. Never crosses a newline:
     a list item with no end mark stops at its line end. On a hashtag-only line (F13 misspelt
-    hashtag) the span is the hashtag token(s) themselves, never the whole line."""
+    hashtag) the span is the hashtag token(s) themselves, never the whole line; on a FAQ question
+    line it is the question text inside "**Q: " … "**", never the markup."""
     ls = text.rfind("\n", 0, start) + 1
     le = text.find("\n", start)
     le = len(text) if le < 0 else le
+    q = _FAQ_Q_LINE_RE.fullmatch(text, ls, le)
+    if q:  # a FAQ question: the question text inside its "**Q: " … "**" markup
+        return q.start(2), q.end(2)
     if _HASHTAG_LINE_RE.fullmatch(text[ls:le].strip()):
         toks = [m.span() for m in _HASHTAG_TOKEN_RE.finditer(text, ls, le)
                 if m.start() < max(end, start + 1) and m.end() > start]
@@ -443,8 +459,12 @@ def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
         k = s - 1
         if text[k] in _SENTENCE_END_CHARS and is_sentence_end(text, k):
             break
-        if text[k] in _CLOSERS and k >= 1 and text[k - 1] in _SENTENCE_END_CHARS and is_sentence_end(text, k - 1):
-            break
+        if text[k] in _CLOSERS:
+            j = k  # back over the closer run ("?**", ".”)") to its end mark
+            while j > ls and text[j] in _CLOSERS:
+                j -= 1
+            if text[j] in _SENTENCE_END_CHARS and is_sentence_end(text, j):
+                break
         s -= 1
     if s == ls:
         lead = len(text[ls:start]) - len(text[ls:start].lstrip(" \t"))

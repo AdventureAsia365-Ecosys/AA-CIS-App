@@ -46,7 +46,8 @@ export interface AdminEdit {
   details: { before?: string; after?: string; mode?: string; gate?: string | null; published?: boolean };
 }
 
-export interface CheckFailure { gate: string; violations: string[] }
+// blocking: Apply refuses it (F1/F2/brand-forbidden/F11/near-verbatim repeat); otherwise a warning (F12/F13).
+export interface CheckFailure { gate: string; violations: string[]; blocking: boolean }
 
 export interface SuggestResponse {
   start: number; end: number; sentence: string; replacement: string;

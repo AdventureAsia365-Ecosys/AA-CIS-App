@@ -14,7 +14,7 @@ import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useToast } from "../../_kit";
 import {
   fmtTime, gateLabel, usd,
-  type AdminEdit, type ApplyBody, type FlaggedSentence, type PieceDetail, type SuggestResponse,
+  type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
 } from "./shared";
 
 const EDITABLE = ["approved", "held"];
@@ -53,13 +53,17 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   });
 
   const apply = useMutation({
-    mutationFn: (body: ApplyBody) => apiSend<PieceDetail>(`${base}/apply`, { body, admin: true }),
-    onSuccess: (detail, body) => {
+    mutationFn: (body: ApplyBody) =>
+      apiSend<PieceDetail & { warnings?: CheckFailure[] }>(`${base}/apply`, { body, admin: true }),
+    onSuccess: ({ warnings, ...detail }, body) => {
       qc.setQueryData(["cq-piece", piece.piece_id], detail);
       qc.invalidateQueries({ queryKey: ["cq-pieces"] });
       setCutting(null);
       setEditor(null);
       toast.success(body.mode === "cut" ? "Sentence cut" : "Sentence replaced");
+      if (warnings && warnings.length > 0) {
+        toast.info(`Saved with warnings — ${warnings.map((w) => `${gateLabel(w.gate)}: ${w.violations.join(" | ")}`).join("; ")}`, 8000);
+      }
     },
     onError: onFail,
   });
@@ -178,12 +182,16 @@ function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onRegenera
       )}
       {sug && sug.checks.length > 0 && ed.draft.trim() === sug.replacement.trim() && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {sug.checks.map((c) => (
-            <div key={c.gate} style={{ fontSize: 12, color: A.ink }}>
-              <Badge tone="warning" dot={false}>{gateLabel(c.gate)}</Badge> {c.violations.join(" | ")}
+          {sug.checks.map((c, i) => (
+            <div key={`${c.gate}-${i}`} style={{ fontSize: 12, color: A.ink }}>
+              <Badge tone={c.blocking ? "danger" : "warning"} dot={false}>{gateLabel(c.gate)}</Badge> {c.violations.join(" | ")}
             </div>
           ))}
-          <div style={{ fontSize: 11.5, color: A.muted }}>This text would be refused on Apply — edit it first.</div>
+          <div style={{ fontSize: 11.5, color: A.muted }}>
+            {sug.checks.some((c) => c.blocking)
+              ? "This text would be refused on Apply — edit it first."
+              : "Warnings only — Apply still saves this text."}
+          </div>
         </div>
       )}
       {onRegenerate && (

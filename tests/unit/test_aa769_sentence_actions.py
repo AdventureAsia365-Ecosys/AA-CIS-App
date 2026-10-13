@@ -197,7 +197,7 @@ def _audits(conn):
 async def test_apply_cut_updates_text_and_writes_audit():
     conn = _conn(_piece_row())
     out = await _apply(conn, gate="F11_brand_name", problem="foreign brand")
-    assert out == {"piece_id": PIECE_ID}
+    assert out == {"piece_id": PIECE_ID, "warnings": []}
     assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
     [upd] = _updates(conn)
     assert upd.args[2] == "Opening line here. The monastery sits above Luang Prabang today. It is a hidden gem."
@@ -445,6 +445,26 @@ async def test_apply_saves_the_replacement_without_citation_tag_or_markdown():
 
 
 @pytest.mark.asyncio
+async def test_apply_saves_with_warnings_and_refuses_only_blocking_checks():
+    """S234 review: F12_scope / F13 hygiene on the admin's own text are warnings (saved, returned);
+    only F1/F2/brand-forbidden/F11/near-verbatim repeats are a 422."""
+    warn = [{"gate": "F12_scope", "violations": ["names 'Mongol', outside this piece's scope: 'x'"],
+             "blocking": False}]
+    conn = _conn(_piece_row())
+    with patch.object(sr, "check_replacement", return_value=warn):
+        out = await _apply(conn, mode="manual", replacement="Trail Pulse builds it.")
+    assert out["warnings"] == warn and len(_updates(conn)) == 1
+    assert json.loads(_audits(conn)[0].args[6])["warnings"] == warn
+    conn = _conn(_piece_row())
+    with patch.object(sr, "check_replacement", return_value=warn + [
+            {"gate": "F11_brand_name", "violations": ["foreign brand"], "blocking": True}]):
+        with pytest.raises(HTTPException) as e:
+            await _apply(conn, mode="manual", replacement="Trail Pulse builds it.")
+    assert e.value.status_code == 422 and "F11_brand_name" in e.value.detail and "F12" not in e.value.detail
+    assert not _updates(conn)
+
+
+@pytest.mark.asyncio
 async def test_apply_rejects_a_replacement_that_is_only_a_tag():
     conn = _conn(_piece_row())
     with pytest.raises(HTTPException) as e:
@@ -490,23 +510,38 @@ async def _regenerate(conn, role="admin"):
 
 
 @pytest.mark.asyncio
-async def test_regenerate_angles_resets_choice_enqueues_and_audits():
+async def test_regenerate_angles_clones_the_request_and_leaves_the_old_one_alone():
+    """S234 review: the old request's option rows are what its pieces join to (wizard resume, My
+    Content, the admin drawer) — regenerate must not touch them."""
     conn = _angle_request_conn()
     out, enq = await _regenerate(conn)
-    assert out == {"request_id": REQUEST_ID, "job_id": "job-1", "status": "pending_goal", "goal": "inspire"}
+    new_id = out["request_id"]
+    assert new_id != REQUEST_ID and uuid.UUID(new_id)
+    assert out == {"request_id": new_id, "regenerated_from": REQUEST_ID, "job_id": "job-1",
+                   "status": "pending_goal", "goal": "inspire"}
     assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
     args, kw = enq.await_args.args, enq.await_args.kwargs
     assert args[0] is conn and args[1] == "t8_angles"
-    assert args[2] == {"request_id": REQUEST_ID, "tenant_id": str(TENANT_ID), "goal": "inspire"}
+    assert args[2] == {"request_id": new_id, "tenant_id": str(TENANT_ID), "goal": "inspire",
+                       "regenerated_from": REQUEST_ID}
     assert kw["created_by"] == "admin:u1"
-    sqls = [c.args[0] for c in conn.execute.await_args_list]
-    assert any("SET chosen = false" in q for q in sqls)
-    assert any("status = 'pending_goal'" in q for q in sqls)
-    [audit] = [c for c in conn.execute.await_args_list if "INSERT INTO acp_shared.audit_log" in c.args[0]]
+    calls = conn.execute.await_args_list
+    sqls = [c.args[0] for c in calls]
+    # nothing on the old request or its option rows is updated or deleted
+    assert not any("UPDATE acp_shared.angle_gate" in q or "DELETE" in q for q in sqls)
+    [clone] = [c for c in calls if "INSERT INTO acp_shared.angle_gate_request" in c.args[0]]
+    assert clone.args[1:] == (REQUEST_ID, new_id)
+    for col in ("atom_id", "trip_id", "channel", "goal", "cta", "subject_id", "route_segment_ids"):
+        assert col in clone.args[0]
+    assert "'pending_goal'" in clone.args[0]
+    [audit] = [c for c in calls if "INSERT INTO acp_shared.audit_log" in c.args[0]]
     assert audit.args[3] == AdminAuditAction.ANGLES_REGENERATED and audit.args[4] == "angle_gate_request"
+    assert audit.args[5] == REQUEST_ID
     d = json.loads(audit.args[6])
-    assert d["job_id"] == "job-1" and d["previous_status"] == "approved"
+    assert d["job_id"] == "job-1" and d["previous_status"] == "approved" and d["new_request_id"] == new_id
     assert d["previous_angles"][0]["name"] == "Ruins at dawn"
+    # the busy check looks for a regenerate of THIS request still in flight
+    assert "regenerated_from" in conn.fetchval.await_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -533,11 +568,11 @@ async def test_regenerate_angles_404_and_admin_only():
     conn.fetchrow.assert_not_awaited()
 
 
-def test_set_goal_and_generate_upserts_the_option_rows():
+def test_set_goal_and_generate_never_overwrites_option_rows():
+    """Option rows are written once per request (regenerate clones the request instead)."""
     import inspect
     from services.acp_angle_gate import service as ag
-    src = inspect.getsource(ag.set_goal_and_generate)
-    assert "ON CONFLICT (request_id, idx) DO UPDATE" in src and "chosen = false" in src
+    assert "ON CONFLICT" not in inspect.getsource(ag.set_goal_and_generate)
 
 
 def test_bff_write_rule_covers_regenerate_angles():

@@ -10,8 +10,9 @@ actions on one piece:
                                          one flagged sentence; writes nothing to the piece.
   POST /pieces/{id}/sentences/apply   — deterministic: cut the sentence or put the (checked)
                                          replacement in its place, audit-logged with before/after.
-  POST /requests/{id}/regenerate-angles — re-enqueue the request's t8_angles job (same goal),
-                                         choice reset, audit-logged with the old angles.
+  POST /requests/{id}/regenerate-angles — clone the request (same goal, atom, subject, route) and
+                                         enqueue t8_angles for the clone; the old request and its
+                                         pieces' angles stay as they were. Audit-logged.
 All three require the `admin` staff role (x-admin-role, forwarded by the BFF from the verified JWT).
 Gate results (`gate_ledger`, `flags`) are left as the writer produced them: they measure the
 writer, not the admin's edit.
@@ -415,8 +416,9 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                          x_admin_role: Optional[str] = Header(None)):
     """Cut one sentence, or put a replacement in its place. Deterministic, no LLM. In one
     transaction: lock the piece, check the span text still matches (else its one occurrence, else
-    409), run the replacement through F1 / F2 / brand-forbidden / F11, and (S234) F12_scope /
-    F13_hygiene incl. a restated neighbour (422 with the violations),
+    409), run the replacement through F1 / F2 / brand-forbidden / F11 and a near-verbatim
+    neighbour (422 with the violations); F12_scope / F13_hygiene hits are returned as `warnings`
+    and saved anyway (S234 review: F12 is warn-only until its replay shows no false positive),
     splice + tidy, refuse a cut that empties the piece or drops it under the channel's minimum
     length, UPDATE content_text and write the audit row with before/after. Returns the refreshed
     piece detail. A published piece is edited here only — WordPress is not re-synced."""
@@ -449,6 +451,7 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                 raise HTTPException(status_code=409, detail=f"A {row['status']} piece cannot be edited")
             old_text = row["content_text"] or ""
             start, end = _resolve(old_text, body.start, body.end, body.text)
+            warnings: list[dict] = []
             wi = _j(row["writer_input"])
             wi = wi if isinstance(wi, dict) else {}
             # The admin's text (or the model's) gets the same tenant-facing clean-up the
@@ -462,8 +465,10 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                 # the piece is not new, so the piece minus this sentence stands in for the source.
                 grounding = (grounding_from_writer_input(wi) if wi
                              else old_text[:start] + " " + old_text[end:])
-                failed = sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"),
+                checks = sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"),
                                                            writer_input=wi, text=old_text, span=(start, end))
+                failed = [c for c in checks if c["blocking"]]
+                warnings = [c for c in checks if not c["blocking"]]
                 if failed:
                     detail = "; ".join(f"{f['gate']}: {' | '.join(f['violations'])}" for f in failed)
                     raise HTTPException(status_code=422, detail=f"The new sentence fails a check — {detail}")
@@ -485,9 +490,11 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                          "suggestion": body.suggestion, "suggestion_model": body.suggestion_model,
                          "suggestion_cost_usd": body.suggestion_cost_usd,
                          "length_before": len(old_text), "length_after": len(new_text),
-                         "published": bool(row["published"])},
+                         "published": bool(row["published"]), "warnings": warnings},
             )
-        return await _load_piece_detail(conn, piece_id)
+        piece = await _load_piece_detail(conn, piece_id)
+    # S234 review: F12_scope / F13 hygiene hits on the admin's text are warnings, not refusals.
+    return {**piece, "warnings": warnings}
 
 
 # ── S234: regenerate the 3 T8 angles of one request (admin only) ─────────────────────────────
@@ -500,16 +507,22 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                             x_admin_user_id: Optional[str] = Header(None),
                             x_admin_role: Optional[str] = Header(None)):
     """New angles for a request whose stored ones are bad (S234: both route-blog requests anchor
-    on the ruins), with the same goal: re-enqueue the existing `t8_angles` job — one Sonnet angle
-    call plus up to 4 Jev answer checks, about $0.02 per request, no new stage. In one
-    transaction: lock the request, refuse while a t8_angles job or a T9 write is in flight for it,
-    reset the choice (every option chosen=false, status back to 'pending_goal' with the goal kept —
-    the tenant flow's own "generating" state), enqueue, and audit the old angles. The job then
-    overwrites the 3 option rows in place (set_goal_and_generate upserts) and lands on
-    'pending_choice'; if it fails, its on_terminal hook clears the goal and the tenant picks a goal
-    again. Existing pieces keep their text; their writer_input records the angle they used."""
+    on the ruins), with the same goal — about $0.02 (one Sonnet angle call plus up to 4 Jev answer
+    checks), no new stage.
+
+    The old request is never touched (S234 review): its option rows are what its pieces'
+    `angle_gate_option_id` joins to (tenant wizard resume, My Content, the admin list/drawer), so
+    overwriting them would relabel every old piece with the new angle and make the wizard resume
+    onto an old piece. Instead, in one transaction: lock the old request, refuse while a
+    regenerate for it is still generating, insert a NEW request cloned from it (same tenant, atom,
+    trip, channel, CTA, subject, route_segment_ids and goal; status 'pending_goal' with the goal
+    set — the tenant flow's own "generating" state), enqueue `t8_angles` for the new request, and
+    audit both ids. The job lands the new request on 'pending_choice' with its own 3 option rows;
+    if it fails, its on_terminal hook clears the goal on the new request only."""
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
+    from uuid import uuid4
+
     from services.acp_angle_gate.service import T8_ANGLES_KIND
     from shared.jobs.registry import enqueue
     pool = request.app.state.pool
@@ -527,37 +540,42 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                                                             "angles cannot be regenerated")
             busy = await conn.fetchval(
                 """
-                SELECT (SELECT count(*) FROM shared.job
-                        WHERE kind = $2 AND payload->>'request_id' = $1 AND status IN ('queued', 'running'))
-                     + (SELECT count(*) FROM acp_shared.content_piece
-                        WHERE angle_gate_request_id = $1::uuid AND status = 'processing')
+                SELECT count(*) FROM shared.job
+                WHERE kind = $2 AND payload->>'regenerated_from' = $1 AND status IN ('queued', 'running')
                 """, request_id, T8_ANGLES_KIND)
             if busy:
-                raise HTTPException(status_code=409, detail="Angles or a piece are being generated for this "
-                                                            "request — try again when it finishes")
+                raise HTTPException(status_code=409, detail="New angles are already being generated for this "
+                                                            "request — try again when they finish")
             previous = await conn.fetch(
                 """
                 SELECT idx, name, best_final_style, recommended, chosen FROM acp_shared.angle_gate_option
                 WHERE request_id = $1::uuid ORDER BY idx
                 """, request_id)
+            new_id = str(uuid4())
             await conn.execute(
-                "UPDATE acp_shared.angle_gate_option SET chosen = false WHERE request_id = $1::uuid", request_id)
-            await conn.execute(
-                "UPDATE acp_shared.angle_gate_request SET status = 'pending_goal', updated_at = now() "
-                "WHERE request_id = $1::uuid", request_id)
+                """
+                INSERT INTO acp_shared.angle_gate_request
+                    (request_id, tenant_id, atom_id, trip_id, channel, goal, status, cta, subject_id,
+                     route_segment_ids)
+                SELECT $2::uuid, tenant_id, atom_id, trip_id, channel, goal, 'pending_goal', cta, subject_id,
+                       route_segment_ids
+                FROM acp_shared.angle_gate_request WHERE request_id = $1::uuid
+                """, request_id, new_id)
             actor = f"admin:{x_admin_user_id or 'unknown'}"
             job_id, _ = await enqueue(
                 conn, T8_ANGLES_KIND,
-                {"request_id": request_id, "tenant_id": str(req["tenant_id"]), "goal": req["goal"]},
+                {"request_id": new_id, "tenant_id": str(req["tenant_id"]), "goal": req["goal"],
+                 "regenerated_from": request_id},
                 created_by=actor,
             )
             await write_audit_log(
                 conn, tenant_id=str(req["tenant_id"]), actor=actor, action=AdminAuditAction.ANGLES_REGENERATED,
                 resource_type="angle_gate_request", resource_id=request_id,
-                details={"job_id": job_id, "goal": req["goal"], "previous_status": req["status"],
-                         "previous_angles": [_row(r) for r in previous]},
+                details={"new_request_id": new_id, "job_id": job_id, "goal": req["goal"],
+                         "previous_status": req["status"], "previous_angles": [_row(r) for r in previous]},
             )
-    return {"request_id": request_id, "job_id": job_id, "status": "pending_goal", "goal": req["goal"]}
+    return {"request_id": new_id, "regenerated_from": request_id, "job_id": job_id, "status": "pending_goal",
+            "goal": req["goal"]}
 
 
 @router.get("/stats")
