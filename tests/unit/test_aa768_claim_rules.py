@@ -118,10 +118,31 @@ def test_split_piece_numbers_body_skips_hashtags_and_adds_title_meta():
 
 
 def test_mask_names_keeps_place_words_out_of_the_tripwires():
+    lex = cr.scope_lexicon(cr.number_source_lines(_seed_without_card()))
     assert "trip" in cr.tripwires("We camp by the lake.")
-    assert "trip" not in cr.tripwires(cr.mask_names("Sod Camp sits by the lake."))
+    assert "trip" not in cr.tripwires(cr.mask_names("Sod Camp sits by the lake.", lexicon=lex))
     assert "trip" not in cr.tripwires(cr.mask_names("It sits near Paro.", ("Paro Private",)))
-    assert "trip" in cr.tripwires(cr.mask_names("Pacing is built in."))  # one opening word is not a name
+    assert "trip" in cr.tripwires(cr.mask_names("Pacing is built in.", lexicon=lex))
+
+
+def test_mask_names_leaves_unknown_title_case_words_visible():
+    """Review S234: every capitalised run used to be blanked, so a title-case SEO title or heading
+    hid its trip words from the rules."""
+    lex = cr.scope_lexicon(cr.number_source_lines(_seed_without_card()))
+    title = "Sod Camp Stay With Private Guide, Hotel And Lunch Included"
+    masked = cr.mask_names(title, lexicon=lex)
+    assert "Sod" not in masked and "Camp" not in masked
+    assert "Guide" in masked and "Lunch Included" in masked
+    # a capitalised seed word that is only trip vocabulary ('Overnight', 'Dinner') is not a name
+    lex2 = cr.scope_lexicon(cr.number_source_lines("Dinner at the camp — stay\nSource itinerary: Dinner at the camp."))
+    assert "Dinner" in cr.mask_names("Dinner is served by the fire.", lexicon=lex2)
+
+
+def test_trip_promise_in_title_case_title_and_heading_fails():
+    v, _ = _run("Ladakh Tour With Private Guide, Hotel And Lunch Included", None, where_title=True)
+    assert v.sid == "T" and v.type == "uncited_trip" and not v.ok and v.blocking
+    v, _ = _run("## Private Guide And Hotel Transfers Included", None)
+    assert v.type == "uncited_trip" and not v.ok
 
 
 # ---------------------------------------------------------------- rule table
@@ -184,13 +205,61 @@ def test_social_proof_is_forced_whatever_the_model_typed():
     assert v.type == "social_proof" and not v.ok
 
 
+def test_social_proof_fails_even_on_a_claim_type_with_a_verified_quote():
+    """Review S234: a trip_fact / place_background row with a real quote (one shared word, e.g.
+    the place name) used to let a rarity or social-proof sentence through."""
+    for t in ("trip_fact", "place_background", "scene_detail"):
+        v, _ = _run("Most travellers skip Sod Camp, but this trip stays there overnight.",
+                    {"type": t, "ref": "S3", "quote": "Overnight at Sod Camp"})
+        assert v.type == "social_proof" and not v.ok and v.blocking, t
+    v, _ = _run("Sod Camp is rarely visited, and visitors never find their way here.",
+                {"type": "place_background", "ref": "S3", "quote": "Overnight at Sod Camp"})
+    assert v.type == "social_proof" and not v.ok
+
+
 def test_exempt_type_with_trip_tripwire_fails_and_scene_only_warns():
     v, _ = _run("Pacing is built in.", {"type": "opinion"})
     assert v.type == "uncited_trip" and not v.ok and v.blocking
+    v, _ = _run("Your private guide meets you at the gate.", {"type": "opinion"})
+    assert v.type == "uncited_trip" and not v.ok
     v, _ = _run("The silence there is worth the effort.", {"type": "opinion"})
     assert v.ok and not v.blocking and "scene detail" in v.problem
     v, _ = _run("That is what makes it worth the effort.", {"type": "opinion"})
     assert v.ok and not v.problem
+
+
+def test_ambient_trip_word_alone_warns_and_questions_pass():
+    """Review S234 (S233 Set B): opinion lines about pacing and FAQ questions blocked as
+    uncited_trip. An ambient word (pace, morning, private, access) now blocks only inside a
+    promise frame; a question asserts nothing."""
+    for sent in ("Pacing matters.", "They struggle with pacing.", "Active travel brands have a pacing problem."):
+        v, _ = _run(sent, {"type": "opinion"})
+        assert v.ok and not v.blocking and "trip-sounding" in v.problem, sent
+        v, _ = _run(sent, None)
+        assert v.ok, sent
+    for sent in ("The pace is designed to let children rest.", "A hot stone bath follows in the afternoon.",
+                 "This trip keeps a private pace."):
+        v, _ = _run(sent, {"type": "opinion"})
+        assert v.type == "uncited_trip" and not v.ok, sent
+    lines = cr.number_source_lines(_grounding(_seed_without_card()))
+    text = ("## FAQ\n\n**Q: Do I need a permit to visit the Tsaatan reindeer herders?**\n"
+            "A: The guide arranges it.\n\nWhy is access to their settlements limited?")
+    vs = cr.apply_rules({}, lines, cr.split_piece(text))
+    by_text = {v.sentence: v for v in vs}
+    assert by_text["Q: Do I need a permit to visit the Tsaatan reindeer herders?"].ok
+    assert by_text["Why is access to their settlements limited?"].ok
+    assert not by_text["The guide arranges it."].ok  # the answer still asserts
+
+
+def test_brand_self_citing_its_brand_line_passes_unless_it_adds_a_service():
+    seed = _grounding(_seed_without_card()).replace(
+        "Safe, active journeys for families.", "Private cultural journeys with depth.")
+    v, _ = _run("Terra Family Expeditions builds private cultural journeys for travellers who want depth.",
+                {"type": "brand_self", "ref": "B2", "quote": "Private cultural journeys with depth"}, seed=seed)
+    assert v.ok and not v.problem
+    v, _ = _run("Terra Family Expeditions builds private cultural journeys with hotel transfers included.",
+                {"type": "brand_self", "ref": "B2", "quote": "Private cultural journeys with depth"}, seed=seed)
+    assert v.type == "uncited_trip" and not v.ok and "brand line B2" in v.problem
 
 
 def test_model_cta_label_alone_does_not_exempt_a_trip_promise():
@@ -244,6 +313,20 @@ def test_hypothetical_policy_flag():
     assert not v.ok and v.type == "scene_detail"  # no conditional marker: a plain scene claim
 
 
+def test_hypothetical_cannot_carry_a_trip_promise():
+    """Review S234: 'hypothetical' + a 'could' / 'if you' marker returned WARN before any
+    tripwire, so a promise could pass by being typed hypothetical."""
+    for sent in ("You could stay in a private lodge with all meals included.",
+                 "If you join us, a private guide and hotel transfers are included."):
+        v, _ = _run(sent, {"type": "hypothetical"})
+        assert v.type == "uncited_trip" and not v.ok and v.blocking, sent
+    v, _ = _run("You could spend the first night at Sod Camp.",
+                {"type": "hypothetical", "ref": "S3", "quote": "Overnight at Sod Camp"})
+    assert v.ok  # no concrete service word: the G2 flag decides
+    v, _ = _run("Imagine the gate at dawn.", {"type": "hypothetical"})
+    assert v.ok and "imagined scene" in v.problem
+
+
 def test_scene_detail_needs_a_quoted_line():
     v, _ = _run("Worn stone steps lead to the gate.", {"type": "scene_detail"})
     assert not v.ok and v.type == "scene_detail"
@@ -256,6 +339,39 @@ def test_spelled_out_numbers_not_in_source_fail():
     assert cr.find_novel_word_numbers("Two monasteries and one day.", ["nothing"]) == []
     v, _ = _run(sent, {"type": "opinion"})
     assert v.type == "number" and not v.ok
+
+
+def test_compound_spelled_out_numbers_match_the_source_digits():
+    """Review S234: 'twenty thousand' was read as 20 and 'thousand years' as 1000, so a correct
+    paraphrase of '20,000–24,000 years' blocked."""
+    src = ["It last erupted approximately 20,000–24,000 years ago.", "Altitude 3,000 m.",
+           "A climb of 200 steps to the gate.", "Built in 1,350 by monks."]
+    assert cr.find_novel_word_numbers(
+        "It last erupted approximately twenty thousand to twenty-four thousand years ago.", src) == []
+    assert cr.find_novel_word_numbers("It sits at three thousand metres.", src) == []
+    assert cr.find_novel_word_numbers("Climb two hundred steps to the gate.", src) == []
+    assert cr.find_novel_word_numbers("Built one thousand three hundred and fifty years ago.", src) == []
+    assert cr.find_novel_word_numbers("It sits at four thousand metres.", src) == ["four thousand metres"]
+    assert cr.find_novel_word_numbers("It erupted thirty thousand years ago.", ["no figures"]) == \
+        ["thirty thousand years"]
+    assert cr.word_numbers("twenty-four thousand years")[0][1] == 24000
+
+
+def test_day_index_ranges_and_ages_are_not_figures():
+    for sent in ("By day two or three, people are running on fumes.", "On day four and five the pace drops.",
+                 "Even a twelve-year-old manages the climb.", "It suits a curious eleven-year-old."):
+        assert cr.find_novel_word_numbers(sent, ["no figures"]) == [], sent
+
+
+def test_novel_number_with_a_verified_digit_citation_warns():
+    seed = compose_seed("Uran Togoo — hike", "Hike the extinct volcano, last active 8,000 years ago.", None, None,
+                        [], place="Uran Togoo", country="Mongolia", day=4, card=None)
+    v, _ = _run("The volcano went quiet about eight thousand years ago — some say nine thousand years.",
+                {"type": "place_background", "ref": "S3", "quote": "extinct volcano, last active 8,000 years ago"},
+                seed=seed)
+    assert v.ok and not v.blocking and v.type == "number" and "check it against S3" in v.problem
+    v, _ = _run("The volcano went quiet nine thousand years ago.", {"type": "place_background"}, seed=seed)
+    assert not v.ok and v.type == "number"
 
 
 def test_deterministic_only_mode_reads_missing_rows_as_generic():

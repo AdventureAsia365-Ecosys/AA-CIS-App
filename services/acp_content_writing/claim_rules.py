@@ -203,6 +203,19 @@ TRIP_RE = re.compile(
     r"\b(you will|you'll|we will|we'll|includes?|included|guide[sd]?|transfer|hotel|lodge|camp|lunch|"
     r"dinner|breakfast|morning|afternoon|evening|pace[ds]?|pacing|private|access|arrange[sd]?|planned|"
     r"briefing|permit|visa|ticket|fee)\b", re.I)
+# The TRIP words that name a concrete service or inclusion. The rest of TRIP_RE (pace, pacing,
+# morning, afternoon, evening, private, access) is ambient: on an exempt-typed sentence it blocks
+# only inside a promise frame (PROMISE_FRAME_RE) and otherwise warns — 'Pacing matters.' or
+# 'Active travel brands have a pacing problem.' assert nothing about this trip (review S234).
+CONCRETE_TRIP_RE = re.compile(
+    r"\b(you will|you'll|we will|we'll|includes?|included|guide[sd]?|transfers?|hotels?|lodges?|camps?|"
+    r"lunch|dinner|breakfast|arrange[sd]?|planned|briefing|permits?|visas?|tickets?|fees?)\b", re.I)
+# Calibrated on S232 Set A (DET arm): keeps 'the pace is designed to let…', 'the trip is
+# structured … pacing', 'a hot stone bath in the afternoon' failing.
+PROMISE_FRAME_RE = re.compile(
+    r"\b(built[- ]in|(this|the) (trip|journey|itinerary|tour|route)|our|we|we're|we've|you get|you have"
+    r"|(is|are) (designed|structured|built|set|kept|planned|timed|arranged)"
+    r"|(in|by|each|every|that|the following|next) (the )?(morning|afternoon|evening))\b", re.I)
 SCENE_RE = re.compile(
     r"\b(steps?|stairs?|path|trail|road|worn|smell|scent|incense|sound|silence|quiet|light|shadow|"
     r"crowd|crowds|wind|cold|stone|dust|echo|bells?|prayer wheels?|flags?)\b", re.I)
@@ -228,22 +241,41 @@ _WORD_VALUES = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
     "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
     "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
-    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100, "thousand": 1000, "dozen": 12,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "dozen": 12,
 }
+_MULTIPLIERS = {"hundred": 100, "thousand": 1000, "million": 1_000_000}
 _TENS = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety"
 _UNITS = ("days?|hours?|minutes?|years?|metres?|meters?|km|kilomet(?:re|er)s?|nights?|dollars?|"
           "percent|per cent|feet|miles?|centur(?:y|ies)|storeys?|stor(?:y|ies)|monks?|steps?")
-_NUMWORD = (rf"(?:{_TENS})(?:-(?:one|two|three|four|five|six|seven|eight|nine))?"
-            r"|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
-            r"sixteen|seventeen|eighteen|nineteen|hundred|thousand|dozen")
+# One number word; longer words first so 'seventeen' is not read as 'seven'.
+_NUMTOK = (rf"(?:{_TENS})(?:-(?:one|two|three|four|five|six|seven|eight|nine))?"
+           r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve|ten"
+           r"|one|two|three|four|five|six|seven|eight|nine|hundred|thousand|million|dozen")
+# A whole spelled-out number: 'twenty-four thousand', 'three hundred and fifty' (review S234:
+# 'twenty thousand' was read as 20 and 'thousand years' as 1000, so a sourced 20,000 failed).
+# 'and' joins only after 'hundred'; 'two or three' / 'four and five' stay separate numbers.
+_NUMWORD = rf"(?:{_NUMTOK})(?:(?:[- ]|\s+and\s+(?=(?:{_TENS}|one|two|three|four|five|six|seven|eight|nine)))" \
+           rf"(?:{_NUMTOK}))*"
 _WORDNUM_RE = re.compile(rf"\b({_NUMWORD})\b(?:[- ](?:US |U\.S\. )?({_UNITS})\b)?", re.I)
-_RANGE_RE = re.compile(rf"\b({_NUMWORD})\s+(?:to|or|and)\s+({_NUMWORD})\b", re.I)
+# A range only with 'to' ('thirty to forty-five'); 'day two or three' is rhetoric, not a figure.
+_RANGE_RE = re.compile(rf"\b({_NUMWORD})\s+to\s+({_NUMWORD})\b", re.I)
+_DAY_INDEX_RE = re.compile(r"\b(?:day|days|week|stage|part|chapter)\s+$", re.I)
 _DIGITS_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 
 
-def _word_value(word: str) -> int:
-    parts = word.lower().split("-")
-    return sum(_WORD_VALUES.get(p, 0) for p in parts)
+def _word_value(phrase: str) -> int:
+    """Value of a spelled-out number phrase: 'twenty-four thousand' → 24000, 'three hundred and
+    fifty' → 350, 'a thousand' (bare 'thousand') → 1000."""
+    total, cur = 0, 0
+    for part in re.split(r"[\s-]+", phrase.lower()):
+        if part in _WORD_VALUES:
+            cur = cur * _WORD_VALUES[part] if part == "dozen" and cur else cur + _WORD_VALUES[part]
+        elif part == "hundred":
+            cur = max(cur, 1) * 100
+        elif part in _MULTIPLIERS:
+            total += max(cur, 1) * _MULTIPLIERS[part]
+            cur = 0
+    return total + cur
 
 
 def word_numbers(sentence: str) -> list[tuple[str, int, bool]]:
@@ -256,11 +288,13 @@ def find_novel_word_numbers(sentence: str, source_texts: Iterable[str]) -> list[
     """The spelled-out sibling of grounding.find_novel_numeric_claims (F1 sees digits only, so
     "a thirty-day e-visa … thirty to forty-five US dollars" passed it, S232). A word number counts
     only with a unit right after it ('thirty-day', 'forty-five US dollars') or as one end of a
-    range ('thirty to forty-five'), and only when the SOURCE has neither the word nor its digits —
-    a bare 'two monasteries' is left to the extraction call."""
+    range ('thirty to forty-five'), and only when the SOURCE has neither the words nor their
+    digits — a bare 'two monasteries' is left to the extraction call. Compounds are one number
+    ('twenty-four thousand years' = 24000). Not figures: a day index ('day two', 'by day four'),
+    an age adjective ('a twelve-year-old')."""
     src = " ".join(source_texts)
     src_digits = {d.replace(",", "") for d in _DIGITS_RE.findall(src)}
-    src_words = set(re.findall(r"[a-z]+(?:-[a-z]+)?", fold(src)))
+    src_norm = " " + " ".join(re.findall(r"[a-z]+", fold(src))) + " "
     clean = strip_tags(sentence)
     in_range: set[int] = set()
     for m in _RANGE_RE.finditer(clean):
@@ -270,19 +304,59 @@ def find_novel_word_numbers(sentence: str, source_texts: Iterable[str]) -> list[
         head, value = m.group(1), _word_value(m.group(1))
         if value <= 1 or not (m.group(2) or m.start() in in_range):  # 'one day' is idiom
             continue
-        if str(value) in src_digits or fold(head) in src_words:
+        if _DAY_INDEX_RE.search(clean[:m.start()]) or re.match(r"[- ]old\b", clean[m.end():], re.I):
+            continue
+        if str(value) in src_digits or f" {' '.join(re.findall(r'[a-z]+', fold(head)))} " in src_norm:
             continue
         out.append(m.group(0))
     return out
 
 
-def mask_names(sentence: str, names: Iterable[str] = ()) -> str:
+_VOCAB_RE = re.compile(rf"(?:{TRIP_RE.pattern}|{CONCRETE_TRIP_RE.pattern}|{SCENE_RE.pattern})", re.I)
+
+
+# Generic place nouns that complete a name next to a known word ('Sod Camp', 'Paro Dzong').
+_PLACE_NOUNS = frozenset("""
+park province district region lake river monastery temple dzong valley falls town city camp ruins mountain
+mountains desert steppe forest island islands bay beach pass peak hill hills gorge cave caves market museum
+palace fort village monument reserve sanctuary site trail route road street square lodge school gate bazaar
+""".split())
+
+
+def _known_name_word(word: str, lexicon: ScopeLexicon) -> bool:
+    toks = phrase_tokens(word)
+    if not toks:
+        return False
+    gaz = {t for key in lexicon.gazetteer for t in key.split()}
+    return all(t in gaz for t in toks) or _in_scope(word, lexicon)
+
+
+def mask_names(sentence: str, names: Iterable[str] = (), lexicon: Optional[ScopeLexicon] = None) -> str:
     """The sentence with its place names blanked, so 'Sod Camp' or 'Paro Private School' do not
-    trip the TRIP / SCENE words ('camp', 'private'). Multi-word capitalised runs and the row's own
-    place names go; a single capitalised word that opens the sentence stays ('Pacing is …')."""
+    trip the TRIP / SCENE words ('camp', 'private'). Blanked: the row's own place names, and the
+    words of a capitalised run that the scope lexicon knows (an own place or a gazetteer place).
+    Unknown capitalised words stay — a title-case SEO title or heading ('Ladakh Tour With Private
+    Guide, Hotel And Lunch Included') keeps its trip words visible to the rules (review S234)."""
     out = sentence
-    for name in sorted(set(proper_nouns(sentence)) | {n for n in names if n}, key=len, reverse=True):
+    for name in sorted({n for n in names if n}, key=len, reverse=True):
         out = re.sub(re.escape(name), " ", out, flags=re.I)
+    if lexicon is None:
+        return out
+    blank: set[str] = set()
+    for run in proper_nouns(out, keep_initial=True):
+        # maximal stretches of known words; a stretch made only of trip / scene words ('Dinner',
+        # 'Breakfast' — the lexicon keeps every capitalised seed word) is not a name
+        # ('Camp' in 'Sod Camp' is a generic place noun the lexicon drops, so it joins a stretch)
+        stretch: list[str] = []
+        for w in run.split() + [""]:
+            if w and (_known_name_word(w, lexicon) or fold(w) in _PLACE_NOUNS):
+                stretch.append(w)
+                continue
+            if any(_known_name_word(x, lexicon) and not _VOCAB_RE.fullmatch(x) for x in stretch):
+                blank |= set(stretch)
+            stretch = []
+    for w in sorted(blank, key=len, reverse=True):
+        out = re.sub(rf"(?<![\w]){re.escape(w)}(?![\w])", " ", out)
     return out
 
 
@@ -471,24 +545,49 @@ def _cited_problem(line: Optional[SourceLine], ref: str, quoted: bool, allowed: 
     return None
 
 
+def _is_question(s: PieceSentence) -> bool:
+    return s.kind == "faq_q" or s.text.rstrip(" *\"'”’)").endswith("?")
+
+
+def _trip_level(masked: str) -> Optional[str]:
+    """'concrete' (a service or inclusion word), 'framed' (an ambient trip word inside a promise
+    frame: 'Pacing is built in.'), 'ambient' (an ambient word alone: 'Pacing matters.') or None."""
+    if CONCRETE_TRIP_RE.search(masked):
+        return "concrete"
+    if TRIP_RE.search(masked):
+        return "framed" if PROMISE_FRAME_RE.search(masked) else "ambient"
+    return None
+
+
 def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
     """(applied type, pass|warn|fail, problem) for one sentence — the rule table."""
     t = row.type
     ref = row.ref.strip().upper()
     line = c.by_id.get(ref)
     quoted = line is not None and verify_quote(row.quote, line.text, s.text)
-    hits = tripwires(mask_names(s.text, row.places))
+    masked = mask_names(s.text, row.places, c.lexicon)
+    hits = tripwires(masked)
+    trip = _trip_level(masked)
+    itinerary_cited = quoted and line.kind in (KIND_TRIP, KIND_FACT)
+    uncited_trip = ("uncited_trip", FAIL, f"reads as a trip promise with no itinerary line behind it, typed {t}")
 
     if _is_cta(s.text, c.cta):
         return "cta", PASS, ""  # the configured CTA itself; a model-typed 'cta' is exempt-typed
     novel = find_novel_word_numbers(s.text, c.number_src)
     if novel:
-        return "number", FAIL, f"states {', '.join(novel)}, which the SOURCE does not give"
-    if "social" in hits and (t == "social_proof" or t in EXEMPT_TYPES or not quoted):
+        problem = f"states {', '.join(novel)}, which the SOURCE does not give"
+        if quoted and _DIGITS_RE.search(line.text):
+            return "number", WARN, f"{problem} — check it against {ref}"  # a paraphrase of a cited figure
+        return "number", FAIL, problem
+    if "social" in hits:  # whatever the model typed (design f9-v2): never in the SOURCE
         return "social_proof", FAIL, ("social proof or rarity claim — what other travellers or itineraries do "
                                       "is never in the SOURCE")
     if t == "hypothetical":
         if HYPOTHETICAL_RE.search(s.text):
+            # a promise in a conditional ('You could stay in a private lodge with meals included')
+            # is still a promise; G2 covers imagined scenes only
+            if trip == "concrete" and not itinerary_cited:
+                return uncited_trip
             if c.config.hypothetical == "warn":
                 return t, WARN, "imagined scene — check it stays plausible"
             return t, FAIL, "imagined scene the SOURCE does not give"
@@ -531,10 +630,24 @@ def _decide(s: PieceSentence, row: ClaimRow, c: _Ctx) -> tuple[str, str, str]:
     if t == "number":
         return t, PASS, ""  # digits are F1's; spelled-out numbers were checked above
     # exempt: opinion, brand_self, generic, a model-typed cta
-    if line is not None and quoted and line.kind in (KIND_TRIP, KIND_FACT, KIND_PLACE):
+    if quoted and line.kind in (KIND_TRIP, KIND_FACT, KIND_PLACE):
         return t, PASS, ""
-    if "trip" in hits:
-        return "uncited_trip", FAIL, f"reads as a trip promise with no itinerary line behind it, typed {t}"
+    if _is_question(s):
+        return t, PASS, ""  # a question asserts nothing (FAQ questions, rhetorical questions)
+    if t == "brand_self" and quoted and line.kind == KIND_BRAND:
+        # the brand describing itself from its own BRAND line ('private cultural journeys'); a
+        # concrete service the BRAND line does not name is still a trip promise
+        brand_words = set(content_words(line.text))
+        extra = {m.group(0).lower() for m in CONCRETE_TRIP_RE.finditer(masked)
+                 if not set(content_words(m.group(0))) & brand_words}
+        if extra:
+            return "uncited_trip", FAIL, (f"promises {', '.join(sorted(extra))}, which the brand line {ref} "
+                                          "does not say and no itinerary line backs")
+        return t, PASS, ""
+    if trip in ("concrete", "framed"):
+        return uncited_trip
+    if trip == "ambient":
+        return t, WARN, f"trip-sounding word in a sentence typed {t} — check it promises nothing"
     if {"scene", "contrast"} & hits:
         kind = "scene detail" if "scene" in hits else "contrast"
         return t, WARN, f"{kind} in a sentence typed {t} — check it"
@@ -547,9 +660,13 @@ def apply_rules(rows: dict[str, ClaimRow], source_lines: list[SourceLine], sente
     """One verdict per sentence. A sentence with no row is read as 'generic' (the tripwires
     decide), which is also the deterministic-only mode: `apply_rules({}, …)`.
 
-    Order: a novel spelled-out number fails; social proof / rarity fails whatever the type; then
-    the type's rule. Exempt types (opinion, brand_self, generic, cta) are re-typed and fail on a
-    TRIP tripwire, warn on SCENE / CONTRAST. Only a sentence that really is the configured CTA
+    Order: a novel spelled-out number fails (warns when the row cites a verified line with
+    digits); social proof / rarity fails whatever the type; then the type's rule. A hypothetical
+    holding a concrete service word ('meals included') is a trip promise. Exempt types (opinion,
+    brand_self, generic, cta) pass on a verified S/F/P quote (brand_self also on its B line,
+    unless it adds a concrete service); a question passes; otherwise a concrete TRIP word, or an
+    ambient one inside a promise frame, re-types the row 'uncited_trip' and fails, an ambient TRIP
+    word alone or SCENE / CONTRAST warns. Only a sentence that really is the configured CTA
     (hygiene's ≥60% CTA-word rule) skips the tripwires — a model's 'cta' label alone does not."""
     c = _Ctx(by_id={ln.id: ln for ln in source_lines}, lexicon=lexicon or scope_lexicon(source_lines),
              number_src=[ln.text for ln in source_lines if ln.kind != KIND_OTHER_TRIP],
