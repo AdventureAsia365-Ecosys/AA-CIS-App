@@ -49,6 +49,11 @@ def test_highlights_locate_every_flagged_span():
     assert "Luang Prabang" in hs[0]["problem"]
 
 
+def test_highlights_dedupe_gate_listed_in_ledger_and_flags():
+    hs = cq.highlights(TEXT, LEDGER + FLAGS, FLAGS)
+    assert [h["gate"] for h in hs].count("F9_brand_style") == 1
+
+
 def test_highlights_skip_unfound_quotes():
     assert cq.highlights("Different text entirely.", LEDGER, []) == []
 
