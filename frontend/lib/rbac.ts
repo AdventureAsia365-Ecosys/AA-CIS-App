@@ -40,6 +40,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/atom-curation", roles: ["admin"] },     // AA-527
   { prefix: "/admin/tenant-activity", roles: ["admin"] },   // AA-551
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
+  { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
   // Content work — every staff role.
   { prefix: "/admin/upload", roles: ALL_STAFF },
   { prefix: "/admin/pipeline", roles: ALL_STAFF },

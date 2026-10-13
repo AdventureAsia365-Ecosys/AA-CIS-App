@@ -38,7 +38,7 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "Intelligence", items: [
     { href: "/admin/atom-curation", icon: <Puzzle size={16} />, label: "Social Content",
-      also: ["/admin/tenant-activity", "/admin/platform-stats"] },
+      also: ["/admin/tenant-activity", "/admin/platform-stats", "/admin/content-quality"] },
     { href: "/admin/seo-intelligence", icon: <Search size={16} />, label: "SEO Intelligence" },
   ] },
   { label: "Tenants", items: [

@@ -23,11 +23,11 @@
 // state (it replaces the deleted `/admin/a4-oversight` page — Review Log + Trust Ramp + a new
 // backend gate/error aggregate).
 import Link from "next/link";
-import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3 } from "lucide-react";
+import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldCheck } from "lucide-react";
 import { A, sans } from "./adminUi";
 
 export type SectionKey = "atomize" | "segment" | "score" | "route_hub" | "slate";
-export type SubNavKey = SectionKey | "content_trace" | "platform_stats";
+export type SubNavKey = SectionKey | "content_trace" | "platform_stats" | "content_quality";
 
 const SECTIONS: { key: SectionKey; label: string; icon: React.ReactNode }[] = [
   { key: "atomize",    label: "01 · Atomize",   icon: <Puzzle size={15} /> },
@@ -96,6 +96,16 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
         }}>
           <BarChart3 size={15} />
           <span style={{ flex: 1 }}>07 · Platform Stats</span>
+        </Link>
+        {/* AA-769 — every quality signal tenants no longer see (AA-770), for every tenant. */}
+        <Link href="/admin/content-quality" style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
+          background: active === "content_quality" ? A.goldTint : "transparent",
+          color: active === "content_quality" ? A.gold : A.body, cursor: "pointer", fontFamily: sans,
+          textDecoration: "none", fontSize: 12.5, fontWeight: active === "content_quality" ? 700 : 500,
+        }}>
+          <ShieldCheck size={15} />
+          <span style={{ flex: 1 }}>08 · Content Quality</span>
         </Link>
       </div>
     </>
