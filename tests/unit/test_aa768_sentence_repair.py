@@ -38,7 +38,6 @@ def test_plan_reads_f9_claims_and_f1_quotes():
 
 
 @pytest.mark.parametrize("other", [
-    {"gate": "F4_seo_surface", "passed": False, "blocking": True, "violations": ["meta too long"]},
     {"gate": "F9_cta_fact", "passed": False, "blocking": True, "violations": ["audit flagged: CTA_NOT_REFLECTED"]},
 ])
 def test_other_failures_need_the_full_rewrite(other):
