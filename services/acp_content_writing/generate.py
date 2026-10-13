@@ -320,10 +320,11 @@ class SentenceRepairError(Exception):
 
 _SEO_FIT_SYSTEM = """You write the search-result title and meta description for a finished blog post.
 Rules:
-- Title: 45-60 characters, contains the target keyword verbatim, names the place the post is about,
+- Title: 45-60 characters, uses every content word of the target keyword (the keyword is a raw
+  search query — reorder it into natural English, never paste it ungrammatically), names the place,
   reads as one natural headline (never a fragment cut at a colon).
-- Meta description: 140-155 characters, ONE complete sentence ending in '.', contains the target
-  keyword verbatim, says what the reader gets from the post.
+- Meta description: 140-155 characters (count them), ONE complete sentence ending in '.', uses every
+  content word of the target keyword in natural English, says what the reader gets from the post.
 - Use only places and facts that appear in the post. No new claims, numbers or promises.
 Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}"""
 

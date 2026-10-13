@@ -526,6 +526,29 @@ def gate_complete(content_text: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F4 family: SEO surface (new, AA-514, blog only)
 
+_KW_STOP = {"and", "the", "for", "with", "from", "into", "tour", "tours", "trip", "trips", "travel"}
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
+
+
+def keyword_covered(text: Optional[str], keyword: Optional[str]) -> bool:
+    """S233 — DFS keywords are raw search queries ("khovsgol and gobi tour mongolia reviews");
+    a headline cannot carry them verbatim. Covered = every content word of the keyword appears in
+    the text, accents and case ignored, with at most one generic word (tour/trip/travel…) or one
+    word in a long keyword missing. Empty keyword = covered."""
+    if not keyword:
+        return True
+    words = [w for w in re.findall(r"[a-z0-9]{3,}", _fold(keyword)) if w not in _KW_STOP]
+    if not words:
+        return True
+    hay = set(re.findall(r"[a-z0-9]{3,}", _fold(text or "")))
+    missing = [w for w in words if w not in hay]
+    return not missing or (len(words) >= 4 and len(missing) == 1)
+
+
 def gate_seo_surface(
     seo_title: Optional[str], meta_description: Optional[str], slug: Optional[str],
     keyword: Optional[str],
@@ -555,7 +578,7 @@ def gate_seo_surface(
                 f"SEO title is {len(seo_title)} characters — a stub; write {_SEO_TITLE_MIN_CHARS}-"
                 f"{_SEO_TITLE_MAX_CHARS} characters"
             )
-        if kw and kw not in seo_title.lower():
+        if kw and not keyword_covered(seo_title, keyword):
             violations.append(f"SEO title does not contain the keyword '{keyword}'")
 
     if not meta_description:
@@ -569,7 +592,7 @@ def gate_seo_surface(
             )
         if not meta_description.rstrip().endswith((".", "!", "?")):
             violations.append("meta description is not a complete sentence")
-        if kw and kw not in meta_description.lower():
+        if kw and not keyword_covered(meta_description, keyword):
             violations.append(f"meta description does not contain the keyword '{keyword}'")
 
     if not slug:
@@ -1075,5 +1098,5 @@ __all__ = [
     "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
     "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
-    "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq",
+    "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
 ]
