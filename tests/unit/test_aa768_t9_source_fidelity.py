@@ -261,3 +261,16 @@ def test_f9_judge_gets_room_for_reasoning_and_claims():
 
 def test_writer_forbids_invented_contrasts():
     assert "contrast claims" in SYSTEM_PROMPT and "not by X but by Y" in SYSTEM_PROMPT
+
+
+def test_seo_fit_retries_once_when_still_out_of_band():
+    long_meta = "y" * 170 + "."
+    ok_meta = "Visit Thimphu's weekend craft bazaar in Bhutan, where weavers sell kira cloth and the " \
+              "Textile Museum explains every pattern you will see."
+    with patch.object(service, "fit_seo_fields",
+                      side_effect=[({"seo_title": None, "meta_description": long_meta}, 0.01),
+                                   ({"seo_title": None, "meta_description": ok_meta}, 0.01)]) as m:
+        out, cost = asyncio.run(service._fit_seo_meta(
+            {"seo_title": TestSeoFit.TITLE_OK, "meta_description": long_meta}, None, body="b", context={},
+            request_id=uuid4()))
+    assert m.call_count == 2 and out["meta_description"] == ok_meta and cost == 0.02

@@ -342,8 +342,10 @@ def fit_seo_fields(
     parts = [f"TARGET SEO KEYWORD: {keyword}" if keyword else "No target keyword — write naturally."]
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
-    parts.append(f"CURRENT TITLE ({len(seo_title or '')} chars): {seo_title or '(none)'}")
-    parts.append(f"CURRENT META ({len(meta_description or '')} chars): {meta_description or '(none)'}")
+    tl, ml = len(seo_title or ""), len(meta_description or "")
+    parts.append(f"CURRENT TITLE ({tl} chars{'' if 45 <= tl <= 60 else ' — must be 45-60'}): {seo_title or '(none)'}")
+    parts.append(f"CURRENT META ({ml} chars{'' if 140 <= ml <= 155 else ' — must be 140-155'}): "
+                 f"{meta_description or '(none)'}")
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
                          stage="t9_write", max_tokens=_MAX_TOKENS)

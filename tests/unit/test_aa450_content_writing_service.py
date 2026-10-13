@@ -244,8 +244,9 @@ class TestStartWrite:
         """AA-514 — reuses T8's own already-snapshotted signal (AA-501, migration 127), no new
         DFS call."""
         conn = AsyncMock()
-        conn.fetchrow.side_effect = [{"text": "atom text"}, _placeholder_row()]
+        conn.fetchrow.side_effect = [{"text": "Laos temples — visit"}, _placeholder_row()]
         pool = _make_pool(conn)
+        # S233 — the keyword must share a place word with the piece's own moment
         snapshot = {"relevance": "HIGH", "people_also_ask": [], "related_keywords": ["laos temples", "vientiane"]}
 
         with patch.object(service.angle_gate_service, "fetch_request",
