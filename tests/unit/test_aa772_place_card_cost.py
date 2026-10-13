@@ -112,7 +112,7 @@ def test_prompts_allow_a_neighbouring_country_and_ask_fewer_facts():
         pc.draft_card(atom)
         pc.check_card({"display_name": "Mai Chau", "country": "Vietnam", "facts": []}, atom)
     draft, check = (c.args[0] for c in client.generate.call_args_list)
-    assert draft.max_tokens == 900 and "4-6" in draft.system_prompt and '"aliases"' in draft.system_prompt
+    assert draft.max_tokens == 1500 and "4-6" in draft.system_prompt and '"aliases"' in draft.system_prompt
     assert "neighbouring country" in draft.user_prompt
     assert "tour sold as Laos; the place may be in a neighbouring country" in check.user_prompt
     assert "Laos to Vietnam" in check.user_prompt
@@ -719,3 +719,18 @@ def test_safe_defaults_mirror_migration_221():
         ("writer", "claude", "haiku", "acc3", ("sonnet",))
     assert (c.role, c.provider, c.model_id, c.account_route, tuple(c.fallback_model_ids), c.shadow_sample_pct) == \
         ("validate", "openai", "gpt-6-luna", "acc3", ("gpt-5.6-luna",), 0)
+
+
+def test_place_card_draft_and_check_run_on_different_vendors():
+    """S234 migration 222: draft on GPT-5.6 Luna, check on Claude Haiku — both `validate` stages
+    (ADR 0008), never the same vendor; SAFE_DEFAULTS mirrors the migration."""
+    from pathlib import Path
+    from shared.llm_client.role_config import SAFE_DEFAULTS
+
+    draft, check = SAFE_DEFAULTS["a3_place_card"], SAFE_DEFAULTS["a3_place_card_check"]
+    assert (draft.role, draft.provider, draft.model_id) == ("validate", "openai", "gpt-5.6-luna")
+    assert (check.role, check.provider, check.model_id) == ("validate", "claude", "haiku")
+    assert draft.provider != check.provider
+    sql = (Path(__file__).resolve().parents[2] / "api/migrations/222_s234_place_card_luna.sql").read_text()
+    assert "model_id = 'gpt-5.6-luna'" in sql and "model_id = 'haiku'" in sql
+    assert sql.count("role = 'validate'") == 2

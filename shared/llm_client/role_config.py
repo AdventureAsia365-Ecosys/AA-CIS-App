@@ -112,11 +112,13 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # UI/report grouping by stage treats both as the same stage (label "A3 atomize").
     "a3_atomize":         StageConfig("a3_atomize", "validate", "openai", "gpt-6-luna", "acc3",
                                       fallback_model_ids=("haiku",)),
-    # AA-772 (S233, migration 220): place cards — draft on the t9_write route, fact check on the
-    # t10_judge route (another vendor).
-    "a3_place_card":      StageConfig("a3_place_card", "writer", "claude", "sonnet", "acc3"),
-    "a3_place_card_check": StageConfig("a3_place_card_check", "judge", "openai", "gpt-5.6-luna", "acc3",
-                                       fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    # AA-772 place cards. S234 (migration 222, A/B n=30): draft on GPT-5.6 Luna (27/27 identity,
+    # 92% facts kept by a cross-vendor check, ~12x cheaper than Sonnet), fact check on Claude Haiku
+    # — both `validate` stages (ADR 0008), draft and check still on different vendors.
+    "a3_place_card":      StageConfig("a3_place_card", "validate", "openai", "gpt-5.6-luna", "acc3",
+                                      fallback_model_ids=("sonnet",)),
+    "a3_place_card_check": StageConfig("a3_place_card_check", "validate", "claude", "haiku", "acc3",
+                                       fallback_model_ids=("sonnet",)),
     # S234 (migration 221): t9_repair — one cheap Claude stage for T9 sentence repair, SEO fit and
     # the admin sentence suggest (plan C2/C12); t10_claims — F9 v2 claim extraction, a validate
     # stage on GPT-6 Luna (ADR 0008 pattern), not wired into the gates until its replay passes.

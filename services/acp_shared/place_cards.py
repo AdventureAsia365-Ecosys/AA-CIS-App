@@ -16,12 +16,13 @@ How a card is made (once per PLACE, in a job — never in an HTTP request, and n
    before its `retry_after`. A GENERIC name ("City Palace", "Night Market" — only kind words) is
    one group per atom, never matched by alias/core name, only by a card whose locality its
    itinerary sentence names.
-1. `a3_place_card` (writer route) gets the place, its itinerary sentence(s), the tour name and
-   the country the tour is sold as, and returns the place's identity (display name, locality,
-   region, country, naming note, aliases) plus 4-6 short background facts.
-2. `a3_place_card_check` (judge route, another vendor) checks the identity and each fact; only
-   facts it marks "supported" are kept. Nothing about the trip itself (prices, hours, what the
-   tour does) is ever a card fact.
+1. `a3_place_card` (validate route; GPT-5.6 Luna since S234 migration 222) gets the place, its
+   itinerary sentence(s), the tour name and the country the tour is sold as, and returns the
+   place's identity (display name, locality, region, country, naming note, aliases) plus 4-6
+   short background facts.
+2. `a3_place_card_check` (validate route; Claude Haiku, another vendor than the draft) checks the
+   identity and each fact; only facts it marks "supported" are kept. Nothing about the trip
+   itself (prices, hours, what the tour does) is ever a card fact.
 3. Same real place → same card: `place_key` = core name | country (S234: no locality — it is LLM
    free text and split one lake into 5 cards); a generic name keeps it (core | locality | country:
    City Palace Jaipur ≠ Udaipur). A draft landing on an admin-REJECTED card's key replaces it when
@@ -56,7 +57,7 @@ logger = structlog.get_logger()
 
 MAX_FACTS = 6
 MAX_ALIASES = 6
-DRAFT_MAX_TOKENS = 900
+DRAFT_MAX_TOKENS = 1500  # Luna spends part of it on reasoning
 _CONCURRENCY = 4
 FACT_KINDS = ("what_it_is", "history", "setting", "visiting", "practical", "naming")
 
@@ -552,7 +553,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
     rep = _representative(atoms)
     signal = {"atom_id": rep["atom_id"], "place": rep["place"], "group_atoms": len(atoms)}
     card, cost, resp = await asyncio.to_thread(draft_card, rep)
-    await _log(pool, "a3_place_card", "writer", resp, signal)
+    await _log(pool, "a3_place_card", "validate", resp, signal)
     model = getattr(resp, "model_used", None)
     name = (card.get("display_name") or "").strip() if isinstance(card.get("display_name"), str) else ""
     raw_country = card.get("country") if isinstance(card.get("country"), str) else ""
@@ -564,7 +565,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
         return None, "no_name"
     ok, verdicts, cost2, resp2 = await asyncio.to_thread(check_card, card, rep)
     kept = [f for f, v in zip(card["facts"], verdicts) if v == "supported"]
-    await _log(pool, "a3_place_card_check", "judge", resp2,
+    await _log(pool, "a3_place_card_check", "validate", resp2,
                dict(signal, identity_ok=ok, facts=len(card["facts"]), kept=len(kept)))
     if not ok:
         logger.info("place_card_identity_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
