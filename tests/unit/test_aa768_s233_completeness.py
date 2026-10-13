@@ -186,3 +186,25 @@ class TestKeywordCoverage:
         from services.acp_content_writing.service import choose_keyword
         assert choose_keyword(["khovsgol and gobi tour mongolia reviews", "khovsgol lake"], "Khövsgöl — x") == \
             "khovsgol lake"
+
+
+class TestKeywordLocationAndSlug:
+    SEED = ("Ruins of an ancient monastery — visit\nLocation: ruins of an ancient monastery, Mongolia\n\n"
+            "Sod Camp — stay\nLocation: Sod Camp, Mongolia\n\nLake Khövsgöl — boat\nLocation: Lake Khövsgöl, Mongolia")
+
+    def test_generic_and_country_words_do_not_match(self):
+        from services.acp_content_writing.service import choose_keyword
+        assert choose_keyword(["gobi tour tourist camp", "mongolia travel guide"], self.SEED) is None
+
+    def test_place_name_in_a_location_line_matches(self):
+        from services.acp_content_writing.service import choose_keyword
+        assert choose_keyword(["gobi tour tourist camp", "khovsgol lake tour"], self.SEED) == "khovsgol lake tour"
+
+    def test_plural_counts_as_covered(self):
+        title = "Mongolia Gobi Tour: From Volcanic Craters to Tourist Camps"
+        assert qg.keyword_covered(title, "Gobi tour Tourist camp")
+
+    def test_slug_is_folded_to_ascii(self):
+        from services.acp_content_writing.service import _ascii_slug
+        assert _ascii_slug("mongolia-gobi-tour-cultural-journey-ruins-khövsgöl") == \
+            "mongolia-gobi-tour-cultural-journey-ruins-khovsgol"

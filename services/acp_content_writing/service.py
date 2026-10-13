@@ -226,6 +226,11 @@ _TRANSACTIONAL_RE = re.compile(
     r"|reddit|tripadvisor)\b", re.I)
 
 
+_GENERIC_PLACE_WORDS = {"tour", "trip", "visit", "travel", "camp", "camps", "lake", "river", "ruins", "ancient",
+                        "monastery", "temple", "village", "town", "city", "valley", "national", "park", "market",
+                        "district", "province", "region", "museum", "palace", "fort", "hotel", "airport", "road"}
+
+
 def _fold_kw(text: str) -> str:
     import unicodedata
     return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
@@ -238,11 +243,16 @@ def choose_keyword(related_keywords: list, seed_text: str) -> Optional[str]:
                   and not _TRANSACTIONAL_RE.search(k)]
     if not candidates:
         return None
-    # Only the piece's own moment(s): the label + Location lines, never "Other trips" siblings or
-    # place background (S233 round 3 picked "gobi tour tourist camp" for a monastery-ruins piece).
-    scoped = "\n".join(line for line in (seed_text or "").splitlines()
-                       if not line.startswith(("- ", "Other trips", "Place background", "Source itinerary")))
-    seed_words = {w for w in re.findall(r"[a-z]{4,}", _fold_kw(scoped))} - {"tour", "trip", "visit", "travel"}
+    # Only the places of the piece's own moment(s): the "Location:" lines, minus country names and
+    # generic words (S233: "camp" in "Sod Camp" matched "gobi tour tourist camp" on a Khövsgöl route;
+    # "other trips" lines had picked "gobi" for a monastery-ruins piece).
+    locs = " ".join(line.split(":", 1)[1] for line in (seed_text or "").splitlines() if line.startswith("Location:"))
+    if not locs.strip():  # no Location line (atom without a country): the label's place part
+        locs = " ".join(line.split(" — ", 1)[0] for line in (seed_text or "").splitlines() if " — " in line)
+    locs = re.sub(r"\(.*?\)", " ", locs)
+    countries = {w for line in (seed_text or "").splitlines() if line.startswith("Location:")
+                 for w in re.findall(r"[a-z]{4,}", _fold_kw(line.rsplit(",", 1)[-1]))}
+    seed_words = ({w for w in re.findall(r"[a-z]{4,}", _fold_kw(locs))} - countries - _GENERIC_PLACE_WORDS)
     for k in candidates:
         if seed_words & set(re.findall(r"[a-z]{4,}", _fold_kw(k))):
             return k
@@ -285,6 +295,14 @@ def _meta_ok(meta, keyword: Optional[str]) -> bool:
             and meta.rstrip().endswith((".", "!", "?")) and keyword_covered(meta, keyword))
 
 
+def _ascii_slug(slug: Optional[str]) -> Optional[str]:
+    """S233 — a slug with accents ("…-khövsgöl") failed F4 lowercase-kebab; fold it to ASCII."""
+    if not isinstance(slug, str) or not slug:
+        return slug
+    folded = re.sub(r"[^a-z0-9]+", "-", _fold_kw(slug)).strip("-")
+    return folded[:60].rstrip("-") or slug
+
+
 async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, context: dict,
                         request_id) -> tuple[dict, float]:
     """AA-768 (S233) — when the blog writer's title or meta is outside the T10 band, regenerate
@@ -293,6 +311,8 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     Thimphu's Weekend Market…" into the 21-char "Bhutan's Craft Bazaar" on 6/20 blogs and cut
     metas mid-phrase. A new value is kept only if it is inside the band and keeps the keyword;
     otherwise the writer's own stays and F4 reports it. Returns (seo_meta, cost)."""
+    if seo_meta and seo_meta.get("slug"):
+        seo_meta = {**seo_meta, "slug": _ascii_slug(seo_meta["slug"])}
     if not seo_meta or (_seo_title_ok(seo_meta.get("seo_title"), keyword)
                         and _meta_ok(seo_meta.get("meta_description"), keyword)):
         return seo_meta, 0.0
