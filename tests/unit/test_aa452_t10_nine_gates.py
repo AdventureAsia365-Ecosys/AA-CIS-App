@@ -14,6 +14,15 @@ from services.acp_content_writing import quality_gates as qg
 from services.acp_content_writing import service
 
 
+@pytest.fixture(autouse=True)
+def _no_cta_insert():
+    """S234 round 3 — run_write_background now restores the configured CTA line word for word
+    (hygiene.ensure_cta). These tests pin the retry loop on placeholder texts ('draft 1') that carry
+    no CTA; the CTA step has its own tests in test_aa768_s234_round3.py."""
+    with patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda text, cta: (text, [])):
+        yield
+
+
 # ---------------------------------------------------------------- gate_atom_density (F5)
 
 class TestGateAtomDensity:
@@ -155,6 +164,7 @@ class TestRunQualityGatesChannelDispatch:
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
+            "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
             "F14_social_shape", "F15_voice", "F15_voice_warn",  # AA-771 (S234) — pass without a channel spec
             "F8_framework", "F9_cta_fact", "F9_brand_style",
         ]
@@ -179,6 +189,7 @@ class TestRunQualityGatesChannelDispatch:
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
+            "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
             "F14_social_shape", "F15_voice", "F15_voice_warn", "F4_seo_surface",
             "F5_atom_density", "F3_structural_variance", "F7_faq_dedup",
             "F8_framework", "F9_cta_fact", "F9_brand_style",

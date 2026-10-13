@@ -280,7 +280,12 @@ states, or widely known background about a place it names. Never add a new claim
 scene detail, promise, or social proof (what travellers, guests or families feel, say or
 remember). The replacement must not restate any CONTEXT sentence around it; if the sentence only
 restated one of them, return "". If nothing true is left to say, return "" to delete the
-sentence. Never mention the source, the notes or the seed. Return ONLY JSON:
+sentence. When the PROBLEM asks you to keep the sentence and ADD one sentence the SOURCE states (a
+missing access caveat), return the sentence followed by that one added sentence in the SOURCE's own
+facts — the only case where a replacement holds two sentences. When the PROBLEM says an activity is
+optional, say so in the sentence ("can", "optional"); when it gives a time, ordinal or rarity the
+source lacks, drop that part and keep the rest. Never mention the source, the notes or the seed.
+Return ONLY JSON:
 {"replacements": ["...", "..."]} — one string per numbered sentence, in the same order."""
 
 

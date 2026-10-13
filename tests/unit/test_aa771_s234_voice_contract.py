@@ -573,7 +573,10 @@ class TestF15Voice:
         text = "Day 2 ends at turquoise pools. Swim, rest, eat. Ask us for the dates."
         assert qg.gate_voice(text, spec=self.spec)["passed"]
         assert qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL)["passed"]
-        assert qg.gate_voice("That is worth sitting with today.", spec=None)["passed"]
+        # S234 round 3 — the cross-round stock lines ('worth sitting with', …) run on every channel; the
+        # rest of the LinkedIn stock list stays LinkedIn-only
+        assert qg.gate_voice("That detail speaks volumes about the place.", spec=None)["passed"]
+        assert not qg.gate_voice("That is worth sitting with today.", spec=None)["passed"]
         assert qg.gate_voice_warn("Travel brands skip it.", spec=None)["passed"]
 
     def test_run_quality_gates_wires_both_for_linkedin(self):

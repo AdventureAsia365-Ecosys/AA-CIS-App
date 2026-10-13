@@ -52,9 +52,10 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import (HygieneContext, content_words, contrast_excess, copies,
-                                                  dangling_opener, find_issues, near_verbatim, sentence_spans,
-                                                  sibling_templates)
+from services.acp_content_writing.hygiene import (HygieneContext, brief_phrases, content_words, contrast_excess,
+                                                  copies, dangling_opener, find_issues, near_verbatim,
+                                                  sentence_spans, sibling_templates, template_lines)
+from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
@@ -1311,6 +1312,47 @@ def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> Ga
                    blocking=False)
 
 
+# S234 round 3 (r2 §4 fix 2) — near-duplicates hygiene.dedupe / trip_facts.fix_misplaced could not
+# remove safely: a figure told twice, an echoed phrase, an orphan line, a moment repeated under
+# another moment's heading. Blocking and sentence-repairable (an empty replacement deletes it).
+F13_REPEAT_GATE = "F13_repeat"
+
+
+def gate_repeat(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
+    """F13_repeat — each violation quotes the later sentence ("<problem>: '<sentence>'")."""
+    if hygiene_ctx is None:
+        return _result(F13_REPEAT_GATE, [])
+    return _result(F13_REPEAT_GATE, find_issues(content_text, hygiene_ctx)["repeat"], repairable=True)
+
+
+# S234 round 3 (r2 §4 fixes 3, 5, 8) — trip facts the seed does not give (an optional activity as
+# fixed, a time / ordinal / position, a family-brand access caveat left out, a role the seed dates as
+# ended written in the present or a wrong span) and rarity / quantifier overclaims. Both blocking and
+# sentence-repairable on the cheap t9_repair stage; a title / meta finding ("meta …") is the SEO
+# fit's (service._fit_seo_meta rejects such a meta). Held only when the repair fails.
+F17_GATE = "F17_trip_fact"
+F18_GATE = "F18_rarity"
+F17_BLOCKING = True
+F18_BLOCKING = True
+
+
+def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_title: Optional[str] = None,
+                    meta_description: Optional[str] = None) -> list[GateResultLite]:
+    """[F17_trip_fact, F18_rarity] from trip_facts.find_trip_fact_issues. No context → both pass."""
+    if trip_ctx is None:
+        return [_result(F17_GATE, [], blocking=F17_BLOCKING), _result(F18_GATE, [], blocking=F18_BLOCKING)]
+    found = find_trip_fact_issues(content_text, trip_ctx, seo_title=seo_title, meta_description=meta_description)
+
+    def body_blocking(vs: list[str], flag: bool) -> bool:
+        # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that
+        # meta and asked for a new one; what is left is a warning for the admin
+        return flag and any(not v.startswith(("title ", "meta ")) for v in vs)
+    return [_result(F17_GATE, found["trip_fact"], repairable=True,
+                    blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
+            _result(F18_GATE, found["rarity"], repairable=True,
+                    blocking=body_blocking(found["rarity"], F18_BLOCKING) if found["rarity"] else F18_BLOCKING)]
+
+
 # ---------------------------------------------------------------- F14 / F15 (AA-771, S234)
 
 # F15_voice (stock-phrase hard list only) blocks — and goes to sentence repair, never a full
@@ -1323,6 +1365,10 @@ F15_GATE = "F15_voice"
 F15_WARN_GATE = "F15_voice_warn"
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 STYLE_ONLY_GATES = frozenset({F15_GATE})
+# S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage (Haiku) when they are
+# the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
+# (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
+CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity"})
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
 OWNED_BY_FIX_STEP = frozenset({"F16_faq", "F14_first_line"})
@@ -1433,9 +1479,24 @@ def _template_violations(text: str, sibling_texts: Optional[list[str]], exclude_
     return out
 
 
+def _brief_violations(text: str, briefs: Optional[dict], exclude_texts: Optional[list[str]],
+                      brand_name: Optional[str], spans: list[dict], keyword: Optional[str]) -> list[str]:
+    out = []
+    if not briefs:
+        return out
+    kept = {sp["clean"] for sp in spans}
+    for sentence, run in brief_phrases(text, briefs, exclude=exclude_texts or [], brand_name=brand_name,
+                                       keyword=keyword):
+        if sentence in kept and len(sentence.split()) >= _MIN_QUOTE_WORDS:
+            out.append(f"pastes the brand brief ('{run}') into the copy — say it in this piece's own words: "
+                       f"'{sentence}'")
+    return out
+
+
 def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True,
                sibling_texts: Optional[list[str]] = None, exclude_texts: Optional[list[str]] = None,
-               brand_name: Optional[str] = None, keyword: Optional[str] = None) -> GateResultLite:
+               brand_name: Optional[str] = None, keyword: Optional[str] = None,
+               brief_texts: Optional[dict] = None) -> GateResultLite:
     """F15_voice — the stock-phrase hard list for a channel with a spec (LinkedIn; S233: 30/41 posts
     — 'worth sitting with', 'not incidental', 'Not as filler. Not as an afterthought.'). Blocking when
     F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
@@ -1455,6 +1516,13 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
     # the same brief (S234 panel §5 fix 6). Same quoted shape, same one-repair-then-flag rule.
     stock += _contrast_violations(text, spans)
     stock += _template_violations(text, sibling_texts, exclude_texts, brand_name, spans, keyword)
+    # S234 round 3 (r2 §4 fix 4) — stock lines that recur across rounds and brands, and phrases pasted
+    # from the brand pack / angle brief, on every channel. Same one-repair-then-flag rule.
+    quoted = {sp["clean"] for sp in spans}
+    for line, sentence in template_lines(text):
+        if sentence in quoted and len(sentence.split()) >= _MIN_QUOTE_WORDS and not any(sentence in v for v in stock):
+            stock.append(f"stock line '{line}' — say it plainly or cut it: '{sentence}'")
+    stock += _brief_violations(text, brief_texts, exclude_texts, brand_name, spans, keyword)
     if not stock:
         return _result(F15_GATE, [], repairable=spec is not None, blocking=False)
     blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
@@ -1535,6 +1603,8 @@ def run_quality_gates(
     sibling_openers: Optional[list[str]] = None,
     stock_blocking: bool = True,
     sibling_texts: Optional[list[str]] = None,
+    trip_ctx: Optional[TripFactContext] = None,
+    brief_texts: Optional[dict] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1595,6 +1665,9 @@ def run_quality_gates(
         gate_scope(content_text, hygiene_ctx, seo_title, meta_description),
         gate_hygiene(content_text, hygiene_ctx),
         gate_leak(content_text, hygiene_ctx),  # S234 round 2 — blocking leaks, sentence-repairable
+        gate_repeat(content_text, hygiene_ctx),  # S234 round 3 — near-duplicates, sentence-repairable
+        # S234 round 3 — trip facts (F17) and rarity (F18), every channel, sentence-repairable
+        *gate_trip_facts(content_text, trip_ctx, seo_title, meta_description),
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
         gate_social_shape(content_text, spec),
@@ -1604,7 +1677,7 @@ def run_quality_gates(
         gate_voice(content_text, spec=spec, stock_blocking=stock_blocking, sibling_texts=sibling_texts,
                    exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta,
                                               hygiene_ctx.facts if hygiene_ctx else None) if t],
-                   brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword),
+                   brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword, brief_texts=brief_texts),
         gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
                         sibling_openers=sibling_openers),
     ]
@@ -1661,4 +1734,5 @@ __all__ = [
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
+    "F13_REPEAT_GATE", "gate_repeat", "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES",
 ]

@@ -24,8 +24,9 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, expand_to_sentence, integrity_problems, is_sentence_end, restates,
-    sentence_spans, sentence_tail_end, tidy_after_cut,
+    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, _safe_to_delete, content_words, copies, expand_to_sentence,
+    integrity_problems, is_sentence_end, near_duplicates, restates, sentence_spans, sentence_tail_end,
+    tidy_after_cut,
 )
 from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
 
@@ -37,9 +38,11 @@ _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
-                   "F12_scope", "F13_hygiene", "F13_leak", "F15_voice"}
+                   "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
+                   "F13_repeat", "F17_trip_fact", "F18_rarity"}  # S234 round 3
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
-_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice"}
+_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
+                 "F13_repeat", "F17_trip_fact", "F18_rarity"}
 # S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
 # rewrite); like F4_seo_surface they never send a piece to the full rewrite.
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
@@ -57,20 +60,40 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
     """(start, end) of the sentence in `text` that begins with `quote` (citation tags between
     words tolerated, so a quote of the tag-stripped text still matches the tagged piece), extended
     to its own sentence end and trailing tags. None when not found or the quote is too short to
-    be unambiguous."""
+    be unambiguous.
+
+    S234 round 3 (r2 §4 fix 7) — a quote from the middle of a sentence (the F9 judge quoting
+    'understood exactly what that meant' of 'Two rivers shape … — and the people who placed it there
+    understood exactly what that meant.') is widened to its whole sentence, so the repair never
+    splices a full sentence into half of one. A quote that is not in the text word for word (the
+    judge's paraphrase) is matched to the ONE sentence it copies (hygiene.copies either way)."""
     words = _clean_quote(quote).split()
     if len(words) < 4:
         return None
     m = re.search(_SEP.join(re.escape(w) for w in words), text)
     if m is None:
-        return None
+        return _fuzzy_locate(text, " ".join(words))
     end = m.end()
     # A quote ending on its own mark is extended from that mark (closers / tags); one ending on
     # "12." of "12.5 km" or "Mt." is not at a sentence end and runs on to the real one.
     tail = sentence_tail_end(text, end - 1 if text[end - 1] in _SENTENCE_END_CHARS else end)
     if tail is None:
         return None
-    return m.start(), max(tail, end)
+    start = m.start()
+    span = next((sp for sp in sentence_spans(text) if sp["start"] < start < sp["end"]), None)
+    if span is not None and span["kind"] != "faq_q":
+        start = span["start"]
+    return start, max(tail, end)
+
+
+def _fuzzy_locate(text: str, quote: str) -> Optional[tuple[int, int]]:
+    """The one prose sentence the quote copies or is copied by (≥ 80% of the shorter side's copy
+    words in order); None when no sentence or more than one sentence does."""
+    hits = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet", "faq_a")
+            and (copies(quote, sp["clean"]) or copies(sp["clean"], quote))]
+    if len(hits) != 1:
+        return None
+    return hits[0]["start"], hits[0]["end"]
 
 
 def _seo_fields_only(g: dict) -> bool:
@@ -96,7 +119,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
         return []
     if not failed or any(g["gate"] not in _ELIGIBLE_GATES for g in failed):
         return None
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, str, str]] = []
     for g in failed:
         for v in g["violations"]:
             if g["gate"] in _QUOTED_GATES:
@@ -105,24 +128,26 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
                 m = _BRAND_QUOTE_RE.search(v)
                 if not m:
                     return None
-                items.append((m.group(2), m.group(1)))
+                items.append((m.group(2), m.group(1), g["gate"]))
             elif g["gate"] == "F1_grounding":
                 m = _F1_QUOTE_RE.search(v)
                 if not m:
                     return None
                 nums = v.split(" not present", 1)[0].replace("sentence states", "").strip()
-                items.append((m.group(1), f"states {nums}, which the source does not contain"))
+                items.append((m.group(1), f"states {nums}, which the source does not contain", g["gate"]))
             else:
                 if "CTA_NOT_REFLECTED" in v or "unsupported claim(s)" not in v:
                     return None
                 claims = _F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1])
                 if not claims:
                     return None
-                items += [(s, f"claims {c.strip()} — {why.strip()}") for s, c, why in claims]
+                items += [(s, f"claims {c.strip()} — {why.strip()}", g["gate"]) for s, c, why in claims]
     out: list[dict] = []
-    for quote, problem in items:
+    for quote, problem, gate in items:
         span = locate_sentence(content_text, quote)
         if span is None:
+            if gate == "F9_cta_fact":
+                continue  # S234 round 3 — a judge quote that matches no sentence; the others are still fixed
             return None
         if any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
             continue  # same sentence flagged twice
@@ -172,31 +197,115 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
     return text
 
 
+def _integrity(before: str, after: str, ignore: frozenset, cta: Optional[str], moments: Optional[list]) -> list[str]:
+    """hygiene.integrity_problems plus (S234 round 3) a moment the repair put under another moment's
+    heading (trip_facts.new_misplaced; r2 #4 Sod Camp in the lake section)."""
+    out = integrity_problems(before, after, ignore, cta)
+    if moments:
+        from services.acp_content_writing.trip_facts import new_misplaced
+        out += new_misplaced(before, after, moments, cta)
+    return out
+
+
+def drop_new_duplicates(before: str, after: str, ignore: frozenset = frozenset(), cta: Optional[str] = None,
+                        moments: Optional[list] = None) -> str:
+    """S234 round 3 (r2 §4 fix 2) — before a repair is reverted, delete what it duplicated: every
+    sentence of `after` that is a NEW later near-duplicate (hygiene.near_duplicates), a new orphan
+    line, or a new misplaced moment sentence, when deleting it orphans no pronoun. The caller keeps
+    the result only when the integrity check then passes."""
+    from services.acp_content_writing.hygiene import orphan_lines
+    old = {d["later"]["clean"] for d in near_duplicates(before, ignore, cta)} | set(orphan_lines(before, ignore, cta))
+    text = after
+    for _ in range(6):
+        targets = [d["later"]["clean"] for d in near_duplicates(text, ignore, cta)]
+        targets += orphan_lines(text, ignore, cta)
+        if moments:
+            from services.acp_content_writing.trip_facts import misplaced_sentences
+            had = set(misplaced_sentences(before, moments, cta))
+            targets += [m for m in misplaced_sentences(text, moments, cta) if m not in had]
+        targets = [t for t in targets if t not in old]
+        if not targets:
+            break
+        spans = sentence_spans(text)
+        k = next((n for n, sp in enumerate(spans) if sp["clean"] == targets[0]), None)
+        if k is None or not _safe_to_delete(spans, k):
+            break
+        sp = spans[k]
+        cut = sp["end"] + 1 if text[sp["end"]:sp["end"] + 1] == " " else sp["end"]
+        text = tidy_after_cut(text[:sp["start"]] + text[cut:])
+    return text
+
+
 def splice_checked(content_text: str, items: list[dict], replacements: list[str], *,
-                   ignore: frozenset = frozenset(), cta: Optional[str] = None) -> str:
+                   ignore: frozenset = frozenset(), cta: Optional[str] = None,
+                   moments: Optional[list] = None) -> str:
     """splice() plus the S234 round 2 integrity check (panel §5 fix 7): a repair that leaves a new
     near-verbatim repeat or a paragraph / piece opener with no referent (#19 'What they find at Lake
     Khövsgöl…' after its referent was cut) is reverted — that item keeps its pre-repair sentence
     and gets `"guard": "integrity"` plus the problems. Items are tried one by one so a good repair
-    is not lost to a bad neighbour; if the kept set still breaks, every repair is reverted."""
+    is not lost to a bad neighbour; if the kept set still breaks, every repair is reverted.
+
+    S234 round 3 — the check also catches near-duplicates (a figure told twice, an echoed phrase, an
+    orphan line) and, with `moments`, a moment put under another moment's heading; before reverting,
+    the NEW later duplicate is deleted when that is safe (`drop_new_duplicates`), and the repair is
+    kept when that leaves the piece clean."""
     out = splice(content_text, items, replacements, ignore=ignore)
-    if not integrity_problems(content_text, out, ignore, cta):
+    if not _integrity(content_text, out, ignore, cta, moments):
         return out
+    deduped = drop_new_duplicates(content_text, out, ignore, cta, moments)
+    if deduped != out and not _integrity(content_text, deduped, ignore, cta, moments):
+        for item in items:
+            item.setdefault("guard", "dedupe")
+        return deduped
     keep_items, keep_reps = [], []
     for item, rep in zip(items, replacements):
-        trial = dict(item)
-        problems = integrity_problems(content_text, splice(content_text, [trial], [rep], ignore=ignore), ignore, cta)
-        if problems:
+        trial = splice(content_text, [dict(item)], [rep], ignore=ignore)
+        problems = _integrity(content_text, trial, ignore, cta, moments)
+        if problems and _integrity(content_text, drop_new_duplicates(content_text, trial, ignore, cta, moments),
+                                   ignore, cta, moments):
             item["guard"], item["integrity"] = "integrity", problems
         else:
             keep_items.append(item)
             keep_reps.append(rep)
     out = splice(content_text, keep_items, keep_reps, ignore=ignore)
-    problems = integrity_problems(content_text, out, ignore, cta)
+    out = drop_new_duplicates(content_text, out, ignore, cta, moments)
+    problems = _integrity(content_text, out, ignore, cta, moments)
     if problems:
         for item in keep_items:
             item["guard"], item["integrity"] = "integrity", problems
         return content_text
+    return out
+
+
+def delete_flagged(content_text: str, items: list[dict], *, ignore: frozenset = frozenset(),
+                   cta: Optional[str] = None, moments: Optional[list] = None) -> Optional[str]:
+    """S234 round 3 (r2 §4 fix 7) — the deterministic fallback when an attempt-3 sentence repair
+    cannot run (the repair call failed or returned a bad reply): cut each flagged sentence that is
+    safe to cut — not the piece's first prose sentence (the hook), not the CTA, not a FAQ question,
+    no pronoun orphaned — and keep the result when the integrity check passes. An item that asks to
+    ADD a sentence (the family access caveat) is never a cut. None when nothing could be cut (the
+    piece is then held as before). r2 #13 (F1, one sentence) and #7 (F9, one sentence) were held
+    at attempt 2/3 with the flagged sentence still in."""
+    from services.acp_content_writing.hygiene import _is_cta
+    spans = sentence_spans(content_text)
+    prose = [sp for sp in spans if sp["kind"] in ("prose", "bullet", "faq_a")]
+    first = prose[0]["start"] if prose else -1
+    cut_items, reps = [], []
+    for item in items:
+        if "add ONE" in item.get("problem", ""):
+            continue
+        k = next((n for n, sp in enumerate(spans) if sp["start"] <= item["start"] < sp["end"]), None)
+        if k is None or spans[k]["kind"] == "faq_q" or spans[k]["start"] == first:
+            continue
+        if _is_cta(spans[k]["clean"], cta) or not _safe_to_delete(spans, k):
+            continue
+        cut_items.append(dict(item))
+        reps.append("")
+    if not cut_items:
+        return None
+    out = tidy_after_cut(splice(content_text, cut_items, reps, ignore=ignore, guard_repeats=False))
+    if _integrity(content_text, out, ignore, cta, moments):
+        return None
     return out
 
 
@@ -337,6 +446,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     warn_hygiene: list[str] = []
     if wi.get("seed"):
         ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
+                                     trip_places=tuple(wi.get("trip_places") or ()),
                                      brand_name=pack.get("brand_name"), cta=wi.get("cta"),
                                      audience=pack.get("customer_segment"), facts=wi.get("facts"))
         found = hygiene.find_issues(sentence, ctx)
@@ -361,6 +471,6 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
 
 
 __all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",
-           "splice", "splice_checked", "OWNED_ELSEWHERE", "expand_to_sentence", "resolve_span", "tidy_after_cut",
-           "apply_edit", "sanitize_replacement",
+           "splice", "splice_checked", "drop_new_duplicates", "delete_flagged", "OWNED_ELSEWHERE", "expand_to_sentence",
+           "resolve_span", "tidy_after_cut", "apply_edit", "sanitize_replacement",
            "check_replacement"]

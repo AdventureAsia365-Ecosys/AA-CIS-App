@@ -17,6 +17,15 @@ import pytest
 
 from services.acp_content_writing import service
 
+
+@pytest.fixture(autouse=True)
+def _no_cta_insert():
+    """S234 round 3 — run_write_background now restores the configured CTA line word for word
+    (hygiene.ensure_cta). These tests pin the retry loop on placeholder texts ('draft 1') that carry
+    no CTA; the CTA step has its own tests in test_aa768_s234_round3.py."""
+    with patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda text, cta: (text, [])):
+        yield
+
 TENANT_ID = uuid.uuid4()
 REQUEST_ID = uuid.uuid4()
 PIECE_ID = uuid.uuid4()

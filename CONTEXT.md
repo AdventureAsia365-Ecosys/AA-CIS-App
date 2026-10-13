@@ -494,6 +494,18 @@ the droppers; one FAQ regeneration per writer text) and **F14_first_line** (Link
 spec after the split and one first-sentence rewrite). Every sentence repair, FAQ regeneration and first-line
 rewrite is reverted when it leaves a new repeat or an orphaned pronoun (`sentence_repair.splice_checked`). An
 approved piece's leftover style-only failure is stored `blocking: false, waived: true` in `gate_ledger`.
+S234 round 3 (AA-768): `services/acp_content_writing/trip_facts.py` owns the trip-fact rules. **F13_repeat**
+(blocking, sentence-repairable) — a figure told twice, an echoed phrase, an orphan line, a moment repeated under
+another moment's heading (autofix deletes the safe ones first; every repair is integrity-checked for the same and
+deletes the new later duplicate before it reverts). **F17_trip_fact** — an optional activity written as fixed, a
+time / ordinal / position the seed lacks, a family brand (audience with children) pitching a moment without the
+seed's access caveat, a role the seed dates as ended written in the present or a wrong span; **F18_rarity** —
+rarity / uniqueness claims and quantifiers stronger than the seed's. Both blocking and sentence-repairable; a
+title/meta-only finding is a warning (the SEO fit refuses such a meta). The full trip's places outside the scoped
+days (`v_active_tour_atoms`) join the out-of-scope gazetteer. F15_voice adds cross-round stock lines and brand-pack /
+angle-brief phrases on every channel. The configured CTA line is restored word for word after autofix. When the
+only blocking failures are F15/F13_repeat/F17/F18 the repair runs on `t9_repair`; an attempt-3 repair call that
+fails cuts the flagged sentence in code instead of holding.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
