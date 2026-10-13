@@ -462,18 +462,25 @@ An automated check run inline right after Write (T9/T10) — up to 9 for `channe
 the other 7 channels. Since AA-613 each failure has a **severity**: `block` (product truth —
 facts, grounding, CTA), `warn` (brand/style, e.g. generic AI wording, brand-fit) or `note`. Only
 `block` triggers a rewrite (max 2 retries). Never assume "failed a gate" means "held" — check
-the severity first. `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
+the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FAQ pairs that
+restate the body); new blocking gates F0_complete (cut-off text), F2_brand_forbidden (the
+tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
+judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
+(it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
-One row of generated content for one (Subject, Goal, Angle) — carries `attempt_number` (max 2),
+One row of generated content for one (Subject, Goal, Angle) — carries `attempt_number` (max 3;
+attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone),
 `gate_ledger` (every Gate's result on the persisted attempt), `status`
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
-`held` now only means "a product-truth problem is still unresolved after ≤2 retries"; the
-tenant always gets the best version. **Tenants never see internal gate data**: the tenant-safe
-projection (`_tenant_safe_piece`) drops `status`, `held_reason`, `gate_ledger`, `repair_log` and
-exposes only `ready_state` (`ready` / `not_ready`, where `not_ready` means there is no content
-yet). Publishing a `held` Piece returns 422. Admins see the full gate data in Content Trace and
+`held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
+and can export and publish a held Piece like an approved one. **Tenants never see internal gate
+data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
+`gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
+`not_ready` means there is no content yet). The same rule covers T2 tour versions (no score / QA
+fields on tenant APIs). `writer_input` (migration 220) stores what the writer was given. Admins
+see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus Content Trace and
 Platform Stats.
 _Avoid_: post, draft, content (all used loosely elsewhere; Piece is the specific DB row).
 
@@ -601,7 +608,12 @@ _Avoid_: block (alone), delete, filter.
 
 ### T-series, old (Tenant rewrite tour, T0-T4)
 
-- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/t0-brand`).
+- **T0 — Brand Identity**: tenant sets up their own brand voice/rules (`/portal/t0-brand`),
+  incl. a Default Call to Action (`tenant_brand_rules.default_cta`, migration 220). The fields
+  become the **brand pack** (`services/acp_shared/brand_pack.py`, AA-771) read by T8, T9 and the
+  T10 judge — compiled deterministically at read time; a hand-written `system_prompt` still heads
+  the judge rubric, otherwise the rubric is compiled from the T0 fields (no Adventure Asia
+  fallback for tenants).
 - **T1 — Tour Selection / Rewrite trigger**: tenant picks an A3 (Master Content) tour and fires
   the rewrite (`/portal/t1-rewrite`, `PoolTab.tsx`'s "Rewrite" button).
 - **T2 — Rewrite (execution)**: the actual LLM rewrite of the picked tour into the tenant's own
@@ -650,8 +662,12 @@ _Avoid_: block (alone), delete, filter.
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
   with `t8_angle_answers` before the ranking (AA-700, shadow).
 - **T9 — Write**: Piece generation, fires automatically the instant an Angle is chosen; the
-  text streams live to the tenant (AA-637). Each Facts Entry is asked `t9_fact_relevant` before
-  it enters the writer prompt (AA-700, shadow). T-series Jev runs only for allow-listed tenants.
+  text streams live to the tenant (AA-637). The seed (`atom_seed.py`) carries the atom's
+  **Place Card** (AA-772: display name, locality/region/country, naming note, checked background
+  facts — `acp_shared.place_card`, built in the T8/T9 jobs by `a3_place_card` + `a3_place_card_check`),
+  `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
+  places the piece covers). Facts Entries are filtered by `facts.country`; S233 removed the
+  per-fact Jev call (no Jev on the T axis).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
   After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
   F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,
