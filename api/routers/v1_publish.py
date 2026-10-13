@@ -152,7 +152,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
             LEFT JOIN acp_shared.publish_log pl
                 ON pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
             WHERE cp.tenant_id = $1::uuid
-              AND cp.status = 'approved'
+              AND cp.status IN ('approved', 'held')  -- AA-770: the tenant always receives the content
               AND COALESCE(cp.channel, agr.channel) = ANY($2::text[])
               AND pl.publish_id IS NULL
             ORDER BY cp.created_at DESC
@@ -281,10 +281,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
     # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
     # piece and the reason is actionable — no existence leak (ownership already confirmed above).
-    if piece["status"] != "approved":
+    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, now
+    # an admin-only quality label) publishes like an approved one. Only a piece with no content
+    # yet ('processing') or a failed write is refused.
+    if piece["status"] not in ("approved", "held"):
         raise HTTPException(
             status_code=422,
-            detail="This piece isn't ready to publish yet — edit it in My Content first.",
+            detail="This piece isn't written yet — try again once it shows as Ready.",
         )
     channel = piece["channel"]
     if channel not in _SUPPORTED_CHANNELS:

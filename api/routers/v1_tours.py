@@ -545,10 +545,10 @@ async def list_my_versions(
 
         params_paged = params + [page_size, offset]
         rows = await conn.fetch(f"""
-            SELECT ttv.id, ttv.version_number, ttv.status, ttv.quality_score,
+            SELECT ttv.id, ttv.version_number, ttv.status,
                    ttv.edit_source, ttv.rewrite_language, ttv.created_at,
-                   ttv.rewritten_content, ttv.qa_auto_passed,
-                   pt.id AS published_tour_id, pt.tour_id, pt.aa_name, pt.quality_score AS aa_quality,
+                   ttv.rewritten_content,
+                   pt.id AS published_tour_id, pt.tour_id, pt.aa_name,
                    rt.country, rt.duration,
                    -- AA-652 — the rewrite job's status (queued/running/succeeded/failed/...),
                    -- NULL for manual edits and pre-AA-652 rows. No job error text (tenant-safe).
@@ -737,6 +737,10 @@ async def get_tour(
 
 # ── P3-S4: Version Detail + Approve/Reject/Edit ───────────────────────────────
 
+_TENANT_HIDDEN_VERSION_FIELDS = {"quality_score", "qa_status", "qa_repair_count", "qa_checked_at",
+                                 "qa_auto_passed"}
+
+
 @router.get("/versions/{version_id}")
 async def get_version(
     version_id: str,
@@ -752,7 +756,6 @@ async def get_version(
             SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
                    pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
                    pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
-                   pt.quality_score AS aa_quality_score,
                    rt.country, rt.duration, rt.price_raw,
                    rt.inclusions, rt.exclusions,
                    j.status AS job_status  -- AA-652
@@ -768,14 +771,16 @@ async def get_version(
 
         # Version history
         history = await conn.fetch("""
-            SELECT id, version_number, status, edit_source, quality_score, created_at
+            SELECT id, version_number, status, edit_source, created_at
             FROM gold_aa_internal.tenant_tour_versions
             WHERE tenant_id = $1::uuid AND published_tour_id = $2::uuid
             ORDER BY version_number ASC
         """, tenant_id, row["published_tour_id"])
 
+    # AA-770 (S233) — scores and QA state stay admin-side (/admin/content-quality).
+    version = {k: v for k, v in dict(row).items() if k not in _TENANT_HIDDEN_VERSION_FIELDS}
     return {
-        **dict(row),
+        **version,
         "version_history": [dict(h) for h in history],
     }
 

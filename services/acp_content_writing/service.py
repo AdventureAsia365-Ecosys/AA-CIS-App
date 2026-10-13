@@ -50,7 +50,7 @@ from services.acp_content_writing import sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, run_quality_gates,
+from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, drop_restated_faq, run_quality_gates,
                                                           strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
@@ -60,7 +60,10 @@ from services.acp_produce.brand import fetch_brand_rubric_text
 
 logger = structlog.get_logger()
 
-MAX_ATTEMPTS = 2  # Phase 1 §2c/§3 — confirmed cap, not N7's 3-8 range
+# AA-770 (S233) — attempt 3 exists only as a sentence-level repair of attempt 2 (never a full
+# rewrite, which invents new facts); it replaces the AA-485 buffer retry (a second content_piece
+# row per request). A piece whose attempt-2 failures are not sentence-repairable stops at 2.
+MAX_ATTEMPTS = 3
 
 # AA-499/AA-484 — the ONE similarity threshold Nghiệp confirmed (Q6=B, 25/07/2026, AA-332
 # origin, cited in AA-484's Linear comment), for BOTH the within-tenant `within_tenant_reuse`
@@ -653,6 +656,15 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text = sentence_repair.splice(content_text, repair_items, replacements)
                     repair_log[-1]["repair_mode"] = "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
+                elif attempt >= 3:
+                    # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
+                    status, held_reason = "held", _held_reason_from(first_failure)
+                    content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
+                    seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
+                    embedding = prev_snapshot["embedding"]
+                    prev_snapshot = None  # nothing was discarded by this attempt
+                    attempt -= 1
+                    break
                 else:
                     content_text, cost, seo_meta, summary = await asyncio.to_thread(
                         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
@@ -703,6 +715,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             "writer_missing_brand_rules": await _tenant_missing_brand_rules(tenant_id, pool),
                         }
 
+            faq_dropped = 0
+            if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
+                content_text, faq_dropped = drop_restated_faq(content_text)
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
@@ -714,6 +729,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
+            if faq_dropped:
+                flags.append({"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
+                              "violations": [f"{faq_dropped} FAQ pair(s) that restated the body were removed"]})
             # AA-701 — Jev questions next to this attempt's gates (allow-listed tenants, observe only).
             await observe_t10(
                 tenant_id=tenant_id, attempt_key=f"{request_id}:{attempt}", content_text=content_text,
@@ -788,7 +806,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         (g for g in prev_ledger if not g["passed"] and g.get("blocking", True)), None
                     )
 
-            if not first_failure["repairable"] or attempt >= MAX_ATTEMPTS:
+            # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
+            last_try = attempt >= MAX_ATTEMPTS or (
+                attempt == MAX_ATTEMPTS - 1 and sentence_repair.plan(content_text, gate_ledger) is None)
+            if not first_failure["repairable"] or last_try:
                 # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
                 # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/
                 # SEO/structure. Brand-voice/framework failures are non-blocking warns (they never
@@ -839,7 +860,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # attempt total, not two. Never affects gate pass/fail — a pure metadata annotation on an
         # already-decided outcome. Soft-fail throughout: a missing embedding (call failed, or
         # tenant_id absent) just leaves this flag absent — never blocks persistence.
-        if status == "approved" and embedding is not None and tenant_id:
+        if embedding is not None and tenant_id:
             similar = await find_similar_pieces(
                 embedding, pool, tenant_id=UUID(tenant_id), exclude_piece_id=piece_id, limit=1,
             )
@@ -866,25 +887,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             discarded_attempts=[discarded_attempt] if discarded_attempt else [],
             seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
             slug=seo_meta.get("slug"), content_summary=summary,
-            # AA-484 now computes `embedding` on EVERY attempt (for the cannibalization gate),
-            # not just when approved — persist it only for the real approved outcome, same
-            # "held piece never ships, nothing useful to index it for" rule AA-499 set.
-            content_embedding=embedding if status == "approved" else None,
+            # AA-770 (S233) — a held piece now reaches the tenant too, so it is indexed like an
+            # approved one (F10 / within-tenant reuse must see it).
+            content_embedding=embedding,
         )
         logger.info(
             "t9_write_and_check_done", request_id=str(request_id), status=status,
             attempts=attempt, cost_usd=total_cost,
         )
 
-        # AA-485 (Q5=C origin, AA-331 — "buffer chạy lại slot HELD", transferred from dead N6/
-        # slot_runner.py to T9/T10's real content_piece.status='held'). Fires as a trailing step
-        # of the SAME background task (no new scheduler/cron infra needed — run_write_background()
-        # is already fire-and-forget from the router's own perspective, AA-466), never re-entrant
-        # (see _buffer_retry_held_piece()'s own eligibility guard for why this can't loop).
-        if status == "held":
-            await _maybe_buffer_retry_held_piece(
-                request_id=request_id, held_piece_id=piece_id, repair_log=repair_log, context=context, pool=pool,
-            )
+        # AA-770 (S233) — the AA-485 buffer retry (a second content_piece row per held request) is
+        # gone: attempt 3 above is its replacement, on the same row.
     except Exception as exc:
         logger.error(
             "t9_write_background_failed", request_id=str(request_id), piece_id=str(piece_id),
@@ -901,131 +914,6 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "t9_write_background_failed_status_write_also_failed",
                 request_id=str(request_id), piece_id=str(piece_id),
             )
-
-
-async def _maybe_buffer_retry_held_piece(
-    *, request_id: UUID, held_piece_id: UUID, repair_log: list[dict], context: dict, pool,
-) -> None:
-    """AA-485 — decides whether to fire the buffer retry, then does it. Two eligibility rules,
-    both from Q5=C's own confirmed design (AA-331), mapped from slot-level to piece-level:
-
-    1. **Repairable-cause holds only.** A NON-repairable hold (e.g. F6_cta_present's missing-CTA
-       case, `repairable=False`) has an external root cause a rewrite can't fix — the same
-       condition would just cause an immediate second hold, wasting a real LLM call for nothing.
-       `repair_log[-1]["repairable"]` is exactly the flag `run_quality_gates()` already computed
-       for this — reused, not re-derived.
-    2. **Exactly N=1 buffer retry per request** (Q5=C: "không lặp vô hạn... số N cần quyết khi
-       build" — chose N=1). Enforced by checking whether ANY OTHER `content_piece` row already
-       exists for this `request_id` — the buffer retry's own new piece becomes that other row,
-       so a SECOND hold naturally fails this check and stops, no counter/recursion needed.
-
-    `promises_an_option`-class flag-not-block gates never need excluding here (AA-520's own
-    audit note on this issue) — they never produce `first_failure`/never cause `held` in the
-    first place, so `repair_log` (built only from real BLOCKING failures) never contains one."""
-    if not repair_log or not repair_log[-1]["repairable"]:
-        logger.info(
-            "t9_buffer_retry_skipped_non_repairable", request_id=str(request_id),
-            held_piece_id=str(held_piece_id),
-        )
-        return
-    async with pool.acquire() as conn:
-        other_piece = await conn.fetchrow(
-            "SELECT piece_id FROM acp_shared.content_piece "
-            "WHERE angle_gate_request_id = $1 AND piece_id != $2 LIMIT 1",
-            request_id, held_piece_id,
-        )
-    if other_piece is not None:
-        logger.info(
-            "t9_buffer_retry_skipped_already_retried", request_id=str(request_id),
-            held_piece_id=str(held_piece_id),
-        )
-        return
-
-    chosen = context["chosen"]
-    new_piece = await _insert_placeholder_piece(
-        pool, tenant_id=UUID(context["tenant_id"]), request_id=request_id,
-        angle_gate_option_id=chosen.get("option_id"), channel=context["channel"],
-        route_hub_name=context.get("route_hub_name"), route_segment_count=context.get("route_segment_count"),
-    )
-    new_piece_id = UUID(new_piece["piece_id"])
-    original_violations = repair_log[-1].get("feedback") or repair_log[-1]["violations"]  # AA-768
-    logger.info(
-        "t9_buffer_retry_triggered", request_id=str(request_id), held_piece_id=str(held_piece_id),
-        new_piece_id=str(new_piece_id),
-    )
-    await _run_buffer_retry_attempt(
-        request_id=request_id, piece_id=new_piece_id, context=context,
-        original_violations=original_violations, pool=pool,
-    )
-
-
-async def _run_buffer_retry_attempt(
-    *, request_id: UUID, piece_id: UUID, context: dict, original_violations: list[str], pool,
-) -> None:
-    """The buffer retry's own write: exactly ONE real attempt, via `rewrite_with_feedback()`
-    seeded with the ORIGINAL hold's own violations — Q5=C's own confirmed design says the retry
-    must "giữ nguyên lý do treo" (keep/know the original hold reason), not a blind fresh roll on
-    `write_content()`. A genuinely separate, smaller loop from `run_write_background()`'s own
-    (deliberately NOT extracted/shared — this codebase's own stated preference elsewhere,
-    quality_gates.py's module docstring, is readable/debuggable-in-isolation over DRY for gate-
-    adjacent logic) — no in-flow MAX_ATTEMPTS=2 retry of ITS OWN; if this one attempt still
-    holds, the piece stays held for good (Q5=C: "không lặp vô hạn"). Any uncaught exception here
-    is caught by `run_write_background()`'s own `except Exception` — deliberately NOT wrapped in
-    a second try/except, so a real bug here surfaces the same `status='failed'` way as every
-    other T9 failure, not swallowed silently."""
-    atom_text, goal, channel_style = context["atom_text"], context["goal"], context["channel_style"]
-    brand_audience, chosen, cta = context["brand_audience"], context["chosen"], context["cta"]
-    destination, trip_name = context["destination"], context["trip_name"]
-    brand_rubric_text, channel, atom_id = context["brand_rubric_text"], context["channel"], context["atom_id"]
-    route_segments = context.get("route_segments")
-    keyword = context.get("keyword")
-    tenant_id = context.get("tenant_id")
-    # AA-529 — same as run_write_background()'s own facts_text/grounding_text: passed into the
-    # rewrite call so the retry sees the same Facts as every other attempt, and folded into the
-    # gate's atom_text so a Facts-sourced claim still passes grounding on this retry too.
-    facts_text = context.get("facts_text") or ""
-    grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
-
-    content_text, cost, seo_meta, summary = await asyncio.to_thread(
-        rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
-        brand_audience=brand_audience, angle=chosen, cta=cta,
-        revision_feedback=original_violations,
-        destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
-        route_segments=route_segments, keyword=keyword,
-        tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-        facts_text=facts_text,
-    )
-    seo_meta, _ = await _fit_seo_meta(seo_meta, keyword, body=content_text, context=context,
-                                      request_id=request_id)  # AA-768
-    outcome = await asyncio.to_thread(
-        run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
-        goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,
-        route_segments=route_segments, keyword=keyword,
-        seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
-        slug=seo_meta.get("slug"), brand_pack=brand_audience,
-    )
-    if outcome["passed"]:
-        status, held_reason = "approved", None
-    else:
-        status, held_reason = "held", _held_reason_from(outcome["first_failure"])
-
-    content_text = strip_citation_tags(content_text)
-    gate_ledger = deep_strip_citation_tags(outcome["gate_ledger"])
-    flags = deep_strip_citation_tags(outcome["flags"])
-    if held_reason:
-        held_reason = strip_citation_tags(held_reason)
-
-    await _finalize_piece(
-        pool, piece_id=piece_id, attempt_number=1,
-        content_text=content_text, status=status, held_reason=held_reason,
-        gate_ledger=gate_ledger, repair_log=[], flags=flags,
-        seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
-        slug=seo_meta.get("slug"), content_summary=summary,
-    )
-    logger.info(
-        "t9_buffer_retry_done", request_id=str(request_id), piece_id=str(piece_id),
-        status=status, cost_usd=cost,
-    )
 
 
 async def _finalize_piece(
@@ -1124,7 +1012,7 @@ def _tenant_safe_piece(row) -> dict:
         "slug": d.get("slug"),
         "route_hub_name": d.get("route_hub_name"),
         "route_segment_count": d.get("route_segment_count"),
-        "flags": d.get("flags") or [],
+        # AA-770 (S233) — no gate notes on the tenant side; they live in the admin Content Quality page.
         "created_at": d["created_at"],
     }
 
@@ -1398,12 +1286,6 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool) -> dict:
     # 'failed'/'processing' rows have content_text = '' by construction, never a partial draft.
     content_text = piece_row["content_text"] if piece_row["status"] in ("approved", "held") else None
 
-    # AA-519 Việc 5 — same no-jsonb-codec gap as dfs_paa_snapshot/route_segment_ids elsewhere in
-    # this codebase (asyncpg has no jsonb codec registered on this app's connections).
-    piece_flags = piece_row["flags"]
-    if isinstance(piece_flags, str):
-        piece_flags = json.loads(piece_flags)
-
     return {
         "request_id": req["request_id"],
         "channel": channel,
@@ -1413,8 +1295,6 @@ async def fetch_review(tenant_id: UUID, request_id: UUID, pool) -> dict:
         # every other optional field in this response.
         "route_hub_name": piece_row["route_hub_name"],
         "route_segment_count": piece_row["route_segment_count"],
-        # AA-519 Việc 5 — [] (never None) so the frontend can check .length without a null guard.
-        "flags": piece_flags or [],
         "goal": (
             {"key": req["goal"], "label": goal_obj["name"] if goal_obj else req["goal"]}
             if req["goal"] else None
@@ -1511,11 +1391,6 @@ async def fetch_review_list(tenant_id: UUID, pool) -> list[dict]:
         if isinstance(snapshot, str):
             snapshot = json.loads(snapshot)
 
-        # AA-519 Việc 5 — same no-jsonb-codec gap as snapshot above.
-        row_flags = r["flags"]
-        if isinstance(row_flags, str):
-            row_flags = json.loads(row_flags)
-
         items.append({
             "request_id": str(r["angle_gate_request_id"]),
             "piece_id": str(r["piece_id"]),
@@ -1525,7 +1400,6 @@ async def fetch_review_list(tenant_id: UUID, pool) -> list[dict]:
             # AA-519 Việc 4/5 — same fields/conventions as fetch_review() above.
             "route_hub_name": r["route_hub_name"],
             "route_segment_count": r["route_segment_count"],
-            "flags": row_flags or [],
             "goal": (
                 {"key": r["goal"], "label": goal_obj["name"] if goal_obj else r["goal"]}
                 if r["goal"] else None
