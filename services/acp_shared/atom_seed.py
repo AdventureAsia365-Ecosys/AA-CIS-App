@@ -160,7 +160,11 @@ def compose_seed(text: str, evidence: Optional[str], hook: Optional[str], season
     """Pure: the seed block from an atom's fields. Empty fields are left out; sibling evidence
     follows `pick_siblings` (S234). `card` (AA-772) is the atom's place card: its location
     replaces the bare place + country line, and its checked facts become the PLACE BACKGROUND the
-    writer may cite."""
+    writer may cite.
+
+    The line prefixes ('Location:', 'Naming:', 'Day N', 'Source itinerary:', 'Why it matters:',
+    'Season:', 'Place background', 'Other trips that include') are a parsing contract for F9 v2
+    (`claim_rules.number_source_lines`, S234 PR5) — a rename needs the round-trip test updated."""
     lines = [text.strip()] + _location_lines(place, country, card)
     if day:
         lines.append(f"Day {day} of the trip")
