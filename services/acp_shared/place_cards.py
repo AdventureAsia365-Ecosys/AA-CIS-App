@@ -768,7 +768,10 @@ def _facts_list(raw) -> list[dict]:
 
 def merged_facts(keep_facts, other_facts: list) -> list[dict]:
     """The kept card's facts, then the merged cards' facts not already there (folded text), added
-    only while the card holds fewer than MAX_FACTS — a merge never drops a fact the card had."""
+    only while the card holds fewer than MAX_FACTS — a merge never drops a fact the card had.
+    Lossless on purpose (review S234 r2b): the donor cards are deleted after the merge, so a
+    number-conflict filter here would lose true facts for good (length vs width of one lake); a
+    seed keeps one value per fact at seed time instead (`seed_canon.canonical_facts`)."""
     out = _facts_list(keep_facts)
     seen = {fold(f["text"]) for f in out}
     for facts in other_facts:

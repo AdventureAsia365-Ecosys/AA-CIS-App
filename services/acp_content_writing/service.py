@@ -41,6 +41,8 @@ from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
+from services.acp_shared.seed_canon import is_overnight
+from services.acp_content_writing import seo_grounding
 from services.acp_shared.channel_spec import channel_spec, first_sentence
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
@@ -130,7 +132,7 @@ async def _tenant_missing_brand_rules(tenant_id: str, pool) -> bool:
 
 
 _ROUTE_SEGMENT_TEXT_QUERY = """
-    SELECT m.atom_id, ta.text, ta.itinerary_day,
+    SELECT m.atom_id, ta.text, ta.itinerary_day, ta.created_at,
            (SELECT bool_and(ar.excluded_reason IS NOT NULL) FROM acp_contract.atom_ranking ar
             WHERE ar.segment_id = m.segment_id AND ar.tour_id = ta.tour_id
               AND ar.superseded_at IS NULL) AS excluded
@@ -150,6 +152,20 @@ _ROUTE_SEGMENT_TEXT_QUERY = """
 # current atom_ranking row of this (segment, tour) has an excluded_reason (transit, lodging, meal,
 # unnamed place — exclusion does not vary by market), the same filter route_detection.py uses.
 # NULL (no current ranking row) keeps the Segment.
+# S234 round 2 — + created_at: within one day the moments follow the order A3 extracted them in
+# (a3_atomize inserts one atom per autocommit statement, in the model's itinerary order; no
+# ordinal column exists).
+
+
+def _walk_order(item: tuple[int, dict]) -> tuple:
+    """S234 round 2 — a route moment's place in the walk: itinerary_day (no day last); within a
+    day an overnight moment last (it ends the day — S234 listed 'Sod Camp — overnight' before the
+    Day 3 volcano), then the atom's extraction order (created_at), then the Segment order."""
+    i, r = item
+    day = r.get("itinerary_day")
+    created = r.get("created_at")
+    ts = created.timestamp() if hasattr(created, "timestamp") else float("inf")
+    return (day is None, day or 0, is_overnight(r.get("text")), ts, i)
 
 
 async def _fetch_route_segments(
@@ -197,7 +213,7 @@ async def _fetch_route_segments(
         if rows and not kept:
             logger.warning("t9_route_all_segments_excluded", segment_ids=segment_ids[:20])
             kept = rows
-        kept.sort(key=lambda p: (p[1].get("itinerary_day") is None, p[1].get("itinerary_day") or 0, p[0]))
+        kept.sort(key=_walk_order)
         atoms = [(r["atom_id"], r["text"]) for _, r in kept]
         segments = await route_moment_seeds(conn, atoms, str(tenant_id)) if atoms else []
     if not segments:
@@ -258,11 +274,28 @@ def _fold_kw(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
 
 
+def _location_only(keyword: str, seed_text: str) -> Optional[str]:
+    """S234 round 2 — the keyword without its ungrounded product words ('punakha dzong meditation
+    retreat' → 'punakha dzong'), kept only when at least 2 words remain."""
+    bad = set(seo_grounding.unsupported_products(keyword, seed_text))
+    words = [w for w in keyword.split() if not any(st in bad for st in seo_grounding.product_terms(w))]
+    while words and words[-1].lower() in {"and", "or", "with", "for", "in", "of", "the"}:
+        words.pop()
+    return " ".join(words) if len(words) >= 2 else None
+
+
 def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> Optional[str]:
     """The blog's SEO keyword: a non-transactional related keyword that shares a place word with
     the piece's own moment(s) and names no place in `out_of_scope` (folded gazetteer entries,
     hygiene.build_scope_lexicon — S234). None otherwise — the writer then writes title/meta
-    naturally."""
+    naturally.
+
+    S234 round 2 (AA-772) — a keyword's product words ('meditation', 'retreat', 'cruise', 'trek' …,
+    seo_grounding.PRODUCT_STEMS) must be used by the seed itself; otherwise the next candidate is
+    tried, and when none is grounded, the first place-matching one with its product words removed
+    (if 2+ words remain). The country of a "Location:" line is read with its parenthetical removed
+    (S234: '(do not place it in any other town, region or country)' hid it, so 'Bhutan meditation
+    retreat' matched every Punakha seed on 'bhutan')."""
     candidates = [k.strip() for k in related_keywords or [] if isinstance(k, str) and k.strip()
                   and not _TRANSACTIONAL_RE.search(k)
                   and not any(hygiene.names_place(k, g) for g in out_of_scope)]
@@ -271,17 +304,26 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
     # Only the places of the piece's own moment(s): the "Location:" lines, minus country names and
     # generic words (S233: "camp" in "Sod Camp" matched "gobi tour tourist camp" on a Khövsgöl route;
     # "other trips" lines had picked "gobi" for a monastery-ruins piece).
-    locs = " ".join(line.split(":", 1)[1] for line in (seed_text or "").splitlines() if line.startswith("Location:"))
+    loc_lines = [re.sub(r"\(.*?\)", " ", line.split(":", 1)[1])
+                 for line in (seed_text or "").splitlines() if line.startswith("Location:")]
+    locs = " ".join(loc_lines)
     if not locs.strip():  # no Location line (atom without a country): the label's place part
         locs = " ".join(line.split(" — ", 1)[0] for line in (seed_text or "").splitlines() if " — " in line)
-    locs = re.sub(r"\(.*?\)", " ", locs)
-    countries = {w for line in (seed_text or "").splitlines() if line.startswith("Location:")
-                 for w in re.findall(r"[a-z]{4,}", _fold_kw(line.rsplit(",", 1)[-1]))}
+        locs = re.sub(r"\(.*?\)", " ", locs)
+    # The country = after the last comma, or the whole line when it has none (a card-less atom with
+    # no place: 'Location: Bhutan (do not name …)' — review r2b).
+    countries = {w for line in loc_lines for w in re.findall(r"[a-z]{4,}", _fold_kw(line.rsplit(",", 1)[-1]))}
     seed_words = ({w for w in re.findall(r"[a-z]{4,}", _fold_kw(locs))} - countries - _GENERIC_PLACE_WORDS)
+    fallback = None
     for k in candidates:
-        if seed_words & set(re.findall(r"[a-z]{4,}", _fold_kw(k))):
+        if not seed_words & set(re.findall(r"[a-z]{4,}", _fold_kw(k))):
+            continue
+        ungrounded = seo_grounding.unsupported_products(k, seed_text)
+        if not ungrounded:
             return k
-    return None  # no keyword about this moment — the writer titles it naturally
+        logger.info("t9_keyword_ungrounded", keyword=k, products=ungrounded)
+        fallback = fallback or _location_only(k, seed_text)
+    return fallback  # None: no keyword about this moment — the writer titles it naturally
 
 
 def _held_reason_from(first_failure: dict) -> str:
@@ -381,14 +423,21 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     def title_ok(value) -> bool:
         return _seo_title_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
 
+    seed = context.get("atom_text") or ""
+
     def meta_ok(value) -> bool:
-        return _meta_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+        # S234 round 2 — a meta may not sell a product the seed and the post never mention
+        # ('a Bhutan meditation retreat' on a Punakha Dzong visit, 6/6 S234 Punakha posts).
+        return (_meta_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+                and not seo_grounding.meta_unsupported_products(value, seed, body))
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
     forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
+    forbidden += [w for w in seo_grounding.meta_unsupported_products(seo_meta.get("meta_description"), seed, body)
+                  if w not in forbidden]
     extra = {"forbidden_words": forbidden} if forbidden else {}
     try:
         fitted, cost = await asyncio.to_thread(
