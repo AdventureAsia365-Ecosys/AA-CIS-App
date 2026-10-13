@@ -28,8 +28,53 @@ _TAG = r"\[(?:R|F):[^\]]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
-_SENTENCE_TAIL_RE = re.compile(rf"[^.!?\n]*[.!?]+[\"'”’)]*(?:\s?{_TAG})*")
 _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
+_SENTENCE_END_CHARS = ".!?"
+_CLOSERS = "\"'”’)"
+# The end mark (run), its closing quotes / brackets, and the citation tags that follow it.
+_SENTENCE_TRAILER_RE = re.compile(rf"[.!?]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
+_TAG_AT_RE = re.compile(_TAG)
+# "Mt. Fuji", "St. Petersburg", "No. 5", "e.g. the …": a period after one of these is not an end.
+_ABBREVIATIONS = frozenset({"mt", "st", "ft", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "no", "vs",
+                            "approx", "ca", "e.g", "i.e"})
+_WORD_BEFORE_DOT_RE = re.compile(r"[A-Za-z.]+$")
+_DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
+
+
+def is_sentence_end(text: str, i: int) -> bool:
+    """True when text[i] ('.', '!' or '?') really ends a sentence (S234 review): the mark run and
+    its closing quotes must be followed by whitespace, a citation tag or the end of the text — so
+    a decimal ("12.5 km", "1.5 hours") or a dotted name ("U.S.", "e.g.") never is — and a period
+    after a known abbreviation ("Mt. Fuji", "St. Petersburg") is not either."""
+    if i < 0 or i >= len(text) or text[i] not in _SENTENCE_END_CHARS:
+        return False
+    j = i + 1
+    while j < len(text) and text[j] in _SENTENCE_END_CHARS:
+        j += 1
+    while j < len(text) and text[j] in _CLOSERS:
+        j += 1
+    if j < len(text) and not text[j].isspace() and not _TAG_AT_RE.match(text, j):
+        return False
+    if text[i] == "." and (i + 1 >= len(text) or text[i + 1] not in _SENTENCE_END_CHARS):
+        word = _WORD_BEFORE_DOT_RE.search(text, 0, i)
+        if word and (word.group(0).lower() in _ABBREVIATIONS or _DOTTED_ACRONYM_RE.fullmatch(word.group(0))):
+            return False
+    return True
+
+
+def sentence_tail_end(text: str, pos: int) -> Optional[int]:
+    """End of the sentence running through `pos`: just after the first real sentence end
+    (is_sentence_end) at or after `pos`, plus its closing quotes and trailing citation tags. None
+    when a newline or the end of the text comes first (a list item or heading with no end mark)."""
+    i = max(pos, 0)
+    while i < len(text) and text[i] != "\n":
+        if text[i] in _SENTENCE_END_CHARS and is_sentence_end(text, i):
+            # back to the start of the mark run ("?!", "..."), then take the whole trailer
+            while i > pos and text[i - 1] in _SENTENCE_END_CHARS:
+                i -= 1
+            return _SENTENCE_TRAILER_RE.match(text, i).end()
+        i += 1
+    return None
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
@@ -58,15 +103,12 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
     if m is None:
         return None
     end = m.end()
-    if text[end - 1] not in ".!?":
-        tail = _SENTENCE_TAIL_RE.match(text, end)
-        if tail is None:
-            return None
-        end = tail.end()
-    else:
-        trailing = re.match(rf"[\"'”’)]*(?:\s?{_TAG})*", text[end:])
-        end += trailing.end() if trailing else 0
-    return m.start(), end
+    # A quote ending on its own mark is extended from that mark (closers / tags); one ending on
+    # "12." of "12.5 km" or "Mt." is not at a sentence end and runs on to the real one.
+    tail = sentence_tail_end(text, end - 1 if text[end - 1] in _SENTENCE_END_CHARS else end)
+    if tail is None:
+        return None
+    return m.start(), max(tail, end)
 
 
 def _seo_fields_only(g: dict) -> bool:
@@ -172,35 +214,33 @@ def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
 
 # ── AA-769 (S234) — admin cut / rewrite of one flagged sentence ─────────────────────────────────
 
-_SENTENCE_END_CHARS = ".!?"
-_CLOSERS = "\"'”’)"
+_TRAILING_JUNK_RE = re.compile(rf"(?:\s|[{re.escape(_CLOSERS)}]|{_TAG})*$")
 
 
 def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
     """The whole sentence around the phrase text[start:end] (an F9_brand_style hit such as "hidden
     gem"), so an admin cut or rewrite never leaves half a sentence. Walks back to just after the
-    previous sentence end or newline, forward to the sentence end plus its closing quotes and
-    trailing citation tags. Never crosses a newline: a list item or heading with no end mark
-    stops at its line end."""
+    previous real sentence end (is_sentence_end: not a decimal, not "Mt.") or newline, forward to
+    the sentence end plus its closing quotes and trailing citation tags. Never crosses a newline:
+    a list item or heading with no end mark stops at its line end."""
     s = start
     while s > 0 and text[s - 1] != "\n":
-        if text[s - 1] in _SENTENCE_END_CHARS:
+        k = s - 1
+        if text[k] in _SENTENCE_END_CHARS and is_sentence_end(text, k):
             break
-        if text[s - 1] in _CLOSERS and s >= 2 and text[s - 2] in _SENTENCE_END_CHARS:
+        if text[k] in _CLOSERS and k >= 1 and text[k - 1] in _SENTENCE_END_CHARS and is_sentence_end(text, k - 1):
             break
         s -= 1
     lead = re.match(rf"(?:\s|{_TAG})*", text[s:start])
     s += lead.end() if lead else 0
-    e = end
-    if re.search(rf"[.!?][{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*$", text[s:e]):
-        # already a whole sentence (locate_sentence spans end on the mark or its trailing tags)
-        trailing = re.match(rf"[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*", text[e:])
-        e += trailing.end() if trailing else 0
-        return s, e
-    tail = _SENTENCE_TAIL_RE.match(text, e)  # cannot cross a newline ([^.!?\n]*)
+    # A span that already ends on its sentence's mark (a located sentence + its tags) is
+    # extended from that mark; anything else from its end.
+    core = s + _TRAILING_JUNK_RE.search(text[s:end]).start() if end > s else end
+    pos = core - 1 if core > s and text[core - 1] in _SENTENCE_END_CHARS else end
+    tail = sentence_tail_end(text, pos)  # never crosses a newline
     if tail is not None:
-        return s, tail.end()
-    nl = text.find("\n", e)
+        return s, max(tail, end)
+    nl = text.find("\n", end)
     e = len(text) if nl < 0 else nl
     while e > end and text[e - 1] in " \t":
         e -= 1
@@ -242,6 +282,24 @@ def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
     return tidy_after_cut(splice(text, [{"start": start, "end": end}], [replacement or ""]))
 
 
+_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
+
+
+def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
+    """The tenant-facing clean-up the pipeline runs before it persists content_text, applied to an
+    admin replacement (lesson: a deterministic fix runs after the LAST LLM step — the suggest
+    call is now that step): drop [R:id]/[F:id] citation tags and the SOURCE's [Moment id=…] /
+    [Fact id=…] labels the model may echo, strip markdown on plain-text channels, collapse
+    whitespace."""
+    from services.acp_content_writing.generate import strip_markdown
+    from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS
+    from services.acp_content_writing.quality_gates import strip_citation_tags
+    text = _SOURCE_LABEL_RE.sub("", strip_citation_tags(replacement or ""))
+    if channel in PLAIN_TEXT_CHANNELS:
+        text = strip_markdown(text)
+    return " ".join(text.split())
+
+
 def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict]) -> list[dict]:
     """The deterministic gates a replacement sentence must pass before it is saved (lesson AA-641:
     a repair needs a guard after it): F1 (no number the source lacks), F2 banned patterns, the
@@ -261,5 +319,6 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     return [{"gate": r["gate"], "violations": list(r["violations"])} for r in results if not r["passed"]]
 
 
-__all__ = ["locate_sentence", "neighbours", "plan", "repeats_neighbour", "splice", "expand_to_sentence", "resolve_span", "tidy_after_cut",
-           "apply_edit", "check_replacement"]
+__all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",
+           "splice", "expand_to_sentence", "resolve_span", "tidy_after_cut", "apply_edit", "sanitize_replacement",
+           "check_replacement"]

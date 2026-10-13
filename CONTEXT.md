@@ -495,7 +495,10 @@ match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F1
 and writes `content_text` plus an `acp_shared.audit_log` row
 (`content_piece.admin_sentence_cut|_rewritten|_edited`, before/after) — the audit log is the
 Piece's edit history. `gate_ledger`/`flags` stay as the writer produced them, and a published
-post is not re-synced.
+post is not re-synced. The replacement is cleaned like pipeline output (no citation tag, no
+markdown on plain-text channels) before it is checked and saved. An admin can also regenerate a
+request's 3 T8 angles (`POST /admin/content-quality/requests/{id}/regenerate-angles`, same goal,
+the `t8_angles` job; the option rows are overwritten in place and the choice is reset).
 _Avoid_: post, draft, content (all used loosely elsewhere; Piece is the specific DB row).
 
 **Channel**:

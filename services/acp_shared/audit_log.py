@@ -62,6 +62,8 @@ class AdminAuditAction:
     SENTENCE_CUT = "content_piece.admin_sentence_cut"
     SENTENCE_REWRITTEN = "content_piece.admin_sentence_rewritten"  # the model's suggestion, unchanged
     SENTENCE_EDITED = "content_piece.admin_sentence_edited"  # the admin's own (or edited) text
+    # S234 — an admin re-ran T8 for a request (new 3 angles, choice reset); details keep the old ones.
+    ANGLES_REGENERATED = "angle_gate_request.admin_angles_regenerated"
 
 
 async def write_audit_log(

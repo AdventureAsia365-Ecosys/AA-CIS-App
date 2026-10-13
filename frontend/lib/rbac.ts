@@ -73,9 +73,11 @@ export const API_RULES = {
 
 // AA-769 (S234) — writes that change tenant content are narrower than the route's read rule: a
 // non-GET request under one of these /api/admin/ path prefixes needs one of `roles` (the backend
-// re-checks the forwarded role). Today only the Content Quality sentence actions (cut / rewrite).
+// re-checks the forwarded role). Today the Content Quality sentence actions (cut / rewrite) and the
+// per-request "regenerate angles".
 export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "content-quality/pieces/", roles: ["admin"] },
+  { prefix: "content-quality/requests/", roles: ["admin"] },
 ];
 
 /** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */

@@ -372,3 +372,170 @@ async def test_piece_detail_cost_includes_content_piece_id_calls_and_admin_edits
     assert out["admin_edits"][0]["details"] == {"before": "x", "after": ""}
     assert out["published"] is True and out["flagged_sentences"][0]["gates"] == ["F9_brand_style"]
     assert out["cost_by_stage"][0]["stage"] == "t9_repair"
+
+
+# ── S234 review: sentence boundaries (decimals, abbreviations) ────────────────────────────────
+
+DECIMAL_TEXT = ("Intro here. Over three unforgettable days you will walk through quiet pine forests and terraced "
+                "valleys, covering roughly 12.5 km each day with your guide. Then lunch.")
+
+
+def test_f1_sentence_with_a_decimal_is_cut_whole():
+    sent = DECIMAL_TEXT[12:DECIMAL_TEXT.index(" Then")]
+    f1 = {"gate": "F1_grounding", "passed": False, "blocking": True, "violations": [
+        f"sentence states ['12.5'] not present in the content seed: '{sent[:100]}'"]}
+    [item] = cq.flagged_sentences(DECIMAL_TEXT, cq.highlights(DECIMAL_TEXT, [f1], []))
+    assert item["text"] == sent
+    assert sr.apply_edit(DECIMAL_TEXT, item["start"], item["end"], "") == "Intro here. Then lunch."
+
+
+def test_locate_sentence_quote_ending_inside_a_decimal_runs_to_the_real_end():
+    text = "Intro. It is about 12.5 km of trail along the ridge today. Next one."
+    span = sr.locate_sentence(text, "It is about 12.")
+    assert text[span[0]:span[1]] == "It is about 12.5 km of trail along the ridge today."
+
+
+@pytest.mark.parametrize("sentence", [
+    "It takes 1.5 hours to reach this hidden gem by boat.",
+    "Visit Mt. Fuji, a hidden gem.",
+    "The trail climbs 2.5 km to a hidden gem viewpoint.",
+    "Visit St. Petersburg, a hidden gem city.",
+    "Trips to the U.S. are a hidden gem for some.",
+])
+def test_phrase_cut_never_leaves_a_fragment(sentence):
+    text = f"Intro here. {sentence} Then lunch."
+    i = text.index("hidden gem")
+    s, e = sr.expand_to_sentence(text, i, i + len("hidden gem"))
+    assert text[s:e] == sentence
+    assert sr.apply_edit(text, s, e, "") == "Intro here. Then lunch."
+
+
+def test_is_sentence_end_rules():
+    assert sr.is_sentence_end("Done. Next", 4)
+    assert sr.is_sentence_end("Done.", 4)
+    assert sr.is_sentence_end('He said "go." Then', 11)
+    assert sr.is_sentence_end("Done. [R:a1] Next", 4)
+    assert not sr.is_sentence_end("12.5 km", 2)
+    assert not sr.is_sentence_end("Mt. Fuji", 2)
+    assert not sr.is_sentence_end("e.g. this", 3)
+    assert sr.is_sentence_end("It costs $12. Then", 12)
+
+
+# ── S234 review: the replacement gets the tenant-facing clean-up ──────────────────────────────
+
+def test_sanitize_replacement_strips_tags_labels_and_plain_text_markdown():
+    assert sr.sanitize_replacement("We visit **Tiger's Nest** [R:abc] [Moment id=m1].", "linkedin") == \
+        "We visit Tiger's Nest."
+    assert sr.sanitize_replacement("We visit **Tiger's Nest** [F:f1].", "blog") == "We visit **Tiger's Nest**."
+
+
+@pytest.mark.asyncio
+async def test_apply_saves_the_replacement_without_citation_tag_or_markdown():
+    conn = _conn(_piece_row())
+    await _apply(conn, mode="manual", replacement="**Trail Pulse** builds it. [R:abc]")
+    [upd] = _updates(conn)
+    assert "Trail Pulse builds it. It is a hidden gem." in upd.args[2]
+    assert "[R:" not in upd.args[2] and "**" not in upd.args[2]
+    assert json.loads(_audits(conn)[0].args[6])["after"] == "Trail Pulse builds it."
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_a_replacement_that_is_only_a_tag():
+    conn = _conn(_piece_row())
+    with pytest.raises(HTTPException) as e:
+        await _apply(conn, mode="manual", replacement="[R:abc]")
+    assert e.value.status_code == 422 and not _updates(conn)
+
+
+@pytest.mark.asyncio
+async def test_suggest_returns_the_cleaned_replacement():
+    conn = _conn(_piece_row())
+    body = cq.SentenceSuggestBody(start=START, end=START + len(SENT), text=SENT)
+    reply = '{"replacements": ["**Trail Pulse** builds it. [R:a1]"]}'
+    with patch.object(generate, "LLMClient", return_value=_llm(reply)), patch.object(generate, "record_call_sync"):
+        out = await cq.suggest_sentence(PIECE_ID, body, _request(conn), x_admin_secret=SECRET, x_admin_role="admin")
+    assert out["replacement"] == "Trail Pulse builds it."
+
+
+def test_repair_sentences_passes_optional_context():
+    items = [{"sentence": "A.", "problem": "p", "context": ["Before.", "After."]}]
+    with patch.object(generate, "LLMClient", return_value=_llm()) as m, patch.object(generate, "record_call_sync"):
+        generate.repair_sentences(sentences=items, content_seed="seed", channel="blog")
+    assert "CONTEXT: Before. | After." in m.return_value.generate.call_args.args[0].user_prompt
+
+
+# ── S234: regenerate the T8 angles of one request ─────────────────────────────────────────────
+
+REQUEST_ID = str(uuid.uuid4())
+
+
+def _angle_request_conn(status="approved", goal="inspire", busy=0):
+    conn = _conn({"request_id": uuid.UUID(REQUEST_ID), "tenant_id": TENANT_ID, "goal": goal, "status": status})
+    conn.fetchval.return_value = busy
+    conn.fetch.return_value = [{"idx": 0, "name": "Ruins at dawn", "best_final_style": "s", "recommended": True,
+                                "chosen": True}]
+    return conn
+
+
+async def _regenerate(conn, role="admin"):
+    with patch("shared.jobs.registry.enqueue", new=AsyncMock(return_value=("job-1", True))) as enq:
+        out = await cq.regenerate_angles(REQUEST_ID, _request(conn), x_admin_secret=SECRET,
+                                         x_admin_user_id="u1", x_admin_role=role)
+    return out, enq
+
+
+@pytest.mark.asyncio
+async def test_regenerate_angles_resets_choice_enqueues_and_audits():
+    conn = _angle_request_conn()
+    out, enq = await _regenerate(conn)
+    assert out == {"request_id": REQUEST_ID, "job_id": "job-1", "status": "pending_goal", "goal": "inspire"}
+    assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
+    args, kw = enq.await_args.args, enq.await_args.kwargs
+    assert args[0] is conn and args[1] == "t8_angles"
+    assert args[2] == {"request_id": REQUEST_ID, "tenant_id": str(TENANT_ID), "goal": "inspire"}
+    assert kw["created_by"] == "admin:u1"
+    sqls = [c.args[0] for c in conn.execute.await_args_list]
+    assert any("SET chosen = false" in q for q in sqls)
+    assert any("status = 'pending_goal'" in q for q in sqls)
+    [audit] = [c for c in conn.execute.await_args_list if "INSERT INTO acp_shared.audit_log" in c.args[0]]
+    assert audit.args[3] == AdminAuditAction.ANGLES_REGENERATED and audit.args[4] == "angle_gate_request"
+    d = json.loads(audit.args[6])
+    assert d["job_id"] == "job-1" and d["previous_status"] == "approved"
+    assert d["previous_angles"][0]["name"] == "Ruins at dawn"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,goal,busy", [("pending_goal", "inspire", 0), ("pending_goal", None, 0),
+                                              ("approved", "inspire", 1)])
+async def test_regenerate_angles_409_when_generating_or_writing(status, goal, busy):
+    conn = _angle_request_conn(status=status, goal=goal, busy=busy)
+    with pytest.raises(HTTPException) as e:
+        await _regenerate(conn)
+    assert e.value.status_code == 409
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_angles_404_and_admin_only():
+    conn = _conn(None)
+    with pytest.raises(HTTPException) as e:
+        await _regenerate(conn)
+    assert e.value.status_code == 404
+    conn = _angle_request_conn()
+    with pytest.raises(HTTPException) as e:
+        await _regenerate(conn, role="content")
+    assert e.value.status_code == 403
+    conn.fetchrow.assert_not_awaited()
+
+
+def test_set_goal_and_generate_upserts_the_option_rows():
+    import inspect
+    from services.acp_angle_gate import service as ag
+    src = inspect.getsource(ag.set_goal_and_generate)
+    assert "ON CONFLICT (request_id, idx) DO UPDATE" in src and "chosen = false" in src
+
+
+def test_bff_write_rule_covers_regenerate_angles():
+    from pathlib import Path
+    rbac = (Path(__file__).resolve().parents[2] / "frontend/lib/rbac.ts").read_text()
+    assert '{ prefix: "content-quality/requests/", roles: ["admin"] }' in rbac

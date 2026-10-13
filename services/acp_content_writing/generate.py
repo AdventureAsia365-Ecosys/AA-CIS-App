@@ -309,7 +309,9 @@ def repair_sentences_detailed(
     stage: str = "t9_write", mode: str = "sentence_repair", attempt: int | None = 2,
     content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS,
 ) -> tuple[list[str], float, str | None]:
-    """repair_sentences() plus the model that answered (the admin suggestion shows and audits it)."""
+    """repair_sentences() plus the model that answered (the admin suggestion shows and audits it).
+    A `sentences` item may carry "context" (its neighbouring sentences) — the same optional field
+    the AA-768 PR adds, so the two generalisations of this call are one superset signature."""
     source = content_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
     numbered = "\n".join(
         f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}"

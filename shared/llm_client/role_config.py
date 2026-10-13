@@ -131,11 +131,13 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "a0_column_map":      StageConfig("a0_column_map", "writer", "claude", "haiku", "acc3"),
     "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),
 }
-# S234 (decision C2): one cheap stage for single-sentence T9 repairs — the AA-769 admin "Rewrite"
-# suggestion now, the pipeline's sentence repair after its A/B. Row seeded by migration 221; the
-# guard keeps one definition when the AA-772 PR adds the same key to the literal above.
-SAFE_DEFAULTS.setdefault(
-    "t9_repair", StageConfig("t9_repair", "writer", "claude", "haiku", "acc3", fallback_model_ids=("sonnet",)))
+
+# S234 (C2/C12, AA-768): one cheap repair route — Haiku, Sonnet fallback — used by the blog SEO fit
+# now and by the AA-769 admin sentence actions; the pipeline sentence repair joins it after the
+# Haiku A/B. Its shared.llm_role_config row comes from migration 221 (AA-772 PR); this mirror only
+# fills the gap when that PR has not added the same key to the dict above.
+SAFE_DEFAULTS.setdefault("t9_repair", StageConfig("t9_repair", "writer", "claude", "haiku", "acc3",
+                                                   fallback_model_ids=("sonnet",)))
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 
