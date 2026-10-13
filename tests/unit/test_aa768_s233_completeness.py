@@ -132,8 +132,14 @@ class TestKeywordChoice:
     def test_transactional_keywords_are_skipped(self):
         from services.acp_content_writing.service import choose_keyword
         kws = ["khovsgol and gobi tour mongolia price", "mongolia tour cost", "khovsgol lake mongolia"]
-        seed = "Ruins of an ancient monastery — visit\nLocation: Mongolia"
+        seed = "Lake Khövsgöl — boat trip\nLocation: Lake Khövsgöl, Mongolia"
         assert choose_keyword(kws, seed) == "khovsgol lake mongolia"
+
+    def test_keyword_outside_the_moment_is_dropped(self):
+        from services.acp_content_writing.service import choose_keyword
+        seed = ("Ruins of an ancient monastery — visit\nLocation: ruins of an ancient monastery, Mongolia\n"
+                "Other trips that include this same moment:\n- A night in a Gobi tourist camp.")
+        assert choose_keyword(["gobi tour tourist camp"], seed) is None
 
     def test_prefers_a_keyword_about_the_seed_place(self):
         from services.acp_content_writing.service import choose_keyword
@@ -178,4 +184,5 @@ class TestKeywordCoverage:
 
     def test_reviews_keyword_is_skipped(self):
         from services.acp_content_writing.service import choose_keyword
-        assert choose_keyword(["khovsgol and gobi tour mongolia reviews", "khovsgol lake"], "seed") == "khovsgol lake"
+        assert choose_keyword(["khovsgol and gobi tour mongolia reviews", "khovsgol lake"], "Khövsgöl — x") == \
+            "khovsgol lake"

@@ -226,19 +226,27 @@ _TRANSACTIONAL_RE = re.compile(
     r"|reddit|tripadvisor)\b", re.I)
 
 
+def _fold_kw(text: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
+
+
 def choose_keyword(related_keywords: list, seed_text: str) -> Optional[str]:
-    """The blog's SEO keyword: a non-transactional related keyword, preferring one that shares a
-    word with the seed (the place the piece is about). None when every keyword is transactional —
-    the writer then writes title/meta naturally."""
+    """The blog's SEO keyword: a non-transactional related keyword that shares a place word with
+    the piece's own moment(s). None otherwise — the writer then writes title/meta naturally."""
     candidates = [k.strip() for k in related_keywords or [] if isinstance(k, str) and k.strip()
                   and not _TRANSACTIONAL_RE.search(k)]
     if not candidates:
         return None
-    seed_words = {w for w in re.findall(r"[a-z]{4,}", (seed_text or "").lower())}
+    # Only the piece's own moment(s): the label + Location lines, never "Other trips" siblings or
+    # place background (S233 round 3 picked "gobi tour tourist camp" for a monastery-ruins piece).
+    scoped = "\n".join(line for line in (seed_text or "").splitlines()
+                       if not line.startswith(("- ", "Other trips", "Place background", "Source itinerary")))
+    seed_words = {w for w in re.findall(r"[a-z]{4,}", _fold_kw(scoped))} - {"tour", "trip", "visit", "travel"}
     for k in candidates:
-        if seed_words & set(re.findall(r"[a-z]{4,}", k.lower())):
+        if seed_words & set(re.findall(r"[a-z]{4,}", _fold_kw(k))):
             return k
-    return candidates[0]
+    return None  # no keyword about this moment — the writer titles it naturally
 
 
 def _held_reason_from(first_failure: dict) -> str:
@@ -299,11 +307,29 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     except Exception as e:  # soft-fail: F4 reports the writer's own values
         logger.warning("t9_seo_fit_failed", request_id=str(request_id), error=str(e)[:200])
         return seo_meta, 0.0
-    out = dict(seo_meta)
-    if not _seo_title_ok(out.get("seo_title"), keyword) and _seo_title_ok(fitted.get("seo_title"), keyword):
-        out["seo_title"] = fitted["seo_title"]
-    if not _meta_ok(out.get("meta_description"), keyword) and _meta_ok(fitted.get("meta_description"), keyword):
-        out["meta_description"] = fitted["meta_description"]
+
+    def merge(base: dict, cand: dict) -> dict:
+        out = dict(base)
+        for key, ok in (("seo_title", _seo_title_ok), ("meta_description", _meta_ok)):
+            if not ok(out.get(key), keyword) and ok(cand.get(key), keyword):
+                out[key] = cand[key]
+        return out
+
+    out = merge(seo_meta, fitted)
+    if not (_seo_title_ok(out.get("seo_title"), keyword) and _meta_ok(out.get("meta_description"), keyword)):
+        # LLMs miscount characters: one more try, told exactly how far off the current values are.
+        try:
+            again, cost2 = await asyncio.to_thread(
+                fit_seo_fields, body=body,
+                seo_title=fitted.get("seo_title") or out.get("seo_title"),
+                meta_description=fitted.get("meta_description") or out.get("meta_description"),
+                keyword=keyword, brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
+                angle_gate_request_id=str(request_id),
+            )
+            cost += cost2
+            out = merge(out, again)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
     return out, cost
 
 
