@@ -978,7 +978,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                  brand_name=(brand_audience or {}).get("brand_name"), cta=cta,
                                  hashtags_max=spec.hashtags_max if spec else None,
                                  first_line_max=spec.first_line_max if spec else None,
-                                 audience=(brand_audience or {}).get("customer_segment"))
+                                 audience=(brand_audience or {}).get("customer_segment"), facts=facts_text)
     # S234 round 2 (panel §5 fix 4) — a part-of-trip piece gets the trip name without its duration
     # and its out-of-scope places ('Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days' → 'Mongolia:
     # Khövsgöl Lake'); the hygiene context keeps the full name (its gazetteer needs those places).

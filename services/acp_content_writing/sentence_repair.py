@@ -338,7 +338,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     if wi.get("seed"):
         ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
                                      brand_name=pack.get("brand_name"), cta=wi.get("cta"),
-                                     audience=pack.get("customer_segment"))
+                                     audience=pack.get("customer_segment"), facts=wi.get("facts"))
         found = hygiene.find_issues(sentence, ctx)
         if found["scope"]:
             out.append({"gate": "F12_scope", "violations": list(found["scope"]), "blocking": False})

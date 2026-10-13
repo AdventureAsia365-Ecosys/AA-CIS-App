@@ -1291,11 +1291,11 @@ def _contrast_violations(text: str, spans: list[dict]) -> list[str]:
 
 
 def _template_violations(text: str, sibling_texts: Optional[list[str]], exclude_texts: Optional[list[str]],
-                         brand_name: Optional[str], spans: list[dict]) -> list[str]:
+                         brand_name: Optional[str], spans: list[dict], keyword: Optional[str] = None) -> list[str]:
     out = []
     kept = {sp["clean"] for sp in spans}
     for sentence, run in sibling_templates(text, sibling_texts or [], exclude=exclude_texts or [],
-                                           brand_name=brand_name):
+                                           brand_name=brand_name, keyword=keyword):
         if sentence in kept and len(sentence.split()) >= _MIN_QUOTE_WORDS:
             out.append(f"repeats a line from an earlier piece of this brief ('{run}') — write it fresh: '{sentence}'")
     return out
@@ -1303,7 +1303,7 @@ def _template_violations(text: str, sibling_texts: Optional[list[str]], exclude_
 
 def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True,
                sibling_texts: Optional[list[str]] = None, exclude_texts: Optional[list[str]] = None,
-               brand_name: Optional[str] = None) -> GateResultLite:
+               brand_name: Optional[str] = None, keyword: Optional[str] = None) -> GateResultLite:
     """F15_voice — the stock-phrase hard list for a channel with a spec (LinkedIn; S233: 30/41 posts
     — 'worth sitting with', 'not incidental', 'Not as filler. Not as an afterthought.'). Blocking when
     F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
@@ -1322,7 +1322,7 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
     # S234 round 2 — every channel: contrast-frame density and lines shared with earlier pieces of
     # the same brief (S234 panel §5 fix 6). Same quoted shape, same one-repair-then-flag rule.
     stock += _contrast_violations(text, spans)
-    stock += _template_violations(text, sibling_texts, exclude_texts, brand_name, spans)
+    stock += _template_violations(text, sibling_texts, exclude_texts, brand_name, spans, keyword)
     if not stock:
         return _result(F15_GATE, [], repairable=spec is not None, blocking=False)
     blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
@@ -1470,8 +1470,9 @@ def run_quality_gates(
         # the warn-only checks are their own result so a stock repair never rewrites them.
         # S234 round 2 — plus contrast density and sibling templates, every channel.
         gate_voice(content_text, spec=spec, stock_blocking=stock_blocking, sibling_texts=sibling_texts,
-                   exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta) if t],
-                   brand_name=(brand_pack or {}).get("brand_name")),
+                   exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta,
+                                              hygiene_ctx.facts if hygiene_ctx else None) if t],
+                   brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword),
         gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
                         sibling_openers=sibling_openers),
     ]
