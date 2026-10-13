@@ -39,6 +39,20 @@ def test_named_places_are_kept(place):
     assert pc.card_skip_reason(place) is None
 
 
+@pytest.mark.parametrize("place,atype", [("Hua Hin Railway Station", "culture"), ("Dorasan Station", "culture"),
+                                         ("Gulmarg hill station", "other"), ("Everest View Hotel", "trek"),
+                                         ("Tsaatan reindeer herding camps", "culture"),
+                                         ("Hua Hin Elephant Camp", "other")])
+def test_logistics_noun_on_a_non_logistics_moment_keeps_its_card(place, atype):
+    """Review fix: ranking keeps these rankable, so the card rule must not drop them."""
+    assert pc.card_skip_reason(place, atype) is None
+
+
+@pytest.mark.parametrize("atype", ["stay", "transit", "food", None])
+def test_logistics_noun_on_a_logistics_moment_is_skipped(atype):
+    assert pc.card_skip_reason("Paro Railway Station", atype) == "logistics_place"
+
+
 def test_skip_reasons():
     assert pc.card_skip_reason("ruins of an ancient monastery") == "unnamed"
     assert pc.card_skip_reason("Your Hotel") == "unnamed"
@@ -117,8 +131,9 @@ class FakeDB:
 
     # asyncpg-like surface
     async def fetch(self, sql, *args):
-        if "FROM acp_shared.atom_place_card WHERE atom_id" in sql:
-            return [{"atom_id": a} for a in args[0] if self.links.get(a, {}).get("card_id")]
+        if "FROM acp_shared.atom_place_card apc" in sql:
+            return [{"atom_id": a} for a in args[0] if self.links.get(a, {}).get("card_id")
+                    and self.cards[self.links[a]["card_id"]]["status"] != "rejected"]
         if "v_active_tour_atoms" in sql:
             return [self.atoms[a] for a in args[0] if a in self.atoms]
         if "FROM acp_shared.place_card_alias a" in sql:
@@ -127,10 +142,17 @@ class FakeDB:
         if "FROM acp_shared.place_card_miss" in sql:
             return [dict(m, place_norm=k[0], country_norm=k[1]) for k, m in self.misses.items()
                     if k[0] in args[0] and k[1] in args[1]]
+        if "split_part(place_key" in sql:
+            return [c for c in self.cards.values() if c["status"] != "rejected"
+                    and c["place_key"].split("|")[0] in args[0]]
         if "FROM acp_shared.place_card" in sql:
             return [c for c in self.cards.values() if c["status"] != "rejected"
                     and (c["place_key"] in args[0] or c["place_key"].count("|") == 2)]
         raise AssertionError(sql)
+
+    async def fetchrow(self, sql, *args):
+        assert "WHERE place_key = $1 FOR UPDATE" in sql
+        return next((dict(c) for c in self.cards.values() if c["place_key"] == args[0]), None)
 
     async def fetchval(self, sql, *args):
         assert "INSERT INTO acp_shared.place_card" in sql
@@ -140,8 +162,9 @@ class FakeDB:
                 c["cost_usd"] += cost
                 return c["card_id"]
         cid = str(uuid.uuid4())
-        self.cards[cid] = {"card_id": cid, "place_key": key, "display_name": name, "country": country,
-                           "status": "auto_checked", "cost_usd": cost, "facts": json.loads(facts)}
+        self.cards[cid] = {"card_id": cid, "place_key": key, "display_name": name, "locality": locality,
+                           "region": region, "country": country, "status": "auto_checked", "cost_usd": cost,
+                           "facts": json.loads(facts)}
         return cid
 
     async def execute(self, sql, *args):
@@ -152,6 +175,12 @@ class FakeDB:
                                      "retry_after": retry, "attempts": old["attempts"] + 1}
         elif "DELETE FROM acp_shared.place_card_miss" in sql:
             self.misses.pop((args[0], args[1]), None)
+        elif "status = 'auto_checked'" in sql:          # a rejected card replaced by a new identity
+            c = self.cards[args[0]]
+            c.update(display_name=args[1], locality=args[2], region=args[3], country=args[4],
+                     facts=json.loads(args[6]), status="auto_checked", cost_usd=c["cost_usd"] + args[7])
+        elif "SET cost_usd = cost_usd + $2" in sql:
+            self.cards[args[0]]["cost_usd"] += args[1]
         else:
             raise AssertionError(sql)
 
@@ -323,12 +352,128 @@ def test_rejected_cards_are_never_reused():
     assert len(llm.drafts) == 1
 
 
+def _existing(status, **kw):
+    return dict({"card_id": "c1", "place_key": "khovsgol|mongolia", "display_name": "Khövsgöl Lake",
+                 "locality": "Khatgal", "region": "Khövsgöl Province", "country": "Mongolia", "status": status,
+                 "cost_usd": 0.01}, **kw)
+
+
 def test_key_conflict_keeps_the_card_but_adds_the_cost():
-    existing = {"card_id": "c1", "place_key": "khovsgol|mongolia", "display_name": "Khövsgöl Lake",
-                "country": "Mongolia", "status": "rejected", "cost_usd": 0.01}
-    db = FakeDB([_atom("a1", "Hovsgol")], cards=[existing])
+    db = FakeDB([_atom("a1", "Hovsgol")], cards=[_existing("auto_checked")])
     _ensure(db, FakeLLM(), ["a1"])
     assert db.links["a1"]["card_id"] == "c1" and db.cards["c1"]["cost_usd"] == pytest.approx(0.014)
+
+
+def test_key_conflict_with_a_rejected_card_of_the_same_identity_links_nothing_and_caches_a_miss():
+    """Review fix: atoms were linked to the rejected card (invisible to writers) for good."""
+    db = FakeDB([_atom("a1", "Hovsgol")], cards=[_existing("rejected")])
+    llm = FakeLLM()
+    out = _ensure(db, llm, ["a1"])
+    assert out["missed"] == 1 and db.links["a1"] == {"card_id": None, "miss_reason": "identity_rejected"}
+    assert db.cards["c1"]["status"] == "rejected" and db.cards["c1"]["cost_usd"] == pytest.approx(0.014)
+    assert db.misses[("hovsgol", "mongolia")]["reason"] == "identity_rejected"
+    _ensure(db, llm, ["a1"])                            # cached: no second paid draft
+    assert len(llm.drafts) == 1
+
+
+def test_key_conflict_with_a_rejected_card_and_a_new_identity_replaces_it():
+    db = FakeDB([_atom("a1", "Hovsgol")], cards=[_existing("rejected", locality="Murun", region="Wrong")])
+    _ensure(db, FakeLLM(), ["a1"])
+    card = db.cards["c1"]
+    assert db.links["a1"]["card_id"] == "c1" and card["status"] == "auto_checked"
+    assert card["locality"] == "Khatgal" and card["facts"] == GOOD_CARD["facts"]
+
+
+def test_atoms_linked_to_a_rejected_card_are_resolved_again():
+    db = FakeDB([_atom("a1", "Lake Khövsgöl")], cards=[_existing("rejected", place_key="old|key|mongolia")])
+    db.links["a1"] = {"card_id": "c1", "miss_reason": None}
+    out = _ensure(db, FakeLLM(), ["a1"])
+    assert out["already_linked"] == 0 and out["drafted"] == 1
+    assert db.links["a1"]["card_id"] not in (None, "c1")
+
+
+# ── generic names (review fix: City Palace Jaipur != Udaipur) ─────────────────────────────────────
+
+def test_core_key_strips_neutral_words_only_at_the_edges_of_a_distinctive_name():
+    assert pc.core_key("City Palace") == "city palace" != pc.core_key("Lake Palace") == "lake palace"
+    assert pc.core_key("Old Town") == "old town" != pc.core_key("Old City") == "old city"
+    assert pc.core_key("Ho Chi Minh City") == "ho chi minh"
+    assert pc.core_key("Khongoryn Els") == "khongoryn"
+    assert pc.core_key("Gobi Sand Dunes") == "gobi"
+    assert pc.core_key("Hoi An Old Town") == "hoi an old town"
+
+
+@pytest.mark.parametrize("name", ["City Palace", "Lake Palace", "Night Market", "National Museum", "Old Quarter",
+                                  "Central Market", "Grand Palace", "Old Town"])
+def test_generic_names(name):
+    assert pc.is_generic_name(name)
+
+
+@pytest.mark.parametrize("name", ["Khövsgöl Lake", "Punakha Dzong", "Hoi An Old Town", "Jaipur City Palace",
+                                  "Bayanzag (Flaming Cliffs)", "Tiger's Nest"])
+def test_distinctive_names(name):
+    assert not pc.is_generic_name(name)
+
+
+def test_place_key_keeps_the_locality_for_a_generic_name():
+    assert pc.place_key("City Palace", "India", "Jaipur") != pc.place_key("City Palace", "India", "Udaipur")
+    assert pc.place_key("City Palace", "India", "Jaipur") != pc.place_key("Lake Palace", "India", "Jaipur")
+    assert pc.place_key("Khövsgöl Lake", "Mongolia", "Khatgal") == "khovsgol|mongolia"
+
+
+def _palace(locality):
+    return {"display_name": "City Palace", "locality": locality, "region": "Rajasthan", "country": "India",
+            "aliases": ["City Palace"], "facts": [{"text": f"It is in {locality}.", "kind": "setting"}]}
+
+
+def test_city_palace_in_two_cities_stays_two_cards_and_is_never_linked_by_name():
+    db = FakeDB([_atom("a1", "City Palace", "India", "Visit the City Palace in Jaipur.")])
+    _ensure(db, FakeLLM(card=_palace("Jaipur")), ["a1"])
+    assert not any(k[0] == "city palace" for k in db.aliases)          # no country-wide generic alias
+    db.atoms["a2"] = _atom("a2", "City Palace", "India", "Tour the City Palace on Lake Pichola in Udaipur.")
+    db.atoms["a3"] = _atom("a3", "Lake Palace", "India", "See the Lake Palace from the boat.")
+    llm = FakeLLM(card=_palace("Udaipur"))
+    out = _ensure(db, llm, ["a2", "a3"])
+    assert out["linked_existing"] == 0 and len(llm.drafts) == 2
+    assert db.links["a2"]["card_id"] != db.links["a1"]["card_id"]
+    assert db.cards[db.links["a2"]["card_id"]]["locality"] == "Udaipur"
+
+
+def test_generic_name_reuses_the_card_whose_locality_the_sentence_names():
+    db = FakeDB([_atom("a1", "City Palace", "India", "Visit the City Palace in Jaipur.")])
+    _ensure(db, FakeLLM(card=_palace("Jaipur")), ["a1"])
+    db.atoms["a2"] = _atom("a2", "City Palace", "India", "Afternoon at the City Palace, Jaipur.")
+    llm = FakeLLM()
+    out = _ensure(db, llm, ["a2"])
+    assert llm.drafts == [] and out["linked_existing"] == 1
+    assert db.links["a2"]["card_id"] == db.links["a1"]["card_id"]
+
+
+def test_night_market_in_two_cities_is_not_auto_linked_and_misses_stay_per_atom():
+    db = FakeDB([_atom("a1", "Night Market", "Laos", "Evening at the Luang Prabang night market.")])
+    market = {"display_name": "Night Market", "locality": "Luang Prabang", "region": "", "country": "Laos",
+              "aliases": [], "facts": [{"text": "Stalls line Sisavangvong Road.", "kind": "setting"}]}
+    _ensure(db, FakeLLM(card=market), ["a1"])
+    db.atoms["a2"] = _atom("a2", "Night Market", "Laos", "Stroll the riverside market in Vientiane.")
+    llm = FakeLLM(card={"display_name": "", "facts": []})
+    _ensure(db, llm, ["a2"])
+    assert len(llm.drafts) == 1 and db.links["a2"]["card_id"] is None
+    assert ("night market", "laos") not in db.misses                  # the miss does not block the country
+
+
+def test_generic_card_with_no_locality_is_a_miss():
+    db = FakeDB([_atom("a1", "Old Town", "Vietnam")])
+    out = _ensure(db, FakeLLM(card=dict(_palace(""), display_name="Old Town", region="", country="Vietnam")), ["a1"])
+    assert out["missed"] == 1 and not db.cards
+
+
+def test_pick_local_card_needs_exactly_one_locality_in_the_sentence():
+    cards = [{"card_id": "j", "display_name": "City Palace", "locality": "Jaipur", "country": "India"},
+             {"card_id": "u", "display_name": "City Palace", "locality": "Udaipur", "country": "India"}]
+    assert pc.pick_local_card("City Palace", "India", "Visit Udaipur's City Palace — Udaipur", cards) == "u"
+    assert pc.pick_local_card("City Palace", "India", "Jaipur then Udaipur", cards) is None
+    assert pc.pick_local_card("City Palace", "India", "Visit the palace.", cards) is None
+    assert pc.pick_local_card("City Palace", "Nepal", "Jaipur", cards) is None
 
 
 def test_cross_border_place_is_found_again_under_the_tour_country():
@@ -367,6 +512,15 @@ def test_duplicate_clusters():
     assert frozenset({"4", "5"}) in groups           # Paro / Paro Town (Bhutan only)
     assert frozenset({"6", "7"}) in groups           # parenthetical name
     assert all("9" not in g and "8" not in g and "10" not in g for g in groups)
+
+
+def test_duplicate_clusters_skip_rejected_cards_and_split_generic_names_by_locality():
+    cards = [_card("1", "Khövsgöl Lake"), dict(_card("2", "Lake Khövsgöl"), status="rejected"),
+             dict(_card("3", "City Palace", "India"), locality="Jaipur"),
+             dict(_card("4", "City Palace", "India"), locality="Udaipur"),
+             dict(_card("5", "City Palace", "India"), locality="jaipur")]
+    groups = [frozenset(c["card_id"] for c in cl["cards"]) for cl in pc.duplicate_clusters(cards)]
+    assert groups == [frozenset({"3", "5"})]
 
 
 def test_duplicate_clusters_by_alias():
@@ -424,6 +578,24 @@ def test_merge_cards_relinks_aliases_sums_cost_and_deletes():
     upd = next(c for c in conn.calls if "SET facts" in c[1])
     assert [f["text"] for f in json.loads(upd[2][1])] == ["A.", "B."]
     assert "DELETE FROM acp_shared.place_card WHERE" in sqls[-1] and conn.calls[-1][2] == ([F],)
+
+
+def test_merge_takes_no_facts_from_a_rejected_card_and_adds_none_to_a_verified_one():
+    rows = _merge_rows()
+    rows[1]["status"] = "rejected"
+    conn = MergeConn(rows)
+    asyncio.run(pc.merge_cards(conn, K, [F]))
+    upd = next(c for c in conn.calls if "SET facts" in c[1])
+    assert [f["text"] for f in json.loads(upd[2][1])] == ["A."]
+    rows = _merge_rows()
+    rows[0]["status"] = "verified"
+    conn = MergeConn(rows)
+    out = asyncio.run(pc.merge_cards(conn, K, [F]))
+    assert out["facts"] == 1 and out["atoms_moved"] == 3
+    rows = _merge_rows()
+    rows[0]["status"] = "rejected"
+    with pytest.raises(pc.MergeError):
+        asyncio.run(pc.merge_cards(MergeConn(rows), K, [F]))
 
 
 def test_merge_cards_rejects_other_country_and_missing_cards():

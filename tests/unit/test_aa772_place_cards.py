@@ -43,6 +43,7 @@ def test_place_key_same_place_same_key():
 class TestBuildCard:
     def _run(self, card, verdicts, identity_ok=True):
         conn = AsyncMock()
+        conn.fetchrow.return_value = None  # no card under this key yet
         conn.fetchval.return_value = "card-uuid"
         client = MagicMock()
         client.generate.side_effect = [_resp(card), _resp({"identity_ok": identity_ok, "verdicts": verdicts})]

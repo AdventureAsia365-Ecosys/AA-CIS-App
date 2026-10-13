@@ -10,9 +10,12 @@ padded thin seeds with unsourced "widely known background" that the F9 judge the
 How a card is made (once per PLACE, in a job — never in an HTTP request, and never in T9):
 0. Free filters first (S234): `card_skip_reason()` drops unnamed places ("ruins of an ancient
    monastery", "your hotel" — the ranking rule `names_somewhere`) and logistics places (hotels,
-   camps, airports, border gates); atoms are grouped by (`place_norm`, tour country) so one place
-   is drafted once; an alias or core-name match links an existing card with no call; a stored
-   miss (`place_card_miss`) is not retried before its `retry_after`.
+   camps, airports, border gates — only on stay/transit/food or untyped moments); atoms are
+   grouped by (`place_norm`, tour country) so one place is drafted once; an alias or core-name
+   match links an existing card with no call; a stored miss (`place_card_miss`) is not retried
+   before its `retry_after`. A GENERIC name ("City Palace", "Night Market" — only kind words) is
+   one group per atom, never matched by alias/core name, only by a card whose locality its
+   itinerary sentence names.
 1. `a3_place_card` (writer route) gets the place, its itinerary sentence(s), the tour name and
    the country the tour is sold as, and returns the place's identity (display name, locality,
    region, country, naming note, aliases) plus 4-6 short background facts.
@@ -20,8 +23,11 @@ How a card is made (once per PLACE, in a job — never in an HTTP request, and n
    facts it marks "supported" are kept. Nothing about the trip itself (prices, hours, what the
    tour does) is ever a card fact.
 3. Same real place → same card: `place_key` = core name | country (S234: no locality — it is LLM
-   free text and split one lake into 5 cards). Every atom of the group is linked in
-   `atom_place_card`; the itinerary spelling and the draft's aliases go to `place_card_alias`.
+   free text and split one lake into 5 cards); a generic name keeps it (core | locality | country:
+   City Palace Jaipur ≠ Udaipur). A draft landing on an admin-REJECTED card's key replaces it when
+   the identity differs, and is a cached miss when it repeats the rejected identity. Every atom
+   of the group is linked in `atom_place_card`; the itinerary spelling and the draft's aliases go
+   to `place_card_alias` (never a generic form).
 Admins can mark a card verified or rejected, and merge duplicates (Content Quality page); a
 rejected card is never shown to a writer.
 
@@ -41,7 +47,7 @@ from typing import Optional
 import structlog
 from json_repair import repair_json
 
-from services.acp_contract.ranking_reference import names_somewhere
+from services.acp_contract.ranking_reference import PLACE_KINDS, names_somewhere
 from shared.llm_client.call_log import record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -104,7 +110,8 @@ PROMPT_SHA = hashlib.sha256(f"{_CARD_SYSTEM}\n{_CHECK_SYSTEM}\nfacts={MAX_FACTS}
 
 
 _ATOM_PLACE_QUERY = """
-    SELECT ta.atom_id, ta.place, ta.evidence, ta.itinerary_day, rt.country, pt.aa_name AS tour_name
+    SELECT ta.atom_id, ta.place, ta.evidence, ta.itinerary_day, ta.activity_type, rt.country,
+           pt.aa_name AS tour_name
     FROM acp_contract.v_active_tour_atoms ta
     LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
     LEFT JOIN gold_aa_internal.published_tours pt ON pt.tour_id = ta.tour_id
@@ -129,8 +136,25 @@ _FOLD_MAP = str.maketrans({"đ": "d", "Đ": "D", "ø": "o", "Ø": "O", "ł": "l"
 _LEADING_FILLER = frozenset({"the", "a", "an", "your", "our", "local", "standard"})
 # Kind words that do not change WHICH place is meant ("Lake Khövsgöl" = "Khövsgöl Lake" =
 # "Khövsgöl Nuur"; "Paro Town" = "Paro"). Deliberately NOT dzong/monastery/museum/river/valley:
-# "Punakha" (town) and "Punakha Dzong" are two places.
-_NEUTRAL_KIND_RE = re.compile(r"\b(sand dunes|lake|nuur|town|city|els|volcano|uul)\b")
+# "Punakha" (town) and "Punakha Dzong" are two places. Stripped only at the EDGES of a name and
+# only while a distinctive word remains ("City Palace" stays "city palace", never "palace").
+_NEUTRAL_KIND_WORDS = frozenset({"lake", "nuur", "town", "city", "els", "volcano", "uul"})
+_NEUTRAL_KIND_PAIRS = (("sand", "dunes"),)
+# Words that only say what KIND of place it is (ranking's kind nouns + qualifiers + when, plus
+# common landmark nouns the Japan-first ranking list lacks). A name made only of these
+# ("City Palace", "Night Market", "Old Town", "National Museum") exists in many cities of one
+# country, so its card key carries the locality and it is never reused across tours by name.
+_GENERIC_PLACE_WORDS = frozenset(
+    {w.lower() for w in PLACE_KINDS} | _NEUTRAL_KIND_WORDS | {
+        "sand", "dunes", "palace", "palaces", "fort", "fortress", "citadel", "monastery", "pagoda",
+        "cathedral", "church", "mosque", "tomb", "tombs", "square", "bazaar", "gate", "tower", "wall",
+        "cave", "caves", "hill", "hills", "desert", "plaza", "bay", "canal", "springs", "spring", "hot",
+        "royal", "summer", "winter", "food", "floating", "botanical", "zoo", "ruins", "monument",
+        "memorial", "stupa", "fishing", "harbor", "viewpoint", "view", "point", "cliffs", "rice",
+        "terraces", "tea", "plantation", "farm", "wildlife", "sanctuary", "reserve", "war", "art",
+        "history", "folk", "cultural", "heritage", "craft", "crafts", "handicraft", "silk", "workshop",
+        "complex", "site", "fishermen", "of", "and", "s",
+    })
 _PAREN_RE = re.compile(r"\(([^)]*)\)")
 
 
@@ -151,12 +175,38 @@ def place_norm(place: Optional[str]) -> str:
     return " ".join(words)
 
 
+def _base_words(name: Optional[str]) -> list[str]:
+    return place_norm(_PAREN_RE.sub(" ", name or "")).split()
+
+
+def _distinctive(words: list[str]) -> bool:
+    return any(w not in _GENERIC_PLACE_WORDS for w in words)
+
+
+def is_generic_name(name: Optional[str]) -> bool:
+    """True when the name (outside any parenthetical) is made only of kind words / qualifiers —
+    'City Palace', 'Lake Palace', 'Night Market', 'Old Town' — so it names a different place in
+    every city. Such a name is never matched across tours by alias or core name."""
+    words = _base_words(name)
+    return bool(words) and not _distinctive(words)
+
+
 def core_key(name: Optional[str]) -> str:
-    """place_norm() of the name outside any parenthetical, minus the neutral kind words; the
-    place_norm() itself when nothing else is left ('Lake' stays 'lake')."""
-    base = place_norm(_PAREN_RE.sub(" ", name or ""))
-    core = " ".join(_NEUTRAL_KIND_RE.sub(" ", base).split())
-    return core or base
+    """place_norm() of the name outside any parenthetical, minus neutral kind words at its edges
+    ('Lake Khövsgöl' == 'Khövsgöl Lake' == 'khovsgol'). A word is only stripped when the words left
+    start and end with a distinctive word, so a generic name keeps every word ('City Palace' !=
+    'Lake Palace') and 'Lake' stays 'lake'."""
+    words = _base_words(name)
+    while True:
+        edges = [tuple(p) for p in _NEUTRAL_KIND_PAIRS] + [(w,) for w in _NEUTRAL_KIND_WORDS]
+        options = [words[len(e):] for e in edges if tuple(words[:len(e)]) == e]
+        options += [words[:-len(e)] for e in edges if tuple(words[-len(e):]) == e]
+        # The word left at the cut edge must itself be distinctive: 'Hoi An Old Town' keeps 'town'
+        # ('hoi an old' would read as a different name), 'Khövsgöl Lake' drops it.
+        rest = next((r for r in options if r and _distinctive(r[:1]) and _distinctive(r[-1:])), None)
+        if rest is None:
+            return " ".join(words)
+        words = rest
 
 
 def name_forms(name: Optional[str]) -> set[str]:
@@ -167,9 +217,34 @@ def name_forms(name: Optional[str]) -> set[str]:
     return {f for f in out if f}
 
 
-def place_key(display_name: str, country: str) -> str:
-    """S234: core name | country. Locality is no longer part of the key (LLM free text)."""
+def place_key(display_name: str, country: str, locality: Optional[str] = None) -> str:
+    """S234: core name | country — locality is LLM free text and split one lake into 5 cards.
+    A generic name ('City Palace') keeps the locality: core | locality | country, so City Palace
+    Jaipur and City Palace Udaipur stay two cards (migration 220's invariant)."""
+    if is_generic_name(display_name):
+        return f"{core_key(display_name)}|{fold(locality)}|{fold(country)}"
     return f"{core_key(display_name)}|{fold(country)}"
+
+
+def atom_group_key(atom: dict) -> tuple[str, str]:
+    """The (place_norm, country_norm) group an atom is drafted with. A generic itinerary name
+    ('City Palace', 'Night Market') is its own group per atom — two tours' City Palaces may be in
+    two cities — so its stored miss never blocks the rest of the country either."""
+    norm = place_norm(atom["place"])
+    if is_generic_name(atom["place"]):
+        norm = f"{norm} @{atom['atom_id']}"
+    return norm, fold(atom.get("country"))
+
+
+def pick_local_card(place: str, country: str, text: str, cards: list[dict]) -> Optional[str]:
+    """The one existing card for a generic itinerary name whose locality the itinerary text names
+    ('City Palace' + 'Udaipur' in the sentence → the Udaipur card), or None (draft instead).
+    `cards`: card_id, display_name, locality, country. Free; ambiguity → None."""
+    form, words = place_norm(place), f" {fold(text)} "
+    hits = {str(c["card_id"]) for c in cards
+            if fold(c.get("country")) == fold(country) and form in name_forms(c["display_name"])
+            and fold(c.get("locality")) and f" {fold(c.get('locality'))} " in words}
+    return hits.pop() if len(hits) == 1 else None
 
 
 # ── Free filter (C9: one rule with ranking) ───────────────────────────────────────────────────
@@ -181,20 +256,26 @@ _LOGISTICS_PLACE_RE = re.compile(
     r"piers?|jetty|jetties|(?<!base )camps?|homestays?|restaurants?|cafes?|"
     r"border (gate|crossing|post)s?|checkpoints?|information cent(er|re)s?)$")
 _POSSESSIVE_RE = re.compile(r"^(your|our)\b")
+# The logistics noun is trusted only when atomize also typed the moment as logistics (or left it
+# untyped): "Hua Hin Railway Station" / "Dorasan Station" / "Everest View Hotel" typed culture or
+# trek stay rankable moments, so they keep their card (lessons: a rule exclusion must match the
+# next step's final decision — ranking has no logistics-noun rule).
+LOGISTICS_ACTIVITY_TYPES = frozenset({"stay", "transit", "food"})
 
 
-def card_skip_reason(place: Optional[str]) -> Optional[str]:
+def card_skip_reason(place: Optional[str], activity_type: Optional[str] = None) -> Optional[str]:
     """Why a place gets no card without any LLM call, or None to card it.
 
     'unnamed' — the ranking rule (`names_somewhere`, ADR 0020: the same function
     `atom_ranking.classify_exclusion` uses for `unnamed_place`) or a 'your/our …' place;
-    'logistics_place' — the folded place ends in a lodging/transport/eating noun."""
+    'logistics_place' — the folded place ends in a lodging/transport/eating noun AND the atom is
+    typed stay/transit/food (or untyped)."""
     if not (place or "").strip():
         return "empty"
     folded = fold(place)
     if not names_somewhere(place) or _POSSESSIVE_RE.match(folded):
         return "unnamed"
-    if _LOGISTICS_PLACE_RE.search(folded):
+    if _LOGISTICS_PLACE_RE.search(folded) and (not activity_type or activity_type in LOGISTICS_ACTIVITY_TYPES):
         return "logistics_place"
     return None
 
@@ -321,18 +402,25 @@ async def _record_miss(pool, group_key: tuple[str, str], atoms: list[dict], reas
         await conn.executemany(_ATOM_MISS_SQL, [(a["atom_id"], reason) for a in atoms])
 
 
+def itinerary_alias_forms(name: Optional[str]) -> set[str]:
+    """name_forms() minus the generic ones — the forms safe to store as a country-wide alias."""
+    return {f for f in name_forms(name) if not is_generic_name(f)}
+
+
 def _alias_rows(card_id: str, atoms: list[dict], group_country: str, card: dict, card_country: str) -> list:
     """(alias_norm, country_norm, card_id, source) rows for a new card: the itinerary spelling under
     the tour's country, and the display name / parenthetical / draft aliases under both the card's
-    and the tour's country (a Vietnamese place on a 'Laos' tour is looked up with 'laos')."""
+    and the tour's country (a Vietnamese place on a 'Laos' tour is looked up with 'laos').
+    A generic form ('city palace', 'night market') is never an alias: it names a place in every
+    city of the country."""
     rows = {}
     for a in atoms:
-        for form in name_forms(a["place"]):
+        for form in itinerary_alias_forms(a["place"]):
             rows.setdefault((form, group_country), "itinerary")
     countries = {c for c in (fold(card_country), group_country) if c}
     for source, names in (("display", [card.get("display_name")]), ("draft_alias", card.get("aliases") or [])):
         for name in names:
-            for form in name_forms(name):
+            for form in itinerary_alias_forms(name):
                 for c in countries:
                     rows.setdefault((form, c), source)
     return [(form, c, card_id, source) for (form, c), source in rows.items()]
@@ -341,7 +429,9 @@ def _alias_rows(card_id: str, atoms: list[dict], group_country: str, card: dict,
 async def find_existing_cards(conn, keys: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
     """(place_norm, country_norm) → card_id, with no LLM call: an alias row first, then a card whose
     core name matches (new-format `place_key`, or any legacy 3-part key — S233 cards — compared
-    in Python until the key backfill runs). Rejected cards are never matched."""
+    in Python until the key backfill runs). Rejected cards are never matched. A generic name
+    ('City Palace') is never matched here — see pick_local_card()."""
+    keys = [k for k in keys if not is_generic_name(k[0])]
     if not keys:
         return {}
     found: dict[tuple[str, str], str] = {}
@@ -365,14 +455,34 @@ async def find_existing_cards(conn, keys: list[tuple[str, str]]) -> dict[tuple[s
         """
         SELECT card_id, display_name, country FROM acp_shared.place_card
         WHERE status <> 'rejected' AND (place_key = ANY($1::text[]) OR place_key LIKE '%|%|%')
+        -- 3-part keys: S233 legacy cards and generic-name cards (skipped in Python)
         """, list(set(wanted.values())))
     by_core: dict[str, str] = {}
     for c in cards:
-        for form in name_forms(c["display_name"]):
+        for form in itinerary_alias_forms(c["display_name"]):
             by_core.setdefault(f"{core_key(form)}|{fold(c['country'])}", str(c["card_id"]))
     for k, ck in wanted.items():
         if ck in by_core:
             found[k] = by_core[ck]
+    return found
+
+
+async def find_local_cards(conn, groups: dict[tuple[str, str], list[dict]]) -> dict[tuple[str, str], str]:
+    """Generic-name groups ('City Palace' on one atom) → the existing card whose locality the
+    itinerary sentence names (pick_local_card), with no LLM call."""
+    generic = {k: g[0] for k, g in groups.items() if len(g) == 1 and is_generic_name(g[0]["place"])}
+    if not generic:
+        return {}
+    cards = [dict(r) for r in await conn.fetch(
+        """
+        SELECT card_id, display_name, locality, country FROM acp_shared.place_card
+        WHERE status <> 'rejected' AND split_part(place_key, '|', 1) = ANY($1::text[])
+        """, list({place_norm(a["place"]) for a in generic.values()}))]
+    found = {}
+    for k, a in generic.items():
+        card_id = pick_local_card(a["place"], a.get("country") or "", a.get("evidence") or "", cards)
+        if card_id:
+            found[k] = card_id
     return found
 
 
@@ -385,6 +495,54 @@ def _representative(atoms: list[dict]) -> dict:
     if len(sentences) > 1:
         rep["evidence"] = " / ".join(sentences[:2])
     return rep
+
+
+def _same_identity(row, name: str, locality: Optional[str], region: Optional[str], country: str) -> bool:
+    return all(fold(a) == fold(b) for a, b in ((row["display_name"], name), (row["locality"], locality),
+                                               (row["region"], region), (row["country"], country)))
+
+
+async def _store_card(conn, key: str, fields: tuple):
+    """Insert the checked draft under `key`, or reuse the card already there (inside the caller's
+    transaction). The existing card wins and the money spent is added to it — unless an admin
+    REJECTED it: then a draft with a different identity replaces it (status back to auto_checked),
+    and a draft repeating the rejected identity returns None (stored as an identity_rejected miss;
+    atoms are never linked to a rejected card)."""
+    name, locality, region, country, note, facts, cost = fields
+    row = await conn.fetchrow(
+        """
+        SELECT card_id, status, display_name, locality, region, country FROM acp_shared.place_card
+        WHERE place_key = $1 FOR UPDATE
+        """, key)
+    if row is not None and row["status"] == "rejected":
+        if _same_identity(row, name, locality, region, country):
+            await conn.execute(
+                "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1",
+                row["card_id"], cost)
+            return None
+        await conn.execute(
+            """
+            UPDATE acp_shared.place_card
+            SET display_name = $2, locality = $3, region = $4, country = $5, naming_note = $6, facts = $7::jsonb,
+                cost_usd = cost_usd + $8, status = 'auto_checked', verified_by = NULL, verified_at = NULL,
+                updated_at = now()
+            WHERE card_id = $1
+            """, row["card_id"], *fields)
+        return row["card_id"]
+    if row is not None:
+        await conn.execute(
+            "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1",
+            row["card_id"], cost)
+        return row["card_id"]
+    return await conn.fetchval(
+        """
+        INSERT INTO acp_shared.place_card
+            (place_key, display_name, locality, region, country, naming_note, facts, cost_usd)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+        ON CONFLICT (place_key) DO UPDATE
+            SET cost_usd = acp_shared.place_card.cost_usd + EXCLUDED.cost_usd, updated_at = now()
+        RETURNING card_id
+        """, key, *fields)
 
 
 async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], pool) -> tuple[Optional[str], str]:
@@ -414,32 +572,31 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
         return None, "identity_rejected"
     locality = (card.get("locality") or "").strip() or None
     region = (card.get("region") or "").strip() or None
+    if is_generic_name(name) and not (locality or region):
+        # 'City Palace' with no town is not one place: no card rather than one per country.
+        await _record_miss(pool, group_key, atoms, "no_name", model)
+        return None, "no_name"
+    key = place_key(name, country, locality or region)
+    fields = (name, locality, region, country, (card.get("naming_note") or "").strip() or None,
+              json.dumps(kept), round(cost + cost2, 6))
     async with pool.acquire() as conn, conn.transaction():
-        # On a key conflict the existing card wins, but the money spent is still added to it.
-        card_id = await conn.fetchval(
-            """
-            INSERT INTO acp_shared.place_card
-                (place_key, display_name, locality, region, country, naming_note, facts, cost_usd)
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-            ON CONFLICT (place_key) DO UPDATE
-                SET cost_usd = acp_shared.place_card.cost_usd + EXCLUDED.cost_usd, updated_at = now()
-            RETURNING card_id
-            """,
-            place_key(name, country), name, locality, region, country,
-            (card.get("naming_note") or "").strip() or None, json.dumps(kept), round(cost + cost2, 6),
-        )
-        card_id = str(card_id)
-        await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in atoms])
-        await conn.executemany(_ALIAS_SQL, _alias_rows(card_id, atoms, group_key[1], card, country))
-        await conn.execute("DELETE FROM acp_shared.place_card_miss WHERE place_norm = $1 AND country_norm = $2",
-                           group_key[0], group_key[1])
+        card_id = await _store_card(conn, key, fields)
+        if card_id is not None:
+            card_id = str(card_id)
+            await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in atoms])
+            await conn.executemany(_ALIAS_SQL, _alias_rows(card_id, atoms, group_key[1], card, country))
+            await conn.execute("DELETE FROM acp_shared.place_card_miss WHERE place_norm = $1 AND country_norm = $2",
+                               group_key[0], group_key[1])
+    if card_id is None:
+        logger.info("place_card_same_as_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
+        await _record_miss(pool, group_key, atoms, "identity_rejected", model)
+        return None, "identity_rejected"
     return card_id, "linked"
 
 
 async def build_card_for_atom(atom: dict, pool) -> Optional[str]:
     """One atom as a one-atom group (kept for callers/tests of the S233 API)."""
-    key = (place_norm(atom["place"]), fold(atom.get("country")))
-    card_id, _ = await build_card_for_group(key, [atom], pool)
+    card_id, _ = await build_card_for_group(atom_group_key(atom), [atom], pool)
     return card_id
 
 
@@ -464,9 +621,13 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
     if not ids:
         return counters
     async with pool.acquire() as conn:
+        # A link to a REJECTED card is not a card: such atoms are resolved again below.
         linked = {r["atom_id"] for r in await conn.fetch(
-            "SELECT atom_id FROM acp_shared.atom_place_card WHERE atom_id = ANY($1::text[]) AND card_id IS NOT NULL",
-            ids)}
+            """
+            SELECT apc.atom_id FROM acp_shared.atom_place_card apc
+            JOIN acp_shared.place_card pc ON pc.card_id = apc.card_id
+            WHERE apc.atom_id = ANY($1::text[]) AND pc.status <> 'rejected'
+            """, ids)}
         counters["already_linked"] = len(linked)
         rows = [dict(r) for r in await conn.fetch(_ATOM_PLACE_QUERY, [a for a in ids if a not in linked])]
     order = {a: i for i, a in enumerate(ids)}
@@ -475,11 +636,11 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
     groups: dict[tuple[str, str], list[dict]] = {}
     skipped: list[tuple[str, str]] = []
     for atom in rows:
-        reason = card_skip_reason(atom["place"])
+        reason = card_skip_reason(atom["place"], atom.get("activity_type"))
         if reason:
             skipped.append((atom["atom_id"], reason))
             continue
-        groups.setdefault((place_norm(atom["place"]), fold(atom.get("country"))), []).append(atom)
+        groups.setdefault(atom_group_key(atom), []).append(atom)
     counters["skipped_by_rule"] = len(skipped)
     counters["places"] = len(groups)
 
@@ -487,10 +648,11 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
         if skipped:
             await conn.executemany(_ATOM_MISS_SQL, skipped)
         existing = await find_existing_cards(conn, list(groups))
+        existing.update(await find_local_cards(conn, groups))
         for key, card_id in existing.items():
             await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in groups[key]])
             await conn.executemany(_ALIAS_SQL, [(f, key[1], card_id, "itinerary")
-                                                for a in groups[key] for f in name_forms(a["place"])])
+                                                for a in groups[key] for f in itinerary_alias_forms(a["place"])])
             counters["linked_existing"] += len(groups[key])
         todo = [k for k in groups if k not in existing]
         misses = {}
@@ -546,7 +708,10 @@ def duplicate_clusters(cards: list[dict], aliases: list[dict] = ()) -> list[dict
     of the same (folded) country pair up when they share a core name ('Lake Khövsgöl' / 'Khövsgöl
     Lake'), one name contains the other as whole words ('Paro' / 'Paro Town' — but also 'Punakha' /
     'Punakha Dzong', which is why a human decides), or an alias of one is a name of the other.
-    `cards`: card_id, display_name, country (+ any display fields, passed through)."""
+    Rejected cards are left out (an admin already judged them wrong — delete, never merge facts
+    from them), and two generic-name cards ('City Palace') pair up only in the same locality.
+    `cards`: card_id, display_name, country, status?, locality? (+ display fields, passed through)."""
+    cards = [c for c in cards if c.get("status") != "rejected"]
     parent = {c["card_id"]: c["card_id"] for c in cards}
     reasons: dict[str, set] = {}
 
@@ -565,6 +730,8 @@ def duplicate_clusters(cards: list[dict], aliases: list[dict] = ()) -> list[dict
 
     info = {c["card_id"]: (fold(c.get("country")), name_forms(c["display_name"]),
                            {core_key(f) for f in name_forms(c["display_name"])}) for c in cards}
+    by_card = {c["card_id"]: c for c in cards}
+    generic = {c["card_id"]: is_generic_name(c["display_name"]) for c in cards}
     alias_of: dict[str, set] = {}
     for a in aliases or []:
         alias_of.setdefault(str(a["card_id"]), set()).add((a["alias_norm"], a["country_norm"]))
@@ -574,6 +741,10 @@ def duplicate_clusters(cards: list[dict], aliases: list[dict] = ()) -> list[dict
         for b in ids[i + 1:]:
             cb, fb, kb = info[b]
             if ca != cb:
+                continue
+            if (generic[a] or generic[b]) and not (
+                    generic[a] and generic[b]
+                    and fold(by_card[a].get("locality")) == fold(by_card[b].get("locality"))):
                 continue
             if ka & kb:
                 union(a, b, "same_core_name")
@@ -616,20 +787,23 @@ class MergeError(ValueError):
 async def merge_cards(conn, keep_id: str, from_ids: list[str]) -> dict:
     """Merge `from_ids` into `keep_id` (call inside a transaction): re-link their atoms, point
     their aliases at the kept card and add their names as aliases, add their facts (up to
-    MAX_FACTS) and cost, then delete them. Cards must share a country. Raises MergeError /
-    LookupError."""
+    MAX_FACTS) and cost, then delete them. Cards must share a country. Facts are never taken from
+    a rejected card, and never added to a verified card (its reviewed facts stay as reviewed);
+    a rejected card cannot be the kept one. Raises MergeError / LookupError."""
     from_ids = [f for f in dict.fromkeys(from_ids) if f and f != keep_id]
     if not from_ids:
         raise MergeError("from_ids must name at least one card other than keep_id")
     rows = {str(r["card_id"]): r for r in await conn.fetch(
         """
-        SELECT card_id, display_name, country, facts, cost_usd FROM acp_shared.place_card
+        SELECT card_id, display_name, country, facts, cost_usd, status FROM acp_shared.place_card
         WHERE card_id = ANY($1::uuid[]) FOR UPDATE
         """, [keep_id, *from_ids])}
     missing = [c for c in [keep_id, *from_ids] if c not in rows]
     if missing:
         raise LookupError(f"place card(s) not found: {', '.join(missing)}")
     keep = rows[keep_id]
+    if keep.get("status") == "rejected":
+        raise MergeError("a rejected card cannot be kept; keep a good card and merge the rejected one into it")
     country = fold(keep["country"])
     if any(fold(rows[f]["country"]) != country for f in from_ids):
         raise MergeError("cards from different countries cannot be merged")
@@ -643,9 +817,11 @@ async def merge_cards(conn, keep_id: str, from_ids: list[str]) -> dict:
     await conn.execute("UPDATE acp_shared.place_card_alias SET card_id = $1::uuid WHERE card_id = ANY($2::uuid[])",
                        keep_id, from_ids)
     alias_rows = [(form, country, keep_id, "merge")
-                  for f in from_ids for form in name_forms(rows[f]["display_name"])]
+                  for f in from_ids for form in itinerary_alias_forms(rows[f]["display_name"])]
     await conn.executemany(_ALIAS_SQL, alias_rows)
-    facts = merged_facts(keep["facts"], [rows[f]["facts"] for f in from_ids])
+    donors = [] if keep.get("status") == "verified" else \
+        [rows[f]["facts"] for f in from_ids if rows[f].get("status") != "rejected"]
+    facts = merged_facts(keep["facts"], donors)
     cost = sum(float(rows[c]["cost_usd"] or 0) for c in [keep_id, *from_ids])
     await conn.execute(
         """
@@ -670,5 +846,6 @@ def render_card(card) -> tuple[str, list[str]]:
 
 __all__ = ["ensure_place_cards", "build_card_for_atom", "build_card_for_group", "render_card", "place_key",
            "CARD_FOR_ATOM_QUERY", "draft_card", "check_card", "fold", "place_norm", "core_key", "name_forms",
-           "card_skip_reason", "find_existing_cards", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
+           "card_skip_reason", "find_existing_cards", "find_local_cards", "pick_local_card", "is_generic_name",
+           "atom_group_key", "itinerary_alias_forms", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
            "duplicate_clusters", "merged_facts", "merge_cards", "MergeError"]
