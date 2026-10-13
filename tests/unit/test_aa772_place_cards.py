@@ -35,9 +35,9 @@ def _pool(conn):
 
 
 def test_place_key_same_place_same_key():
-    assert pc.place_key("Pabongka Monastery", "Lhasa", "Tibet", "China") == \
-        pc.place_key("pabongka  monastery", "LHASA", None, "china")
-    assert pc.place_key("City Palace", "Jaipur", None, "India") != pc.place_key("City Palace", "Udaipur", None, "India")
+    # S234: locality is no longer part of the key (LLM free text split one lake into 5 cards).
+    assert pc.place_key("Pabongka Monastery", "China") == pc.place_key("pabongka  monastery", "china")
+    assert pc.place_key("Lake Khövsgöl", "Mongolia") == pc.place_key("Khövsgöl Lake", "Mongolia")
 
 
 class TestBuildCard:
@@ -61,7 +61,8 @@ class TestBuildCard:
         stages = [c.args[0].stage for c in client.generate.call_args_list]
         assert stages == ["a3_place_card", "a3_place_card_check"]
         assert [c.kwargs["stage"] for c in log.await_args_list] == ["a3_place_card", "a3_place_card_check"]
-        assert "atom_place_card" in conn.execute.await_args.args[0]
+        link = conn.executemany.await_args_list[0]
+        assert "atom_place_card" in link.args[0] and link.args[1] == [("a1", "card-uuid")]
 
     def test_misaligned_verdicts_keep_nothing(self):
         _, conn, _, _ = self._run(CARD, ["supported"])
@@ -84,10 +85,13 @@ class TestBuildCard:
 
 def test_ensure_skips_linked_atoms_and_soft_fails():
     conn = AsyncMock()
-    conn.fetch.side_effect = [[{"atom_id": "a1"}], [dict(ATOM, atom_id="a2")]]
-    with patch.object(pc, "build_card_for_atom", new=AsyncMock(side_effect=RuntimeError("boom"))) as build:
-        assert asyncio.run(pc.ensure_place_cards(["a1", "a2", "a2"], _pool(conn))) == 0
+    conn.fetch.side_effect = [[{"atom_id": "a1"}], [dict(ATOM, atom_id="a2")], [], [], []]
+    with patch.object(pc, "build_card_for_group", new=AsyncMock(side_effect=RuntimeError("boom"))) as build, \
+            patch.object(pc, "_record_miss", new=AsyncMock()) as miss:
+        out = asyncio.run(pc.ensure_place_cards(["a1", "a2", "a2"], _pool(conn)))
+    assert out["built"] == 0 and out["errors"] == 1 and out["already_linked"] == 1
     assert build.await_count == 1
+    assert miss.await_args.args[3] == "error"
     assert conn.fetch.await_args_list[1].args[1] == ["a2"]
 
 
@@ -144,13 +148,25 @@ def test_scope_reaches_the_writer_prompt():
     assert "SCOPE: days 1–3" in prompt and prompt.index("TRIP:") < prompt.index("SCOPE:")
 
 
-def test_resolve_facts_rebuilds_seed_when_a_card_is_built():
+def test_resolve_facts_rereads_seed_and_never_builds_cards():
+    """S234 (plan C8): T9 only reads place cards — no draft call path is left in the T9 job."""
     conn = AsyncMock()
     ctx = {"facts_pending": True, "tenant_id": "00000000-0000-0000-0000-0000000000aa", "atom_id": "a1",
            "atom_text": "old seed", "destination": "China"}
-    with patch.object(service, "ensure_place_cards", new=AsyncMock(return_value=1)), \
-            patch.object(service, "atom_seed_text", new=AsyncMock(return_value="new seed with card")), \
+    with patch.object(service, "atom_seed_text", new=AsyncMock(return_value="new seed with card")), \
             patch.object(service, "fetch_facts_for_writing", new=AsyncMock(return_value=[])) as facts:
         asyncio.run(service.resolve_facts("r", ctx, _pool(conn)))
     assert ctx["atom_text"] == "new seed with card"
     assert facts.await_args.kwargs["country"] == "China"
+    assert not hasattr(service, "ensure_place_cards")
+
+
+def test_resolve_facts_rereads_every_route_moment():
+    conn = AsyncMock()
+    ctx = {"facts_pending": True, "tenant_id": "00000000-0000-0000-0000-0000000000aa", "atom_id": "a1",
+           "route_segments": [("a1", "m1"), ("a2", "m2")], "atom_text": "m1\n\nm2", "destination": "Laos"}
+    with patch.object(service, "atom_seed_text", new=AsyncMock(side_effect=["card m1", None])), \
+            patch.object(service, "fetch_facts_for_writing", new=AsyncMock(return_value=[])):
+        asyncio.run(service.resolve_facts("r", ctx, _pool(conn)))
+    assert ctx["route_segments"] == [("a1", "card m1"), ("a2", "m2")]
+    assert ctx["atom_text"] == "card m1\n\nm2"

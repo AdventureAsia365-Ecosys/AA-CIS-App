@@ -1,9 +1,13 @@
-"""AA-772 (S233) — `place_cards_build` job kind: build the missing place cards for one tour's
-atoms (admin "Build place cards" on the Content Quality page). T8/T9 also build cards on demand
-for the atoms they write from; this job fills a whole tour ahead of a run.
+"""AA-772 — `place_cards_build` job kind: build the missing place cards for one tour's atoms
+(admin "Build place cards" on the Content Quality page). T8 also builds the card of its request
+atom on demand; T9 only reads cards (S234, plan C8). This job fills a whole tour ahead of a run.
 
-Payload: {"tour_id"}. Cost: ~2 short calls per new card; one tour has ~30-50 atoms, and atoms
-that already have a card are skipped.
+Payload: {"tour_id", "force"?}. `force` ignores stored misses (place_card_miss) for this tour;
+the free rule skip (unnamed / logistics places) still applies.
+
+Cost (S234): ≤1 draft + 1 check per DISTINCT place (atoms are grouped by place, existing cards
+are reused by alias / core name, misses are cached), capped at MAX_PLACES drafts per job. S233 —
+before grouping — paid ~72 calls / $0.38 per tour.
 """
 from __future__ import annotations
 
@@ -15,12 +19,14 @@ from shared.jobs.registry import JobContext, NonRetryable, job_kind
 logger = structlog.get_logger()
 
 KIND = "place_cards_build"
-MAX_ATOMS = 60  # paid-run rule: one tour at a time, never the catalog
+MAX_PLACES = 40  # paid-run rule: one tour at a time, never the catalog; extra places wait for a re-run
+MAX_ATOMS = 400  # safety bound on the atom read only (the largest tours have ~100 atoms)
 
 
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=600)
 async def run(ctx: JobContext) -> dict:
-    tour_id = (ctx.payload or {}).get("tour_id")
+    payload = ctx.payload or {}
+    tour_id = payload.get("tour_id")
     if not tour_id:
         raise NonRetryable("payload needs tour_id")
     async with ctx.pool.acquire() as conn:
@@ -31,6 +37,7 @@ async def run(ctx: JobContext) -> dict:
             ORDER BY itinerary_day NULLS LAST, atom_id
             LIMIT $2
             """, tour_id, MAX_ATOMS)]
-    built = await ensure_place_cards(atom_ids, ctx.pool)
-    logger.info("place_cards_build_done", tour_id=tour_id, atoms=len(atom_ids), built=built)
-    return {"tour_id": tour_id, "atoms": len(atom_ids), "cards_built": built}
+    counters = await ensure_place_cards(atom_ids, ctx.pool, force=bool(payload.get("force")),
+                                        max_places=MAX_PLACES)
+    logger.info("place_cards_build_done", tour_id=tour_id, **counters)
+    return {"tour_id": tour_id, "force": bool(payload.get("force")), **counters}

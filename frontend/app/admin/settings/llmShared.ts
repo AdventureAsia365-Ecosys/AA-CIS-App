@@ -119,7 +119,13 @@ export const STAGE_GROUPS: { key: string; label: string; stages: string[] }[] = 
   // AA-772 (S233): place cards — drafted by a writer, each fact kept only if the checker agrees.
   { key: "a3_place", label: "A3 — Place cards", stages: ["a3_place_card", "a3_place_card_check"] },
   { key: "t8", label: "T8 — Angle generation", stages: ["t8_angle_gen"] },
-  { key: "t9", label: "T9 — Content write + T10 quality judge", stages: ["t9_write", "t10_judge"] },
+  // S234 (migration 221): t9_repair = cheap sentence repair / SEO fit / admin suggest;
+  // t10_claims = F9 v2 claim extraction (not wired into the gates yet).
+  {
+    key: "t9",
+    label: "T9 — Content write + T10 quality judge",
+    stages: ["t9_write", "t9_repair", "t10_judge", "t10_claims"],
+  },
   // AA-685: call sites that bypassed the gateway before.
   { key: "a0", label: "A0 — Excel column auto-detect", stages: ["a0_column_map"] },
   { key: "embed", label: "Embeddings (question/atom matching)", stages: ["f10_embed"] },
@@ -149,7 +155,9 @@ export const STAGE_LABELS: Record<string, string> = {
   t5_atomize: "A3 atomize",  // AA-757: historical rows under the old stage key — same stage.
   t8_angle_gen: "Angle generation",
   t9_write: "Content write",
+  t9_repair: "Sentence repair / SEO fit",
   t10_judge: "Quality judge (F8+F9)",
+  t10_claims: "Claim extraction (F9 v2)",
   a0_column_map: "Column mapping",
   f10_embed: "Content embedding",
   tp_compose: "Trip plan compose",

@@ -46,7 +46,6 @@ from services.acp_content_writing.quality_gates import (
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_shared.place_cards import ensure_place_cards
 from services.acp_content_writing import sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
@@ -579,35 +578,41 @@ async def _insert_placeholder_piece(
     return _row_to_dict(row)
 
 
+async def _reread_seed(context: dict, tenant_id: UUID, pool) -> None:
+    """Re-read each moment's seed so it carries any place card built since start_write (T8 or the
+    place_cards_build job). A context with no atom (hand-built) keeps its seed."""
+    route_segments = context.get("route_segments")
+    if not route_segments and not context.get("atom_id"):
+        return
+    async with pool.acquire() as conn:
+        if route_segments:
+            fresh = []
+            for atom_id, text in route_segments:
+                fresh.append((atom_id, await atom_seed_text(conn, atom_id, str(tenant_id)) or text))
+            context["route_segments"] = fresh
+            context["atom_text"] = "\n\n".join(text for _, text in fresh)
+        else:
+            context["atom_text"] = await atom_seed_text(conn, context["atom_id"], str(tenant_id)) \
+                or context["atom_text"]
+
+
 async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
     """AA-764 (G5) — the T9 source step, run in the t9_write job (not the HTTP request). Fills
     `context` in place, once (the buffer retry reuses the same context); a context without
     `facts_pending` (built before AA-764, or by a test) is left untouched.
 
-    S233: (1) place cards (AA-772) are built for the piece's atoms if missing, and the seed is
-    re-read so it carries them; (2) Facts are the platform + tenant facts for the trip's country
+    S233: (1) the seed is re-read so it carries the place cards (AA-772) of the piece's atoms —
+    S234 (plan C8): T9 only READS cards; it never drafts one (S233: 36 of 169 card drafts, one
+    unnamed atom 35 times, came from this step). Cards are built by T8 for the request atom and
+    by the place_cards_build job; (2) Facts are the platform + tenant facts for the trip's country
     (facts.country), with no per-fact Jev call (S232: no Jev on the T axis)."""
     if not context.get("facts_pending"):
         return
     tenant_id = UUID(context["tenant_id"])
-    route_segments = context.get("route_segments")
-    atom_ids = [a for a, _ in route_segments] if route_segments else [context.get("atom_id")]
     try:
-        built = await ensure_place_cards([a for a in atom_ids if a], pool)
-    except Exception as e:  # noqa: BLE001 — cards are an aid, never a reason to fail a write
-        logger.warning("t9_place_cards_failed", request_id=str(request_id), error=str(e)[:200])
-        built = 0
-    if built:
-        async with pool.acquire() as conn:
-            if route_segments:
-                fresh = []
-                for atom_id, text in route_segments:
-                    fresh.append((atom_id, await atom_seed_text(conn, atom_id, str(tenant_id)) or text))
-                context["route_segments"] = fresh
-                context["atom_text"] = "\n\n".join(text for _, text in fresh)
-            else:
-                context["atom_text"] = await atom_seed_text(conn, context["atom_id"], str(tenant_id)) \
-                    or context["atom_text"]
+        await _reread_seed(context, tenant_id, pool)
+    except Exception as e:  # noqa: BLE001 — the seed built at start_write still works
+        logger.warning("t9_seed_reread_failed", request_id=str(request_id), error=str(e)[:200])
     facts = await fetch_facts_for_writing(tenant_id, pool, country=context.get("destination"))
     context["facts_text"] = format_facts_block(facts)
     context["facts_pending"] = False

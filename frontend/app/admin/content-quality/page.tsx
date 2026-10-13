@@ -8,7 +8,8 @@
 //                   gate), attempts, LLM cost; drawer = highlighted text + writer inputs.
 //   Tour versions — every T2 tenant tour version with its score / QA state / escalations.
 //   Gate stats    — per gate and channel: runs, fails, blocking fails; per tenant outcomes.
-//   Place cards   — AA-772 cards: verify / reject, build the missing cards for one tour (job).
+//   Place cards   — AA-772 cards: verify / reject, build the missing cards for one tour (job),
+//                   S234: review duplicate candidates and merge them into one card.
 // UI kit + react-query; view state in the URL (tab, filters, page) like the Jobs page.
 // API: /admin/content-quality/* via the BFF.
 
@@ -18,13 +19,13 @@ import type { SortingState } from "@tanstack/react-table";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
 import {
-  Badge, DataTable, Drawer, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
+  Badge, ConfirmModal, DataTable, Drawer, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
   type ColumnDef,
 } from "../../_kit";
 import PieceDrawer from "./PieceDrawer";
 import {
-  GATE_LABELS, fmtTime, gateLabel, usd,
-  type GateStat, type Paged, type PieceRow, type PlaceCard, type TenantStat, type VersionRow,
+  DUPLICATE_REASON_LABELS, GATE_LABELS, fmtTime, gateLabel, usd,
+  type DuplicateCluster, type GateStat, type Paged, type PieceRow, type PlaceCard, type TenantStat, type VersionRow,
 } from "./shared";
 
 type TabKey = "pieces" | "versions" | "stats" | "cards";
@@ -255,10 +256,106 @@ function StatsTab({ gates, tenants, loading }: { gates: GateStat[]; tenants: Ten
 }
 
 // ── Place cards ─────────────────────────────────────────────────────────────────────────────────
+// S234 (AA-772) — one duplicate cluster: pick the card to keep (default: most atoms), untick any
+// card that is really a different place ("Punakha" vs "Punakha Dzong"), then merge.
+function DuplicateClusterRow({ cluster, onMerge, busy }: {
+  cluster: DuplicateCluster; busy: boolean;
+  onMerge: (keepId: string, fromIds: string[], names: string) => void;
+}) {
+  const byAtoms = [...cluster.cards].sort((a, b) => b.atoms - a.atoms || b.facts - a.facts);
+  const [keep, setKeep] = useState(byAtoms[0].card_id);
+  const [merge, setMerge] = useState<Set<string>>(() => new Set(cluster.cards.map((c) => c.card_id)));
+  const fromIds = cluster.cards.filter((c) => c.card_id !== keep && merge.has(c.card_id)).map((c) => c.card_id);
+  const toggle = (id: string) => setMerge((m) => { const n = new Set(m); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const keepName = cluster.cards.find((c) => c.card_id === keep)?.display_name ?? "";
+  return (
+    <div style={{ border: `1px solid ${A.line}`, borderRadius: 8, padding: "10px 12px", background: A.card }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+        <b style={{ fontSize: 13 }}>{cluster.country}</b>
+        {cluster.reasons.map((r) => <Badge key={r} tone="warning" dot={false}>{DUPLICATE_REASON_LABELS[r] ?? r}</Badge>)}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {cluster.cards.map((c) => (
+          <div key={c.card_id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 64 }}>
+              <input type="radio" name={`keep-${cluster.cards[0].card_id}`} checked={keep === c.card_id} onChange={() => setKeep(c.card_id)} aria-label={`Keep ${c.display_name}`} />
+              keep
+            </label>
+            <label style={{ display: "inline-flex", gap: 4, alignItems: "center", minWidth: 70, color: keep === c.card_id ? A.muted2 : A.ink3 }}>
+              <input type="checkbox" disabled={keep === c.card_id} checked={keep !== c.card_id && merge.has(c.card_id)} onChange={() => toggle(c.card_id)} aria-label={`Merge ${c.display_name}`} />
+              merge
+            </label>
+            <span style={{ minWidth: 0 }}>
+              <b>{c.display_name}</b>
+              <span style={{ color: A.muted }}> — {[c.locality, c.region].filter(Boolean).join(", ") || "no locality"} · {c.atoms} atoms · {c.facts} facts · {c.status}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Btn size="sm" disabled={busy || fromIds.length === 0} onClick={() => onMerge(keep, fromIds, keepName)}>
+          Merge {fromIds.length || ""} into “{keepName}”
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+function DuplicatesPanel() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<{ keepId: string; fromIds: string[]; name: string } | null>(null);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["cq-card-duplicates"],
+    queryFn: () => apiGet<{ data: DuplicateCluster[]; total: number }>(`/api/admin/content-quality/place-cards/duplicates`, { admin: true }),
+    enabled: open,
+  });
+  const merge = useMutation({
+    mutationFn: (p: { keepId: string; fromIds: string[] }) =>
+      apiSend<{ atoms_moved: number }>(`/api/admin/content-quality/place-cards/${p.keepId}/merge`, { body: { from_ids: p.fromIds }, admin: true }),
+    onSuccess: (r) => {
+      toast.success(`Merged — ${r.atoms_moved} atom link(s) moved`);
+      setPending(null);
+      qc.invalidateQueries({ queryKey: ["cq-card-duplicates"] });
+      qc.invalidateQueries({ queryKey: ["cq-cards"] });
+    },
+    onError: (e) => { toast.error(`Could not merge: ${String(e)}`); setPending(null); },
+  });
+  const clusters = data?.data ?? [];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <Btn size="sm" variant="secondary" onClick={() => setOpen((o) => !o)}>
+          {open ? "Hide duplicates" : "Find duplicate cards"}
+        </Btn>
+        {open && !isLoading && !error && <span style={{ fontSize: 12, color: A.muted }}>{clusters.length} candidate group(s) — never merged automatically</span>}
+      </div>
+      {open && isLoading && <span style={{ fontSize: 12, color: A.muted }}>Loading…</span>}
+      {open && error && <span style={{ fontSize: 12, color: A.red }}>Could not load duplicates: {String(error)}</span>}
+      {open && clusters.map((c) => (
+        <DuplicateClusterRow key={c.cards.map((x) => x.card_id).join(",")} cluster={c} busy={merge.isPending}
+          onMerge={(keepId, fromIds, name) => setPending({ keepId, fromIds, name })} />
+      ))}
+      <ConfirmModal
+        open={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={() => pending && merge.mutate({ keepId: pending.keepId, fromIds: pending.fromIds })}
+        title="Merge place cards"
+        body={`Merge ${pending?.fromIds.length ?? 0} card(s) into “${pending?.name ?? ""}”? Their atoms move to this card, their names become aliases, and the merged cards are deleted.`}
+        confirmLabel="Merge"
+        destructive
+        busy={merge.isPending}
+      />
+    </div>
+  );
+}
+
 function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [tourId, setTourId] = useState("");
+  const [force, setForce] = useState(false);
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE) });
   if (view.status) qs.set("status", view.status);
   if (view.q) qs.set("q", view.q);
@@ -273,8 +370,8 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
     onError: (e) => toast.error(`Could not save: ${String(e)}`),
   });
   const build = useMutation({
-    mutationFn: () => apiSend<{ job_id: string }>(`/api/admin/content-quality/place-cards/build`, { body: { tour_id: tourId.trim() }, admin: true }),
-    onSuccess: (r) => { toast.success(`Place-card job queued (${r.job_id})`); setTourId(""); },
+    mutationFn: () => apiSend<{ job_id: string }>(`/api/admin/content-quality/place-cards/build`, { body: { tour_id: tourId.trim(), force }, admin: true }),
+    onSuccess: (r) => { toast.success(`Place-card job queued (${r.job_id})`); setTourId(""); setForce(false); },
     onError: (e) => toast.error(`Could not queue: ${String(e)}`),
   });
   const columns = useMemo<ColumnDef<PlaceCard, unknown>[]>(() => [
@@ -294,12 +391,14 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
       ) },
   ], [verdict]);
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+    <DuplicatesPanel />
     <DataTable<PlaceCard>
       data={data?.data ?? []} columns={columns} tableId="admin-content-quality-cards" getRowId={(r) => r.card_id}
       loading={isLoading} error={error ? String(error) : null} onRetry={() => refetch()}
       serverPagination={{ pageIndex: view.page, pageSize: PAGE_SIZE, total: data?.total ?? 0, onChange: (i) => update({ page: i }) }}
       pageSize={PAGE_SIZE} tableMinWidth={900}
-      emptyTitle="No place cards yet" emptyDescription="Cards are built when T8/T9 write about an atom, or for a whole tour below."
+      emptyTitle="No place cards yet" emptyDescription="Cards are built when T8 writes angles for an atom, or for a whole tour below."
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder="Search place / country…" aria-label="Search places" style={inputStyle} />
@@ -309,9 +408,14 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
           </select>
           <input value={tourId} onChange={(e) => setTourId(e.target.value)} placeholder="tour_id (uuid)" aria-label="Tour id" style={{ ...inputStyle, fontFamily: mono, minWidth: 260 }} />
           <Btn size="sm" disabled={!/^[0-9a-f-]{36}$/i.test(tourId.trim()) || build.isPending} onClick={() => build.mutate()}>Build cards for tour</Btn>
+          <label style={{ display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12, color: A.ink3 }} title="Retry places whose last draft found no place or was rejected">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} aria-label="Retry cached misses" />
+            retry misses
+          </label>
         </div>
       }
     />
+    </div>
   );
 }
 
