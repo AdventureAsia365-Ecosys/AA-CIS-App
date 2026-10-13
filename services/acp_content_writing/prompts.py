@@ -106,7 +106,7 @@ in exactly this shape:
 {{
   "seo_title": "<the SEO search-result headline, 45-60 characters, one natural headline containing
 the target keyword and the place the piece is about>",
-  "meta_description": "<the search-result snippet, 140-155 characters, ONE complete sentence ending
+  "meta_description": "<the search-result snippet, 130-145 characters (never over 155), ONE complete sentence ending
 in '.', '!' or '?', containing the target keyword>",
   "slug": "<lowercase-kebab-case URL slug, <=60 characters, e.g. 'wat-sisaket-vientiane'>",
   "body": "<the full piece itself, exactly as specified above — every H2/FAQ/citation-tag
