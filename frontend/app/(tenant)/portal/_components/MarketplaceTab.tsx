@@ -23,9 +23,6 @@ interface MarketplaceTour {
   version_id: string;
   version_number: number;
   status: string;
-  quality_score: number | null;
-  qa_status: string;
-  qa_auto_passed: boolean;
   published_tour_id: string;
   tour_id: string;
   name: string;
@@ -104,8 +101,7 @@ export default function MarketplaceTab() {
                   </div>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: T.ink, lineHeight: 1.4 }}>{t.name}</div>
                   <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <Badge variant={statusVariant(t.status)}>{t.status.replace("_", " ")}</Badge>
-                    {t.qa_auto_passed && <Badge>auto-passed</Badge>}
+                    <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
                     <Badge variant="info">v{t.version_number}</Badge>
                   </div>
                 </div>

@@ -93,7 +93,7 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
         <EmptyState
           icon={<FileText size={28} color={T.muted2} />}
           title="Nothing to publish yet"
-          sub="Approved content will show up here once you've written and it's passed quality review."
+          sub="Blog and Facebook pieces show up here as soon as they're written."
         />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

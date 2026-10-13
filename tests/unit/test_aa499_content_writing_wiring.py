@@ -85,11 +85,9 @@ class TestEmbeddingComputedEveryAttempt:
         # run_quality_gates() got the (empty, no cannibalization match) result explicitly.
         assert mock_gates.call_args.kwargs["cannibalization_match"] is None
 
-    async def test_held_piece_computes_embedding_for_cannibalization_but_never_persists_it(self):
-        """Real behavior change from AA-499's own original design: embedding IS computed on a
-        held attempt now (AA-484's gate needs it), but content_embedding still only persists for
-        the real approved outcome — 'held piece never ships, nothing to index it for' still holds
-        at the PERSISTENCE layer, just not at the COMPUTE layer anymore."""
+    async def test_held_piece_computes_and_persists_embedding(self):
+        """AA-770 (S233): a held piece now reaches the tenant too, so its embedding is persisted
+        like an approved one (F10 cross-tenant and within-tenant reuse must see it)."""
         with patch.object(service, "write_content", return_value=("draft", 0.02, {}, None)), \
              patch.object(service, "rewrite_with_feedback", return_value=("draft 2", 0.02, {}, None)), \
              patch.object(service, "run_quality_gates",
@@ -101,7 +99,7 @@ class TestEmbeddingComputedEveryAttempt:
             await service.run_write_background(REQUEST_ID, PIECE_ID, _context(), pool=MagicMock())
 
         assert mock_compute.call_count == 2  # once per attempt
-        assert mock_finalize.call_args.kwargs["content_embedding"] is None
+        assert mock_finalize.call_args.kwargs["content_embedding"] == EMBEDDING
 
     async def test_embedding_call_failure_soft_fails_no_similarity_query_at_all(self):
         """compute_embedding()'s own soft-fail contract (returns None) means find_similar_pieces()

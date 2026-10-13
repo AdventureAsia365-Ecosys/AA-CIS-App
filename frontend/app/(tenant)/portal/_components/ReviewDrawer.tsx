@@ -4,10 +4,10 @@
 // the copy-lock, tenant-safe context, flag banner, inline edit and export actions from the old
 // ReviewList card (AA-501/AA-519/AA-614) unchanged in behaviour.
 
-import { Download, Flag, HelpCircle, Loader2, Pencil, Save, Search, Sparkles, X } from "lucide-react";
+import { Download, HelpCircle, Loader2, Pencil, Save, Search, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { T, sans, mono, Btn } from "./ui";
-import { type ReviewFlag, type ReviewItem } from "./reviewListApi";
+import { type ReviewItem } from "./reviewListApi";
 
 export function ReviewDrawer({
   item,
@@ -60,7 +60,7 @@ export function ReviewDrawer({
         </div>
       ) : item.ready_state === "not_ready" && !item.content_text ? (
         <div style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.bg, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
-          This piece isn&rsquo;t ready to publish yet. Our team is on it — check back soon.
+          Writing this piece didn&rsquo;t finish. Write it again from Social Content.
         </div>
       ) : (
         <div
@@ -82,11 +82,6 @@ export function ReviewDrawer({
           }}
         >
           {item.content_text}
-          {item.ready_state === "not_ready" && (
-            <div style={{ marginTop: 10, fontSize: 11.5, color: T.muted, fontStyle: "italic" }}>
-              Draft above isn&rsquo;t ready to publish yet — our team is reviewing it.
-            </div>
-          )}
         </div>
       )}
 
@@ -126,22 +121,7 @@ export function ReviewDrawer({
           </div>
         ))}
 
-      <FlagBanner flags={item.flags} />
       <ContextSection item={item} />
-    </div>
-  );
-}
-
-function FlagBanner({ flags }: { flags: ReviewFlag[] }) {
-  if (flags.length === 0) return null;
-  return (
-    <div style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${T.amber}`, background: T.amberSoft, fontSize: 12, lineHeight: 1.6, color: T.body }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 600, color: T.ink, marginBottom: 4 }}>
-        <Flag size={12} color={T.amber} /> Flagged for your review — doesn&rsquo;t block publishing
-      </div>
-      {flags.flatMap((f) => f.violations).map((v, i) => (
-        <div key={i} style={{ color: T.muted }}>{v}</div>
-      ))}
     </div>
   );
 }

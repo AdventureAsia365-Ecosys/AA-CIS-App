@@ -24,7 +24,6 @@ export interface DfsPaaSnapshot {
   people_also_ask: string[];
   related_keywords: string[];
 }
-export interface ReviewFlag { gate: string; violations: string[] }
 
 export type ReadyState = "ready" | "in_progress" | "not_ready";
 
@@ -43,7 +42,6 @@ export interface ReviewItem {
   created_at: string | null;
   route_hub_name: string | null;
   route_segment_count: number | null;
-  flags: ReviewFlag[];
 }
 
 export function fetchReviews(): Promise<ReviewItem[]> {

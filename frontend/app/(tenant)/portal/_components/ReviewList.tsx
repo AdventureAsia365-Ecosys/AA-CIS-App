@@ -10,7 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Download, Flag, Send } from "lucide-react";
+import { Download, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 import { T, sans } from "./ui";
 import {
@@ -145,7 +145,6 @@ function ReviewListInner() {
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, color: T.ink, display: "flex", alignItems: "center", gap: 6 }}>
                 {it.angle?.name || "Untitled"}
-                {it.flags.length > 0 && <Flag size={12} color={T.amber} />}
               </div>
               {it.tour && (
                 <div style={{ fontSize: 11.5, color: T.muted2 }}>
