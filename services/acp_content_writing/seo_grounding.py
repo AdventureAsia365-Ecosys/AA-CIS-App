@@ -38,6 +38,10 @@ PRODUCT_STEMS: tuple[str, ...] = (
 # Stems that name the same product: a 'hiking day' on a 'short trek' promises nothing new.
 _SAME_PRODUCT = {"hike": "trek", "hiking": "trek", "bike": "cycling", "biking": "cycling",
                  "birding": "birdwatch"}
+# Other roots in a source that support a product word (review r2b: 'camping' on a 'ger camp' seed,
+# 'horse riding' on a 'horseback excursion', 'tasting' on 'taste the …', 'swim' on 'bathe').
+_SUPPORT_ROOTS = {"camping": ("camp",), "riding": ("ride", "rode", "horseback"),
+                  "tasting": ("tast",), "swim": ("bathe", "bathing")}
 _GUIDE_PROMISE_RE = re.compile(r"\b(guides you|guided tour|private guide)\b", re.I)
 
 
@@ -77,7 +81,8 @@ def product_terms(text: Optional[str]) -> list[str]:
 def _supported(stem: str, sources: list[str]) -> bool:
     if " " in stem:
         return any(re.search(rf"\b{stem}", " ".join(_words(s))) for s in sources)
-    return any(_stem_of(w) == stem for s in sources for w in _words(s))
+    roots = _SUPPORT_ROOTS.get(stem, ())
+    return any(_stem_of(w) == stem or (roots and w.startswith(roots)) for s in sources for w in _words(s))
 
 
 def unsupported_products(text: Optional[str], *sources: Optional[str]) -> list[str]:

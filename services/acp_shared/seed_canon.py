@@ -10,8 +10,8 @@ the lakeshore camp": the camp of Day 3 is not at the lake, the card guessed the 
 
 Everything here is pure and deterministic (no LLM): `canonical_facts` keeps one value per
 (place, measured thing) across the cards of a seed; `facts_conflict` is the pairwise test;
-`overnight_card_off_route` flags the overnight moment whose card region no other moment of that
-day shares.
+`overnight_card_off_route` flags an (unverified) overnight moment whose card region no other moment
+of that day shares, when the next day's itinerary travels on to a lodging in that region.
 
 Soft contradictions with no number ("ancient" vs "geologically recent") are NOT resolved here:
 a word-level contradiction test would drop true facts on synonyms; both lines are kept.
@@ -43,6 +43,15 @@ _RANGE_SEP = frozenset({"to", "and"})
 WINDOW_BEFORE = 4
 WINDOW_AFTER = 6
 MIN_SHARED_CONTEXT = 3  # S234 Mongolia: 2% vs 0.4% share {world, fresh, surface}; 70% vs 0.4% share 2
+# The dimension a length/height number measures, next to it ('136 km LONG' vs '36 km WIDE', '262 m
+# DEEP' vs '1,645 m ABOVE sea level'). Two quantities with different dimensions are two measures.
+_DIMENSIONS = {
+    "long": "length", "length": "length", "lengthwise": "length",
+    "wide": "width", "width": "width", "across": "width", "breadth": "width", "broad": "width",
+    "deep": "depth", "depth": "depth", "thick": "depth",
+    "high": "height", "height": "height", "tall": "height", "elevation": "height", "altitude": "height",
+    "above": "height", "below": "height", "sea": "height",
+}
 
 
 def _tokens(text: str) -> list[str]:
@@ -67,12 +76,14 @@ def _stem(w: str) -> str:
     return w[:-1] if len(w) > 4 and w.endswith("s") else w
 
 
-def quantities(text: str) -> list[tuple[float, float, str, frozenset, str]]:
-    """(low, high, unit, context words, "of" word) for every number in a fact. A range "20,000–24,000" or
+def quantities(text: str) -> list[tuple[float, float, str, frozenset, str, str]]:
+    """(low, high, unit, context words, "of" word, dimension) for every number in a fact. A range "20,000–24,000" or
     "1–2%" is one quantity. `unit` is the next word ('percent', 'metres', 'years'), or 'year' for a
     bare year (1000–2100). Context = content words within WINDOW_BEFORE/WINDOW_AFTER tokens, the
     unit itself excluded. The "of" word is the measure's whole ('percent of the WORLD's …'): two
-    quantities with different "of" words are different measures."""
+    quantities with different "of" words are different measures. The dimension ('length', 'width',
+    'depth', 'height' — `_DIMENSIONS`) is read from the 2 tokens after the unit, else the 2 before
+    the number; '' when none."""
     toks = _tokens(text)
     out = []
     i = 0
@@ -102,8 +113,10 @@ def quantities(text: str) -> list[tuple[float, float, str, frozenset, str]]:
         if toks[k:k + 1] == ["of"]:
             rest = [w for w in toks[k + 1:k + 3] if w not in _STOP]
             of = _stem(rest[0]) if rest else ""
+        dim = next((_DIMENSIONS[w] for w in toks[k:k + 2] if w in _DIMENSIONS), "")
+        dim = dim or next((_DIMENSIONS[w] for w in reversed(toks[max(0, start - 2):start]) if w in _DIMENSIONS), "")
         if unit:
-            out.append((min(lo, hi), max(lo, hi), unit, ctx, of))
+            out.append((min(lo, hi), max(lo, hi), unit, ctx, of, dim))
         i = j
     return out
 
@@ -113,15 +126,18 @@ def _disjoint(a_lo: float, a_hi: float, b_lo: float, b_hi: float) -> bool:
     return a_hi + tol < b_lo or b_hi + tol < a_lo
 
 
-def facts_conflict(a: str, b: str) -> bool:
+def facts_conflict(a: str, b: str, ignore: Iterable[str] = ()) -> bool:
     """Two facts about the same place state different numbers for the same measured thing: same
-    unit, same "of" word when both have one, at least MIN_SHARED_CONTEXT shared context words,
-    non-overlapping values."""
-    for a_lo, a_hi, a_unit, a_ctx, a_of in quantities(a):
-        for b_lo, b_hi, b_unit, b_ctx, b_of in quantities(b):
-            if a_unit != b_unit or (a_of and b_of and a_of != b_of):
+    unit, same "of" word and same dimension when both have one, at least MIN_SHARED_CONTEXT shared
+    context words, non-overlapping values. `ignore` = words that do not count as shared context —
+    the place's own name and country (review r2b: on two facts about one lake, 'lake khovsgol
+    mongolia' alone made 'long' and 'wide' one measure)."""
+    skip = {_stem(w) for w in ignore}
+    for a_lo, a_hi, a_unit, a_ctx, a_of, a_dim in quantities(a):
+        for b_lo, b_hi, b_unit, b_ctx, b_of, b_dim in quantities(b):
+            if a_unit != b_unit or (a_of and b_of and a_of != b_of) or (a_dim and b_dim and a_dim != b_dim):
                 continue
-            if len(a_ctx & b_ctx) >= MIN_SHARED_CONTEXT and _disjoint(a_lo, a_hi, b_lo, b_hi):
+            if len((a_ctx & b_ctx) - skip) >= MIN_SHARED_CONTEXT and _disjoint(a_lo, a_hi, b_lo, b_hi):
                 return True
     return False
 
@@ -164,6 +180,11 @@ def canonical_facts(cards: list[dict], atom_counts: Optional[dict] = None) -> tu
         if c and c.get("card_id") and c["card_id"] not in seen:
             seen[c["card_id"]] = c
     names = {cid: card_names(c) for cid, c in seen.items()}
+    # Parsed once: asyncpg returns jsonb `facts` as a str, and a re-parse would give new dicts
+    # (review r2b — kept facts were matched by object identity and came back empty).
+    parsed = {cid: _facts_of(c) for cid, c in seen.items()}
+    name_words = {w for cid, c in seen.items()
+                  for w in _TOKEN_RE.findall(" ".join(names[cid]) + " " + fold(c.get("country")))}
     order = {cid: i for i, cid in enumerate(seen)}
 
     def place_id(cid: str) -> str:
@@ -184,15 +205,15 @@ def canonical_facts(cards: list[dict], atom_counts: Optional[dict] = None) -> tu
         return (seen[cid].get("status") == "verified", place_id(cid) in shared,
                 place_atoms[place_id(cid)], -order[cid])
 
-    kept: list[tuple[str, dict, set]] = []
+    kept: list[tuple[str, dict, set, int]] = []
     dropped: list[dict] = []
     for cid in seen:
-        for fact in _facts_of(seen[cid]):
+        for idx, fact in enumerate(parsed[cid]):
             subj = subjects(cid, fact["text"])
             wins = True
             for k in list(kept):
                 shared = k[2] & subj
-                if k[0] == cid or not shared or not facts_conflict(k[1]["text"], fact["text"]):
+                if k[0] == cid or not shared or not facts_conflict(k[1]["text"], fact["text"], name_words):
                     continue
                 if strength(cid, shared) > strength(k[0], shared):
                     kept.remove(k)
@@ -204,9 +225,9 @@ def canonical_facts(cards: list[dict], atom_counts: Optional[dict] = None) -> tu
                                     "kept_fact": k[1]["text"]})
                     break
             if wins:
-                kept.append((cid, fact, subj))
-    keep_ids = {id(f) for _, f, _ in kept}
-    return {cid: [f for f in _facts_of(c) if id(f) in keep_ids] for cid, c in seen.items()}, dropped
+                kept.append((cid, fact, subj, idx))
+    keep = {(k[0], k[3]) for k in kept}
+    return {cid: [f for i, f in enumerate(parsed[cid]) if (cid, i) in keep] for cid in seen}, dropped
 
 
 # An overnight / lodging moment: its card names a camp or hotel, a kind of place that exists in
@@ -218,17 +239,50 @@ def is_overnight(label: Optional[str]) -> bool:
     return bool(_OVERNIGHT_RE.search(label or ""))
 
 
-def overnight_card_off_route(part: dict, same_day: list[dict]) -> bool:
-    """True when `part` is an overnight moment whose card region differs from the region of every
-    other carded moment of the same day (and at least one exists). Such a card's location — and the
-    facts that follow from it — is not trusted: the seed falls back to the itinerary place + country."""
+# A later day that travels ON to a lodging ('before continuing to the lakeshore camp', Day 4 of the
+# S234 Mongolia route): that day arrives at the region's lodging, so an earlier night was not there.
+_ARRIVE_LODGING_RE = re.compile(
+    r"\b(?:continu\w*|driv\w*|head\w*|travel\w*|transfer\w*|proceed\w*|mov\w* on|arriv\w*|reach\w*)"
+    r"(?:\s+on)?\s+(?:to|towards?|at|in)?\s*(?:the|your|a|our)?\s*(?:[\w'-]+\s+){0,3}?"
+    r"(?:camp|hotel|lodge|homestay|guesthouse|guest house|resort|farmhouse|ryokan|inn)\b", re.I)
+# Generic administrative words of a region name: 'Khövsgöl Province' == 'Khövsgöl Province
+# (Khövsgöl Aimag)' == 'Khövsgöl'.
+_REGION_GENERIC = frozenset({"province", "aimag", "district", "dzongkhag", "region", "state", "prefecture",
+                             "county", "oblast", "governorate", "municipality", "division", "area", "the", "of"})
+
+
+def region_key(region: Optional[str]) -> str:
+    """A region name without parentheticals, accents and generic administrative words."""
+    words = [w for w in re.findall(r"[a-z0-9]+", fold(re.sub(r"\(.*?\)", " ", region or "")))
+             if w not in _REGION_GENERIC]
+    return " ".join(words)
+
+
+def _part_region(p: dict) -> str:
+    return region_key((p.get("card") or {}).get("region"))
+
+
+def overnight_card_off_route(part: dict, same_day: list[dict], next_day: list[dict]) -> bool:
+    """True when `part` is an overnight moment whose card the itinerary itself contradicts — all of:
+    the card is not 'verified'; its region (`region_key`) matches no other carded moment of the same
+    day (and one exists); and the NEXT day both travels on to a lodging (`_ARRIVE_LODGING_RE` in a
+    moment's label or itinerary text) and has a moment carded in that region. S234: Day 3 'Sod Camp'
+    card on the Khövsgöl lakeshore, Day 4 'stop for lunch near Mörön … before continuing to the
+    lakeshore camp'. A plain transfer day (sleep in region B, explore B the next day) keeps its
+    card: the next day does not arrive at a lodging there. Such a card's location — and the facts
+    that follow from it — is not trusted: the seed falls back to the itinerary place + country."""
     card = part.get("card") or {}
-    if not is_overnight(part.get("text")) or not card.get("region"):
+    if not is_overnight(part.get("text")) or card.get("status") == "verified":
         return False
-    others = {fold((p.get("card") or {}).get("region")) for p in same_day
-              if p is not part and (p.get("card") or {}).get("region")}
-    return bool(others) and fold(card["region"]) not in others
+    key = region_key(card.get("region"))
+    if not key:
+        return False
+    others = {_part_region(p) for p in same_day if p is not part and _part_region(p)}
+    if not others or key in others:
+        return False
+    arrives = any(_ARRIVE_LODGING_RE.search(f"{p.get('text') or ''} {p.get('evidence') or ''}") for p in next_day)
+    return arrives and any(_part_region(p) == key for p in next_day)
 
 
 __all__ = ["quantities", "facts_conflict", "canonical_facts", "card_names", "is_overnight",
-           "overnight_card_off_route"]
+           "overnight_card_off_route", "region_key"]

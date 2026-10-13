@@ -310,8 +310,9 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
     if not locs.strip():  # no Location line (atom without a country): the label's place part
         locs = " ".join(line.split(" — ", 1)[0] for line in (seed_text or "").splitlines() if " — " in line)
         locs = re.sub(r"\(.*?\)", " ", locs)
-    countries = {w for line in loc_lines if "," in line
-                 for w in re.findall(r"[a-z]{4,}", _fold_kw(line.rsplit(",", 1)[-1]))}
+    # The country = after the last comma, or the whole line when it has none (a card-less atom with
+    # no place: 'Location: Bhutan (do not name …)' — review r2b).
+    countries = {w for line in loc_lines for w in re.findall(r"[a-z]{4,}", _fold_kw(line.rsplit(",", 1)[-1]))}
     seed_words = ({w for w in re.findall(r"[a-z]{4,}", _fold_kw(locs))} - countries - _GENERIC_PLACE_WORDS)
     fallback = None
     for k in candidates:

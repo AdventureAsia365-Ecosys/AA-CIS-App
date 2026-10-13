@@ -21,9 +21,9 @@ fewer than `THIN_FACTS` facts is tagged thin so it is not made the hook.
 
 S234 round 2 (AA-772) — a route seed keeps one value per fact across its cards
 (`seed_canon.canonical_facts`: 'two percent' vs '0.4 percent' of the world's fresh water), and an
-overnight moment whose card region no other moment of that day shares loses its card
-(`seed_canon.overnight_card_off_route`: the Day 3 'Sod Camp' card sat on the Khövsgöl lakeshore
-that the route only reaches on Day 4).
+unverified overnight moment whose card region no other moment of that day shares, and that the next
+day travels on to a lodging in, loses its card (`seed_canon.overnight_card_off_route`: the Day 3
+'Sod Camp' card sat on the Khövsgöl lakeshore that the route only reaches on Day 4).
 """
 from __future__ import annotations
 
@@ -334,17 +334,22 @@ def canonicalize_route_cards(parts: list[dict]) -> tuple[list[dict], dict]:
     for p in parts:
         if p.get("day") is not None:
             by_day.setdefault(p["day"], []).append(p)
+    days = sorted(by_day)
+    next_of = {d: by_day[days[i + 1]] if i + 1 < len(days) and days[i + 1] == d + 1 else []
+               for i, d in enumerate(days)}
     out: list[dict] = []
     off_route: list[str] = []
     for p in parts:
-        if p.get("card") and p.get("day") is not None and overnight_card_off_route(p, by_day[p["day"]]):
+        if (p.get("card") and p.get("day") is not None
+                and overnight_card_off_route(p, by_day[p["day"]], next_of[p["day"]])):
             off_route.append(p["card"].get("display_name") or "")
             p = {**p, "card": None}
         out.append(p)
     cards = [p["card"] for p in out if p.get("card")]
     counts = Counter(c.get("card_id") for c in cards)
     kept, dropped = canonical_facts(cards, counts)
-    out = [{**p, "card": {**p["card"], "facts": kept.get(p["card"].get("card_id"), [])}}
+    # `facts` comes back from canonical_facts as a list even when asyncpg gave the card a jsonb str.
+    out = [{**p, "card": {**p["card"], "facts": kept[p["card"]["card_id"]]}}
            if p.get("card") and p["card"].get("card_id") in kept else p for p in out]
     return out, {"overnight_cards_dropped": off_route, "facts_dropped": dropped}
 

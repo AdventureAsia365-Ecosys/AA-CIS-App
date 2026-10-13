@@ -78,9 +78,45 @@ def test_canonical_facts_ignores_the_same_measure_of_two_different_places():
     assert dropped == [] and len(kept["lake"]) == len(kept["moron"]) == 1
 
 
-def test_merge_never_adds_a_conflicting_donor_fact():
+def test_merge_stays_lossless_even_on_number_conflicts():
+    # Review r2b: donors are deleted after a merge, so a conflict filter would lose true facts for
+    # good; the seed canonicalises at seed time instead.
     out = merged_facts([{"text": LAKE_04}], [[{"text": SOD_2PCT}, {"text": "It freezes in winter."}]])
-    assert [f["text"] for f in out] == [LAKE_04, "It freezes in winter."]
+    assert [f["text"] for f in out] == [LAKE_04, SOD_2PCT, "It freezes in winter."]
+    long_ = "The lake is 136 kilometres long and lies near the Russian border."
+    wide = "The lake is 36 kilometres wide and lies near the Russian border."
+    assert [f["text"] for f in merged_facts([{"text": long_}], [[{"text": wide}]])] == [long_, wide]
+
+
+def test_different_dimensions_of_one_place_do_not_conflict():
+    assert not facts_conflict("The lake is 136 kilometres long and lies near the Russian border.",
+                              "The lake is 36 kilometres wide and lies near the Russian border.")
+    assert not facts_conflict("Lake Khovsgol is 262 metres deep, the deepest lake in Mongolia.",
+                              "Lake Khovsgol sits at 1645 metres above sea level in Mongolia.")
+    assert facts_conflict("The lake is 136 kilometres long and lies near the Russian border.",
+                          "The lake is 120 kilometres long and lies near the Russian border.")
+
+
+def test_place_name_words_are_not_shared_context():
+    a = _card("a", "Lake Khövsgöl", ["Lake Khövsgöl in Mongolia is 262 metres in places."])
+    b = _card("b", "Khövsgöl Lake", ["Lake Khövsgöl in Mongolia rises 1645 metres in places."])
+    kept, dropped = canonical_facts([a, b])
+    assert dropped == [] and len(kept["a"]) == len(kept["b"]) == 1
+
+
+def test_canonical_facts_with_jsonb_string_facts():
+    # asyncpg returns jsonb as str (no codec registered); kept facts must survive the parse.
+    import json
+    sod = {**_card("sod", "Sod Camp", []), "facts": json.dumps([{"text": "It has gers."}, {"text": SOD_2PCT}])}
+    lake = {**_card("lake", "Lake Khövsgöl", []), "facts": json.dumps([{"text": LAKE_04}, {"text": "It freezes."}])}
+    kept, dropped = canonical_facts([sod, lake], {"sod": 1, "lake": 3})
+    assert [f["text"] for f in kept["sod"]] == ["It has gers."]
+    assert [f["text"] for f in kept["lake"]] == [LAKE_04, "It freezes."]
+    parts = [{"atom_id": "s", "text": "Sod Camp — visit", "day": 1, "card": sod},
+             {"atom_id": "l", "text": "Lake — visit", "day": 1, "card": lake}]
+    out, _ = canonicalize_route_cards(parts)
+    assert isinstance(out[0]["card"]["facts"], list) and [f["text"] for f in out[0]["card"]["facts"]] == ["It has gers."]
+    assert len(out[1]["card"]["facts"]) == 2
 
 
 # ---------------------------------------------------------------- overnight card + day order
@@ -94,8 +130,10 @@ def _parts():
         {"atom_id": "u", "text": "Uran Togoo — trek into the caldera", "day": 3, "card": uran, "country": "Mongolia"},
         {"atom_id": "s", "text": "Sod Camp — overnight in a standard ger camp", "day": 3, "card": sod,
          "place": "Sod Camp", "country": "Mongolia"},
-        {"atom_id": "m", "text": "Moron — stop for lunch", "day": 4, "card": moron, "country": "Mongolia"},
-        {"atom_id": "l1", "text": "Lake Khövsgöl — visit", "day": 4, "card": lake, "country": "Mongolia"},
+        {"atom_id": "m", "text": "Moron — stop for lunch", "day": 4, "card": moron, "country": "Mongolia",
+         "evidence": "Stop for lunch near Moron, capital of Khövsgöl province, before continuing to the lakeshore camp."},
+        {"atom_id": "l1", "text": "Lake Khövsgöl — visit", "day": 4, "card": {**lake, "region": "Khövsgöl Province (Khövsgöl Aimag)"},
+         "country": "Mongolia"},
         {"atom_id": "l2", "text": "Khövsgöl Lake — boat rides", "day": 5, "card": lake, "country": "Mongolia"},
     ]
 
@@ -103,11 +141,38 @@ def _parts():
 def test_overnight_card_in_another_region_than_the_day_is_dropped():
     parts = _parts()
     assert is_overnight(parts[1]["text"]) and not is_overnight(parts[0]["text"])
-    assert overnight_card_off_route(parts[1], parts[:2])
-    assert not overnight_card_off_route(parts[1], [parts[1]])  # alone on its day: nothing to compare
+    assert overnight_card_off_route(parts[1], parts[:2], parts[2:4])
+    assert not overnight_card_off_route(parts[1], [parts[1]], parts[2:4])  # alone on its day: nothing to compare
+    assert not overnight_card_off_route(parts[1], parts[:2], [])  # no next-day evidence: kept
+    verified = {**parts[1], "card": {**parts[1]["card"], "status": "verified"}}
+    assert not overnight_card_off_route(verified, [parts[0], verified], parts[2:4])  # verified: never dropped
     out, report = canonicalize_route_cards(parts)
     assert out[1]["card"] is None and report["overnight_cards_dropped"] == ["Sod Camp"]
     assert report["facts_dropped"] == []  # the 2% line left with the card
+
+
+def test_plain_transfer_day_keeps_the_overnight_card():
+    # Review r2b: visit region A, drive on and sleep in region B, explore B the next day.
+    dochula = {**_card("d", "Dochula Pass", ["It sits at 3100 metres."], region="Thimphu District"), "country": "Bhutan"}
+    farm = {**_card("f", "Punakha Farmhouse", ["It is a traditional house."], region="Punakha District",
+                    status="verified"), "country": "Bhutan"}
+    farm_unverified = {**farm, "status": "auto_checked"}
+    dzong = {**_card("z", "Punakha Dzong", ["Built in 1637."], region="Punakha Dzongkhag"), "country": "Bhutan"}
+    for f in (farm, farm_unverified):
+        parts = [
+            {"atom_id": "d", "text": "Cross Dochula Pass", "day": 3, "card": dochula},
+            {"atom_id": "f", "text": "Overnight at a farmhouse homestay in Punakha valley", "day": 3, "card": f},
+            {"atom_id": "z", "text": "Punakha Dzong — visit", "day": 4, "card": dzong,
+             "evidence": "Drive to Punakha Dzong, the old winter capital."},
+        ]
+        out, report = canonicalize_route_cards(parts)
+        assert out[1]["card"] is not None and report["overnight_cards_dropped"] == []
+
+
+def test_region_key_normalises_generic_words():
+    from services.acp_shared.seed_canon import region_key
+    assert region_key("Khövsgöl Province") == region_key("Khövsgöl Province (Khövsgöl Aimag)") == "khovsgol"
+    assert region_key("Punakha District") == region_key("Punakha Dzongkhag") == "punakha"
 
 
 def test_canonical_facts_apply_when_the_overnight_card_stays():
@@ -231,3 +296,18 @@ async def test_seo_fit_never_keeps_an_ungrounded_meta_and_names_the_words():
         out, _ = await service._fit_seo_meta(seo, None, body=body, context={"atom_text": PUNAKHA}, request_id="r")
     assert calls and {"meditation", "retreat", "guides you"} <= set(calls[0]["forbidden_words"])
     assert out["meta_description"] == META  # neither fitted meta is grounded: F4 reports the writer's own
+
+
+def test_country_only_location_line_removes_the_country():
+    # Review r2b: a card-less atom with no place has 'Location: Bhutan (…)' with no comma.
+    seed = "Monastery visit — morning prayers\nLocation: Bhutan (do not name any other country or region for it)"
+    assert service.choose_keyword(["bhutan tours", "bhutan travel guide"], seed) is None
+
+
+def test_product_variants_ground_on_their_roots():
+    meta = "Spend nights camping in a ger camp beside Lake Khovsgol and wake to the lake at dawn."
+    assert meta_unsupported_products(meta, "Overnight at a lakeshore ger camp", "We stayed at a ger camp.") == []
+    assert meta_unsupported_products("Go horse riding across the steppe near the lake.",
+                                      "Horseback excursion across the steppe", "") == []
+    assert unsupported_products("wine tasting", "Taste the local wine at a family estate") == []
+    assert unsupported_products("camping", "Visit the dzong") == ["camping"]
