@@ -170,5 +170,96 @@ def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
     return before + after
 
 
-__all__ = ["expand_to_sentence", "locate_sentence", "neighbours", "plan", "repeats_neighbour", "splice",
-           "tidy_after_cut"]
+# ── AA-769 (S234) — admin cut / rewrite of one flagged sentence ─────────────────────────────────
+
+_SENTENCE_END_CHARS = ".!?"
+_CLOSERS = "\"'”’)"
+
+
+def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
+    """The whole sentence around the phrase text[start:end] (an F9_brand_style hit such as "hidden
+    gem"), so an admin cut or rewrite never leaves half a sentence. Walks back to just after the
+    previous sentence end or newline, forward to the sentence end plus its closing quotes and
+    trailing citation tags. Never crosses a newline: a list item or heading with no end mark
+    stops at its line end."""
+    s = start
+    while s > 0 and text[s - 1] != "\n":
+        if text[s - 1] in _SENTENCE_END_CHARS:
+            break
+        if text[s - 1] in _CLOSERS and s >= 2 and text[s - 2] in _SENTENCE_END_CHARS:
+            break
+        s -= 1
+    lead = re.match(rf"(?:\s|{_TAG})*", text[s:start])
+    s += lead.end() if lead else 0
+    e = end
+    if re.search(rf"[.!?][{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*$", text[s:e]):
+        # already a whole sentence (locate_sentence spans end on the mark or its trailing tags)
+        trailing = re.match(rf"[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*", text[e:])
+        e += trailing.end() if trailing else 0
+        return s, e
+    tail = _SENTENCE_TAIL_RE.match(text, e)  # cannot cross a newline ([^.!?\n]*)
+    if tail is not None:
+        return s, tail.end()
+    nl = text.find("\n", e)
+    e = len(text) if nl < 0 else nl
+    while e > end and text[e - 1] in " \t":
+        e -= 1
+    return s, e
+
+
+def resolve_span(text: str, start: int, end: int, expected: str) -> Optional[tuple[int, int]]:
+    """Where `expected` (the span the admin saw) sits in the CURRENT text: at (start, end) when it
+    still matches there, else at its one and only occurrence. None when it is gone or ambiguous —
+    the piece changed since the drawer loaded, so nothing is cut blindly."""
+    if not expected:
+        return None
+    if 0 <= start <= end <= len(text) and text[start:end] == expected:
+        return start, end
+    if text.count(expected) == 1:
+        i = text.index(expected)
+        return i, i + len(expected)
+    return None
+
+
+def tidy_after_cut(text: str) -> str:
+    """Whitespace left behind by splice(): spaces before a line end, a single stray space at a line
+    start, doubled spaces inside a line, and the blank-line pile-up left by a cut paragraph."""
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n (?=\S)", "\n", text)
+    text = re.sub(r"(?<=\S) {2,}(?=\S)", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
+    """The piece text with text[start:end] replaced (or cut, when `replacement` is empty) through
+    splice() — trailing citation tags kept after a rewrite — then tidied. A cut that empties a
+    whole line (a list item with no end mark) also takes that line's newline."""
+    if not (replacement or "").strip():
+        line_start = start == 0 or text[start - 1] == "\n"
+        if line_start and text[end:end + 1] == "\n":
+            end += 1
+    return tidy_after_cut(splice(text, [{"start": start, "end": end}], [replacement or ""]))
+
+
+def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict]) -> list[dict]:
+    """The deterministic gates a replacement sentence must pass before it is saved (lesson AA-641:
+    a repair needs a guard after it): F1 (no number the source lacks), F2 banned patterns, the
+    brand's forbidden words and F11 (no foreign brand / platform name). Returns the failed gates
+    as [{gate, violations}] — empty means it may be saved."""
+    from services.acp_content_writing import quality_gates as qg
+    sentence = qg.strip_citation_tags(replacement or "").strip()
+    if not sentence:
+        return []
+    pack = brand_pack or {}
+    results = [
+        qg.gate_grounding(sentence, grounding),
+        qg.gate_banned_patterns(sentence, grounding),
+        qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
+        qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
+    ]
+    return [{"gate": r["gate"], "violations": list(r["violations"])} for r in results if not r["passed"]]
+
+
+__all__ = ["locate_sentence", "neighbours", "plan", "repeats_neighbour", "splice", "expand_to_sentence", "resolve_span", "tidy_after_cut",
+           "apply_edit", "check_replacement"]

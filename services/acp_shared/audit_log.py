@@ -54,6 +54,16 @@ class PlatformAuditAction:
     PLACE_CARD_MERGE = "place_card.merge"  # AA-772 (S234) — admin merged duplicate cards
 
 
+class AdminAuditAction:
+    """AA-769 (S234) — an AA admin changed a tenant's T9 piece from the Content Quality drawer.
+    Admin-only rows (tenants never read audit_log); `details` holds before/after and the offsets,
+    so each edit can be reviewed or reverted by hand. Shared prefix: ADMIN_SENTENCE_PREFIX."""
+    ADMIN_SENTENCE_PREFIX = "content_piece.admin_sentence_"
+    SENTENCE_CUT = "content_piece.admin_sentence_cut"
+    SENTENCE_REWRITTEN = "content_piece.admin_sentence_rewritten"  # the model's suggestion, unchanged
+    SENTENCE_EDITED = "content_piece.admin_sentence_edited"  # the admin's own (or edited) text
+
+
 async def write_audit_log(
     conn, *, tenant_id: Optional[str], actor: str, action: str,
     resource_type: str, resource_id: str, details: Optional[dict[str, Any]] = None,

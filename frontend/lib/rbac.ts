@@ -71,6 +71,20 @@ export const API_RULES = {
   tenantProxy: ALL_STAFF,    // /api/tenant/[...path] called by a staff page (e.g. Master Content)
 } satisfies Record<string, StaffRole[]>;
 
+// AA-769 (S234) — writes that change tenant content are narrower than the route's read rule: a
+// non-GET request under one of these /api/admin/ path prefixes needs one of `roles` (the backend
+// re-checks the forwarded role). Today only the Content Quality sentence actions (cut / rewrite).
+export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
+  { prefix: "content-quality/pieces/", roles: ["admin"] },
+];
+
+/** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */
+export function canWriteAdminPath(role: string | null | undefined, method: string, path: string): boolean {
+  if (method === "GET" || method === "HEAD") return true;
+  const rule = API_WRITE_RULES.find((r) => path.startsWith(r.prefix));
+  return !rule || (!!role && (rule.roles as string[]).includes(role));
+}
+
 /** Landing page after login / for the retired /admin/dashboard. */
 export function landingPage(role: string | null | undefined): string {
   return role === "admin" ? "/admin/overview" : "/admin/review";

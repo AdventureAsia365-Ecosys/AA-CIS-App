@@ -4,13 +4,23 @@ sentences, writer inputs and per-gate stats live here, for AA admins to improve 
 
 Cross-tenant by design: admin pool (aa_cis_admin, BYPASSRLS), X-Admin-Secret checked on every
 route like the other /admin routers. Read-only except the place-card verdict, the place-card
-merge (both audited in acp_shared.audit_log) and the place-card build job.
+merge (both audited in acp_shared.audit_log), the place-card build job, and (S234) the sentence
+actions on one piece:
+  POST /pieces/{id}/sentences/suggest — one cheap LLM call (stage t9_repair) proposing a rewrite of
+                                         one flagged sentence; writes nothing to the piece.
+  POST /pieces/{id}/sentences/apply   — deterministic: cut the sentence or put the (checked)
+                                         replacement in its place, audit-logged with before/after.
+Both require the `admin` staff role (x-admin-role, forwarded by the BFF from the verified JWT).
+Gate results (`gate_ledger`, `flags`) are left as the writer produced them: they measure the
+writer, not the admin's edit.
 
 Counting rule (S232 lesson): `held_reason` names only the first blocking gate; every count and
 filter here reads `gate_ledger` (+ `flags`), never `held_reason`.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import re
 from decimal import Decimal
@@ -18,12 +28,15 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
 from services.acp_content_writing import sentence_repair
+from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
+from services.acp_content_writing.quality_gates import _length_bounds_for_channel
+from services.acp_content_writing.service import grounding_from_writer_input
 from services.acp_shared import place_cards
-from services.acp_shared.audit_log import PlatformAuditAction, write_audit_log
+from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"])
 
@@ -198,7 +211,92 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
         if (h["start"], h["end"], h["gate"]) not in seen:
             seen.add((h["start"], h["end"], h["gate"]))
             unique.append(h)
+    # S234 — edit-ready: the exact span text (the client sends it back so a stale offset can never
+    # cut the wrong words) and the whole sentence around a phrase hit, which is what cut/rewrite act on.
+    for h in unique:
+        ss, se = sentence_repair.expand_to_sentence(text, h["start"], h["end"])
+        sentence = _plain(text[ss:se])
+        h.update(text=text[h["start"]:h["end"]], sentence_start=ss, sentence_end=se, sentence=sentence,
+                 key=_sentence_key(sentence))
     return unique
+
+
+def _plain(span: str) -> str:
+    return " ".join(re.sub(sentence_repair._TAG, " ", span).split())
+
+
+def _sentence_key(sentence: str) -> str:
+    return hashlib.sha1(sentence.encode("utf-8")).hexdigest()[:12]
+
+
+def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
+    """One actionable item per flagged sentence, for the drawer's Cut / Rewrite list: highlights on
+    the same sentence (an F1 number and an F9 phrase, say) merge into one item listing every gate
+    and problem. `start`/`end`/`text` are the sentence span the actions send back."""
+    items: dict[tuple[int, int], dict] = {}
+    for h in hls:
+        span = (h["sentence_start"], h["sentence_end"])
+        it = items.get(span)
+        if it is None:
+            it = items[span] = {"key": h["key"], "start": span[0], "end": span[1],
+                                "text": content_text[span[0]:span[1]], "sentence": h["sentence"],
+                                "gates": [], "problems": [], "blocking": False}
+        if h["gate"] not in it["gates"]:
+            it["gates"].append(h["gate"])
+        it["problems"].append({"gate": h["gate"], "problem": h["problem"], "blocking": h["blocking"]})
+        it["blocking"] = it["blocking"] or bool(h["blocking"])
+    return [items[k] for k in sorted(items)]
+
+
+_PIECE_DETAIL_SQL = f"""
+    SELECT cp.piece_id, cp.tenant_id, t.name AS tenant_name, COALESCE(cp.channel, agr.channel) AS channel,
+           cp.status, cp.held_reason, cp.attempt_number, cp.created_at, cp.job_id,
+           cp.content_text, cp.seo_title, cp.meta_description, cp.slug, cp.gate_ledger, cp.flags,
+           cp.repair_log, cp.discarded_attempts, cp.writer_input, cp.route_hub_name,
+           agr.goal, agr.atom_id, agr.request_id,
+           ago.name AS angle_name, ago.why_it_works AS angle_why, ago.best_final_style AS angle_style,
+           EXISTS (SELECT 1 FROM acp_shared.publish_log pl
+                   WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published,
+           {_COST_SQL}
+    {_PIECE_FROM}
+    WHERE cp.piece_id = $1::uuid
+"""
+
+# S234 — the drawer's cost includes calls made for this piece outside its write job (the admin
+# rewrite suggestions, logged with content_piece_id).
+_PIECE_COST_BY_STAGE_SQL = """
+    SELECT stage, role, count(*) AS calls, sum(cost_usd) AS cost_usd
+    FROM shared.llm_call_log WHERE job_id = $1 OR content_piece_id = $2::uuid
+    GROUP BY stage, role ORDER BY sum(cost_usd) DESC NULLS LAST
+"""
+
+_ADMIN_EDITS_SQL = """
+    SELECT action, actor, details, created_at FROM acp_shared.audit_log
+    WHERE tenant_id = $1 AND resource_type = 'content_piece' AND resource_id = $2 AND action LIKE $3
+    ORDER BY created_at DESC LIMIT 50
+"""
+
+
+async def _load_piece_detail(conn, piece_id: str) -> dict:
+    """GET /pieces/{id} and the apply response share this one read."""
+    row = await conn.fetchrow(_PIECE_DETAIL_SQL, piece_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Piece not found")
+    cost_rows = await conn.fetch(_PIECE_COST_BY_STAGE_SQL, row["job_id"], piece_id)
+    siblings = await conn.fetch(
+        """
+        SELECT piece_id, status, attempt_number, created_at FROM acp_shared.content_piece
+        WHERE angle_gate_request_id = $1 AND piece_id <> $2::uuid ORDER BY created_at
+        """, row["request_id"], piece_id)
+    edits = await conn.fetch(_ADMIN_EDITS_SQL, str(row["tenant_id"]), str(row["piece_id"]),
+                             AdminAuditAction.ADMIN_SENTENCE_PREFIX + "%")
+    piece = _row(row)
+    piece["highlights"] = highlights(piece["content_text"], piece["gate_ledger"], piece["flags"])
+    piece["flagged_sentences"] = flagged_sentences(piece["content_text"] or "", piece["highlights"])
+    piece["cost_by_stage"] = [_row(r) for r in cost_rows]
+    piece["other_pieces_for_request"] = [_row(r) for r in siblings]
+    piece["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    return piece
 
 
 @router.get("/pieces/{piece_id}")
@@ -206,35 +304,174 @@ async def get_piece(piece_id: str, request: Request, x_admin_secret: str = Heade
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        return await _load_piece_detail(conn, piece_id)
+
+
+# ── S234: cut / rewrite one flagged sentence (admin only) ─────────────────────────────────────
+
+_EDITABLE_STATUSES = ("approved", "held")  # same boundary as the tenant hand-edit (AA-569)
+_SUGGEST_MAX_TOKENS = 400  # one sentence of JSON back
+_SUGGEST_STAGE = "t9_repair"
+
+
+def _require_admin_role(x_admin_role: Optional[str]) -> None:
+    """Defense in depth behind the BFF's own check: the sentence actions change a tenant's piece,
+    so only the `admin` staff role (never reviewer / content) may call them."""
+    if x_admin_role != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can edit a piece")
+
+
+def _resolve(content_text: str, start: int, end: int, text: str) -> tuple[int, int]:
+    span = sentence_repair.resolve_span(content_text, start, end, text)
+    if span is None:
+        raise HTTPException(status_code=409, detail="The piece changed since it was loaded — reload and try again")
+    return span
+
+
+class SentenceSuggestBody(BaseModel):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=5000)
+    problem: str = Field("", max_length=1000)
+    note: Optional[str] = Field(None, max_length=200)
+
+
+@router.post("/pieces/{piece_id}/sentences/suggest")
+async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Request,
+                           x_admin_secret: str = Header(None), x_admin_role: Optional[str] = Header(None)):
+    """A proposed rewrite of one sentence: ONE call on the `t9_repair` stage (Haiku, max 400
+    tokens, about $0.001-0.006), logged to llm_call_log with this piece's id. Nothing is saved —
+    the admin reviews (or edits) it and sends it to /apply. The suggestion is run through the same
+    deterministic checks /apply uses, so the drawer can show what would block it."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            f"""
-            SELECT cp.piece_id, cp.tenant_id, t.name AS tenant_name, COALESCE(cp.channel, agr.channel) AS channel,
-                   cp.status, cp.held_reason, cp.attempt_number, cp.created_at, cp.job_id,
-                   cp.content_text, cp.seo_title, cp.meta_description, cp.slug, cp.gate_ledger, cp.flags,
-                   cp.repair_log, cp.discarded_attempts, cp.writer_input, cp.route_hub_name,
-                   agr.goal, agr.atom_id, agr.request_id,
-                   ago.name AS angle_name, ago.why_it_works AS angle_why, ago.best_final_style AS angle_style,
-                   {_COST_SQL}
-            {_PIECE_FROM}
+            """
+            SELECT cp.content_text, cp.status, cp.tenant_id, cp.writer_input, cp.angle_gate_request_id,
+                   COALESCE(cp.channel, agr.channel) AS channel
+            FROM acp_shared.content_piece cp
+            LEFT JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
             WHERE cp.piece_id = $1::uuid
             """, piece_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Piece not found")
-        cost_rows = await conn.fetch(
-            """
-            SELECT stage, role, count(*) AS calls, sum(cost_usd) AS cost_usd
-            FROM shared.llm_call_log WHERE job_id = $1 GROUP BY stage, role ORDER BY sum(cost_usd) DESC NULLS LAST
-            """, row["job_id"]) if row["job_id"] else []
-        siblings = await conn.fetch(
-            """
-            SELECT piece_id, status, attempt_number, created_at FROM acp_shared.content_piece
-            WHERE angle_gate_request_id = $1 AND piece_id <> $2::uuid ORDER BY created_at
-            """, row["request_id"], piece_id)
-    piece = _row(row)
-    piece["highlights"] = highlights(piece["content_text"], piece["gate_ledger"], piece["flags"])
-    piece["cost_by_stage"] = [_row(r) for r in cost_rows]
-    piece["other_pieces_for_request"] = [_row(r) for r in siblings]
-    return piece
+    if row is None:
+        raise HTTPException(status_code=404, detail="Piece not found")
+    wi = _j(row["writer_input"])
+    if not isinstance(wi, dict) or not wi:
+        raise HTTPException(status_code=409, detail="No writer input stored for this piece (written before "
+                                                    "AA-769), so there is no source to rewrite from. Cut or "
+                                                    "edit it by hand instead.")
+    start, end = _resolve(row["content_text"] or "", body.start, body.end, body.text)
+    sentence = _plain(row["content_text"][start:end])
+    problem = body.problem.strip() or "The editor wants this sentence rewritten."
+    if body.note and body.note.strip():
+        problem += f" Editor note: {body.note.strip()}"
+    grounding = grounding_from_writer_input(wi)
+    try:
+        reps, cost, model = await asyncio.to_thread(
+            repair_sentences_detailed, sentences=[{"sentence": sentence, "problem": problem}],
+            content_seed=grounding, facts_text=None, channel=row["channel"] or "unknown",
+            tenant_id=str(row["tenant_id"]), angle_gate_request_id=str(row["angle_gate_request_id"]),
+            stage=_SUGGEST_STAGE, mode="admin_suggest", attempt=None, content_piece_id=piece_id,
+            max_tokens=_SUGGEST_MAX_TOKENS,
+        )
+    except SentenceRepairError as e:
+        raise HTTPException(status_code=502, detail=f"The model reply could not be read: {str(e)[:200]}")
+    replacement = reps[0].strip()
+    return {"start": start, "end": end, "sentence": sentence, "replacement": replacement,
+            "checks": sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack")),
+            "model": model, "cost_usd": cost}
+
+
+class SentenceApplyBody(BaseModel):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=5000)  # the span the admin saw
+    replacement: str = Field("", max_length=3000)  # "" = cut
+    mode: str  # cut | rewrite (the suggestion as-is) | manual (the admin's own text)
+    gate: Optional[str] = Field(None, max_length=100)
+    problem: Optional[str] = Field(None, max_length=1000)
+    suggestion: Optional[str] = Field(None, max_length=3000)
+    suggestion_model: Optional[str] = Field(None, max_length=200)
+    suggestion_cost_usd: Optional[float] = None
+
+
+_ACTION_BY_MODE = {"cut": AdminAuditAction.SENTENCE_CUT, "rewrite": AdminAuditAction.SENTENCE_REWRITTEN,
+                   "manual": AdminAuditAction.SENTENCE_EDITED}
+
+
+@router.post("/pieces/{piece_id}/sentences/apply")
+async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Request,
+                         x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                         x_admin_role: Optional[str] = Header(None)):
+    """Cut one sentence, or put a replacement in its place. Deterministic, no LLM. In one
+    transaction: lock the piece, check the span text still matches (else its one occurrence, else
+    409), run the replacement through F1 / F2 / brand-forbidden / F11 (422 with the violations),
+    splice + tidy, refuse a cut that empties the piece or drops it under the channel's minimum
+    length, UPDATE content_text and write the audit row with before/after. Returns the refreshed
+    piece detail. A published piece is edited here only — WordPress is not re-synced."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    if body.mode not in _ACTION_BY_MODE:
+        raise HTTPException(status_code=422, detail="mode must be cut, rewrite or manual")
+    replacement = body.replacement.strip()
+    if body.mode == "cut":
+        replacement = ""
+    elif not replacement:
+        raise HTTPException(status_code=422, detail="An empty replacement is a cut — use mode 'cut'")
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT cp.content_text, cp.status, cp.tenant_id, cp.writer_input,
+                       COALESCE(cp.channel, (SELECT agr.channel FROM acp_shared.angle_gate_request agr
+                                             WHERE agr.request_id = cp.angle_gate_request_id)) AS channel,
+                       EXISTS (SELECT 1 FROM acp_shared.publish_log pl
+                               WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published
+                FROM acp_shared.content_piece cp
+                WHERE cp.piece_id = $1::uuid
+                FOR UPDATE OF cp
+                """, piece_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Piece not found")
+            if row["status"] not in _EDITABLE_STATUSES:
+                raise HTTPException(status_code=409, detail=f"A {row['status']} piece cannot be edited")
+            old_text = row["content_text"] or ""
+            start, end = _resolve(old_text, body.start, body.end, body.text)
+            wi = _j(row["writer_input"])
+            wi = wi if isinstance(wi, dict) else {}
+            if replacement:
+                # No stored source (piece written before AA-769): a number already in the rest of
+                # the piece is not new, so the piece minus this sentence stands in for the source.
+                grounding = (grounding_from_writer_input(wi) if wi
+                             else old_text[:start] + " " + old_text[end:])
+                failed = sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"))
+                if failed:
+                    detail = "; ".join(f"{f['gate']}: {' | '.join(f['violations'])}" for f in failed)
+                    raise HTTPException(status_code=422, detail=f"The new sentence fails a check — {detail}")
+            new_text = sentence_repair.apply_edit(old_text, start, end, replacement)
+            min_chars, _ = _length_bounds_for_channel(row["channel"])
+            if not new_text.strip():
+                raise HTTPException(status_code=422, detail="This would leave the piece empty")
+            if len(new_text) < min_chars <= len(old_text):
+                raise HTTPException(status_code=422, detail=f"This would take the piece under the {min_chars}-char "
+                                                            f"minimum for {row['channel']}")
+            await conn.execute(
+                "UPDATE acp_shared.content_piece SET content_text = $2 WHERE piece_id = $1::uuid",
+                piece_id, new_text)
+            await write_audit_log(
+                conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
+                action=_ACTION_BY_MODE[body.mode], resource_type="content_piece", resource_id=piece_id,
+                details={"start": start, "end": end, "before": old_text[start:end], "after": replacement,
+                         "mode": body.mode, "gate": body.gate, "problem": body.problem,
+                         "suggestion": body.suggestion, "suggestion_model": body.suggestion_model,
+                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                         "length_before": len(old_text), "length_after": len(new_text),
+                         "published": bool(row["published"])},
+            )
+        return await _load_piece_detail(conn, piece_id)
 
 
 @router.get("/stats")

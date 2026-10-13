@@ -131,6 +131,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "a0_column_map":      StageConfig("a0_column_map", "writer", "claude", "haiku", "acc3"),
     "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),
 }
+# S234 (decision C2): one cheap stage for single-sentence T9 repairs — the AA-769 admin "Rewrite"
+# suggestion now, the pipeline's sentence repair after its A/B. Row seeded by migration 221; the
+# guard keeps one definition when the AA-772 PR adds the same key to the literal above.
+SAFE_DEFAULTS.setdefault(
+    "t9_repair", StageConfig("t9_repair", "writer", "claude", "haiku", "acc3", fallback_model_ids=("sonnet",)))
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 
