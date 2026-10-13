@@ -165,6 +165,13 @@ class ScopeLexicon:
     own_text: str
     sibling_text: str
     cap_only: frozenset = frozenset()
+    # S234 round 3 — keys from the FULL trip's itinerary places outside the scope (capitalised only,
+    # like cap_only, but never cut from the writer's TRIP line); `leg_only` ⊂ trip_keys: places a
+    # place-background line mentions, out of scope only when the sentence makes them a leg of travel
+    # ('a domestic airport connecting the region to Ulaanbaatar'; not 'the Je Khenpo relocates here
+    # from Thimphu each winter').
+    trip_keys: frozenset = frozenset()
+    leg_only: frozenset = frozenset()
 
 
 def _near_allowed(token: str, allowed: frozenset) -> bool:
@@ -202,7 +209,7 @@ def trip_name_places(trip_name: Optional[str]) -> list[list[tuple[str, str]]]:
 
 
 def build_scope_lexicon(seed: Optional[str], scope: Optional[str] = None,
-                        trip_name: Optional[str] = None) -> ScopeLexicon:
+                        trip_name: Optional[str] = None, trip_places: tuple = ()) -> ScopeLexicon:
     """Allowed = every capitalised word/run of the moment's own lines (label, Location, Naming,
     Source itinerary, Place background) and of the SCOPE line, plus every 'quoted' spelling in a
     Naming line. Gazetteer = (a) proper-noun phrases of the sibling lines that are not allowed and
@@ -243,8 +250,32 @@ def build_scope_lexicon(seed: Optional[str], scope: Optional[str] = None,
             if piece and key not in gazetteer:
                 gazetteer[key] = " ".join(d for _, d in piece)
                 cap_only.add(key)
+    trip_keys: set[str] = set()
+    leg_only: set[str] = set()
+    if trip_places:
+        core: set[str] = set()
+        core_text = "\n".join(ln for ln in own.splitlines() if not ln.lstrip().startswith("- "))
+        for p in proper_nouns(core_text, keep_initial=True) | proper_nouns(scope, keep_initial=True):
+            core |= set(phrase_tokens(p))
+        for line in own.splitlines():
+            if line.startswith("Naming:"):
+                for quoted in re.findall(r"'([^']+)'", line):
+                    core |= set(phrase_tokens(quoted))
+        frozen_core = frozenset(core)
+        for place in trip_places:
+            for part in re.split(r"[,(;/]", place or ""):
+                toks = phrase_tokens(part.strip(" )"))
+                if not toks or any(t in frozen_core or _near_allowed(t, frozen_core) for t in toks):
+                    continue  # a place this piece covers too ('Khövsgöl Lake' on a later day)
+                key = " ".join(toks)
+                if key in gazetteer and key not in cap_only:
+                    continue
+                gazetteer.setdefault(key, " ".join(w for w in part.strip(" )").split() if fold(w) not in COMMON_CAPS))
+                trip_keys.add(key)
+                if all(t in frozen or _near_allowed(t, frozen) for t in toks):
+                    leg_only.add(key)
     return ScopeLexicon(allowed=frozen, gazetteer=gazetteer, own_text=own, sibling_text=sib,
-                        cap_only=frozenset(cap_only))
+                        cap_only=frozenset(cap_only), trip_keys=frozenset(trip_keys), leg_only=frozenset(leg_only))
 
 
 _NAME_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
@@ -279,11 +310,27 @@ def names_place(text: Optional[str], key: str) -> bool:
     return _has_place(_name_tokens(text), key)
 
 
+# A sentence that makes a place a leg of the trip — transport or arrival / departure wording.
+_LEG_RE = re.compile(
+    r"\b(?:airports?|flights?|fly|flying|flew|flown|connections?|connecting|connects?|drive|driving|drove|transfers?"
+    r"|depart\w*|arriv\w*|return(?:s|ing|ed)?\s+to|by air|by road|overland|gateway|entry point|leaves? for"
+    r"|set(?:s|ting)? off"
+    r"|heading (?:to|for|north|south|east|west)|starts? (?:in|from)|begins? (?:in|from)|ends? (?:in|at))\b", re.I)
+
+
 def places_named(lex: ScopeLexicon, text: Optional[str]) -> list[str]:
     """Display forms of the gazetteer places `text` names (accent-folded, word-bounded; a
-    trip-name word only when capitalised)."""
+    trip-name or trip-itinerary word only when capitalised; a `leg_only` place only when the text
+    makes it a leg of travel)."""
     toks = _name_tokens(text)
-    return [disp for g, disp in sorted(lex.gazetteer.items()) if _has_place(toks, g, g in lex.cap_only)]
+    out = []
+    for g, disp in sorted(lex.gazetteer.items()):
+        if not _has_place(toks, g, g in lex.cap_only or g in lex.trip_keys):
+            continue
+        if g in lex.leg_only and not _LEG_RE.search(strip_tags(text or "")):
+            continue
+        out.append(disp)
+    return out
 
 
 def find_scope_violations(lex: ScopeLexicon, *, title: Optional[str] = None, meta: Optional[str] = None,
@@ -900,14 +947,172 @@ def repeated_sentences(text: str, ignore: frozenset = frozenset(), cta: Optional
 def integrity_problems(before: str, after: str, ignore: frozenset = frozenset(),
                        cta: Optional[str] = None) -> list[str]:
     """What a repair (sentence splice, a regenerated section, a rewritten first line) broke: a new
-    near-verbatim repeat, or a new paragraph / piece opener with no referent. [] = the repair is
-    safe to keep (S234 panel §5 fix 7: #19 'What they find…', duplicated sentences in #10/#19)."""
+    near-verbatim repeat, a new near-duplicate (S234 round 3: a figure / fact told twice, a phrase
+    echoed across a sentence break, a short line that adds nothing to its neighbours), or a new
+    paragraph / piece opener with no referent. [] = the repair is safe to keep (S234 panel §5 fix 7:
+    #19 'What they find…', duplicated sentences in #10/#19; r2 §4 fix 2: #3, #14, #16, #17)."""
     out = []
     old_rep = set(repeated_sentences(before, ignore, cta))
     out += [f"repeats an earlier sentence: '{s[:200]}'" for s in repeated_sentences(after, ignore, cta)
             if s not in old_rep]
+    old_dup = {d["later"]["clean"] for d in near_duplicates(before, ignore, cta)}
+    out += [f"{d['why']}: '{d['later']['clean'][:200]}'" for d in near_duplicates(after, ignore, cta)
+            if d["later"]["clean"] not in old_dup and d["later"]["clean"] not in old_rep]
+    old_orphans = set(orphan_lines(before, ignore, cta))
+    out += [f"adds nothing to the sentences around it: '{s[:200]}'" for s in orphan_lines(after, ignore, cta)
+            if s not in old_orphans]
     out += [f"opens on a pronoun with no referent: '{s[:200]}'" for s in dangling_openers(after, before)]
+    return list(dict.fromkeys(out))
+
+
+# ---------------------------------------------------------------- near duplicates (S234 round 3)
+
+# A figure or fact told twice (S234 r2: 'seventy percent of Mongolia's fresh water' #14/#16, 'only a
+# few hundred people' #17), a phrase echoed across a sentence break ('Uran Togoo arrives on day
+# three. On day three, …' #16) — the repairs' and the writer's near-duplicates that are not verbatim.
+_FACT_GRAM = 3
+_ECHO_MAX = 4
+_DUP_SHORT_WORDS = 12        # a fact repeat this short is deleted outright …
+_DUP_CONTAINED = 0.6         # … when this share of its words is already in the earlier sentence
+_ORPHAN_MAX_WORDS = 8
+
+
+def _dup_spans(text: str, cta: Optional[str]) -> list[dict]:
+    return [s for s in sentence_spans(text or "") if s["kind"] in ("prose", "bullet") and not s["in_faq"]
+            and not _is_cta(s["clean"], cta)]
+
+
+def _fact_grams(words: list[str]) -> set:
+    """Copy-word 3-grams that carry a number which is not a day index ('70 percent mongolia', 'few
+    100 people'; never 'day 3 …')."""
+    out = set()
+    for i in range(len(words) - _FACT_GRAM + 1):
+        g = tuple(words[i:i + _FACT_GRAM])
+        if any(w.isdigit() and not (i + k > 0 and words[i + k - 1] == "day") for k, w in enumerate(g)):
+            out.add(g)
     return out
+
+
+def _echo(a: list[str], b: list[str]) -> Optional[str]:
+    """The run of words sentence `a` ends on and sentence `b` (right after it) opens with: ≥ 3
+    words, or 2 when one is a number ('day 3')."""
+    for k in range(min(_ECHO_MAX, len(a), len(b)), 1, -1):
+        if a[-k:] == b[:k] and (k >= 3 or any(w.isdigit() for w in b[:k])):
+            return " ".join(b[:k])
+    return None
+
+
+def near_duplicates(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> list[dict]:
+    """[{"earlier", "later" (sentence spans), "kind": copy | fact | echo, "why", "shared"}] — prose
+    sentences outside the FAQ (the CTA excluded) that say again what an earlier one said:
+    - copy: `copies` (≥ 80% of one sentence's copy words in the other, in order) anywhere in the body;
+    - fact: a shared copy-word 3-gram carrying a number that is not a day index;
+    - echo: the next sentence opens on the words the previous one ended on."""
+    spans = _dup_spans(text, cta)
+    words = [copy_words(s["clean"], ignore) for s in spans]
+    out: list[dict] = []
+    seen: set[int] = set()
+    for j in range(1, len(spans)):
+        if len(words[j]) < 2:
+            continue
+        hit = None
+        if j - 1 >= 0 and spans[j - 1]["end"] <= spans[j]["start"]:
+            gap = (text or "")[spans[j - 1]["end"]:spans[j]["start"]]
+            run = _echo(words[j - 1], words[j]) if "\n\n" not in gap else None
+            if run:
+                hit = (j - 1, "echo", run, f"repeats '{run}' from the end of the sentence before it")
+        for i in range(j):
+            if hit:
+                break
+            if len(words[j]) >= _COPY_MIN_WORDS and copies(spans[j]["clean"], spans[i]["clean"], ignore):
+                hit = (i, "copy", "", "says again what an earlier sentence says")
+                break
+            shared = _fact_grams(words[j]) & _fact_grams(words[i])
+            if shared:
+                g = " ".join(sorted(shared)[0])
+                hit = (i, "fact", g, f"repeats a figure already given earlier ('{g}')")
+        if hit and j not in seen:
+            seen.add(j)
+            i, kind, shared, why = hit
+            out.append({"earlier": spans[i], "later": spans[j], "kind": kind, "why": why, "shared": shared})
+    return out
+
+
+def orphan_lines(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> list[str]:
+    """One-sentence paragraphs of ≤ 8 words whose every content word is already in the sentence
+    before or after them — a line a repair left behind ('The itinerary builds it in.' between 'The
+    itinerary keeps you there…' and 'Trail Pulse builds trips around…', S234 r2 #3)."""
+    spans = _dup_spans(text, cta)
+    out = []
+    for k, s in enumerate(spans):
+        if s["kind"] != "prose":
+            continue
+        line_start = text.rfind("\n", 0, s["start"]) + 1
+        line_end = text.find("\n", s["end"])
+        line_end = len(text) if line_end < 0 else line_end
+        if text[line_start:s["start"]].strip() or text[s["end"]:line_end].strip():
+            continue  # not alone on its line
+        cw = content_words(s["clean"], ignore)
+        if len(cw) < 2 or len(s["clean"].split()) > _ORPHAN_MAX_WORDS:
+            continue
+        around = set()
+        for t in spans[max(0, k - 1):k] + spans[k + 1:k + 2]:
+            around |= {w[:5] for w in content_words(t["clean"], ignore)}
+        if all(w[:5] in around for w in cw):
+            out.append(s["clean"])
+    return out
+
+
+def _dup_safe_delete(text: str, span: dict) -> bool:
+    spans = sentence_spans(text)
+    k = next((n for n, s in enumerate(spans) if s["start"] == span["start"]), None)
+    return k is not None and _safe_to_delete(spans, k)
+
+
+_LEAD_PHRASE_RE = re.compile(r"^(?:On|By|At|In|From|For)\s+[^,.;]{1,40},\s+(?=[a-z])")
+
+
+def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> tuple[str, list[str]]:
+    """Fix the near-duplicates that are safe to fix in place: delete a later sentence that copies an
+    earlier one, or a short one (≤ 12 copy words) that repeats a figure with ≥ 60% of its words
+    already in the earlier sentence; trim an echoed opening phrase ('On day three, the route…' →
+    'The route…'); delete an orphan line. A delete happens only when no pronoun is orphaned. The rest
+    is left for F13_repeat. Returns (text, log)."""
+    log: list[str] = []
+    for _ in range(6):  # one edit per pass: offsets move after each
+        changed = False
+        for d in near_duplicates(text, ignore, cta):
+            later, earlier = d["later"], d["earlier"]
+            lw = copy_words(later["clean"], ignore)
+            ew = set(copy_words(earlier["clean"], ignore))
+            if d["kind"] == "echo":
+                m = _LEAD_PHRASE_RE.match(later["text"])
+                if m and all(w in copy_words(m.group(0), ignore) for w in d["shared"].split()):
+                    rest = later["text"][m.end():]
+                    text = text[:later["start"]] + rest[:1].upper() + rest[1:] + text[later["end"]:]
+                    log.append(f"trimmed an echoed opening ('{m.group(0).strip(', ')}'): '{later['clean'][:160]}'")
+                    changed = True
+                    break
+                continue
+            contained = sum(w in ew for w in lw) / len(lw) if lw else 0.0
+            if d["kind"] == "copy" or (len(lw) <= _DUP_SHORT_WORDS and contained >= _DUP_CONTAINED):
+                if _dup_safe_delete(text, later):
+                    after = later["end"] + 1 if text[later["end"]:later["end"] + 1] == " " else later["end"]
+                    text = tidy_after_cut(text[:later["start"]] + text[after:])
+                    log.append(f"deleted a sentence that {d['why']}: '{later['clean'][:160]}'")
+                    changed = True
+                    break
+        if not changed:
+            for o in orphan_lines(text, ignore, cta):
+                span = next(s for s in _dup_spans(text, cta) if s["clean"] == o)
+                if _dup_safe_delete(text, span):
+                    text = tidy_after_cut(text[:span["start"]] + text[span["end"]:])
+                    log.append(f"deleted a line that adds nothing to the sentences around it: '{o[:160]}'")
+                    changed = True
+                    break
+        if not changed:
+            break
+    return text, log
 
 
 # ---------------------------------------------------------------- trip name and trip length (S234 round 2)
@@ -1102,12 +1307,16 @@ def _template_units(text: str, kinds: tuple) -> list[tuple[dict, list[str]]]:
 
 def sibling_templates(text: str, siblings: list[str], *, exclude: list[str] = (),
                       brand_name: Optional[str] = None, keyword: Optional[str] = None,
-                      kinds: tuple = ("prose", "bullet", "faq_a")) -> list[tuple[str, str]]:
+                      kinds: tuple = ("prose", "bullet", "faq_a"), run: int = TEMPLATE_RUN,
+                      shapes: bool = True, skip_brand_lines: bool = True) -> list[tuple[str, str]]:
     """[(sentence of `text`, the shared words)] — lines of `text` (spans of `kinds`; pass
     ("heading",) for headings) that repeat an earlier piece of the same brief (rules A/B above).
     `exclude` = source texts (own seed lines, Facts block, CTA, keyword): their words are never
     template words. A sentence carrying the SEO `keyword` is skipped — siblings of one request
-    share the keyword by design (S233 #13/#16 'Khovsgol and Gobi tour Mongolia price')."""
+    share the keyword by design (S233 #13/#16 'Khovsgol and Gobi tour Mongolia price').
+    S234 round 3 — the brief check (`brief_phrases`) reuses this with `run=4`, `shapes=False` (rule A
+    only) and `skip_brand_lines=False`: a brand-pack phrase pasted into the brand's own sign-off
+    ('Trail Pulse builds trips around movement and energy delivered well') is exactly the target."""
     import difflib
 
     if not siblings:
@@ -1142,19 +1351,19 @@ def sibling_templates(text: str, siblings: list[str], *, exclude: list[str] = ()
     for k, (sp, words) in enumerate(mine):
         if len(words) < 4 or sp["clean"] in out:
             continue
-        if brand and brand <= set(words):
+        if skip_brand_lines and brand and brand <= set(words):
             continue  # the brand's own sign-off line ('Trail Pulse builds trips around…') is not a template
         if has_keyword(words):
             continue
         window = words + (mine[k + 1][1] if k + 1 < len(mine) else [])
         for stream in sib_stream:  # A: a contiguous run that starts in this sentence
             sm = difflib.SequenceMatcher(None, window, stream, autojunk=False)
-            blk = next((b for b in sm.get_matching_blocks() if b.size >= TEMPLATE_RUN and b.a < len(words)
+            blk = next((b for b in sm.get_matching_blocks() if b.size >= run and b.a < len(words)
                         and novel_ok(window[b.a:b.a + b.size], 2)), None)
             if blk is not None:
                 out[sp["clean"]] = " ".join(window[blk.a:blk.a + blk.size])
                 break
-        if sp["clean"] in out:
+        if sp["clean"] in out or not shapes:
             continue
         for unit in sib_units:  # B: the same sentence shape with a word or two changed
             for mine_unit in (words, window):
@@ -1171,6 +1380,167 @@ def sibling_templates(text: str, siblings: list[str], *, exclude: list[str] = ()
                 out[sp["clean"]] = " ".join(matched)
                 break
     return list(out.items())
+
+
+# S234 round 3 (r2 §4 fix 4) — stock lines that came back across rounds and brands, on every channel
+# ('worth sitting with' ×3, 'That stop isn't filler.', 'The mountain remembers what it was.', 'The
+# caldera is not a metaphor…', 'Paro Taktsang asks something of every visitor', 'Knowing them in
+# advance' with no antecedent). F15_voice: one sentence repair, never a hold.
+TEMPLATE_LINE_RES = tuple(re.compile(p, re.I) for p in (
+    r"\bworth sitting with\b",
+    r"\b(?:is|was|are|isn['’]t|wasn['’]t|aren['’]t)\s+(?:not\s+)?(?:\w+\s+)?filler\b|\bnot\s+(?:\w+\s+)?filler\b",
+    r"\bthe\s+[a-z]+\s+remembers\b",
+    r"\bnot\s+a\s+metaphor\b",
+    r"\basks\s+something\s+of\s+(?:every|each|its|the|any)\s+(?:visitor|traveller|traveler|guest|family)s?\b",
+    # only as the sentence's opener with a plural pronoun (r2 #2 'Knowing them in advance —' had no
+    # antecedent); 'and knowing that in advance changes how you plan' (r1 #13, clean) is fine
+    r"^knowing\s+(?:them|these|those)\s+in\s+advance\b",
+))
+
+
+def template_lines(text: str) -> list[tuple[str, str]]:
+    """[(stock line, its sentence)] for TEMPLATE_LINE_RES, prose / bullets / FAQ answers."""
+    out = []
+    for sp in sentence_spans(text or ""):
+        if sp["kind"] not in ("prose", "bullet", "faq_a"):
+            continue
+        for rx in TEMPLATE_LINE_RES:
+            m = rx.search(sp["clean"])
+            if m:
+                out.append((" ".join(m.group(0).split()), sp["clean"]))
+                break
+    return out
+
+
+BRIEF_RUN = 5  # 4 fired on generic runs ('in a mountain kingdom', 'steppe gives way to') on clean pieces
+_BRIEF_PACK_FIELDS = ("core_idea", "style_guide", "good_examples", "customer_mindset", "brand_type")
+_BRIEF_ANGLE_FIELDS = ("why_it_works", "best_final_style", "formula_fit")
+
+
+def brief_texts(brand_pack: Optional[dict], angle: Optional[dict] = None) -> dict[str, list[str]]:
+    """{"pack": the brand pack's text fields, "angle": the chosen angle's brief fields} — never the
+    angle's name (the blog H2 is the angle name by design) and never the voice adjectives."""
+    out: dict[str, list[str]] = {"pack": [], "angle": []}
+    for key, src, fields in (("pack", brand_pack or {}, _BRIEF_PACK_FIELDS),
+                             ("angle", angle or {}, _BRIEF_ANGLE_FIELDS)):
+        for f in fields:
+            v = src.get(f)
+            if isinstance(v, str) and v.strip():
+                out[key].append(v)
+    return out
+
+
+def brief_phrases(text: str, briefs: dict, *, exclude: list[str] = (), brand_name: Optional[str] = None,
+                  keyword: Optional[str] = None) -> list[tuple[str, str]]:
+    """[(sentence, the shared words)] — a run of ≥ 5 words copied from the brand pack (anywhere) or
+    from the angle brief into a sentence that speaks as the brand, at least half of its content
+    words not in the source (seed, Facts, CTA): S234 r2 #3/#11 'Trail Pulse builds trips around
+    movement and energy delivered well' (the angle's 'core idea of movement and energy delivered
+    well'), #5/#17 'Terra … plans active, educational journeys for families who want…' (core idea).
+    An angle phrase in a sentence that does not name the brand is the writer following its brief
+    ('That choice was inseparable from the institution's purpose', S234 r1 #5, panel-clean) — not
+    flagged. The sibling n-gram rule A, on brief text instead of siblings, brand lines included."""
+    kw = dict(exclude=exclude, brand_name=brand_name, keyword=keyword, run=BRIEF_RUN, shapes=False,
+              skip_brand_lines=False)
+    out = dict(sibling_templates(text, briefs.get("pack") or [], **kw))
+    brand = brand_words(brand_name)
+    for sentence, run in sibling_templates(text, briefs.get("angle") or [], **kw):
+        if brand and brand <= set(_WORD_RE.findall(fold(sentence))):
+            out.setdefault(sentence, run)
+    return list(out.items())
+
+
+# ---------------------------------------------------------------- CTA literal (S234 round 3)
+
+_FAQ_HEADING_RE = re.compile(r"(?im)^#{1,6}[ \t]*faq\b.*$")
+_HASHTAG_TAIL_RE = re.compile(r"(?:\n[ \t]*(?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+[ \t]*)+\s*$")
+
+
+def cta_norm(text: Optional[str]) -> str:
+    """Accent-folded words only, '&' read as 'and': 'Talk to an Atlas & Hearth travel designer.' and
+    'talk to an atlas and hearth travel designer' compare equal."""
+    t = fold(strip_tags(text or "")).replace("&", " and ")
+    return " ".join(re.findall(r"[a-z0-9]+", t))
+
+
+def has_cta_literal(text: Optional[str], cta: Optional[str]) -> bool:
+    """Is the configured CTA line in the prose, word for word (whitespace / punctuation / case
+    normalised), before any FAQ heading and outside hashtag lines?"""
+    want = cta_norm(cta)
+    if not want:
+        return False
+    body = text or ""
+    m = _FAQ_HEADING_RE.search(body)
+    body = body[:m.start()] if m else body
+    body = "\n".join(ln for ln in body.split("\n") if not _HASHTAG_LINE_RE.fullmatch(ln.strip() or "-"))
+    return f" {want} " in f" {cta_norm(body)} "
+
+
+# an invitation verb ('ask', 'speak to', 'get in touch with' …) a few words before the brand's first
+# word: the shape of a reworded CTA ('Speak to Terra Family Expeditions about how this journey is
+# structured…', 'If you want to understand Day 4, ask WildKind Travel for the complete itinerary.')
+_INVITE_VERBS = (r"ask|speak|talk|contact|reach\s+out|get\s+in\s+touch|enquire|inquire|write|email|call|message"
+                 r"|book|request|get|plan")
+CTA_WINDOW = 3  # the closing prose sentences searched for a reworded CTA
+
+
+def _cta_brand_word(cta: Optional[str]) -> Optional[str]:
+    """The first capitalised word of the CTA after its verb ('Terra', 'WildKind', 'Atlas', 'Trail')."""
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ][\w’'-]*", cta or "")
+    return next((w for w in words[1:] if w[0].isupper()), None)
+
+
+def _is_cta_invite(sentence: str, cta: Optional[str]) -> bool:
+    """A sentence that invites the reader to contact the brand: an invitation verb, then at most four
+    words, then the CTA's brand word. The brand's own line ('Terra Family Expeditions plans journeys
+    for families…') has no invitation before the name and is not one."""
+    brand = _cta_brand_word(cta)
+    if not brand:
+        return False
+    return bool(re.search(rf"\b(?:{_INVITE_VERBS})\b(?:\s+[\w’'&-]+){{0,4}}?\s+{re.escape(brand)}\b",
+                          strip_tags(sentence or ""), re.I))
+
+
+def ensure_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
+    """S234 r2 #19 paraphrased the configured CTA ('Speak to Terra Family Expeditions about how this
+    journey is structured…') and `check_cta` passed it. The literal line is restored in code, and the
+    piece ends with ONE CTA: the last of the closing CTA_WINDOW prose sentences that invites the
+    reader to contact the brand (`_is_cta_invite`) — or, failing that, a closing sentence that is the
+    CTA reworded (≥ 60% of its words) — is replaced by it in place. Only when no such sentence exists
+    is the line added: as its own paragraph right before '## FAQ' (blog) or the hashtags (social),
+    and before a closing question paragraph (a post's engagement question stays last). Returns
+    (text, log)."""
+    line = " ".join((cta or "").split())
+    if not line or has_cta_literal(text, cta):
+        return text, []
+    if line[-1] not in ".!?":
+        line += "."
+    body = text or ""
+    faq = _FAQ_HEADING_RE.search(body)
+    end = faq.start() if faq else len(body)
+    tail = _HASHTAG_TAIL_RE.search(body[:end]) if not faq else None
+    if tail:
+        end = tail.start()
+    spans = [s for s in sentence_spans(body) if s["kind"] == "prose" and s["end"] <= end and not s["in_faq"]]
+    closing = spans[-CTA_WINDOW:]
+    invites = [s for s in closing if _is_cta_invite(s["clean"], cta)]
+    # the brand's own line before the closing sentence ('Terra Family Expeditions plans journeys for
+    # families who want…', r2 #19) shares the CTA's words too, so the ≥ 60% test is for the last one only
+    target = invites[-1] if invites else (spans[-1] if spans and _is_cta(spans[-1]["clean"], cta) else None)
+    if target is not None:
+        new = body[:target["start"]] + line + body[target["end"]:]
+        return new, [f"restored the configured CTA line in place of a reworded one: '{target['clean'][:160]}'"]
+    last = spans[-1] if spans else None
+    if last is not None and last["clean"].endswith("?"):
+        para = body.rfind("\n\n", 0, last["start"])
+        if para > 0 and body[:para].strip():
+            end = para
+    head = body[:end].rstrip()
+    rest = body[end:].lstrip("\n")
+    new = f"{head}\n\n{line}\n\n{rest}" if rest else f"{head}\n\n{line}\n"
+    if not (text or "").endswith("\n"):
+        new = new.rstrip("\n")
+    return new, ["added the configured CTA line, which the piece did not have word for word"]
 
 
 def _seed_overlap(sentence: str, seed_words: set) -> float:
@@ -1275,10 +1645,22 @@ class HygieneContext:
     # S234 round 2 review — the piece's Facts block: a range stated there ('25–40 °C') is a source
     # fact, never the audience leaking.
     facts: Optional[str] = None
+    # S234 round 3 — places of the FULL trip outside the scoped days (the trip's itinerary atoms,
+    # service._trip_places_outside): out-of-scope gazetteer entries even when a place-background
+    # line mentions them ('a domestic airport connecting the region to Ulaanbaatar').
+    trip_places: tuple = ()
     lexicon: ScopeLexicon = field(init=False)
 
     def __post_init__(self):
-        self.lexicon = build_scope_lexicon(self.seed, self.scope, self.trip_name)
+        self.lexicon = build_scope_lexicon(self.seed, self.scope, self.trip_name, trip_places=self.trip_places)
+
+    @property
+    def moments(self) -> list:
+        """The seed's moment blocks (trip_facts.parse_moments), parsed once."""
+        if not hasattr(self, "_moments"):
+            from services.acp_content_writing.trip_facts import parse_moments
+            self._moments = parse_moments(self.seed)
+        return self._moments
 
     @property
     def source_text(self) -> str:
@@ -1493,6 +1875,14 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
             log.append(line)
         text = tidy_after_cut(text)
 
+    # S234 round 3 — near-duplicates the window rule above does not see (a figure told twice, an echoed
+    # opening, an orphan line) and a moment repeated under another moment's heading
+    text, more = dedupe(text, ignore, ctx.cta)
+    log += more
+    from services.acp_content_writing.trip_facts import fix_misplaced
+    text, more = fix_misplaced(text, ctx.moments, ctx.cta)
+    log += more
+
     for old, new in hashtag_fixes(text, lex, ctx.brand_name).items():
         text = re.sub(rf"{re.escape(old)}(?![A-Za-z0-9])", new, text)
         log.append(f"fixed hashtag {old} → {new}")
@@ -1548,18 +1938,30 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
             issues.append(f"social proof ('{m.group(0)}') the source does not state: '{s['clean'][:200]}'")
     prose = [s for s in body if s["kind"] in ("prose", "bullet") and not s["in_faq"]]
     ignore = brand_words(ctx.brand_name)
+    # S234 round 3 — what dedupe / fix_misplaced could not fix safely: blocking, sentence-repairable
+    repeats: list[str] = []
+    for d in near_duplicates(text, ignore, ctx.cta):
+        repeats.append(f"{d['why']} — cut it or say something new: '{d['later']['clean'][:200]}'")
+    repeats += [f"adds nothing to the sentences around it — cut it: '{o[:200]}'"
+                for o in orphan_lines(text, ignore, ctx.cta)]
+    from services.acp_content_writing.trip_facts import misplaced_sentences
+    repeats += [f"repeats a moment under another moment's heading — cut it or move its fact: '{m[:200]}'"
+                for m in misplaced_sentences(text, ctx.moments, ctx.cta)]
+    repeated = {r.rsplit(": '", 1)[-1] for r in repeats}
     for a, s in enumerate(prose):
         if _is_cta(s["clean"], ctx.cta):
             continue
         if any(near_verbatim(s["clean"], t["clean"], ignore) for t in prose[:a]):
-            issues.append(f"repeats an earlier sentence: '{s['clean'][:200]}'")
+            if f"{s['clean'][:200]}'" not in repeated:
+                issues.append(f"repeats an earlier sentence: '{s['clean'][:200]}'")
     for old, new in hashtag_fixes(text, lex, ctx.brand_name).items():
         issues.append(f"misspelt hashtag '{old}' (did you mean '{new}'?): '{old}'")
     if ctx.hashtags_max is not None:
         n = len(set(_HASHTAG_RE.findall(text)))
         if n > ctx.hashtags_max:
             issues.append(f"{n} hashtags, more than the channel's {ctx.hashtags_max}: '{n} hashtags'")
-    return {"scope": scope, "hygiene": issues, "leak": list(dict.fromkeys(leaks))}
+    return {"scope": scope, "hygiene": issues, "leak": list(dict.fromkeys(leaks)),
+            "repeat": list(dict.fromkeys(repeats))}
 
 
 __all__ = [

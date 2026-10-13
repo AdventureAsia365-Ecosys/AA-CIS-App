@@ -41,6 +41,7 @@ from services.acp_content_writing.hygiene import (
     ScopeLexicon,
     _is_cta,
     build_scope_lexicon,
+    cta_norm,
     content_words,
     fold,
     lev,
@@ -779,11 +780,12 @@ def _stem4(word: str) -> str:
 
 
 def check_cta(content_text: Optional[str], cta: Optional[str], channel: Optional[str] = None) -> CtaCheck:
-    """Replaces the LLM's CTA_NOT_REFLECTED (design f9-v2 item 4; S232 e2484582 failed on a
-    reworded CTA). Pass when ≥80% of the CTA's content words (4-letter stems, so 'plan' ==
-    'planning') appear in the closing part of the prose: the last 35% before a FAQ heading (blog),
-    or the last two paragraphs or last 35%, whichever is longer (social). Hashtag lines and the FAQ
-    never count. No CTA configured → fail, not repairable (as F6 today)."""
+    """Replaces the LLM's CTA_NOT_REFLECTED (design f9-v2 item 4). Pass when the configured CTA line
+    appears word for word (hygiene.cta_norm: case, whitespace, punctuation, '&' = 'and') in the
+    closing part of the prose: the last 35% before a FAQ heading (blog), or the last two paragraphs
+    or last 35%, whichever is longer (social). Hashtag lines and the FAQ never count. No CTA
+    configured → fail, not repairable (as F6 today). S234 round 3: a reworded CTA no longer passes
+    (it did by word share before — r2 #19); `matched` still lists the CTA words found."""
     want = {_stem4(w) for w in content_words(cta or "")}
     if not want:
         return CtaCheck(False, repairable=False, problem="no CTA configured for this piece")
@@ -801,11 +803,16 @@ def check_cta(content_text: Optional[str], cta: Optional[str], channel: Optional
     tail = prose[max(0, start):]
     have = {_stem4(w) for w in content_words(tail)}
     matched = want & have
-    if len(matched) / len(want) >= _CTA_MIN_SHARE:
+    # S234 round 3 (r2 §4 fix 9) — the configured CTA line must be there word for word (case,
+    # whitespace and punctuation normalised, '&' = 'and'): r2 #19 'Speak to Terra Family Expeditions
+    # about how this journey is structured…' passed the word-share test with the line missing.
+    # service.py restores the literal line (hygiene.ensure_cta) before the gates.
+    if f" {cta_norm(cta)} " in f" {cta_norm(tail)} ":
         return CtaCheck(True, matched=tuple(sorted(matched)))
     missing = sorted(want - have)
-    return CtaCheck(False, problem=f"CTA not found in the closing text — missing {', '.join(missing)}",
-                    matched=tuple(sorted(matched)))
+    why = (f"missing {', '.join(missing)}" if missing
+           else "the line is reworded — it must be the configured CTA word for word")
+    return CtaCheck(False, problem=f"CTA not found in the closing text — {why}", matched=tuple(sorted(matched)))
 
 
 __all__ = [

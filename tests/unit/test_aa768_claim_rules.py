@@ -423,12 +423,19 @@ def test_warn_verdicts_format_separately():
 
 # ---------------------------------------------------------------- deterministic CTA
 
-def test_cta_reworded_passes():
+def test_cta_reworded_fails_and_the_literal_line_passes():
+    """S234 round 3 — the configured CTA line must be there word for word (r2 #19 paraphrased it)."""
     cta = "Contact Terra Family Expeditions to plan your Mongolia trip"
     text = ("Para one about the lake.\n\nPara two about the monastery.\n\n"
             "When you are ready, contact Terra Family Expeditions and we will start planning this Mongolia trip "
             "for you.")
-    assert cr.check_cta(text, cta, "linkedin").ok
+    r = cr.check_cta(text, cta, "linkedin")
+    assert not r.ok and "word for word" in r.problem
+    literal = ("Para one.\n\nPara two.\n\nWhen you are ready: contact  Terra Family Expeditions to plan your "
+               "MONGOLIA trip!")
+    assert cr.check_cta(literal, cta, "linkedin").ok
+    assert cr.check_cta("Body.\n\nTalk to an Atlas and Hearth travel designer.",
+                        "Talk to an Atlas & Hearth travel designer", "linkedin").ok
 
 
 def test_cta_cut_off_or_only_after_faq_fails():

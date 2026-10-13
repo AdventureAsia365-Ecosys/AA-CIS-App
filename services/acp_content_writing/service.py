@@ -49,11 +49,12 @@ from services.acp_content_writing.quality_gates import (
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import hygiene, sentence_repair
+from services.acp_content_writing import hygiene, sentence_repair, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
+from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, FAQ_MAX_PAIRS, FAQ_MIN_PAIRS,
+                                                          STYLE_ONLY_GATES,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_unanswerable_faq, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, replace_faq_section,
@@ -260,6 +261,38 @@ async def _scope_line(atom_ids: list[str], pool) -> Optional[str]:
             "place, leg or direction of travel outside these moments, even if the TRIP name does.")
 
 
+_TRIP_PLACES_QUERY = """
+    WITH span AS (
+        SELECT min(itinerary_day) AS lo, max(itinerary_day) AS hi
+        FROM acp_contract.v_active_tour_atoms WHERE atom_id = ANY($3::text[])
+    )
+    SELECT DISTINCT a.place FROM acp_contract.v_active_tour_atoms a, span
+    WHERE a.tour_id = $1::uuid AND a.owner_scope IN ('platform', $2::text)
+      AND NOT a.deleted AND NOT a.is_empty_marker
+      AND a.place IS NOT NULL AND btrim(a.place) <> ''
+      AND span.lo IS NOT NULL AND a.itinerary_day IS NOT NULL
+      AND (a.itinerary_day < span.lo OR a.itinerary_day > span.hi)
+      AND NOT (a.atom_id = ANY($3::text[]))
+"""
+
+
+async def _trip_places_outside(tenant_id, trip_id: Optional[str], atom_ids: list[str], pool) -> list[str]:
+    """S234 round 3 (r2 §4 fix 3c) — every place of the FULL trip on a day outside this piece's days
+    (the trip's itinerary atoms), for the out-of-scope gazetteer: 'Ulaanbaatar' on a days 3–14
+    Khövsgöl blog (r2 #5, #17), Thimphu / Paro on a Punakha day-4 post. [] without a trip, without
+    a scoped day, or on any error — scope is an aid, never a reason to fail a write."""
+    ids = [a for a in atom_ids if a]
+    if not trip_id or not ids:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_TRIP_PLACES_QUERY, trip_id, str(tenant_id), ids)
+        return [r["place"] for r in rows if isinstance(r["place"], str)]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t9_trip_places_failed", error=str(e)[:200])
+        return []
+
+
 # S233 checkpoint: related_keywords[0] was "khovsgol and gobi tour mongolia price" for all 8
 # Mongolia blogs — titles became "…Mongolia Price of Memory" and no meta could hold it (F4).
 _TRANSACTIONAL_RE = re.compile(
@@ -434,8 +467,12 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
     def meta_ok(value) -> bool:
         # S234 round 2 — a meta may not sell a product the seed and the post never mention
         # ('a Bhutan meditation retreat' on a Punakha Dzong visit, 6/6 S234 Punakha posts).
+        # S234 round 3 — nor a role the seed dates as ended in the present tense ('remains Bhutan's …
+        # administrative center today', r2 #1/#9/#13) or a rarity claim the seed does not make.
         return (_meta_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
-                and not seo_grounding.meta_unsupported_products(value, seed, body))
+                and not seo_grounding.meta_unsupported_products(value, seed, body)
+                and not trip_facts.date_authority_claims("", seed, extra_texts=(("meta", value),))
+                and not trip_facts.rarity_claims("", hygiene.split_seed(seed)[0], extra_texts=(("meta", value),)))
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
@@ -444,6 +481,9 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
     forbidden += [w for w in seo_grounding.meta_unsupported_products(seo_meta.get("meta_description"), seed, body)
                   if w not in forbidden]
+    if trip_facts.date_authority_claims("", seed, extra_texts=(("meta", seo_meta.get("meta_description")),)):
+        forbidden += [w for w in ("still", "remains", "today", "active center", "administrative center")
+                      if w not in forbidden]
     extra = {"forbidden_words": forbidden} if forbidden else {}
     try:
         fitted, cost = await asyncio.to_thread(
@@ -527,11 +567,13 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
 
 
 def _style_only_repair(gate_ledger: list[dict]) -> bool:
-    """Every blocking failure a sentence repair will fix is style-only (F15_voice: stock phrase,
-    contrast frame, sibling template) — that repair runs on the cheap t9_repair stage (S234 round 2)."""
+    """Every blocking failure a sentence repair will fix is one the cheap t9_repair stage handles
+    (S234 round 2: F15_voice — stock phrase, contrast frame, sibling template; round 3: F13_repeat,
+    F17_trip_fact, F18_rarity — the repair keeps, softens or cuts a sentence the seed already bounds).
+    F1 / F9 / leak / brand failures in the same attempt keep the t9_write stage."""
     failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
               and g["gate"] not in sentence_repair.OWNED_ELSEWHERE]
-    return bool(failed) and all(g["gate"] in STYLE_ONLY_GATES for g in failed)
+    return bool(failed) and all(g["gate"] in CHEAP_REPAIR_GATES for g in failed)
 
 
 async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygiene.HygieneContext,
@@ -761,8 +803,9 @@ async def start_write(
         atom_text = "\n\n".join(text for _, text in route_segments)
     else:
         atom_text = await _fetch_atom_text(tenant_id, req["atom_id"], pool)
-    scope = await _scope_line([a for a, _ in (route_atoms or route_segments)] if route_segments else [req["atom_id"]],
-                              pool)
+    scope_atoms = [a for a, _ in (route_atoms or route_segments)] if route_segments else [req["atom_id"]]
+    scope = await _scope_line(scope_atoms, pool)
+    trip_places = await _trip_places_outside(tenant_id, req.get("trip_id"), scope_atoms, pool)
     goal = get_goal(req["goal"])
     if goal is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown goal={req['goal']!r}")
@@ -816,7 +859,7 @@ async def start_write(
     related_keywords = dfs_snapshot.get("related_keywords") or []
     # S234 — a keyword naming a place outside the piece's scope ('khovsgol and gobi tour mongolia'
     # on a Khövsgöl-only route) would force that place into the title and meta.
-    out_of_scope = hygiene.build_scope_lexicon(atom_text, scope, trip_name).gazetteer
+    out_of_scope = hygiene.build_scope_lexicon(atom_text, scope, trip_name, trip_places=tuple(trip_places)).gazetteer
     keyword = choose_keyword(related_keywords, atom_text, out_of_scope=out_of_scope)
 
     # AA-529 — Facts Entry source: ALL scope='platform' facts + this tenant's own scope='tenant'
@@ -837,6 +880,7 @@ async def start_write(
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
         "scope": scope,  # S233
+        "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
         "facts_text": None,  # AA-529 — filled by resolve_facts() in the job ("" when none exist)
         "facts_pending": True,  # AA-764
@@ -950,6 +994,17 @@ async def resolve_facts(request_id: UUID, context: dict, pool) -> None:
     context["facts_pending"] = False
 
 
+def _add_date_spans(context: dict) -> None:
+    """S234 round 3 (r2 §4 fix 5) — when a seed dates a role as ended ('served as the capital and seat
+    of government of Bhutan until 1955') and gives its start, the writer and the gates get the span
+    as a stated fact line (trip_facts.with_date_spans): r2 #12 wrote 'for nearly three centuries' for
+    1637–1955. Idempotent; route segments get the same line in their own block."""
+    if context.get("atom_text"):
+        context["atom_text"] = trip_facts.with_date_spans(context["atom_text"])
+    if context.get("route_segments"):
+        context["route_segments"] = [(a, trip_facts.with_date_spans(t)) for a, t in context["route_segments"]]
+
+
 async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, pool) -> None:
     """The write/rewrite + T10-check loop — UNCHANGED body from the pre-AA-466 single-function
     write_and_check(), just reading its inputs from `context` (built by start_write()) instead
@@ -962,6 +1017,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     status='failed', distinct from status='held' (a real, complete, gate-blocked outcome with
     real content_text) — see migration 118's header for why these must not be conflated."""
     await resolve_facts(request_id, context, pool)  # AA-764 — Jev fact-select runs here, in the job
+    _add_date_spans(context)  # S234 round 3 — 'served … until 1955' → the span as a stated fact
     atom_text, goal, channel_style = context["atom_text"], context["goal"], context["channel_style"]
     brand_audience, chosen, cta = context["brand_audience"], context["chosen"], context["cta"]
     destination, trip_name = context["destination"], context["trip_name"]
@@ -989,7 +1045,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                                  brand_name=(brand_audience or {}).get("brand_name"), cta=cta,
                                  hashtags_max=spec.hashtags_max if spec else None,
                                  first_line_max=spec.first_line_max if spec else None,
-                                 audience=(brand_audience or {}).get("customer_segment"), facts=facts_text)
+                                 audience=(brand_audience or {}).get("customer_segment"), facts=facts_text,
+                                 trip_places=tuple(context.get("trip_places") or ()))
+    # S234 round 3 — trip facts / rarity (F17/F18) read the moment's own seed lines + Facts; the
+    # brand pack and the chosen angle are the brief F15 checks for pasted phrases.
+    trip_ctx = trip_facts.TripFactContext(
+        seed=atom_text, source=f"{hyg.lexicon.own_text}\n{facts_text}",
+        audience=(brand_audience or {}).get("customer_segment"), cta=cta)
+    briefs = hygiene.brief_texts(brand_audience, chosen)
     # S234 round 2 (panel §5 fix 4) — a part-of-trip piece gets the trip name without its duration
     # and its out-of-scope places ('Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days' → 'Mongolia:
     # Khövsgöl Lake'); the hygiene context keeps the full name (its gazetteer needs those places).
@@ -1093,17 +1156,30 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     # S234 round 2 — splice_checked reverts any repair that leaves a new repeat or a
                     # pronoun with no referent (panel §5 fix 7: #19, #10) to its pre-repair sentence.
                     content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
-                                                                  ignore=brand_ignore, cta=cta)
+                                                                  ignore=brand_ignore, cta=cta, moments=hyg.moments)
                     repair_log[-1]["repair_mode"] = "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
                     # S234 — replacements turned into deletes because they restated a neighbour.
                     guarded = sum(item.get("guard") == "repeat" for item in repair_items)
                     if guarded:
                         repair_log[-1]["repeat_guard_deletes"] = guarded
+                    kept = sum(item.get("guard") == "repeat_kept" for item in repair_items)
+                    if kept:
+                        repair_log[-1]["repeat_guard_kept"] = kept
+                    deduped = sum(item.get("guard") == "dedupe" for item in repair_items)
+                    if deduped:
+                        repair_log[-1]["dedupe_after_repair"] = True
                     reverted = [item for item in repair_items if item.get("guard") == "integrity"]
                     if reverted:
                         repair_log[-1]["integrity_reverts"] = len(reverted)
                         repair_log[-1]["integrity_problems"] = [p for it in reverted for p in it["integrity"]][:5]
+                elif attempt >= 3 and repair_items and (cut := sentence_repair.delete_flagged(
+                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)) is not None:
+                    # S234 round 3 (r2 §4 fix 7) — the attempt-3 repair call failed: cut the flagged
+                    # sentence(s) in code rather than hold a piece on one sentence (r2 #7, #13).
+                    content_text, cost = cut, 0.0
+                    repair_log[-1]["repair_mode"] = "sentences_cut"
+                    repair_log[-1]["sentences_repaired"] = len(repair_items)
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
@@ -1168,6 +1244,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # S234 — deterministic fixes after the last LLM step of this attempt (write/rewrite,
             # sentence splice and SEO fit all ran above), before the gates read the text.
             content_text, hygiene_log = hygiene.autofix(content_text, hyg)
+            # S234 round 3 (r2 §4 fix 9) — the configured CTA line, word for word, after the last edit
+            content_text, cta_log = hygiene.ensure_cta(content_text, cta)
+            hygiene_log += cta_log
+            # S234 round 3 review — a family brand's missing access caveat goes in from the seed, in
+            # code (no repair call that the repeat guard could turn into a cut of the anchor sentence)
+            content_text, caveat_log = trip_facts.add_family_caveats(content_text, trip_ctx, brand_ignore)
+            hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 content_text, faq_dropped = drop_restated_faq(content_text)
                 content_text, faq_unanswerable = drop_unanswerable_faq(
@@ -1203,6 +1286,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # S234 review — a stock phrase blocks (one sentence repair) on attempt 1 only.
                 stock_blocking=attempt == 1,
                 sibling_texts=sibling_texts,  # S234 round 2 — F15 sibling templates
+                trip_ctx=trip_ctx, brief_texts=briefs,  # S234 round 3 — F17/F18, brief phrases in F15
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -1419,6 +1503,8 @@ def writer_input_snapshot(context: dict) -> dict:
         "cta": context.get("cta"), "trip": context.get("trip_name"), "destination": context.get("destination"),
         # S234 round 2 — the TRIP line the writer actually got (scoped trip name); absent before.
         **({"writer_trip": context["writer_trip_name"]} if "writer_trip_name" in context else {}),
+        # S234 round 3 — the full trip's places outside the scope (out-of-scope gazetteer); absent before.
+        **({"trip_places": context["trip_places"]} if context.get("trip_places") else {}),
     }
 
 

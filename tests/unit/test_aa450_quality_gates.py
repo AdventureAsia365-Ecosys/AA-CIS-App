@@ -249,7 +249,8 @@ class TestRunQualityGates:
         # AA-768 (S233): + F0_complete; AA-771: + F2_brand_forbidden, F11_brand_name.
         # AA-768 (S234): + F12_scope, F13_hygiene (warn; pass without a hygiene context).
         # AA-771 (S234): + F14_social_shape, F15_voice, F15_voice_warn (pass for a channel without a spec).
-        assert len(outcome["gate_ledger"]) == 18  # ...+f12+f13+f13_leak+f14+f15+f15w+f8+f9x2
+        # ...+f12+f13+f13_leak+f13_repeat+f17+f18 (S234 round 3)+f14+f15+f15w+f8+f9x2
+        assert len(outcome["gate_ledger"]) == 21
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
