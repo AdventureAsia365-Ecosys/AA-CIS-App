@@ -50,12 +50,12 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
 - Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
-- If, and only if, the piece includes a FAQ section, put it LAST (after the call-to-action
-  paragraph), headed by a line that is exactly "## FAQ", followed by one or more Q/A pairs in
-  this exact format and nothing else — each answer must add something the body did not say:
+- End the piece with a FAQ section, LAST (after the call-to-action paragraph), headed by a line
+  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else —
+  each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
-- FAQ: 2-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
+- FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
   states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
@@ -81,12 +81,12 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
 - Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
-- If, and only if, the piece includes a FAQ section, put it LAST (after the call-to-action
-  paragraph), headed by a line that is exactly "## FAQ", followed by one or more Q/A pairs in
-  this exact format and nothing else — each answer must add something the body did not say:
+- End the piece with a FAQ section, LAST (after the call-to-action paragraph), headed by a line
+  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else —
+  each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
-- FAQ: 2-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
+- FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
   states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one

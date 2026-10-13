@@ -52,7 +52,8 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import HygieneContext, find_issues, sentence_spans
+from services.acp_content_writing.hygiene import (HygieneContext, contrast_excess, find_issues, sentence_spans,
+                                                  sibling_templates)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
@@ -1093,6 +1094,51 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
     return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", log
 
 
+# ---------------------------------------------------------------- F16 FAQ contract (AA-768, S234 round 2)
+
+# S234 panel §2 class 4: 6/8 blogs ended with no FAQ (#2, #17) or one pair (#1, #16, #18, #19) —
+# the single deciding structural defect of those blogs. A blog must end on "## FAQ" with at least
+# FAQ_MIN_PAIRS pairs, counted AFTER drop_restated_faq / drop_unanswerable_faq ran. service.py
+# regenerates a short FAQ once (generate.write_faq, t9_repair) before the gates read the text.
+FAQ_MIN_PAIRS = 3
+F16_GATE = "F16_faq"
+
+
+def faq_pair_count(content_text: str) -> int:
+    """Q/A pairs under the "## FAQ" heading (the same pair shape the droppers read)."""
+    body = content_text or ""
+    if "## FAQ" not in body:
+        return 0
+    return len(_FAQ_PAIR_RE.findall(body.partition("## FAQ")[2]))
+
+
+def replace_faq_section(content_text: str, pairs: list[tuple[str, str]]) -> str:
+    """The text with its FAQ section replaced by `pairs` ((question, answer), no markup), as the
+    last section. Prose blocks that sat after the FAQ pairs (a CTA written after the FAQ) move
+    above the FAQ, so the CTA stays before it (blog format rule)."""
+    body = (content_text or "").rstrip()
+    before, _, faq = body.partition("## FAQ")
+    trailing = [b.strip() for b in re.split(r"\n\s*\n", faq)
+                if b.strip() and not b.strip().startswith(("**Q:", "A:"))]
+    head = before.rstrip()
+    if trailing:
+        head += "\n\n" + "\n\n".join(trailing)
+    qa = "\n\n".join(f"**Q: {q.strip()}**\nA: {a.strip()}" for q, a in pairs if q.strip() and a.strip())
+    return f"{head}\n\n## FAQ\n\n{qa}\n" if qa else head + "\n"
+
+
+def gate_faq_contract(content_text: str) -> GateResultLite:
+    """F16_faq (blog) — the post must end on a "## FAQ" section with at least FAQ_MIN_PAIRS pairs.
+    Blocking and not repairable: the FAQ step in service.py already had its one regeneration, so a
+    short FAQ holds the piece (admin label) instead of forcing a full rewrite that invents facts.
+    sentence_repair.plan skips it (owned by that step), so it never blocks a sentence repair."""
+    n = faq_pair_count(content_text)
+    if n >= FAQ_MIN_PAIRS:
+        return _result(F16_GATE, [], repairable=False)
+    return _result(F16_GATE, [f"the blog ends with {n} FAQ pair(s) after unanswerable and restated ones were "
+                              f"dropped; it needs at least {FAQ_MIN_PAIRS}"], repairable=False)
+
+
 # ---------------------------------------------------------------- F12 / F13 (AA-768, S234)
 
 # F12_scope warns for one checkpoint round (S234 plan C4); flip to True once the replay and the
@@ -1109,6 +1155,19 @@ def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_tit
         return _result("F12_scope", [], blocking=F12_SCOPE_BLOCKING)
     found = find_issues(content_text, hygiene_ctx, seo_title=seo_title, meta_description=meta_description)
     return _result("F12_scope", found["scope"], repairable=True, blocking=F12_SCOPE_BLOCKING)
+
+
+F13_LEAK_GATE = "F13_leak"
+
+
+def gate_leak(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
+    """F13_leak (blocking, sentence-repairable) — what hygiene.autofix could not remove safely: the
+    writer's instructions ('A Sentence on…', 'This guide covers…', the SCOPE's day span), the
+    brand's audience ranges ('25–40'), the source notes' own words, or a piece that opens on a
+    pronoun with no referent (a repair artifact, S234 #19). Each quotes its sentence."""
+    if hygiene_ctx is None:
+        return _result(F13_LEAK_GATE, [])
+    return _result(F13_LEAK_GATE, find_issues(content_text, hygiene_ctx)["leak"], repairable=True)
 
 
 def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
@@ -1132,6 +1191,9 @@ F15_GATE = "F15_voice"
 F15_WARN_GATE = "F15_voice_warn"
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
 STYLE_ONLY_GATES = frozenset({F15_GATE})
+# S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
+# (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
+OWNED_BY_FIX_STEP = frozenset({"F16_faq", "F14_first_line"})
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 
@@ -1160,10 +1222,26 @@ def gate_social_shape(content_text: str, spec: Optional[ChannelSpec]) -> GateRes
     tags = list(dict.fromkeys(HASHTAG_RE.findall(text)))
     if len(tags) > spec.hashtags_max:
         violations.append(f"{len(tags)} hashtags, more than {spec.hashtags_max}: '{' '.join(tags)}'")
-    head = text.strip().split("\n", 1)[0].strip() if text.strip() else ""
-    if len(head) > spec.first_line_max:
-        violations.append(f"first line is {len(head)} characters, over {spec.first_line_max}: '{head[:300]}'")
     return _result(F14_GATE, violations, repairable=blocking, blocking=blocking)
+
+
+F14_FIRST_LINE_GATE = "F14_first_line"
+
+
+def gate_first_line(content_text: str, spec: Optional[ChannelSpec]) -> GateResultLite:
+    """F14_first_line (S234 round 2) — the hook line is still longer than the brand's first_line_max
+    after hygiene.autofix split it and service.py's one first-sentence rewrite (t9_repair) ran
+    (S234 #4 165, #12 209 chars). Blocking, not repairable: the rewrite step owns it
+    (sentence_repair.plan skips it), so it holds the piece instead of forcing a full rewrite."""
+    if spec is None:
+        return _result(F14_FIRST_LINE_GATE, [], repairable=False)
+    text = strip_citation_tags(content_text or "")
+    head = text.strip().split("\n", 1)[0].strip() if text.strip() else ""
+    if len(head) <= spec.first_line_max:
+        return _result(F14_FIRST_LINE_GATE, [], repairable=False)
+    return _result(F14_FIRST_LINE_GATE,
+                   [f"first line is {len(head)} characters, over {spec.first_line_max}: '{head[:300]}'"],
+                   repairable=False)
 
 
 def _quote(spans: list[dict], start: int, end: int) -> str:
@@ -1191,23 +1269,62 @@ def _has_num(text: str, key: str) -> bool:
     return re.search(rf"(?<!\d){re.escape(key)}(?!\d)", _norm_num(text)) is not None
 
 
-def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True) -> GateResultLite:
+# S234 round 2 — contrast frames are fixed only down to the allowed density, worst first: a stock
+# 'This is not a metaphor', then a two-sentence "It's not X. It's Y.", then "is not X, it is Y",
+# then the milder "not just X but Y" / "less X than Y" (index into hygiene.CONTRAST_FRAME_RES).
+_CONTRAST_RANK = (5, 2, 0, 1, 6, 3, 7, 4)
+
+
+def _contrast_violations(text: str, spans: list[dict]) -> list[str]:
+    n, allowed, frames = contrast_excess(text)
+    if n <= allowed:
+        return []
+    words = len(strip_citation_tags(text).split())
+    worst = sorted(frames, key=lambda f: (_CONTRAST_RANK.index(f[3]), f[0]))[:n - allowed]
+    out = []
+    for start, end, match, _kind in sorted(worst):
+        q = _quote(spans, start, end)
+        if q:
+            out.append(f"contrast frame '{' '.join(match.split())[:80]}' ({n} in {words} words, over 1 per 150) "
+                       f"— say it directly, without the 'not X but Y' turn: '{q}'")
+    return out
+
+
+def _template_violations(text: str, sibling_texts: Optional[list[str]], exclude_texts: Optional[list[str]],
+                         brand_name: Optional[str], spans: list[dict], keyword: Optional[str] = None) -> list[str]:
+    out = []
+    kept = {sp["clean"] for sp in spans}
+    for sentence, run in sibling_templates(text, sibling_texts or [], exclude=exclude_texts or [],
+                                           brand_name=brand_name, keyword=keyword):
+        if sentence in kept and len(sentence.split()) >= _MIN_QUOTE_WORDS:
+            out.append(f"repeats a line from an earlier piece of this brief ('{run}') — write it fresh: '{sentence}'")
+    return out
+
+
+def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True,
+               sibling_texts: Optional[list[str]] = None, exclude_texts: Optional[list[str]] = None,
+               brand_name: Optional[str] = None, keyword: Optional[str] = None) -> GateResultLite:
     """F15_voice — the stock-phrase hard list for a channel with a spec (LinkedIn; S233: 30/41 posts
     — 'worth sitting with', 'not incidental', 'Not as filler. Not as an afterthought.'). Blocking when
     F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
     repaired sentence by sentence (sentence_repair._ELIGIBLE_GATES) at most once, never by a full
     rewrite; `hold_failure` never holds a piece on it. Every violation reads
     "<problem>: '<sentence>'" (the shape sentence_repair.plan parses)."""
-    if spec is None:
-        return _result(F15_GATE, [], repairable=False, blocking=False)
     text = content_text or ""
     spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
     stock: list[str] = []
-    for pattern in STOCK_PATTERNS:
-        for m in pattern.finditer(text):
-            q = _quote(spans, m.start(), m.end())
-            if q:
-                stock.append(f"stock phrase '{' '.join(m.group(0).split())}' — say it plainly or cut it: '{q}'")
+    if spec is not None:
+        for pattern in STOCK_PATTERNS:
+            for m in pattern.finditer(text):
+                q = _quote(spans, m.start(), m.end())
+                if q:
+                    stock.append(f"stock phrase '{' '.join(m.group(0).split())}' — say it plainly or cut it: '{q}'")
+    # S234 round 2 — every channel: contrast-frame density and lines shared with earlier pieces of
+    # the same brief (S234 panel §5 fix 6). Same quoted shape, same one-repair-then-flag rule.
+    stock += _contrast_violations(text, spans)
+    stock += _template_violations(text, sibling_texts, exclude_texts, brand_name, spans, keyword)
+    if not stock:
+        return _result(F15_GATE, [], repairable=spec is not None, blocking=False)
     blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
     return _result(F15_GATE, list(dict.fromkeys(stock)), repairable=True, blocking=blocking)
 
@@ -1285,6 +1402,7 @@ def run_quality_gates(
     hygiene_ctx: Optional[HygieneContext] = None,
     sibling_openers: Optional[list[str]] = None,
     stock_blocking: bool = True,
+    sibling_texts: Optional[list[str]] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1344,12 +1462,17 @@ def run_quality_gates(
         # both pass when the caller gives no hygiene context.
         gate_scope(content_text, hygiene_ctx, seo_title, meta_description),
         gate_hygiene(content_text, hygiene_ctx),
+        gate_leak(content_text, hygiene_ctx),  # S234 round 2 — blocking leaks, sentence-repairable
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
         gate_social_shape(content_text, spec),
         # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1);
         # the warn-only checks are their own result so a stock repair never rewrites them.
-        gate_voice(content_text, spec=spec, stock_blocking=stock_blocking),
+        # S234 round 2 — plus contrast density and sibling templates, every channel.
+        gate_voice(content_text, spec=spec, stock_blocking=stock_blocking, sibling_texts=sibling_texts,
+                   exclude_texts=[t for t in (hygiene_ctx.lexicon.own_text if hygiene_ctx else atom_text, cta,
+                                              hygiene_ctx.facts if hygiene_ctx else None) if t],
+                   brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword),
         gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
                         sibling_openers=sibling_openers),
     ]
@@ -1369,6 +1492,14 @@ def run_quality_gates(
     gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
     gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text, source_text=atom_text,
                                     voice=(brand_pack or {}).get("voice"))
+    # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
+    # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
+    # failure left the piece is held at once; when another gate fails first, that gate's repair
+    # runs (sentence_repair.plan skips these two).
+    if channel == "blog":
+        gate_ledger.append(gate_faq_contract(content_text))
+    if spec is not None:
+        gate_ledger.append(gate_first_line(content_text, spec))
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
     # considers a BLOCKING gate now; a failed non-blocking gate (currently only
     # promises_an_option) never holds/repairs a piece, but its result is still in gate_ledger AND
@@ -1393,4 +1524,6 @@ __all__ = [
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
     "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
+    "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
+    "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
 ]

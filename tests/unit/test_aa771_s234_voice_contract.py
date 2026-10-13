@@ -424,7 +424,8 @@ class TestT9Prompt:
 
     def test_blog_prompts_are_byte_identical(self):
         """Guard: hashes computed on the PR2 base (feat/aa768-hygiene-scope-seed) before any AA-771
-        S234 edit. Any change to a blog writer prompt must be deliberate and update these."""
+        S234 edit. Any change to a blog writer prompt must be deliberate and update these.
+        Updated S234 round 2 review (AA-768): the FAQ is required with 3-4 pairs (F16_faq contract)."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -446,8 +447,8 @@ class TestT9Prompt:
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "be2787f580be157dccf3ed5ae5f7183d6e7bbd2f1a78a747089b1031806b8cba"
-        assert sha(single) == "6dc220ac252478f0947e4644db81aae5c26d3aa6f5a25b5190540f097979aed3"
-        assert sha(route) == "d2619b3f8f456ecb0ae02abc762d22dcefcfd4af42a1bdf7ef81dacb3b7acdca"
+        assert sha(single) == "c282fdddb68017597157bfa4e92275a70c988d55dd30b2c4d9edf59b7b2db6fd"
+        assert sha(route) == "5938dbf1a12c6f5d52b6b2899af0ac22f633ef45986320edd1410e31fbd77f4b"
 
 
 # ---------------------------------------------------------------- hygiene with the spec (finalize_social)
@@ -512,7 +513,11 @@ class TestF14SocialShape:
         text = "x" * 150 + "\n\n" + _words(150) + "\n\n#A #B #C #D"
         v = qg.gate_social_shape(text, linkedin_spec(TRAIL))["violations"]
         assert any(s.startswith("4 hashtags, more than 3: '#A #B #C #D'") for s in v)
-        assert any(s.startswith("first line is 150 characters, over 140") for s in v)
+        # S234 round 2 — the first line has its own blocking result (F14_first_line)
+        assert not any(s.startswith("first line") for s in v)
+        fl = qg.gate_first_line(text, linkedin_spec(TRAIL))
+        assert fl["violations"][0].startswith("first line is 150 characters, over 140")
+        assert fl["blocking"] and not fl["repairable"]
 
     def test_hashtags_do_not_count_as_words(self):
         assert post_words("One two three. #Four #Five") == 3
@@ -654,10 +659,10 @@ class TestHighlights:
     def test_f15_and_f14_quotes_are_highlighted(self):
         text = "x" * 150 + "\n\nDay 2 ends at the pools. That detail is worth sitting with."
         f15 = qg.gate_voice(text, spec=linkedin_spec(TRAIL))
-        f14 = qg.gate_social_shape(text, linkedin_spec(TRAIL))
+        f14 = qg.gate_first_line(text, linkedin_spec(TRAIL))
         hs = highlights(text, [f15, f14], [])
         gates = {h["gate"] for h in hs}
-        assert {"F15_voice", "F14_social_shape"} <= gates
+        assert {"F15_voice", "F14_first_line"} <= gates
         h = next(h for h in hs if h["gate"] == "F15_voice")
         assert text[h["start"]:h["end"]] == "That detail is worth sitting with."
 

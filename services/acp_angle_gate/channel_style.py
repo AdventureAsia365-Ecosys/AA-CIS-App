@@ -140,7 +140,7 @@ CHANNEL_STYLES: list[ChannelStyle] = [
         "use_when": "Long-form SEO content, hub/pillar pages, in-depth destination guides",
         "structure": (
             "Hook → context / why this place → structured H2 sections → call-to-action paragraph "
-            "→ FAQ (if top-of-funnel)"
+            "→ FAQ (3-4 pairs)"
         ),
         "style": "informative, structured, SEO-aware, still specific (not generic travel copy)",
         "avoid": "keyword stuffing, generic listicle tone, cliché superlatives without proof",

@@ -482,6 +482,18 @@ rewrite), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for o
 never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener; warn only, never repaired). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
+S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
+on…", "This guide covers…", the SCOPE's day span), the brand pack's audience ranges ("25–40", "seven-to-sixteen")
+and a piece opening on a pronoun with no referent; hygiene.autofix trims headings and deletes such a sentence
+only when no pronoun is orphaned. A part-of-trip piece's writer gets the **scoped trip name** (no duration, no
+out-of-scope places); the whole trip's length and "the journey concludes" are F12_scope hits. **F15_voice**
+also counts contrast frames (>1 per 150 words) and lines shared with up to 5 earlier pieces of the same request,
+on every channel; a style-only repair runs on `t9_repair`. Contract gates last in the ledger, owned by one-call
+fix steps (`t9_repair`) and never sent to a rewrite: **F16_faq** (blog ends with "## FAQ" and ≥3 pairs after
+the droppers; one FAQ regeneration per writer text) and **F14_first_line** (LinkedIn hook still over the
+spec after the split and one first-sentence rewrite). Every sentence repair, FAQ regeneration and first-line
+rewrite is reverted when it leaves a new repeat or an orphaned pronoun (`sentence_repair.splice_checked`). An
+approved piece's leftover style-only failure is stored `blocking: false, waived: true` in `gate_ledger`.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:

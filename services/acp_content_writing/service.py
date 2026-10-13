@@ -50,12 +50,13 @@ from services.acp_content_writing.quality_gates import (
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
 from services.acp_content_writing import hygiene, sentence_repair
-from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
-                                                   rewrite_with_feedback, write_content)
+from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
+                                                   repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (STYLE_ONLY_GATES, deep_strip_citation_tags,
-                                                          drop_restated_faq, drop_unanswerable_faq, hold_failure,
-                                                          run_quality_gates, strip_citation_tags)
+from services.acp_content_writing.quality_gates import (FAQ_MIN_PAIRS, STYLE_ONLY_GATES, deep_strip_citation_tags,
+                                                          drop_restated_faq, drop_unanswerable_faq, faq_pair_count,
+                                                          hold_failure, replace_faq_section, run_quality_gates,
+                                                          strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -345,10 +346,13 @@ def _grounding_text(context: dict) -> str:
     """AA-768 — the gates' view of what the writer was given as fact: the seed (atom or joined
     route moments) + the Facts block + the audience and trip lines build_user_prompt() also
     shows the writer. The audience/trip lines were missing before, so a number the brand itself
-    states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot)."""
+    states (terra-family's "children aged 7–16") failed F1 as invented (S231 pilot).
+    S234 round 2 — the TRIP line is the one the writer got (`writer_trip_name`, the scoped trip name)
+    when run_write_background() set it."""
+    trip = context["writer_trip_name"] if "writer_trip_name" in context else context.get("trip_name")
     return grounding_text_from(
         seed=context["atom_text"], facts_text=context.get("facts_text"),
-        brand_audience=context.get("brand_audience"), trip_name=context.get("trip_name"),
+        brand_audience=context.get("brand_audience"), trip_name=trip,
         destination=context.get("destination"),
     )
 
@@ -359,7 +363,7 @@ def grounding_from_writer_input(writer_input: dict) -> str:
     wi = writer_input or {}
     return grounding_text_from(
         seed=wi.get("seed") or "", facts_text=wi.get("facts"), brand_audience=wi.get("brand_pack"),
-        trip_name=wi.get("trip"), destination=wi.get("destination"),
+        trip_name=wi["writer_trip"] if "writer_trip" in wi else wi.get("trip"), destination=wi.get("destination"),
     )
 
 
@@ -505,6 +509,127 @@ def _repair_source(content_text: str, items: list[dict], context: dict) -> str:
     if audience.get("core_idea"):
         parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
     return "\n\n".join(p for p in parts if p)
+
+
+def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
+    """S234 round 2 (panel §3, piece #7) — an APPROVED piece can still carry a failed style-only gate
+    (F15_voice) marked `blocking: true` when the AA-528 guard reverted to attempt 1's ledger. The
+    piece ships with it by design (hold_failure skips style-only gates), so the persisted ledger
+    says so too: `blocking: false, waived: true`. Readers count blocking failures from gate_ledger
+    (CONTEXT.md), and "failed blocking yet approved" read as a gate bug."""
+    if status != "approved":
+        return gate_ledger
+    return [{**g, "blocking": False, "waived": True}
+            if not g["passed"] and g.get("blocking", True) and g["gate"] in STYLE_ONLY_GATES else g
+            for g in gate_ledger]
+
+
+def _style_only_repair(gate_ledger: list[dict]) -> bool:
+    """Every blocking failure a sentence repair will fix is style-only (F15_voice: stock phrase,
+    contrast frame, sibling template) — that repair runs on the cheap t9_repair stage (S234 round 2)."""
+    failed = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+              and g["gate"] not in sentence_repair.OWNED_ELSEWHERE]
+    return bool(failed) and all(g["gate"] in STYLE_ONLY_GATES for g in failed)
+
+
+async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygiene.HygieneContext,
+                                request_id, brand_ignore: frozenset) -> tuple[str, float, list[str]]:
+    """S234 round 2 (panel §5 fix 1) — a blog must end with "## FAQ" and ≥ FAQ_MIN_PAIRS pairs, counted
+    after drop_restated_faq / drop_unanswerable_faq. When short: ONE t9_repair call
+    (generate.write_faq, about $0.004–0.008 on Haiku) writes a new FAQ from the moment's own seed
+    lines + Facts, the section is replaced (prose found after the old FAQ moves above it, so the CTA
+    stays before the FAQ), hygiene.autofix and both droppers run again, and the result is kept only
+    when it has more pairs than before and passes the repair integrity check. F16_faq then reports
+    whatever is still short. Returns (text, cost, log lines)."""
+    before = faq_pair_count(content_text)
+    if before >= FAQ_MIN_PAIRS:
+        return content_text, 0.0, []
+    own_seed = hygiene.split_seed(context.get("atom_text") or "")[0]
+    facts_text = context.get("facts_text") or ""
+    audience = context.get("brand_audience") or {}
+    try:
+        pairs, cost = await asyncio.to_thread(
+            write_faq, source=own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else ""),
+            body=content_text.partition("## FAQ")[0], brand_name=audience.get("brand_name"),
+            tenant_id=context.get("tenant_id"), angle_gate_request_id=str(request_id),
+        )
+    except Exception as e:  # noqa: BLE001 — F16_faq reports the short FAQ
+        logger.warning("t9_faq_regen_failed", request_id=str(request_id), error=str(e)[:200])
+        return content_text, 0.0, []
+    new = replace_faq_section(content_text, pairs)
+    new, _ = hygiene.autofix(new, hyg)
+    new, _ = drop_restated_faq(new)
+    new, _ = drop_unanswerable_faq(new, own_seed, facts_text)
+    after = faq_pair_count(new)
+    problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
+    if after <= before or problems:
+        why = "; ".join(problems[:2]) if problems else f"{after} pair(s) left after the droppers"
+        return content_text, cost, [f"FAQ regeneration not kept ({why})"]
+    return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs)"]
+
+
+async def _fix_first_line(content_text: str, *, spec, context: dict, hyg: hygiene.HygieneContext,
+                          request_id, brand_ignore: frozenset) -> tuple[str, float, list[str]]:
+    """S234 round 2 — LinkedIn hook line still over the brand's first_line_max after
+    hygiene.autofix's deterministic split (S234 #4 165, #12 209 chars: the first SENTENCE is the long
+    part). ONE t9_repair call (about $0.001–0.002 on Haiku) rewrites only that sentence to ≤120
+    characters; the splice is re-split, then kept only when the line fits and the integrity check
+    passes. F14_first_line reports what is still too long."""
+    if spec is None or not spec.first_line_max:
+        return content_text, 0.0, []
+    head = content_text.strip().split("\n", 1)[0].strip()
+    if len(strip_citation_tags(head)) <= spec.first_line_max:
+        return content_text, 0.0, []
+    first = next((sp for sp in hygiene.sentence_spans(content_text) if sp["kind"] == "prose"), None)
+    if first is None:
+        return content_text, 0.0, []
+    item = {"start": first["start"], "end": first["end"], "sentence": first["clean"],
+            "problem": (f"this opening line is {len(first['clean'])} characters; LinkedIn cuts the hook at "
+                        f"{spec.first_line_max}. Rewrite it as ONE sentence of at most 120 characters with the same "
+                        "meaning and no new fact, place, number or stock phrase")}
+    item["context"] = sentence_repair.neighbours(content_text, item)
+    try:
+        reps, cost = await asyncio.to_thread(
+            repair_sentences, sentences=[item], content_seed=_repair_source(content_text, [item], context),
+            facts_text=None, channel=context.get("channel"), tenant_id=context.get("tenant_id"),
+            angle_gate_request_id=str(request_id), stage=SEO_FIT_STAGE, mode="first_line",
+        )
+    except Exception as e:  # noqa: BLE001 — F14_first_line reports the long line
+        logger.warning("t9_first_line_fix_failed", request_id=str(request_id), error=str(e)[:200])
+        return content_text, 0.0, []
+    if not (reps and reps[0].strip()):
+        return content_text, cost, ["first-line rewrite returned nothing; kept the original"]
+    new = sentence_repair.splice(content_text, [dict(item)], reps, ignore=brand_ignore)
+    new, _ = hygiene.autofix(new, hyg)
+    line = strip_citation_tags(new.strip().split("\n", 1)[0].strip())
+    problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
+    if len(line) > spec.first_line_max or problems:
+        why = "; ".join(problems[:2]) if problems else f"still {len(line)} characters"
+        return content_text, cost, [f"first-line rewrite not kept ({why})"]
+    return new, cost, [f"rewrote the first sentence to fit the hook line ({len(head)} → {len(line)} characters)"]
+
+
+_SIBLING_TEXTS_QUERY = """
+    SELECT content_text FROM acp_shared.content_piece
+    WHERE tenant_id = $1::uuid AND angle_gate_request_id = $2::uuid AND piece_id <> $3::uuid
+      AND status IN ('approved', 'held') AND btrim(content_text) <> ''
+    ORDER BY created_at DESC
+    LIMIT 5
+"""
+
+
+async def _sibling_texts(tenant_id: Optional[str], request_id: UUID, piece_id: UUID, pool) -> list[str]:
+    """S234 round 2 (panel §5 fix 6) — up to 5 earlier pieces of the SAME angle_gate_request, one
+    SELECT, for the F15_voice sibling-template check. [] on any error or without a tenant."""
+    if not tenant_id:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_SIBLING_TEXTS_QUERY, str(tenant_id), str(request_id), str(piece_id))
+        return [r["content_text"] for r in rows if isinstance(r["content_text"], str)]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t9_sibling_texts_failed", request_id=str(request_id), error=str(e)[:200])
+        return []
 
 
 def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
@@ -848,19 +973,26 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # write_content()/rewrite_with_feedback() below (those get `facts_text=facts_text` as its own
     # argument instead, appended once inside build_user_prompt()) — this avoids the Facts block
     # appearing twice in what the model actually reads.
+    spec = channel_spec(channel, brand_audience)
+    hyg = hygiene.HygieneContext(seed=atom_text, scope=context.get("scope"), trip_name=trip_name,
+                                 brand_name=(brand_audience or {}).get("brand_name"), cta=cta,
+                                 hashtags_max=spec.hashtags_max if spec else None,
+                                 first_line_max=spec.first_line_max if spec else None,
+                                 audience=(brand_audience or {}).get("customer_segment"), facts=facts_text)
+    # S234 round 2 (panel §5 fix 4) — a part-of-trip piece gets the trip name without its duration
+    # and its out-of-scope places ('Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days' → 'Mongolia:
+    # Khövsgöl Lake'); the hygiene context keeps the full name (its gazetteer needs those places).
+    writer_trip = hygiene.scoped_trip_name(trip_name, context.get("scope"), hyg.lexicon)
+    context["writer_trip_name"] = writer_trip
     grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
     # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
     # splits an over-long first line, in hygiene.autofix after the last LLM step of each attempt.
-    spec = channel_spec(channel, brand_audience)
-    hyg = hygiene.HygieneContext(seed=atom_text, scope=context.get("scope"), trip_name=trip_name,
-                                 brand_name=(brand_audience or {}).get("brand_name"), cta=cta,
-                                 hashtags_max=spec.hashtags_max if spec else None,
-                                 first_line_max=spec.first_line_max if spec else None)
     sibling_openers = context.get("sibling_openers") or []
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
     brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
+    sibling_texts = await _sibling_texts(context.get("tenant_id"), request_id, piece_id, pool)
 
     attempt = 1  # bound before the try block so the except handler always has a real value
     try:
@@ -905,12 +1037,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 content_text, cost, seo_meta, summary = await asyncio.to_thread(
                     write_content, content_seed=atom_text, goal=goal, channel_style=channel_style,
                     brand_audience=brand_audience, angle=chosen, cta=cta,
-                    destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
+                    destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
                     facts_text=facts_text, **openers_kw,
                 )
+                fresh_text = True
             else:
+                fresh_text = False
                 # AA-528 — capture attempt (attempt-1)'s outcome before rewrite_with_feedback()
                 # overwrites content_text/gate_ledger/etc. below. This is what a detected
                 # regression gets reverted to.
@@ -927,12 +1061,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     # S234 — the ±2 neighbouring sentences as context, and only the cited source.
                     for item in repair_items:
                         item["context"] = sentence_repair.neighbours(content_text, item)
+                    # S234 round 2 — a style-only repair (F15_voice) runs on the cheap t9_repair stage.
+                    stage_kw = {"stage": SEO_FIT_STAGE} if _style_only_repair(gate_ledger) else {}
                     try:
                         replacements, cost = await asyncio.to_thread(
                             repair_sentences, sentences=repair_items,
                             content_seed=_repair_source(content_text, repair_items, context),
                             facts_text=None, channel=channel, tenant_id=tenant_id,
-                            angle_gate_request_id=str(request_id),
+                            angle_gate_request_id=str(request_id), **stage_kw,
                         )
                     except SentenceRepairError as e:
                         logger.warning("t9_sentence_repair_failed", request_id=str(request_id), error=str(e)[:200])
@@ -942,14 +1078,20 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     cost = 0.0
                     repair_log[-1]["repair_mode"] = "seo_fields"
                 elif replacements is not None:
-                    content_text = sentence_repair.splice(content_text, repair_items, replacements,
-                                                          ignore=brand_ignore)
+                    # S234 round 2 — splice_checked reverts any repair that leaves a new repeat or a
+                    # pronoun with no referent (panel §5 fix 7: #19, #10) to its pre-repair sentence.
+                    content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
+                                                                  ignore=brand_ignore, cta=cta)
                     repair_log[-1]["repair_mode"] = "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
                     # S234 — replacements turned into deletes because they restated a neighbour.
                     guarded = sum(item.get("guard") == "repeat" for item in repair_items)
                     if guarded:
                         repair_log[-1]["repeat_guard_deletes"] = guarded
+                    reverted = [item for item in repair_items if item.get("guard") == "integrity"]
+                    if reverted:
+                        repair_log[-1]["integrity_reverts"] = len(reverted)
+                        repair_log[-1]["integrity_problems"] = [p for it in reverted for p in it["integrity"]][:5]
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
@@ -964,11 +1106,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         rewrite_with_feedback, content_seed=atom_text, goal=goal, channel_style=channel_style,
                         brand_audience=brand_audience, angle=chosen, cta=cta,
                         revision_feedback=repair_log[-1].get("feedback") or repair_log[-1]["violations"],
-                        destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
+                        destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
                         facts_text=facts_text, **openers_kw,
                     )
+                    fresh_text = True
             total_cost += cost
             seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text,
                                                      context=context, request_id=request_id, hyg=hyg)
@@ -1017,6 +1160,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 content_text, faq_dropped = drop_restated_faq(content_text)
                 content_text, faq_unanswerable = drop_unanswerable_faq(
                     content_text, hygiene.split_seed(atom_text)[0], facts_text)
+                if fresh_text:  # S234 round 2 — FAQ contract: one regeneration per writer text
+                    content_text, faq_cost, faq_regen = await _enforce_faq_contract(
+                        content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore)
+                    total_cost += faq_cost
+                    faq_unanswerable = list(faq_unanswerable) + faq_regen
+            first_line_log: list[str] = []
+            if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split
+                content_text, fl_cost, first_line_log = await _fix_first_line(
+                    content_text, spec=spec, context=context, hyg=hyg, request_id=request_id,
+                    brand_ignore=brand_ignore)
+                total_cost += fl_cost
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
@@ -1027,6 +1181,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 brand_pack=brand_audience, hygiene_ctx=hyg, **openers_kw,
                 # S234 review — a stock phrase blocks (one sentence repair) on attempt 1 only.
                 stock_blocking=attempt == 1,
+                sibling_texts=sibling_texts,  # S234 round 2 — F15 sibling templates
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -1035,9 +1190,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             if faq_log:
                 flags.append({"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
                               "violations": faq_log})
-            if hygiene_log:  # S234 — every in-place edit, shown in the admin drawer
+            if hygiene_log or first_line_log:  # S234 — every in-place edit, shown in the admin drawer
                 flags.append({"gate": "F13_autofix", "passed": False, "blocking": False, "repairable": False,
-                              "violations": hygiene_log})
+                              "violations": hygiene_log + first_line_log})
             # AA-701 — Jev questions next to this attempt's gates (allow-listed tenants, observe only).
             await observe_t10(
                 tenant_id=tenant_id, attempt_key=f"{request_id}:{attempt}", content_text=content_text,
@@ -1187,6 +1342,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     ],
                 })
 
+        gate_ledger = _waive_style_only(gate_ledger, status)  # S234 round 2 — panel §3, piece #7
         progress_step("save")  # AA-637 live view
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,
@@ -1240,6 +1396,8 @@ def writer_input_snapshot(context: dict) -> dict:
         "angle": {k: chosen.get(k) for k in ("name", "why_it_works", "formula_fit", "best_final_style")},
         "goal": goal.get("key"), "channel": context.get("channel"), "keyword": context.get("keyword"),
         "cta": context.get("cta"), "trip": context.get("trip_name"), "destination": context.get("destination"),
+        # S234 round 2 — the TRIP line the writer actually got (scoped trip name); absent before.
+        **({"writer_trip": context["writer_trip_name"]} if "writer_trip_name" in context else {}),
     }
 
 
