@@ -37,6 +37,7 @@ interface BrandData {
   brand_name: string; brand_type: string; core_idea: string;
   customer_segment: string; customer_mindset: string;
   tone_of_voice: string[]; good_examples: string; target_markets: string[];
+  default_cta?: string;
 }
 
 // Single-line text input, same visual language as Field (textarea) above.
@@ -112,6 +113,7 @@ export default function BrandTab() {
   const [customerMindset, setCustomerMindset] = useState("");
   const [toneOfVoice, setToneOfVoice] = useState("");
   const [goodExamples, setGoodExamples] = useState("");
+  const [defaultCta, setDefaultCta] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -132,6 +134,7 @@ export default function BrandTab() {
         setCustomerMindset(d.customer_mindset ?? "");
         setToneOfVoice((d.tone_of_voice ?? []).join(", "));
         setGoodExamples(d.good_examples ?? "");
+        setDefaultCta(d.default_cta ?? "");
         setDirty(false);
       }
     } finally { setLoading(false); }
@@ -159,6 +162,7 @@ export default function BrandTab() {
           customer_mindset: customerMindset,
           tone_of_voice: toneOfVoice.split(",").map(w => w.trim()).filter(Boolean),
           good_examples: goodExamples,
+          default_cta: defaultCta,
         }),
       });
       const body = await r.json().catch(() => ({}));
@@ -318,6 +322,9 @@ export default function BrandTab() {
             placeholder="Paste 1-2 short passages that read exactly the way this brand should sound."
             value={goodExamples} onChange={v => { setGoodExamples(v); markDirty(); }}
           />
+          <TextField label="Default Call to Action" value={defaultCta}
+            onChange={v => { setDefaultCta(v); markDirty(); }}
+            placeholder="e.g. Ask us for the full itinerary and dates" />
           <Field
             label="Should Write (System Prompt)" rows={5}
             placeholder="e.g. We are a luxury private-travel operator for US/UK professionals aged 40–60. Emphasise depth of experience, exclusivity, and cultural immersion."

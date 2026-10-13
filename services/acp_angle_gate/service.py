@@ -160,6 +160,8 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
         brand_audience=brand_audience, destination=destination, trip_name=trip_name,
         search_demand=search_demand, piece_history=piece_history,
         tenant_id=tenant_id, request_id=request_id, pool=pool,  # AA-505
+        # AA-771 (S233) — the angle is shaped for the request's channel (always set by the Slate)
+        channel_style=get_channel_style(req["channel"]) if req["channel"] else None,
     )
 
     # AA-512 — measurable ranking (ADR 0004), replacing the LLM's own opinion, ONLY when channel
@@ -172,6 +174,10 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     if req["channel"]:
         channel_style = get_channel_style(req["channel"])
         avoid_text = channel_style["avoid"] if channel_style else ""
+        # AA-771 (S233) — the tenant's own forbidden words count as avoid-list hits too.
+        tenant_forbidden = [w for w in (brand_audience.get("forbidden_words") or []) if "," not in w]
+        if tenant_forbidden:
+            avoid_text = ", ".join(p for p in (avoid_text, ", ".join(tenant_forbidden)) if p)
         asked_questions = search_demand.people_also_ask if search_demand else []
         ranking_evidence, recommended_index = rank_angles(
             angles, claimed_answers=[a.get("answers", []) for a in angles],

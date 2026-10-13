@@ -178,8 +178,9 @@ def test_brand_name_reaches_prompt_and_gate_source():
                                  "structure": "s", "style": "st", "avoid": "a"},
                   angle={"name": "a", "why_it_works": "w", "best_final_style": "b"}, cta="Book")
     prompt = build_user_prompt(brand_audience={"brand_name": "Trail Pulse"}, **kwargs)
-    assert "BRAND NAME (the only name to use for the brand — never invent another): Trail Pulse" in prompt
-    assert "BRAND NAME" not in build_user_prompt(brand_audience={}, **kwargs)
+    # AA-771 (S233): the brand name now rides in the brand pack block
+    assert "Name: Trail Pulse" in prompt
+    assert "Name:" not in build_user_prompt(brand_audience={}, **kwargs)
     assert "BRAND: Trail Pulse" in service._grounding_text(
         {"atom_text": "seed", "brand_audience": {"brand_name": "Trail Pulse"}})
 

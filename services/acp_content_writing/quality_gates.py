@@ -275,6 +275,47 @@ def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
     return _result("F2_banned_patterns", violations)
 
 
+# ---------------------------------------------------------------- F2b / F11: tenant brand (AA-771, S233)
+
+def _sentence_with(content_text: str, needle: str) -> str:
+    for sent in _SENT_SPLIT_RE.split(content_text or ""):
+        if needle.lower() in sent.lower():
+            return strip_citation_tags(sent.strip())[:160]
+    return needle
+
+
+def gate_brand_forbidden_words(content_text: str, atom_text: str,
+                               forbidden_words: Optional[list[str]]) -> GateResultLite:
+    """F2_brand_forbidden — blocking, repairable: a word or phrase the tenant's own T0 brand pack
+    forbids (before S233 these reached only the F9 judge as text, a warn-only signal). Exempt
+    when the phrase is in the source itself, same carve-out as F2."""
+    violations: list[str] = []
+    atom_lower = (atom_text or "").lower()
+    for phrase in forbidden_words or []:
+        phrase = phrase.strip()
+        if len(phrase) < 2 or phrase.lower() in atom_lower:
+            continue
+        pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
+        m = pattern.search(content_text or "")
+        if m:
+            violations.append(f"uses '{m.group(0)}', which the brand forbids: "
+                              f"'{_sentence_with(content_text, m.group(0))}'")
+    return _result("F2_brand_forbidden", violations)
+
+
+def gate_brand_name(content_text: str, atom_text: str, brand_name: Optional[str]) -> GateResultLite:
+    """F11_brand_name — blocking, repairable: the piece speaks as a brand that is not the tenant
+    ("At Arcadia Adventures, we…" for Trail Pulse, S232) or names the platform (Adventure Asia /
+    AA) to a tenant's readers."""
+    from services.acp_shared.brand_pack import foreign_brand_mentions
+    violations = [
+        f"names a brand that is not {brand_name or 'this brand'} ('{name}'): "
+        f"'{_sentence_with(content_text, name)}'"
+        for name in dict.fromkeys(foreign_brand_mentions(content_text, brand_name, atom_text))
+    ]
+    return _result("F11_brand_name", violations)
+
+
 # ---------------------------------------------------------------- F10 (cross-tenant cannibalization, AA-484)
 
 def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
@@ -913,6 +954,7 @@ def run_quality_gates(
     seo_title: Optional[str] = None, meta_description: Optional[str] = None,
     slug: Optional[str] = None, keyword: Optional[str] = None,
     cannibalization_match: Optional[dict] = None,
+    brand_pack: Optional[dict] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -956,6 +998,9 @@ def run_quality_gates(
         cta_result,
         gate_grounding(content_text, atom_text),
         gate_banned_patterns(content_text, atom_text),
+        # AA-771 (S233) — the tenant's own forbidden words and brand name, deterministic.
+        gate_brand_forbidden_words(content_text, atom_text, (brand_pack or {}).get("forbidden_words")),
+        gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
         # AA-484 — every channel, not blog-only (cannibalization risk isn't channel-specific);
         # placed right after F2 (another content-safety-class gate), before the DET/judge gates.
         gate_cannibalization(cannibalization_match),
@@ -995,7 +1040,8 @@ def run_quality_gates(
 __all__ = [
     "GateResultLite", "QualityCheckOutcome", "TAG_RE", "ATOM_DENSITY_WORDS",
     "strip_citation_tags", "deep_strip_citation_tags", "gate_cta_present", "gate_grounding",
-    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_promises_an_option", "gate_extreme_length",
+    "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
+    "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates",
 ]

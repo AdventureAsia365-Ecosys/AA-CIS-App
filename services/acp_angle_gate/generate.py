@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import structlog
 from json_repair import repair_json
 
 from services.acp_angle_gate.brand_audience import BrandAudience
+from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
+from services.acp_shared.brand_pack import foreign_brand_mentions
 from services.acp_angle_gate.prompts import SYSTEM_PROMPT, build_user_prompt
 from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.piece_history import PriorPiece
@@ -88,7 +91,7 @@ def _validate(parsed: dict) -> tuple[list[dict], int, str]:
     return angles, recommended_index, reason
 
 
-async def generate_angles(
+async def _generate_once(
     *, content_seed: str, goal: Goal, brand_audience: BrandAudience,
     destination: str | None = None, trip_name: str | None = None,
     search_demand: SearchDemandSignal | None = None,
@@ -96,6 +99,8 @@ async def generate_angles(
     # existing tests/callers that don't pass it are unaffected)
     tenant_id=None, request_id=None, pool=None,  # AA-505 — attribution for llm_call_log, optional
     # (defaults None) so existing tests that call this without them are unaffected.
+    channel_style: ChannelStyle | None = None, revision_feedback: list[str] | None = None,
+    attempt: int = 1,
 ) -> tuple[list[dict], int, str, float]:
     """Returns (angles, recommended_index, recommendation_reason, cost_usd). `angles` is a list
     of exactly 3 dicts with the 4 required fields — service.py persists these directly into
@@ -114,6 +119,7 @@ async def generate_angles(
         content_seed=content_seed, goal=goal,
         brand_audience=brand_audience, destination=destination, trip_name=trip_name,
         search_demand=search_demand, piece_history=piece_history,
+        channel_style=channel_style, revision_feedback=revision_feedback,
     )
     client = LLMClient()
     request = LLMRequest(
@@ -129,7 +135,7 @@ async def generate_angles(
     avg_answers = (sum(len(a["answers"]) for a in angles) / len(angles)) if angles else 0
     quality_signal = {
         "angles_generated": len(angles), "recommended_index": recommended_index,
-        "avg_paa_answers_per_angle": round(avg_answers, 2),
+        "avg_paa_answers_per_angle": round(avg_answers, 2), "attempt": attempt,
     }
     if pool is not None:
         await record_call_with_pool(
@@ -158,4 +164,39 @@ async def generate_angles(
     return angles, recommended_index, reason, resp.cost_usd
 
 
-__all__ = ["AngleGenerationError", "generate_angles"]
+_ANGLE_TEXT_FIELDS = ("name", "why_it_works", "formula_fit", "best_final_style")
+
+
+def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience) -> list[str]:
+    """AA-771 (S233) — deterministic checks on the 3 angles before anyone sees them: a brand that
+    is not the tenant's (stored S232 angles said "how AA builds this visit" for terra-family) and
+    the tenant's own forbidden words."""
+    out: list[str] = []
+    brand_name = brand_pack.get("brand_name")
+    for i, a in enumerate(angles):
+        text = " ".join(str(a.get(f) or "") for f in _ANGLE_TEXT_FIELDS)
+        for name in dict.fromkeys(foreign_brand_mentions(text, brand_name)):
+            out.append(f"angle {i + 1} ('{a.get('name')}') names '{name}' — only "
+                       f"{brand_name or 'the brand in the BRAND block'} may be named")
+        lower = text.lower()
+        for w in brand_pack.get("forbidden_words") or []:
+            if w.strip() and re.search(rf"(?<!\w){re.escape(w.strip().lower())}(?!\w)", lower):
+                out.append(f"angle {i + 1} ('{a.get('name')}') uses '{w.strip()}', which the brand forbids")
+    return out
+
+
+async def generate_angles(*, brand_audience: BrandAudience, **kwargs) -> tuple[list[dict], int, str, float]:
+    """One angle call; when the angles break the brand contract (angle_contract_violations), one
+    more call with those violations as feedback. Returns the second set either way (ranking then
+    penalises any remaining avoid-list hits). Cost covers both calls."""
+    angles, idx, reason, cost = await _generate_once(brand_audience=brand_audience, **kwargs)
+    violations = angle_contract_violations(angles, brand_audience)
+    if not violations:
+        return angles, idx, reason, cost
+    logger.info("angle_gate_contract_retry", violations=violations[:5])
+    angles, idx, reason, cost2 = await _generate_once(
+        brand_audience=brand_audience, revision_feedback=violations, attempt=2, **kwargs)
+    return angles, idx, reason, cost + cost2
+
+
+__all__ = ["AngleGenerationError", "generate_angles", "angle_contract_violations"]

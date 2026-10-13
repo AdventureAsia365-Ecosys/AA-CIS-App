@@ -60,6 +60,7 @@ BRAND_FIELD_LIMITS = {
     "core_idea": MAX_BRAND_MEDIUM_LEN,
     "customer_segment": MAX_BRAND_MEDIUM_LEN,
     "customer_mindset": MAX_BRAND_MEDIUM_LEN,
+    "default_cta": MAX_BRAND_MEDIUM_LEN,
     "brand_name": MAX_SHORT_FIELD_LEN,
     "brand_type": MAX_SHORT_FIELD_LEN,
 }

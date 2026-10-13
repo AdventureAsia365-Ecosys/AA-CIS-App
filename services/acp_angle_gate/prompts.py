@@ -11,6 +11,8 @@ generate_node() in services/content_generation/graph.py already uses.
 from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
+from services.acp_angle_gate.channel_style import ChannelStyle
+from services.acp_shared.brand_pack import render_brand_block
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.piece_history import PriorPiece
@@ -25,11 +27,10 @@ from services.acp_shared.piece_history import PriorPiece
 # full at write time regardless, this only removes an early, now-redundant channel-conditioning
 # pass over the angle's own `best_final_style` field.
 
-SYSTEM_PROMPT = """You are a senior content strategist for Adventure Asia (AA), a travel \
-company. Your job in this step is ONLY to generate 3 distinct content angles for one piece of \
-content — you are NOT writing the final content itself (that happens later, after a human picks \
-one of your 3 angles AND a channel — neither the specific channel nor its format rules are known \
-yet at this step).
+SYSTEM_PROMPT = """You are a senior content strategist for the travel brand described in the \
+BRAND block below. Your job in this step is ONLY to generate 3 distinct content angles for one \
+piece of content for the channel given below — you are NOT writing the final content itself (a \
+writer does that later, from the angle a human picks).
 
 An "angle" here means: one specific strategic approach to the SAME content seed/topic, shaped by \
 a chosen goal and its marketing formula. The 3 angles you generate must be genuinely different \
@@ -41,18 +42,24 @@ Each angle needs exactly 4 required fields, plus a 5th when questions are suppli
 never vague ("this is engaging")
 - formula_fit: name the marketing formula step-shape this angle follows (from the goal's own \
 formula, given below) and briefly how this specific angle realizes it
-- best_final_style: how this angle's own story/narrative should feel and unfold when it's \
-eventually written — tone, shape, opening approach — general to the angle itself, not tied to \
-any one channel (channel-specific format/structure rules are applied separately, later, once a \
-channel is chosen)
-- answers: (AA-512) a list of the questions from "Travelers also ask" below that THIS SPECIFIC \
+- best_final_style: a brief for the writer — tone, shape, opening approach, and WHICH details \
+from the CONTENT SEED to lead with. The writer follows it literally, so it must not name any \
+object, scene, sound, smell, number, activity, form of access or promise that is not in the \
+CONTENT SEED (no "the guide unrolling a map", no "the smell of incense" unless the seed says so).
+- answers: a list of the questions from "Travelers also ask" below that THIS SPECIFIC \
 angle would genuinely answer if written — quoted EXACTLY as given, word for word. Claim only \
 what the angle really covers: an angle answering 2 questions well beats one listing 6 it barely \
 touches. Empty list if none of the given questions fit this angle, or if no questions were given.
 
-Never invent facts, statistics, testimonials, or claims not present in the content seed given to \
-you. If the content seed lacks a concrete detail a strong angle would want, say so honestly \
-rather than fabricating one.
+Never invent facts, statistics, testimonials, scene detail or claims not present in the content \
+seed given to you. If the content seed lacks a concrete detail a strong angle would want, build \
+the angle on what the seed does have rather than fabricating one.
+
+Every angle must fit the BRAND: follow every rule in its style guide (including each "do not" — \
+e.g. a brand that says not to make a trip sound like a school trip gets no classroom framing), \
+never use its forbidden words, and never promise exclusivity, rare access or transformation the \
+seed does not state. Never name any brand other than the one in the BRAND block, and never \
+mention the platform this material came from.
 
 If a SEARCH DEMAND SIGNAL block is given below, treat it as real traveler search behavior you \
 may use to judge which angle is most relevant or timely — never as a source of new facts about \
@@ -77,11 +84,9 @@ Return ONLY valid JSON, no markdown fences, no commentary, in exactly this shape
   "recommended_index": 0,
   "recommendation_reason": "short reason this one is the strongest of the 3"
 }
-recommended_index must be 0, 1, or 2. NOTE: when a channel is already known for this request \
-(most requests today, via the Slate — see services/acp_angle_gate/service.py), the caller \
-RE-RANKS the 3 angles itself by measurable criteria (real PAA-answer count, checked against your \
-"answers" claims, and channel avoid-list violations) and may override recommended_index — your \
-own recommendation is only the fallback for the rare request where no channel is known yet."""
+recommended_index must be 0, 1, or 2. The caller re-ranks the 3 angles by measurable criteria \
+(real PAA-answer count, checked against your "answers" claims, and avoid-list hits) and may \
+override recommended_index."""
 
 
 def build_user_prompt(
@@ -89,9 +94,9 @@ def build_user_prompt(
     destination: str | None, trip_name: str | None,
     search_demand: SearchDemandSignal | None = None,
     piece_history: list[PriorPiece] | None = None,
+    channel_style: ChannelStyle | None = None,
+    revision_feedback: list[str] | None = None,
 ) -> str:
-    segment = brand_audience.get("customer_segment") or "(not specified for this tenant)"
-    mindset = brand_audience.get("customer_mindset") or "(not specified for this tenant)"
 
     parts = [
         f"CONTENT SEED (from a curated atom — the concrete detail this content must be about):\n"
@@ -105,12 +110,16 @@ def build_user_prompt(
         f"Formula logic: {goal['logic']}\n"
         f"Marketing term: {goal['marketing_term']}"
     )
-    parts.append(
-        f"BRAND AUDIENCE (fixed, from this tenant's brand identity — write angles that would "
-        f"genuinely appeal to THIS audience, not a generic traveller):\n"
-        f"Customer segment: {segment}\n"
-        f"Customer mindset: {mindset}"
-    )
+    parts.append(render_brand_block(brand_audience))
+    # AA-771 (S233) — the channel is always known when T8 runs (pick_subject sets it), so the
+    # angle is shaped for it; AA-469 removed this block when the channel came after the angle.
+    if channel_style:
+        parts.append(
+            f"CHANNEL: {channel_style['display_name']}\n"
+            f"Channel use case: {channel_style['use_when']}\n"
+            f"Channel structure: {channel_style['structure']}\n"
+            f"Channel — avoid: {channel_style['avoid']}"
+        )
     # AA-469 Việc 4 — optional 5th block (was 6th, back when CHANNEL was still a block here — see
     # this module's own header comment on the flow-order fix that removed it). Omitted entirely
     # (not "SEARCH DEMAND: none") when there's no seo_context row for this tour, or when the row
@@ -138,6 +147,9 @@ def build_user_prompt(
                 f"Angle used: {p.angle_name or '(unknown)'} — {p.summary}"
             )
         parts.append("\n".join(lines))
+    if revision_feedback:
+        parts.append("YOUR PREVIOUS ANGLES BROKE THESE RULES — write 3 new angles that do not:\n- "
+                     + "\n- ".join(revision_feedback))
     return "\n\n".join(parts)
 
 

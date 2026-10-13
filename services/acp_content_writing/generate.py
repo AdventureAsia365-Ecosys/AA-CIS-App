@@ -22,13 +22,14 @@ instruction, not patched in later after a production incident the way N7's own f
 from __future__ import annotations
 
 import json
+import re
 
 from json_repair import repair_json
 
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
-from services.acp_content_writing.prompts import SYSTEM_PROMPT, build_user_prompt
+from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS, SYSTEM_PROMPT, build_user_prompt
 from services.acp_content_writing.quality_gates import strip_citation_tags
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
@@ -141,6 +142,19 @@ def _strip_fences(raw: str) -> str:
     return raw
 
 
+_MD_BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1", re.DOTALL)
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+
+
+def strip_markdown(text: str) -> str:
+    """AA-768 (S233) — plain-text channels: drop **bold**/__bold__, "# " heading markers and
+    [text](url) links (→ "text url"). Hashtags (#Bhutan, no space) are kept."""
+    text = _MD_BOLD_RE.sub(r"\2", text)
+    text = _MD_HEADING_RE.sub("", text)
+    return _MD_LINK_RE.sub(r"\1 \2", text)
+
+
 def write_content(
     *, content_seed: str, goal: Goal, channel_style: ChannelStyle,
     brand_audience: BrandAudience, angle: dict, cta: str,
@@ -187,6 +201,8 @@ def write_content(
         body, seo_meta, summary = _parse_blog_envelope(resp.content)
         return body, cost, seo_meta, summary
     content, summary = _extract_summary(_strip_fences(resp.content))
+    if channel in PLAIN_TEXT_CHANNELS:
+        content = strip_markdown(content)
     return content, cost, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
@@ -244,16 +260,19 @@ def rewrite_with_feedback(
         body, seo_meta, summary = _parse_blog_envelope(resp.content)
         return body, cost, seo_meta, summary
     content, summary = _extract_summary(_strip_fences(resp.content))
+    if channel in PLAIN_TEXT_CHANNELS:
+        content = strip_markdown(content)
     return content, cost, {"seo_title": None, "meta_description": None, "slug": None}, summary
 
 
 _REPAIR_SYSTEM = """You fix single sentences inside a finished piece of travel content.
-For each numbered sentence you get the problem a fact-checker found. Return a replacement that
-keeps the sentence's role, tone and flow in the piece but removes the unsupported claim or number:
-use only what the SOURCE states, or widely known background about a place it names. Never add a
-new claim, number, place, scene detail or promise. If nothing true is left to say, return "" to
-delete the sentence. Return ONLY JSON: {"replacements": ["...", "..."]} — one string per numbered
-sentence, in the same order."""
+For each numbered sentence you get the problem a checker found. Return a replacement that keeps
+the sentence's role, tone and flow in the piece but removes the problem — the unsupported claim
+or number, the word the brand forbids, or the wrong brand name (use the BRAND named in the SOURCE,
+or drop the self-reference). Use only what the SOURCE states, or widely known background about a
+place it names. Never add a new claim, number, place, scene detail or promise. If nothing true is
+left to say, return "" to delete the sentence. Return ONLY JSON: {"replacements": ["...", "..."]}
+— one string per numbered sentence, in the same order."""
 
 
 def repair_sentences(
