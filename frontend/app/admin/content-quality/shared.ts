@@ -148,6 +148,11 @@ export const GATE_LABELS: Record<string, string> = {
   F8_framework: "Goal framework",
   F9_cta_fact: "Unsupported claim / CTA",
   F9_brand_style: "Off-brand / AI wording",
+  F12_scope: "Place outside the piece's scope",
+  F13_hygiene: "Leak / social proof / repeat / hashtag",
+  F13_autofix: "Auto-fixed sentences",
+  F14_social_shape: "Social post shape",
+  F15_voice: "Stock phrase / voice",
   within_tenant_reuse: "Repeats this tenant",
 };
 

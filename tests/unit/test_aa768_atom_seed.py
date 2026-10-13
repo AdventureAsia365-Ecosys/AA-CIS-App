@@ -14,14 +14,16 @@ def test_compose_full_seed():
         "Visit Pawangka Monastery, built in the seventh century by Songtsen Gampo.",
         "ancient sacred site", None,
         ["Visit Pawangka Monastery, built in the seventh century by Songtsen Gampo.",  # dup of own
-         "Walk to Pawangka, one of the oldest monasteries near Lhasa."],
+         "Walk to Pawangka, one of the oldest monasteries in the valley.",
+         "Walk to Pawangka, one of the oldest monasteries near Lhasa."],  # S234: names another place
     )
     assert seed.splitlines()[0] == "Pawangka Monastery — visit"
     assert "Source itinerary: Visit Pawangka Monastery, built in the seventh century" in seed
     assert "Why it matters: ancient sacred site" in seed
     assert "Season:" not in seed
     assert seed.count("seventh century") == 1  # sibling duplicate dropped
-    assert "- Walk to Pawangka, one of the oldest monasteries near Lhasa." in seed
+    assert "- Walk to Pawangka, one of the oldest monasteries in the valley." in seed
+    assert "Lhasa" not in seed
 
 
 def test_compose_label_only_when_no_fields():

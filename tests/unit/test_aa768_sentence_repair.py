@@ -101,6 +101,25 @@ async def test_bad_repair_reply_falls_back_to_full_rewrite():
     rw.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_title_only_scope_failure_takes_no_rewrite_and_no_repair_call():
+    """S234 review — a blocking F12 with only title/meta violations re-runs the SEO fit and the
+    gates on the same text; no Sonnet rewrite, no repair call."""
+    f12 = {"gate": "F12_scope", "passed": False, "blocking": True, "repairable": True,
+           "violations": ["title names 'Gobi', outside this piece's scope: 'Gobi Guide'"]}
+    row = {"piece_id": str(uuid4()), "attempt_number": 2, "status": "approved"}
+    with patch.object(service, "write_content", return_value=(PIECE, 0.01, {}, None)), \
+         patch.object(service, "repair_sentences") as rep, \
+         patch.object(service, "rewrite_with_feedback") as rw, \
+         patch.object(service, "run_quality_gates", side_effect=[_outcome([f12]), _outcome([])]) as gates, \
+         patch.object(service, "_finalize_piece", new=AsyncMock(return_value=row)) as fin:
+        await service.run_write_background(uuid4(), uuid4(), _ctx(), pool=MagicMock())
+    rw.assert_not_called()
+    rep.assert_not_called()
+    assert gates.call_args_list[1].kwargs["content_text"] == gates.call_args_list[0].kwargs["content_text"]
+    assert fin.call_args.kwargs["repair_log"][0]["repair_mode"] == "seo_fields"
+
+
 def _llm(content):
     fake = MagicMock()
     fake.generate.return_value = MagicMock(content=content, model_used="sonnet", cost_usd=0.002,

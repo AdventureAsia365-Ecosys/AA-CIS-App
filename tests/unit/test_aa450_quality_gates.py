@@ -247,7 +247,8 @@ class TestRunQualityGates:
         # this call passes no cannibalization_match — always passes with 0 violations).
         # AA-613: F9 now yields TWO results (F9_cta_fact + F9_brand_style), so 9 not 8.
         # AA-768 (S233): + F0_complete; AA-771: + F2_brand_forbidden, F11_brand_name.
-        assert len(outcome["gate_ledger"]) == 12  # cta+grounding+banned+cannib+promises+length+f0+f8+f9x2
+        # AA-768 (S234): + F12_scope, F13_hygiene (warn; pass without a hygiene context).
+        assert len(outcome["gate_ledger"]) == 14  # cta+grounding+banned+cannib+promises+length+f0+f12+f13+f8+f9x2
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
@@ -312,7 +313,8 @@ class TestRunQualityGatesFlagNotBlock:
         # AA-613 — the non-blocking (warn/note) gates are: promises_an_option (note),
         # F8_framework (warn), F9_brand_style (warn). Everything else (product-truth /
         # structural / SEO) stays blocking.
-        _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style"}
+        # AA-768 (S234): + F12_scope (warn for one round) and F13_hygiene (warn).
+        _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style", "F12_scope", "F13_hygiene"}
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",

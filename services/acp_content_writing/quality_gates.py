@@ -52,6 +52,7 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
+from services.acp_content_writing.hygiene import HygieneContext, find_issues
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json
 from services.acp_shared.grounding import find_novel_numeric_claims
 from shared.llm_client.call_log import record_call_sync
@@ -991,6 +992,109 @@ def drop_restated_faq(content_text: str) -> tuple[str, int]:
     return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", dropped
 
 
+# AA-768 (S234) — FAQ questions the seed cannot answer. S233 r1: 5/8 blogs asked about age
+# suitability, fitness or price; the answers came from the brand's AUDIENCE line or were invented.
+# Each topic: (question regex, support regex). A pair is dropped when its question hits a topic
+# and neither the moment's OWN seed lines nor the FACTS block has a support term for it — the
+# "other trips" lines, AUDIENCE and BRAND never count as support. The question side asks about the
+# topic itself (review S234): a family brand names children in most questions ('What will kids
+# see at the reindeer camp?'), so bare kids/children, 'fit', 'include' or 'when should' never
+# count — only age suitability, effort level, price/inclusions and timing/season wording.
+_KIDS = r"(?:young(?:er)? |small |little )?(?:children|kids|toddlers|teens|teenagers|families)"
+_FAQ_TOPICS = {
+    "age": (r"\b(?:what|which|any) (?:ages?|age range|age group)\b|\bages?\s+(?:range|limit|groups?"
+            r"|requirements?|restrictions?)\b|\bage of (?:the )?(?:children|kids)\b|\bminimum age\b|\bhow old\b"
+            r"|\btoo young\b|\bold enough\b|\bage[- ]appropriate\b|\b(?:child|kid|family)[- ]friendly\b"
+            rf"|\bsuit(?:able|ed) (?:for|to) {_KIDS}|\b(?:good|right|ok|okay|safe|appropriate) for {_KIDS}"
+            r"|\b(?:children|kids|toddlers) (?:under|over|aged|of all ages)\b",
+            r"\b(?:aged \d|ages? \d|\d+\s*(?:-|–|to)\s*\d+\s*years|minimum age|children (?:under|over|from|aged)"
+            r"|suitable for (?:young )?(?:children|kids|families)|(?:child|kid|family)[- ]friendly)"),
+    "fitness": (r"\b(?:fitness|how fit|fit enough|physically|physical (?:effort|demands?|condition)|demanding"
+                r"|difficult|difficulty|strenuous|challenging|how hard|level of (?:effort|exertion)"
+                r"|altitude sickness)\b",
+                r"\b(?:strenuous|demanding|difficult|difficulty|fitness|steep|challenging|easy|gentle|moderate"
+                r"|level of exertion)\b"),
+    "price": (r"\b(?:price|prices|pricing|cost|costs|how much|budget|fees?|inclusions?)\b"
+              r"|\bwhat(?:'s| is| are)? included in the (?:price|tour|trip|package|cost)\b"
+              r"|\bwhat does the (?:price|tour|trip|package|cost) include\b",
+              r"(?:\b(?:price|prices|cost|costs|usd|fees?|included|includes|inclusive)\b|[$€£])"),
+    "booking": (r"\b(?:permits?|visas?|book|booking|reserve|reservations?)\b",
+                r"\b(?:permits?|visas?|book|booking|reserv\w*)\b"),
+    "accommodation": (r"\b(?:hotels?|accommodation|where (?:do|will|does) (?:we|you|families|the group) (?:stay|sleep)"
+                      r"|wi-?fi|bathrooms?|showers?|toilets?)\b",
+                      r"\b(?:hotels?|lodges?|ger|gers|camps?|guesthouses?|homestays?|accommodation|overnight|wi-?fi"
+                      r"|bathrooms?|showers?)\b"),
+    "best_time": (r"\b(?:best time|best season|which season|what season|time of year|weather|climate|temperatures?"
+                  r"|when (?:is the best|to go|to visit|to travel))\b",
+                  r"(?:^Season:|\b(?:seasons?|summer|winter|spring|autumn|monsoon|weather|climate|temperatures?"
+                  r"|cold|warm|rain)\b)"),
+}
+_FAQ_Q_RE = re.compile(r"\*\*Q: (.*?)\*\*", re.DOTALL)
+
+
+def unanswerable_faq_topics(question: str, own_seed_text: str, facts_text: Optional[str] = None) -> list[str]:
+    """The topics `question` asks about that neither the seed's own lines nor FACTS support."""
+    support = f"{own_seed_text or ''}\n{facts_text or ''}"
+    q = question.lower()
+    return [topic for topic, (ask, ok) in _FAQ_TOPICS.items()
+            if re.search(ask, q) and not re.search(ok, support, re.I | re.M)]
+
+
+def drop_unanswerable_faq(content_text: str, own_seed_text: str,
+                          facts_text: Optional[str] = None) -> tuple[str, list[str]]:
+    """AA-768 (S234) — remove FAQ pairs whose question the source cannot answer (see
+    `_FAQ_TOPICS`). `own_seed_text` must be the moment's own lines (hygiene.split_seed), never the
+    grounding text with AUDIENCE/BRAND. When fewer than 2 pairs are left, the whole FAQ goes (it is
+    optional per the prompt). Returns (text, one log line per dropped pair)."""
+    body = content_text or ""
+    if "## FAQ" not in body:
+        return body, []
+    pre, _, faq = body.partition("## FAQ")
+    kept, log = [], []
+    for m in _FAQ_PAIR_RE.finditer(faq):
+        q = _FAQ_Q_RE.match(m.group(0))
+        topics = unanswerable_faq_topics(q.group(1) if q else "", own_seed_text, facts_text)
+        if topics:
+            log.append(f"dropped FAQ the source cannot answer ({', '.join(topics)}): "
+                       f"'{strip_citation_tags(q.group(1) if q else m.group(0))[:160]}'")
+        else:
+            kept.append(m.group(0).strip())
+    if not log:
+        return body, []
+    if len(kept) < 2:
+        if kept:
+            log.append(f"dropped the FAQ section: only {len(kept)} answerable pair left")
+        return pre.rstrip() + "\n", log
+    return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", log
+
+
+# ---------------------------------------------------------------- F12 / F13 (AA-768, S234)
+
+# F12_scope warns for one checkpoint round (S234 plan C4); flip to True once the replay and the
+# live checkpoint show 0 false positives. It is repairable either way: a body violation quotes
+# its sentence, so sentence_repair can fix it once it blocks.
+F12_SCOPE_BLOCKING = False
+
+
+def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_title: Optional[str] = None,
+               meta_description: Optional[str] = None) -> GateResultLite:
+    """F12_scope — the title, meta, headings or body name a place outside the piece's SCOPE (the
+    TRIP name's or another trip's places; hygiene.build_scope_lexicon). No context → passes."""
+    if hygiene_ctx is None:
+        return _result("F12_scope", [], blocking=F12_SCOPE_BLOCKING)
+    found = find_issues(content_text, hygiene_ctx, seo_title=seo_title, meta_description=meta_description)
+    return _result("F12_scope", found["scope"], repairable=True, blocking=F12_SCOPE_BLOCKING)
+
+
+def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> GateResultLite:
+    """F13_hygiene (warn) — what autofix could not fix safely: a source-notes leak, social proof,
+    a repeated sentence, a misspelt hashtag, too many hashtags."""
+    if hygiene_ctx is None:
+        return _result("F13_hygiene", [], repairable=False, blocking=False)
+    return _result("F13_hygiene", find_issues(content_text, hygiene_ctx)["hygiene"], repairable=False,
+                   blocking=False)
+
+
 # ---------------------------------------------------------------- orchestration
 
 class QualityCheckOutcome(TypedDict):
@@ -1008,6 +1112,7 @@ def run_quality_gates(
     slug: Optional[str] = None, keyword: Optional[str] = None,
     cannibalization_match: Optional[dict] = None,
     brand_pack: Optional[dict] = None,
+    hygiene_ctx: Optional[HygieneContext] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1062,6 +1167,10 @@ def run_quality_gates(
         # _length_bounds_for_channel()); the other 7 channels are unaffected.
         gate_extreme_length(length_check_text, channel),
         gate_complete(content_text),  # AA-768 (S233) — a cut-off piece never ships as finished
+        # AA-768 (S234) — scope (warn for one round) and residual hygiene (warn), every channel;
+        # both pass when the caller gives no hygiene context.
+        gate_scope(content_text, hygiene_ctx, seo_title, meta_description),
+        gate_hygiene(content_text, hygiene_ctx),
     ]
     if channel == "blog":
         gate_ledger += [
@@ -1100,4 +1209,5 @@ __all__ = [
     "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
+    "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
 ]

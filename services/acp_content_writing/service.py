@@ -40,17 +40,18 @@ from services.acp_angle_gate import service as angle_gate_service
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
-from services.acp_shared.atom_seed import atom_seed_text
+from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import sentence_repair
+from services.acp_content_writing import hygiene, sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, drop_restated_faq, run_quality_gates,
+from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, drop_restated_faq,
+                                                          drop_unanswerable_faq, run_quality_gates,
                                                           strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
@@ -128,7 +129,10 @@ async def _tenant_missing_brand_rules(tenant_id: str, pool) -> bool:
 
 
 _ROUTE_SEGMENT_TEXT_QUERY = """
-    SELECT m.atom_id, ta.text
+    SELECT m.atom_id, ta.text, ta.itinerary_day,
+           (SELECT bool_and(ar.excluded_reason IS NOT NULL) FROM acp_contract.atom_ranking ar
+            WHERE ar.segment_id = m.segment_id AND ar.tour_id = ta.tour_id
+              AND ar.superseded_at IS NULL) AS excluded
     FROM acp_contract.atom_segment_member m
     JOIN acp_contract.v_active_tour_atoms ta ON ta.atom_id = m.atom_id
     WHERE m.segment_id = $1 AND ta.tour_id = $2::uuid
@@ -141,16 +145,20 @@ _ROUTE_SEGMENT_TEXT_QUERY = """
 # query is that same resolution, applied per-Segment across the whole walk — see this module's
 # docstring above). Same reasoning: platform-wide atomize (AA-526) means a Route's member
 # Segments are built from the shared atom pool by default.
+# S234 (AA-768) — + itinerary_day (the walk is sorted by day) and `excluded`: TRUE when every
+# current atom_ranking row of this (segment, tour) has an excluded_reason (transit, lodging, meal,
+# unnamed place — exclusion does not vary by market), the same filter route_detection.py uses.
+# NULL (no current ranking row) keeps the Segment.
 
 
 async def _fetch_route_segments(
     tenant_id: UUID, trip_id: Optional[str], segment_ids: list[str], pool,
+    atoms_out: Optional[list] = None,
 ) -> list[tuple[str, str]]:
-    """AA-511 Gap A (2026-09-02) — every Segment's live representative atom, in the Route's own
-    day order. Same per-Segment resolution `services/acp_shared/slate.py::
-    _resolve_representative_atom()` already uses for its OWN single-atom fallback (identical
-    query, one tour_id filter, first live non-alias member atom) — applied here to every Segment
-    in the walk, not just the first.
+    """AA-511 Gap A (2026-09-02) — every Segment's live representative atom. Same per-Segment
+    resolution `services/acp_shared/slate.py::_resolve_representative_atom()` already uses for its
+    OWN single-atom fallback (identical query, one tour_id filter, first live non-alias member
+    atom) — applied here to every Segment in the walk, not just the first.
 
     Best-effort per Segment (matches `route_detection.py::create_route_pick()`'s own precedent,
     "a partial/empty join degrades the snapshot's detail but never fails route_pick creation") —
@@ -166,24 +174,38 @@ async def _fetch_route_segments(
     gate_banned_patterns()) is still built by joining just the text half of each pair — see
     start_write() below — deliberately NOT the labeled prompt text, to avoid a real risk this
     STEP0 flagged: an atom_id like "atom_00af646e46" contains digits that
-    find_novel_numeric_claims() would otherwise pick up as a false "supporting number"."""
+    find_novel_numeric_claims() would otherwise pick up as a false "supporting number".
+
+    S234 (AA-768) — the walk is sorted by itinerary_day (S233: the scope read "ruins (day 14) → Sod
+    Camp (day 3) …" because segment_ids are not in day order); a Segment whose ranking excluded it
+    (A3's transit/meal/unnamed-place decision) is skipped, unless that would leave nothing; and
+    moments at the same place merge into one block (atom_seed.route_moment_seeds, C10), so a pair
+    is (first atom_id of the block, block). `atoms_out`, when given, receives every kept
+    (atom_id, label) in day order — resolve_facts() re-reads the merged seeds from it."""
     if not trip_id:
         raise ContentWritingError(
             "route_segment_ids is set but trip_id is missing — cannot resolve any Segment's atom."
         )
-    segments: list[tuple[str, str]] = []
+    rows: list[tuple[int, dict]] = []
     async with pool.acquire() as conn:
-        for segment_id in segment_ids:
+        for i, segment_id in enumerate(segment_ids):
             row = await conn.fetchrow(_ROUTE_SEGMENT_TEXT_QUERY, segment_id, trip_id, str(tenant_id))
             if row is not None:
-                # AA-768 — each moment's full seed (evidence/hook/siblings), not just its label.
-                seed = await atom_seed_text(conn, row["atom_id"], str(tenant_id))
-                segments.append((row["atom_id"], seed or row["text"]))
+                rows.append((i, dict(row)))
+        kept = [(i, r) for i, r in rows if not r.get("excluded")]
+        if rows and not kept:
+            logger.warning("t9_route_all_segments_excluded", segment_ids=segment_ids[:20])
+            kept = rows
+        kept.sort(key=lambda p: (p[1].get("itinerary_day") is None, p[1].get("itinerary_day") or 0, p[0]))
+        atoms = [(r["atom_id"], r["text"]) for _, r in kept]
+        segments = await route_moment_seeds(conn, atoms, str(tenant_id)) if atoms else []
     if not segments:
         raise ContentWritingError(
             f"None of route_segment_ids={segment_ids!r} resolved to a live atom for trip_id="
             f"{trip_id!r} — the Route was rebuilt away. Refresh the Slate and pick again."
         )
+    if atoms_out is not None:
+        atoms_out.extend(atoms)
     return segments
 
 
@@ -235,11 +257,14 @@ def _fold_kw(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).lower()
 
 
-def choose_keyword(related_keywords: list, seed_text: str) -> Optional[str]:
+def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> Optional[str]:
     """The blog's SEO keyword: a non-transactional related keyword that shares a place word with
-    the piece's own moment(s). None otherwise — the writer then writes title/meta naturally."""
+    the piece's own moment(s) and names no place in `out_of_scope` (folded gazetteer entries,
+    hygiene.build_scope_lexicon — S234). None otherwise — the writer then writes title/meta
+    naturally."""
     candidates = [k.strip() for k in related_keywords or [] if isinstance(k, str) and k.strip()
-                  and not _TRANSACTIONAL_RE.search(k)]
+                  and not _TRANSACTIONAL_RE.search(k)
+                  and not any(hygiene.names_place(k, g) for g in out_of_scope)]
     if not candidates:
         return None
     # Only the places of the piece's own moment(s): the "Location:" lines, minus country names and
@@ -276,7 +301,10 @@ def _grounding_text(context: dict) -> str:
     if audience.get("core_idea"):
         parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
     if audience.get("customer_segment"):
-        parts.append(f"AUDIENCE: {audience['customer_segment']}")
+        # S234 (C11) — kept for F1 (the brand's own '7–16'), labelled so the F9 judge stops taking
+        # the segment as trip truth (S233: FAQ age answers passed on it).
+        parts.append(f"AUDIENCE (who the brand writes for — not a fact about this trip): "
+                     f"{audience['customer_segment']}")
     if context.get("trip_name"):
         parts.append(f"TRIP: {context['trip_name']}")
     if context.get("destination"):
@@ -303,25 +331,39 @@ def _ascii_slug(slug: Optional[str]) -> Optional[str]:
 
 
 async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, context: dict,
-                        request_id) -> tuple[dict, float]:
+                        request_id, hyg: Optional[hygiene.HygieneContext] = None) -> tuple[dict, float]:
     """AA-768 (S233) — when the blog writer's title or meta is outside the T10 band, regenerate
     both with one short call (generate.fit_seo_fields) instead of cutting the string. The S232
     deterministic cut (fit_seo_title, built for tour names) turned "Bhutan's Craft Bazaar:
     Thimphu's Weekend Market…" into the 21-char "Bhutan's Craft Bazaar" on 6/20 blogs and cut
     metas mid-phrase. A new value is kept only if it is inside the band and keeps the keyword;
-    otherwise the writer's own stays and F4 reports it. Returns (seo_meta, cost)."""
+    otherwise the writer's own stays and F4 reports it. Returns (seo_meta, cost).
+
+    S234 — with `hyg`, a title or meta naming a place outside the piece's scope (r1: 'Gobi' in
+    8/8 titles) is out of band too; the fit is told never to use those places, and a fitted value
+    that still names one is rejected (F12 then reports the writer's own)."""
     if seo_meta and seo_meta.get("slug"):
         seo_meta = {**seo_meta, "slug": _ascii_slug(seo_meta["slug"])}
-    if not seo_meta or (_seo_title_ok(seo_meta.get("seo_title"), keyword)
-                        and _meta_ok(seo_meta.get("meta_description"), keyword)):
+    lex = hyg.lexicon if hyg is not None else None
+
+    def title_ok(value) -> bool:
+        return _seo_title_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+
+    def meta_ok(value) -> bool:
+        return _meta_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+
+    if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
     audience = context.get("brand_audience") or {}
+    forbidden = sorted({p for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
+                        for p in (hygiene.places_named(lex, v) if lex is not None else [])})
+    extra = {"forbidden_words": forbidden} if forbidden else {}
     try:
         fitted, cost = await asyncio.to_thread(
             fit_seo_fields, body=body, seo_title=seo_meta.get("seo_title"),
             meta_description=seo_meta.get("meta_description"), keyword=keyword,
             brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
-            angle_gate_request_id=str(request_id),
+            angle_gate_request_id=str(request_id), **extra,
         )
     except Exception as e:  # soft-fail: F4 reports the writer's own values
         logger.warning("t9_seo_fit_failed", request_id=str(request_id), error=str(e)[:200])
@@ -329,13 +371,13 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     def merge(base: dict, cand: dict) -> dict:
         out = dict(base)
-        for key, ok in (("seo_title", _seo_title_ok), ("meta_description", _meta_ok)):
-            if not ok(out.get(key), keyword) and ok(cand.get(key), keyword):
+        for key, ok in (("seo_title", title_ok), ("meta_description", meta_ok)):
+            if not ok(out.get(key)) and ok(cand.get(key)):
                 out[key] = cand[key]
         return out
 
     out = merge(seo_meta, fitted)
-    if not (_seo_title_ok(out.get("seo_title"), keyword) and _meta_ok(out.get("meta_description"), keyword)):
+    if not (title_ok(out.get("seo_title")) and meta_ok(out.get("meta_description"))):
         # LLMs miscount characters: one more try, told exactly how far off the current values are.
         try:
             again, cost2 = await asyncio.to_thread(
@@ -343,13 +385,45 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
                 seo_title=fitted.get("seo_title") or out.get("seo_title"),
                 meta_description=fitted.get("meta_description") or out.get("meta_description"),
                 keyword=keyword, brand_name=audience.get("brand_name"), tenant_id=context.get("tenant_id"),
-                angle_gate_request_id=str(request_id),
+                angle_gate_request_id=str(request_id), **extra,
             )
             cost += cost2
             out = merge(out, again)
         except Exception as e:  # noqa: BLE001
             logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
     return out, cost
+
+
+_FACT_BLOCK_RE = re.compile(r"\[Fact id=([^\]]+)\]\n.*?(?=\n\n\[Fact id=|\Z)", re.DOTALL)
+_CITE_RE = re.compile(r"\[(R|F):([^\]]+)\]")
+
+
+def _repair_source(content_text: str, items: list[dict], context: dict) -> str:
+    """S234 — what a sentence repair is shown: only the route moment(s) and fact(s) the flagged
+    sentences cite ([R:id] / [F:id]) plus the brand line, not the whole grounding text (19.4k
+    chars on the S233 Mongolia route: about $0.02 → $0.007 per Sonnet repair). A one-moment piece
+    sends its own seed (about 2.4k chars). A route sentence that cites nothing gets the whole
+    grounding text, as before."""
+    cited: dict[str, list[str]] = {"R": [], "F": []}
+    for it in items:
+        for kind, ident in _CITE_RE.findall(content_text[it["start"]:it["end"]]):
+            cited[kind].append(ident.strip())
+    route = [(a, t) for a, t in (context.get("route_segments") or [])]
+    if len(route) > 1:
+        by_id = dict(route)
+        moments = [by_id[i] for i in dict.fromkeys(cited["R"]) if i in by_id]
+        if not moments and not cited["F"]:
+            return _grounding_text(context)
+    else:
+        moments = [context.get("atom_text") or ""]
+    facts = {m.group(1).strip(): m.group(0) for m in _FACT_BLOCK_RE.finditer(context.get("facts_text") or "")}
+    parts = moments + [facts[i] for i in dict.fromkeys(cited["F"]) if i in facts]
+    audience = context.get("brand_audience") or {}
+    if audience.get("brand_name"):
+        parts.append(f"BRAND: {audience['brand_name']}")
+    if audience.get("core_idea"):
+        parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
+    return "\n\n".join(p for p in parts if p)
 
 
 def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
@@ -425,6 +499,7 @@ async def start_write(
     # stays the plain joined text either way — deliberately NOT the labeled prompt text, see
     # _fetch_route_segments()'s own docstring for why.
     route_segments: Optional[list[tuple[str, str]]] = None
+    route_atoms: list[tuple[str, str]] = []  # S234 — every kept moment, day order (merged blocks hide some)
     # AA-519 Việc 4 — req already carries subject_hub_name (angle_gate_service.fetch_request()'s
     # own LEFT JOIN acp_shared.subject -> acp_contract.route) and route_segment_ids (AA-511 Gap
     # A) — this was the real gap: both were resolved here and then dropped, never written onto
@@ -433,11 +508,13 @@ async def start_write(
     route_hub_name = req.get("subject_hub_name")
     route_segment_count = len(req["route_segment_ids"]) if req.get("route_segment_ids") else None
     if req.get("route_segment_ids"):
-        route_segments = await _fetch_route_segments(tenant_id, req["trip_id"], req["route_segment_ids"], pool)
+        route_segments = await _fetch_route_segments(tenant_id, req["trip_id"], req["route_segment_ids"], pool,
+                                                     atoms_out=route_atoms)
         atom_text = "\n\n".join(text for _, text in route_segments)
     else:
         atom_text = await _fetch_atom_text(tenant_id, req["atom_id"], pool)
-    scope = await _scope_line([a for a, _ in route_segments] if route_segments else [req["atom_id"]], pool)
+    scope = await _scope_line([a for a, _ in (route_atoms or route_segments)] if route_segments else [req["atom_id"]],
+                              pool)
     goal = get_goal(req["goal"])
     if goal is None:
         raise ContentWritingError(f"request_id={request_id} has an unknown goal={req['goal']!r}")
@@ -488,7 +565,10 @@ async def start_write(
     # `_keyword_line()` already has a no-keyword instruction for it, not a bug to work around.
     dfs_snapshot = req.get("dfs_paa_snapshot") or {}
     related_keywords = dfs_snapshot.get("related_keywords") or []
-    keyword = choose_keyword(related_keywords, atom_text)
+    # S234 — a keyword naming a place outside the piece's scope ('khovsgol and gobi tour mongolia'
+    # on a Khövsgöl-only route) would force that place into the title and meta.
+    out_of_scope = hygiene.build_scope_lexicon(atom_text, scope, trip_name).gazetteer
+    keyword = choose_keyword(related_keywords, atom_text, out_of_scope=out_of_scope)
 
     # AA-529 — Facts Entry source: ALL scope='platform' facts + this tenant's own scope='tenant'
     # facts, never another tenant's (fetch_facts_for_writing()'s own WHERE clause enforces that).
@@ -517,6 +597,7 @@ async def start_write(
         # a SECOND placeholder piece for the same request and needs the same values — added here
         # rather than re-fetched, since `context` already has everything else that piece needs.
         "route_hub_name": route_hub_name, "route_segment_count": route_segment_count,
+        "route_atoms": route_atoms,  # S234 — resolve_facts() re-reads the merged route seeds from it
     }
     return {"piece": piece, "context": context}
 
@@ -586,9 +667,10 @@ async def _reread_seed(context: dict, tenant_id: UUID, pool) -> None:
         return
     async with pool.acquire() as conn:
         if route_segments:
-            fresh = []
-            for atom_id, text in route_segments:
-                fresh.append((atom_id, await atom_seed_text(conn, atom_id, str(tenant_id)) or text))
+            # S234 (AA-768) — re-merge from every kept moment (a merged block shows only its first
+            # atom id), so a card built since start_write lands in the merged block too.
+            route_atoms = [(a, t) for a, t in (context.get("route_atoms") or route_segments)]
+            fresh = await route_moment_seeds(conn, route_atoms, str(tenant_id)) or route_segments
             context["route_segments"] = fresh
             context["atom_text"] = "\n\n".join(text for _, text in fresh)
         else:
@@ -653,6 +735,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # argument instead, appended once inside build_user_prompt()) — this avoids the Facts block
     # appearing twice in what the model actually reads.
     grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
+    # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
+    # JSON job payload).
+    hyg = hygiene.HygieneContext(seed=atom_text, scope=context.get("scope"), trip_name=trip_name,
+                                 brand_name=(brand_audience or {}).get("brand_name"), cta=cta)
+    brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
 
     attempt = 1  # bound before the try block so the except handler always has a real value
     try:
@@ -716,18 +803,32 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 repair_items = sentence_repair.plan(content_text, gate_ledger)
                 replacements = None
                 if repair_items:
+                    # S234 — the ±2 neighbouring sentences as context, and only the cited source.
+                    for item in repair_items:
+                        item["context"] = sentence_repair.neighbours(content_text, item)
                     try:
                         replacements, cost = await asyncio.to_thread(
-                            repair_sentences, sentences=repair_items, content_seed=grounding_text,
+                            repair_sentences, sentences=repair_items,
+                            content_seed=_repair_source(content_text, repair_items, context),
                             facts_text=None, channel=channel, tenant_id=tenant_id,
                             angle_gate_request_id=str(request_id),
                         )
                     except SentenceRepairError as e:
                         logger.warning("t9_sentence_repair_failed", request_id=str(request_id), error=str(e)[:200])
-                if replacements is not None:
-                    content_text = sentence_repair.splice(content_text, repair_items, replacements)
+                if repair_items == []:
+                    # S234 review — only a title/meta scope violation failed: the SEO fit below
+                    # owns it; the text stays as it is (no rewrite call).
+                    cost = 0.0
+                    repair_log[-1]["repair_mode"] = "seo_fields"
+                elif replacements is not None:
+                    content_text = sentence_repair.splice(content_text, repair_items, replacements,
+                                                          ignore=brand_ignore)
                     repair_log[-1]["repair_mode"] = "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
+                    # S234 — replacements turned into deletes because they restated a neighbour.
+                    guarded = sum(item.get("guard") == "repeat" for item in repair_items)
+                    if guarded:
+                        repair_log[-1]["repeat_guard_deletes"] = guarded
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     status, held_reason = "held", _held_reason_from(first_failure)
@@ -749,7 +850,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
             total_cost += cost
             seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text,
-                                                     context=context, request_id=request_id)
+                                                     context=context, request_id=request_id, hyg=hyg)
             total_cost += seo_cost
 
             # AA-484 — cross-tenant cannibalization check, done HERE (before run_quality_gates(),
@@ -787,9 +888,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             "writer_missing_brand_rules": await _tenant_missing_brand_rules(tenant_id, pool),
                         }
 
-            faq_dropped = 0
+            faq_dropped, faq_unanswerable = 0, []
+            # S234 — deterministic fixes after the last LLM step of this attempt (write/rewrite,
+            # sentence splice and SEO fit all ran above), before the gates read the text.
+            content_text, hygiene_log = hygiene.autofix(content_text, hyg)
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 content_text, faq_dropped = drop_restated_faq(content_text)
+                content_text, faq_unanswerable = drop_unanswerable_faq(
+                    content_text, hygiene.split_seed(atom_text)[0], facts_text)
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
@@ -797,13 +903,18 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 route_segments=route_segments, keyword=keyword,
                 seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
                 slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
-                brand_pack=brand_audience,
+                brand_pack=brand_audience, hygiene_ctx=hyg,
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
-            if faq_dropped:
+            faq_log = ([f"{faq_dropped} FAQ pair(s) that restated the body were removed"] if faq_dropped else []) \
+                + faq_unanswerable
+            if faq_log:
                 flags.append({"gate": "F7_faq_autofix", "passed": False, "blocking": False, "repairable": False,
-                              "violations": [f"{faq_dropped} FAQ pair(s) that restated the body were removed"]})
+                              "violations": faq_log})
+            if hygiene_log:  # S234 — every in-place edit, shown in the admin drawer
+                flags.append({"gate": "F13_autofix", "passed": False, "blocking": False, "repairable": False,
+                              "violations": hygiene_log})
             # AA-701 — Jev questions next to this attempt's gates (allow-listed tenants, observe only).
             await observe_t10(
                 tenant_id=tenant_id, attempt_key=f"{request_id}:{attempt}", content_text=content_text,

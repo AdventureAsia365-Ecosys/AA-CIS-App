@@ -467,6 +467,13 @@ restate the body); new blocking gates F0_complete (cut-off text), F2_brand_forbi
 tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
 judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
 (it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
+S234 (AA-768): `services/acp_content_writing/hygiene.py` owns the deterministic text rules (scope
+lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LEAK_RE`,
+`SOCIAL_PROOF_RE`, repeats, hashtag spelling). It fixes what is safe in place before the gates
+(logged as the `F13_autofix` flag) and two gates report the rest: **F12_scope** (a place outside
+the SCOPE in title/meta/headings/body; warn for one round, `F12_SCOPE_BLOCKING`) and
+**F13_hygiene** (warn). Blogs also drop FAQ pairs the seed cannot answer (age, fitness, price…),
+logged under `F7_faq_autofix`.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
@@ -670,7 +677,9 @@ _Avoid_: block (alone), delete, filter.
   through `place_card_alias` / core name, and misses cached in `place_card_miss`; a generic name such
   as "City Palace" keeps its locality in the key and is never reused across tours by name),
   `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
-  places the piece covers). Facts Entries are filtered by `facts.country`; S233 removed the
+  places the piece covers). S234: sibling lines only when the card has <3 facts (≤2, none naming
+  another place); a Route's moments are in day order, skip Segments ranking excluded, carry no
+  siblings, merge same-place moments into one block, and a moment with <3 facts is tagged thin. Facts Entries are filtered by `facts.country`; S233 removed the
   per-fact Jev call (no Jev on the T axis).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
   After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
