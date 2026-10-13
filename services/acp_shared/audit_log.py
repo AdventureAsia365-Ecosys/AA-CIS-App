@@ -48,11 +48,18 @@ class TenantAuditAction:
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
 
 
+class PlatformAuditAction:
+    """`action` strings for admin changes to platform data (no tenant: tenant_id is NULL)."""
+    PLACE_CARD_STATUS = "place_card.status"  # AA-772 — admin verified / rejected / reset a card
+    PLACE_CARD_MERGE = "place_card.merge"  # AA-772 (S234) — admin merged duplicate cards
+
+
 async def write_audit_log(
-    conn, *, tenant_id: str, actor: str, action: str,
+    conn, *, tenant_id: Optional[str], actor: str, action: str,
     resource_type: str, resource_id: str, details: Optional[dict[str, Any]] = None,
 ) -> None:
-    """INSERT one `acp_shared.audit_log` row.
+    """INSERT one `acp_shared.audit_log` row. `tenant_id=None` (platform data, e.g. place cards)
+    is stored as NULL.
 
     `conn` may be an asyncpg Connection OR a Pool — both expose a compatible `.execute()`
     (`Pool.execute()` acquires a connection internally), so a caller already holding a
@@ -75,6 +82,6 @@ async def write_audit_log(
             (tenant_id, actor, action, resource_type, resource_id, details)
         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
         """,
-        str(tenant_id), actor, action, resource_type, str(resource_id),
+        str(tenant_id) if tenant_id is not None else None, actor, action, resource_type, str(resource_id),
         json.dumps(details or {}),
     )

@@ -117,6 +117,13 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "a3_place_card":      StageConfig("a3_place_card", "writer", "claude", "sonnet", "acc3"),
     "a3_place_card_check": StageConfig("a3_place_card_check", "judge", "openai", "gpt-5.6-luna", "acc3",
                                        fallback_model_ids=_JUDGE_ROUTE_DEFAULT),
+    # S234 (migration 221): t9_repair — one cheap Claude stage for T9 sentence repair, SEO fit and
+    # the admin sentence suggest (plan C2/C12); t10_claims — F9 v2 claim extraction, a validate
+    # stage on GPT-6 Luna (ADR 0008 pattern), not wired into the gates until its replay passes.
+    "t9_repair":          StageConfig("t9_repair", "writer", "claude", "haiku", "acc3",
+                                      fallback_model_ids=("sonnet",)),
+    "t10_claims":         StageConfig("t10_claims", "validate", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("gpt-5.6-luna",)),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
     # SAFE_DEFAULTS here and deleted from shared.llm_role_config by migration 207.

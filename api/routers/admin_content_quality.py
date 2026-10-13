@@ -3,8 +3,8 @@ sees (AA-770: tenant always receives T2/T9 content; gate results, held reasons, 
 sentences, writer inputs and per-gate stats live here, for AA admins to improve the system).
 
 Cross-tenant by design: admin pool (aa_cis_admin, BYPASSRLS), X-Admin-Secret checked on every
-route like the other /admin routers. Read-only except the place-card verdict and the place-card
-build job.
+route like the other /admin routers. Read-only except the place-card verdict, the place-card
+merge (both audited in acp_shared.audit_log) and the place-card build job.
 
 Counting rule (S232 lesson): `held_reason` names only the first blocking gate; every count and
 filter here reads `gate_ledger` (+ `flags`), never `held_reason`.
@@ -22,6 +22,8 @@ from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
 from services.acp_content_writing import sentence_repair
+from services.acp_shared import place_cards
+from services.acp_shared.audit_log import PlatformAuditAction, write_audit_log
 
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"])
 
@@ -384,6 +386,30 @@ class PlaceCardVerdict(BaseModel):
     status: str  # verified | rejected | auto_checked
 
 
+@router.get("/place-cards/duplicates")
+async def list_place_card_duplicates(request: Request, x_admin_secret: str = Header(None)):
+    """S234 — candidate duplicate clusters (same country + same core name, whole-word name
+    containment, or an alias), for the admin to merge by hand. Never merged automatically:
+    'Punakha' and 'Punakha Dzong' are two places."""
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        cards = await conn.fetch(
+            """
+            SELECT pc.card_id, pc.display_name, pc.locality, pc.region, pc.country, pc.status, pc.facts,
+                   pc.cost_usd, pc.created_at,
+                   (SELECT count(*) FROM acp_shared.atom_place_card a WHERE a.card_id = pc.card_id) AS atoms
+            FROM acp_shared.place_card pc
+            ORDER BY pc.country, pc.display_name, pc.created_at
+            """)
+        aliases = await conn.fetch("SELECT alias_norm, country_norm, card_id FROM acp_shared.place_card_alias")
+    rows = [_row(c) for c in cards]
+    for r in rows:
+        r["facts"] = len(r.get("facts") or [])
+    clusters = place_cards.duplicate_clusters(rows, [dict(a) for a in aliases])
+    return {"data": clusters, "total": len(clusters)}
+
+
 @router.patch("/place-cards/{card_id}")
 async def set_place_card_status(card_id: str, body: PlaceCardVerdict, request: Request,
                                 x_admin_secret: str = Header(None),
@@ -392,32 +418,72 @@ async def set_place_card_status(card_id: str, body: PlaceCardVerdict, request: R
     if body.status not in ("verified", "rejected", "auto_checked"):
         raise HTTPException(status_code=422, detail="status must be verified, rejected or auto_checked")
     pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    actor = x_admin_user_id or "admin"
+    async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             """
             UPDATE acp_shared.place_card
             SET status = $2, verified_by = $3, verified_at = CASE WHEN $2 = 'auto_checked' THEN NULL ELSE now() END,
                 updated_at = now()
             WHERE card_id = $1::uuid
-            RETURNING card_id, status, verified_by, verified_at
-            """, card_id, body.status, x_admin_user_id or "admin")
+            RETURNING card_id, status, verified_by, verified_at, display_name, country
+            """, card_id, body.status, actor)
+        if row is not None:
+            await write_audit_log(
+                conn, tenant_id=None, actor=f"admin:{actor}", action=PlatformAuditAction.PLACE_CARD_STATUS,
+                resource_type="place_card", resource_id=card_id,
+                details={"status": body.status, "display_name": row["display_name"], "country": row["country"]})
     if row is None:
         raise HTTPException(status_code=404, detail="Place card not found")
     return _row(row)
 
 
+class PlaceCardMerge(BaseModel):
+    from_ids: list[str]
+
+
+@router.post("/place-cards/{keep_id}/merge")
+async def merge_place_cards(keep_id: str, body: PlaceCardMerge, request: Request,
+                            x_admin_secret: str = Header(None),
+                            x_admin_user_id: Optional[str] = Header(None)):
+    """S234 — merge duplicate cards into `keep_id` in one transaction: atoms re-linked, names kept
+    as aliases (the next atom naming them links with no LLM call), facts/cost added, merged cards
+    deleted, one audit_log row."""
+    verify_admin_secret(x_admin_secret)
+    try:
+        ids = [str(UUID(i)) for i in [keep_id, *body.from_ids]]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="card ids must be UUIDs")
+    actor = x_admin_user_id or "admin"
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        try:
+            out = await place_cards.merge_cards(conn, ids[0], ids[1:])
+        except place_cards.MergeError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        await write_audit_log(
+            conn, tenant_id=None, actor=f"admin:{actor}", action=PlatformAuditAction.PLACE_CARD_MERGE,
+            resource_type="place_card", resource_id=ids[0], details=out)
+    return out
+
+
 class PlaceCardBuild(BaseModel):
     tour_id: str
+    force: bool = False  # ignore stored misses (place_card_miss) for this tour
 
 
 @router.post("/place-cards/build")
 async def build_place_cards(body: PlaceCardBuild, request: Request, x_admin_secret: str = Header(None),
                             x_admin_user_id: Optional[str] = Header(None)):
-    """Enqueue `place_cards_build` for one tour (missing cards only; ≤60 atoms)."""
+    """Enqueue `place_cards_build` for one tour (missing cards only; ≤40 paid drafts, one per
+    distinct place). `force` retries places whose last draft missed."""
     verify_admin_secret(x_admin_secret)
     from shared.jobs import queue as job_queue
+    payload = {"tour_id": body.tour_id, **({"force": True} if body.force else {})}
     job_id, created = await job_queue.enqueue(
-        request.app.state.pool, "place_cards_build", {"tour_id": body.tour_id},
+        request.app.state.pool, "place_cards_build", payload,
         max_attempts=2,
         created_by=x_admin_user_id or "admin",
     )

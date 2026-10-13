@@ -21,6 +21,10 @@ def _request(conn):
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)
     ctx.__aexit__ = AsyncMock(return_value=False)
+    tx = MagicMock()
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx)
     req = MagicMock()
     req.app.state.pool.acquire.return_value = ctx
     return req
@@ -100,10 +104,15 @@ async def test_place_card_verdict_validated_and_recorded():
                                        x_admin_secret=SECRET, x_admin_user_id="u1")
     assert e.value.status_code == 422
     conn.fetchrow.return_value = {"card_id": uuid.uuid4(), "status": "rejected", "verified_by": "u1",
-                                  "verified_at": datetime(2026, 10, 13, tzinfo=timezone.utc)}
+                                  "verified_at": datetime(2026, 10, 13, tzinfo=timezone.utc),
+                                  "display_name": "Paro", "country": "Bhutan"}
     out = await cq.set_place_card_status("c1", cq.PlaceCardVerdict(status="rejected"), _request(conn),
                                          x_admin_secret=SECRET, x_admin_user_id="u1")
     assert out["status"] == "rejected" and conn.fetchrow.await_args.args[2:] == ("rejected", "u1")
+    # S234: every verdict writes an audit row (platform data → tenant_id NULL)
+    audit = conn.execute.await_args.args
+    assert "acp_shared.audit_log" in audit[0]
+    assert audit[1:6] == (None, "admin:u1", "place_card.status", "place_card", "c1")
 
 
 @pytest.mark.asyncio

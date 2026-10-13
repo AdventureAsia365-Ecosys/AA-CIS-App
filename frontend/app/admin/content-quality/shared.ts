@@ -97,6 +97,30 @@ export interface PlaceCard {
   atoms: number;
 }
 
+// S234 (AA-772) — GET /place-cards/duplicates: candidate clusters an admin may merge.
+export interface DuplicateCard {
+  card_id: string;
+  display_name: string;
+  locality: string | null;
+  region: string | null;
+  country: string;
+  status: PlaceCard["status"];
+  facts: number;
+  atoms: number;
+  cost_usd: number;
+  created_at: string;
+}
+export interface DuplicateCluster {
+  country: string;
+  reasons: ("same_core_name" | "name_contains" | "alias")[];
+  cards: DuplicateCard[];
+}
+export const DUPLICATE_REASON_LABELS: Record<string, string> = {
+  same_core_name: "same name",
+  name_contains: "one name contains the other",
+  alias: "alias match",
+};
+
 export interface Paged<T> { data: T[]; total: number; limit: number; offset: number }
 
 export const usd = (n: number | null | undefined) =>

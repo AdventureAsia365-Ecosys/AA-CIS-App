@@ -513,15 +513,23 @@ class LLMClient:
         cache_write = usage.get("cacheWriteInputTokens", 0) or 0
         cost = self._calc_cost(model.model_key, in_tok, out_tok,
                                cache_read=cache_read, cache_write=cache_write)
+        # S234 (AA-772/PR0): Converse's `inputTokens` is only the UNCACHED part of the prompt.
+        # Bedrock caches long prompt prefixes of the Luna models on its own (no cachePoint sent),
+        # so llm_call_log showed tokens_in of 2-118 for 2-5k-character prompts (t10_judge,
+        # t2_judge, a3_atomize on gpt-6-luna / gpt-5.6-luna) while cost_usd already priced the
+        # cached tokens. `input_tokens` now carries the whole prompt; the cache split stays in
+        # cache_read_tokens / cache_write_tokens, and the cost above is unchanged.
+        prompt_tok = in_tok + cache_read + cache_write
 
         logger.info("llm_success", provider="bedrock-satellite", api="converse",
                     model=model.model_key, account=account,
-                    in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
+                    in_tokens=prompt_tok, uncached_in_tokens=in_tok, cache_read=cache_read,
+                    cache_write=cache_write, out_tokens=out_tok, cost_usd=cost, stop_reason=stop_reason)
 
         return LLMResponse(
             # "satellite-" prefix: call_log.py strips it and records provider=bedrock-satellite.
             content=content, model_used=f"satellite-{model.model_key}", provider="bedrock-satellite",
-            input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
+            input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost,
             fallback_used=False, satellite_account=account,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
             stop_reason=stop_reason,

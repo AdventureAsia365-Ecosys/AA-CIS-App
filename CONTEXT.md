@@ -664,7 +664,11 @@ _Avoid_: block (alone), delete, filter.
 - **T9 — Write**: Piece generation, fires automatically the instant an Angle is chosen; the
   text streams live to the tenant (AA-637). The seed (`atom_seed.py`) carries the atom's
   **Place Card** (AA-772: display name, locality/region/country, naming note, checked background
-  facts — `acp_shared.place_card`, built in the T8/T9 jobs by `a3_place_card` + `a3_place_card_check`),
+  facts — `acp_shared.place_card`, drafted by `a3_place_card` + checked by `a3_place_card_check` in the
+  T8 job (request atom) and the `place_cards_build` job — T9 only reads cards (S234). One draft per
+  place: free rule skip (unnamed / logistics places), atoms grouped by folded place + country, reuse
+  through `place_card_alias` / core name, and misses cached in `place_card_miss`; a generic name such
+  as "City Palace" keeps its locality in the key and is never reused across tours by name),
   `Day N`, same-country sibling evidence labelled "other trips", and a SCOPE line (which days and
   places the piece covers). Facts Entries are filtered by `facts.country`; S233 removed the
   per-fact Jev call (no Jev on the T axis).

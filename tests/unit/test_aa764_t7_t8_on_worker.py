@@ -205,8 +205,7 @@ class TestResolveFacts:
     async def test_pending_facts_are_selected_once(self):
         ctx = {"facts_pending": True, "tenant_id": str(TENANT), "atom_text": "seed", "chosen": {},
                "trip_name": "Trip"}
-        with patch.object(cw, "fetch_facts_for_writing", new=AsyncMock(return_value=[])) as fetch, \
-             patch.object(cw, "ensure_place_cards", new=AsyncMock(return_value=0)):
+        with patch.object(cw, "fetch_facts_for_writing", new=AsyncMock(return_value=[])) as fetch:
             await cw.resolve_facts(REQUEST, ctx, MagicMock())
             await cw.resolve_facts(REQUEST, ctx, MagicMock())
         fetch.assert_awaited_once()

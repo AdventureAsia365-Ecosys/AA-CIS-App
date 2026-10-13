@@ -288,3 +288,30 @@ async def test_patch_rejects_model_the_stage_cannot_execute():
                                        x_admin_secret="x", x_admin_user_id="u")
         assert exc.value.status_code == 404
     setter.assert_not_called()
+
+
+def test_converse_input_tokens_include_prompt_cache_tokens():
+    """S234 (PR0): Bedrock reports most of a long Luna prompt as cache tokens and only the uncached
+    tail as inputTokens (llm_call_log showed tokens_in 2-118 for 2-5k-char prompts). input_tokens
+    is now the whole prompt; the cost is unchanged (each part priced at its own rate)."""
+    rt = MagicMock()
+    rt.converse.return_value = _converse_response(usage={
+        "inputTokens": 2, "outputTokens": 900, "cacheWriteInputTokens": 1640, "cacheReadInputTokens": 100})
+    c = _client()
+    rates = {"in": 0.0001, "out": 0.0005, "cache_read": 0.00001, "cache_write": 0.000125}
+    with patch("shared.llm_client.client.get_model_sync", return_value=LUNA), \
+            patch("shared.llm_client.pricing._catalog_rates", return_value=rates), \
+            patch("shared.llm_client.bedrock_satellite.get_satellite_client", return_value=rt), \
+            patch("shared.llm_client.client.stream_sink.delta_callback", return_value=None):
+        resp = c.generate(LLMRequest(system_prompt="s", user_prompt="u", model_tier="gpt-5.6-luna"))
+    assert resp.input_tokens == 2 + 1640 + 100
+    assert (resp.cache_write_tokens, resp.cache_read_tokens) == (1640, 100)
+    expected = (2 * rates["in"] + 900 * rates["out"] + 1640 * rates["cache_write"] + 100 * rates["cache_read"]) / 1000
+    assert resp.cost_usd == pytest.approx(round(expected, 6))
+
+
+def test_converse_without_cache_keeps_input_tokens():
+    rt = MagicMock()
+    rt.converse.return_value = _converse_response(usage={"inputTokens": 491, "outputTokens": 435})
+    resp, _ = _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="gpt-5.6-luna"), LUNA, rt)
+    assert (resp.input_tokens, resp.cache_read_tokens, resp.cache_write_tokens) == (491, 0, 0)

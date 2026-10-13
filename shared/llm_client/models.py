@@ -42,9 +42,11 @@ class LLMResponse(BaseModel):
     # acc2 native hoặc GPT-4.1; khác fallback_used (chất lượng thấp hơn ý định). Trước AA-397
     # đây là bool `satellite_used` — đổi sang str|None để phân biệt acc1 vs acc3.
     satellite_account: Optional[str] = None
-    # AA-288: tokens read from / written to the Bedrock prompt cache for this call. Only ever
-    # non-zero from _call_bedrock (acc2, use_cache=True) — satellite/OpenAI calls don't cache,
-    # so they keep the 0 default rather than a caller having to know which provider ran.
+    # AA-288: tokens read from / written to the Bedrock prompt cache for this call. Non-zero from
+    # _call_bedrock (acc2, use_cache=True), the Claude satellite path, and — S234 — the Converse
+    # path, where Bedrock caches long Luna prompts on its own. On the Anthropic paths
+    # `input_tokens` EXCLUDES these (Anthropic's convention); on the Converse path `input_tokens`
+    # is the whole prompt (uncached + cache read + cache write) so llm_call_log.tokens_in is real.
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     # AA-493: why generation stopped — Anthropic's `stop_reason` ("end_turn" | "max_tokens" |
