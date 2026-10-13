@@ -182,9 +182,10 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
-            elif gate in ("F12_scope", "F13_hygiene", "F15_voice"):
-                # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text.
-                # F15_voice (AA-771, PR3) quotes its sentence the same way (plan C4).
+            elif gate in ("F12_scope", "F13_hygiene", "F14_social_shape", "F15_voice", "F15_voice_warn"):
+                # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text. F14's
+                # word-count line quotes nothing and is left out; its first line / hashtags are quoted.
+                # F15_voice quotes its sentence the same way (plan C4).
                 m = _BRAND_RE.search(v)
                 if m and not v.startswith(("title ", "meta ")):
                     quote = m.group(2)

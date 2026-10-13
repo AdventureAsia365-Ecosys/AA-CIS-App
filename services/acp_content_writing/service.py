@@ -41,6 +41,7 @@ from services.acp_angle_gate.brand_audience import fetch_brand_audience
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.goals import get_goal
 from services.acp_shared.atom_seed import atom_seed_text, route_moment_seeds
+from services.acp_shared.channel_spec import channel_spec, first_sentence
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
@@ -50,9 +51,9 @@ from services.acp_content_writing import hygiene, sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, drop_restated_faq,
-                                                          drop_unanswerable_faq, run_quality_gates,
-                                                          strip_citation_tags)
+from services.acp_content_writing.quality_gates import (STYLE_ONLY_GATES, deep_strip_citation_tags,
+                                                          drop_restated_faq, drop_unanswerable_faq, hold_failure,
+                                                          run_quality_gates, strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -287,6 +288,17 @@ def _held_reason_from(first_failure: dict) -> str:
     return f"{first_failure['gate']}: {'; '.join(first_failure['violations'][:3])}"
 
 
+def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
+    """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
+    product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
+    (F15_voice) is left — it is added to the flags so the admin still sees it."""
+    hold = hold_failure(gate_ledger)
+    if hold is not None:
+        return "held", _held_reason_from(hold), flags
+    style = [g for g in gate_ledger if not g["passed"] and g["gate"] in STYLE_ONLY_GATES]
+    return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
+
+
 def _grounding_text(context: dict) -> str:
     """AA-768 — the gates' view of what the writer was given as fact: the seed (atom or joined
     route moments) + the Facts block + the audience and trip lines build_user_prompt() also
@@ -457,6 +469,37 @@ def _repair_feedback(gate_ledger: list[dict]) -> list[str]:
     ]
 
 
+_SIBLING_OPENERS_QUERY = """
+    SELECT left(cp.content_text, 400) AS head
+    FROM acp_shared.content_piece cp
+    JOIN acp_shared.angle_gate_request r ON r.request_id = cp.angle_gate_request_id
+    WHERE cp.tenant_id = $1::uuid AND cp.status IN ('approved', 'held') AND btrim(cp.content_text) <> ''
+      AND COALESCE(cp.channel, r.channel) = $4
+      AND (cp.angle_gate_request_id = $2::uuid
+           OR (r.atom_id = $3 AND cp.created_at > now() - interval '30 days'))
+    ORDER BY cp.created_at DESC
+    LIMIT 5
+"""
+
+
+async def _sibling_openers(tenant_id: UUID, request_id: UUID, atom_id: Optional[str], channel: str,
+                           pool) -> list[str]:
+    """AA-771 (S234) — first sentences of this tenant's earlier pieces from the same brief (or the
+    same atom in the last 30 days) on the same channel, so the writer does not reuse them (S233:
+    Terra 3/3 opened 'There is a checkpoint before you reach the inner temples of Paro Taktsang.').
+    An aid: [] on any error, and never for blog (its prompt stays byte-identical)."""
+    if channel == "blog":
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_SIBLING_OPENERS_QUERY, str(tenant_id), str(request_id), atom_id, channel)
+        openers = [first_sentence(r["head"]) for r in rows if isinstance(r["head"], str)]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t9_sibling_openers_failed", request_id=str(request_id), error=str(e)[:200])
+        return []
+    return list(dict.fromkeys(o for o in openers if o))
+
+
 async def start_write(
     tenant_id: UUID, request_id: UUID, pool, cta_override: Optional[str] = None,
 ) -> dict:
@@ -568,6 +611,7 @@ async def start_write(
     # it — a request written before this change has no rows to backfill (0 approved requests
     # existed live as of this migration, confirmed via STEP0-refresh), so there's no gap to close.
     option_id = chosen.get("option_id")
+    sibling_openers = await _sibling_openers(tenant_id, request_id, req["atom_id"], req["channel"], pool)
     # AA-469 Việc 4 (flow-order fix) — content_piece.channel (migration 124's Decision 2 column,
     # unpopulated until now per that migration's own header) finally has a real value to write:
     # channel is set on the request (angle_gate_service.set_channel(), step 8) before a write can
@@ -618,6 +662,7 @@ async def start_write(
         # rather than re-fetched, since `context` already has everything else that piece needs.
         "route_hub_name": route_hub_name, "route_segment_count": route_segment_count,
         "route_atoms": route_atoms,  # S234 — resolve_facts() re-reads the merged route seeds from it
+        "sibling_openers": sibling_openers,  # S234 (AA-771) — non-blog channels only
     }
     return {"piece": piece, "context": context}
 
@@ -757,8 +802,15 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     grounding_text = _grounding_text(context)  # AA-768 — + audience/trip lines
     # S234 — scope lexicon + text rules for this piece (pure; rebuilt per job, never stored in the
     # JSON job payload).
+    # AA-771 (S234) — the channel spec (LinkedIn) caps the hashtags, moves them to the last line and
+    # splits an over-long first line, in hygiene.autofix after the last LLM step of each attempt.
+    spec = channel_spec(channel, brand_audience)
     hyg = hygiene.HygieneContext(seed=atom_text, scope=context.get("scope"), trip_name=trip_name,
-                                 brand_name=(brand_audience or {}).get("brand_name"), cta=cta)
+                                 brand_name=(brand_audience or {}).get("brand_name"), cta=cta,
+                                 hashtags_max=spec.hashtags_max if spec else None,
+                                 first_line_max=spec.first_line_max if spec else None)
+    sibling_openers = context.get("sibling_openers") or []
+    openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
     brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
 
     attempt = 1  # bound before the try block so the except handler always has a real value
@@ -807,7 +859,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                    facts_text=facts_text,
+                    facts_text=facts_text, **openers_kw,
                 )
             else:
                 # AA-528 — capture attempt (attempt-1)'s outcome before rewrite_with_feedback()
@@ -851,8 +903,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         repair_log[-1]["repeat_guard_deletes"] = guarded
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
-                    status, held_reason = "held", _held_reason_from(first_failure)
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
+                    status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
                     prev_snapshot = None  # nothing was discarded by this attempt
@@ -866,7 +918,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         destination=destination, trip_name=trip_name, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                        facts_text=facts_text,
+                        facts_text=facts_text, **openers_kw,
                     )
             total_cost += cost
             seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text,
@@ -923,7 +975,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 route_segments=route_segments, keyword=keyword,
                 seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
                 slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
-                brand_pack=brand_audience, hygiene_ctx=hyg,
+                brand_pack=brand_audience, hygiene_ctx=hyg, **openers_kw,
+                # S234 review — a stock phrase blocks (one sentence repair) on attempt 1 only.
+                stock_blocking=attempt == 1,
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -1021,7 +1075,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # "unresolved product-truth after ≤2 retries" — the tenant still SEES this piece
                 # (My Content shows held content the same as approved, AA-613 #7), but it cannot be
                 # published until the tenant edits it or an admin clears it (v1_publish gate, #8).
-                status, held_reason = "held", _held_reason_from(first_failure)
+                # S234 review — held only on a product-truth gate; a piece whose only blocking
+                # failure left is style-only (F15_voice stock phrase) ships with it as a flag.
+                status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
 
         # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]

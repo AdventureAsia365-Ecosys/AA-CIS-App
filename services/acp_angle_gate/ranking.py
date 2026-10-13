@@ -67,18 +67,24 @@ class RankedAngle:
     idx: int
     answers: list[str] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
+    # S234 (C7) — '<moment> (n facts)' when a Route angle leads with a thin moment
+    # (route_digest.thin_anchor). Internal ranking evidence only: never persisted into the
+    # tenant-visible `violations` column (tenants see content, not QA flags).
+    thin_anchor: str | None = None
 
     @property
-    def score(self) -> tuple[int, int]:
-        """Sort key, best/lowest first: fewest avoid-list violations, then most real PAA
-        questions answered. Matches the reference `Angle.score`'s first 2 elements exactly
-        (its 3rd, `walks`, is out of scope here — see module docstring)."""
-        return (len(self.violations), -len(self.answers))
+    def score(self) -> tuple[int, int, int]:
+        """Sort key, best/lowest first: not anchored on a thin moment, then fewest avoid-list
+        violations, then most real PAA questions answered. Elements 2-3 match the reference
+        `Angle.score`'s first 2 exactly (its 3rd, `walks`, is out of scope here — see module
+        docstring)."""
+        return (1 if self.thin_anchor else 0, len(self.violations), -len(self.answers))
 
 
 def rank_angles(
     angles: list[dict], *, claimed_answers: list[list[str]],
     asked_questions: list[str], avoid_text: str,
+    thin_anchors: list[str | None] | None = None,
 ) -> tuple[list[RankedAngle], int]:
     """Rank `angles` (each with 'name'/'why_it_works' text to check for avoid-list violations)
     against the real PAA pool and the channel's own avoid-list. `claimed_answers[i]` is the LLM's
@@ -97,7 +103,9 @@ def rank_angles(
         claims = claimed_answers[i] if i < len(claimed_answers) else []
         real_answers = [asked[_plain(c)] for c in claims if _plain(c) in asked]
         text = f"{a.get('name', '')} {a.get('why_it_works', '')}"
-        evidence.append(RankedAngle(idx=i, answers=real_answers, violations=_violations(text, banned)))
+        thin = thin_anchors[i] if thin_anchors and i < len(thin_anchors) else None
+        evidence.append(RankedAngle(idx=i, answers=real_answers, violations=_violations(text, banned),
+                                    thin_anchor=thin))
 
     return evidence, best_index(evidence)
 

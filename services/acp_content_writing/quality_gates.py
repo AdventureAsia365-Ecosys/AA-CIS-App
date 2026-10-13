@@ -52,7 +52,10 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import HygieneContext, find_issues
+from services.acp_content_writing.hygiene import HygieneContext, find_issues, sentence_spans
+from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
+                                              ChannelSpec, channel_spec, first_sentence, opener_overlap,
+                                              post_words)
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json
 from services.acp_shared.grounding import find_novel_numeric_claims
 from shared.llm_client.call_log import record_call_sync
@@ -185,11 +188,14 @@ _GENERIC_AI_WORDING_ANCHOR = (
     "destination unchanged.\n"
     "- GOOD (specific, on-brand — do NOT flag this): a sentence built from a real, concrete, "
     "verifiable detail from the content seed (a place name, a real fact, a specific number or "
-    "geography) — calm and precise, no adjective padding, no superlatives.\n"
-    "Do not flag calm, precise, unhurried writing as \"too plain\" just because it lacks "
-    "superlatives. Reserve GENERIC_AI_WORDING for templated filler that could be copy-pasted "
-    "onto any other brand's any other piece unchanged.\n"
+    "geography) — specific, concrete, in THIS brand's voice, no adjective padding, no superlatives.\n"
+    "Reserve GENERIC_AI_WORDING for templated filler that could be copy-pasted onto any other "
+    "brand's any other piece unchanged.\n"
 )
+# AA-771 (S234) — the anchor used to say "calm and precise … Do not flag calm, precise, unhurried
+# writing": a calm house voice, which is why all 3 calm Trail Pulse posts (voice: Energetic, Fresh,
+# Lightly playful) were approved while the panel rated them 0/3 light edit. The brand's own voice
+# adjectives now go into the same judge call (no extra call).
 
 
 class GateResultLite(TypedDict):
@@ -687,8 +693,19 @@ def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
 _F9_MAX_TOKENS = 8192
 
 
+def _voice_block(voice: Optional[list[str]]) -> str:
+    """AA-771 (S234) — the brand's voice adjectives for the F9 judge; '' when the pack has none."""
+    words = [v.strip() for v in voice or [] if isinstance(v, str) and v.strip()]
+    if not words:
+        return ""
+    return ("\nBRAND VOICE (judge the tone against these words, never against a calm house style): "
+            + ", ".join(words) + ". Use SUMMARY_OFF_BRAND, quoting the phrase, when the tone is clearly the "
+            "opposite of them (e.g. calm and essayistic for an energetic, playful brand).\n")
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+    voice: Optional[list[str]] = None,
 ) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
@@ -753,6 +770,7 @@ def gate_brand_voice(
         f"{source_block}"
         f"REQUIRED CALL TO ACTION FOR THIS PIECE: {cta}\n\n"
         f"BRAND RUBRIC:\n{brand_rubric_text}\n"
+        f"{_voice_block(voice)}"
         f"{_GENERIC_AI_WORDING_ANCHOR}\n"
         "Score every field 1 or 0. cta_clear=1 only if the required CTA above is present and "
         "reads as a single, unambiguous action — not a vague sign-off. Use ONLY the listed "
@@ -1095,6 +1113,151 @@ def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> Ga
                    blocking=False)
 
 
+# ---------------------------------------------------------------- F14 / F15 (AA-771, S234)
+
+# F15_voice (stock-phrase hard list only) blocks — and goes to sentence repair, never a full
+# rewrite — on the FIRST attempt only, and never holds a piece (S234 plan PR3 + review): a style
+# phrase is not product truth (AA-613 'held'). Trade register, audience leak and opener checks are a
+# separate warn-only result, F15_voice_warn, so sentence_repair.plan never rewrites them.
+F15_STOCK_BLOCKING = True
+F14_GATE = "F14_social_shape"
+F15_GATE = "F15_voice"
+F15_WARN_GATE = "F15_voice_warn"
+# Gates that may block (to trigger one repair) but never hold a piece on their own.
+STYLE_ONLY_GATES = frozenset({F15_GATE})
+_MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
+OPENER_REPEAT_JACCARD = 0.6
+
+
+def gate_social_shape(content_text: str, spec: Optional[ChannelSpec]) -> GateResultLite:
+    """F14_social_shape — LinkedIn word count, hashtags and first line against the brand's channel
+    spec. Warn outside the word band; BLOCKING (a full rewrite with the explicit target) only when
+    the post is over 1.3 × the band's top (325 words; 390 editorial). Hashtags and the first line are
+    normally fixed in place by hygiene.autofix first, so they show here only as residue. No spec
+    (every other channel) → passes."""
+    if spec is None:
+        return _result(F14_GATE, [], repairable=False, blocking=False)
+    text = strip_citation_tags(content_text or "")
+    n = post_words(text)
+    lo, hi = spec.words
+    tlo, thi = spec.target_words
+    violations: list[str] = []
+    blocking = n > spec.block_words
+    if blocking:
+        violations.append(f"post is {n} words, far over the {lo}–{hi}-word band for this brand on LinkedIn — "
+                          f"rewrite it to {tlo}–{thi} words, keeping the same angle and facts")
+    elif n > hi:
+        violations.append(f"post is {n} words, over the {lo}–{hi}-word band for this brand on LinkedIn")
+    elif n < lo:
+        violations.append(f"post is {n} words, under the {lo}–{hi}-word band for this brand on LinkedIn")
+    tags = list(dict.fromkeys(HASHTAG_RE.findall(text)))
+    if len(tags) > spec.hashtags_max:
+        violations.append(f"{len(tags)} hashtags, more than {spec.hashtags_max}: '{' '.join(tags)}'")
+    head = text.strip().split("\n", 1)[0].strip() if text.strip() else ""
+    if len(head) > spec.first_line_max:
+        violations.append(f"first line is {len(head)} characters, over {spec.first_line_max}: '{head[:300]}'")
+    return _result(F14_GATE, violations, repairable=blocking, blocking=blocking)
+
+
+def _quote(spans: list[dict], start: int, end: int) -> str:
+    """The sentence(s) of `spans` covering [start, end), extended by the next sentence while it
+    has fewer than `_MIN_QUOTE_WORDS` words, so sentence repair can locate it."""
+    idx = [i for i, sp in enumerate(spans) if sp["end"] > start and sp["start"] < end]
+    if not idx:
+        return ""
+    i, j = idx[0], idx[-1]
+    while len(" ".join(sp["clean"] for sp in spans[i:j + 1]).split()) < _MIN_QUOTE_WORDS and j + 1 < len(spans):
+        j += 1
+    return " ".join(sp["clean"] for sp in spans[i:j + 1])
+
+
+_SEG_NUM_RE = re.compile(r"\d+\s*(?:[–—-]|to)\s*\d+|\d+\s*\+")
+
+
+def _norm_num(text: str) -> str:
+    """'25 – 40' / '25 to 40' → '25-40'; '18 +' → '18+'."""
+    t = re.sub(r"(\d)\s*(?:[–—-]|to)\s*(\d)", r"\1-\2", text or "")
+    return re.sub(r"(\d)\s*\+", r"\1+", t)
+
+
+def _has_num(text: str, key: str) -> bool:
+    return re.search(rf"(?<!\d){re.escape(key)}(?!\d)", _norm_num(text)) is not None
+
+
+def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True) -> GateResultLite:
+    """F15_voice — the stock-phrase hard list for a channel with a spec (LinkedIn; S233: 30/41 posts
+    — 'worth sitting with', 'not incidental', 'Not as filler. Not as an afterthought.'). Blocking when
+    F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
+    repaired sentence by sentence (sentence_repair._ELIGIBLE_GATES) at most once, never by a full
+    rewrite; `hold_failure` never holds a piece on it. Every violation reads
+    "<problem>: '<sentence>'" (the shape sentence_repair.plan parses)."""
+    if spec is None:
+        return _result(F15_GATE, [], repairable=False, blocking=False)
+    text = content_text or ""
+    spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
+    stock: list[str] = []
+    for pattern in STOCK_PATTERNS:
+        for m in pattern.finditer(text):
+            q = _quote(spans, m.start(), m.end())
+            if q:
+                stock.append(f"stock phrase '{' '.join(m.group(0).split())}' — say it plainly or cut it: '{q}'")
+    blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
+    return _result(F15_GATE, list(dict.fromkeys(stock)), repairable=True, blocking=blocking)
+
+
+def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Optional[dict] = None,
+                    atom_text: str = "", sibling_openers: Optional[list[str]] = None) -> GateResultLite:
+    """F15_voice_warn — warn-only voice checks for a channel with a spec (LinkedIn), kept apart from
+    F15_voice so a stock-phrase repair never rewrites them:
+    - writing to (or as) the travel trade for a non-editorial brand (S233 Trail Pulse 3/3: 'Active
+      travel brands have a pacing problem.'; channel_spec.TRADE_PATTERN);
+    - the brand's Audience numbers in the text when the source does not have them (S233 #6
+      'clients in the 25–40 range');
+    - a generic 'There is a …' opener, or the same opener as an earlier piece from the same brief
+      (token Jaccard ≥ 0.6; S233 Terra 3/3 identical).
+    Same "<problem>: '<sentence>'" shape, for the admin highlights."""
+    if spec is None:
+        return _result(F15_WARN_GATE, [], repairable=False, blocking=False)
+    text = content_text or ""
+    spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
+    warn: list[str] = []
+    if spec.register != EDITORIAL:
+        for sp in spans:
+            m = B2B_RE.search(sp["clean"])
+            if m:
+                warn.append(f"writes to the travel trade ('{m.group(0)}'), not to travellers: "
+                            f"'{_quote(spans, sp['start'], sp['end'])}'")
+    # The gates' source carries the brand's AUDIENCE line (service._grounding_text, for F1) — the
+    # very text a leak repeats — so it is left out here.
+    source = "\n\n".join(p for p in (atom_text or "").split("\n\n") if not p.startswith("AUDIENCE"))
+    for num in dict.fromkeys(_SEG_NUM_RE.findall((brand_pack or {}).get("customer_segment") or "")):
+        key = _norm_num(num).strip()
+        if _has_num(source, key):
+            continue
+        for sp in spans:
+            if _has_num(sp["clean"], key):
+                warn.append(f"repeats the brand's audience definition ('{num.strip()}') — the Audience line is not a "
+                            f"fact about this trip: '{_quote(spans, sp['start'], sp['end'])}'")
+                break
+    if spans:
+        opener = first_sentence(text)
+        q = _quote(spans, spans[0]["start"], spans[0]["end"])
+        if GENERIC_OPENER_RE.match(opener):
+            warn.append(f"generic 'There is a …' opener: '{q}'")
+        same = next((o for o in sibling_openers or [] if opener_overlap(opener, o) >= OPENER_REPEAT_JACCARD), None)
+        if same:
+            warn.append(f"opens like an earlier piece from this brief ('{same[:80]}'): '{q}'")
+    return _result(F15_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)
+
+
+def hold_failure(gate_ledger: list[GateResultLite]) -> Optional[GateResultLite]:
+    """The failed blocking gate a piece is HELD on — the first one that is not style-only
+    (STYLE_ONLY_GATES: F15_voice may block to get one sentence repair, but a stock phrase is not
+    unresolved product truth, AA-613). None → nothing holds the piece; it ships with the flags."""
+    return next((g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+                 and g["gate"] not in STYLE_ONLY_GATES), None)
+
+
 # ---------------------------------------------------------------- orchestration
 
 class QualityCheckOutcome(TypedDict):
@@ -1113,6 +1276,8 @@ def run_quality_gates(
     cannibalization_match: Optional[dict] = None,
     brand_pack: Optional[dict] = None,
     hygiene_ctx: Optional[HygieneContext] = None,
+    sibling_openers: Optional[list[str]] = None,
+    stock_blocking: bool = True,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1152,6 +1317,7 @@ def run_quality_gates(
         return {"passed": False, "gate_ledger": ledger, "first_failure": cta_result, "flags": []}
 
     length_check_text = strip_citation_tags(content_text)
+    spec = channel_spec(channel, brand_pack)
     gate_ledger = [
         cta_result,
         gate_grounding(content_text, atom_text),
@@ -1171,6 +1337,14 @@ def run_quality_gates(
         # both pass when the caller gives no hygiene context.
         gate_scope(content_text, hygiene_ctx, seo_title, meta_description),
         gate_hygiene(content_text, hygiene_ctx),
+        # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
+        # channel without a spec (every channel but LinkedIn).
+        gate_social_shape(content_text, spec),
+        # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1);
+        # the warn-only checks are their own result so a stock repair never rewrites them.
+        gate_voice(content_text, spec=spec, stock_blocking=stock_blocking),
+        gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
+                        sibling_openers=sibling_openers),
     ]
     if channel == "blog":
         gate_ledger += [
@@ -1186,7 +1360,8 @@ def run_quality_gates(
     # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
     # returns TWO results (blocking F9_cta_fact + non-blocking F9_brand_style), spread in here.
     gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
-    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text, source_text=atom_text)
+    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text, source_text=atom_text,
+                                    voice=(brand_pack or {}).get("voice"))
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
     # considers a BLOCKING gate now; a failed non-blocking gate (currently only
     # promises_an_option) never holds/repairs a piece, but its result is still in gate_ledger AND
@@ -1210,4 +1385,5 @@ __all__ = [
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
     "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
+    "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
 ]

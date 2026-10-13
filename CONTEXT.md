@@ -474,6 +474,14 @@ lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LE
 the SCOPE in title/meta/headings/body; warn for one round, `F12_SCOPE_BLOCKING`) and
 **F13_hygiene** (warn). Blogs also drop FAQ pairs the seed cannot answer (age, fitness, price…),
 logged under `F7_faq_autofix`.
+S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
+consumer_social / editorial / warm_practical / observational, from the voice adjectives then brand_type) —
+word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
+and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks only above 1.3× the band → full
+rewrite), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
+never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
+generic or repeated opener; warn only, never repaired). All pass for every other channel. The F9 judge
+gets the brand's voice adjectives and no longer favours a calm house voice.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
@@ -681,7 +689,13 @@ _Avoid_: block (alone), delete, filter.
   asks the Jev Question `t7_topic_fits_brand` before the Luna call on a cache miss (AA-700, shadow).
 - **T8 — Angle Gate**: Goal + Angle selection (`/portal/t8-angle-gate`, one continuous wizard
   covering T8 and T9 together — no separate T9 route). Each PAA answer an Angle claims is checked
-  with `t8_angle_answers` before the ranking (AA-700, shadow).
+  with `t8_angle_answers` before the ranking (AA-700, shadow). S234 (AA-771): an Angle's
+  `best_final_style` is shape + which seed details to lead with — never a voice, an opening line or an
+  audience other than the brand's; `sanitize_best_final_style` fixes those in code ('Open with X' →
+  'Lead with X', a literal first line or a trade-facing sentence is cut) before the Angle
+  is saved (and again on stored Angles when a non-blog T9 prompt is built). A Route request writes its
+  Angles from a digest of the whole walk (day order, fact counts, ANCHOR CANDIDATES / THIN MOMENTS); an
+  Angle anchored on a thin moment ranks last, and the call is retried only when all 3 are thin.
 - **T9 — Write**: Piece generation, fires automatically the instant an Angle is chosen; the
   text streams live to the tenant (AA-637). The seed (`atom_seed.py`) carries the atom's
   **Place Card** (AA-772: display name, locality/region/country, naming note, checked background

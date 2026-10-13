@@ -35,16 +35,20 @@ class ChannelStyle(TypedDict):
 # traced 25/29 LinkedIn posts with an invented "At <Brand>, we…" paragraph to it. Tone now comes
 # from the tenant's brand pack. `avoid` items are plain comma-separated phrases so ranking.py's
 # word-boundary match can find them in an angle (quoted/Vietnamese items never matched).
+# S234 (AA-771) — the LinkedIn row lost "B2B and partner audiences" and "calm": every brand got the
+# same calm, trade-facing register (Trail Pulse wrote to "active travel brands" 3/3). The
+# register-specific use case / structure / avoid list and the numeric limits come from
+# services/acp_shared/channel_spec.py::linkedin_spec(pack); this row is the brand-neutral base.
 CHANNEL_STYLES: list[ChannelStyle] = [
     {
         "channel": "linkedin",
         "display_name": "LinkedIn",
-        "use_when": "Thought leadership, founder voice, B2B and partner audiences, considered positioning",
+        "use_when": "Thought leadership and considered positioning for the brand's own audience (its Audience line)",
         "structure": (
             "Hook insight → short paragraphs → one clear insight → at most one sentence on how the "
             "brand approaches it (only what its brand identity states) → light, reflective CTA"
         ),
-        "style": "professional, calm, insight-led, editorial, confident without arrogance",
+        "style": "insight-led, specific, confident without arrogance",
         "avoid": (
             "many emojis, generic travel copy, hard sell, long itinerary lists, over-emotional "
             "storytelling, hidden gem, bucket list, paradise awaits, markdown formatting"

@@ -42,14 +42,21 @@ Each angle needs exactly 4 required fields, plus a 5th when questions are suppli
 never vague ("this is engaging")
 - formula_fit: name the marketing formula step-shape this angle follows (from the goal's own \
 formula, given below) and briefly how this specific angle realizes it
-- best_final_style: a brief for the writer — tone, shape, opening approach, and WHICH details \
-from the CONTENT SEED to lead with. The writer follows it literally, so it must not name any \
-object, scene, sound, smell, number, activity, form of access or promise that is not in the \
-CONTENT SEED (no "the guide unrolling a map", no "the smell of incense" unless the seed says so).
+- best_final_style: a brief for the writer — the shape of the piece, what to emphasise, and WHICH \
+details from the CONTENT SEED to lead with. It never sets a voice or mood (the writer takes its \
+voice only from the BRAND block), never writes or prescribes the first sentence (no "Open with …"), \
+and never names an audience other than the brand's own Audience line. The writer follows it, so \
+it must not name any object, scene, sound, smell, number, activity, form of access or promise that \
+is not in the CONTENT SEED (no "the guide unrolling a map", no "the smell of incense" unless the \
+seed says so).
 - answers: a list of the questions from "Travelers also ask" below that THIS SPECIFIC \
 angle would genuinely answer if written — quoted EXACTLY as given, word for word. Claim only \
 what the angle really covers: an angle answering 2 questions well beats one listing 6 it barely \
 touches. Empty list if none of the given questions fit this angle, or if no questions were given.
+
+If the CONTENT SEED is a ROUTE with ANCHOR CANDIDATES and THIN MOMENTS, every angle leads with \
+an anchor candidate. A thin moment has almost no source facts: it may appear in one sentence at \
+most and is never the hook, the title (name) or the climax of an angle.
 
 Never invent facts, statistics, testimonials, scene detail or claims not present in the content \
 seed given to you. If the content seed lacks a concrete detail a strong angle would want, build \
@@ -96,12 +103,14 @@ def build_user_prompt(
     piece_history: list[PriorPiece] | None = None,
     channel_style: ChannelStyle | None = None,
     revision_feedback: list[str] | None = None,
+    is_route: bool = False,
 ) -> str:
-
-    parts = [
-        f"CONTENT SEED (from a curated atom — the concrete detail this content must be about):\n"
-        f"{content_seed}",
-    ]
+    """`is_route` (S234): `content_seed` is the Route digest (route_digest.render_digest — every
+    moment in day order with its fact count, ANCHOR CANDIDATES and THIN MOMENTS), not one atom."""
+    head = ("CONTENT SEED (a Route — the moments of the trip this content covers; build every angle on "
+            "them):" if is_route else
+            "CONTENT SEED (from a curated atom — the concrete detail this content must be about):")
+    parts = [f"{head}\n{content_seed}"]
     if trip_name:
         parts.append(f"TRIP: {trip_name}" + (f" ({destination})" if destination else ""))
     parts.append(
@@ -120,6 +129,11 @@ def build_user_prompt(
             f"Channel structure: {channel_style['structure']}\n"
             f"Channel — avoid: {channel_style['avoid']}"
         )
+    # AA-771 (S234, C7) — the voice is the brand's; an angle brief that sets another is cut in code
+    # (channel_spec.sanitize_best_final_style).
+    if brand_audience.get("voice"):
+        parts.append("VOICE (from the BRAND block — the writer takes it from there; an angle never sets another "
+                     "voice or mood): " + ", ".join(brand_audience["voice"]))
     # AA-469 Việc 4 — optional 5th block (was 6th, back when CHANNEL was still a block here — see
     # this module's own header comment on the flow-order fix that removed it). Omitted entirely
     # (not "SEARCH DEMAND: none") when there's no seo_context row for this tour, or when the row
