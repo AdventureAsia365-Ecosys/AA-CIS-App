@@ -407,11 +407,12 @@ class TestDateAuthority:
 # ---------------------------------------------------------------- 2c. out-of-scope trip places
 
 class TestTripPlaces:
-    def test_a_background_place_is_out_of_scope_only_as_a_leg_of_travel(self):
+    def test_a_trip_place_the_seed_background_names_is_whitelisted(self):
+        # S234 round 4 (r3 panel §4 fix 3): was out of scope as a leg of travel; 7/7 r3 hits were noise
         lex = h.build_scope_lexicon(ROUTE_SEED, trip_places=("Ulaanbaatar", "Gobi Desert", "Khövsgöl Lake"))
-        assert "ulaanbaatar" in lex.leg_only and "gobi" in lex.trip_keys and "khovsgol" not in lex.gazetteer
-        assert h.places_named(lex, "Mörön has a domestic airport connecting the region to Ulaanbaatar.") == [
-            "Ulaanbaatar"]
+        assert "ulaanbaatar" not in lex.gazetteer and not lex.leg_only
+        assert "gobi" in lex.trip_keys and "khovsgol" not in lex.gazetteer
+        assert h.places_named(lex, "Mörön has a domestic airport connecting the region to Ulaanbaatar.") == []
         assert h.places_named(lex, "Its people were long governed from Ulaanbaatar.") == []
         assert h.places_named(lex, "The Gobi feels far away.") == ["Gobi"]
 

@@ -22,8 +22,11 @@ from services.acp_content_writing import service
 def _no_cta_insert():
     """S234 round 3 — run_write_background now restores the configured CTA line word for word
     (hygiene.ensure_cta). These tests pin the retry loop on placeholder texts ('draft 1') that carry
-    no CTA; the CTA step has its own tests in test_aa768_s234_round3.py."""
-    with patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda text, cta: (text, [])):
+    no CTA; the CTA step has its own tests in test_aa768_s234_round3.py. S234 round 4 — the final
+    text-integrity pass (one CTA, fragments) is off here too; it is covered in test_aa768_s234_round4.py."""
+    with patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda text, cta: (text, [])), \
+            patch("services.acp_content_writing.service.text_integrity.final_pass",
+                  side_effect=lambda text, hyg, **kw: (text, [], [])):
         yield
 
 TENANT_ID = uuid.uuid4()

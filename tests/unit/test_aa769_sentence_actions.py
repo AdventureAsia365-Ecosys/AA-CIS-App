@@ -579,3 +579,18 @@ def test_bff_write_rule_covers_regenerate_angles():
     from pathlib import Path
     rbac = (Path(__file__).resolve().parents[2] / "frontend/lib/rbac.ts").read_text()
     assert '{ prefix: "content-quality/requests/", roles: ["admin"] }' in rbac
+
+
+@pytest.mark.asyncio
+async def test_apply_cut_that_leaves_a_fragment_returns_an_f13_repeat_warning():
+    """S234 round 4 review — the final integrity pass does not run on a hand edit, so what the edit
+    newly breaks (here a lower-case fragment left by cutting the sentence's first half) is returned as
+    a non-blocking F13_repeat warning; the edit is still saved."""
+    text = "Opening line here. The valley is wide, and then the valley opens. The camps move."
+    sent = "The valley is wide,"
+    start = text.index(sent)
+    conn = _conn(_piece_row(text=text, writer_input=None))
+    out = await _apply(conn, start=start, end=start + len(sent), text=sent)
+    [w] = [w for w in out["warnings"] if w["gate"] == "F13_repeat"]
+    assert w["blocking"] is False and any("lower-case" in v for v in w["violations"])
+    assert len(_updates(conn)) == 1

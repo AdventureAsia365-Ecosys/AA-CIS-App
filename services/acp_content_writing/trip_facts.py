@@ -35,6 +35,7 @@ _LABEL_SPLIT_RE = re.compile(r"\s+[—–]\s+")
 _DAY_LINE_RE = re.compile(r"^Day\s+(\d+)\s+of the trip(?::\s*(.*))?$", re.I)
 _BACKGROUND_HEAD = "Place background"
 _TRIP_LINE_PREFIXES = ("Source itinerary:", "Why it matters:", "Day ")
+_THIN_PREFIX = "Thin moment:"
 # Generic place words never identify a moment on their own ('Sod Camp' is named by 'sod').
 _GENERIC = frozenset({"lake", "camp", "ruins", "ruin", "settlement", "settlements", "reindeer", "herder", "herders",
                       "ancient", "monastery", "temple", "falls", "dzong", "nest", "visit", "province", "district"})
@@ -51,6 +52,9 @@ class Moment:
     trip_lines: list[str] = field(default_factory=list)
     background: list[str] = field(default_factory=list)
     days: list[int] = field(default_factory=list)
+    # S234 round 4 — the seed builder's "Thin moment: only N source fact(s)…" note
+    # (atom_seed.thin_note, < THIN_FACTS facts): the moment may not carry a heading or the coda
+    thin: bool = False
 
     @property
     def lines(self) -> list[str]:
@@ -89,6 +93,8 @@ def parse_moments(seed: Optional[str]) -> list[Moment]:
                 m.background.append(ln[2:])
                 continue
             in_bg = False
+            if ln.startswith(_THIN_PREFIX):
+                m.thin = True
             day = _DAY_LINE_RE.match(ln)
             if day:
                 m.days.append(int(day.group(1)))
@@ -892,6 +898,374 @@ def new_misplaced(before: str, after: str, moments: list[Moment], cta: Optional[
             for s in misplaced_sentences(after, moments, cta) if s not in had]
 
 
+# ---------------------------------------------------------------- thin moment weight (S234 round 4)
+
+# Words a sentence about a thin moment may use beyond the moment's own seed lines without adding a
+# claim: how the route gets there and where it sits in the trip (calibrated on the 80 stored pieces —
+# every plain 'On Day 14, families visit the ruins of an ancient monastery destroyed during the
+# political purges of 1937.' has ≤ 2 other content words; every interpreted coda ≥ 4).
+_THIN_GLUE = frozenset(content_words(
+    "journey route trip day days visit visits visiting later late section close closes closing end ends ending "
+    "final last brief briefly single quiet quieter stop stops pass passes passing include includes including "
+    "encounter encounters fourteen moment moments itinerary families family travellers travelers stand stands "
+    "standing reach reaches arrive arrives near"))
+THIN_EXTRA_MAX = 2
+_NUMBER_WORDS = {w: n for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen twenty".split())}
+_DAY_REF_RE = re.compile(r"\bdays?\s+(\d{1,2}|[a-z]+)\b", re.I)
+# where an interpretation is appended to a plain mention: ' — a quiet coda to…', ', a detail that…'
+_APPOSITIVE_RE = re.compile(r"\s+[—–]\s+|;\s+|:\s+|,\s+(?=(?:a|an|the|one|which|where)\b)")
+
+
+def _thin_words(m: Moment) -> set[str]:
+    """The thin moment's identifying words: its label's content words ('ruin', 'ancient',
+    'monastery') and the years its trip lines give ('1937')."""
+    words = set(content_words(m.name)) - _THIN_GLUE
+    for ln in m.trip_lines:
+        words |= set(re.findall(r"\b1[0-9]{3}\b|\b20[0-9]{2}\b", ln))
+    return words
+
+
+def _day_refs(text: str) -> set[int]:
+    out = set()
+    for d in _DAY_REF_RE.finditer(text or ""):
+        tok = d.group(1).lower()
+        n = int(tok) if tok.isdigit() else _NUMBER_WORDS.get(tok)
+        if n is not None:
+            out.add(n)
+    return out
+
+
+def names_thin(text: str, m: Moment, moments: list[Moment]) -> bool:
+    """Does `text` (a sentence or a heading) name the thin moment `m`: two of its identifying words
+    ('the ruins of an ancient monastery', 'Ruins from 1937'), or its day ('Day Fourteen') when no
+    other moment shares that day — and no other moment?"""
+    if any(names_moment(text, o) for o in moments if o is not m):
+        return False
+    have = set(content_words(text)) | set(re.findall(r"\b1[0-9]{3}\b|\b20[0-9]{2}\b", text or ""))
+    if len(have & _thin_words(m)) >= 2:
+        return True
+    other_days = {d for o in moments if o is not m for d in o.days}
+    return bool(_day_refs(text) & (set(m.days) - other_days))
+
+
+def _thin_extra(sentence: str, m: Moment) -> list[str]:
+    """Content words of `sentence` that are neither in the thin moment's own seed lines nor route glue."""
+    own = set(content_words(" ".join(m.lines))) | _thin_words(m)
+    return [w for w in content_words(sentence) if w not in own and w not in _THIN_GLUE and not w.isdigit()]
+
+
+def _thin_moments(moments: list[Moment]) -> list[Moment]:
+    return [m for m in moments if m.thin] if len(moments) >= 2 else []
+
+
+def _heading_sections(text: str) -> list[dict]:
+    """[{"heading": span | None, "body": [prose/bullet spans]}] for the body before any FAQ."""
+    out: list[dict] = [{"heading": None, "body": []}]
+    for sp in sentence_spans(text or ""):
+        if sp["in_faq"]:
+            break
+        if sp["kind"] == "heading":
+            out.append({"heading": sp, "body": []})
+        elif sp["kind"] in ("prose", "bullet"):
+            out[-1]["body"].append(sp)
+    return out
+
+
+def thin_headings(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[dict]:
+    """Headings that give a thin moment its own section (r3 #0 'Day 14: A Single Moment of Historical
+    Weight', #4, #14, #16 'Day Fourteen', #17, #19): the heading names it, or every body sentence of the
+    section that names a moment names only it. [{"heading": span, "moment": m, "first": bool}]."""
+    thin = _thin_moments(moments)
+    if not thin:
+        return []
+    out = []
+    secs = _heading_sections(text)
+    for k, sec in enumerate(secs):
+        h = sec["heading"]
+        if h is None:
+            continue
+        for m in thin:
+            body = [sp for sp in sec["body"] if not _is_cta_sentence(sp["clean"], cta)]
+            named = [sp for sp in body if moments_named(sp["clean"], moments) or names_thin(sp["clean"], m, moments)]
+            own = names_thin(h["clean"], m, moments)
+            # a generic heading ('A Final Marker of Loss') over a section that opens on the thin moment
+            # and is mostly about it
+            thin_n = sum(names_thin(sp["clean"], m, moments) for sp in body)
+            only = (bool(named) and all(names_thin(sp["clean"], m, moments) for sp in named)
+                    and not moments_named(h["clean"], moments) and len(body) <= 3
+                    and names_thin(body[0]["clean"], m, moments) and 2 * thin_n >= len(body))
+            if own or only:
+                has_before = any(s["body"] for s in secs[:k]) or k > 1
+                out.append({"heading": h, "moment": m, "first": not has_before})
+                break
+    return out
+
+
+def _coda(text: str, moments: list[Moment], cta: Optional[str]) -> Optional[tuple[dict, Moment]]:
+    """The closing body sentence before the CTA (the last paragraph before the paragraph or section
+    that carries the CTA) when it is about a thin moment: (span, moment) or None."""
+    from services.acp_content_writing.hygiene import cta_norm
+    thin = _thin_moments(moments)
+    want = cta_norm(cta)
+    if not thin or not want:
+        return None
+    body = [sp for sec in _heading_sections(text) for sp in sec["body"] if sp["kind"] == "prose"]
+    k = next((n for n, sp in enumerate(body) if f" {want} " in f" {cta_norm(sp['clean'])} "
+              or _is_cta_sentence(sp["clean"], cta)), None)
+    if not k:
+        return None
+    para_start = (text or "").rfind("\n", 0, body[k]["start"])
+    before = [sp for sp in body[:k] if sp["end"] <= para_start]
+    if not before:
+        return None
+    last = before[-1]
+    for m in thin:
+        if names_thin(last["clean"], m, moments):
+            return last, m
+    return None
+
+
+def thin_coda(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
+    """The thin moment as an interpreted coda (r3 #0, #4, #12, #14, #16, #17, #18, #19: '… destroyed during
+    the political purges of 1937 — a quiet coda to two weeks spent moving through a landscape where loss
+    and endurance…'): more than THIN_EXTRA_MAX content words the moment's seed does not give."""
+    hit = _coda(text, moments, cta)
+    if hit is None:
+        return []
+    sp, m = hit
+    if len(_thin_extra(sp["clean"], m)) <= THIN_EXTRA_MAX:
+        return []
+    return [_quoted("closes on a thin moment (one source fact) with an interpretation the source does not give "
+                    "— say it in one plain sentence, or cut the added clause", sp["clean"])]
+
+
+def _trim_thin(sentence: str, m: Moment, moments: list[Moment]) -> Optional[str]:
+    """The sentence cut before its appended interpretation, when the head still names the moment, has
+    ≥ 6 words and ≤ THIN_EXTRA_MAX words the seed does not give ('… purges of 1937 — a single, quiet
+    encounter with…' → '… purges of 1937.'). The longest such head; None when there is none."""
+    best = None
+    for cut in _APPOSITIVE_RE.finditer(sentence):
+        head = sentence[:cut.start()].rstrip(" ,;:—–")
+        if len(head.split()) < 6 or not names_thin(head, m, moments):
+            continue
+        if len(_thin_extra(head, m)) <= THIN_EXTRA_MAX:
+            best = head
+    return (best + ".") if best else None
+
+
+def fix_thin_moments(text: str, moments: list[Moment], cta: Optional[str] = None) -> tuple[str, list[str]]:
+    """Deterministic fixes (S234 round 4, r3 panel §4 fix 2): a thin moment's own heading is deleted —
+    its paragraph joins the section before (never the first heading of the piece); an interpreted coda
+    sentence is cut before its appended clause. What is left is an F17_trip_fact finding. Returns
+    (text, log)."""
+    from services.acp_content_writing.hygiene import tidy_after_cut
+    log: list[str] = []
+    for _ in range(4):
+        heads = [hd for hd in thin_headings(text, moments, cta) if not hd["first"]]
+        if not heads:
+            break
+        h = heads[0]["heading"]
+        line_start = text.rfind("\n", 0, h["start"]) + 1
+        line_end = text.find("\n", h["end"])
+        line_end = len(text) if line_end < 0 else line_end + 1
+        text = tidy_after_cut(text[:line_start] + text[line_end:])
+        log.append(f"merged the thin moment {heads[0]['moment'].name}'s own heading into the section before: "
+                   f"'{h['clean'][:120]}'")
+    hit = _coda(text, moments, cta)
+    if hit is not None:
+        sp, m = hit
+        if len(_thin_extra(sp["clean"], m)) > THIN_EXTRA_MAX:
+            raw = text[sp["start"]:sp["end"]]
+            tags = re.search(r"(?:\s?\[(?:R|F):[^\]]+\])+\s*$", raw)
+            trimmed = _trim_thin(sp["clean"], m, moments)
+            if trimmed:
+                text = text[:sp["start"]] + trimmed + (tags.group(0).rstrip() if tags else "") + text[sp["end"]:]
+                log.append(f"cut the interpretation appended to the thin moment {m.name}: '{sp['clean'][:160]}'")
+    return text, log
+
+
+def thin_moment_issues(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
+    out = [_quoted(f"gives the thin moment {hd['moment'].name} (one source fact) its own heading — fold it into "
+                   "the section before in one sentence", hd["heading"]["clean"])
+           for hd in thin_headings(text, moments, cta)]
+    return out + thin_coda(text, moments, cta)
+
+
+# ---------------------------------------------------------------- hazard polarity (S234 round 4)
+
+# A hazard the seed states for the trip or the place ('sudden storms can arise quickly on the lake,
+# making navigation in small boats potentially hazardous', 'a multi-hour horse or reindeer ride').
+_SEED_HAZARD_RE = re.compile(
+    r"\b(?:storms?|hazard\w*|danger\w*|multi-hour|physically demanding|demanding|strenuous|arduous|boggy"
+    r"|rough terrain|unpredictable weather|extreme(?:ly)? cold|steep|elevation gain|crossing rivers)\b", re.I)
+# The same hazard in the copy (the sentence that plays it down, or the one right before it).
+_COPY_HAZARD_RE = re.compile(
+    r"\b(?:storms?|hazard\w*|danger\w*|weather|rides?|riding|terrain|demanding|strenuous|cold|steep|climb\w*"
+    r"|elevation|crossing|boggy|marsh\w*|navigation|wind)\b", re.I)
+# Copy that negates or minimises it ('That is not a limitation', 'not a reason for caution', r3 #0/#14).
+MINIMISE_RE = re.compile(
+    r"\b(?:(?:is|are|was|were|it's|that's|isn't|aren't)\s+(?:not|never|no)|isn't|aren't|not|never|no)\s+"
+    r"(?:a\s+|an\s+|any\s+|much\s+(?:of\s+)?a\s+)?(?:real\s+|serious\s+|significant\s+|major\s+|great\s+)?"
+    r"(?:limitation|reason\s+(?:for|to)\s+(?:caution|concern|worry|hesitate|hesitation|be\s+concerned)"
+    r"|cause\s+for\s+(?:concern|alarm|worry)|problem|concern|obstacle|drawback|deterrent|barrier|danger|risk"
+    r"|hardship|issue)s?\b"
+    r"|\bnothing\s+to\s+(?:worry|fear|be\s+concerned)\s+about\b"
+    r"|\bno\s+need\s+to\s+(?:worry|be\s+concerned|be\s+anxious)\b"
+    r"|\b(?:perfectly|completely|entirely|totally)\s+safe\b|\beasily\s+manageable\b", re.I)
+# A sentence that is ONLY the reassurance ('That is not a limitation; it is simply how…'): deleted.
+_REASSURANCE_OPEN_RE = re.compile(r"^(?:that|this|it|these|those|which)\s+(?:is|are|was|were|isn't|aren't|'s|’s)\b",
+                                  re.I)
+
+
+def minimised_hazards(text: str, ctx: "TripFactContext") -> list[dict]:
+    """For a brand whose audience includes children, when the seed states a hazard: sentences that
+    negate or minimise it — MINIMISE_RE in a sentence that names the hazard or right after one that does
+    (same paragraph). [{"span", "pure"}] — `pure`: the sentence opens on 'That is / It is…' (only the
+    reassurance), safe to delete."""
+    if not audience_has_children(ctx.audience) or not _SEED_HAZARD_RE.search(split_seed(ctx.seed)[0]):
+        return []
+    spans = _body_spans(text, ctx.cta, kinds=("prose", "bullet", "faq_a"))
+    out = []
+    for k, sp in enumerate(spans):
+        mm = MINIMISE_RE.search(sp["clean"])
+        if not mm:
+            continue
+        prev = spans[k - 1] if k else None
+        same_para = prev is not None and "\n\n" not in (text or "")[prev["end"]:sp["start"]]
+        if _COPY_HAZARD_RE.search(sp["clean"]) or (same_para and _COPY_HAZARD_RE.search(prev["clean"])):
+            pure = bool(_REASSURANCE_OPEN_RE.match(sp["clean"])) and mm.start() < 40
+            out.append({"span": sp, "pure": pure})
+    return out
+
+
+def fix_minimised_hazards(text: str, ctx: "TripFactContext") -> tuple[str, list[str]]:
+    from services.acp_content_writing.hygiene import _safe_to_delete, tidy_after_cut
+    log: list[str] = []
+    for _ in range(3):
+        target = None
+        for hit in minimised_hazards(text, ctx):
+            if not hit["pure"]:
+                continue
+            spans = sentence_spans(text)
+            k = next((n for n, sp in enumerate(spans) if sp["start"] == hit["span"]["start"]), None)
+            if k is not None and _safe_to_delete(spans, k):
+                target = hit["span"]
+                break
+        if target is None:
+            break
+        after = target["end"] + 1 if text[target["end"]:target["end"] + 1] == " " else target["end"]
+        text = tidy_after_cut(text[:target["start"]] + text[after:])
+        log.append(f"deleted a sentence that plays down a hazard the source states: '{target['clean'][:160]}'")
+    return text, log
+
+
+# ---------------------------------------------------------------- background place as the trip's base
+
+# 'Khatgal, at the lake's southern tip, serves as the primary gateway and base for boat trips' (r3 #4,
+# #16, #19 FAQ): the seed's place background names Khatgal as where visitors TYPICALLY arrive; the
+# trip itself never goes there. Wording that makes a place a gateway / base for the reader.
+_BASE_RE = re.compile(r"\b(?:gateway|base)\b", re.I)
+
+
+def _background_places(seed: Optional[str], trip_places: tuple = ()) -> dict[str, str]:
+    """Folded key → display: proper-noun places named ONLY in place-background bullets (not in a
+    moment's label / Location / Naming / Source itinerary / SCOPE lines) and not a place of the trip
+    itself (`trip_places`, the whitelist: Ulaanbaatar via the Mörön airport fact)."""
+    from services.acp_content_writing.hygiene import _near_allowed, proper_nouns
+    own = split_seed(seed)[0]
+    core: set[str] = set()
+    core_text = "\n".join(ln for ln in own.splitlines() if not ln.lstrip().startswith("- "))
+    for p in proper_nouns(core_text, keep_initial=True):
+        core |= set(phrase_tokens(p))
+    trip: set[str] = set()
+    for place in trip_places or ():
+        for part in re.split(r"[,(;/]", place or ""):
+            trip |= set(phrase_tokens(part))
+    frozen = frozenset(core)
+    out: dict[str, str] = {}
+    bg = "\n".join(ln for ln in own.splitlines() if ln.lstrip().startswith("- "))
+    for p in proper_nouns(bg):
+        toks = [t for t in phrase_tokens(p) if t not in frozen and not _near_allowed(t, frozen)]
+        if toks and not any(t in trip for t in toks):
+            out[" ".join(toks)] = " ".join(w for w in p.split() if fold(w) not in COMMON_CAPS)
+    return out
+
+
+def background_bases(text: str, ctx: "TripFactContext") -> list[dict]:
+    """Body or FAQ sentences that make a background-only place the reader's gateway or base.
+    [{"span", "place"}]."""
+    from services.acp_content_writing.hygiene import _has_place, _name_tokens
+    places = _background_places(ctx.seed, ctx.trip_places)
+    if not places:
+        return []
+    out = []
+    for sp in _body_spans(text, ctx.cta, kinds=("prose", "bullet", "faq_a")):
+        if not _BASE_RE.search(sp["clean"]):
+            continue
+        toks = _name_tokens(sp["clean"])
+        named = [disp for key, disp in places.items() if _has_place(toks, key, True)]
+        if named:
+            out.append({"span": sp, "place": named[0]})
+    return out
+
+
+def fix_background_bases(text: str, ctx: "TripFactContext") -> tuple[str, list[str]]:
+    """Delete such a sentence when no pronoun is orphaned; when it is the whole answer of a FAQ pair,
+    delete the pair while the FAQ keeps at least FAQ_MIN_PAIRS pairs. Returns (text, log)."""
+    from services.acp_content_writing.hygiene import _safe_to_delete, tidy_after_cut
+    from services.acp_content_writing.quality_gates import FAQ_MIN_PAIRS
+    log: list[str] = []
+    for _ in range(4):
+        hits = background_bases(text, ctx)
+        done = False
+        for hit in hits:
+            sp = hit["span"]
+            spans = sentence_spans(text)
+            k = next((n for n, s in enumerate(spans) if s["start"] == sp["start"]), None)
+            if k is None:
+                continue
+            answer = [s for s in spans if s["kind"] == "faq_a"
+                      and text.rfind("\n", 0, s["start"]) == text.rfind("\n", 0, sp["start"])]
+            if sp["kind"] == "faq_a" and len(answer) == 1:
+                pairs = sum(1 for s in spans if s["kind"] == "faq_q")
+                q = next((s for s in reversed(spans[:k]) if s["kind"] == "faq_q"), None)
+                if q is None or pairs <= FAQ_MIN_PAIRS:
+                    continue
+                start = text.rfind("\n", 0, q["start"]) + 1
+                end = text.find("\n", sp["end"])
+                end = len(text) if end < 0 else end + 1
+                text = tidy_after_cut(text[:start] + text[end:])
+                log.append(f"deleted a FAQ pair that makes {hit['place']} the trip's base (background only): "
+                           f"'{q['clean'][:120]}'")
+                done = True
+                break
+            if _safe_to_delete(spans, k):
+                after = sp["end"] + 1 if text[sp["end"]:sp["end"] + 1] == " " else sp["end"]
+                text = tidy_after_cut(text[:sp["start"]] + text[after:])
+                log.append(f"deleted a sentence that makes {hit['place']} the trip's base (background only): "
+                           f"'{sp['clean'][:160]}'")
+                done = True
+                break
+        if not done:
+            break
+    return text, log
+
+
+def fix_trip_facts(text: str, ctx: Optional["TripFactContext"]) -> tuple[str, list[str]]:
+    """S234 round 4 — the deterministic trip-fact fixes, run in the job after the last LLM step and
+    before the gates: thin-moment heading / coda, a hazard played down for a family brand, a
+    background-only place made the trip's base. Returns (text, log)."""
+    if ctx is None:
+        return text, []
+    text, log = fix_thin_moments(text, ctx.moments, ctx.cta)
+    text, more = fix_minimised_hazards(text, ctx)
+    log += more
+    text, more = fix_background_bases(text, ctx)
+    return text, log + more
+
+
 # ---------------------------------------------------------------- one entry point
 
 @dataclass
@@ -900,6 +1274,9 @@ class TripFactContext:
     source: str = ""          # own seed lines + Facts (rarity support)
     audience: Optional[str] = None
     cta: Optional[str] = None
+    # S234 round 4 — places of the full trip (service._trip_places_outside): a background place that is
+    # one of them is not 'a base the trip never uses' (Ulaanbaatar via the Mörön airport fact)
+    trip_places: tuple = ()
     moments: list = field(init=False)
 
     def __post_init__(self):
@@ -921,6 +1298,13 @@ def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_titl
                             f"getting there ({miss['caveat'][:160].rstrip('.')}) — keep this sentence and add ONE "
                             "short sentence that states that caveat in the source's words", miss["sentence"]))
     trip += date_authority_claims(text, ctx.seed, ctx.cta, extra)
+    # S234 round 4 (r3 panel §4 fixes 2, 3, 4)
+    trip += thin_moment_issues(text, ctx.moments, ctx.cta)
+    trip += [_quoted("plays down a hazard the source states, for a family audience — keep the hazard, cut the "
+                     "reassurance", hit["span"]["clean"]) for hit in minimised_hazards(text, ctx)]
+    trip += [_quoted(f"makes {hit['place']} the reader's gateway or base, but this trip does not go there (the "
+                     "source names it only as background) — cut it", hit["span"]["clean"])
+             for hit in background_bases(text, ctx)]
     rarity = rarity_claims(text, ctx.source, ctx.cta, extra)
     return {"trip_fact": list(dict.fromkeys(trip)), "rarity": list(dict.fromkeys(rarity))}
 
@@ -928,7 +1312,8 @@ def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_titl
 __all__ = [
     "EndedRole", "Moment", "OptionalActivity", "RARITY_CLAIM_RE", "TripFactContext", "audience_has_children",
     "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
-    "find_trip_fact_issues", "missing_family_caveat",
+    "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
+    "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "moments_named", "names_moment", "optional_activities", "optional_as_fixed", "parse_moments", "rarity_claims",
     "timing_claims", "with_date_spans",
 ]

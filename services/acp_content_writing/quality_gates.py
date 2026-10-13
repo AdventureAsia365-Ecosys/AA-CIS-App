@@ -560,9 +560,22 @@ def keyword_covered(text: Optional[str], keyword: Optional[str]) -> bool:
     return not missing or (len(words) >= 4 and len(missing) == 1)
 
 
+def title_key(title: Optional[str]) -> str:
+    """S234 round 4 — a title compared across pieces: accent-folded words only ('Lake Khövsgöl:
+    Mongolia's Family Adventure Hub' == 'lake khovsgol mongolias family adventure hub')."""
+    from services.acp_content_writing.hygiene import fold
+    return " ".join(re.findall(r"[a-z0-9]+", fold(title or "").replace("'", "").replace("’", "")))
+
+
+def title_taken(title: Optional[str], taken_titles) -> bool:
+    key = title_key(title)
+    return bool(key) and any(key == title_key(t) for t in (taken_titles or ()))
+
+
 def gate_seo_surface(
     seo_title: Optional[str], meta_description: Optional[str], slug: Optional[str],
     keyword: Optional[str], *, seed: Optional[str] = None, body: Optional[str] = None,
+    taken_titles: Optional[list[str]] = None,
 ) -> GateResultLite:
     """AA-514 — ported from `gates/shape.py::seo_surface()` (thresholds verbatim from
     `gate-thresholds.toml`). Blog-only (dispatch in run_quality_gates(), not here — same
@@ -591,6 +604,10 @@ def gate_seo_surface(
             )
         if kw and not keyword_covered(seo_title, keyword):
             violations.append(f"SEO title does not contain the keyword '{keyword}'")
+        # S234 round 4 (r3 panel §4 fix 5: #0 = #19) — the brand's earlier pieces on this channel
+        if title_taken(seo_title, taken_titles):
+            violations.append("SEO title is the same as an earlier piece of this brand — search results "
+                              "would show two identical headlines")
 
     if not meta_description:
         violations.append("no meta description — the search snippet is not optional")
@@ -1605,6 +1622,7 @@ def run_quality_gates(
     sibling_texts: Optional[list[str]] = None,
     trip_ctx: Optional[TripFactContext] = None,
     brief_texts: Optional[dict] = None,
+    taken_titles: Optional[list[str]] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1683,7 +1701,8 @@ def run_quality_gates(
     ]
     if channel == "blog":
         gate_ledger += [
-            gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text, body=content_text),
+            gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text, body=content_text,
+                             taken_titles=taken_titles),
             # AA-770 (S233) — blog shape is advice, not product truth: F5 (citation density), F3
             # (rhythm) and F7 (FAQ restates; service.py auto-drops those pairs first) warn only.
             # S232: they held 12/20 final blogs and forced full rewrites that invented new facts.
@@ -1734,5 +1753,6 @@ __all__ = [
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
-    "F13_REPEAT_GATE", "gate_repeat", "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES",
+    "F13_REPEAT_GATE", "gate_repeat", "title_key", "title_taken",
+    "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES",
 ]

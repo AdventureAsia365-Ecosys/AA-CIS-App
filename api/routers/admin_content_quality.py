@@ -34,7 +34,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
-from services.acp_content_writing import sentence_repair
+from services.acp_content_writing import sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
@@ -422,7 +422,9 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
     neighbour (422 with the violations); F12_scope / F13_hygiene hits are returned as `warnings`
     and saved anyway (S234 review: F12 is warn-only until its replay shows no false positive),
     splice + tidy, refuse a cut that empties the piece or drops it under the channel's minimum
-    length, UPDATE content_text and write the audit row with before/after. Returns the refreshed
+    length, UPDATE content_text and write the audit row with before/after. What the edit newly
+    breaks (`text_integrity.edit_findings`: a second / reworded CTA, a fragment, a repeat) is an
+    F13_repeat warning — the final integrity pass does not run here. Returns the refreshed
     piece detail. A published piece is edited here only — WordPress is not re-synced."""
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
@@ -475,6 +477,13 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                     detail = "; ".join(f"{f['gate']}: {' | '.join(f['violations'])}" for f in failed)
                     raise HTTPException(status_code=422, detail=f"The new sentence fails a check — {detail}")
             new_text = sentence_repair.apply_edit(old_text, start, end, replacement)
+            # S234 round 4 review — the pipeline's final integrity pass does not run on a hand edit:
+            # what the edit newly breaks (a second or reworded CTA, a lower-case fragment left by a
+            # cut, a repeat) is returned as an F13_repeat warning (saved anyway — the admin decides)
+            broken = text_integrity.edit_findings(old_text, new_text, wi.get("cta"),
+                                                  (wi.get("brand_pack") or {}).get("brand_name"))
+            if broken:
+                warnings.append({"gate": "F13_repeat", "violations": broken, "blocking": False})
             min_chars, _ = _length_bounds_for_channel(row["channel"])
             if not new_text.strip():
                 raise HTTPException(status_code=422, detail="This would leave the piece empty")

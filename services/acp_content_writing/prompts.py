@@ -92,6 +92,9 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
   bulleted list, and give the richest moment (or section) clearly more depth — at least half as
   long again as any other section.
+- A moment the CONTENT SEED marks "Thin moment" gets ONE plain sentence inside a neighbouring section:
+  never its own "## " heading, never the climax or a closing reflection; if it is the last stop, state
+  it plainly, with no interpretation the seed does not give.
 - The CONTENT SEED below is organized into several moments along the route, each preceded by its
   own citation id (shown as "[Moment id=<id>]"). Immediately after every sentence that uses a
   specific fact, number, or detail drawn from one of these moments, append the tag [R:<id>] using

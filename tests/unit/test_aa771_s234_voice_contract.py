@@ -425,7 +425,8 @@ class TestT9Prompt:
     def test_blog_prompts_are_byte_identical(self):
         """Guard: hashes computed on the PR2 base (feat/aa768-hygiene-scope-seed) before any AA-771
         S234 edit. Any change to a blog writer prompt must be deliberate and update these.
-        Updated S234 round 2 review (AA-768): the FAQ is required with 3-4 pairs (F16_faq contract)."""
+        Updated S234 round 2 review (AA-768): the FAQ is required with 3-4 pairs (F16_faq contract).
+        Updated S234 round 4 (AA-768): the route blog prompt gets one line for a "Thin moment"."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -448,7 +449,7 @@ class TestT9Prompt:
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "be2787f580be157dccf3ed5ae5f7183d6e7bbd2f1a78a747089b1031806b8cba"
         assert sha(single) == "c282fdddb68017597157bfa4e92275a70c988d55dd30b2c4d9edf59b7b2db6fd"
-        assert sha(route) == "5938dbf1a12c6f5d52b6b2899af0ac22f633ef45986320edd1410e31fbd77f4b"
+        assert sha(route) == "fc26b65199ddee7b9cdefdafd350aa5781cb34a752d6e4ad12bff76195e8efbe"
 
 
 # ---------------------------------------------------------------- hygiene with the spec (finalize_social)

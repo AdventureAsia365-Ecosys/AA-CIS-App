@@ -46,15 +46,15 @@ from services.acp_content_writing import seo_grounding
 from services.acp_shared.channel_spec import channel_spec, first_sentence
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
-    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered,
+    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import hygiene, sentence_repair, trip_facts
+from services.acp_content_writing import hygiene, sentence_repair, text_integrity, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, FAQ_MAX_PAIRS, FAQ_MIN_PAIRS,
-                                                          STYLE_ONLY_GATES,
+from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, FAQ_MAX_PAIRS,
+                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_unanswerable_faq, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, replace_faq_section,
@@ -443,8 +443,19 @@ def _ascii_slug(slug: Optional[str]) -> Optional[str]:
     return folded[:60].rstrip("-") or slug
 
 
+def _title_variant(title: Optional[str], brand: Optional[str], taken: list[str]) -> Optional[str]:
+    """S234 round 4 — a deterministic way out of a title clash the fit could not fix: the title with
+    ' | <brand>' when that is inside the band and not taken itself; else None (F4 reports the clash)."""
+    if not title or not brand:
+        return None
+    cand = f"{title} | {brand}"
+    ok = _SEO_TITLE_MIN_CHARS <= len(cand) <= _SEO_TITLE_MAX_CHARS and not title_taken(cand, taken)
+    return cand if ok else None
+
+
 async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, context: dict,
-                        request_id, hyg: Optional[hygiene.HygieneContext] = None) -> tuple[dict, float]:
+                        request_id, hyg: Optional[hygiene.HygieneContext] = None,
+                        taken_titles: Optional[list[str]] = None) -> tuple[dict, float]:
     """AA-768 (S233) — when the blog writer's title or meta is outside the T10 band, regenerate
     both with one short call (generate.fit_seo_fields) instead of cutting the string. The S232
     deterministic cut (fit_seo_title, built for tour names) turned "Bhutan's Craft Bazaar:
@@ -459,8 +470,12 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         seo_meta = {**seo_meta, "slug": _ascii_slug(seo_meta["slug"])}
     lex = hyg.lexicon if hyg is not None else None
 
+    taken = list(taken_titles or [])
+
     def title_ok(value) -> bool:
-        return _seo_title_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+        # S234 round 4 (r3 #0 = #19) — never a title an earlier piece of this brand already uses
+        return (_seo_title_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
+                and not title_taken(value, taken))
 
     seed = context.get("atom_text") or ""
 
@@ -485,6 +500,9 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         forbidden += [w for w in ("still", "remains", "today", "active center", "administrative center")
                       if w not in forbidden]
     extra = {"forbidden_words": forbidden} if forbidden else {}
+    if title_taken(seo_meta.get("seo_title"), taken):
+        clash = [t for t in taken if title_taken(t, [seo_meta.get("seo_title")])]
+        extra["taken_titles"] = clash[:1] + [t for t in taken if t not in clash][:9]
     try:
         fitted, cost = await asyncio.to_thread(
             fit_seo_fields, body=body, seo_title=seo_meta.get("seo_title"),
@@ -518,6 +536,10 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
             out = merge(out, again)
         except Exception as e:  # noqa: BLE001
             logger.warning("t9_seo_fit_retry_failed", request_id=str(request_id), error=str(e)[:200])
+    if title_taken(out.get("seo_title"), taken):
+        variant = _title_variant(out.get("seo_title"), audience.get("brand_name"), taken)
+        if variant and _seo_title_ok(variant, keyword):
+            out = {**out, "seo_title": variant}
     return out, cost
 
 
@@ -551,6 +573,26 @@ def _repair_source(content_text: str, items: list[dict], context: dict) -> str:
     if audience.get("core_idea"):
         parts.append(f"BRAND CORE IDEA: {audience['core_idea']}")
     return "\n\n".join(p for p in parts if p)
+
+
+def _final_integrity(content_text: str, hyg: hygiene.HygieneContext, gate_ledger: list[dict], flags: list[dict],
+                     status: str, held_reason: Optional[str]) -> tuple:
+    """S234 round 4 — `text_integrity.final_pass` on the text about to be stored. Its edits go in the
+    flags (F13_final_pass, non-blocking); its residue (the F13_repeat findings left — the same
+    `hygiene.find_issues()["repeat"]` the gate reads) replaces the ledger's F13_repeat entry and holds
+    an approved piece. Returns (content_text, gate_ledger, flags, status, held_reason)."""
+    content_text, log, residue = text_integrity.final_pass(content_text, hyg)
+    if log:
+        flags = list(flags) + [{"gate": "F13_final_pass", "passed": False, "blocking": False, "repairable": False,
+                                "violations": log}]
+    if not residue:
+        return content_text, gate_ledger, flags, status, held_reason
+    entry = {"gate": F13_REPEAT_GATE, "passed": False, "blocking": True, "repairable": True,
+             "violations": residue[:10]}
+    ledger = [g for g in gate_ledger if g.get("gate") != F13_REPEAT_GATE] + [entry]
+    if status == "approved":
+        status, held_reason = "held", _held_reason_from(entry)
+    return content_text, ledger, flags, status, held_reason
 
 
 def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
@@ -682,6 +724,30 @@ async def _sibling_texts(tenant_id: Optional[str], request_id: UUID, piece_id: U
         return [r["content_text"] for r in rows if isinstance(r["content_text"], str)]
     except Exception as e:  # noqa: BLE001
         logger.warning("t9_sibling_texts_failed", request_id=str(request_id), error=str(e)[:200])
+        return []
+
+
+_SIBLING_TITLES_QUERY = """
+    SELECT seo_title FROM acp_shared.content_piece
+    WHERE tenant_id = $1::uuid AND channel = $2 AND piece_id <> $3::uuid
+      AND status IN ('approved', 'held') AND seo_title IS NOT NULL AND btrim(seo_title) <> ''
+    ORDER BY created_at DESC
+    LIMIT 50
+"""
+
+
+async def _sibling_titles(tenant_id: Optional[str], channel: Optional[str], piece_id: UUID, pool) -> list[str]:
+    """S234 round 4 (r3 panel §4 fix 5) — the SEO titles of this tenant's 50 most recent pieces on the
+    same channel, one SELECT, so a new title never repeats one (r3 #0 = #19 'Lake Khövsgöl: Mongolia's
+    Family Adventure Hub'). [] on any error or without a tenant (fail-open: F4 then cannot see a clash)."""
+    if not tenant_id or not channel:
+        return []
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_SIBLING_TITLES_QUERY, str(tenant_id), channel, str(piece_id))
+        return [r["seo_title"] for r in rows if isinstance(r["seo_title"], str)]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("t9_sibling_titles_failed", piece_id=str(piece_id), error=str(e)[:200])
         return []
 
 
@@ -1051,7 +1117,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # brand pack and the chosen angle are the brief F15 checks for pasted phrases.
     trip_ctx = trip_facts.TripFactContext(
         seed=atom_text, source=f"{hyg.lexicon.own_text}\n{facts_text}",
-        audience=(brand_audience or {}).get("customer_segment"), cta=cta)
+        audience=(brand_audience or {}).get("customer_segment"), cta=cta,
+        trip_places=tuple(context.get("trip_places") or ()))
     briefs = hygiene.brief_texts(brand_audience, chosen)
     # S234 round 2 (panel §5 fix 4) — a part-of-trip piece gets the trip name without its duration
     # and its out-of-scope places ('Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days' → 'Mongolia:
@@ -1067,6 +1134,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
     brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
     sibling_texts = await _sibling_texts(context.get("tenant_id"), request_id, piece_id, pool)
+    # S234 round 4 — only the blog channel has a search title (F4 and the publish path are blog-only)
+    taken_titles = await _sibling_titles(context.get("tenant_id"), channel, piece_id, pool) if channel == "blog" else []
 
     attempt = 1  # bound before the try block so the except handler always has a real value
     try:
@@ -1201,9 +1270,13 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     )
                     fresh_text = True
             total_cost += cost
-            seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text,
-                                                     context=context, request_id=request_id, hyg=hyg)
-            total_cost += seo_cost
+            if channel == "blog":
+                # S234 round 4 — the search title/meta exist for the blog only: no publish path, gate or
+                # tenant view reads them on another channel, and the fit made 1–2 t9_repair calls per
+                # attempt on every LinkedIn post (r3 #6/#10 stored a partial or empty pair from it).
+                seo_meta, seo_cost = await _fit_seo_meta(seo_meta, keyword, body=content_text, context=context,
+                                                         request_id=request_id, hyg=hyg, taken_titles=taken_titles)
+                total_cost += seo_cost
 
             # AA-484 — cross-tenant cannibalization check, done HERE (before run_quality_gates(),
             # which stays synchronous/pool-free — see quality_gates.gate_cannibalization()'s own
@@ -1275,6 +1348,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text, spec=spec, context=context, hyg=hyg, request_id=request_id,
                     brand_ignore=brand_ignore)
                 total_cost += fl_cost
+            # S234 round 4 (r3 panel §4 fixes 1–4, 8) — after the last edit of this attempt (FAQ
+            # regeneration and the first-line rewrite included): the deterministic trip-fact fixes
+            # (thin-moment heading / coda, a hazard played down, a background place made the base),
+            # then the final text-integrity pass (one CTA, no duplicate, no fragment, normalised
+            # whitespace). What it cannot fix is F13_repeat in the gates below.
+            content_text, tf_log = trip_facts.fix_trip_facts(content_text, trip_ctx)
+            content_text, final_log, _ = text_integrity.final_pass(content_text, hyg)
+            first_line_log = first_line_log + tf_log + final_log
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
@@ -1287,6 +1368,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 stock_blocking=attempt == 1,
                 sibling_texts=sibling_texts,  # S234 round 2 — F15 sibling templates
                 trip_ctx=trip_ctx, brief_texts=briefs,  # S234 round 3 — F17/F18, brief phrases in F15
+                taken_titles=taken_titles,  # S234 round 4 — F4: a title this brand already used
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -1404,6 +1486,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         flags = deep_strip_citation_tags(flags)
         if held_reason:
             held_reason = strip_citation_tags(held_reason)
+        # S234 round 4 (r3 panel §4 fix 1) — the very last step before the piece is stored, after every
+        # repair, revert and the tag strip: fail closed — a duplicate, a second CTA or a fragment the
+        # pass cannot remove holds the piece (r3 #19 was approved with three visible duplicates).
+        content_text, gate_ledger, flags, status, held_reason = _final_integrity(
+            content_text, hyg, gate_ledger, flags, status, held_reason)
 
         # AA-570 — the common case: attempt 2 ran and its own gate-regression-guard branch above
         # never fired, so `discarded_attempt` is still None even though a real attempt WAS
