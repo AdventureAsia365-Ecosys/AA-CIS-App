@@ -323,7 +323,8 @@ Rules:
 - Title: 45-60 characters, uses every content word of the target keyword (the keyword is a raw
   search query — reorder it into natural English, never paste it ungrammatically), names the place,
   reads as one natural headline (never a fragment cut at a colon).
-- Meta description: 140-155 characters (count them), ONE complete sentence ending in '.', uses every
+- Meta description: aim for 130-145 characters, never over 155 (models overshoot — keep it short),
+  ONE complete sentence of about 20 words ending in '.', uses every
   content word of the target keyword in natural English, says what the reader gets from the post.
 - Use only places and facts that appear in the post. No new claims, numbers or promises.
 Return ONLY JSON: {"seo_title": "...", "meta_description": "..."}"""
@@ -344,7 +345,7 @@ def fit_seo_fields(
         parts.append(f"BRAND (never name another brand): {brand_name}")
     tl, ml = len(seo_title or ""), len(meta_description or "")
     parts.append(f"CURRENT TITLE ({tl} chars{'' if 45 <= tl <= 60 else ' — must be 45-60'}): {seo_title or '(none)'}")
-    parts.append(f"CURRENT META ({ml} chars{'' if 140 <= ml <= 155 else ' — must be 140-155'}): "
+    parts.append(f"CURRENT META ({ml} chars{'' if 120 <= ml <= 155 else ' — must be 130-145, never over 155'}): "
                  f"{meta_description or '(none)'}")
     parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
