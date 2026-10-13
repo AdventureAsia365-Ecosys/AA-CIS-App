@@ -98,15 +98,66 @@ class TestSanitizeBestFinalStyle:
         brief = "Tone: calm, intelligent, slightly contemplative — not mystical. Anchor the question in the rivers."
         assert sanitize_best_final_style(brief, AH) == (brief, [])
 
-    def test_strips_open_with_sentences_for_every_brand(self):
+    def test_open_with_becomes_lead_with_for_every_brand(self):
         brief = "Open with the geography as a thinking problem: why here? Move to the founder."
         for pack in (TRAIL, AH, TERRA, WILDKIND):
             clean, stripped = sanitize_best_final_style(brief, pack)
-            assert clean == "Move to the founder." and len(stripped) == 1
+            assert clean == "Lead with the geography as a thinking problem: why here? Move to the founder."
+            assert stripped == ["Open with"]
 
     def test_keeps_the_then_part_of_an_opening_sentence(self):
         clean, _ = sanitize_best_final_style("Open with the checkpoint, then explain why preparation matters.", TERRA)
-        assert clean == "Explain why preparation matters."
+        assert clean == "Lead with the checkpoint, then explain why preparation matters."
+
+    def test_literal_first_line_is_cut(self):
+        brief = 'Opening line: "The water is not supposed to be that colour." Then explain the limestone.'
+        assert sanitize_best_final_style(brief, TRAIL)[0] == "Explain the limestone."
+        clean, stripped = sanitize_best_final_style('Open with "Nobody warns you about the cold."', TRAIL)
+        assert clean == "Lead with the most concrete details from the content seed." and stripped
+
+    # S234 review — real stored S232/S233 briefs: the seed detail and what follows it survive.
+    @pytest.mark.parametrize("pack,brief,clean", [
+        (WILDKIND, "Open with the confluence itself: the Pho Chhu and Mo Chhu meeting at the peninsula where the "
+                   "dzong stands. Build one short paragraph on what that siting meant.",
+         "Lead with the confluence itself: the Pho Chhu and Mo Chhu meeting at the peninsula where the dzong "
+         "stands. Build one short paragraph on what that siting meant."),
+        (TRAIL, "Open with the question … why is the water that colour? Answer it directly using the limestone.",
+         "Lead with the question … why is the water that colour? Answer it directly using the limestone."),
+        (AH, "Open with the question of why the dzong stands here. Anchor the question in the rivers.",
+         "Lead with the question of why the dzong stands here. Anchor the question in the rivers."),
+        (TERRA, "Do not open with the bath as a reward or treat; frame both as intentional planning decisions.",
+         "Do not lead with the bath as a reward or treat; frame both as intentional planning decisions."),
+        (TRAIL, "Start with the trek to the pools, the swim and the rest, and finish at the café.",
+         "Lead with the trek to the pools, the swim and the rest, and finish at the café."),
+        (TRAIL, "Begin on Day 2 at the limestone pools; keep the swim central.",
+         "Lead with Day 2 at the limestone pools; keep the swim central."),
+        (TRAIL, "Start with the climb to the monastery on Day 3.", "Lead with the climb to the monastery on Day 3."),
+    ])
+    def test_opening_keeps_the_seed_detail(self, pack, brief, clean):
+        assert sanitize_best_final_style(brief, pack)[0] == clean
+
+    def test_lead_with_open_water_is_not_an_opening(self):
+        assert sanitize_best_final_style("Lead with open water on Day 2.", TRAIL) == ("Lead with open water on Day 2.", [])
+
+    @pytest.mark.parametrize("pack,brief", [
+        (TRAIL, "Mention that local boat operators run the crossing at dawn, then the lake."),
+        (TRAIL, "Reassure parents that guides and planners handle the altitude days."),
+        (TERRA, "Speak to parents and family trip planners who worry about pacing for kids aged 7-16."),
+    ])
+    def test_trip_content_operators_and_planners_are_kept(self, pack, brief):
+        assert sanitize_best_final_style(brief, pack) == (brief, [])
+
+    @pytest.mark.parametrize("pack,brief", [
+        (TERRA, "Tone: warm but analytically grounded — this should read like a thoughtful operator reflecting "
+                "on trip design."),
+        (TRAIL, "End with a light CTA asking LinkedIn readers how they think about sequencing when they plan or "
+                "recommend active travel."),
+        (TRAIL, "Close with a reflective question for the LinkedIn audience about what it means to really know a "
+                "destination before you put travellers in it."),
+    ])
+    def test_trade_facing_briefs_are_stripped(self, pack, brief):
+        clean, stripped = sanitize_best_final_style("Lead with the pools. " + brief, pack)
+        assert clean == "Lead with the pools." and stripped == [brief]
 
     def test_strips_professional_audience_for_non_editorial_only(self):
         brief = ("Lead with the pools. Close with a light CTA inviting professionals planning active travel "
@@ -123,7 +174,7 @@ class TestSanitizeBestFinalStyle:
         assert sanitize_best_final_style(brief, TRAIL) == (brief, [])
 
     def test_never_empty(self):
-        clean, stripped = sanitize_best_final_style("Open with the date 1937.", TRAIL)
+        clean, stripped = sanitize_best_final_style("Open with \"1937.\"", TRAIL)
         assert clean and stripped
 
 
@@ -195,6 +246,30 @@ class TestRouteDigest:
         assert angle_anchor(_angle("A Morning Climb", "Lead with the lake shore."), ms)["atom_id"] == "a_lake"
         assert thin_anchor(_angle("What One Ruined Monastery Tells Families"), ms) == \
             "ruins of an ancient monastery — visit (1 fact)"
+
+    # S234 review — the T8 prompt asks angles to keep thin moments out of the lead in exactly these words.
+    @pytest.mark.parametrize("brief", [
+        "Keep the ruins to one sentence at most; lead with the horse ride on Lake Khovsgol.",
+        "Avoid anchoring on the ruins. Lead with the lake crossing.",
+        "Lead with the horse ride on Lake Khovsgol, not the ruins.",
+        "Do not open with the ruins; start on the lake shore instead.",
+        "Mention the ruins only briefly. Lead with the lake shore.",
+    ])
+    def test_thin_moment_kept_out_of_the_lead_is_not_the_anchor(self, brief):
+        ms = route_moments(SEGMENTS)
+        assert angle_anchor(_angle("Four days on the water", brief), ms)["atom_id"] == "a_lake"
+        assert thin_anchor(_angle("Four days on the water", brief), ms) is None
+
+    def test_moment_after_the_lead_verb_wins(self):
+        ms = route_moments(SEGMENTS)
+        brief = "After the ruins on Day 14 the route ends, so lead with the Uran Togoo crater."
+        assert angle_anchor(_angle("Four days", brief), ms)["atom_id"] == "a_uran"
+        assert angle_anchor(_angle("Four days", "Lead with the ruins, then the lake."), ms)["atom_id"] == "a_ruins"
+
+    def test_compliant_angles_do_not_trigger_the_all_thin_retry(self):
+        ms = route_moments(SEGMENTS)
+        ok = _angle("Four days on the water", "Keep the ruins to one sentence at most; lead with the lake shore.")
+        assert angle_generate.angle_contract_violations([ok, ok, ok], {}, ms) == []
 
     def test_contract_violation_only_when_all_three_are_thin(self):
         ms = route_moments(SEGMENTS)
@@ -294,7 +369,7 @@ class TestT8Service:
         angles = [_angle(f"A{i}", "Calm, considered LinkedIn voice — direct. Open with the pools. Lead with Day 2.")
                   for i in range(3)]
         _, inserts = await self._run(_req(), angles, TRAIL)
-        assert [args[6] for args in inserts] == ["Lead with Day 2."] * 3
+        assert [args[6] for args in inserts] == ["Lead with the pools. Lead with Day 2."] * 3
 
     async def test_linkedin_channel_block_follows_the_register(self):
         gen, _ = await self._run(_req(), [_angle(f"A{i}") for i in range(3)], TRAIL)
@@ -336,12 +411,12 @@ class TestT9Prompt:
 
     def test_linkedin_prompt_gets_the_sanitised_brief(self):
         p = _t9("linkedin")
-        assert "ANGLE'S BEST FINAL STYLE: Lead with Day 2." in p
+        assert "ANGLE'S BEST FINAL STYLE: Lead with the pools. Lead with Day 2." in p
 
     def test_other_social_channel_keeps_its_style_but_gets_the_clean_brief(self):
         p = _t9("facebook")
         assert "CHANNEL STYLE: human, warm" in p and "LENGTH AND SHAPE" not in p
-        assert "ANGLE'S BEST FINAL STYLE: Lead with Day 2." in p
+        assert "ANGLE'S BEST FINAL STYLE: Lead with the pools. Lead with Day 2." in p
 
     def test_sibling_openers_listed_for_social_not_blog(self):
         p = _t9("linkedin", sibling_openers=["There is a checkpoint before the temples."])
@@ -452,7 +527,7 @@ class TestF15Voice:
 
     def test_stock_phrase_blocks_and_goes_to_sentence_repair(self):
         text = "Day 2 ends at the pools. That detail is worth sitting with. Swim, rest, then lunch."
-        r = qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL)
+        r = qg.gate_voice(text, spec=self.spec)
         assert r["blocking"] and r["repairable"]
         assert r["violations"][0].endswith("'That detail is worth sitting with.'")
         items = sentence_repair.plan(text, [r])
@@ -460,29 +535,30 @@ class TestF15Voice:
 
     def test_not_as_pair_is_one_quoted_span(self):
         text = "Rest is built in. Not as filler. Not as an afterthought. It is the plan."
-        r = qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL)
+        r = qg.gate_voice(text, spec=self.spec)
         assert any("'Not as filler. Not as an afterthought.'" in v for v in r["violations"])
         items = sentence_repair.plan(text, [r])
         assert items and text[items[0]["start"]:items[0]["end"]] == "Not as filler. Not as an afterthought."
 
     def test_b2b_register_warns_for_trail_not_for_atlas_hearth(self):
         text = "Active travel brands have a pacing problem. The pools on Day 2 fix it."
-        r = qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL)
+        r = qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL)
         assert not r["blocking"] and any(v.startswith("writes to the travel trade") for v in r["violations"])
-        assert qg.gate_voice(text, spec=linkedin_spec(AH), brand_pack=AH)["passed"]
+        assert qg.gate_voice_warn(text, spec=linkedin_spec(AH), brand_pack=AH)["passed"]
+        assert qg.gate_voice(text, spec=self.spec)["passed"]
 
     def test_segment_leak_warns_unless_the_source_has_it(self):
         text = "We plan trips for clients in the 25–40 range. The pools are on Day 2."
         source = "Kuang Si pools\n\nAUDIENCE (who the brand writes for — not a fact about this trip): 25–40 years old"
-        r = qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL, atom_text=source)
+        r = qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL, atom_text=source)
         assert any("audience definition ('25–40')" in v for v in r["violations"])
-        r2 = qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL, atom_text="Group of 25-40 riders on Day 2.")
+        r2 = qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL, atom_text="Group of 25-40 riders on Day 2.")
         assert not any("audience definition" in v for v in r2["violations"])
 
     def test_generic_and_repeated_openers_warn(self):
         terra_opener = "There is a checkpoint before you reach the inner temples of Paro Taktsang."
-        r = qg.gate_voice(terra_opener + " Cameras stay behind.", spec=linkedin_spec(TERRA), brand_pack=TERRA,
-                          sibling_openers=[terra_opener])
+        r = qg.gate_voice_warn(terra_opener + " Cameras stay behind.", spec=linkedin_spec(TERRA), brand_pack=TERRA,
+                               sibling_openers=[terra_opener])
         kinds = [v.split(":")[0] for v in r["violations"]]
         assert any(k.startswith("generic 'There is a") for k in kinds)
         assert any(k.startswith("opens like an earlier piece") for k in kinds)
@@ -490,8 +566,10 @@ class TestF15Voice:
 
     def test_clean_post_passes_and_other_channels_skip(self):
         text = "Day 2 ends at turquoise pools. Swim, rest, eat. Ask us for the dates."
-        assert qg.gate_voice(text, spec=self.spec, brand_pack=TRAIL)["passed"]
+        assert qg.gate_voice(text, spec=self.spec)["passed"]
+        assert qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL)["passed"]
         assert qg.gate_voice("That is worth sitting with today.", spec=None)["passed"]
+        assert qg.gate_voice_warn("Travel brands skip it.", spec=None)["passed"]
 
     def test_run_quality_gates_wires_both_for_linkedin(self):
         text = "Active travel brands have a pacing problem. That detail is worth sitting with."
@@ -503,6 +581,47 @@ class TestF15Voice:
         gates = {g["gate"]: g for g in out["gate_ledger"]}
         assert not gates["F14_social_shape"]["passed"]  # 13 words, under the band
         assert gates["F15_voice"]["blocking"] and out["first_failure"]["gate"] == "F15_voice"
+        assert not gates["F15_voice_warn"]["passed"] and not gates["F15_voice_warn"]["blocking"]
+        with patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])), \
+             patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
+                                                                 qg._result("F9_brand_style", [], blocking=False)]):
+            later = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us", goal_key="promotion",
+                                         brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL,
+                                         stock_blocking=False)
+        assert later["passed"] and any(g["gate"] == "F15_voice" for g in later["flags"])
+
+    # S234 review — a stock repair touches the stock sentence only, never the warn-only checks.
+    def test_stock_repair_plan_ignores_the_warn_only_checks(self):
+        text = ("There is a lake you reach on Day 2. Active travel brands often skip it entirely. "
+                "That detail is worth sitting with.")
+        ledger = [qg.gate_voice(text, spec=self.spec),
+                  qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL)]
+        assert ledger[0]["blocking"] and len(ledger[1]["violations"]) == 2
+        items = sentence_repair.plan(text, ledger)
+        assert [i["sentence"] for i in items] == ["That detail is worth sitting with."]
+
+    @pytest.mark.parametrize("text", [
+        "Your guide tells you everything you need to know about the crossing before you set off.",
+        "No accident has been reported on this trail in years.",
+        "That tells you something.",
+    ])
+    def test_ordinary_sentences_are_not_stock(self, text):
+        assert qg.gate_voice(text, spec=self.spec)["passed"]
+
+    @pytest.mark.parametrize("text", ["It was no accident that the dzong stands at the confluence of two rivers.",
+                                      "The confluence tells you something about how the dzong was sited."])
+    def test_narrowed_stock_patterns_still_fire(self, text):
+        assert not qg.gate_voice(text, spec=self.spec)["passed"]
+
+    def test_a_stock_phrase_never_holds_a_piece(self):
+        f15 = qg.gate_voice("Day 2. That detail is worth sitting with.", spec=self.spec)
+        f1 = qg._result("F1_grounding", ["x"])
+        assert qg.hold_failure([f15]) is None
+        assert qg.hold_failure([f15, f1])["gate"] == "F1_grounding"
+        status, reason, flags = writing_service._hold_or_ship([f15], [])
+        assert (status, reason) == ("approved", None)
+        assert flags[0]["gate"] == "F15_voice" and flags[0]["blocking"] is False
+        assert writing_service._hold_or_ship([f15, f1], [])[0] == "held"
 
 
 # ---------------------------------------------------------------- F9 voice
@@ -534,7 +653,7 @@ class TestF9Voice:
 class TestHighlights:
     def test_f15_and_f14_quotes_are_highlighted(self):
         text = "x" * 150 + "\n\nDay 2 ends at the pools. That detail is worth sitting with."
-        f15 = qg.gate_voice(text, spec=linkedin_spec(TRAIL), brand_pack=TRAIL)
+        f15 = qg.gate_voice(text, spec=linkedin_spec(TRAIL))
         f14 = qg.gate_social_shape(text, linkedin_spec(TRAIL))
         hs = highlights(text, [f15, f14], [])
         gates = {h["gate"] for h in hs}
@@ -563,3 +682,30 @@ class TestSiblingOpeners:
         conn.fetch.side_effect = RuntimeError("db down")
         assert await writing_service._sibling_openers(uuid.uuid4(), uuid.uuid4(), "a1", "linkedin",
                                                       _pool(conn)) == []
+
+
+# ---------------------------------------------------------------- T9 loop: F15 never holds (S234 review)
+
+@pytest.mark.asyncio
+async def test_stock_phrase_left_after_repairs_ships_instead_of_held():
+    text = "Day 2 ends at the pools. That detail is worth sitting with. Ask us for dates."
+    f15 = qg.gate_voice(text, spec=linkedin_spec(TRAIL))
+    outcome = {"passed": False, "gate_ledger": [f15], "first_failure": f15, "flags": []}
+    ctx = {"atom_text": "seed", "goal": {"key": "promotion", "name": "P", "description": "d", "logic": "l"},
+           "channel_style": {"channel": "linkedin"}, "brand_audience": TRAIL, "chosen": {"name": "a"},
+           "cta": "Ask", "destination": None, "trip_name": None, "brand_rubric_text": "r", "channel": "linkedin",
+           "atom_id": "a1", "tenant_id": None}
+    gates = MagicMock(return_value=outcome)  # the mock ignores stock_blocking: worst case
+    with patch.object(writing_service, "write_content", return_value=(text, 0.01, {}, None)), \
+            patch.object(writing_service, "rewrite_with_feedback") as rewrite, \
+            patch.object(writing_service, "repair_sentences",
+                         return_value=(["That detail matters on a hot day."], 0.01)), \
+            patch.object(writing_service, "run_quality_gates", new=gates), \
+            patch.object(writing_service, "observe_t10", new=AsyncMock()), \
+            patch.object(writing_service, "_finalize_piece", new=AsyncMock()) as fin:
+        await writing_service.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
+    rewrite.assert_not_called()
+    assert [c.kwargs["stock_blocking"] for c in gates.call_args_list] == [True, False]  # one repair round
+    kw = fin.await_args.kwargs
+    assert kw["status"] == "approved" and kw["held_reason"] is None
+    assert any(f["gate"] == "F15_voice" and f["blocking"] is False for f in kw["flags"])

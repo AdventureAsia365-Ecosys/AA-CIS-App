@@ -1115,11 +1115,16 @@ def gate_hygiene(content_text: str, hygiene_ctx: Optional[HygieneContext]) -> Ga
 
 # ---------------------------------------------------------------- F14 / F15 (AA-771, S234)
 
-# F15_voice blocks — and goes to sentence repair, not a full rewrite — only for the stock-phrase
-# hard list (S234 plan PR3). B2B register, segment leak and opener repeat stay warn-only.
+# F15_voice (stock-phrase hard list only) blocks — and goes to sentence repair, never a full
+# rewrite — on the FIRST attempt only, and never holds a piece (S234 plan PR3 + review): a style
+# phrase is not product truth (AA-613 'held'). Trade register, audience leak and opener checks are a
+# separate warn-only result, F15_voice_warn, so sentence_repair.plan never rewrites them.
 F15_STOCK_BLOCKING = True
 F14_GATE = "F14_social_shape"
 F15_GATE = "F15_voice"
+F15_WARN_GATE = "F15_voice_warn"
+# Gates that may block (to trigger one repair) but never hold a piece on their own.
+STYLE_ONLY_GATES = frozenset({F15_GATE})
 _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a sentence
 OPENER_REPEAT_JACCARD = 0.6
 
@@ -1179,19 +1184,13 @@ def _has_num(text: str, key: str) -> bool:
     return re.search(rf"(?<!\d){re.escape(key)}(?!\d)", _norm_num(text)) is not None
 
 
-def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Optional[dict] = None,
-               atom_text: str = "", sibling_openers: Optional[list[str]] = None) -> GateResultLite:
-    """F15_voice — deterministic voice checks for a channel with a spec (LinkedIn):
-    - stock phrases from the hard list (S233: 30/41 posts — 'worth sitting with', 'not incidental',
-      'Not as filler. Not as an afterthought.') — blocking when F15_STOCK_BLOCKING, and repaired
-      sentence by sentence (sentence_repair._ELIGIBLE_GATES), never by a full rewrite;
-    - writing to the travel trade for a non-editorial brand (S233 Trail Pulse 3/3: 'Active travel
-      brands have a pacing problem.') — warn;
-    - the brand's Audience numbers in the text when the source does not have them (S233 #6
-      'clients in the 25–40 range') — warn;
-    - a generic 'There is a …' opener, or the same opener as an earlier piece from the same brief
-      (token Jaccard ≥ 0.6; S233 Terra 3/3 identical) — warn.
-    Every violation reads "<problem>: '<sentence>'" (the shape sentence_repair.plan parses)."""
+def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking: bool = True) -> GateResultLite:
+    """F15_voice — the stock-phrase hard list for a channel with a spec (LinkedIn; S233: 30/41 posts
+    — 'worth sitting with', 'not incidental', 'Not as filler. Not as an afterthought.'). Blocking when
+    F15_STOCK_BLOCKING and `stock_blocking` (the caller passes it for attempt 1 only), so it is
+    repaired sentence by sentence (sentence_repair._ELIGIBLE_GATES) at most once, never by a full
+    rewrite; `hold_failure` never holds a piece on it. Every violation reads
+    "<problem>: '<sentence>'" (the shape sentence_repair.plan parses)."""
     if spec is None:
         return _result(F15_GATE, [], repairable=False, blocking=False)
     text = content_text or ""
@@ -1202,6 +1201,25 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Op
             q = _quote(spans, m.start(), m.end())
             if q:
                 stock.append(f"stock phrase '{' '.join(m.group(0).split())}' — say it plainly or cut it: '{q}'")
+    blocking = F15_STOCK_BLOCKING and stock_blocking and bool(stock)
+    return _result(F15_GATE, list(dict.fromkeys(stock)), repairable=True, blocking=blocking)
+
+
+def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Optional[dict] = None,
+                    atom_text: str = "", sibling_openers: Optional[list[str]] = None) -> GateResultLite:
+    """F15_voice_warn — warn-only voice checks for a channel with a spec (LinkedIn), kept apart from
+    F15_voice so a stock-phrase repair never rewrites them:
+    - writing to (or as) the travel trade for a non-editorial brand (S233 Trail Pulse 3/3: 'Active
+      travel brands have a pacing problem.'; channel_spec.TRADE_PATTERN);
+    - the brand's Audience numbers in the text when the source does not have them (S233 #6
+      'clients in the 25–40 range');
+    - a generic 'There is a …' opener, or the same opener as an earlier piece from the same brief
+      (token Jaccard ≥ 0.6; S233 Terra 3/3 identical).
+    Same "<problem>: '<sentence>'" shape, for the admin highlights."""
+    if spec is None:
+        return _result(F15_WARN_GATE, [], repairable=False, blocking=False)
+    text = content_text or ""
+    spans = [sp for sp in sentence_spans(text) if sp["kind"] in ("prose", "bullet")]
     warn: list[str] = []
     if spec.register != EDITORIAL:
         for sp in spans:
@@ -1229,8 +1247,15 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Op
         same = next((o for o in sibling_openers or [] if opener_overlap(opener, o) >= OPENER_REPEAT_JACCARD), None)
         if same:
             warn.append(f"opens like an earlier piece from this brief ('{same[:80]}'): '{q}'")
-    blocking = F15_STOCK_BLOCKING and bool(stock)
-    return _result(F15_GATE, list(dict.fromkeys(stock + warn)), repairable=True, blocking=blocking)
+    return _result(F15_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)
+
+
+def hold_failure(gate_ledger: list[GateResultLite]) -> Optional[GateResultLite]:
+    """The failed blocking gate a piece is HELD on — the first one that is not style-only
+    (STYLE_ONLY_GATES: F15_voice may block to get one sentence repair, but a stock phrase is not
+    unresolved product truth, AA-613). None → nothing holds the piece; it ships with the flags."""
+    return next((g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
+                 and g["gate"] not in STYLE_ONLY_GATES), None)
 
 
 # ---------------------------------------------------------------- orchestration
@@ -1252,6 +1277,7 @@ def run_quality_gates(
     brand_pack: Optional[dict] = None,
     hygiene_ctx: Optional[HygieneContext] = None,
     sibling_openers: Optional[list[str]] = None,
+    stock_blocking: bool = True,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1314,8 +1340,11 @@ def run_quality_gates(
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
         gate_social_shape(content_text, spec),
-        gate_voice(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
-                   sibling_openers=sibling_openers),
+        # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1);
+        # the warn-only checks are their own result so a stock repair never rewrites them.
+        gate_voice(content_text, spec=spec, stock_blocking=stock_blocking),
+        gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
+                        sibling_openers=sibling_openers),
     ]
     if channel == "blog":
         gate_ledger += [
@@ -1356,5 +1385,5 @@ __all__ = [
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
     "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
-    "gate_social_shape", "gate_voice", "F15_STOCK_BLOCKING",
+    "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
 ]

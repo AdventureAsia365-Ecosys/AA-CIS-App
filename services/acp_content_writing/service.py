@@ -51,9 +51,9 @@ from services.acp_content_writing import hygiene, sentence_repair
 from services.acp_content_writing.generate import (SentenceRepairError, fit_seo_fields, repair_sentences,
                                                    rewrite_with_feedback, write_content)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (deep_strip_citation_tags, drop_restated_faq,
-                                                          drop_unanswerable_faq, run_quality_gates,
-                                                          strip_citation_tags)
+from services.acp_content_writing.quality_gates import (STYLE_ONLY_GATES, deep_strip_citation_tags,
+                                                          drop_restated_faq, drop_unanswerable_faq, hold_failure,
+                                                          run_quality_gates, strip_citation_tags)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
@@ -286,6 +286,17 @@ def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> O
 
 def _held_reason_from(first_failure: dict) -> str:
     return f"{first_failure['gate']}: {'; '.join(first_failure['violations'][:3])}"
+
+
+def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
+    """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
+    product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
+    (F15_voice) is left — it is added to the flags so the admin still sees it."""
+    hold = hold_failure(gate_ledger)
+    if hold is not None:
+        return "held", _held_reason_from(hold), flags
+    style = [g for g in gate_ledger if not g["passed"] and g["gate"] in STYLE_ONLY_GATES]
+    return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
 
 
 def _grounding_text(context: dict) -> str:
@@ -892,8 +903,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         repair_log[-1]["repeat_guard_deletes"] = guarded
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
-                    status, held_reason = "held", _held_reason_from(first_failure)
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
+                    status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
                     prev_snapshot = None  # nothing was discarded by this attempt
@@ -965,6 +976,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
                 slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
                 brand_pack=brand_audience, hygiene_ctx=hyg, **openers_kw,
+                # S234 review — a stock phrase blocks (one sentence repair) on attempt 1 only.
+                stock_blocking=attempt == 1,
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]
@@ -1062,7 +1075,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # "unresolved product-truth after ≤2 retries" — the tenant still SEES this piece
                 # (My Content shows held content the same as approved, AA-613 #7), but it cannot be
                 # published until the tenant edits it or an admin clears it (v1_publish gate, #8).
-                status, held_reason = "held", _held_reason_from(first_failure)
+                # S234 review — held only on a product-truth gate; a piece whose only blocking
+                # failure left is style-only (F15_voice stock phrase) ships with it as a flag.
+                status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
 
         # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]

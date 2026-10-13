@@ -248,8 +248,8 @@ class TestRunQualityGates:
         # AA-613: F9 now yields TWO results (F9_cta_fact + F9_brand_style), so 9 not 8.
         # AA-768 (S233): + F0_complete; AA-771: + F2_brand_forbidden, F11_brand_name.
         # AA-768 (S234): + F12_scope, F13_hygiene (warn; pass without a hygiene context).
-        # AA-771 (S234): + F14_social_shape, F15_voice (pass for a channel without a spec).
-        assert len(outcome["gate_ledger"]) == 16  # ...+f12+f13+f14+f15+f8+f9x2
+        # AA-771 (S234): + F14_social_shape, F15_voice, F15_voice_warn (pass for a channel without a spec).
+        assert len(outcome["gate_ledger"]) == 17  # ...+f12+f13+f14+f15+f15w+f8+f9x2
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
@@ -317,7 +317,7 @@ class TestRunQualityGatesFlagNotBlock:
         # AA-768 (S234): + F12_scope (warn for one round) and F13_hygiene (warn).
         # AA-771 (S234): F14/F15 block only on their own triggers; a passing result is non-blocking.
         _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style", "F12_scope", "F13_hygiene",
-                         "F14_social_shape", "F15_voice"}
+                         "F14_social_shape", "F15_voice", "F15_voice_warn"}
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",

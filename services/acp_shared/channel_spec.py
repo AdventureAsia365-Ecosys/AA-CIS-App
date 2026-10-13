@@ -16,12 +16,13 @@ This module owns:
 - `linkedin_spec(pack)` / `channel_spec(channel, pack)` — use case, structure, avoid list, the
   gate word band, the (lower) prompt word target, the hashtag cap and the first-line limit. Only
   LinkedIn has a spec; every other channel keeps its `channel_style` row;
-- `sanitize_best_final_style(text, pack)` — strips, in code, the parts of an angle brief that
-  set a tone on the opposite side of the brand voice, prescribe the opening, or (for a
-  non-editorial brand) address travel professionals. Used before an angle is saved (T8) and on
+- `sanitize_best_final_style(text, pack)` — fixes, in code, the parts of an angle brief that
+  set a tone on the opposite side of the brand voice, prescribe the opening ('Open with X' →
+  'Lead with X'; a literal first line is cut), or (for a non-editorial brand) address or speak as
+  the travel trade. Used before an angle is saved (T8) and on
   stored angles when a non-blog prompt is built (T9), so old requests get it at $0;
-- the stock-phrase hard list, the B2B-register and segment-leak patterns and the generic-opener
-  pattern read by the T9 prompt and the F15_voice gate.
+- the stock-phrase hard list, the trade-register pattern (TRADE_PATTERN / B2B_RE) and the
+  generic-opener pattern read by the T9 prompt and the F15_voice / F15_voice_warn gates.
 
 Pure: no DB, no LLM.
 """
@@ -145,8 +146,9 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"\b(?:difficult|hard) to overstate\b",
     r"\bit is argument\b",
     r"\bnot incidental\b",
-    r"\b(?:not|never|wasn'?t|isn'?t|did not|didn'?t) (?:\w+ ){0,4}by accident\b|\bno accident\b",
-    r"\btells you (?:something|everything)\b",
+    r"\b(?:not|never|wasn'?t|isn'?t|did not|didn'?t) (?:\w+ ){0,4}by accident\b"
+    r"|\b(?:it'?s|it is|it was|is|was|this is|that is) no accident\b",
+    r"\btells you something (?:about|important)\b",
     r"\bsays something about\b",
     r"\bspeaks volumes\b",
     r"\bhere'?s the thing\b",
@@ -155,11 +157,29 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
 ))
 # A first sentence that starts "There is a …" / "There's a …" (S232: 20/29 openers; S233: 6/12).
 GENERIC_OPENER_RE = re.compile(r"^\s*There(?:\s+is|'s|’s|\s+was)\s+(?:a|an|one)\b", re.I)
-# Writing to the trade instead of travellers (S233: Trail Pulse 3/3 'active travel brands').
-B2B_RE = re.compile(
-    r"\b(?:active |adventure )?travel (?:brands?|professionals?|planners?|advisors?|agents?|operators?|industry)\b"
-    r"|\btour operators?\b|\bif you (?:work|operate|design|recommend|sell)\b|\byour clients\b"
-    r"|\b(?:industry|trade) (?:peers|audience)\b|\bB2B\b", re.I)
+# Writing to the trade instead of travellers (S233: Trail Pulse 3/3 'active travel brands', Terra 'a
+# thoughtful operator reflecting on trip design', Trail Pulse 'how they plan or recommend active travel',
+# '…before you put travellers in it'). Shared by the F15 trade-register warn (post text) and the
+# brief sanitiser (T8/T9). Only phrases that ADDRESS or SPEAK AS the trade — never a bare 'operators',
+# 'planners' or 'advisors', which are trip content ('local boat operators run the crossing') or
+# traveller-facing ('parents and family trip planners').
+TRADE_PATTERN = (
+    r"\b(?:active |adventure |other )?(?:travel|tourism) (?:brands?|companies|professionals?|practitioners?"
+    r"|planners?|advisors?|agents?|operators?|industry|trade|peers)\b"
+    r"|\b(?:fellow|other) (?:tour |travel |trip )?(?:operators?|brands?|planners?|practitioners?)\b"
+    r"|\b(?:as|like) an? (?:\w+ )?(?:operator|practitioner)\b"
+    r"|\b(?:thoughtful|experienced|seasoned|savvy|smart|good) (?:tour |travel |trip )?(?:operators?|practitioners?)\b"
+    r"|\btour operators? (?:like you|who (?:plan|sell|design|recommend))\b"
+    r"|\bprofessionals? (?:planning|designing|selling|recommending|who plan|in (?:the )?(?:travel|tourism))\b"
+    r"|\b(?:recommend|sell|package)(?:s|ing)? (?:active |adventure |family |group )?"
+    r"(?:travel|trips|itineraries|tours)\b"
+    r"|\bplan(?:s|ning)? or (?:recommend|sell|design)\w*\b"
+    r"|\bput(?:ting)? (?:travell?ers|guests|clients|groups) (?:in|on|into|through)\b"
+    r"|\byour (?:clients|customers)\b"
+    r"|\bif you (?:work|operate|design|recommend|sell|run)\b"
+    r"|\b(?:industry|trade) (?:peers|audience|readers|professionals?)\b|\bpeers in\b|\bB2B\b"
+)
+B2B_RE = re.compile(TRADE_PATTERN, re.I)
 
 _LINKEDIN_AVOID = (
     "many emojis, generic travel copy, hard sell, long itinerary lists, hidden gem, bucket list, paradise awaits, "
@@ -253,11 +273,20 @@ def opener_overlap(a: str, b: str) -> float:
 _TONE_CUE_RE = re.compile(r"\b(?:tone|voice|register|mood)\b", re.I)
 _NEGATED_RE = re.compile(r"\b(?:no|not|never|without|avoid|nor|rather than|instead of)\s+(?:too\s+|overly\s+|a\s+)?"
                          r"[\w-]+(?:\s+[\w-]+)?", re.I)
-_OPEN_RE = re.compile(r"^\s*(?:\w+\s+){0,2}?(?:open|opening(?: line| sentence)?|start|begin|first (?:line|sentence))"
-                      r"\b(?:\s*[:—–-]|\s+(?:\w+\s+){0,2}?(?:with|on|by)\b)", re.I)
-_AUDIENCE_RE = re.compile(
-    r"\b(?:travel |tourism )?(?:professionals?|industry peers|travel brands?|tour operators?|operators|advisors?"
-    r"|travel agents?|planners?|B2B|trade audience)\b|\bif you work\b|\bpeers in\b", re.I)
+# 'Open with X' / 'Start on X' / 'Do not begin with X' — the verb and its preposition (S234 review:
+# the sentence names WHICH seed detail to lead with, so it is rewritten to 'Lead with X', not cut).
+_PRE = (r"(?P<pre>\s*(?:(?:please|then|so|and|first|always|simply|immediately|instead|do|does|not|don'?t|don’t"
+        r"|never)\s+){0,3})")
+_OPEN_RE = re.compile(_PRE + r"(?P<verb>open|opens|start|starts|begin|begins)(?P<mid>\s+(?:[\w'’]+\s+){0,2}?)"
+                      r"(?P<prep>with|on|by)\b", re.I)
+# 'Open: X' / 'Start — X'.
+_OPEN_COLON_RE = re.compile(_PRE + r"(?:open|opening|start|begin)\s*[:—–-]\s*", re.I)
+# Text that dictates the actual first line — a literal line, quoted or after 'Opening line:' — is cut.
+_FIRST_LINE_RE = re.compile(r"^\s*(?:[\w'’]+\s+){0,2}?(?:opening|first)\s+(?:line|sentence|words?)\b\s*[:—–-]", re.I)
+_LITERAL_RE = re.compile(r"^\s*(?:(?:a|the)\s+(?:line|sentence|words?)\b(?:\s+(?:like|such as))?\s*[:,]?\s*)?[\"“‘']",
+                         re.I)
+_NEG_PRE_RE = re.compile(r"\b(?:not|never|n't|don'?t)\b", re.I)
+_AUDIENCE_RE = B2B_RE
 _SENT_RE = re.compile(r"(?<=[.!?])\s+")
 _CLAUSE_RE = re.compile(r"\s+[—–]\s+|;\s+|\s+-\s+")
 _THEN_RE = re.compile(r",?\s+(?:and\s+)?then\s+", re.I)
@@ -290,16 +319,42 @@ def _finish(s: str) -> str:
     return s if not s or s[-1] in ".!?\"'”’" else s + "."
 
 
+def _opening(sentence: str) -> Optional[tuple[str, str]]:
+    """None when `sentence` does not prescribe the opening; otherwise (what is kept, what was cut).
+    - a literal first line ('Opening line: …', 'Open with "…"') is cut — a following ', then …'
+      part is kept;
+    - 'Open/Start/Begin with|on X' keeps X as 'Lead with X' (the brief names WHICH detail leads);
+      'Do not open with X' becomes 'Do not lead with X', so the framing guard survives."""
+    m = _OPEN_RE.match(sentence) or _OPEN_COLON_RE.match(sentence)
+    literal = bool(_FIRST_LINE_RE.match(sentence)) or bool(m and _LITERAL_RE.match(sentence[m.end():]))
+    if literal:
+        head, *rest = _THEN_RE.split(sentence, 1)
+        if rest and rest[0].strip():
+            return _finish(_cap(rest[0])), head.strip()
+        return "", sentence.strip()
+    if m is None:
+        return None
+    pre = m.group("pre")
+    if _NEG_PRE_RE.search(pre):
+        lead = ("Never lead " if re.search(r"\bnever\b", pre, re.I) else "Do not lead ")
+    else:
+        lead = "Lead "
+    prep = "by" if (m.groupdict().get("prep") or "").lower() == "by" else "with"
+    rest = sentence[m.end():].lstrip() if m.re is _OPEN_COLON_RE else sentence[m.end():]
+    return lead + prep + ("" if rest.startswith(" ") else " ") + rest, sentence[:m.end()].strip()
+
+
 def sanitize_best_final_style(text: Optional[str], pack: Optional[dict]) -> tuple[str, list[str]]:
     """Strip from an angle brief:
     (a) a tone clause with a word on the opposite pole of the brand voice — the whole sentence when
         it leads the sentence ('Tone: calm, considered, quietly authoritative — the voice of …' for
         Terra); negated words ('no hype') are ignored, and 'Tone: calm, intelligent' stays for a
         calm brand;
-    (b) a sentence that prescribes the opening ('Open with …', 'Opening line: …'); a following
-        ', then …' part is kept;
-    (c) for a non-editorial brand, a sentence addressing travel professionals, operators or other
-        brands.
+    (b) the opening instruction: 'Open/Start/Begin with X' becomes 'Lead with X' (X is the seed
+        detail the brief means to lead with), 'Do not open with X' becomes 'Do not lead with X', and a
+        literal first line ('Opening line: …', 'Open with "…"') is cut, keeping a following ', then …';
+    (c) for a non-editorial brand, a sentence addressing or speaking as the travel trade
+        (TRADE_PATTERN — never a bare 'operators' / 'planners', which are trip content).
     Returns (clean brief, stripped parts). Never returns an empty brief."""
     if not text or not text.strip():
         return text or "", []
@@ -308,14 +363,12 @@ def sanitize_best_final_style(text: Optional[str], pack: Optional[dict]) -> tupl
     kept_sentences: list[str] = []
     stripped: list[str] = []
     for sentence in [s for s in _SENT_RE.split(text.strip()) if s.strip()]:
-        if _OPEN_RE.search(sentence):
-            head, *rest = _THEN_RE.split(sentence, 1)
-            if rest and rest[0].strip():
-                stripped.append(head.strip())
-                kept_sentences.append(_finish(_cap(rest[0])))
-            else:
-                stripped.append(sentence.strip())
-            continue
+        opening = _opening(sentence)
+        if opening is not None:
+            sentence, cut = opening
+            stripped.append(cut)
+            if not sentence:
+                continue
         if non_editorial and _AUDIENCE_RE.search(sentence):
             stripped.append(sentence.strip())
             continue
@@ -337,6 +390,7 @@ def sanitize_best_final_style(text: Optional[str], pack: Optional[dict]) -> tupl
 __all__ = [
     "B2B_RE", "CONSUMER_SOCIAL", "ChannelSpec", "EDITORIAL", "FIRST_LINE_MAX", "GENERIC_OPENER_RE", "HASHTAGS_MAX",
     "HASHTAG_RE", "LINKEDIN_TARGET_WORDS", "OBSERVATIONAL", "REGISTERS", "STOCK_PATTERNS", "STOCK_PHRASES",
+    "TRADE_PATTERN",
     "TONE_WORDS", "WARM_PRACTICAL", "apply_spec", "brand_poles", "brand_register", "channel_spec", "first_sentence",
     "linkedin_spec", "off_voice_words", "opener_overlap", "post_words", "sanitize_best_final_style",
 ]
