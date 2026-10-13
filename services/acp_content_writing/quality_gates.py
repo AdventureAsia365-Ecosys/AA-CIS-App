@@ -52,8 +52,8 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import (HygieneContext, contrast_excess, find_issues, sentence_spans,
-                                                  sibling_templates)
+from services.acp_content_writing.hygiene import (HygieneContext, content_words, contrast_excess, copies,
+                                                  find_issues, sentence_spans, sibling_templates)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
@@ -959,55 +959,64 @@ def gate_structural_variance(
 # ---------------------------------------------------------------- F7-adjusted (FAQ dedup, blog only)
 
 _FAQ_ANSWER_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: (.*?)(?=\n\*\*Q: |\Z)", re.DOTALL)
-_FAQ_TOKEN_RE = re.compile(r"[a-z]{5,}")
-_FAQ_DEDUP_THRESHOLD = 0.85  # ported from acp_produce/gates.py::gate_faq_dedup()
+_FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
+
+
+def _body_sentences(pre_faq: str) -> list[str]:
+    return [s["clean"] for s in sentence_spans(pre_faq or "") if s["kind"] in ("prose", "bullet")]
+
+
+def answer_copies_body(answer: str, body_sentences: list[str]) -> bool:
+    """AA-768 (S234 round 2 fix) — is a FAQ answer a near-verbatim copy of the body: more than half
+    of its content words sit in sentences that each copy ONE body sentence (hygiene.copies).
+
+    Replaces the S233 test (answer words of 5+ letters found ANYWHERE in the body > 85%), which in a
+    seed-bound blog flags every answerable question — the body already uses the seed's vocabulary —
+    and so stripped 3-4 pairs per blog (S234 r1 F7 flags; r2 F16_faq held 7/8). An answer that
+    restates a body fact in its own words to answer a reader's question stays (product rule)."""
+    spans = [s["clean"] for s in sentence_spans(strip_citation_tags(answer or "")) if s["clean"].strip()]
+    total = copied = 0
+    for sent in spans:
+        n = len(content_words(sent))
+        total += n
+        if any(copies(sent, b) for b in body_sentences):
+            copied += n
+    return total > 0 and copied * 2 > total
 
 
 def gate_faq_dedup(content_text: str) -> GateResultLite:
-    """AA-452 gate map — F7 port, channel=='blog' only (dispatch in run_quality_gates()). Ported
-    from acp_produce/gates.py::gate_faq_dedup() (referenced, not imported): does a FAQ answer
-    just restate a body paragraph within the SAME piece? INTRA-piece only, same real gap the N7
-    original documents (cross-time dedup against previously-published FAQs needs a table that
-    doesn't exist for T9 either). No-op (passed=True) when the piece has no '## FAQ' section —
-    prompts.py's blog instructions only ask for one "if the piece includes a FAQ section", most
-    blog pieces won't have one. Matches the real '**Q: ...**'/'A: ...' format prompts.py now
-    instructs the writer to use, same shape acp_produce/faq.py::render_faq_section() renders for
-    N7."""
+    """AA-452 gate map — F7 port, channel=='blog' only (dispatch in run_quality_gates()): does a FAQ
+    answer just copy the body within the SAME piece? INTRA-piece only (cross-time dedup against
+    previously-published FAQs needs a table that doesn't exist for T9 either). No-op (passed=True)
+    when the piece has no '## FAQ' section. Same test as drop_restated_faq (answer_copies_body,
+    AA-768 S234 round 2), so it only fails when that auto-fix did not run."""
     body = content_text or ""
     if "## FAQ" not in body:
         return _result("F7_faq_dedup", [])
-
     pre, _, faq = body.partition("## FAQ")
-    pre_tokens = set(_FAQ_TOKEN_RE.findall(pre.lower()))
-
+    sentences = _body_sentences(pre)
     violations: list[str] = []
     for i, m in enumerate(_FAQ_ANSWER_RE.finditer(faq)):
-        answer = m.group(1).strip()
-        answer_tokens = set(_FAQ_TOKEN_RE.findall(answer.lower()))
-        if answer_tokens and len(answer_tokens & pre_tokens) / len(answer_tokens) > _FAQ_DEDUP_THRESHOLD:
+        if answer_copies_body(m.group(1).strip(), sentences):
             violations.append(
-                f"FAQ answer {i + 1} restates a body paragraph -- cut or add a detail the body lacks"
+                f"FAQ answer {i + 1} copies a body sentence -- cut or answer in other words"
             )
     return _result("F7_faq_dedup", violations)
 
 
-_FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
-
-
 def drop_restated_faq(content_text: str) -> tuple[str, int]:
-    """AA-770 (S233) — F7 auto-fix: remove FAQ pairs whose answer restates the body (same test as
-    gate_faq_dedup) instead of holding or rewriting the whole piece. Drops the "## FAQ" heading
-    too when no pair is left. Returns (text, pairs removed)."""
+    """AA-770 (S233) — F7 auto-fix: remove FAQ pairs whose answer copies the body
+    (answer_copies_body, same test as gate_faq_dedup) instead of holding or rewriting the whole
+    piece. Drops the "## FAQ" heading too when no pair is left. Returns (text, pairs removed)."""
     body = content_text or ""
     if "## FAQ" not in body:
         return body, 0
     pre, _, faq = body.partition("## FAQ")
-    pre_tokens = set(_FAQ_TOKEN_RE.findall(pre.lower()))
+    sentences = _body_sentences(pre)
     kept, dropped = [], 0
     for m in _FAQ_PAIR_RE.finditer(faq):
         answer = _FAQ_ANSWER_RE.match(m.group(0))
-        tokens = set(_FAQ_TOKEN_RE.findall((answer.group(1) if answer else "").lower()))
-        if tokens and len(tokens & pre_tokens) / len(tokens) > _FAQ_DEDUP_THRESHOLD:
+        if answer_copies_body(answer.group(1) if answer else "", sentences):
             dropped += 1
         else:
             kept.append(m.group(0).strip())
@@ -1070,8 +1079,10 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
                           facts_text: Optional[str] = None) -> tuple[str, list[str]]:
     """AA-768 (S234) — remove FAQ pairs whose question the source cannot answer (see
     `_FAQ_TOPICS`). `own_seed_text` must be the moment's own lines (hygiene.split_seed), never the
-    grounding text with AUDIENCE/BRAND. When fewer than 2 pairs are left, the whole FAQ goes (it is
-    optional per the prompt). Returns (text, one log line per dropped pair)."""
+    grounding text with AUDIENCE/BRAND. Every answerable pair stays; the "## FAQ" heading goes only
+    when none is left (S234 round 2 fix: the FAQ is required now — F16_faq — so a lone answerable
+    pair is kept for the contract step to build on, not thrown away). Returns (text, one log line
+    per dropped pair)."""
     body = content_text or ""
     if "## FAQ" not in body:
         return body, []
@@ -1087,9 +1098,7 @@ def drop_unanswerable_faq(content_text: str, own_seed_text: str,
             kept.append(m.group(0).strip())
     if not log:
         return body, []
-    if len(kept) < 2:
-        if kept:
-            log.append(f"dropped the FAQ section: only {len(kept)} answerable pair left")
+    if not kept:
         return pre.rstrip() + "\n", log
     return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", log
 
@@ -1125,6 +1134,50 @@ def replace_faq_section(content_text: str, pairs: list[tuple[str, str]]) -> str:
         head += "\n\n" + "\n\n".join(trailing)
     qa = "\n\n".join(f"**Q: {q.strip()}**\nA: {a.strip()}" for q, a in pairs if q.strip() and a.strip())
     return f"{head}\n\n## FAQ\n\n{qa}\n" if qa else head + "\n"
+
+
+# AA-768 (S234 round 2 fix) — the seed facts the post has not used yet, so the FAQ regeneration
+# answers from them first instead of re-telling the body. A line from the moment's own seed / Facts
+# is split into sentences (≥ 6 content words); it counts as unused when less than
+# _UNUSED_WORD_COVER of its content words and less than _UNUSED_TRIGRAM_COVER of its content
+# trigrams appear in the body. Measured on the S234 r2 blogs: 'Mörön has a small domestic
+# airport…' 0.27–0.33 / 0.00 and 'The lake freezes solidly in winter…' 0.20–0.27 / 0.00 (unused);
+# the facts each post builds on sit at 0.8–1.0 words. A partly told fact may still be listed — it
+# is only a preference in the prompt, the droppers decide what stays.
+_UNUSED_WORD_COVER = 0.75
+_UNUSED_TRIGRAM_COVER = 0.25
+_SEED_META_LINE_RE = re.compile(
+    r"^(?:Location|Naming|Days? \d|Thin moment|Place background|SCOPE|TRIP|AUDIENCE|BRAND|FACTS:"
+    r"|\[Moment\b|\[Fact\b|Other trips)", re.I)
+_SEED_LINE_PREFIX_RE = re.compile(r"^(?:[-*•]\s*)?(?:(?:Source itinerary|Why it matters):\s*)?")
+
+
+def _trigrams(words: list[str]) -> set:
+    return {tuple(words[i:i + 3]) for i in range(len(words) - 2)}
+
+
+def unused_source_facts(source_text: str, body: str, limit: int = 8) -> list[str]:
+    """Fact sentences of `source_text` (the moment's own seed lines + Facts block) that `body` does
+    not tell yet, least-covered first, at most `limit`. Deterministic, no model call."""
+    body_words = content_words(strip_citation_tags(body or ""))
+    word_set, body_tri = set(body_words), _trigrams(body_words)
+    scored, seen = [], set()
+    for raw in (source_text or "").splitlines():
+        line = _SEED_LINE_PREFIX_RE.sub("", raw.strip(), count=1).strip()
+        if not line or _SEED_META_LINE_RE.match(line):
+            continue
+        for span in sentence_spans(line):
+            sent = span["clean"].strip()
+            words = content_words(sent)
+            if len(words) < 6 or sent in seen:
+                continue
+            seen.add(sent)
+            cover = sum(w in word_set for w in words) / len(words)
+            tri = _trigrams(words)
+            tri_cover = len(tri & body_tri) / len(tri) if tri else 0.0
+            if cover < _UNUSED_WORD_COVER and tri_cover < _UNUSED_TRIGRAM_COVER:
+                scored.append((cover + tri_cover, len(scored), sent))
+    return [s for _, _, s in sorted(scored)[:limit]]
 
 
 def gate_faq_contract(content_text: str) -> GateResultLite:
@@ -1522,7 +1575,8 @@ __all__ = [
     "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
     "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
-    "drop_unanswerable_faq", "unanswerable_faq_topics", "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
+    "drop_unanswerable_faq", "unanswerable_faq_topics", "answer_copies_body", "unused_source_facts",
+    "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",

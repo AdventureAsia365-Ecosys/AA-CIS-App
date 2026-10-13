@@ -369,12 +369,16 @@ def test_audience_line_never_counts_as_support():
     assert qg.unanswerable_faq_topics("What age range is it for?", grounding) == []
 
 
-def test_faq_section_removed_when_under_two_pairs_left():
+def test_lone_answerable_pair_is_kept():
+    """S234 round 2 fix — the FAQ is required (F16_faq), so one answerable pair stays for the
+    contract step; only a FAQ with no answerable pair loses its heading."""
     body = ("Body.\n\n## FAQ\n\n**Q: Is it suitable for kids?**\nA: Yes.\n\n"
             "**Q: Do families need permits to visit the Tsaatan?**\nA: Yes.\n")
     own, _ = h.split_seed(SEED)
     text, log = qg.drop_unanswerable_faq(body, own)
-    assert text == "Body.\n" and log[-1].startswith("dropped the FAQ section")
+    assert "suitable for kids" not in text and "permits to visit the Tsaatan" in text and len(log) == 1
+    only_bad = "Body.\n\n## FAQ\n\n**Q: Is it suitable for kids?**\nA: Yes.\n"
+    assert qg.drop_unanswerable_faq(only_bad, own)[0] == "Body.\n"
 
 
 PUNAKHA_OWN = ("Punakha Dzong — visit the fortress\nLocation: Punakha Dzong, Punakha, Bhutan\n"

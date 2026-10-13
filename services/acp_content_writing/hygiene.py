@@ -20,6 +20,7 @@ near-verbatim repeat); everything else is reported by `find_issues()` for the ga
 """
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -569,6 +570,30 @@ def near_verbatim(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
     if len(ca) < _REPEAT_MIN_WORDS or len(cb) < _REPEAT_MIN_WORDS:
         return False
     return len(_grams(ca, 3) & _grams(cb, 3)) >= 2 or _jaccard(ca, cb) >= 0.5
+
+
+# AA-768 (S234 round 2 fix) — a FAQ answer sentence COPIED from one body sentence: most of its
+# content words appear in that sentence IN THE SAME ORDER (difflib matching blocks). Stricter than
+# `restates` / `near_verbatim` on purpose: in a seed-bound blog the answer and the body both phrase
+# the same seed fact, so they routinely share trigrams ('central asian steppe') and most of their
+# vocabulary while answering a reader's question in other words — a normal FAQ (S233 F7 bans copies
+# only). Calibrated on the S234 r1 + r2 blogs and 8 regenerated FAQs: lightly edited copies ('The
+# crater is roughly 600 metres wide and between 50 to 60 metres deep, with a caldera floor…' against
+# the body's 'The crater is roughly 600 metres wide and 50 to 60 metres deep, and the caldera
+# floor…') reach 0.82–0.93; the same fact retold (reordered numbers, a new clause) stays ≤ 0.79.
+COPY_ORDERED_SHARE = 0.8
+_COPY_MIN_WORDS = 4
+
+
+def copies(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
+    """Is sentence `a` a near-verbatim copy of sentence `b`: ≥ COPY_ORDERED_SHARE of a's content
+    words appear in b in the same order. `a` needs ≥ 4 content words; a short answer such as
+    'Yes, at Sod Camp.' is never a copy."""
+    ca, cb = content_words(a, ignore), content_words(b, ignore)
+    if len(ca) < _COPY_MIN_WORDS or not cb:
+        return False
+    matched = sum(m.size for m in difflib.SequenceMatcher(None, ca, cb, autojunk=False).get_matching_blocks())
+    return matched / len(ca) >= COPY_ORDERED_SHARE
 
 
 # ---------------------------------------------------------------- leak and social proof
@@ -1466,7 +1491,7 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
 __all__ = [
     "COMMON_CAPS", "HygieneContext", "brand_words", "LEAK_RE", "SIBLING_HEADER", "SOCIAL_PROOF_RE", "ScopeLexicon",
     "autofix",
-    "build_scope_lexicon", "content_words", "expand_to_sentence", "find_issues", "find_scope_violations",
+    "build_scope_lexicon", "content_words", "copies", "expand_to_sentence", "find_issues", "find_scope_violations",
     "is_sentence_end", "sentence_tail_end",
     "fold", "hashtag_fixes", "lev", "names_place", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns",
     "restates", "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS", "trip_name_places",
