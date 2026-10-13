@@ -69,15 +69,13 @@ _MARKETPLACE_QUERY = """
     WITH latest_versions AS (
         SELECT DISTINCT ON (ttv.published_tour_id)
             ttv.id AS version_id, ttv.published_tour_id, ttv.version_number,
-            ttv.status, ttv.quality_score, ttv.qa_status, ttv.qa_auto_passed,
-            ttv.created_at AS version_created_at
+            ttv.status, ttv.created_at AS version_created_at
         FROM gold_aa_internal.tenant_tour_versions ttv
         WHERE ttv.tenant_id = $1::uuid
         ORDER BY ttv.published_tour_id, ttv.version_number DESC
     )
     SELECT
-        lv.version_id, lv.version_number, lv.status, lv.quality_score,
-        lv.qa_status, lv.qa_auto_passed, lv.version_created_at,
+        lv.version_id, lv.version_number, lv.status, lv.version_created_at,
         pt.id AS published_tour_id, pt.tour_id, pt.aa_name AS name,
         rt.country, rt.duration, rt.price_raw,
         COALESCE(ac.atom_count, 0) AS atom_count
@@ -93,6 +91,19 @@ _MARKETPLACE_QUERY = """
     ) ac ON ac.tour_id = pt.tour_id
     ORDER BY lv.version_created_at DESC
 """
+
+
+def tenant_version_state(status):
+    """AA-770 (S233) — the tenant sees whether a tour version is written, not how a gate scored
+    it: ai_generated / needs_review (score < 7) are both simply 'ready'. The tenant's own
+    approve/reject decisions are kept."""
+    if status in ("pending", "processing"):
+        return "writing"
+    if status == "failed":
+        return "failed"
+    if status in ("approved", "rejected"):
+        return status
+    return "ready"
 
 
 @router.get("")
@@ -122,6 +133,7 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     total_atoms = 0
     for r in rows:
         t = _safe(r)
+        t["status"] = tenant_version_state(t.get("status"))  # AA-770 — no QA states on the tenant side
         price_raw = t.pop("price_raw")
         price_usd = parse_price(price_raw)
         t["price_usd"] = price_usd

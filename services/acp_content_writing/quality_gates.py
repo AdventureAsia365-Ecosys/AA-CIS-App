@@ -745,7 +745,9 @@ def gate_brand_voice(
         # Fail-closed on the BLOCKING (product-truth) side; brand-style passes (no signal to
         # flag on). AA-613 — same two-result shape as the success path below.
         return [
-            _result("F9_cta_fact", [f"judge unavailable: {e} — treated as fail"], blocking=True),
+            # AA-770 (S233) — an outage is not a verdict: the piece ships, the admin sees the flag.
+            _result("F9_cta_fact", [f"judge unavailable: {e} — not checked"], repairable=False,
+                    blocking=False),
             _result("F9_brand_style", [], repairable=False, blocking=False),
         ]
 
@@ -938,6 +940,33 @@ def gate_faq_dedup(content_text: str) -> GateResultLite:
     return _result("F7_faq_dedup", violations)
 
 
+_FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
+
+
+def drop_restated_faq(content_text: str) -> tuple[str, int]:
+    """AA-770 (S233) — F7 auto-fix: remove FAQ pairs whose answer restates the body (same test as
+    gate_faq_dedup) instead of holding or rewriting the whole piece. Drops the "## FAQ" heading
+    too when no pair is left. Returns (text, pairs removed)."""
+    body = content_text or ""
+    if "## FAQ" not in body:
+        return body, 0
+    pre, _, faq = body.partition("## FAQ")
+    pre_tokens = set(_FAQ_TOKEN_RE.findall(pre.lower()))
+    kept, dropped = [], 0
+    for m in _FAQ_PAIR_RE.finditer(faq):
+        answer = _FAQ_ANSWER_RE.match(m.group(0))
+        tokens = set(_FAQ_TOKEN_RE.findall((answer.group(1) if answer else "").lower()))
+        if tokens and len(tokens & pre_tokens) / len(tokens) > _FAQ_DEDUP_THRESHOLD:
+            dropped += 1
+        else:
+            kept.append(m.group(0).strip())
+    if not dropped:
+        return body, 0
+    if not kept:
+        return pre.rstrip() + "\n", dropped
+    return pre + "## FAQ\n\n" + "\n\n".join(kept) + "\n", dropped
+
+
 # ---------------------------------------------------------------- orchestration
 
 class QualityCheckOutcome(TypedDict):
@@ -1013,9 +1042,12 @@ def run_quality_gates(
     if channel == "blog":
         gate_ledger += [
             gate_seo_surface(seo_title, meta_description, slug, keyword),
-            gate_atom_density(content_text),
-            gate_structural_variance(content_text, route_segments),
-            gate_faq_dedup(content_text),
+            # AA-770 (S233) — blog shape is advice, not product truth: F5 (citation density), F3
+            # (rhythm) and F7 (FAQ restates; service.py auto-drops those pairs first) warn only.
+            # S232: they held 12/20 final blogs and forced full rewrites that invented new facts.
+            _downgrade_to_warn(gate_atom_density(content_text)),
+            _downgrade_to_warn(gate_structural_variance(content_text, route_segments)),
+            _downgrade_to_warn(gate_faq_dedup(content_text)),
         ]
     # AA-613 — F8 framework/formula-fit is now a WARN (non-blocking): a piece that misses its
     # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
@@ -1043,5 +1075,5 @@ __all__ = [
     "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
     "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
     "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
-    "gate_framework", "gate_brand_voice", "run_quality_gates",
+    "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq",
 ]

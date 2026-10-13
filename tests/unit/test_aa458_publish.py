@@ -74,7 +74,7 @@ async def test_list_pending_returns_rows_scoped_to_tenant():
     assert tenant_id_param == TENANT["sub"]
     # AA-462 — list_pending() now covers every supported channel (blog + facebook), not just blog
     assert set(channels_param) == {"blog", "facebook"}
-    assert "status = 'approved'" in sql
+    assert "cp.status IN ('approved', 'held')" in sql  # AA-770 — the tenant always receives it
     assert "pl.publish_id IS NULL" in sql
     # AA-497 — angle_name joins via the denormalized FK first (mutable chosen=true is only a
     # fallback for pre-AA-497 rows), so a reopen()+re-choice on this request doesn't retroactively
@@ -115,11 +115,10 @@ async def test_publish_404_when_piece_not_found():
 
 
 @pytest.mark.asyncio
-async def test_publish_422_when_piece_held_product_truth_unresolved():
-    """AA-613 — a 'held' piece (unresolved product-truth after retries) is owned by the tenant
-    and visible in My Content, but not publishable until edited. 422 (actionable), not 404 —
-    ownership is already confirmed by the WHERE clause, so there's no existence leak to protect."""
-    piece = {"piece_id": str(PIECE_ID), "content_text": "x", "status": "held",
+async def test_publish_422_when_piece_not_written_yet():
+    """AA-770 (S233) — 'held' is an admin-only quality label now and publishes like approved
+    (test_aa770_tenant_receives.py); only a piece with no content yet is refused (422)."""
+    piece = {"piece_id": str(PIECE_ID), "content_text": "", "status": "processing",
               "channel": "blog", "angle_name": "A"}
     pool, _ = _sequential_pool(piece)
     req = _make_request(pool)

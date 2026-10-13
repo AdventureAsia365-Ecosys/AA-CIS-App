@@ -9,7 +9,6 @@ export interface Version {
   id: string;
   version_number: number;
   status: string;
-  quality_score: number | null;
   edit_source: string;
   rewrite_language: string;
   created_at: string;
@@ -23,7 +22,6 @@ export interface Version {
   aa_itineraries: string | null;
   aa_seo_title: string;
   aa_seo_meta: string;
-  aa_quality_score: number;
   country: string | null;
   duration: string | null;
   inclusions?: string | null;
