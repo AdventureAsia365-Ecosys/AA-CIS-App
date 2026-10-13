@@ -44,6 +44,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'overview', label: 'Overview', path: '/admin/overview' },
   { id: 'photos', label: 'Photos', path: '/admin/photos' },
   { id: 'platform-stats', label: 'Platform Stats', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
+  // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
+  { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]' },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
   { id: 's1-rewrite', label: 'S1 Rewrite', path: '/admin/s1-rewrite' },
   { id: 'seo-intelligence', label: 'SEO Intelligence', path: '/admin/seo-intelligence' },

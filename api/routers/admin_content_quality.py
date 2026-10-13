@@ -179,8 +179,13 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                 if span:
                     out.append({"start": span[0], "end": span[1], "gate": gate, "blocking": blocking,
                                 "problem": problem[:300]})
-    out.sort(key=lambda h: h["start"])
-    return out
+    # A non-blocking gate sits in both gate_ledger and flags: keep one highlight per span + gate.
+    seen, unique = set(), []
+    for h in sorted(out, key=lambda h: (h["start"], h["end"])):
+        if (h["start"], h["end"], h["gate"]) not in seen:
+            seen.add((h["start"], h["end"], h["gate"]))
+            unique.append(h)
+    return unique
 
 
 @router.get("/pieces/{piece_id}")
