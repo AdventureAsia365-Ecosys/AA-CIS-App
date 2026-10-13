@@ -510,7 +510,11 @@ S234 round 4 (AA-768): `services/acp_content_writing/text_integrity.py` owns the
 before the gates read an attempt AND before the piece is stored (after every repair, revert and the tag strip):
 whitespace normalised, exactly one CTA (a reworded copy next to the literal line is cut), later duplicates cut
 (paraphrased ones too), lower-case fragments cut; what it cannot fix is `hygiene.find_issues()["repeat"]` —
-the same list F13_repeat reads — and holds the piece (fail closed). Before it, `trip_facts.fix_trip_facts`
+the same list F13_repeat reads — and holds the piece (fail closed). A far repeat blocks only when it is a
+real one (`hygiene.strict_repeat`: a copy, Jaccard ≥ 0.5, or nothing new); two shared trigrams alone (a place
+phrase, the keyword) stay an F13_hygiene warning. The CTA paraphrase search covers only the closing sentences
+next to the literal line (never the hook), and the literal line is matched across sentence breaks like
+`has_cta_literal`. The admin sentence apply path returns what an edit newly breaks as an F13_repeat warning. Before it, `trip_facts.fix_trip_facts`
 folds a "Thin moment"'s own heading into the section before and cuts an interpretation appended to its closing
 mention, deletes a family-brand reassurance that plays down a seed hazard, and removes a background-only place
 made the reader's gateway / base (FAQ included); the rest is F17. A trip place the seed's place background names

@@ -623,6 +623,28 @@ def near_verbatim(a: str, b: str, ignore: frozenset = frozenset()) -> bool:
     return len(_grams(ca, 3) & _grams(cb, 3)) >= 2 or _jaccard(ca, cb) >= 0.5
 
 
+_STRICT_JACCARD = 0.5
+_ADDS_NOTHING = 0.8  # share of the later sentence's copy words already in the earlier one
+
+
+def adds_nothing(later: str, earlier: str, ignore: frozenset = frozenset()) -> bool:
+    """≥ 80% of `later`'s copy words are already in `earlier` — the later sentence says nothing new."""
+    lw, ew = copy_words(later, ignore), set(copy_words(earlier, ignore))
+    return bool(lw) and sum(w in ew for w in lw) / len(lw) >= _ADDS_NOTHING
+
+
+def strict_repeat(later: str, earlier: str, ignore: frozenset = frozenset()) -> bool:
+    """S234 round 4 review — a REAL repeat, not two sentences that share a place phrase, the SEO
+    keyword or a template ('elevation of roughly … metres above sea level'): `copies`, or
+    content-word Jaccard ≥ 0.5 (both ≥ 6 content words), or `adds_nothing`. `near_verbatim`'s
+    2-shared-trigram arm alone fires on r1 #17 (Lake Khövsgöl 1,645 m vs Mörön 1,283 m) and s233 #13
+    (the SEO keyword only), so on its own it is an F13_hygiene warning, never blocking."""
+    ca, cb = content_words(later, ignore), content_words(earlier, ignore)
+    if len(ca) >= _REPEAT_MIN_WORDS and len(cb) >= _REPEAT_MIN_WORDS and _jaccard(ca, cb) >= _STRICT_JACCARD:
+        return True
+    return copies(later, earlier, ignore) or adds_nothing(later, earlier, ignore)
+
+
 # AA-768 (S234 round 2 fix) — a FAQ answer sentence COPIED from one body sentence: most of its
 # content words appear in that sentence IN THE SAME ORDER (difflib matching blocks). Stricter than
 # `restates` / `near_verbatim` on purpose: in a seed-bound blog the answer and the body both phrase
@@ -986,7 +1008,6 @@ _ECHO_MAX = 4
 _DUP_SHORT_WORDS = 12        # a fact repeat this short is deleted outright …
 _DUP_CONTAINED = 0.6         # … when this share of its words is already in the earlier sentence
 _ORPHAN_MAX_WORDS = 8
-_FAR_REPEAT_NOTHING_NEW = 0.8  # a far repeat outside the closing section is cut only when it adds nothing
 
 
 def _dup_spans(text: str, cta: Optional[str]) -> list[dict]:
@@ -1139,6 +1160,28 @@ def _dup_safe_delete(text: str, span: dict) -> bool:
 _LEAD_PHRASE_RE = re.compile(r"^(?:On|By|At|In|From|For)\s+[^,.;]{1,40},\s+(?=[a-z])")
 
 
+_PIECE_WIDE_MIN = 3  # a content trigram in this many sentences (headings included) is a piece-wide phrase
+
+
+def _piece_wide_trigrams(text: str, ignore: frozenset = frozenset()) -> set:
+    """Content trigrams found in ≥ 3 sentences or headings of the piece: the SEO keyword ('khovsgol gobi
+    tour', 'tour mongolia price'), the trip name, a fact the piece tells throughout. Sharing one says
+    nothing about two sentences repeating each other."""
+    seen: dict = {}
+    for s in sentence_spans(text or ""):
+        for g in _grams(content_words(s["clean"], ignore), 3):
+            seen[g] = seen.get(g, 0) + 1
+    return {g for g, n in seen.items() if n >= _PIECE_WIDE_MIN}
+
+
+def _own_trigrams(a: str, b: str, ignore: frozenset, common: set) -> int:
+    """Shared content trigrams of `a` and `b` that are not piece-wide phrases."""
+    ca, cb = content_words(a, ignore), content_words(b, ignore)
+    if len(ca) < _REPEAT_MIN_WORDS or len(cb) < _REPEAT_MIN_WORDS:
+        return 0
+    return len((_grams(ca, 3) & _grams(cb, 3)) - common)
+
+
 def _closing_zone(text: str, cta: Optional[str]) -> Optional[tuple[int, int]]:
     """(start, end) of the piece's closing section: from the heading above the CTA sentence (or, with
     no heading, the start of its paragraph) to the end of the CTA sentence. None without a CTA."""
@@ -1197,17 +1240,26 @@ def dedupe(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None
             # it is in the closing (CTA) section or adds nothing (≥ 80% of its words in the earlier one);
             # a mid-body repeat that adds a figure stays for F13_repeat ('cut it or say something new')
             zone = _closing_zone(text, cta)
+            common = _piece_wide_trigrams(text, ignore)
             for r in repeated_sentences(text, ignore, cta):
                 span = next((s for s in reversed(_dup_spans(text, cta)) if s["clean"] == r), None)
                 if span is None:
                     continue
-                lw = copy_words(r, ignore)
-                prior = [t for t in _dup_spans(text, cta) if t["end"] <= span["start"]
+                prior = [t["clean"] for t in _dup_spans(text, cta) if t["end"] <= span["start"]
                          and near_verbatim(r, t["clean"], ignore)]
-                ew = set(copy_words(prior[0]["clean"], ignore)) if prior else set()
-                adds_nothing = bool(lw) and sum(w in ew for w in lw) / len(lw) >= _FAR_REPEAT_NOTHING_NEW
                 closing = zone is not None and zone[0] <= span["start"] < zone[1]
-                if (closing or adds_nothing) and _dup_safe_delete(text, span):
+                # S234 round 4 review — near_verbatim alone is not enough: s233 #13 lost the answer
+                # under its keyword heading on 3 shared trigrams that are all the SEO keyword. In the
+                # closing section a recap is cut on a strict repeat or on ≥ 2 shared trigrams that are
+                # not piece-wide phrases (in ≥ 3 sentences: the keyword, the trip name, a fact told
+                # throughout) — r3 #12 / #17's recaps (the panel's hard errors) still go. Elsewhere the
+                # later sentence must add nothing.
+                if closing:
+                    real = any(strict_repeat(r, e, ignore) or _own_trigrams(r, e, ignore, common) >= 2
+                               for e in prior)
+                else:
+                    real = any(adds_nothing(r, e, ignore) for e in prior)
+                if real and _dup_safe_delete(text, span):
                     after = span["end"] + 1 if text[span["end"]:span["end"] + 1] == " " else span["end"]
                     text = tidy_after_cut(text[:span["start"]] + text[after:])
                     log.append(f"deleted a sentence that repeats an earlier one: '{r[:160]}'")
@@ -2057,14 +2109,21 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
     for a, s in enumerate(prose):
         if _is_cta(s["clean"], ctx.cta):
             continue
-        if any(near_verbatim(s["clean"], t["clean"], ignore) for t in prose[:a]):
-            if f"{s['clean'][:200]}'" not in repeated:
-                # S234 round 4 — blocking (F13_repeat) like every other repeat: the final pass deletes
-                # the later copy when that is safe, so one left here is visible (r3 #12, #17 recaps)
+        earlier = [t["clean"] for t in prose[:a] if near_verbatim(s["clean"], t["clean"], ignore)]
+        if earlier and f"{s['clean'][:200]}'" not in repeated:
+            if any(strict_repeat(s["clean"], e, ignore) for e in earlier):
+                # S234 round 4 — a real repeat is blocking (F13_repeat): the final pass deletes the
+                # later copy when that is safe, so one left here is visible (r3 #12, #17 recaps)
                 repeats.append(f"repeats an earlier sentence — cut it or say something new: '{s['clean'][:200]}'")
+            else:
+                # 2 shared trigrams only (a place phrase, the keyword, a template): a warning, as
+                # before round 4 (review: r1 #17 'elevation of roughly … metres above sea level')
+                issues.append(f"repeats an earlier sentence: '{s['clean'][:200]}'")
     # S234 round 4 (r3 panel §4 fix 1) — one CTA, no fragment: the same function the final pass uses
     from services.acp_content_writing.text_integrity import integrity_findings
     repeats += integrity_findings(text, ctx.cta)
+    from services.acp_content_writing.text_integrity import unbalanced_findings
+    issues += unbalanced_findings(text)
     for old, new in hashtag_fixes(text, lex, ctx.brand_name).items():
         issues.append(f"misspelt hashtag '{old}' (did you mean '{new}'?): '{old}'")
     if ctx.hashtags_max is not None:

@@ -199,7 +199,8 @@ class TestFragments:
 
 class TestFinalPass:
     def test_residue_is_the_f13_repeat_list(self):
-        text = "The lake (the largest in the region is cold.\n\n" + AH_CTA + "."
+        # a lower-case fragment the pass cannot cut ('It…' after it would lose its referent)
+        text = "The lake is large. they say the water matters. It is cold.\n\n" + AH_CTA + "."
         out, log, residue = ti.final_pass(text, _hyg())
         assert residue == h.find_issues(out, _hyg())["repeat"] == qg.gate_repeat(out, _hyg())["violations"]
         assert residue
@@ -213,7 +214,7 @@ class TestFinalPass:
 
     def test_final_integrity_holds_an_approved_piece_with_a_residue(self):
         ledger = [{"gate": "F13_repeat", "passed": True, "blocking": True, "violations": []}]
-        text = "The lake (the largest in the region is cold.\n\n" + AH_CTA + "."
+        text = "The lake is large. they say the water matters. It is cold.\n\n" + AH_CTA + "."
         out, led, flags, status, reason = service._final_integrity(text, _hyg(), ledger, [], "approved", None)
         assert status == "held" and reason.startswith("F13_repeat")
         assert [g for g in led if g["gate"] == "F13_repeat"][0]["passed"] is False and len(led) == 1
@@ -375,3 +376,145 @@ class TestTitles:
 def test_a_demand_on_everyone_is_not_social_proof():
     assert not h.SOCIAL_PROOF_RE.search("a forest that asks a great deal of everyone who enters it")
     assert h.SOCIAL_PROOF_RE.search("Everyone who visits says it is unforgettable.")
+
+
+# ---------------------------------------------------------------- round-4 review fixes
+
+TP_CTA = "Get the full Trail Pulse itinerary and dates"
+WK_CTA = "Ask WildKind Travel for the full itinerary"
+
+
+class TestReviewCtaScope:
+    def test_a_body_sentence_with_the_common_noun_trail_is_kept(self):
+        text = ("Ladakh rewards early starts.\n\nMost groups get to the trail before sunrise, and the light on the "
+                f"ridge is the reward. It is cold.\n\n{TP_CTA}.")
+        out, log = ti.fix_cta(text, TP_CTA)
+        assert out == text and log == [] and ti.cta_findings(text, TP_CTA) == []
+
+    def test_an_invite_shaped_hook_is_never_deleted(self):
+        text = (f"Ask WildKind Travel guides about Punakha and they start with the river.\n\nThe dzong sits at the "
+                f"confluence.\n\n{WK_CTA}.")
+        assert ti.fix_cta(text, WK_CTA) == (text, [])
+        assert ti.cta_findings(text, WK_CTA) == []
+
+    def test_a_mid_body_brand_mention_is_not_a_cta(self):
+        text = ("The lake is cold.\n\nGuides call WildKind Travel's base camp the quietest spot on the shore.\n\n"
+                "The camps move. The herds graze. The forest is dense. The river runs.\n\n" + WK_CTA + ".")
+        assert ti.fix_cta(text, WK_CTA) == (text, [])
+        assert ti.cta_findings(text, WK_CTA) == []
+
+    def test_a_reworded_cta_in_another_section_is_not_counted(self):
+        text = ("The lake is cold.\n\n## Camps\n\nThe camps move. Ask WildKind Travel about the camps.\n\n## Plan\n\n"
+                f"The route rewards patience. {WK_CTA}.")
+        assert ti.cta_findings(text, WK_CTA) == []
+
+    def test_the_closing_literal_line_is_never_deleted(self):
+        cta = AH_CTA
+        text = ("## The Camps\n\nIf the timing suits, talk to an Atlas & Hearth travel designer about this journey "
+                f"and its ger camps.\n\n## Plan\n\nThe route rewards patience.\n\n{cta}.")
+        out, log = ti.fix_cta(text, cta)
+        assert out == text and log == []
+        assert any("2 times" in f for f in ti.cta_findings(out, cta))
+
+    @pytest.mark.parametrize("cta", [
+        "Ready for the steppe? Ask WildKind Travel for the full itinerary.",
+        "Questions? Ask WildKind Travel",
+        "Ask Wild Co. Travel for the full itinerary",
+        "Write to us at hello@wild.travel. We reply within a day",
+    ])
+    def test_a_cta_split_over_sentences_is_one_occurrence(self, cta):
+        text, _ = h.ensure_cta("The steppe is wide. The camps move.", cta)
+        assert h.has_cta_literal(text, cta) and h.ensure_cta(text, cta)[1] == []
+        assert ti.cta_findings(text, cta) == []
+        assert ti.fix_cta(text, cta) == (text, [])
+        lit, _ = ti.cta_occurrences(text, cta)
+        assert len(lit) == 1
+
+    def test_a_two_sentence_cta_said_twice_keeps_the_last(self):
+        cta = "Ready for the steppe? Ask WildKind Travel for the full itinerary."
+        text = f"{cta}\n\nThe steppe is wide. The camps move.\n\n{cta}"
+        assert any("2 times" in f for f in ti.cta_findings(text, cta))
+        out, log = ti.fix_cta(text, cta)
+        assert out == f"The steppe is wide. The camps move.\n\n{cta}" and log
+
+
+class TestReviewStrictRepeat:
+    R1_17_EARLIER = "Mörön sits in a broad valley at an elevation of roughly 1,283 metres above sea level."
+    R1_17_LATER = ("Lake Khövsgöl holds approximately 70 percent of Mongolia's fresh water and sits at an elevation "
+                   "of roughly 1,645 metres above sea level in a mountain-rimmed basin.")
+
+    def test_r1_17_two_places_sharing_a_template_are_a_warning_not_blocking(self):
+        text = f"{self.R1_17_EARLIER}\n\nThe camps move.\n\n{self.R1_17_LATER}\n\n{AH_CTA}."
+        assert h.near_verbatim(self.R1_17_LATER, self.R1_17_EARLIER)
+        assert not h.strict_repeat(self.R1_17_LATER, self.R1_17_EARLIER)
+        found = h.find_issues(text, _hyg())
+        assert not any("Lake Khövsgöl holds" in v for v in found["repeat"])
+        assert any(v.startswith("repeats an earlier sentence") for v in found["hygiene"])
+        _, _, residue = ti.final_pass(text, _hyg())
+        assert residue == []
+
+    def test_s233_13_keyword_topic_sentence_is_kept(self):
+        # shares only the SEO keyword (in the heading and 3 sentences) with an earlier sentence
+        earlier = ("For parents thinking about the Khovsgol and Gobi tour Mongolia price in terms of what a family "
+                   "actually gets, this moment is worth understanding before anything else.")
+        topic = ("When families weigh the Khovsgol and Gobi tour Mongolia price, the question is usually not just "
+                 "about cost but about what the cost includes in terms of meaningful experience.")
+        text = (f"{earlier}\n\nThe camps move. The herds graze.\n\n## Thinking About the Khovsgol and Gobi Tour "
+                f"Mongolia Price\n\n{topic} {AH_CTA}.")
+        out, log = h.dedupe(text, cta=AH_CTA)
+        assert topic in out and log == []
+
+    def test_r3_12_closing_recap_is_still_cut(self):
+        intro = ("The route through northern Mongolia — from the volcanic terrain of Bulgan Province to the reindeer "
+                 "herders of the remote taiga — is among the most distinct journeys the region offers.")
+        recap = ("This route through northern Mongolia — from the caldera at Uran Togoo to the taiga camps of the "
+                 "Tsaatan — rewards those who travel with curiosity and patience.")
+        text = f"{intro}\n\nThe camps move. The herds graze.\n\n## Plan\n\n{recap} {AH_CTA}."
+        out, log = h.dedupe(text, cta=AH_CTA)
+        assert recap not in out and log
+
+    def test_a_closing_copy_is_still_cut(self):
+        a = "Lake Khövsgöl holds about seventy percent of Mongolia's fresh water in a high mountain-rimmed basin."
+        b = "Lake Khövsgöl holds about seventy percent of Mongolia's fresh water in a high mountain basin today."
+        text = f"{a}\n\nThe camps move. The herds graze.\n\n## Plan\n\n{b} {AH_CTA}."
+        out, log = h.dedupe(text, cta=AH_CTA)
+        assert b not in out and log
+
+
+class TestReviewUnbalanced:
+    @pytest.mark.parametrize("text", [
+        "Pack three things: 1) a fleece, 2) a hat, 3) sunscreen. Nights drop below zero.",
+        "Pack: a) a fleece, b) a hat. Nights are cold.",
+        "Great day on the ridge :) see you there.",
+        'The tallest guide is 6\'2" and the shortest is 5\'4".',
+        'The doorway is 60" wide.',
+        "The dzong (built in 1637) sits at the confluence.",
+    ])
+    def test_inline_enumerators_emoticons_and_inch_marks_are_balanced(self, text):
+        assert ti.fragments(text) == []
+
+    def test_a_single_letter_close_still_counts(self):
+        assert ti.fragments("See the note b) for details.")
+
+    def test_unbalanced_paragraph_is_a_warning_not_f13_repeat(self):
+        text = "The lake (the largest in the region is cold.\n\n" + AH_CTA + "."
+        found = h.find_issues(text, _hyg())
+        assert not any("unbalanced" in v for v in found["repeat"])
+        assert any("unbalanced" in v for v in found["hygiene"])
+
+
+class TestReviewEditFindings:
+    def test_a_cut_that_leaves_a_lower_case_fragment_is_reported(self):
+        old = "The lake is large. The valley is wide, and then the valley opens. The camps move."
+        new = "The lake is large. and then the valley opens. The camps move."
+        assert any("lower-case" in f for f in ti.edit_findings(old, new, AH_CTA, "Atlas & Hearth"))
+
+    def test_a_reworded_cta_next_to_the_literal_is_reported(self):
+        old = f"The lake is large. The camps move.\n\n{WK_CTA}."
+        new = f"The lake is large. Ask WildKind Travel about dates.\n\n{WK_CTA}."
+        assert any("other words" in f for f in ti.edit_findings(old, new, WK_CTA, "WildKind Travel"))
+
+    def test_an_unchanged_problem_is_not_reported_again(self):
+        old = "The lake is large. they say it matters. It is cold. The camps move."
+        new = "The lake is very large. they say it matters. It is cold. The camps move."
+        assert ti.edit_findings(old, new, None) == []

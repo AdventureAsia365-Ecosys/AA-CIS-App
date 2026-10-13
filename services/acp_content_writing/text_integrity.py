@@ -22,9 +22,11 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _is_cta_invite, _safe_to_delete, brand_words, cta_norm,
-    dedupe, sentence_spans, tidy_after_cut,
+    CTA_WINDOW, _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
+    brand_words, cta_norm, dedupe, has_cta_literal, sentence_spans, tidy_after_cut,
 )
+
+_HEADING_LINE_RE = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]")
 
 # ---------------------------------------------------------------- whitespace
 
@@ -63,25 +65,83 @@ def _body_end(text: str) -> int:
     return m.start() if m else len(text or "")
 
 
+def _body_prose(text: str) -> list[dict]:
+    """Prose / bullet sentences before any FAQ heading, hashtag lines left out, in order."""
+    end = _body_end(text)
+    return [s for s in sentence_spans(text or "")
+            if s["end"] <= end and not s["in_faq"] and s["kind"] in ("prose", "bullet")
+            and not _HASHTAG_LINE_RE.fullmatch(s["clean"] or "-")]
+
+
+def _literal_groups(spans: list[dict], want: str) -> list[dict]:
+    """Every occurrence of the CTA in the prose, as a group of consecutive sentences: a CTA of two
+    sentences ('Ready for the steppe? Ask WildKind Travel …') or one `sentence_spans` splits ('Ask
+    Wild Co. Travel …', 'hello@wild.travel. We reply …') is one occurrence, the same match
+    `hygiene.has_cta_literal` makes on the joined body (S234 round 4 review). A group:
+    {"start", "end", "clean", "idx": [span indices]}."""
+    groups: list[dict] = []
+    n = len(spans)
+    k = 0
+    while k < n:
+        hit = None
+        for m in range(k, min(n, k + 6)):
+            joined = " ".join(s["clean"] for s in spans[k:m + 1])
+            if f" {want} " in f" {cta_norm(joined)} ":
+                hit = m
+                break
+        if hit is None:
+            k += 1
+            continue
+        # the occurrence starts at the LAST k that still holds it ('… Ask WildKind Travel for the full
+        # itinerary.' must not start one sentence early)
+        first = k
+        while first < hit and f" {want} " in f" {cta_norm(' '.join(s['clean'] for s in spans[first + 1:hit + 1]))} ":
+            first += 1
+        part = spans[first:hit + 1]
+        groups.append({"start": part[0]["start"], "end": part[-1]["end"],
+                       "clean": " ".join(s["clean"] for s in part), "idx": list(range(first, hit + 1))})
+        k = hit + 1
+    return groups
+
+
+def _invites_brand(sentence: str, cta: Optional[str]) -> bool:
+    """`hygiene._is_cta_invite` with the brand word matched CASE-SENSITIVELY (S234 round 4 review:
+    'Most groups get to the trail before sunrise' is not a Trail Pulse CTA)."""
+    if not _is_cta_invite(sentence, cta):
+        return False
+    brand = _cta_brand_word(cta)
+    return bool(brand) and re.search(rf"\b{re.escape(brand)}\b", sentence or "") is not None
+
+
 def cta_occurrences(text: str, cta: Optional[str]) -> tuple[list[dict], list[dict]]:
-    """(literal, paraphrase) — prose sentences before any FAQ heading that carry the configured CTA
-    word for word (`cta_norm`), and the ones that invite the reader to the brand in other words
-    (`hygiene._is_cta_invite`: 'Talk to an Atlas & Hearth travel designer about how this journey might
-    be arranged.'). Hashtag lines never count."""
+    """(literal, paraphrase) before any FAQ heading. literal: every occurrence of the configured CTA
+    word for word (`cta_norm`), a group of one or more consecutive sentences (`_literal_groups`).
+    paraphrase: a sentence that invites the reader to the brand in other words ('Talk to an Atlas &
+    Hearth travel designer about how this journey might be arranged.', r3 #12) — searched only among
+    the CTA_WINDOW prose sentences on either side of the LAST literal occurrence, in its section (no
+    heading between), never the piece's first sentence (the hook), and with the brand word matched
+    case-sensitively. A brand mention mid-body is not a CTA (S234 round 4 review). Hashtag lines never
+    count."""
     want = cta_norm(cta)
     if not want:
         return [], []
-    end = _body_end(text)
-    lit, para = [], []
-    for s in sentence_spans(text or ""):
-        if s["end"] > end or s["in_faq"] or s["kind"] not in ("prose", "bullet"):
+    spans = _body_prose(text)
+    lit = _literal_groups(spans, want)
+    if not lit:
+        return [], []
+    used = {i for g in lit for i in g["idx"]}
+    last = lit[-1]
+    lo, hi = last["idx"][0], last["idx"][-1]
+    window = list(range(max(1, lo - CTA_WINDOW), lo)) + list(range(hi + 1, min(len(spans), hi + 1 + CTA_WINDOW)))
+    para = []
+    for i in window:
+        if i in used or i == 0:
             continue
-        if _HASHTAG_LINE_RE.fullmatch(s["clean"] or "-"):
-            continue
-        if f" {want} " in f" {cta_norm(s['clean'])} ":
-            lit.append(s)
-        elif _is_cta_invite(s["clean"], cta):
-            para.append(s)
+        a, b = sorted((spans[i]["start"], last["start"]))
+        if _HEADING_LINE_RE.search((text or "")[a:b]):
+            continue  # another section
+        if _invites_brand(spans[i]["clean"], cta):
+            para.append({**spans[i], "idx": [i]})
     return lit, para
 
 
@@ -91,15 +151,18 @@ def _delete_span(text: str, span: dict) -> str:
 
 
 def _deletable(text: str, span: dict) -> bool:
+    """Deleting `span` (a sentence, or a group of them) orphans no pronoun in the sentence after it."""
     spans = sentence_spans(text)
-    k = next((n for n, s in enumerate(spans) if s["start"] == span["start"]), None)
+    k = next((n for n, s in enumerate(spans) if s["end"] == span["end"]), None)
     return k is not None and _safe_to_delete(spans, k)
 
 
 def fix_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
-    """Exactly one CTA: a CTA reworded next to the literal line is deleted (r3 #12), and a second
-    literal line that is ONLY the CTA is deleted (the last one stays — the closing line). A delete
-    happens only when no pronoun is orphaned. Returns (text, log)."""
+    """Exactly one CTA: a CTA reworded next to the literal line (`cta_occurrences`) is deleted (r3
+    #12), and an EARLIER occurrence that is ONLY the CTA is deleted. The last literal occurrence — the
+    closing line `hygiene.ensure_cta` placed — is never deleted: when the only other copy is inside a
+    longer sentence, both stay and `cta_findings` reports it (S234 round 4 review). A delete happens
+    only when no pronoun is orphaned. Returns (text, log)."""
     want = cta_norm(cta)
     log: list[str] = []
     for _ in range(4):
@@ -110,8 +173,6 @@ def fix_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
         why = "a reworded CTA next to the configured line"
         if target is None and len(lit) > 1:
             target = next((s for s in lit[:-1] if cta_norm(s["clean"]) == want and _deletable(text, s)), None)
-            if target is None and cta_norm(lit[-1]["clean"]) == want and _deletable(text, lit[-1]):
-                target = lit[-1]
             why = "a second copy of the CTA line"
         if target is None:
             break
@@ -122,13 +183,15 @@ def fix_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
 
 def cta_findings(text: str, cta: Optional[str]) -> list[str]:
     """The CTA is said exactly once, word for word: 'the piece has no …' / '… N times' / '… also in
-    other words'. [] without a configured CTA."""
+    other words'. 'Missing' only when `hygiene.has_cta_literal` (what `ensure_cta` reads) agrees, so
+    the gate never asks for a CTA the chain will not add. [] without a configured CTA."""
     if not cta_norm(cta):
         return []
     lit, para = cta_occurrences(text, cta)
     out = []
     if not lit:
-        out.append(f"the configured call to action is missing — add it word for word: '{' '.join(cta.split())}'")
+        if not has_cta_literal(text, cta):
+            out.append(f"the configured call to action is missing — add it word for word: '{' '.join(cta.split())}'")
     elif len(lit) > 1:
         out += [f"says the call to action {len(lit)} times — keep one: '{s['clean'][:200]}'" for s in lit[:-1]]
     if lit:
@@ -142,10 +205,23 @@ _OPEN_CLOSE = (("(", ")"), ("[", "]"), ("“", "”"))
 _TAG_RE = re.compile(r"\[(?:R|F):[^\]]+\]")
 
 
+# not brackets or quotes of the prose (S234 round 4 review): an emoticon (':)', ';-('), an inline
+# enumerator ('1) a fleece, 2) a hat', 'a) … b) …' — only when there are ≥ 2, so 'see note b)'
+# alone still counts), an inch / seconds mark after a digit (6'2", only when the quotes are odd)
+_EMOTICON_RE = re.compile(r"(?<!\S)[:;=][-'^]?[()\[\]DPp](?!\w)")
+_ENUMERATOR_RE = re.compile(r"(?<![\w(])(?:\d{1,2}|[a-z])\)")
+_INCH_RE = re.compile(r"(?<=\d)[\"″]")
+
+
 def _unbalanced(paragraph: str) -> bool:
-    p = _TAG_RE.sub("", paragraph)
+    p = _EMOTICON_RE.sub(" ", _TAG_RE.sub("", paragraph))
+    enum = len(_ENUMERATOR_RE.findall(p))
+    if enum >= 2:
+        p = _ENUMERATOR_RE.sub(" ", p)
     if any(p.count(a) != p.count(b) for a, b in _OPEN_CLOSE):
         return True
+    if p.count('"') % 2 == 1:
+        p = _INCH_RE.sub("", p)
     return p.count('"') % 2 == 1
 
 
@@ -191,8 +267,29 @@ def fix_fragments(text: str, cta: Optional[str] = None) -> tuple[str, list[str]]
 # ---------------------------------------------------------------- the pass
 
 def integrity_findings(text: str, cta: Optional[str]) -> list[str]:
-    """CTA count + broken fragments — appended to `hygiene.find_issues()["repeat"]` (F13_repeat)."""
-    return cta_findings(text, cta) + [f"{f['why']} — rewrite or cut it: '{f['text'][:200]}'" for f in fragments(text)]
+    """CTA count + lower-case fragments — appended to `hygiene.find_issues()["repeat"]` (F13_repeat).
+    An unbalanced bracket or quote is NOT here (`unbalanced_findings`, a warning): nothing
+    deterministic fixes it and its quote is a whole paragraph, not a sentence a repair can locate."""
+    return cta_findings(text, cta) + [f"{f['why']} — rewrite or cut it: '{f['text'][:200]}'"
+                                      for f in fragments(text) if f["span"] is not None]
+
+
+def unbalanced_findings(text: str) -> list[str]:
+    """A paragraph with an unbalanced bracket or quote — `hygiene.find_issues()["hygiene"]` (F13_hygiene,
+    warn-only, S234 round 4 review)."""
+    return [f"{f['why']}: '{f['text'][:200]}'" for f in fragments(text) if f["span"] is None]
+
+
+def edit_findings(old_text: str, new_text: str, cta: Optional[str], brand_name: Optional[str] = None) -> list[str]:
+    """What a hand edit (the admin sentence apply path) newly broke: `hygiene.integrity_problems`
+    (a new repeat / near-duplicate / orphan line / dangling opener / broken fragment) plus a new CTA
+    finding (a second CTA, a reworded one next to it, the CTA cut). Findings the old text already had
+    are not repeated. Pure."""
+    from services.acp_content_writing.hygiene import integrity_problems
+    out = integrity_problems(old_text or "", new_text or "", brand_words(brand_name), cta)
+    old_cta = set(cta_findings(old_text or "", cta))
+    out += [f for f in cta_findings(new_text or "", cta) if f not in old_cta]
+    return list(dict.fromkeys(out))
 
 
 def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[str], list[str]]:
@@ -217,5 +314,5 @@ def final_pass(text: str, hyg, *, cta: Optional[str] = None) -> tuple[str, list[
     return text, log, residue
 
 
-__all__ = ["cta_findings", "cta_occurrences", "final_pass", "fix_cta", "fix_fragments", "fragments",
-           "integrity_findings", "normalise"]
+__all__ = ["cta_findings", "cta_occurrences", "edit_findings", "final_pass", "fix_cta", "fix_fragments", "fragments",
+           "integrity_findings", "normalise", "unbalanced_findings"]
