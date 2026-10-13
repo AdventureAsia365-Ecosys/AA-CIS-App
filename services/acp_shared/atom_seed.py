@@ -18,16 +18,28 @@ card has fewer than `RICH_CARD_FACTS` facts, at most `MAX_SIBLINGS` (2), and nev
 place the moment's own lines do not name. Route moments get no siblings at all
 (`route_moment_seeds`), are merged by place card or core place name (one block per place, C10), and a moment with
 fewer than `THIN_FACTS` facts is tagged thin so it is not made the hook.
+
+S234 round 2 (AA-772) — a route seed keeps one value per fact across its cards
+(`seed_canon.canonical_facts`: 'two percent' vs '0.4 percent' of the world's fresh water), and an
+overnight moment whose card region no other moment of that day shares loses its card
+(`seed_canon.overnight_card_off_route`: the Day 3 'Sod Camp' card sat on the Khövsgöl lakeshore
+that the route only reaches on Day 4).
 """
 from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from typing import Optional
+
+import structlog
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
 from services.acp_shared.place_cards import core_key, is_generic_name, place_key
 from services.acp_shared.place_cards import fold as place_fold
+from services.acp_shared.seed_canon import canonical_facts, overnight_card_off_route
+
+logger = structlog.get_logger()
 
 MAX_SIBLINGS = 2
 MAX_EVIDENCE_CHARS = 500
@@ -66,7 +78,8 @@ _SIBLING_EVIDENCE_QUERY = """
 """
 
 _CARD_QUERY = """
-    SELECT pc.card_id, pc.display_name, pc.locality, pc.region, pc.country, pc.naming_note, pc.facts
+    SELECT pc.card_id, pc.display_name, pc.locality, pc.region, pc.country, pc.naming_note, pc.facts,
+           pc.status
     FROM acp_shared.atom_place_card apc
     JOIN acp_shared.place_card pc ON pc.card_id = apc.card_id
     WHERE apc.atom_id = $1 AND pc.status <> 'rejected'
@@ -312,6 +325,30 @@ async def atom_seed_text(conn, atom_id: str, tenant_id: str) -> Optional[str]:
                         country=p["country"], day=p["day"], card=p["card"])
 
 
+def canonicalize_route_cards(parts: list[dict]) -> tuple[list[dict], dict]:
+    """S234 round 2 — pure: the route's moment parts (day order) with (1) the card removed from an
+    overnight moment the day's geography contradicts and (2) every remaining card's facts reduced to
+    one value per fact across the seed (`seed_canon.canonical_facts`; a verified card wins, then the
+    card with more moments in this route, then the earlier one). Returns (new parts, report)."""
+    by_day: dict = {}
+    for p in parts:
+        if p.get("day") is not None:
+            by_day.setdefault(p["day"], []).append(p)
+    out: list[dict] = []
+    off_route: list[str] = []
+    for p in parts:
+        if p.get("card") and p.get("day") is not None and overnight_card_off_route(p, by_day[p["day"]]):
+            off_route.append(p["card"].get("display_name") or "")
+            p = {**p, "card": None}
+        out.append(p)
+    cards = [p["card"] for p in out if p.get("card")]
+    counts = Counter(c.get("card_id") for c in cards)
+    kept, dropped = canonical_facts(cards, counts)
+    out = [{**p, "card": {**p["card"], "facts": kept.get(p["card"].get("card_id"), [])}}
+           if p.get("card") and p["card"].get("card_id") in kept else p for p in out]
+    return out, {"overnight_cards_dropped": off_route, "facts_dropped": dropped}
+
+
 async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[str, str]]:
     """S234 — a route's moments as [(first atom_id, seed block)], in the given (day) order, with
     same-place moments merged into one block (C10) and no sibling lines. `atoms` is
@@ -322,6 +359,10 @@ async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[st
         p = await atom_seed_parts(conn, atom_id, tenant_id, siblings=False)
         parts.append(p if p is not None else {"atom_id": atom_id, "text": label or "", "card": None,
                                               "label_only": True})
+    parts, report = canonicalize_route_cards(parts)
+    if report["overnight_cards_dropped"] or report["facts_dropped"]:
+        logger.info("t9_route_seed_canon", overnight_cards_dropped=report["overnight_cards_dropped"],
+                    facts_dropped=[d["fact"][:120] for d in report["facts_dropped"]])
     out = []
     for group in group_route_moments(parts):
         block = group[0]["text"] if group[0].get("label_only") else compose_route_moment(group)

@@ -559,7 +559,7 @@ def keyword_covered(text: Optional[str], keyword: Optional[str]) -> bool:
 
 def gate_seo_surface(
     seo_title: Optional[str], meta_description: Optional[str], slug: Optional[str],
-    keyword: Optional[str],
+    keyword: Optional[str], *, seed: Optional[str] = None, body: Optional[str] = None,
 ) -> GateResultLite:
     """AA-514 — ported from `gates/shape.py::seo_surface()` (thresholds verbatim from
     `gate-thresholds.toml`). Blog-only (dispatch in run_quality_gates(), not here — same
@@ -602,6 +602,13 @@ def gate_seo_surface(
             violations.append("meta description is not a complete sentence")
         if kw and not keyword_covered(meta_description, keyword):
             violations.append(f"meta description does not contain the keyword '{keyword}'")
+        # AA-772 (S234 round 2) — the link preview may not sell a product the seed and the post
+        # never mention ('a Bhutan meditation retreat' for a dzong visit). Checked only when the
+        # caller passes the seed.
+        if seed is not None:
+            from services.acp_content_writing.seo_grounding import meta_unsupported_products
+            for word in meta_unsupported_products(meta_description, seed, body):
+                violations.append(f"meta description promises '{word}', which neither the seed nor the post mentions")
 
     if not slug:
         violations.append("no slug")
@@ -1348,7 +1355,7 @@ def run_quality_gates(
     ]
     if channel == "blog":
         gate_ledger += [
-            gate_seo_surface(seo_title, meta_description, slug, keyword),
+            gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text, body=content_text),
             # AA-770 (S233) — blog shape is advice, not product truth: F5 (citation density), F3
             # (rhythm) and F7 (FAQ restates; service.py auto-drops those pairs first) warn only.
             # S232: they held 12/20 final blogs and forced full rewrites that invented new facts.

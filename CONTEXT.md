@@ -708,7 +708,15 @@ _Avoid_: block (alone), delete, filter.
   places the piece covers). S234: sibling lines only when the card has <3 facts (≤2, none naming
   another place); a Route's moments are in day order, skip Segments ranking excluded, carry no
   siblings, merge same-place moments into one block, and a moment with <3 facts is tagged thin. Facts Entries are filtered by `facts.country`; S233 removed the
-  per-fact Jev call (no Jev on the T axis).
+  per-fact Jev call (no Jev on the T axis). S234 round 2 (`acp_shared.seed_canon`): a Route seed
+  keeps one value per fact across its cards (same measure, different number → a verified card wins,
+  then the place's own card, then the place with more moments, then the first; numberless
+  contradictions are kept), an overnight moment loses its card when its region matches no other
+  moment of that day (the card guessed the famous region), and within a day moments run
+  overnight-last, then in A3 extraction order. The SEO keyword's product words (retreat, cruise,
+  trek … — `acp_content_writing.seo_grounding`) must be in the seed, else the next candidate or the
+  keyword cut to its place words; a meta's product nouns must be in the seed or the body (SEO fit
+  and F4).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
   After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
   F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,

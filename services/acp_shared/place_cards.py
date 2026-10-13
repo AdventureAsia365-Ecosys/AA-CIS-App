@@ -768,14 +768,18 @@ def _facts_list(raw) -> list[dict]:
 
 def merged_facts(keep_facts, other_facts: list) -> list[dict]:
     """The kept card's facts, then the merged cards' facts not already there (folded text), added
-    only while the card holds fewer than MAX_FACTS — a merge never drops a fact the card had."""
+    only while the card holds fewer than MAX_FACTS — a merge never drops a fact the card had.
+    S234 round 2 — a donor fact that states another number for a fact the card already has
+    ('two percent' vs '0.4 percent' of the world's fresh water, seed_canon.facts_conflict) is
+    not added: the kept card's value is canonical."""
+    from services.acp_shared.seed_canon import facts_conflict
     out = _facts_list(keep_facts)
     seen = {fold(f["text"]) for f in out}
     for facts in other_facts:
         for f in _facts_list(facts):
             if len(out) >= MAX_FACTS:
                 return out
-            if fold(f["text"]) not in seen:
+            if fold(f["text"]) not in seen and not any(facts_conflict(k["text"], f["text"]) for k in out):
                 seen.add(fold(f["text"]))
                 out.append(f)
     return out
