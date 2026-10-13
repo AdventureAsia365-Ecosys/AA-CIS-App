@@ -9,7 +9,8 @@ a hashtag (#PakoTaktsang). SCOPE was a prompt line only; nothing in code checked
 
 This module owns those rules (S234 plan C5): the scope lexicon and out-of-scope gazetteer,
 `SOCIAL_PROOF_RE`, `LEAK_RE`, the hashtag fix, and the text primitives they share (`fold`,
-`sentence_spans`, `restates`, `near_verbatim`, `tidy_after_cut`). Other modules import them —
+`sentence_spans`, `is_sentence_end`, `expand_to_sentence`, `restates`, `near_verbatim`,
+`tidy_after_cut`). Other modules import them —
 `sentence_repair` (the splice guard), `quality_gates` (F12_scope / F13_hygiene), `atom_seed`
 (sibling filter) and F9 v2 `claim_rules` — and never re-implement them.
 
@@ -304,6 +305,62 @@ _HASHTAG_LINE_RE = re.compile(r"(?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+")
 _HEADING_RE = re.compile(r"#{1,6}\s")
 _SENT_END_RE = re.compile(rf"[.!?…]+[\"'”’)*]*(?:\s?{_TAG})*(?=\s+\S|\s*$)")
 
+# Sentence boundaries (AA-769 review, S234) — the ONE rule sentence_spans, expand_to_sentence and
+# sentence_repair.locate_sentence share: a mark is an end only when whitespace, a citation tag or
+# the end of the text follows it (never "12.5 km", "U.S."), and a period after a known
+# abbreviation ("Mt. Fuji", "St. Petersburg", "No. 5") is not one either.
+_SENTENCE_END_CHARS = ".!?"
+_CLOSERS = "\"'”’)"
+# The end mark (run), its closing quotes / brackets, and the citation tags that follow it.
+_SENTENCE_TRAILER_RE = re.compile(rf"[.!?]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
+_TAG_AT_RE = re.compile(_TAG)
+_ABBREVIATIONS = frozenset({"mt", "st", "ft", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "vs",
+                            "approx", "ca", "e.g", "i.e"})
+# "No." is an abbreviation only before a number ("No. 5"); "Is it hard? No." ends a sentence.
+_NUMBER_ABBREVIATIONS = frozenset({"no"})
+_WORD_BEFORE_DOT_RE = re.compile(r"[A-Za-z.]+$")
+_DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
+_NEXT_IS_NUMBER_RE = re.compile(r"\s*\d")
+
+
+def is_sentence_end(text: str, i: int) -> bool:
+    """True when text[i] ('.', '!' or '?') really ends a sentence: the mark run and its closing
+    quotes must be followed by whitespace, a citation tag or the end of the text — so a decimal
+    ("12.5 km", "1.5 hours") or a dotted name ("U.S.", "e.g.") never is — and a period after a
+    known abbreviation ("Mt. Fuji", "St. Petersburg", "No. 5") is not either."""
+    if i < 0 or i >= len(text) or text[i] not in _SENTENCE_END_CHARS:
+        return False
+    j = i + 1
+    while j < len(text) and text[j] in _SENTENCE_END_CHARS:
+        j += 1
+    while j < len(text) and text[j] in _CLOSERS:
+        j += 1
+    if j < len(text) and not text[j].isspace() and not _TAG_AT_RE.match(text, j):
+        return False
+    if text[i] == "." and (i + 1 >= len(text) or text[i + 1] not in _SENTENCE_END_CHARS):
+        word = _WORD_BEFORE_DOT_RE.search(text, 0, i)
+        w = word.group(0).lower() if word else ""
+        if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word.group(0))):
+            return False
+        if w in _NUMBER_ABBREVIATIONS and _NEXT_IS_NUMBER_RE.match(text, i + 1):
+            return False
+    return True
+
+
+def sentence_tail_end(text: str, pos: int) -> Optional[int]:
+    """End of the sentence running through `pos`: just after the first real sentence end
+    (is_sentence_end) at or after `pos`, plus its closing quotes and trailing citation tags. None
+    when a newline or the end of the text comes first (a list item or heading with no end mark)."""
+    i = max(pos, 0)
+    while i < len(text) and text[i] != "\n":
+        if text[i] in _SENTENCE_END_CHARS and is_sentence_end(text, i):
+            # back to the start of the mark run ("?!", "..."), then take the whole trailer
+            while i > pos and text[i - 1] in _SENTENCE_END_CHARS:
+                i -= 1
+            return _SENTENCE_TRAILER_RE.match(text, i).end()
+        i += 1
+    return None
+
 
 def sentence_spans(text: str) -> list[dict]:
     """Every sentence of `text` with absolute offsets: {"start", "end", "text", "clean", "kind",
@@ -340,6 +397,8 @@ def sentence_spans(text: str) -> list[dict]:
         cur = line_start + lead
         line_end = line_start + len(line.rstrip())
         for m in _SENT_END_RE.finditer(line, lead):
+            if line[m.start()] != "…" and not is_sentence_end(line, m.start()):
+                continue  # "Mt. Fuji", "No. 5": not a sentence end
             end = line_start + m.end()
             if end > cur:
                 spans.append(_span(text, cur, end, kind, in_faq))
@@ -357,18 +416,63 @@ def _span(text: str, start: int, end: int, kind: str, in_faq: bool) -> dict:
             "kind": kind, "in_faq": in_faq}
 
 
+_TRAILING_JUNK_RE = re.compile(rf"(?:\s|[{re.escape(_CLOSERS)}]|{_TAG})*$")
+# A line's own marker, kept when its first sentence is cut or rewritten: a FAQ answer's "A: " or a
+# bullet's "- " / "* " (sentence_spans starts those sentences after it the same way).
+_LINE_MARKER_RE = re.compile(r"(?:A:|[-*])[ \t]+")
+_HASHTAG_TOKEN_RE = re.compile(r"#[A-Za-z][A-Za-z0-9]*")
+
+
 def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
-    """The whole sentence(s) around [start, end) — AA-769 snaps an admin's selection to it."""
-    hit = [s for s in sentence_spans(text) if s["start"] < max(end, start + 1) and s["end"] > start]
-    if not hit:
-        return start, end
-    return min(s["start"] for s in hit), max(s["end"] for s in hit)
+    """The whole sentence around text[start:end] (an F9_brand_style phrase such as "hidden gem",
+    or a located sentence), so an admin cut or rewrite (AA-769) never leaves half a sentence.
+    Walks back to just after the previous real sentence end (is_sentence_end: not a decimal, not
+    "Mt.") or the line start — skipping a FAQ "A: " / bullet "- " marker there — and forward to
+    the sentence end plus its closing quotes and trailing citation tags. Never crosses a newline:
+    a list item with no end mark stops at its line end. On a hashtag-only line (F13 misspelt
+    hashtag) the span is the hashtag token(s) themselves, never the whole line."""
+    ls = text.rfind("\n", 0, start) + 1
+    le = text.find("\n", start)
+    le = len(text) if le < 0 else le
+    if _HASHTAG_LINE_RE.fullmatch(text[ls:le].strip()):
+        toks = [m.span() for m in _HASHTAG_TOKEN_RE.finditer(text, ls, le)
+                if m.start() < max(end, start + 1) and m.end() > start]
+        return (toks[0][0], toks[-1][1]) if toks else (start, end)
+    s = start
+    while s > ls:
+        k = s - 1
+        if text[k] in _SENTENCE_END_CHARS and is_sentence_end(text, k):
+            break
+        if text[k] in _CLOSERS and k >= 1 and text[k - 1] in _SENTENCE_END_CHARS and is_sentence_end(text, k - 1):
+            break
+        s -= 1
+    if s == ls:
+        lead = len(text[ls:start]) - len(text[ls:start].lstrip(" \t"))
+        marker = _LINE_MARKER_RE.match(text, ls + lead)
+        if marker and marker.end() <= start:
+            s = marker.end()
+    lead = re.match(rf"(?:\s|{_TAG})*", text[s:start])
+    s += lead.end() if lead else 0
+    # A span that already ends on its sentence's mark (a located sentence + its tags) is
+    # extended from that mark; anything else from its end.
+    core = s + _TRAILING_JUNK_RE.search(text[s:end]).start() if end > s else end
+    pos = core - 1 if core > s and text[core - 1] in _SENTENCE_END_CHARS else end
+    tail = sentence_tail_end(text, pos)  # never crosses a newline
+    if tail is not None:
+        return s, max(tail, end)
+    e = le if le >= end else end
+    while e > end and text[e - 1] in " \t":
+        e -= 1
+    return s, e
 
 
 def tidy_after_cut(text: str) -> str:
-    """Clean up after sentences were deleted: drop empty FAQ answers (with their question), empty
-    bullets, headings whose section is now empty, double spaces and extra blank lines."""
-    lines = [re.sub(r"(?<=\S) {2,}", " ", ln.rstrip()) for ln in text.split("\n")]
+    """Clean up after sentences were cut (hygiene.autofix and the AA-769 admin cut / rewrite): drop
+    empty FAQ answers (with their question), empty bullets, headings whose section is now empty,
+    spaces before a line end, a single stray space at a line start (never a 2+ space indent),
+    doubled spaces and extra blank lines. Leading / trailing blank lines go; one trailing newline
+    is kept when the input had one."""
+    lines = [re.sub(r"(?<=\S) {2,}", " ", re.sub(r"^ (?=\S)", "", ln.rstrip())) for ln in text.split("\n")]
     kept: list[str] = []
     for ln in lines:
         s = ln.strip()
@@ -733,6 +837,7 @@ __all__ = [
     "COMMON_CAPS", "HygieneContext", "brand_words", "LEAK_RE", "SIBLING_HEADER", "SOCIAL_PROOF_RE", "ScopeLexicon",
     "autofix",
     "build_scope_lexicon", "content_words", "expand_to_sentence", "find_issues", "find_scope_violations",
+    "is_sentence_end", "sentence_tail_end",
     "fold", "hashtag_fixes", "lev", "names_place", "near_verbatim", "phrase_tokens", "places_named", "proper_nouns",
     "restates", "sentence_spans", "split_seed", "strip_tags", "tidy_after_cut", "TRIP_NAME_WORDS", "trip_name_places",
 ]

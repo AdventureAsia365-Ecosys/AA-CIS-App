@@ -14,67 +14,25 @@ located — falls back to the full rewrite, unchanged.
 S234 — `splice` refuses a replacement that restates one of its ±4 neighbouring sentences (it
 deletes the sentence instead): the S233 G7 repeats (#2/#9/#14) were repairs that re-stated the
 sentence two places earlier. F12_scope / F13_hygiene / F15_voice violations quote their sentence
-the same way F2/F11 do, so they can be repaired here once they block. `expand_to_sentence` and
-`tidy_after_cut` (hygiene.py) are re-exported for the AA-769 admin sentence actions.
+the same way F2/F11 do, so they can be repaired here once they block. The sentence primitives
+(`is_sentence_end`, `sentence_tail_end`, `expand_to_sentence`, `tidy_after_cut`) live in
+hygiene.py — one implementation — and are re-exported here for the AA-769 admin sentence actions.
 """
 from __future__ import annotations
 
 import re
 from typing import Optional
 
-from services.acp_content_writing.hygiene import expand_to_sentence, restates, sentence_spans, tidy_after_cut
+from services.acp_content_writing.hygiene import (
+    _SENTENCE_END_CHARS, expand_to_sentence, is_sentence_end, restates, sentence_spans, sentence_tail_end,
+    tidy_after_cut,
+)
 
 _TAG = r"\[(?:R|F):[^\]]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
 _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
-_SENTENCE_END_CHARS = ".!?"
-_CLOSERS = "\"'”’)"
-# The end mark (run), its closing quotes / brackets, and the citation tags that follow it.
-_SENTENCE_TRAILER_RE = re.compile(rf"[.!?]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
-_TAG_AT_RE = re.compile(_TAG)
-# "Mt. Fuji", "St. Petersburg", "No. 5", "e.g. the …": a period after one of these is not an end.
-_ABBREVIATIONS = frozenset({"mt", "st", "ft", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "no", "vs",
-                            "approx", "ca", "e.g", "i.e"})
-_WORD_BEFORE_DOT_RE = re.compile(r"[A-Za-z.]+$")
-_DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
-
-
-def is_sentence_end(text: str, i: int) -> bool:
-    """True when text[i] ('.', '!' or '?') really ends a sentence (S234 review): the mark run and
-    its closing quotes must be followed by whitespace, a citation tag or the end of the text — so
-    a decimal ("12.5 km", "1.5 hours") or a dotted name ("U.S.", "e.g.") never is — and a period
-    after a known abbreviation ("Mt. Fuji", "St. Petersburg") is not either."""
-    if i < 0 or i >= len(text) or text[i] not in _SENTENCE_END_CHARS:
-        return False
-    j = i + 1
-    while j < len(text) and text[j] in _SENTENCE_END_CHARS:
-        j += 1
-    while j < len(text) and text[j] in _CLOSERS:
-        j += 1
-    if j < len(text) and not text[j].isspace() and not _TAG_AT_RE.match(text, j):
-        return False
-    if text[i] == "." and (i + 1 >= len(text) or text[i + 1] not in _SENTENCE_END_CHARS):
-        word = _WORD_BEFORE_DOT_RE.search(text, 0, i)
-        if word and (word.group(0).lower() in _ABBREVIATIONS or _DOTTED_ACRONYM_RE.fullmatch(word.group(0))):
-            return False
-    return True
-
-
-def sentence_tail_end(text: str, pos: int) -> Optional[int]:
-    """End of the sentence running through `pos`: just after the first real sentence end
-    (is_sentence_end) at or after `pos`, plus its closing quotes and trailing citation tags. None
-    when a newline or the end of the text comes first (a list item or heading with no end mark)."""
-    i = max(pos, 0)
-    while i < len(text) and text[i] != "\n":
-        if text[i] in _SENTENCE_END_CHARS and is_sentence_end(text, i):
-            # back to the start of the mark run ("?!", "..."), then take the whole trailer
-            while i > pos and text[i - 1] in _SENTENCE_END_CHARS:
-                i -= 1
-            return _SENTENCE_TRAILER_RE.match(text, i).end()
-        i += 1
-    return None
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
@@ -180,18 +138,19 @@ def repeats_neighbour(text: str, start: int, end: int, replacement: str,
 
 
 def splice(content_text: str, items: list[dict], replacements: list[str], *,
-           ignore: frozenset = frozenset()) -> str:
+           ignore: frozenset = frozenset(), guard_repeats: bool = True) -> str:
     """Put each replacement in place of its sentence (last first, so offsets stay valid). The
     original sentence's trailing citation tags are kept after a non-empty replacement; an empty
     replacement deletes the sentence. S234 guard: a replacement that restates a neighbouring
     sentence is turned into a delete (the item gets `"guard": "repeat"`). `ignore`: words the
-    repeat test skips (the brand name)."""
+    repeat test skips (the brand name). `guard_repeats=False` (the AA-769 admin apply, which
+    refuses such a replacement up front in check_replacement) never turns a rewrite into a cut."""
     text = content_text
     for item, new in sorted(zip(items, replacements), key=lambda p: p[0]["start"], reverse=True):
         original = text[item["start"]:item["end"]]
         tags = _TRAILING_TAGS_RE.search(original)
         new = (new or "").strip()
-        if new and repeats_neighbour(text, item["start"], item["end"], new, ignore):
+        if new and guard_repeats and repeats_neighbour(text, item["start"], item["end"], new, ignore):
             item["guard"] = "repeat"
             new = ""
         if new:
@@ -214,39 +173,6 @@ def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
 
 # ── AA-769 (S234) — admin cut / rewrite of one flagged sentence ─────────────────────────────────
 
-_TRAILING_JUNK_RE = re.compile(rf"(?:\s|[{re.escape(_CLOSERS)}]|{_TAG})*$")
-
-
-def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
-    """The whole sentence around the phrase text[start:end] (an F9_brand_style hit such as "hidden
-    gem"), so an admin cut or rewrite never leaves half a sentence. Walks back to just after the
-    previous real sentence end (is_sentence_end: not a decimal, not "Mt.") or newline, forward to
-    the sentence end plus its closing quotes and trailing citation tags. Never crosses a newline:
-    a list item or heading with no end mark stops at its line end."""
-    s = start
-    while s > 0 and text[s - 1] != "\n":
-        k = s - 1
-        if text[k] in _SENTENCE_END_CHARS and is_sentence_end(text, k):
-            break
-        if text[k] in _CLOSERS and k >= 1 and text[k - 1] in _SENTENCE_END_CHARS and is_sentence_end(text, k - 1):
-            break
-        s -= 1
-    lead = re.match(rf"(?:\s|{_TAG})*", text[s:start])
-    s += lead.end() if lead else 0
-    # A span that already ends on its sentence's mark (a located sentence + its tags) is
-    # extended from that mark; anything else from its end.
-    core = s + _TRAILING_JUNK_RE.search(text[s:end]).start() if end > s else end
-    pos = core - 1 if core > s and text[core - 1] in _SENTENCE_END_CHARS else end
-    tail = sentence_tail_end(text, pos)  # never crosses a newline
-    if tail is not None:
-        return s, max(tail, end)
-    nl = text.find("\n", end)
-    e = len(text) if nl < 0 else nl
-    while e > end and text[e - 1] in " \t":
-        e -= 1
-    return s, e
-
-
 def resolve_span(text: str, start: int, end: int, expected: str) -> Optional[tuple[int, int]]:
     """Where `expected` (the span the admin saw) sits in the CURRENT text: at (start, end) when it
     still matches there, else at its one and only occurrence. None when it is gone or ambiguous —
@@ -261,25 +187,20 @@ def resolve_span(text: str, start: int, end: int, expected: str) -> Optional[tup
     return None
 
 
-def tidy_after_cut(text: str) -> str:
-    """Whitespace left behind by splice(): spaces before a line end, a single stray space at a line
-    start, doubled spaces inside a line, and the blank-line pile-up left by a cut paragraph."""
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n (?=\S)", "\n", text)
-    text = re.sub(r"(?<=\S) {2,}(?=\S)", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
-
-
 def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
     """The piece text with text[start:end] replaced (or cut, when `replacement` is empty) through
-    splice() — trailing citation tags kept after a rewrite — then tidied. A cut that empties a
-    whole line (a list item with no end mark) also takes that line's newline."""
+    splice() — trailing citation tags kept after a rewrite, no silent repeat-guard cut (the
+    caller checked the replacement) — then tidied (hygiene.tidy_after_cut: an emptied FAQ answer
+    goes with its question, an emptied bullet or section goes). A cut that empties a whole line
+    (a list item with no end mark) also takes that line's newline. The text keeps its own
+    trailing-newline state."""
     if not (replacement or "").strip():
         line_start = start == 0 or text[start - 1] == "\n"
         if line_start and text[end:end + 1] == "\n":
             end += 1
-    return tidy_after_cut(splice(text, [{"start": start, "end": end}], [replacement or ""]))
+    out = tidy_after_cut(splice(text, [{"start": start, "end": end}], [replacement or ""], guard_repeats=False))
+    out = out.rstrip("\n")
+    return out + "\n" if text.endswith("\n") and out else out
 
 
 _SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
@@ -300,11 +221,19 @@ def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
     return " ".join(text.split())
 
 
-def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict]) -> list[dict]:
+def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict], *,
+                      writer_input: Optional[dict] = None, text: Optional[str] = None,
+                      span: Optional[tuple[int, int]] = None) -> list[dict]:
     """The deterministic gates a replacement sentence must pass before it is saved (lesson AA-641:
     a repair needs a guard after it): F1 (no number the source lacks), F2 banned patterns, the
-    brand's forbidden words and F11 (no foreign brand / platform name). Returns the failed gates
-    as [{gate, violations}] — empty means it may be saved."""
+    brand's forbidden words and F11 (no foreign brand / platform name). With the piece's stored
+    `writer_input` (S234, AA-768 hygiene) also F12_scope (no place outside the piece's scope) and
+    F13_hygiene (no source-notes leak, no unsourced social proof) — the same rules the drawer
+    flags, so a rewrite of an F12/F13 sentence cannot bring the problem back. With the piece
+    `text` and the sentence `span`, a replacement that restates one of its neighbours fails
+    F13_hygiene too (splice would otherwise have turned it into a silent cut). Returns the failed
+    gates as [{gate, violations}] — empty means it may be saved."""
+    from services.acp_content_writing import hygiene
     from services.acp_content_writing import quality_gates as qg
     sentence = qg.strip_citation_tags(replacement or "").strip()
     if not sentence:
@@ -316,7 +245,22 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
     ]
-    return [{"gate": r["gate"], "violations": list(r["violations"])} for r in results if not r["passed"]]
+    failed = [{"gate": r["gate"], "violations": list(r["violations"])} for r in results if not r["passed"]]
+    wi = writer_input or {}
+    hygiene_issues: list[str] = []
+    if wi.get("seed"):
+        ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
+                                     brand_name=pack.get("brand_name"), cta=wi.get("cta"))
+        found = hygiene.find_issues(sentence, ctx)
+        if found["scope"]:
+            failed.append({"gate": "F12_scope", "violations": list(found["scope"])})
+        hygiene_issues += found["hygiene"]
+    if text is not None and span is not None and repeats_neighbour(
+            text, span[0], span[1], sentence, hygiene.brand_words(pack.get("brand_name"))):
+        hygiene_issues.append(f"restates a nearby sentence: '{sentence[:200]}'")
+    if hygiene_issues:
+        failed.append({"gate": "F13_hygiene", "violations": hygiene_issues})
+    return failed
 
 
 __all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",

@@ -132,13 +132,6 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),
 }
 
-# S234 (C2/C12, AA-768): one cheap repair route — Haiku, Sonnet fallback — used by the blog SEO fit
-# now and by the AA-769 admin sentence actions; the pipeline sentence repair joins it after the
-# Haiku A/B. Its shared.llm_role_config row comes from migration 221 (AA-772 PR); this mirror only
-# fills the gap when that PR has not added the same key to the dict above.
-SAFE_DEFAULTS.setdefault("t9_repair", StageConfig("t9_repair", "writer", "claude", "haiku", "acc3",
-                                                   fallback_model_ids=("sonnet",)))
-
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
 
 # stage -> (StageConfig, fetched_at_monotonic)

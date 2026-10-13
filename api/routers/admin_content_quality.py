@@ -181,8 +181,9 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
-            elif gate in ("F12_scope", "F13_hygiene"):
+            elif gate in ("F12_scope", "F13_hygiene", "F15_voice"):
                 # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text.
+                # F15_voice (AA-771, PR3) quotes its sentence the same way (plan C4).
                 m = _BRAND_RE.search(v)
                 if m and not v.startswith(("title ", "meta ")):
                     quote = m.group(2)
@@ -372,7 +373,10 @@ async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Re
     grounding = grounding_from_writer_input(wi)
     try:
         reps, cost, model = await asyncio.to_thread(
-            repair_sentences_detailed, sentences=[{"sentence": sentence, "problem": problem}],
+            repair_sentences_detailed,
+            sentences=[{"sentence": sentence, "problem": problem,
+                        # S234 — its neighbours, so the rewrite does not restate them (same as T9)
+                        "context": sentence_repair.neighbours(row["content_text"], {"start": start, "end": end})}],
             content_seed=grounding, facts_text=None, channel=row["channel"] or "unknown",
             tenant_id=str(row["tenant_id"]), angle_gate_request_id=str(row["angle_gate_request_id"]),
             stage=_SUGGEST_STAGE, mode="admin_suggest", attempt=None, content_piece_id=piece_id,
@@ -382,7 +386,9 @@ async def suggest_sentence(piece_id: str, body: SentenceSuggestBody, request: Re
         raise HTTPException(status_code=502, detail=f"The model reply could not be read: {str(e)[:200]}")
     replacement = sentence_repair.sanitize_replacement(reps[0], row["channel"])
     return {"start": start, "end": end, "sentence": sentence, "replacement": replacement,
-            "checks": sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack")),
+            "checks": sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"),
+                                                        writer_input=wi, text=row["content_text"],
+                                                        span=(start, end)),
             "model": model, "cost_usd": cost}
 
 
@@ -409,7 +415,8 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                          x_admin_role: Optional[str] = Header(None)):
     """Cut one sentence, or put a replacement in its place. Deterministic, no LLM. In one
     transaction: lock the piece, check the span text still matches (else its one occurrence, else
-    409), run the replacement through F1 / F2 / brand-forbidden / F11 (422 with the violations),
+    409), run the replacement through F1 / F2 / brand-forbidden / F11, and (S234) F12_scope /
+    F13_hygiene incl. a restated neighbour (422 with the violations),
     splice + tidy, refuse a cut that empties the piece or drops it under the channel's minimum
     length, UPDATE content_text and write the audit row with before/after. Returns the refreshed
     piece detail. A published piece is edited here only — WordPress is not re-synced."""
@@ -455,7 +462,8 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                 # the piece is not new, so the piece minus this sentence stands in for the source.
                 grounding = (grounding_from_writer_input(wi) if wi
                              else old_text[:start] + " " + old_text[end:])
-                failed = sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"))
+                failed = sentence_repair.check_replacement(replacement, grounding, wi.get("brand_pack"),
+                                                           writer_input=wi, text=old_text, span=(start, end))
                 if failed:
                     detail = "; ".join(f"{f['gate']}: {' | '.join(f['violations'])}" for f in failed)
                     raise HTTPException(status_code=422, detail=f"The new sentence fails a check — {detail}")

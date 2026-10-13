@@ -64,7 +64,8 @@ def test_expand_to_sentence_stops_at_newline_and_keeps_tags():
     assert text[s:e] == "A hidden gem here. [R:a1]"
     j = text.rfind("hidden gem")
     s, e = sr.expand_to_sentence(text, j, j + 10)
-    assert text[s:e] == "- a hidden gem list item"
+    # S234 stack on AA-768: the bullet marker stays out of the span (cut → empty bullet → tidied away)
+    assert text[s:e] == "a hidden gem list item"
 
 
 def test_expand_keeps_a_located_whole_sentence():
@@ -142,7 +143,8 @@ def test_repair_sentences_defaults_unchanged():
     assert (req.stage, req.max_tokens) == ("t9_write", generate._MAX_TOKENS)
     kw = rec.call_args.kwargs
     assert kw["stage"] == "t9_write" and kw["content_piece_id"] is None
-    assert kw["quality_signal"] == {"channel": "blog", "attempt": 2, "mode": "sentence_repair", "sentences": 1}
+    assert kw["quality_signal"] == {"channel": "blog", "attempt": 2, "mode": "sentence_repair", "sentences": 1,
+                                    "source_chars": len("seed")}
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────────────────────
@@ -311,6 +313,9 @@ async def test_suggest_uses_cheap_stage_and_logs_piece():
     req = m.return_value.generate.call_args.args[0]
     assert req.stage == "t9_repair" and req.max_tokens <= 400
     assert "foreign brand Editor note: keep it short" in req.user_prompt and "BRAND: Trail Pulse" in req.user_prompt
+    # S234 stack: the neighbours go along as CONTEXT, same as the T9 sentence repair
+    assert "CONTEXT: Opening line here. | The monastery sits above Luang Prabang today. | It is a hidden gem." \
+        in req.user_prompt
     kw = rec.call_args.kwargs
     assert kw["stage"] == "t9_repair" and kw["content_piece_id"] == PIECE_ID
     assert kw["quality_signal"]["mode"] == "admin_suggest"

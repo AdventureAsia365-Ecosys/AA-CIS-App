@@ -491,7 +491,9 @@ see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus C
 Platform Stats. An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
 an approved/held Piece from that drawer (S234): *suggest* is one cheap LLM call (stage
 `t9_repair`, logged with `content_piece_id`, nothing saved); *apply* is deterministic (span-text
-match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F11, splice + tidy)
+match under `FOR UPDATE`, the replacement re-checked by F1/F2/brand-forbidden/F11 and — with the
+stored `writer_input` — F12_scope/F13_hygiene, incl. a restated neighbour; splice + tidy, using the
+same sentence primitives as the T9 hygiene in `hygiene.py`)
 and writes `content_text` plus an `acp_shared.audit_log` row
 (`content_piece.admin_sentence_cut|_rewritten|_edited`, before/after) — the audit log is the
 Piece's edit history. `gate_ledger`/`flags` stay as the writer produced them, and a published
