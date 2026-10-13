@@ -4,10 +4,16 @@ construction. Referenced (not reused, ADR §0.5) against services/acp_s4_social/
 ContentBrief-assembly shape — written fresh here against T8's real inputs (angle_gate_request/
 angle_gate_option, channel_style.py, goals.py, brand_audience.py), not the old ContentBrief.
 
-No hardcoded per-channel word-count numbers (STEP0 §Open Question #3 / build task's own explicit
-instruction — neither SKILL_v2.md's own Channel Rules nor T8's real Bảng-2 source,
-channel_style.py, states one) — length guidance is qualitative, from channel_style.py's
-`structure`/`style` fields, same as the LLM already gets for angle generation (generate.py).
+Length guidance was qualitative only (STEP0 §Open Question #3: no source stated a per-channel word
+count). S234 (AA-771) reverses that for LinkedIn only: S233 posts averaged 369 words with up to 8
+hashtags, so `services/acp_shared/channel_spec.py::linkedin_spec(pack)` gives a numeric target
+(150–220 words, below the F14 gate band of 120–250 / 300 editorial, because models overshoot
+counts), ≤3 hashtags and a first line ≤140 characters. For a channel with a spec the "CHANNEL STYLE"
+line becomes a VOICE line (the brand's own adjectives — the shared LinkedIn row used to say "calm"
+for every brand). Every non-blog channel also gets the stored angle's brief through
+`sanitize_best_final_style` (old requests get the clean brief at $0) and, when given, the first
+sentences of earlier pieces from the same brief so the opener is not reused. The blog prompt is
+byte-identical (guard test: tests/unit/test_aa771_s234_voice_contract.py).
 
 AA-452: `channel_style.py`'s own `blog` entry describes an N7-shaped structure ("Hook→context→
 structured H2 sections→FAQ (if TOFU)→CTA") that this module never actually asked the model to
@@ -36,6 +42,7 @@ from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_shared.brand_pack import render_brand_block
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
+from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 
 _BLOG_FORMAT_INSTRUCTIONS = """
 
@@ -221,6 +228,7 @@ def build_user_prompt(
     revision_feedback: list[str] | None = None, atom_id: str | None = None,
     route_segments: list[tuple[str, str]] | None = None, keyword: str | None = None,
     facts_text: str | None = None, scope: str | None = None,
+    sibling_openers: list[str] | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -284,11 +292,24 @@ def build_user_prompt(
             f"{facts_text}"
         )
 
+    # AA-771 (S234) — non-blog channels only (the blog prompt stays byte-identical): the register
+    # spec (LinkedIn), the brand's voice in place of the channel style, and the sanitised brief.
+    spec = None
+    if channel_style["channel"] != "blog":
+        spec = channel_spec(channel_style["channel"], brand_audience)
+        channel_style = apply_spec(channel_style, spec)
+        angle = {**angle, "best_final_style": sanitize_best_final_style(angle["best_final_style"],
+                                                                        brand_audience)[0]}
+    if spec is not None:
+        voice = ", ".join(brand_audience.get("voice") or []) or "the voice of the BRAND block below"
+        style_line = f"VOICE (from the brand — the channel and the angle never override it): {voice}"
+    else:
+        style_line = f"CHANNEL STYLE: {channel_style['style']}"
     lines = [
         f"CHANNEL: {channel_style['display_name']}",
         f"CHANNEL USE CASE: {channel_style['use_when']}",
         f"CHANNEL STRUCTURE: {channel_style['structure']}",
-        f"CHANNEL STYLE: {channel_style['style']}",
+        style_line,
         f"CHANNEL — AVOID: {channel_style['avoid']}",
         "",
         f"GOAL: {goal['name']} — {goal['description']}",
@@ -311,6 +332,16 @@ def build_user_prompt(
         lines.insert(-2, f"TRIP: {trip_name}")
     if scope:
         lines.insert(-2, scope)
+    if spec is not None:
+        lo, hi = spec.target_words
+        lines.insert(5, (
+            f"LENGTH AND SHAPE: {lo}–{hi} words (never more than {spec.words[1]}). The first line is one sentence "
+            f"of at most {spec.first_line_max} characters, followed by a blank line. At most {spec.hashtags_max} "
+            "hashtags, all on the last line, spelled exactly as the place names in the content seed. Do not open "
+            "with \"There is …\" or \"There's a …\"."))
+    if sibling_openers and channel_style["channel"] != "blog":
+        lines.insert(-2, "EARLIER PIECES FROM THIS BRIEF OPENED WITH (do not reuse these sentences or their "
+                         "construction):\n" + "\n".join(f"- {o}" for o in sibling_openers))
     if revision_feedback:
         lines.append(
             "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW — fix EXACTLY these issues, preserve "

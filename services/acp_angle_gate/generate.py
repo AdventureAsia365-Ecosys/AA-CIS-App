@@ -30,6 +30,8 @@ from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.brand_pack import foreign_brand_mentions
 from services.acp_angle_gate.prompts import SYSTEM_PROMPT, build_user_prompt
+from services.acp_angle_gate.route_digest import thin_anchor
+from services.acp_shared.channel_spec import sanitize_best_final_style
 from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.piece_history import PriorPiece
 from shared.llm_client.client import LLMClient
@@ -100,7 +102,7 @@ async def _generate_once(
     tenant_id=None, request_id=None, pool=None,  # AA-505 — attribution for llm_call_log, optional
     # (defaults None) so existing tests that call this without them are unaffected.
     channel_style: ChannelStyle | None = None, revision_feedback: list[str] | None = None,
-    attempt: int = 1,
+    attempt: int = 1, is_route: bool = False,
 ) -> tuple[list[dict], int, str, float]:
     """Returns (angles, recommended_index, recommendation_reason, cost_usd). `angles` is a list
     of exactly 3 dicts with the 4 required fields — service.py persists these directly into
@@ -119,7 +121,7 @@ async def _generate_once(
         content_seed=content_seed, goal=goal,
         brand_audience=brand_audience, destination=destination, trip_name=trip_name,
         search_demand=search_demand, piece_history=piece_history,
-        channel_style=channel_style, revision_feedback=revision_feedback,
+        channel_style=channel_style, revision_feedback=revision_feedback, is_route=is_route,
     )
     client = LLMClient()
     request = LLMRequest(
@@ -167,11 +169,21 @@ async def _generate_once(
 _ANGLE_TEXT_FIELDS = ("name", "why_it_works", "formula_fit", "best_final_style")
 
 
-def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience) -> list[str]:
+def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience,
+                              moments: list[dict] | None = None) -> list[str]:
     """AA-771 (S233) — deterministic checks on the 3 angles before anyone sees them: a brand that
     is not the tenant's (stored S232 angles said "how AA builds this visit" for terra-family) and
-    the tenant's own forbidden words."""
+    the tenant's own forbidden words.
+
+    S234 (C7) — with a Route's `moments` (route_digest.route_moments): when ALL 3 angles lead with a
+    thin moment, that is a violation too (one thin angle out of 3 is only re-ranked, at no cost —
+    ranking.rank_angles). Tone, opening and audience in the brief are not violations: they are
+    stripped in code before the angle is saved (sanitize_best_final_style), never retried."""
     out: list[str] = []
+    thin = [thin_anchor(a, moments) for a in angles] if moments else []
+    if thin and all(thin):
+        out.append("every angle leads with a thin moment (" + "; ".join(dict.fromkeys(thin)) + ") — lead with one "
+                   "of the ANCHOR CANDIDATES; a thin moment gets one sentence at most")
     brand_name = brand_pack.get("brand_name")
     for i, a in enumerate(angles):
         text = " ".join(str(a.get(f) or "") for f in _ANGLE_TEXT_FIELDS)
@@ -185,18 +197,25 @@ def angle_contract_violations(angles: list[dict], brand_pack: BrandAudience) -> 
     return out
 
 
-async def generate_angles(*, brand_audience: BrandAudience, **kwargs) -> tuple[list[dict], int, str, float]:
+async def generate_angles(*, brand_audience: BrandAudience, moments: list[dict] | None = None,
+                          **kwargs) -> tuple[list[dict], int, str, float]:
     """One angle call; when the angles break the brand contract (angle_contract_violations), one
     more call with those violations as feedback. Returns the second set either way (ranking then
-    penalises any remaining avoid-list hits). Cost covers both calls."""
+    penalises any remaining avoid-list hits and thin anchors). Cost covers both calls.
+
+    `moments` (S234): a Route request's moments (route_digest.route_moments) — each returned angle
+    carries `thin_anchor` ('<moment> (n facts)' or None) for ranking.rank_angles."""
     angles, idx, reason, cost = await _generate_once(brand_audience=brand_audience, **kwargs)
-    violations = angle_contract_violations(angles, brand_audience)
-    if not violations:
-        return angles, idx, reason, cost
-    logger.info("angle_gate_contract_retry", violations=violations[:5])
-    angles, idx, reason, cost2 = await _generate_once(
-        brand_audience=brand_audience, revision_feedback=violations, attempt=2, **kwargs)
-    return angles, idx, reason, cost + cost2
+    violations = angle_contract_violations(angles, brand_audience, moments)
+    if violations:
+        logger.info("angle_gate_contract_retry", violations=violations[:5])
+        angles, idx, reason, cost2 = await _generate_once(
+            brand_audience=brand_audience, revision_feedback=violations, attempt=2, **kwargs)
+        cost += cost2
+    if moments:
+        for a in angles:
+            a["thin_anchor"] = thin_anchor(a, moments)
+    return angles, idx, reason, cost
 
 
-__all__ = ["AngleGenerationError", "generate_angles", "angle_contract_violations"]
+__all__ = ["AngleGenerationError", "generate_angles", "angle_contract_violations", "sanitize_best_final_style"]

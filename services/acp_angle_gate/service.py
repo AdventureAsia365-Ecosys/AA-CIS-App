@@ -33,6 +33,8 @@ from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.generate import generate_angles
 from services.acp_angle_gate.goals import get_goal
 from services.acp_angle_gate.ranking import rank_angles, verify_answers
+from services.acp_angle_gate.route_digest import render_digest, route_moments
+from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_shared.dfs_relevance import fetch_search_demand_signal
@@ -132,6 +134,16 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
         logger.warning("t8_place_cards_failed", request_id=str(request_id), error=str(e)[:200])
     atom = await _fetch_atom_for_tenant(tenant_id, req["atom_id"], pool)
     brand_audience = await fetch_brand_audience(tenant_id, pool)
+    # S234 (C7) — a Route request writes its angles from the whole walk (day order, fact counts,
+    # anchor candidates / thin moments), not from route_segment_ids[0] alone.
+    content_seed, moments = atom["text"], None
+    if req["route_segment_ids"]:
+        moments = await _route_moments(tenant_id, req, pool)
+        if moments:
+            content_seed = render_digest(moments)
+    # AA-771 (S234) — LinkedIn's use case / structure / avoid list follow the brand's register.
+    channel_style = apply_spec(get_channel_style(req["channel"]), channel_spec(req["channel"], brand_audience)) \
+        if req["channel"] and get_channel_style(req["channel"]) else None
 
     trip_name = None
     destination = None
@@ -163,12 +175,13 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     )
 
     angles, recommended_index, reason, cost_usd = await generate_angles(
-        content_seed=atom["text"], goal=goal,
+        content_seed=content_seed, goal=goal,
         brand_audience=brand_audience, destination=destination, trip_name=trip_name,
         search_demand=search_demand, piece_history=piece_history,
         tenant_id=tenant_id, request_id=request_id, pool=pool,  # AA-505
         # AA-771 (S233) — the angle is shaped for the request's channel (always set by the Slate)
-        channel_style=get_channel_style(req["channel"]) if req["channel"] else None,
+        channel_style=channel_style,
+        **({"moments": moments, "is_route": True} if moments else {}),
     )
 
     # AA-512 — measurable ranking (ADR 0004), replacing the LLM's own opinion, ONLY when channel
@@ -179,7 +192,6 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     # regression. See docs/claude_audit/AA-512-step0-investigation.md §2.
     ranking_evidence = None
     if req["channel"]:
-        channel_style = get_channel_style(req["channel"])
         avoid_text = channel_style["avoid"] if channel_style else ""
         # AA-771 (S233) — the tenant's own forbidden words count as avoid-list hits too.
         tenant_forbidden = [w for w in (brand_audience.get("forbidden_words") or []) if "," not in w]
@@ -189,6 +201,7 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
         ranking_evidence, recommended_index = rank_angles(
             angles, claimed_answers=[a.get("answers", []) for a in angles],
             asked_questions=asked_questions, avoid_text=avoid_text,
+            thin_anchors=[a.get("thin_anchor") for a in angles] if moments else None,  # S234 C7
         )
         ranking_evidence, recommended_index, jev_dropped = await verify_answers(   # AA-700 T8-1
             angles, ranking_evidence, tenant_id,
@@ -205,6 +218,15 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     # (no trip_id, or no seo_context row) stays NULL, not an empty object — same "absent means no
     # signal" convention fetch_search_demand_signal() itself uses.
     dfs_paa_snapshot = json.dumps(asdict(search_demand)) if search_demand else None
+
+    # AA-771 (S234, C7) — the brief may not set a voice against the brand's, prescribe the opening,
+    # or (non-editorial brands) address travel professionals. Stripped in code, never retried, so
+    # the tenant and the writer both see the clean brief.
+    for i, a in enumerate(angles):
+        clean, stripped = sanitize_best_final_style(a["best_final_style"], brand_audience)
+        if stripped:
+            logger.info("angle_gate_style_sanitized", request_id=str(request_id), idx=i, stripped=stripped[:5])
+            a["best_final_style"] = clean
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -236,6 +258,23 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
         recommended_index=recommended_index, recommendation_reason=reason, cost_usd=cost_usd,
     )
     return await fetch_request(tenant_id, request_id, pool)
+
+
+async def _route_moments(tenant_id: UUID, req, pool) -> list[dict] | None:
+    """S234 — the Route's moments, from the same day-ordered, merged seed blocks T9 writes from.
+    None (single-atom seed, as before) when the walk cannot be read."""
+    # local import: content_writing.service imports this module
+    from services.acp_content_writing.service import _fetch_route_segments
+    segment_ids = req["route_segment_ids"]
+    if isinstance(segment_ids, str):
+        segment_ids = json.loads(segment_ids)
+    try:
+        trip_id = str(req["trip_id"]) if req["trip_id"] else None
+        segments = await _fetch_route_segments(tenant_id, trip_id, segment_ids, pool)
+    except Exception as e:  # noqa: BLE001 — the single-atom seed still works
+        logger.warning("t8_route_digest_failed", request_id=str(req["request_id"]), error=str(e)[:200])
+        return None
+    return route_moments(segments) if len(segments) > 1 else None
 
 
 T8_ANGLES_KIND = "t8_angles"

@@ -182,8 +182,8 @@ export const GATE_LABELS: Record<string, string> = {
   F12_scope: "Place outside the piece's scope",
   F13_hygiene: "Leak / social proof / repeat / hashtag",
   F13_autofix: "Auto-fixed sentences",
-  F14_social_shape: "Social post shape",
-  F15_voice: "Stock phrase / voice",
+  F14_social_shape: "LinkedIn length / hashtags / first line",
+  F15_voice: "Stock phrase / trade register / opener",
   within_tenant_reuse: "Repeats this tenant",
 };
 
