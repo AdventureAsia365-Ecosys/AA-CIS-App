@@ -506,6 +506,16 @@ days (`v_active_tour_atoms`) join the out-of-scope gazetteer. F15_voice adds cro
 angle-brief phrases on every channel. The configured CTA line is restored word for word after autofix. When the
 only blocking failures are F15/F13_repeat/F17/F18 the repair runs on `t9_repair`; an attempt-3 repair call that
 fails cuts the flagged sentence in code instead of holding.
+S234 round 4 (AA-768): `services/acp_content_writing/text_integrity.py` owns the **final pass** — the last step
+before the gates read an attempt AND before the piece is stored (after every repair, revert and the tag strip):
+whitespace normalised, exactly one CTA (a reworded copy next to the literal line is cut), later duplicates cut
+(paraphrased ones too), lower-case fragments cut; what it cannot fix is `hygiene.find_issues()["repeat"]` —
+the same list F13_repeat reads — and holds the piece (fail closed). Before it, `trip_facts.fix_trip_facts`
+folds a "Thin moment"'s own heading into the section before and cuts an interpretation appended to its closing
+mention, deletes a family-brand reassurance that plays down a seed hazard, and removes a background-only place
+made the reader's gateway / base (FAQ included); the rest is F17. A trip place the seed's place background names
+is not out of scope. The blog SEO title may not repeat a title of the tenant's last 50 blog pieces (F4); only the
+blog gets an SEO title/meta (the fit no longer runs for other channels).
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:

@@ -379,6 +379,7 @@ def fit_seo_fields(
     *, body: str, seo_title: str | None, meta_description: str | None, keyword: str | None,
     brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, forbidden_words: list[str] | None = None,
+    taken_titles: list[str] | None = None,
 ) -> tuple[dict, float]:
     """AA-768 (S233) — regenerate an out-of-band blog SEO title/meta with one short call instead
     of cutting the string (PR #670 cut "Bhutan's Craft Bazaar: Thimphu's Weekend Market…" at the
@@ -393,6 +394,9 @@ def fit_seo_fields(
         parts.append(f"NEVER USE (outside this post's scope): {', '.join(forbidden_words)}")
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
+    if taken_titles:  # S234 round 4 — the brand's earlier titles: this one must read differently
+        parts.append("TITLES THIS BRAND ALREADY USED (write a clearly different title):\n- "
+                     + "\n- ".join(t for t in taken_titles[:10]))
     tl, ml = len(seo_title or ""), len(meta_description or "")
     parts.append(f"CURRENT TITLE ({tl} chars{'' if 45 <= tl <= 60 else ' — must be 45-60'}): {seo_title or '(none)'}")
     parts.append(f"CURRENT META ({ml} chars{'' if 120 <= ml <= 155 else ' — must be 130-145, never over 155'}): "

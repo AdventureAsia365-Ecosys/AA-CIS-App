@@ -50,7 +50,7 @@ def _slow_sync_write(*args, **kwargs) -> tuple[str, float, dict, None]:
     """Stands in for the real generate.py::write_content() -> LLMClient.generate() ->
     boto3 invoke_model_with_response_stream(), a synchronous, blocking HTTP call."""
     time.sleep(_SIMULATED_BEDROCK_LATENCY_SECONDS)
-    return "final piece text", 0.02, {}, None
+    return "Final piece text.", 0.02, {}, None  # S234 round 4: a lower-case fragment would be held
 
 
 def _fast_passing_gates(*args, **kwargs):
