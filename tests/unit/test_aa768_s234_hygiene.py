@@ -289,7 +289,7 @@ def test_find_issues_quotes_sentences_in_the_repairable_shape():
     assert found["scope"][0].startswith("title names 'Gobi'")
     body = found["scope"][1]
     assert sr._BRAND_QUOTE_RE.search(body).group(2) == "The Gobi is far."
-    assert any("leaks the source-notes wording" in v for v in found["hygiene"])
+    assert any("leaks the source-notes wording" in v for v in found["leak"])  # S234 round 2: F13_leak
 
 
 # ---------------------------------------------------------------- sentence_repair
@@ -426,8 +426,11 @@ def test_f12_warns_and_f13_reports_residue():
     ctx = _ctx()
     f12 = qg.gate_scope("The Gobi is far from here.", ctx, "Gobi and Khovsgol Guide", None)
     assert not f12["passed"] and f12["blocking"] is qg.F12_SCOPE_BLOCKING is False and f12["repairable"]
-    f13 = qg.gate_hygiene("The content seed describes many things in great detail here.", ctx)
+    f13 = qg.gate_hygiene("Most families say the lake is the best part of the trip for them.", ctx)
     assert not f13["passed"] and not f13["blocking"]
+    # S234 round 2 — a source-notes leak is F13_leak now: blocking, sentence-repairable
+    leak = qg.gate_leak("The content seed describes many things in great detail here.", ctx)
+    assert not leak["passed"] and leak["blocking"] and leak["repairable"]
     assert qg.gate_scope("The Gobi is far.", None)["passed"] and qg.gate_hygiene("x", None)["passed"]
 
 

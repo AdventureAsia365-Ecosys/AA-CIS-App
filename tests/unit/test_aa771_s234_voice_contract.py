@@ -512,7 +512,11 @@ class TestF14SocialShape:
         text = "x" * 150 + "\n\n" + _words(150) + "\n\n#A #B #C #D"
         v = qg.gate_social_shape(text, linkedin_spec(TRAIL))["violations"]
         assert any(s.startswith("4 hashtags, more than 3: '#A #B #C #D'") for s in v)
-        assert any(s.startswith("first line is 150 characters, over 140") for s in v)
+        # S234 round 2 — the first line has its own blocking result (F14_first_line)
+        assert not any(s.startswith("first line") for s in v)
+        fl = qg.gate_first_line(text, linkedin_spec(TRAIL))
+        assert fl["violations"][0].startswith("first line is 150 characters, over 140")
+        assert fl["blocking"] and not fl["repairable"]
 
     def test_hashtags_do_not_count_as_words(self):
         assert post_words("One two three. #Four #Five") == 3
@@ -654,10 +658,10 @@ class TestHighlights:
     def test_f15_and_f14_quotes_are_highlighted(self):
         text = "x" * 150 + "\n\nDay 2 ends at the pools. That detail is worth sitting with."
         f15 = qg.gate_voice(text, spec=linkedin_spec(TRAIL))
-        f14 = qg.gate_social_shape(text, linkedin_spec(TRAIL))
+        f14 = qg.gate_first_line(text, linkedin_spec(TRAIL))
         hs = highlights(text, [f15, f14], [])
         gates = {h["gate"] for h in hs}
-        assert {"F15_voice", "F14_social_shape"} <= gates
+        assert {"F15_voice", "F14_first_line"} <= gates
         h = next(h for h in hs if h["gate"] == "F15_voice")
         assert text[h["start"]:h["end"]] == "That detail is worth sitting with."
 

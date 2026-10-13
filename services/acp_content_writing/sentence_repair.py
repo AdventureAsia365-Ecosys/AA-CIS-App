@@ -24,9 +24,10 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import (
-    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, expand_to_sentence, is_sentence_end, restates, sentence_spans,
-    sentence_tail_end, tidy_after_cut,
+    _FAQ_Q_LINE_RE, _SENTENCE_END_CHARS, expand_to_sentence, integrity_problems, is_sentence_end, restates,
+    sentence_spans, sentence_tail_end, tidy_after_cut,
 )
+from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
 
 _TAG = r"\[(?:R|F):[^\]]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
@@ -36,9 +37,12 @@ _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
-                   "F12_scope", "F13_hygiene", "F15_voice"}
+                   "F12_scope", "F13_hygiene", "F13_leak", "F15_voice"}
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
-_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F15_voice"}
+_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice"}
+# S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
+# rewrite); like F4_seo_surface they never send a piece to the full rewrite.
+OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
 # A scope violation in the SEO title or meta is fixed by the SEO fit, not here.
 _SEO_FIELD_PREFIXES = ("title ", "meta ")
 NEIGHBOUR_WINDOW = 4
@@ -72,7 +76,7 @@ def locate_sentence(text: str, quote: str) -> Optional[tuple[int, int]]:
 def _seo_fields_only(g: dict) -> bool:
     """A failed gate the SEO title/meta fit owns: F4_seo_surface, or a quoted gate (F12_scope)
     whose every violation is in the title or meta."""
-    if g["gate"] == "F4_seo_surface":
+    if g["gate"] == "F4_seo_surface" or g["gate"] in OWNED_ELSEWHERE:
         return True
     vs = g.get("violations") or []
     return g["gate"] in _QUOTED_GATES and bool(vs) and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
@@ -88,7 +92,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
     # the same for an F12_scope whose violations are all in the title/meta.
     failed = [g for g in blocking if not _seo_fields_only(g)]
-    if not failed and any(g["gate"] != "F4_seo_surface" for g in blocking):
+    if not failed and any(g["gate"] != "F4_seo_surface" and g["gate"] not in OWNED_ELSEWHERE for g in blocking):
         return []
     if not failed or any(g["gate"] not in _ELIGIBLE_GATES for g in failed):
         return None
@@ -166,6 +170,34 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
             after = item["end"] + 1 if text[item["end"]:item["end"] + 1] == " " else item["end"]
             text = text[:item["start"]] + text[after:]
     return text
+
+
+def splice_checked(content_text: str, items: list[dict], replacements: list[str], *,
+                   ignore: frozenset = frozenset(), cta: Optional[str] = None) -> str:
+    """splice() plus the S234 round 2 integrity check (panel §5 fix 7): a repair that leaves a new
+    near-verbatim repeat or a paragraph / piece opener with no referent (#19 'What they find at Lake
+    Khövsgöl…' after its referent was cut) is reverted — that item keeps its pre-repair sentence
+    and gets `"guard": "integrity"` plus the problems. Items are tried one by one so a good repair
+    is not lost to a bad neighbour; if the kept set still breaks, every repair is reverted."""
+    out = splice(content_text, items, replacements, ignore=ignore)
+    if not integrity_problems(content_text, out, ignore, cta):
+        return out
+    keep_items, keep_reps = [], []
+    for item, rep in zip(items, replacements):
+        trial = dict(item)
+        problems = integrity_problems(content_text, splice(content_text, [trial], [rep], ignore=ignore), ignore, cta)
+        if problems:
+            item["guard"], item["integrity"] = "integrity", problems
+        else:
+            keep_items.append(item)
+            keep_reps.append(rep)
+    out = splice(content_text, keep_items, keep_reps, ignore=ignore)
+    problems = integrity_problems(content_text, out, ignore, cta)
+    if problems:
+        for item in keep_items:
+            item["guard"], item["integrity"] = "integrity", problems
+        return content_text
+    return out
 
 
 def neighbours(content_text: str, item: dict, n: int = 2) -> list[str]:
@@ -305,11 +337,15 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     warn_hygiene: list[str] = []
     if wi.get("seed"):
         ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
-                                     brand_name=pack.get("brand_name"), cta=wi.get("cta"))
+                                     brand_name=pack.get("brand_name"), cta=wi.get("cta"),
+                                     audience=pack.get("customer_segment"))
         found = hygiene.find_issues(sentence, ctx)
         if found["scope"]:
             out.append({"gate": "F12_scope", "violations": list(found["scope"]), "blocking": False})
+        # S234 round 2 — leaks are blocking in the pipeline (F13_leak) but a warning on an admin's text;
+        # "opens on a pronoun" is meaningless for one sentence out of its piece.
         warn_hygiene += found["hygiene"]
+        warn_hygiene += [v for v in found["leak"] if not v.startswith("opens on a pronoun")]
     if text is not None and span is not None:
         ignore = hygiene.brand_words(pack.get("brand_name"))
         near = _neighbour_spans(text, span[0], span[1])
@@ -325,5 +361,6 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
 
 
 __all__ = ["is_sentence_end", "sentence_tail_end", "locate_sentence", "neighbours", "plan", "repeats_neighbour",
-           "splice", "expand_to_sentence", "resolve_span", "tidy_after_cut", "apply_edit", "sanitize_replacement",
+           "splice", "splice_checked", "OWNED_ELSEWHERE", "expand_to_sentence", "resolve_span", "tidy_after_cut",
+           "apply_edit", "sanitize_replacement",
            "check_replacement"]

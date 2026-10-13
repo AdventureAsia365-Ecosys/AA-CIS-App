@@ -602,6 +602,388 @@ SOCIAL_PROOF_RE = re.compile(
 _SOCIAL_SUPPORT_MIN = 0.30  # social-proof sentence auto-deleted only below this seed overlap
 
 
+# ---------------------------------------------------------------- numbers in words (S234 round 2)
+
+_SMALL_NUMBERS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen twenty".split())}
+_TENS_WORDS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
+# '15', 'fifteen', 'twenty-one', 'thirty' — the small numbers a day count, a day index or an age uses.
+NUM_TOKEN = (r"(?:\d{1,3}|(?:twenty|thirty|forty|fifty|sixty)(?:-(?:one|two|three|four|five|six|seven|eight|nine))?"
+             r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve|ten"
+             r"|one|two|three|four|five|six|seven|eight|nine)")
+
+
+def small_number(token: str) -> Optional[int]:
+    """'15' → 15, 'fifteen' → 15, 'twenty-one' → 21; None for anything else."""
+    t = (token or "").strip().lower()
+    if t.isdigit():
+        return int(t)
+    if t in _SMALL_NUMBERS:
+        return _SMALL_NUMBERS[t]
+    head, _, unit = t.partition("-")
+    if head in _TENS_WORDS and (not unit or unit in _SMALL_NUMBERS):
+        return _TENS_WORDS[head] + (_SMALL_NUMBERS[unit] if unit else 0)
+    return None
+
+
+_RANGE_SEP = r"\s*(?:–|—|-|to|-to-|through|and)\s*"
+_NUM_RANGE_RE = re.compile(rf"(?<![\w.,])({NUM_TOKEN}){_RANGE_SEP}({NUM_TOKEN})(?![\w])", re.I)
+
+
+def number_ranges(text: Optional[str]) -> set[tuple[int, int]]:
+    """Every 'a–b' / 'a to b' / 'seven-to-sixteen' range in `text` as (a, b) values, a < b."""
+    out = set()
+    for m in _NUM_RANGE_RE.finditer(text or ""):
+        a, b = small_number(m.group(1)), small_number(m.group(2))
+        if a is not None and b is not None and a < b:
+            out.add((a, b))
+    return out
+
+
+# ---------------------------------------------------------------- writer-instruction leaks (S234 round 2)
+
+# The writer's brief showing through as published text (S234 panel §2 class 5): an H2 that reads
+# like an instruction ("A Single Sentence on What Time Has Taken", #10; "A Sentence on Loss", #16),
+# the piece describing itself ("This piece traces one route…", #18; "This guide covers days three
+# through fourteen…", #9/#17; "What follows is a guide to the route…", #19).
+INSTRUCTION_LEAK_RE = re.compile(
+    r"\b(?:a|one)\s+(?:single\s+|short\s+|brief\s+|final\s+)?(?:sentence|paragraph|line)\s+(?:on|about)\b"
+    r"|\b(?:this|the)\s+(?:piece|post|article|guide|blog\s+post|write-up)\s+(?:traces|covers|explores|follows"
+    r"|looks\s+at|focuses\s+on|examines|walks\s+(?:you\s+)?through|describes|sets\s+out|is\s+about|will\s+\w+)\b"
+    r"|\bin\s+this\s+(?:piece|post|article|guide)\b"
+    r"|\bwhat\s+follows\s+is\s+(?:a|an|the)\b", re.I)
+_DAY_RANGE_RE = re.compile(rf"\bdays\s+({NUM_TOKEN}){_RANGE_SEP}({NUM_TOKEN})\b", re.I)
+_SCOPE_DAYS_RE = re.compile(r"\bdays?\s+(\d+)(?:\s*[–—-]\s*(\d+))?", re.I)
+
+
+def scope_days(scope: Optional[str]) -> Optional[tuple[int, int]]:
+    """(first, last) day of the SCOPE line: 'covers days 3–14' → (3, 14); '(day 2)' → (2, 2)."""
+    m = _SCOPE_DAYS_RE.search(scope or "")
+    if not m:
+        return None
+    first = int(m.group(1))
+    return first, int(m.group(2)) if m.group(2) else first
+
+
+def instruction_leaks(sentence: str, scope: Optional[str] = None) -> list[str]:
+    """The writer-instruction phrases in one sentence or heading: INSTRUCTION_LEAK_RE, plus a day
+    range that is exactly the SCOPE line's span ('days three through fourteen' on a days 3–14
+    piece — the scope mechanics, not something a reader needs)."""
+    out = [m.group(0) for m in INSTRUCTION_LEAK_RE.finditer(sentence or "")]
+    span = scope_days(scope)
+    if span and span[0] != span[1]:
+        for m in _DAY_RANGE_RE.finditer(sentence or ""):
+            if (small_number(m.group(1)), small_number(m.group(2))) == span:
+                out.append(m.group(0))
+    return out
+
+
+def audience_leaks(sentence: str, audience: Optional[str], own_text: Optional[str]) -> list[str]:
+    """The brand's Audience ranges ('25–40 years old', 'children aged 7–16') in a sentence, in
+    digits or words ('seven-to-sixteen'), when the moment's own source lines do not have the same
+    range (S234 #7 'If you're a 25–40 traveller', #2 'the seven-to-sixteen range')."""
+    want = number_ranges(audience) - number_ranges(own_text)
+    if not want:
+        return []
+    return [m.group(0) for m in _NUM_RANGE_RE.finditer(sentence or "")
+            if (small_number(m.group(1)), small_number(m.group(2))) in want]
+
+
+# A pronoun or demonstrative that needs the sentence before it. 'This dzong…' (a determiner and a
+# noun) is fine; 'This is…', 'It was…', 'They…', 'What they find…' are not, at a piece or paragraph
+# opening (S234 #19 opened on "What they find at Lake Khövsgöl is…" after a repair cut its referent).
+_ANAPHOR_OPENER_RE = re.compile(
+    r"^(?:it|they|them|what\s+(?:they|it|this|that|these|those)|such|"
+    r"(?:this|that|these|those)(?=\s*(?:[,.;:!?—–]|$|\s+(?:is|was|are|were|has|had|have|'s|’s|means|meant|makes"
+    r"|made|matters|explains|shows|gives|sets|changes|will|would|can|could|may|might|does|did|isn't|wasn't"
+    r"|aren't|is\s+not|was\s+not|alone|too|also|all|one|kind|sort|detail|matters)\b)))\b", re.I)
+
+
+def dangling_opener(sentence: str) -> bool:
+    """Does `sentence` open on a pronoun that needs an earlier sentence ('It…', 'This is…',
+    'What they find…')?"""
+    return bool(_ANAPHOR_OPENER_RE.match(strip_tags(sentence or "").strip().lstrip("\"'“‘*")))
+
+
+def _openers(text: str) -> list[str]:
+    """The piece's first prose sentence and the first sentence of every later prose paragraph
+    (clean text), in order — what a reader meets without the sentence before it."""
+    out, prev_end = [], None
+    for s in sentence_spans(text or ""):
+        if s["kind"] not in ("prose", "bullet", "faq_a"):
+            prev_end = None
+            continue
+        gap = text[prev_end:s["start"]] if prev_end is not None else "\n\n"
+        if "\n\n" in gap or prev_end is None:
+            out.append(s["clean"])
+        prev_end = s["end"]
+    return out
+
+
+def dangling_openers(text: str, before: Optional[str] = None) -> list[str]:
+    """Paragraph / piece openers of `text` that need a sentence before them. With `before` (the
+    text before a repair), only the ones `before` did not already have — the repair made them."""
+    had = {o for o in _openers(before) if dangling_opener(o)} if before is not None else set()
+    return [o for o in _openers(text) if dangling_opener(o) and o not in had]
+
+
+def piece_opens_dangling(text: str) -> Optional[str]:
+    """The piece's very first prose sentence when it opens on a pronoun with no referent."""
+    ops = _openers(text)
+    return ops[0] if ops and dangling_opener(ops[0]) else None
+
+
+def repeated_sentences(text: str, ignore: frozenset = frozenset(), cta: Optional[str] = None) -> list[str]:
+    """Prose sentences that near-verbatim repeat an earlier one (the F13 repeat rule)."""
+    prose = [s for s in sentence_spans(text or "") if s["kind"] in ("prose", "bullet") and not s["in_faq"]]
+    out = []
+    for a, s in enumerate(prose):
+        if _is_cta(s["clean"], cta):
+            continue
+        if any(near_verbatim(s["clean"], t["clean"], ignore) for t in prose[:a]):
+            out.append(s["clean"])
+    return out
+
+
+def integrity_problems(before: str, after: str, ignore: frozenset = frozenset(),
+                       cta: Optional[str] = None) -> list[str]:
+    """What a repair (sentence splice, a regenerated section, a rewritten first line) broke: a new
+    near-verbatim repeat, or a new paragraph / piece opener with no referent. [] = the repair is
+    safe to keep (S234 panel §5 fix 7: #19 'What they find…', duplicated sentences in #10/#19)."""
+    out = []
+    old_rep = set(repeated_sentences(before, ignore, cta))
+    out += [f"repeats an earlier sentence: '{s[:200]}'" for s in repeated_sentences(after, ignore, cta)
+            if s not in old_rep]
+    out += [f"opens on a pronoun with no referent: '{s[:200]}'" for s in dangling_openers(after, before)]
+    return out
+
+
+# ---------------------------------------------------------------- trip name and trip length (S234 round 2)
+
+_TRIP_DAYS_RE = re.compile(rf"\b({NUM_TOKEN})[\s-]*(?:days?|d)\b", re.I)
+
+
+def trip_length(trip_name: Optional[str]) -> Optional[int]:
+    """The trip's day count from its name: 'Mongolia: … — 15 Days' → 15, 'Fifteen-Day …' → 15."""
+    m = _TRIP_DAYS_RE.search(trip_name or "")
+    return small_number(m.group(1)) if m else None
+
+
+def scope_is_partial(scope: Optional[str], trip_name: Optional[str]) -> bool:
+    """Does the SCOPE line cover only part of the trip? A one-moment scope always does; a span does
+    unless it runs from day 1 to the trip's last day. No SCOPE line → False (nothing to hold to)."""
+    if not scope:
+        return False
+    span, total = scope_days(scope), trip_length(trip_name)
+    if span is None or total is None:
+        return True
+    return not (span[0] <= 1 and span[1] >= total)
+
+
+# Generic geography words that follow a place in a trip name ('Gobi Desert', 'Halong Bay').
+_GEO_WORDS = ("Desert|Lake|Lakes|River|Rivers|Valley|Valleys|Mountains?|Range|Steppe|Forest|Island|Islands|Bay"
+              "|Coast|Highlands|Region|Province|National Park|Park|Falls|Delta|Plateau|Peninsula")
+_DURATION_RE = re.compile(
+    rf"\s*(?:[—–-]|\(|,)?\s*\b{NUM_TOKEN}[\s-]*(?:days?|d)(?:\s*(?:/|and|&)\s*{NUM_TOKEN}[\s-]*(?:nights?|n))?\b\)?",
+    re.I)
+
+
+def scoped_trip_name(trip_name: Optional[str], scope: Optional[str], lexicon: Optional[ScopeLexicon]) -> Optional[str]:
+    """The TRIP line the writer gets (S234 panel §5 fix 4). When the SCOPE covers only part of the
+    trip, drop the trip's duration ('— 15 Days', 'Fifteen-Day') and the places of its name that
+    are outside the scope ('and Gobi Desert'): 'Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days'
+    → 'Mongolia: Khövsgöl Lake'. The full name otherwise. None when nothing is left."""
+    if not trip_name or not scope_is_partial(scope, trip_name):
+        return trip_name
+    name = _DURATION_RE.sub("", trip_name)
+    if lexicon is not None:
+        for key in lexicon.cap_only:
+            disp = lexicon.gazetteer.get(key) or ""
+            if not disp:
+                continue
+            words = r"[\s-]+".join(re.escape(w) for w in disp.split())
+            generic = rf"(?:\s+(?:{_GEO_WORDS}))*"
+            pat = re.compile(rf"(?:\s*(?:,|&|\+|/|\band\b|\bor\b))?\s*\b{words}\b{generic}", re.I)
+            name = pat.sub("", name)
+    name = re.sub(r"\s{2,}", " ", name)
+    name = re.sub(r"^[\s:,&/+—–-]+|[\s:,&/+—–-]+$", "", name)
+    name = re.sub(r"\s+(?:and|or|&)$", "", name, flags=re.I).strip()
+    return name if len(name) >= 3 else None
+
+
+def _trip_length_alt(total: int) -> str:
+    """Regex alternation for a day count in digits or words: 15 → '15|fifteen'."""
+    words = [w for w, v in _SMALL_NUMBERS.items() if v == total]
+    if 20 < total < 70:
+        tens = max((t for t, v in _TENS_WORDS.items() if v <= total), key=_TENS_WORDS.get)
+        unit = total - _TENS_WORDS[tens]
+        words.append(tens + (f"-{next(w for w, v in _SMALL_NUMBERS.items() if v == unit)}" if unit else ""))
+    return "|".join([str(total)] + [re.escape(w) for w in words])
+
+
+def _trip_length_re(total: int) -> re.Pattern:
+    return re.compile(rf"(?<![\w-])(?:{_trip_length_alt(total)})[\s-]+(?:days?|nights?)\b", re.I)
+
+
+_JOURNEY_END_RE = re.compile(
+    r"\b(?:the|this|our|your)\s+(?:whole\s+|full\s+)?(?:journey|trip|route|tour|itinerary|expedition)\s+"
+    r"(?:then\s+|finally\s+)?(?:concludes|ends|closes|finishes|wraps\s+up|comes\s+to\s+(?:an|its)\s+end)\b", re.I)
+
+
+def trip_length_mentions(sentence: str, ctx: "HygieneContext") -> list[str]:
+    """The whole trip's length ('fifteen-day', '15 days') in a sentence of a piece that covers only
+    part of the trip, when the moment's own source lines do not state it (S234: 4/4 Terra blogs)."""
+    total = trip_length(ctx.trip_name)
+    if total is None or not scope_is_partial(ctx.scope, ctx.trip_name):
+        return []
+    rx = _trip_length_re(total)
+    if rx.search(ctx.lexicon.own_text or ""):
+        return []
+    # the trip's own name quoted in full ('the Bhutan Cultural Discovery - 8 Days itinerary') is the
+    # trip-name rule's business (autofix), not a length claim
+    clean = re.sub(re.escape(ctx.trip_name or ""), " ", strip_tags(sentence), flags=re.I) if ctx.trip_name else sentence
+    return [m.group(0) for m in rx.finditer(clean)]
+
+
+def journey_end_claims(sentence: str, ctx: "HygieneContext") -> list[str]:
+    """'The journey concludes / the route closes …' in a piece whose SCOPE stops before the trip's
+    last day (S234 #17 'The route closes, on day fourteen', #18 'The journey concludes with…')."""
+    if not scope_is_partial(ctx.scope, ctx.trip_name):
+        return []
+    span, total = scope_days(ctx.scope), trip_length(ctx.trip_name)
+    if span is not None and total is not None and span[1] >= total:
+        return []
+    return [m.group(0) for m in _JOURNEY_END_RE.finditer(strip_tags(sentence))]
+
+
+# ---------------------------------------------------------------- contrast frames + sibling templates (S234 round 2)
+
+# "not X, it is Y" family (S234 panel §2 class 1: 18/20 pieces). Each pattern is one frame; a
+# sentence pair "That's not filler. It's a structural choice." is one frame too.
+CONTRAST_FRAME_RES = tuple(re.compile(p, re.I) for p in (
+    r"\b(?:is|was|are|were)\s+not\b[^.!?;]{1,80}?[,;:—–]\s*(?:it|this|that|they)(?:['’]s|['’]re|\s+is|\s+was"
+    r"|\s+are|\s+were)\b",
+    r"\b(?:is|was|are|were)n['’]t\b[^.!?;]{1,80}?[,;:—–]\s*(?:it|this|that|they)(?:['’]s|['’]re|\s+is|\s+was"
+    r"|\s+are|\s+were)\b",
+    r"(?:\bnot\b|n['’]t\b)[^.!?\n]{0,80}[.!?][\"'”’]?[ \t]+(?:It|This|That|They)(?:['’]s|['’]re|\s+is|\s+was|\s+are"
+    r"|\s+were)\b",
+    r"\bnot\s+(?:just|only|merely|simply)\b[^.!?;]{1,80}?\bbut\b",
+    r"\bless\s+(?:a\s+|an\s+|about\s+)?\w+(?:\s+\w+){0,4}\s+than\b",
+    r"\b(?:this|that|it)\s+is\s+not\s+(?:a\s+)?metaphor\b",
+    r"\bnot\s+(?:a\s+|an\s+|the\s+)?\w+(?:\s+\w+){0,3}\s+but\s+(?!also\b)\w+",
+    r"[—–,;]\s*not\s+(?:just|only|merely|simply)\s+\w+",
+))
+CONTRAST_WORDS_PER_FRAME = 150
+
+
+def contrast_frames(text: str) -> list[tuple[int, int, str, int]]:
+    """(start, end, matched text, pattern index) of every contrast frame, non-overlapping, in text
+    order."""
+    clean = text or ""
+    hits: list[tuple[int, int, str, int]] = []
+    for k, rx in enumerate(CONTRAST_FRAME_RES):
+        for m in rx.finditer(clean):
+            if not any(m.start() < e and s < m.end() for s, e, _, _ in hits):
+                hits.append((m.start(), m.end(), m.group(0), k))
+    return sorted(hits)
+
+
+def contrast_excess(text: str) -> tuple[int, int, list[tuple[int, int, str, int]]]:
+    """(frames, allowed, frames) — allowed is one frame per CONTRAST_WORDS_PER_FRAME words (at least
+    one). A piece is over the line when frames > allowed (S234 panel §5 fix 6: '>1 per 150 words')."""
+    frames = contrast_frames(text)
+    words = len(strip_tags(text or "").split())
+    allowed = max(1, words // CONTRAST_WORDS_PER_FRAME)
+    return len(frames), allowed, frames
+
+
+# Cross-piece templates (S234 panel §2 class 8). The plan said "a shared 8-gram"; on the 20 stored
+# pieces no target pair shares one ('That's not filler. It's a structural choice.' / 'That's not
+# downtime filler. It's a deliberate call.'; 'a well-prepared family arrives knowing exactly what
+# to expect' / '… arrives already knowing what to expect'), while shared seed facts do. So a line is
+# a template when it shares with an earlier sibling (A) a contiguous run of TEMPLATE_RUN words, or
+# (B) a sentence (or two-sentence window) at SequenceMatcher ratio ≥ TEMPLATE_RATIO with
+# TEMPLATE_RUN matched words — and in both cases at least a third of the matched content words are
+# NOT source words (seed, CTA, brand name, number words): a repeated seed fact is not a template. A
+# sentence naming the brand (its sign-off / self-description) is skipped.
+TEMPLATE_RUN = 5
+TEMPLATE_RATIO = 0.6
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_NUMBER_WORDS = frozenset(set(_SMALL_NUMBERS) | set(_TENS_WORDS) | {
+    "hundred", "thousand", "million", "mid", "century", "centuries", "first", "second", "third", "fourth", "fifth",
+    "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth",
+    "sixteenth", "seventeenth", "eighteenth", "nineteenth", "twentieth"})
+
+
+def _stem(w: str) -> str:
+    return w[:-1] if w.endswith("s") and len(w) > 4 else w
+
+
+def _template_units(text: str, kinds: tuple) -> list[tuple[dict, list[str]]]:
+    return [(sp, _WORD_RE.findall(fold(sp["clean"]))) for sp in sentence_spans(text or "") if sp["kind"] in kinds]
+
+
+def sibling_templates(text: str, siblings: list[str], *, exclude: list[str] = (),
+                      brand_name: Optional[str] = None,
+                      kinds: tuple = ("prose", "bullet", "faq_a")) -> list[tuple[str, str]]:
+    """[(sentence of `text`, the shared words)] — lines of `text` (spans of `kinds`; pass
+    ("heading",) for headings) that repeat an earlier piece of the same brief (rules A/B above)."""
+    import difflib
+
+    if not siblings:
+        return []
+    source = set(_NUMBER_WORDS) | brand_words(brand_name)
+    for e in exclude:
+        source |= {_stem(w) for w in _WORD_RE.findall(fold(strip_tags(e)))}
+
+    def novel_ok(words: list[str], min_novel: int) -> bool:
+        content = [_stem(w) for w in words if w not in _STOP and len(w) > 2]
+        novel = [w for w in content if w not in source]
+        return len(novel) >= min_novel and 3 * len(novel) >= len(content)
+
+    mine = _template_units(text, kinds)
+    sib_units: list[list[str]] = []
+    sib_stream: list[list[str]] = []
+    for sib in siblings:
+        units = _template_units(sib, kinds)
+        sib_units += [u for _, u in units]
+        sib_units += [units[k][1] + units[k + 1][1] for k in range(len(units) - 1)]
+        sib_stream.append([w for _, u in units for w in u])
+    out: dict[str, str] = {}
+    brand = brand_words(brand_name)
+    for k, (sp, words) in enumerate(mine):
+        if len(words) < 4 or sp["clean"] in out:
+            continue
+        if brand and brand <= set(words):
+            continue  # the brand's own sign-off line ('Trail Pulse builds trips around…') is not a template
+        window = words + (mine[k + 1][1] if k + 1 < len(mine) else [])
+        for stream in sib_stream:  # A: a contiguous run that starts in this sentence
+            sm = difflib.SequenceMatcher(None, window, stream, autojunk=False)
+            blk = next((b for b in sm.get_matching_blocks() if b.size >= TEMPLATE_RUN and b.a < len(words)
+                        and novel_ok(window[b.a:b.a + b.size], 2)), None)
+            if blk is not None:
+                out[sp["clean"]] = " ".join(window[blk.a:blk.a + blk.size])
+                break
+        if sp["clean"] in out:
+            continue
+        for unit in sib_units:  # B: the same sentence shape with a word or two changed
+            for mine_unit in (words, window):
+                sm = difflib.SequenceMatcher(None, mine_unit, unit, autojunk=False)
+                if sm.real_quick_ratio() >= TEMPLATE_RATIO and sm.ratio() >= TEMPLATE_RATIO:
+                    break
+            else:
+                continue
+            blocks = [b for b in sm.get_matching_blocks() if b.size]
+            matched = [mine_unit[b.a + i] for b in blocks for i in range(b.size)]
+            # the words matched inside THIS sentence decide (a window must not lend its next sentence)
+            own = [mine_unit[b.a + i] for b in blocks for i in range(b.size) if b.a + i < len(words)]
+            if len(matched) >= TEMPLATE_RUN and len(own) >= 3 and novel_ok(own, 1):
+                out[sp["clean"]] = " ".join(matched)
+                break
+    return list(out.items())
+
+
 def _seed_overlap(sentence: str, seed_words: set) -> float:
     words = content_words(sentence)
     return sum(w in seed_words for w in words) / len(words) if words else 0.0
@@ -698,6 +1080,9 @@ class HygieneContext:
     cta: Optional[str] = None
     hashtags_max: Optional[int] = None
     first_line_max: Optional[int] = None
+    # S234 round 2 — the brand pack's audience line (customer_segment): its number ranges are never
+    # a fact about the trip ('25–40', 'children aged 7–16').
+    audience: Optional[str] = None
     lexicon: ScopeLexicon = field(init=False)
 
     def __post_init__(self):
@@ -741,6 +1126,81 @@ def _leak_fix(sentence: str) -> Optional[str]:
     return None
 
 
+def _fix_heading(raw: str, scope: Optional[str]) -> str:
+    """'## A Single Sentence on What Time Has Taken' → '## What Time Has Taken'; '## The Monastery
+    Ruins: A Sentence on Loss' → '## The Monastery Ruins: Loss'. A heading with nothing left goes
+    (tidy_after_cut drops the empty line)."""
+    m = re.match(r"(\s*#{1,6}\s+)(.*)$", raw)
+    if not m:
+        return raw
+    marks, body = m.group(1), m.group(2)
+    for leak in instruction_leaks(body, scope):
+        body = body.replace(leak, " ", 1)
+    body = re.sub(r"\s{2,}", " ", body).strip(" :—–-,")
+    body = re.sub(r"\s+([:,])", r"\1", body)
+    if not re.search(r"[A-Za-z]{3,}", body):
+        return ""
+    return marks + body[0].upper() + body[1:]
+
+
+_AUDIENCE_NOUN_STOP = frozenset({"range", "bracket", "group", "groups", "span", "age", "ages", "band"})
+
+
+def _trim_audience(text: str, leak: str) -> Optional[str]:
+    """'If you're a 25–40 traveller who…' → 'If you're a traveller who…'; 'children aged 7–16 who'
+    → 'children who'. None when the range is not an adjective before a noun ('the seven-to-sixteen
+    range' — the whole sentence is about the segment)."""
+    rx = re.compile(rf"(?:\b(?:aged|ages?)\s+)?{re.escape(leak)}(?:[\s-]+years?(?:[\s-]+olds?)?)?\s+(?=([a-z]+))")
+    m = rx.search(text)
+    if not m or m.group(1) in _AUDIENCE_NOUN_STOP:
+        return None
+    out = text[:m.start()] + text[m.end():]
+    return out[0].upper() + out[1:] if m.start() == 0 else out
+
+
+def _next_body(spans: list[dict], i: int) -> Optional[dict]:
+    return next((s for s in spans[i + 1:] if s["kind"] in ("prose", "bullet", "faq_a")), None)
+
+
+def _safe_to_delete(spans: list[dict], i: int) -> bool:
+    """Deleting sentence i leaves no pronoun without its referent: the next sentence does not open
+    on 'It…', 'This is…', 'They…' (S234 #19)."""
+    nxt = _next_body(spans, i)
+    return nxt is None or not dangling_opener(nxt["clean"])
+
+
+def _round2_fix(spans: list[dict], i: int, ctx: HygieneContext,
+                trim_only: bool = False) -> Optional[tuple[str, str]]:
+    """S234 round 2 fixes of one body sentence: drop the whole trip's length used as an adjective
+    ('the full fifteen-day Mongolia itinerary' → 'the full Mongolia itinerary'); delete a
+    sentence that describes the piece itself ('This guide covers days three through fourteen…');
+    trim or delete the brand's audience range. A delete happens only when it leaves no dangling
+    pronoun; otherwise the sentence is left for F13_leak (blocking). None = nothing to do."""
+    s = spans[i]
+    text, logs = s["text"], []
+    total = trip_length(ctx.trip_name)
+    if total is not None and trip_length_mentions(text, ctx):
+        adj = re.compile(rf"(?<![\w-])(?:{_trip_length_alt(total)})-day\s+(?=[A-Za-zÀ-ÿ'’])", re.I)
+        new = adj.sub("", text)
+        if new != text:
+            logs.append(f"dropped the whole trip's length from a part-of-trip piece: '{s['clean'][:160]}'")
+            text = new
+    if trim_only:
+        return (text, "; ".join(logs)) if logs else None
+    if instruction_leaks(strip_tags(text), ctx.scope):
+        if _safe_to_delete(spans, i):
+            return "", f"deleted writer-instruction wording: '{s['clean'][:160]}'"
+        return (text, "; ".join(logs)) if logs else None
+    for leak in audience_leaks(strip_tags(text), ctx.audience, ctx.lexicon.own_text):
+        trimmed = _trim_audience(text, leak)
+        if trimmed is not None:
+            text = trimmed
+            logs.append(f"removed the brand's audience range '{leak}': '{s['clean'][:160]}'")
+        elif _safe_to_delete(spans, i):
+            return "", f"deleted the brand's audience range '{leak}': '{s['clean'][:160]}'"
+    return (text, "; ".join(logs)) if logs else None
+
+
 def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     """Fix in place what is safe to fix, in this order: the TRIP name when it names an
     out-of-scope place → 'this journey'; delete sentences borrowed from another trip that name an
@@ -764,11 +1224,23 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     seed_words = set(content_words(lex.own_text))
     spans = sentence_spans(text)
     edits: dict[int, tuple[str, str]] = {}  # span index → (replacement, log line)
+    for i, s in enumerate(spans):  # S234 round 2 — an instruction-style heading keeps its topic only
+        if s["kind"] == "heading" and instruction_leaks(s["clean"], ctx.scope):
+            fixed = _fix_heading(s["text"], ctx.scope)
+            edits[i] = (fixed, f"removed writer-instruction wording from a heading: '{s['clean'][:160]}'")
     body_idx = [i for i, s in enumerate(spans) if s["kind"] in ("prose", "bullet", "faq_a")]
     for i in body_idx:
         s = spans[i]
         clean = s["clean"]
         if _is_cta(clean, ctx.cta):
+            # the CTA is never deleted, but the whole trip's length can go ('the full fifteen-day …')
+            fixed_r2 = _round2_fix(spans, i, ctx, trim_only=True)
+            if fixed_r2 is not None:
+                edits[i] = fixed_r2
+            continue
+        fixed_r2 = _round2_fix(spans, i, ctx)
+        if fixed_r2 is not None:
+            edits[i] = fixed_r2
             continue
         named = places_named(lex, clean)
         leak = LEAK_RE.search(clean)
@@ -817,7 +1289,7 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
 
 def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[str] = None,
                 meta_description: Optional[str] = None) -> dict[str, list[str]]:
-    """What is still wrong after autofix: {"scope": [...], "hygiene": [...]}, each violation
+    """What is still wrong after autofix: {"scope": [...], "hygiene": [...], "leak": [...]}, each violation
     quoting its sentence as "<problem>: '<sentence>'" (the shape sentence_repair.plan parses).
     Title/meta scope violations start with "title " / "meta " — the SEO fit fixes those, not a
     sentence repair."""
@@ -828,12 +1300,31 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
         prefix = "" if v["where"] == "body" else f"{v['where']} "
         scope.append(f"{prefix}names '{v['place']}', outside this piece's scope: '{v['sentence'][:200]}'")
     issues: list[str] = []
+    leaks: list[str] = []
     spans = sentence_spans(text)
     body = [s for s in spans if s["kind"] in ("prose", "bullet", "faq_a", "faq_q")]
+    for s in spans:  # S234 round 2 — headings too ('A Sentence on Loss')
+        if s["kind"] not in ("prose", "bullet", "faq_a", "faq_q", "heading"):
+            continue
+        for leak in instruction_leaks(s["clean"], ctx.scope):
+            leaks.append(f"leaks the writer's instructions ('{leak}'): '{s['clean'][:200]}'")
+        for leak in audience_leaks(s["clean"], ctx.audience, lex.own_text):
+            leaks.append(f"leaks the brand's audience definition ('{leak}'), not a fact about this trip: "
+                         f"'{s['clean'][:200]}'")
+        if s["kind"] == "heading":
+            continue
+        for m in trip_length_mentions(s["clean"], ctx):
+            scope.append(f"states the whole trip's length ('{m}'), but this piece covers only part of the trip: "
+                         f"'{s['clean'][:200]}'")
+        for m in journey_end_claims(s["clean"], ctx):
+            scope.append(f"says '{m}', but the trip goes on after this piece's last day: '{s['clean'][:200]}'")
+    opener = piece_opens_dangling(text)
+    if opener:
+        leaks.append(f"opens on a pronoun with no referent: '{opener[:200]}'")
     for s in body:
         m = LEAK_RE.search(s["clean"])
         if m:
-            issues.append(f"leaks the source-notes wording ('{m.group(0)}'): '{s['clean'][:200]}'")
+            leaks.append(f"leaks the source-notes wording ('{m.group(0)}'): '{s['clean'][:200]}'")
         m = SOCIAL_PROOF_RE.search(s["clean"])
         if m and not _is_cta(s["clean"], ctx.cta):
             issues.append(f"social proof ('{m.group(0)}') the source does not state: '{s['clean'][:200]}'")
@@ -850,7 +1341,7 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
         n = len(set(_HASHTAG_RE.findall(text)))
         if n > ctx.hashtags_max:
             issues.append(f"{n} hashtags, more than the channel's {ctx.hashtags_max}: '{n} hashtags'")
-    return {"scope": scope, "hygiene": issues}
+    return {"scope": scope, "hygiene": issues, "leak": list(dict.fromkeys(leaks))}
 
 
 __all__ = [

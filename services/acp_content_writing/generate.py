@@ -419,7 +419,64 @@ def fit_seo_fields(
     return out, resp.cost_usd
 
 
-__all__ = ["SEO_FIT_STAGE", "SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError",
+_FAQ_SYSTEM = """You write the FAQ section that ends a finished travel blog post.
+Rules:
+- Write exactly 4 question/answer pairs.
+- Each question is one a reader of this post would ask about the places in it, and its answer is a
+  fact stated in the SOURCE (keep its wording close). Never answer from general knowledge.
+- Never ask about age suitability, fitness or difficulty, price or what is included, booking,
+  permits, accommodation or weather unless a SOURCE line states the answer.
+- Each answer adds something the POST does not already say, in one or two sentences, in the brand's
+  plain voice. No places outside the SOURCE, no promises about the trip, no social proof.
+- Never mention the source, the notes, the seed or the itinerary as such.
+Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
+
+
+def write_faq(
+    *, source: str, body: str, brand_name: str | None = None, tenant_id: str | None = None,
+    angle_gate_request_id: str | None = None,
+) -> tuple[list[tuple[str, str]], float]:
+    """AA-768 (S234 round 2) — the blog FAQ contract's one regeneration: 4 Q/A pairs answered from
+    `source` (the moment's own seed lines + Facts — never the AUDIENCE / BRAND lines or another
+    trip's), not restating `body`. Runs on the cheap repair route (SEO_FIT_STAGE = t9_repair;
+    Haiku, about $0.004–0.008 a call on a route blog: ~4–6k input tokens). Returns ([(q, a)], cost);
+    an unusable reply gives [] (the caller keeps the old FAQ and F16_faq reports it)."""
+    parts = []
+    if brand_name:
+        parts.append(f"BRAND (never name another brand): {brand_name}")
+    parts.append(f"SOURCE:\n{source[:12000]}")
+    parts.append(f"POST (do not repeat what it says):\n{strip_citation_tags(body)[:6000]}")
+    request = LLMRequest(system_prompt=_FAQ_SYSTEM, user_prompt="\n\n".join(parts),
+                         stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
+    resp = LLMClient().generate(request)
+    record_call_sync(
+        stage=SEO_FIT_STAGE, role="writer", model=resp.model_used,
+        tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
+        cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
+        quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source)},
+        stop_reason=getattr(resp, "stop_reason", None),
+        account=getattr(resp, "satellite_account", None),
+        fallback_used=getattr(resp, "fallback_used", None),
+    )
+    text = _strip_fences(resp.content)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = repair_json(text, return_objects=True)
+    rows = data.get("faq") if isinstance(data, dict) else None
+    out: list[tuple[str, str]] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        q, a = row.get("q"), row.get("a")
+        if isinstance(q, str) and isinstance(a, str) and q.strip() and a.strip():
+            q = re.sub(r"^\**\s*Q:\s*|\*+$", "", strip_citation_tags(q)).strip()
+            a = re.sub(r"^A:\s*", "", strip_citation_tags(a)).strip()
+            out.append((" ".join(q.split()), " ".join(a.split())))
+    return out, resp.cost_usd
+
+
+__all__ = ["SEO_FIT_STAGE", "write_faq", "SeoEnvelopeError", "fit_seo_fields", "max_tokens_for", "SentenceRepairError",
            "write_content",
            "rewrite_with_feedback",
            "repair_sentences"]

@@ -154,7 +154,7 @@ class TestRunQualityGatesChannelDispatch:
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
             "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene",
+            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F14_social_shape", "F15_voice", "F15_voice_warn",  # AA-771 (S234) — pass without a channel spec
             "F8_framework", "F9_cta_fact", "F9_brand_style",
         ]
@@ -178,10 +178,11 @@ class TestRunQualityGatesChannelDispatch:
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
             "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene",
+            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F14_social_shape", "F15_voice", "F15_voice_warn", "F4_seo_surface",
             "F5_atom_density", "F3_structural_variance", "F7_faq_dedup",
             "F8_framework", "F9_cta_fact", "F9_brand_style",
+            "F16_faq",  # S234 round 2 — the blog FAQ contract, last (owned by the FAQ step)
         ]
 
     def test_extreme_length_measured_on_stripped_text_not_tagged(self):
