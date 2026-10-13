@@ -223,8 +223,10 @@ class TestServiceSteps:
             out, cost, log = await writing_service._enforce_faq_contract(
                 BLOG, context=ctx, hyg=_ctx(), request_id=uuid.uuid4(), brand_ignore=frozenset())
         wf.assert_called_once()
-        assert qg.faq_pair_count(out) == 3 and cost == 0.006  # the age question was dropped
-        assert "1 → 3 pairs" in log[0] and out.index("Ask Terra") < out.index("## FAQ")
+        # the age question was dropped; the writer's surviving pair stays first (S234 r2 review: merged)
+        assert qg.faq_pair_count(out) == 4 and cost == 0.006
+        assert qg.faq_pairs(out)[0][0] == "How deep is the lake?"
+        assert "1 → 4 pairs" in log[0] and out.index("Ask Terra") < out.index("## FAQ")
 
     async def test_faq_not_called_when_long_enough(self):
         full = qg.replace_faq_section(BLOG, [("a?", "x."), ("b?", "y."), ("c?", "z.")])

@@ -170,7 +170,7 @@ class TestFaqAnswerPronouns:
         with patch.object(writing_service, "write_faq", return_value=(pairs, 0.006)):
             out, _cost, log = await writing_service._enforce_faq_contract(
                 BLOG, context=ctx, hyg=_ctx(), request_id=uuid.uuid4(), brand_ignore=frozenset())
-        assert qg.faq_pair_count(out) == 3 and "1 → 3 pairs" in log[0]
+        assert qg.faq_pair_count(out) == 4 and "1 → 4 pairs" in log[0]  # + the writer's own pair
 
 
 # ---------------------------------------------------------------- piece-opening pronoun

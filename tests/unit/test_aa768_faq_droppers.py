@@ -3,8 +3,9 @@
 S234 r2: F16_faq held 7/8 blogs. drop_restated_faq dropped an answer when > 85% of its 5+-letter
 words appeared ANYWHERE in the body; in a seed-bound blog every answerable question uses the body's
 vocabulary, so it stripped 3-4 pairs per blog (r1 F7 flags '4/3/3 pairs removed') and most of the
-one regenerated FAQ. Now an answer is dropped only when it COPIES body sentences (hygiene.copies:
-≥ 80% of a sentence's content words, in order, in ONE body sentence). Fixture sentences are the
+one regenerated FAQ. Now only answer sentences that COPY the body are cut (hygiene.copies: ≥ 80% of
+the sentence's words in order in one body sentence or two adjacent ones, or ≥ 80% of such a body
+sentence inside it; number words = digits), and a pair goes when too little is left. Fixture sentences are the
 real r2 body sentences and the real regenerated answers (8 Haiku calls, stage adhoc_aa768_faq).
 """
 import uuid
@@ -87,18 +88,74 @@ def test_copied_answers_are_still_dropped():
     assert not gate["passed"] and len(gate["violations"]) == 2 and "copies a body sentence" in gate["violations"][0]
 
 
-def test_copy_is_judged_per_sentence_against_one_body_sentence():
-    sentences = [s["clean"] for s in h.sentence_spans(BODY) if s["kind"] == "prose"]
-    # one copied sentence + a longer new one: most of the answer is new → kept
-    mixed = (COPIED[1][1] + " The Tsaatan are ethnically and linguistically related to the Tuvan peoples of "
-             "southern Siberia, and only a few hundred of them still herd reindeer in the taiga.")
-    assert not qg.answer_copies_body(mixed, sentences)
-    assert qg.answer_copies_body(COPIED[0][1], sentences)
+def _body():
+    return qg._body_sentences(BODY.partition("## FAQ")[0])
+
+
+def test_a_copied_sentence_is_cut_from_a_mixed_answer():
+    """S234 r2 review: '<verbatim body sentence> <longer new sentence>' kept the verbatim sentence
+    under the old half-of-the-answer rule. Now the copy is cut and the new sentence answers alone."""
+    new_part = ("The Tsaatan are ethnically and linguistically related to the Tuvan peoples of southern Siberia, "
+                "and only a few hundred of them still herd reindeer in the taiga.")
+    mixed = COPIED[1][1] + " " + new_part
+    assert qg.answer_copies_body(mixed, _body())
+    assert qg.strip_copied_sentences(mixed, _body()) == (new_part, 1)
+    text = qg.replace_faq_section(BODY, RESTATED + [("What are the reindeer used for?", mixed)])
+    out, changed = qg.drop_restated_faq(text)
+    assert changed == 1 and qg.faq_pair_count(out) == 4
+    assert "primarily raised for meat" not in out.partition("## FAQ")[2] and new_part in out
+    assert qg.gate_faq_dedup(out)["passed"]
+
+
+def test_whats_left_must_still_answer_and_stand_alone():
+    # only 'Yes.' left → the pair goes
+    assert qg.strip_copied_sentences("Yes. " + COPIED[1][1], _body()) == (None, 1)
+    # the kept sentence leans on the cut one ('It also…') → the pair goes
+    assert qg.strip_copied_sentences(COPIED[1][1] + " It also gives the family a steady supply of yoghurt.",
+                                     _body())[0] is None
+
+
+@pytest.mark.parametrize("answer", [
+    # lead-in + a verbatim body sentence (S234 r2 review: the answer's own share stayed low)
+    "Yes, and it is worth knowing ahead of the family trip that reindeer in Tsaatan life are used for riding "
+    "and as pack animals, and for milk — the herds are not primarily raised for meat.",
+    # a verbatim body sentence + an appended clause (real e5842181 shape)
+    "Their settlements are not permanent villages but seasonal camps of teepee-style dwellings called urts, "
+    "moved several times a year as the reindeer require, and the ride there crosses rivers and boggy forest.",
+    # two adjacent body sentences merged into one
+    "Their settlements are not permanent villages but seasonal camps of teepee-style dwellings called urts, "
+    "moved several times a year as the reindeer require, and reindeer in Tsaatan life are used for riding and as "
+    "pack animals, and for milk.",
+])
+def test_containment_and_merged_copies_are_cut(answer):
+    assert qg.answer_copies_body(answer, _body())
+    out, changed = qg.drop_restated_faq(qg.replace_faq_section(BODY, [("Q?", answer)]))
+    assert changed == 1 and "## FAQ" not in out
+
+
+def test_restated_facts_and_spread_words_are_not_copies():
+    sentences = _body()
+    for _, a in RESTATED:
+        assert not qg.answer_copies_body(a, sentences)
     # words spread over the whole body are not a copy of any one sentence
     spread = "The crater floor and the taiga forest both sit near the reindeer camps of the Tsaatan."
     assert not qg.answer_copies_body(spread, sentences)
-    # a short answer is never a copy
+    # a short answer is never a copy; a short body line never makes a long answer a copy
     assert not h.copies("Yes, at Sod Camp.", "The route starts at Sod Camp.")
+    assert not h.copies("Ask us about the camp and the long ride north to the lake shore.", "Ask us.")
+
+
+def test_number_words_and_digits_compare_equal():
+    """S234 r2 review, real 75313b8c: the body spells the numbers, the answer uses digits."""
+    body = ("The crater itself is roughly six hundred metres wide and fifty to sixty metres deep, and the caldera "
+            "floor is accessible on foot.")
+    answer = ("The crater is roughly 600 metres wide and between 50 to 60 metres deep, with a caldera floor that you "
+              "can walk across on foot.")
+    assert h.copies(answer, body) and h.copies(answer.replace("600", "six hundred"), body.replace("six hundred", "600"))
+    assert h.copy_words("sixteen hundred and forty-five metres, 1,645 metres") == ["1645", "metre", "1645", "metre"]
+    assert h.copy_words("one of the lakes") == ["lake"]  # a lone 'one' is a word
+    assert h.copy_words("two thousand and twelve, five lakes") == ["2012", "5", "lake"]
+    assert h.copy_words("lakes five six") == ["lake", "5", "6"]
 
 
 SEED = (
@@ -164,3 +221,99 @@ async def test_contract_step_passes_the_unused_facts():
     unused = wf.call_args.kwargs["unused_facts"]
     assert any("domestic airport" in f for f in unused) and not any("capital city" in f for f in unused)
     assert qg.faq_pair_count(out) == 3 and "0 → 3 pairs" in log[0]
+
+
+@pytest.mark.asyncio
+async def test_contract_merges_the_writers_surviving_pairs_with_the_regeneration():
+    """S234 r2 review: the regeneration replaced the whole FAQ, so 2 surviving writer pairs + 2
+    surviving regenerated pairs ended on 2 (held F16). Now they merge; a repeated question goes."""
+    writer = qg.replace_faq_section(BODY, RESTATED[:2])
+    regen = [COPIED[0], COPIED[1],  # both copies → dropped
+             (RESTATED[0][0], "It is a crater you can walk into."),  # same question as the writer's → goes
+             RESTATED[2],
+             ("Is there an airport near Mörön?", "Yes, a small domestic airport with flights to Ulaanbaatar.")]
+    ctx = {"atom_text": SEED, "facts_text": "", "brand_audience": {"brand_name": "Terra"}, "tenant_id": None,
+           "cta": "Ask Terra Family Expeditions to plan this trip for your family."}
+    with patch.object(writing_service, "write_faq", return_value=(regen, 0.006)):
+        out, _, log = await writing_service._enforce_faq_contract(
+            writer, context=ctx, hyg=h.HygieneContext(seed=SEED), request_id=uuid.uuid4(), brand_ignore=frozenset())
+    assert [q for q, _ in qg.faq_pairs(out)] == [RESTATED[0][0], RESTATED[1][0], RESTATED[2][0],
+                                                 "Is there an airport near Mörön?"]
+    assert "2 → 4 pairs" in log[0] and qg.gate_faq_contract(out)["passed"] and qg.gate_faq_dedup(out)["passed"]
+
+
+@pytest.mark.asyncio
+async def test_contract_caps_the_merged_faq():
+    writer = qg.replace_faq_section(BODY, RESTATED[:2])
+    regen = [("What is the market like?", "Stalls sell dried curd, felt slippers and fresh bread."),
+             ("Where do boats leave from?", "Small wooden launches depart from the Khatgal jetty each morning."),
+             ("Is there a monastery nearby?", "Dayan Derkh cave shrine sits a day's ride west of the shore."),
+             ("What fish live in the lake?", "Lenok, grayling and the endemic Hovsgol grayling swim there."),
+             ("When does the ice melt?", "Thaw usually arrives in late May or early June."),
+             ("Can you swim?", "Brave visitors swim in August, though the water stays bracingly cold.")]
+    with patch.object(writing_service, "write_faq", return_value=(regen, 0.006)):
+        out, _, _ = await writing_service._enforce_faq_contract(
+            writer, context={"atom_text": SEED}, hyg=h.HygieneContext(seed=SEED), request_id=uuid.uuid4(),
+            brand_ignore=frozenset())
+    assert qg.faq_pair_count(out) == qg.FAQ_MAX_PAIRS and qg.faq_pairs(out)[0][0] == RESTATED[0][0]
+
+
+def test_faq_pairs_reads_the_section_without_the_trailing_cta():
+    text = BODY.rstrip() + "\n\n## FAQ\n\n**Q: One?**\nA: First answer.\n\n**Q: Two?**\nA: Second answer.\n\nAsk us now.\n"
+    assert qg.faq_pairs(text) == [("One?", "First answer."), ("Two?", "Second answer.")]
+    assert qg.faq_pairs(BODY) == []
+
+
+# ---------------------------------------------------------------- a sentence repair that empties a FAQ answer
+
+REPAIR_BLOG = ("## Lake\n\nThe lake is deep and cold all year. Ask Terra to plan this trip.\n\n## FAQ\n\n"
+               "**Q: Is there an airport?**\nA: Yes, Mörön has flights to Ulaanbaatar.\n\n"
+               "**Q: When does the lake freeze?**\nA: It freezes solidly from January through April at 900 metres.\n\n"
+               "**Q: What fish live there?**\nA: Lenok and grayling swim in the lake.\n")
+F1_FAQ = {"gate": "F1_grounding", "passed": False, "blocking": True, "repairable": True, "violations": [
+    "sentence states ['900'] not present in the content seed: "
+    "'It freezes solidly from January through April at 900 metres'"]}
+
+
+def test_an_emptied_answer_is_not_a_pair():
+    emptied = REPAIR_BLOG.replace("It freezes solidly from January through April at 900 metres.", "")
+    out, changed = qg.drop_restated_faq(emptied)
+    assert changed == 1 and qg.faq_pair_count(out) == 2 and "When does the lake freeze?" not in out
+
+
+def _blog_ctx():
+    return {"atom_text": "Lake Khövsgöl freezes. Mörön has flights.", "goal": {"key": "promotion"},
+            "channel_style": {"channel": "blog"}, "brand_audience": {}, "chosen": {}, "cta": "Ask Terra to plan this trip.",
+            "destination": None, "trip_name": None, "brand_rubric_text": "", "channel": "blog", "atom_id": "a1"}
+
+
+def _outcome(ledger):
+    first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
+    return {"passed": first is None, "gate_ledger": ledger, "first_failure": first, "flags": []}
+
+
+@pytest.mark.asyncio
+async def test_a_repair_that_cuts_the_faq_below_the_contract_regenerates_once():
+    """S234 r2 review: attempt 1 ends on exactly 3 pairs; the attempt-2 sentence repair deletes a FAQ
+    answer (2 pairs left). F16_faq is not repairable, so without a regeneration the blog was held."""
+    from unittest.mock import AsyncMock
+    row = {"piece_id": str(uuid.uuid4()), "attempt_number": 3, "status": "held"}
+    calls = []
+
+    async def enforce(text, **_):
+        calls.append(qg.faq_pair_count(text))
+        return text, 0.0, []
+
+    with patch.object(writing_service, "write_content", return_value=(REPAIR_BLOG, 0.01, {}, None)), \
+         patch.object(writing_service, "repair_sentences", return_value=([""], 0.002)), \
+         patch.object(writing_service, "rewrite_with_feedback") as rw, \
+         patch.object(writing_service, "_fit_seo_meta", new=AsyncMock(side_effect=lambda m, *a, **k: (m, 0.0))), \
+         patch.object(writing_service, "_enforce_faq_contract", side_effect=enforce), \
+         patch.object(writing_service, "run_quality_gates",
+                      side_effect=[_outcome([F1_FAQ]), _outcome([F1_FAQ]), _outcome([F1_FAQ])]), \
+         patch.object(writing_service, "_finalize_piece", new=AsyncMock(return_value=row)):
+        await writing_service.run_write_background(uuid.uuid4(), uuid.uuid4(), _blog_ctx(), pool=MagicMock())
+    rw.assert_not_called()
+    # attempt 1 (fresh text, 3 pairs → no call inside), attempt 2 (repair cut it to 2 → one more);
+    # attempt 3 never regenerates again
+    assert calls == [3, 2]
