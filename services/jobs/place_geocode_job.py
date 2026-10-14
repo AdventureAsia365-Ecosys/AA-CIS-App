@@ -9,9 +9,13 @@ Payload: {"reason"?, "limit"?, "coalesced"?}. Enqueued (debounced, one queued jo
 by place_extract when names wait. Re-enqueues itself while more names are due.
 
 Paid calls: one `a3_place_locate` per 40 names (budget row bedrock/job:place_geocode, $3/run) and,
-with GEOCODER_PROVIDER = mapbox_permanent | amazon_location, one geocoder request per located name
-(budget rows geocoder/global $25/day and geocoder/job:place_geocode $50/run; spend in
-geo.geocode_call and the job's own cost_usd). Default model_only: no external call.
+with GEOCODER_PROVIDER = geoapify (default since S236), one to three Geoapify requests per located name
+("X to Y" endpoints, a native-script retry for Taiwan / South Korea; generic phrases send none). Free
+plan: $0, so the guard that matters is the daily CREDIT guard (GEOAPIFY_DAILY_CREDIT_LIMIT, default
+2,500 of the 3,000/day quota, counted per UTC day from geo.geocode_call): when it trips, the remaining
+names stay pending without a try counted and the job ends `stopped_credit_limit` without re-enqueueing
+itself (the next place_extract / backfill picks them up). The $ rows (geocoder/global $25/day,
+geocoder/job:place_geocode $50/run) apply on a paid plan via GEOCODER_COST_PER_REQUEST_USD.
 """
 from __future__ import annotations
 
@@ -47,14 +51,19 @@ class BudgetedGeocoder:
     def requests(self) -> int:
         return self.inner.requests
 
-    async def confirm(self, name, lat, lng, country):
+    def credits_left(self) -> int:
+        fn = getattr(self.inner, "credits_left", None)
+        return fn() if fn is not None else 1
+
+    async def confirm(self, name, lat, lng, country, *, native_name=None):
         if self.budget is not None:
             self.budget.check(self.cost_per_request)
+        before = self.inner.requests
         try:
-            return await self.inner.confirm(name, lat, lng, country)
+            return await self.inner.confirm(name, lat, lng, country, native_name=native_name)
         finally:
-            if self.budget is not None:
-                self.budget.charge(self.cost_per_request)
+            if self.budget is not None:   # charge what was really sent (0 for a skipped generic name)
+                self.budget.charge(self.cost_per_request * (self.inner.requests - before))
 
     async def aclose(self):
         await self.inner.aclose()
@@ -65,6 +74,9 @@ async def run(ctx: JobContext) -> Optional[dict]:
     p = ctx.payload or {}
     limit = max(1, min(int(p.get("limit") or MAX_NAMES_PER_RUN), MAX_NAMES_PER_RUN))
     inner = get_geocoder()
+    if hasattr(inner, "credits_used_today"):
+        async with ctx.pool.acquire() as conn:
+            inner.credits_used_today = await store.geocoder_requests_today(conn, inner.name)
     llm_budget = await load_run_budget(ctx.pool, "bedrock", KIND)
     geo_budget = await load_run_budget(ctx.pool, "geocoder", KIND) if inner.calls_external else None
     geocoder = BudgetedGeocoder(inner, geo_budget)
@@ -95,7 +107,11 @@ async def run(ctx: JobContext) -> Optional[dict]:
         async with ctx.pool.acquire() as conn:
             remaining = await store.pending_names_due(conn)
         result["pending_names_due"] = remaining
-        if remaining and result.get("names"):
+        if result.get("stopped_credit_limit"):
+            result["status"] = "stopped_credit_limit"
+            logger.warning("place_geocode_credit_limit", provider=inner.name, deferred=result.get("deferred"),
+                           pending=remaining)
+        elif remaining and result.get("names"):
             result["next_job"], _ = await enqueue_debounced(ctx.pool, KIND, reason=f"{KIND}:continue",
                                                             created_by=KIND, debounce_s=CONTINUE_DEBOUNCE_S)
     except Exception as e:  # noqa: BLE001 — follow-ups are best-effort

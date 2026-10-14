@@ -16,7 +16,10 @@
 --    (TripPlanner's backfill_country rule, when its tables are readable) or the row is marked
 --    suspect; rows that collide on the new key keep one keeper, the others get duplicate_of = keeper
 --    and geo_status = 'suspect' (no row is deleted, no FK moves). located_by also accepts
---    'amazon_location' (geocoder adapter) and 'manual' (admin fix).
+--    'geoapify' (the confirming geocoder, S236) and 'manual' (admin fix); geo_precision
+--    (point | area), geocoder_provider / geocoded_at / geocoder_meta (audit + re-run on another
+--    provider without a migration) and review_reason (unconfirmed hard place kinds → /admin/places).
+--    Geoapify / OpenStreetMap ATTRIBUTION is required wherever these coordinates are shown.
 --    geo.name_norm(text) is the SQL twin of services/places/names.py::name_norm — the same 504-letter
 --    accent table; tests/integration/test_aa712_migration_226.py compares both on real Postgres.
 -- 3. acp_shared.place_card.destination_id: a card resolves once to a destination (design §2.2).
@@ -26,8 +29,8 @@
 --      a3_place_locate validate  Sonnet (acc3)
 --      a3_place_embed  embed     Cohere Embed v4 (acc2), 1536-d = TripPlanner's tp_search_embed
 --    `validate` (ADR 0008): extraction of reference data, never scored by a judge, any vendor.
--- 5. shared.spend_budget: provider 'geocoder' (Mapbox Permanent / Amazon Location, whichever
---    GEOCODER_PROVIDER selects) + rows job:place_extract ($5/run, $40/day of that kind's own spend),
+-- 5. shared.spend_budget: provider 'geocoder' (Geoapify; Free plan = $0, the daily credit guard is
+--    GEOAPIFY_DAILY_CREDIT_LIMIT — the $ rows matter only on a paid plan) + rows job:place_extract ($5/run, $40/day of that kind's own spend),
 --    job:place_geocode ($3/run Bedrock; $50/run geocoder) and geocoder global $25/day (design §8).
 --
 -- pgvector: geo.tour_place.embedding vector(1536) + HNSW only where the `vector` type exists (RDS has
@@ -329,7 +332,12 @@ ALTER TABLE shared.destinations
     ADD COLUMN IF NOT EXISTS geo_checked_at    timestamptz,
     ADD COLUMN IF NOT EXISTS name_norm         text,
     ADD COLUMN IF NOT EXISTS locality_norm     text NOT NULL DEFAULT '',
-    ADD COLUMN IF NOT EXISTS duplicate_of      uuid REFERENCES shared.destinations(id) ON DELETE SET NULL;
+    ADD COLUMN IF NOT EXISTS duplicate_of      uuid REFERENCES shared.destinations(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS geo_precision     text,
+    ADD COLUMN IF NOT EXISTS geocoder_provider text,
+    ADD COLUMN IF NOT EXISTS geocoded_at       timestamptz,
+    ADD COLUMN IF NOT EXISTS geocoder_meta     jsonb,
+    ADD COLUMN IF NOT EXISTS review_reason     text;
 
 DO $$
 BEGIN
@@ -337,6 +345,11 @@ BEGIN
                     AND conname = 'destinations_geo_status_check') THEN
         ALTER TABLE shared.destinations ADD CONSTRAINT destinations_geo_status_check
             CHECK (geo_status IN ('ok', 'suspect', 'manual'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'shared.destinations'::regclass
+                    AND conname = 'destinations_geo_precision_check') THEN
+        ALTER TABLE shared.destinations ADD CONSTRAINT destinations_geo_precision_check
+            CHECK (geo_precision IS NULL OR geo_precision IN ('point', 'area'));
     END IF;
 END $$;
 
@@ -348,14 +361,14 @@ BEGIN
     FOR c IN SELECT conname FROM pg_constraint
               WHERE conrelid = 'shared.destinations'::regclass AND contype = 'c'
                 AND pg_get_constraintdef(oid) LIKE '%located_by%'
-                AND pg_get_constraintdef(oid) NOT LIKE '%amazon_location%'
+                AND pg_get_constraintdef(oid) NOT LIKE '%geoapify%'
     LOOP
         EXECUTE format('ALTER TABLE shared.destinations DROP CONSTRAINT %I', c.conname);
     END LOOP;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'shared.destinations'::regclass
                     AND conname = 'destinations_located_by_check') THEN
         ALTER TABLE shared.destinations ADD CONSTRAINT destinations_located_by_check
-            CHECK (located_by IN ('mapbox', 'llm', 'amazon_location', 'manual'));
+            CHECK (located_by IN ('mapbox', 'llm', 'geoapify', 'manual'));
     END IF;
 END $$;
 
@@ -363,7 +376,20 @@ COMMENT ON COLUMN shared.destinations.geo_status IS
     'AA-712 — ok | suspect (outlier / duplicate / no country: excluded from graph views, listed on '
     '/admin/places) | manual (admin-fixed coordinates: never overwritten by a job).';
 COMMENT ON COLUMN shared.destinations.geocoder_place_id IS
-    'AA-712 — the external geocoder''s id of the confirming result (Mapbox mapbox_id / Amazon Location PlaceId).';
+    'AA-712 — the external geocoder''s id of the confirming result (Geoapify place_id).';
+COMMENT ON COLUMN shared.destinations.located_by IS
+    'AA-712 — geoapify (confirmed by Geoapify / OpenStreetMap: show "Powered by Geoapify" + '
+    '"© OpenStreetMap contributors" wherever the point is shown) | llm (the model''s point, area precision) | '
+    'manual (admin fix) | mapbox (legacy TripPlanner row, re-confirmed by the CIS pipeline).';
+COMMENT ON COLUMN shared.destinations.geo_precision IS
+    'AA-712 — point (geocoder-confirmed or admin) | area (the model''s own point: show as an area, not a pin); '
+    'NULL = legacy row not yet processed by the CIS pipeline.';
+COMMENT ON COLUMN shared.destinations.geocoder_meta IS
+    'AA-712 — audit of the last geocoder check: provider, outcome, query, result_type, raw rank.confidence '
+    '(recorded, never a gate), name similarity, km to the model point, attribution.';
+COMMENT ON COLUMN shared.destinations.review_reason IS
+    'AA-712 — set when the row needs a human look on /admin/places (unconfirmed_hard_type: a temple / pass / '
+    'lake / village… no geocoder confirmed).';
 COMMENT ON COLUMN shared.destinations.name_norm IS
     'AA-712 — geo.name_norm(name); key (name_norm, lower(country), locality_norm) is unique among non-duplicates.';
 COMMENT ON COLUMN shared.destinations.locality_norm IS

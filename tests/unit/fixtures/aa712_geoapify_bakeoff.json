@@ -1,0 +1,3359 @@
+{
+ "_source": "S236 AA-712 Geoapify bake-off (05-geocoder-bakeoff.md): recorded /v1/geocode/search responses (text=<name>, filter=countrycode:<iso2>, limit=3), trimmed to the fields the adapter reads; no API key. labels = hand labels per candidate rank (N named place, R related, F admin fallback, W wrong).",
+ "rows": [
+  {
+   "i": 0,
+   "name": "Chorten Kora temple",
+   "country": "Bhutan",
+   "ref": [
+    27.5028,
+    91.5561
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Chorten Kora",
+     "address_line1": "Chorten Kora",
+     "result_type": "amenity",
+     "lat": 27.6060099,
+     "lon": 91.4948556,
+     "country_code": "bt",
+     "place_id": "51848fd2b6abdf5640595f8dfd76239b3b40f00103f9013ae74c7900000000c0020192030c43686f7274656e204b6f7261e203236f70656e7374726565746d61703a76656e75653a6e6f64652f32303335303833303636",
+     "rank": {
+      "confidence": 0.6666666666666667,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 1,
+   "name": "Dochu La Pass",
+   "country": "Bhutan",
+   "ref": [
+    27.4833,
+    89.7833
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Dochu La",
+     "address_line1": "Dochu La",
+     "result_type": "amenity",
+     "lat": 27.4900827,
+     "lon": 89.7490068,
+     "country_code": "bt",
+     "place_id": "51d39e37baef6f564059dbd5500f767d3b40f00103f9017aa29e7800000000c00201920308446f636875204c61",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 2,
+   "name": "Taktshang Monastery",
+   "country": "Bhutan",
+   "ref": [
+    27.494435,
+    89.361684
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "R",
+    "1": "R"
+   },
+   "results": [
+    {
+     "name": "Öselgang monastery",
+     "address_line1": "Öselgang monastery",
+     "result_type": "amenity",
+     "lat": 27.4923743,
+     "lon": 89.3674477,
+     "country_code": "bt",
+     "place_id": "51639f5b43845756405912e4fb3d0c7e3b40f00102f9019dc28d1e00000000c00201920313c39673656c67616e67206d6f6e617374657279",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Taktshang-Bumdra path",
+     "address_line1": "Taktshang-Bumdra path",
+     "result_type": "street",
+     "lat": 27.495098,
+     "lon": 89.371128,
+     "country_code": "bt",
+     "place_id": "5150a8a78fc057564059a45016bebe7e3b40c0020492031554616b747368616e672d42756d6472612070617468e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3232333436363937",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Taktshang Paradise",
+     "address_line1": "Taktshang Paradise",
+     "result_type": "amenity",
+     "lat": 27.4731757,
+     "lon": 89.3468098,
+     "country_code": "bt",
+     "place_id": "51ab3bbb2132565640590cc3ec0a22793b40f00103f9013764de3003000000c0020192031254616b747368616e67205061726164697365e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3133373034373832393033",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 3,
+   "name": "Manas River",
+   "country": "Bhutan",
+   "ref": [
+    26.85,
+    90.65
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Manas River",
+     "address_line1": "Manas River",
+     "result_type": "amenity",
+     "lat": 26.8629026,
+     "lon": 91.0477567,
+     "country_code": "bt",
+     "place_id": "518d2a1e720ec356405925a24e2fe7dc3a40f00101f9011f59ac0000000000c0020192030b4d616e6173205269766572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 4,
+   "name": "ThombuShong",
+   "country": "Bhutan",
+   "ref": [
+    27.7,
+    89.5
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 5,
+   "name": "Tingtibi",
+   "country": "Bhutan",
+   "ref": [
+    26.9667,
+    90.7333
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "R",
+    "1": "R"
+   },
+   "results": [
+    {
+     "name": "Tingtibi - Zhemgang Highway",
+     "address_line1": "Tingtibi - Zhemgang Highway",
+     "result_type": "street",
+     "lat": 27.1952221,
+     "lon": 90.7258287,
+     "country_code": "bt",
+     "place_id": "51e23f38fa73ae564059d9f45613fa313b40f00102f9013e96fd0800000000c0020492031b54696e6774696269202d205a68656d67616e672048696768776179",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Tingtibi - Panbang Highway",
+     "address_line1": "Tingtibi - Panbang Highway",
+     "result_type": "street",
+     "lat": 26.8746949,
+     "lon": 90.916972,
+     "country_code": "bt",
+     "place_id": "5141d653abafba5640595e7a4501ecdf3a40f00102f901fd4c0d2500000000c0020492031a54696e6774696269202d2050616e62616e672048696768776179",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Tingtibi - Panbang Highway",
+     "address_line1": "Tingtibi - Panbang Highway",
+     "result_type": "street",
+     "lat": 27.0249024,
+     "lon": 90.8236993,
+     "country_code": "bt",
+     "place_id": "513dcf447db7b45640598797f10060063b40f00102f901e4b0082500000000c0020492031a54696e6774696269202d2050616e62616e672048696768776179",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 6,
+   "name": "Phnom Penh",
+   "country": "Cambodia",
+   "ref": [
+    11.568271,
+    104.922443
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "R",
+    "2": "R"
+   },
+   "results": [
+    {
+     "name": "Phnom Penh Garbage Dump",
+     "address_line1": "Phum Kandal",
+     "result_type": "postcode",
+     "lat": 11.4822936,
+     "lon": 104.887219,
+     "country_code": "kh",
+     "place_id": "51f3583332c8385a4059e523ce2feff62640f00102f90141528f1800000000c002079203093132303530382b6b68",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Phnom Penh Precast Plants Co., Ltd",
+     "address_line1": "Sangkat Chrang Chamreh Muoy",
+     "result_type": "postcode",
+     "lat": 11.6392204,
+     "lon": 104.8828218,
+     "country_code": "kh",
+     "place_id": "5189cc012780385a405940df71e547472740f00102f90168b5062900000000c002079203093132303730342b6b68",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Phnom Penh Center",
+     "address_line1": "Phnom Penh Center",
+     "result_type": "amenity",
+     "lat": 11.5532941,
+     "lon": 104.9336869,
+     "country_code": "kh",
+     "place_id": "51080db386c13b5a4059b723415d491b2740f00102f901618b8c1f00000000c0020192031150686e6f6d2050656e682043656e746572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 7,
+   "name": "Siem Reap",
+   "country": "Cambodia",
+   "ref": [
+    13.354503,
+    103.85486
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Siem Reap",
+     "address_line1": "Siem Reap",
+     "result_type": "city",
+     "lat": 13.3617562,
+     "lon": 103.8590321,
+     "country_code": "kh",
+     "place_id": "51b5edc561faf65940591f40d01b38b92a40f00103f901dd4d5e0f00000000c002089203095369656d2052656170",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 8,
+   "name": "Huashan's five peaks",
+   "country": "China",
+   "ref": [
+    34.4847,
+    110.0865
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Five Sen5es",
+     "address_line1": "Five Sen5es",
+     "result_type": "amenity",
+     "lat": 36.063452,
+     "lon": 120.37485,
+     "country_code": "cn",
+     "place_id": "51f5b9da8afd175e4059d26ef4311f084240f00103f9016386b53401000000c0020192030b466976652053656e356573e203236f70656e7374726565746d61703a76656e75653a6e6f64652f35313739323738393437",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Five Guys",
+     "address_line1": "Five Guys",
+     "result_type": "amenity",
+     "lat": 31.217965,
+     "lon": 121.4549967,
+     "country_code": "cn",
+     "place_id": "516d927aaa1e5d5e405932ace28dcc373f40f00103f9018db6b80802000000c00201920309466976652047757973e203236f70656e7374726565746d61703a76656e75653a6e6f64652f38373336323537363737",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "High Five BeefBurger",
+     "address_line1": "High Five BeefBurger",
+     "result_type": "amenity",
+     "lat": 43.8642829,
+     "lon": 125.3155036,
+     "country_code": "cn",
+     "place_id": "514cf1023631545f4059fbfe72d2a0ee4540f00103f9010155a31f01000000c002019203144869676820466976652042656566427572676572e203236f70656e7374726565746d61703a76656e75653a6e6f64652f34383235373635313231",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 9,
+   "name": "Jokhang Temple and Barkhor Street",
+   "country": "China",
+   "ref": [
+    29.653,
+    91.1175
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Jokhang Monastery",
+     "address_line1": "Jokhang Monastery",
+     "result_type": "amenity",
+     "lat": 29.6528598,
+     "lon": 91.1317978,
+     "country_code": "cn",
+     "place_id": "51d32b0a606fc856405984dfe1d121a73d40f00101f901adfd230000000000c002019203114a6f6b68616e67204d6f6e617374657279",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Jokhang Monastery",
+     "address_line1": "Jokhang Monastery",
+     "result_type": "amenity",
+     "lat": 29.653008,
+     "lon": 91.131841,
+     "country_code": "cn",
+     "place_id": "5167d13b1570c8564059c00644882ba73d40f00101f901adfd230000000000c002019203114a6f6b68616e67204d6f6e617374657279e203246f70656e7374726565746d61703a76656e75653a72656c6174696f6e2f32333538373031",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 10,
+   "name": "Tashilhunpo Monastery",
+   "country": "China",
+   "ref": [
+    29.25,
+    88.8833
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Tashilhunpo Monastery",
+     "address_line1": "Tashilhunpo Monastery",
+     "result_type": "amenity",
+     "lat": 29.2683181,
+     "lon": 88.8699879,
+     "country_code": "cn",
+     "place_id": "519b9abae1ad37564059c36cb87eb0443d40f00102f901b3e35f0800000000c0020192031554617368696c68756e706f204d6f6e617374657279",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 11,
+   "name": "Guangning",
+   "country": "China",
+   "ref": [
+    23.634102,
+    112.43327
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Guangning County",
+     "address_line1": "Guangning County",
+     "result_type": "city",
+     "lat": 23.6348923,
+     "lon": 112.4317972,
+     "country_code": "cn",
+     "place_id": "514820b990a21b5c405973fb404d88a23740f00101f901a7ea300000000000c002089203104775616e676e696e6720436f756e7479",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Nanjie",
+     "address_line1": "Nanjie",
+     "result_type": "city",
+     "lat": 23.634137,
+     "lon": 112.434781,
+     "country_code": "cn",
+     "place_id": "5105fbaf73d31b5c4059fd2e6ccd56a23740f00101f901d974360100000000c002089203064e616e6a6965",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Guangning",
+     "address_line1": "Guangning",
+     "result_type": "suburb",
+     "lat": 39.9245888,
+     "lon": 116.1396304,
+     "country_code": "cn",
+     "place_id": "51c16158b4ef085d4059bb1f01ed58f64340f00101f901203a160100000000c002059203094775616e676e696e67",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 12,
+   "name": "Liannan and Lianshan mountains",
+   "country": "China",
+   "ref": [
+    24.727915,
+    112.28177
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 13,
+   "name": "Wohushan Great Wall",
+   "country": "China",
+   "ref": [
+    40.6833,
+    117.1667
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Wohushan Shuiku",
+     "address_line1": "Wohushan Shuiku",
+     "result_type": "amenity",
+     "lat": 36.48583,
+     "lon": 116.97472,
+     "country_code": "cn",
+     "place_id": "5175b0fecf613e5d405935b56cad2f3e4240c0020192030f576f68757368616e20536875696b75e2031667656f6e616d65733a76656e75653a31373931333737",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Great wall remnant",
+     "address_line1": "Great wall remnant",
+     "result_type": "amenity",
+     "lat": 40.3233287,
+     "lon": 95.4591305,
+     "country_code": "cn",
+     "place_id": "512786e46462dd574059d92db8d562294440f00103f90185c5c90703000000c0020192031247726561742077616c6c2072656d6e616e74e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3133303135353635373031",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Great Wall Ruins",
+     "address_line1": "Great Wall Ruins",
+     "result_type": "amenity",
+     "lat": 43.4628016,
+     "lon": 116.7484316,
+     "country_code": "cn",
+     "place_id": "51c052a74de62f5d4059ab4434153dbb4540f00103f9016a6e749100000000c0020192031047726561742057616c6c205275696e73e203236f70656e7374726565746d61703a76656e75653a6e6f64652f32343430333236373632",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 14,
+   "name": "Bhangarh village",
+   "country": "India",
+   "ref": [
+    27.09579,
+    76.28778
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Bhangarh",
+     "address_line1": "Bhangarh",
+     "result_type": "city",
+     "lat": 22.8942195,
+     "lon": 76.0987816,
+     "country_code": "in",
+     "place_id": "51945c0f7052065340590af2b391ebe43640f00103f9011ff546a602000000c002089203084268616e67617268",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Bhangarh",
+     "address_line1": "Bhangarh",
+     "result_type": "city",
+     "lat": 24.3126852,
+     "lon": 78.2679963,
+     "country_code": "in",
+     "place_id": "51bcfcf3d9269153405977f123230c503840f00103f901e197d03902000000c002089203084268616e67617268",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Bhangarh",
+     "address_line1": "Bhangarh",
+     "result_type": "city",
+     "lat": 25.85233,
+     "lon": 78.1675744,
+     "country_code": "in",
+     "place_id": "5166e9f989b98a5340595166834c32da3940f00103f9010b0bf13802000000c002089203084268616e67617268",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 15,
+   "name": "ger camp",
+   "country": "India",
+   "ref": [
+    18.518328,
+    73.88774
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": true,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Camp Church (Saint Mary Church)",
+     "address_line1": "Camp Church (Saint Mary Church)",
+     "result_type": "amenity",
+     "lat": 15.855419,
+     "lon": 74.501096,
+     "country_code": "in",
+     "place_id": "51030af5f411a052405909c1aa7af9b52f40f00102f901755a631700000000c0020192031f43616d702043687572636820285361696e74204d6172792043687572636829e203216f70656e7374726565746d61703a76656e75653a7761792f333932333837313839",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Parvati Base Camp to Shepherd Camp",
+     "address_line1": "Parvati Base Camp to Shepherd Camp",
+     "result_type": "street",
+     "lat": 31.839222,
+     "lon": 77.854351,
+     "country_code": "in",
+     "place_id": "518313d1afad765340596e15c440d7d63f40c002049203225061727661746920426173652043616d7020746f2053686570686572642043616d70e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3230393635333836",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "CMP Lane",
+     "address_line1": "CMP Lane",
+     "result_type": "street",
+     "lat": 10.345101,
+     "lon": 79.355818,
+     "country_code": "in",
+     "place_id": "510055dcb8c5d653405940a20914b1b02440c00204920308434d50204c616e65e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3234373336333539",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 16,
+   "name": "Rangaji Temple",
+   "country": "India",
+   "ref": [
+    27.575,
+    77.6972
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Temple Jn",
+     "address_line1": "Temple Jn",
+     "result_type": "city",
+     "lat": 8.462417,
+     "lon": 77.139531,
+     "country_code": "in",
+     "place_id": "51ce716e13ee48534059973ac8ebc1ec2040c0020892030954656d706c65204a6ee2031f77686f736f6e66697273743a6c6f63616c6974793a31383133363230353037",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "Valavandu Temple",
+     "address_line1": "Valavandu Temple",
+     "result_type": "suburb",
+     "lat": 9.594813,
+     "lon": 76.329223,
+     "country_code": "in",
+     "place_id": "51d38558fd1115534059a7785c548b302340c0020592031056616c6176616e64752054656d706c65e2032477686f736f6e66697273743a6e65696768626f7572686f6f643a31383330303639343835",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "Pithambil Temple",
+     "address_line1": "Pithambil Temple",
+     "result_type": "city",
+     "lat": 9.273163,
+     "lon": 76.456704,
+     "country_code": "in",
+     "place_id": "51f4fc69a33a1d5340595af44e05dc8b2240c0020892031050697468616d62696c2054656d706c65e2031f77686f736f6e66697273743a6c6f63616c6974793a31383330303636353633",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    }
+   ]
+  },
+  {
+   "i": 17,
+   "name": "Bikaner",
+   "country": "India",
+   "ref": [
+    28.01578,
+    73.31255
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Bikaner",
+     "address_line1": "Bikaner",
+     "result_type": "city",
+     "lat": 28.0159286,
+     "lon": 73.3171367,
+     "country_code": "in",
+     "place_id": "5121b7baf74b54524059311290e513043c40f00103f901d41bca5300000000c0020892030742696b616e6572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 18,
+   "name": "Jaisalmer",
+   "country": "India",
+   "ref": [
+    26.913721,
+    70.911514
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Jaisalmer",
+     "address_line1": "Jaisalmer",
+     "result_type": "city",
+     "lat": 26.9116615,
+     "lon": 70.9124888,
+     "country_code": "in",
+     "place_id": "51d87d6c3766ba514059b685e7a562e93a40f00103f901c6dbb31500000000c002089203094a616973616c6d6572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Jaisalmer",
+     "address_line1": "Jaisalmer",
+     "result_type": "city",
+     "lat": 24.3250333,
+     "lon": 77.2008097,
+     "country_code": "in",
+     "place_id": "510d8eed10da4c534059689ce16135533840f00103f901e9744e3802000000c002089203094a616973616c6d6572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 19,
+   "name": "Saheliyon Ki Bari",
+   "country": "India",
+   "ref": [
+    24.595,
+    73.6847
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Saheliyon-Ki-Bari",
+     "address_line1": "Saheliyon-Ki-Bari",
+     "result_type": "amenity",
+     "lat": 24.6030656,
+     "lon": 73.6854635,
+     "country_code": "in",
+     "place_id": "5182c64ca2de6b524059b657d581629a3840f00102f90128e17b0600000000c00201920311536168656c69796f6e2d4b692d42617269",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 20,
+   "name": "fishing village",
+   "country": "Japan",
+   "ref": [
+    37.5,
+    138.0
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": true,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Monument to Fukushima Fishing Village",
+     "address_line1": "Monument to Fukushima Fishing Village",
+     "result_type": "amenity",
+     "lat": 35.2990775,
+     "lon": 139.479253,
+     "country_code": "jp",
+     "place_id": "515130630a566f61405917bce82b48a64140f00103f90119cd956301000000c002019203254d6f6e756d656e7420746f2046756b757368696d612046697368696e672056696c6c616765",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Tokyo German Village fishing pond pool",
+     "address_line1": "Tokyo German Village fishing pond pool",
+     "result_type": "amenity",
+     "lat": 35.4098778,
+     "lon": 140.0602066,
+     "country_code": "jp",
+     "place_id": "511b406436ed816140599f2d31e076b44140f00102f90133a3211e00000000c00201920326546f6b796f204765726d616e2056696c6c6167652066697368696e6720706f6e6420706f6f6c",
+     "rank": {
+      "confidence": 0.6561000000000001,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 21,
+   "name": "Nasu Imperial Villa",
+   "country": "Japan",
+   "ref": [
+    37.01909,
+    140.11963
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Nasu Imperial Villa",
+     "address_line1": "Nasu Imperial Villa",
+     "result_type": "amenity",
+     "lat": 37.0878735,
+     "lon": 140.0238643,
+     "country_code": "jp",
+     "place_id": "515881107fc380614059b05758703f8b4240f00102f9013f9bf72400000000c002019203134e61737520496d70657269616c2056696c6c61",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 22,
+   "name": "northern Okinawa fishing villages",
+   "country": "Japan",
+   "ref": [
+    27.941786,
+    128.200727
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": true,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 23,
+   "name": "living reefs",
+   "country": "Japan",
+   "ref": [
+    37.5,
+    138.0
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": true,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "LIVING HOUSE",
+     "address_line1": "LIVING HOUSE",
+     "result_type": "amenity",
+     "lat": 34.744214,
+     "lon": 135.359796,
+     "country_code": "jp",
+     "place_id": "5169a7e67283eb604059d89c8367425f4140f00103f901bd3cc7c102000000c0020192030c4c4956494e4720484f555345e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3131383430393934343933",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "WISE Living Lab",
+     "address_line1": "WISE Living Lab",
+     "result_type": "amenity",
+     "lat": 35.5824967,
+     "lon": 139.5571509,
+     "country_code": "jp",
+     "place_id": "51fccd1f2ed47161405993437a408fca4140f00103f901f1d2e8c102000000c0020192030f57495345204c6976696e67204c6162e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3131383433313935363333",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Dash Living HigashiAzabu",
+     "address_line1": "Dash Living HigashiAzabu",
+     "result_type": "amenity",
+     "lat": 35.655135,
+     "lon": 139.744449,
+     "country_code": "jp",
+     "place_id": "514791b586d27761405984bbb376dbd34140f00103f90106bca5a902000000c0020192031844617368204c6976696e672048696761736869417a616275e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3131343336313435363730",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 24,
+   "name": "Nago Pineapple Park",
+   "country": "Japan",
+   "ref": [
+    26.589401,
+    127.984406
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Nago Pineapple Park",
+     "address_line1": "Nago Pineapple Park",
+     "result_type": "amenity",
+     "lat": 26.6165795,
+     "lon": 127.9708586,
+     "country_code": "jp",
+     "place_id": "5195021c8c22fe5f405950e27327d89d3a40f00102f901a9414e4800000000c002019203134e61676f2050696e656170706c65205061726b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Nago Pineapple Park",
+     "address_line1": "Nago Pineapple Park",
+     "result_type": "amenity",
+     "lat": 26.6164726,
+     "lon": 127.9696693,
+     "country_code": "jp",
+     "place_id": "51dbdbd20f0ffe5f40594ee1f725d19d3a40f00102f901d29f510c00000000c002019203134e61676f2050696e656170706c65205061726b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 25,
+   "name": "Takayama",
+   "country": "Japan",
+   "ref": [
+    36.142757,
+    137.2562
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Takayama",
+     "address_line1": "Takayama",
+     "result_type": "city",
+     "lat": 36.1396246,
+     "lon": 137.2510322,
+     "country_code": "jp",
+     "place_id": "51c627ae740828614059c95b0938df114240f00101f90113f9470000000000c0020892030854616b6179616d61",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Takayama",
+     "address_line1": "Tsuzuki Ward",
+     "result_type": "suburb",
+     "lat": 35.534696,
+     "lon": 139.561836,
+     "country_code": "jp",
+     "place_id": "51e5b67d8ffa71614059a8a624eb70c44140f00101f90184b1fb0000000000c0020592030854616b6179616d61",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 26,
+   "name": "cave complexes near Vang Vieng",
+   "country": "Laos",
+   "ref": [
+    18.926098,
+    102.44764
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "F"
+   },
+   "results": [
+    {
+     "name": "Vang Vieng",
+     "address_line1": "Vang Vieng",
+     "result_type": "city",
+     "lat": 18.9194213,
+     "lon": 102.4477333,
+     "country_code": "la",
+     "place_id": "51213592a9a79c594059edbebe315feb3240f00103f9010b569a5600000000c0020892030a56616e67205669656e67",
+     "rank": {
+      "confidence": 0.23529411764705882,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 27,
+   "name": "Li Phi Waterfall",
+   "country": "Laos",
+   "ref": [
+    13.9833,
+    105.9833
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Li Phi Falls",
+     "address_line1": "Li Phi Falls",
+     "result_type": "amenity",
+     "lat": 13.9539819,
+     "lon": 105.911616,
+     "country_code": "la",
+     "place_id": "51a9a0a2ea577a5a4059aff3ca5070e82b40f00103f9015aa57c1900000000c0020192030c4c69205068692046616c6c73e203226f70656e7374726565746d61703a76656e75653a6e6f64652f343237353939313934",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Houay Phi",
+     "address_line1": "Houay Phi",
+     "result_type": "amenity",
+     "lat": 16.93478,
+     "lon": 106.19479,
+     "country_code": "la",
+     "place_id": "519fe57970778c5a405973f4f8bd4def3040c00201920309486f75617920506869e2031767656f6e616d65733a76656e75653a3131323335353739",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Houay Phi",
+     "address_line1": "Houay Phi",
+     "result_type": "amenity",
+     "lat": 20.80261,
+     "lon": 103.05107,
+     "country_code": "la",
+     "place_id": "51a1f31abb44c35940594c7155d977cd3440c00201920309486f75617920506869e2031667656f6e616d65733a76656e75653a31393535303737",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 28,
+   "name": "Tham Ting and Tham Thueng caves",
+   "country": "Laos",
+   "ref": [
+    19.888744,
+    102.135898
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 29,
+   "name": "Khone Phapheng Falls",
+   "country": "Laos",
+   "ref": [
+    19.828976,
+    104.53849
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Khone Phapheng Falls",
+     "address_line1": "Khone Phapheng Falls",
+     "result_type": "amenity",
+     "lat": 13.9597676,
+     "lon": 105.986526,
+     "country_code": "la",
+     "place_id": "51d6a9f23d237f5a40595485aba866eb2b40f00103f9015ba57c1900000000c002019203144b686f6e65205068617068656e672046616c6c73",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 30,
+   "name": "Laos Buffalo Dairy",
+   "country": "Laos",
+   "ref": [
+    19.30470588235294,
+    103.20294117647059
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Laos Buffalo Dairy",
+     "address_line1": "Laos Buffalo Dairy",
+     "result_type": "amenity",
+     "lat": 19.7933267,
+     "lon": 101.9860712,
+     "country_code": "la",
+     "place_id": "51c2e160ca1b7f5940592a8b677517cb3340f00103f90103fb3e4701000000c002019203124c616f732042756666616c6f204461697279",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 31,
+   "name": "local market",
+   "country": "Laos",
+   "ref": [
+    19.303529411764707,
+    103.20882352941177
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": true,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Local market",
+     "address_line1": "Local market",
+     "result_type": "amenity",
+     "lat": 17.5659685,
+     "lon": 104.6921321,
+     "country_code": "la",
+     "place_id": "51c1806fe44b2c5a4059f110c64fe3903140f00103f9012f06392501000000c0020192030c4c6f63616c206d61726b6574",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Local market",
+     "address_line1": "Local market",
+     "result_type": "amenity",
+     "lat": 18.942576,
+     "lon": 102.4469894,
+     "country_code": "la",
+     "place_id": "5128aa6d799b9c59405997fe25a94cf13240f00103f901bddbd03101000000c0020192030c4c6f63616c206d61726b6574",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Local market",
+     "address_line1": "Local market",
+     "result_type": "amenity",
+     "lat": 17.5623665,
+     "lon": 105.1876144,
+     "country_code": "la",
+     "place_id": "518e10d4df014c5a4059b1dd3d40f78f3140f00103f9015006392501000000c0020192030c4c6f63616c206d61726b6574",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 32,
+   "name": "Khuvsgul Lake",
+   "country": "Mongolia",
+   "ref": [
+    51.0,
+    100.5
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Lake Khuvsgul",
+     "address_line1": "Lake Khuvsgul",
+     "result_type": "amenity",
+     "lat": 51.0204501,
+     "lon": 100.4785657,
+     "country_code": "mn",
+     "place_id": "51319f07d2a01e5940599759df1b9e824940f00101f9015072190000000000c0020192030d4c616b65204b6875767367756c",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Khuvsgul National Park",
+     "address_line1": "Khuvsgul National Park",
+     "result_type": "amenity",
+     "lat": 50.4353363,
+     "lon": 100.1599702,
+     "country_code": "mn",
+     "place_id": "516a55a6f33c0a5940597ea19119b9374940f00103f9019b075d5600000000c002019203164b6875767367756c204e6174696f6e616c205061726be203236f70656e7374726565746d61703a76656e75653a6e6f64652f31343438393337333731",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 33,
+   "name": "Terelj valley",
+   "country": "Mongolia",
+   "ref": [
+    47.8597,
+    107.4514
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "R"
+   },
+   "results": [
+    {
+     "name": "Terelj Hotel",
+     "address_line1": "Terelj Hotel",
+     "result_type": "amenity",
+     "lat": 47.9886498,
+     "lon": 107.4619611,
+     "country_code": "mn",
+     "place_id": "518c214ac590dd5a405935199f138cfe4740f00102f9015233100a00000000c0020192030c546572656c6a20486f74656c",
+     "rank": {
+      "confidence": 0.7,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Terelj",
+     "address_line1": "Terelj",
+     "result_type": "street",
+     "lat": 48.02841,
+     "lon": 107.678946,
+     "country_code": "mn",
+     "place_id": "510070ecd973eb5a40598f705af0a2034840c00204920306546572656c6ae203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3330303530333536",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Terelj - Mungunmorit",
+     "address_line1": "Terelj - Mungunmorit",
+     "result_type": "street",
+     "lat": 48.296432,
+     "lon": 108.202765,
+     "country_code": "mn",
+     "place_id": "5180f10c1afa0c5b405973bed87bf1254840c00204920314546572656c6a202d204d756e67756e6d6f726974e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3330303530333435",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 34,
+   "name": "Yol Valley (Vulture Valley)",
+   "country": "Mongolia",
+   "ref": [
+    43.5167,
+    104.0667
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Yol",
+     "address_line1": "Yol",
+     "result_type": "amenity",
+     "lat": 43.5100514,
+     "lon": 104.0659863,
+     "country_code": "mn",
+     "place_id": "51fb1e9a1e39045a4059b723415d49c14540f00103f9013c9c977e01000000c00201920303596f6ce203236f70656e7374726565746d61703a76656e75653a6e6f64652f36343138383332343434",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "tali yol",
+     "address_line1": "tali yol",
+     "result_type": "street",
+     "lat": 47.876332,
+     "lon": 107.182073,
+     "country_code": "mn",
+     "place_id": "51041f8315a7cb5a40591938a0a52bf04740c0020492030874616c6920796f6ce203256f70656e7374726565746d61703a7374726565743a706f6c796c696e653a37363138303331",
+     "rank": {
+      "confidence": 0.007083825265643446,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Yol Am Limit Point",
+     "address_line1": "Yol Am Limit Point",
+     "result_type": "amenity",
+     "lat": 43.493145,
+     "lon": 104.085449,
+     "country_code": "mn",
+     "place_id": "51751e15ff77055a4059cc9717601fbf4540f00103f901612c4a5a01000000c00201920312596f6c20416d204c696d697420506f696e74e203236f70656e7374726565746d61703a76656e75653a6e6f64652f35383039373737373631",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 35,
+   "name": "Chinggis Khan equestrian statue",
+   "country": "Mongolia",
+   "ref": [
+    47.8078,
+    107.5358
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "E Mart Chinggis",
+     "address_line1": "E Mart Chinggis",
+     "result_type": "amenity",
+     "lat": 47.9231218,
+     "lon": 106.9342586,
+     "country_code": "mn",
+     "place_id": "516f4095e4cabb5a4059c19ceada28f64740f00103f9012142f30101000000c0020192030f45204d617274204368696e67676973e203236f70656e7374726565746d61703a76656e75653a6e6f64652f34333237363836363839",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Chinggis Beer Club",
+     "address_line1": "Chinggis Beer Club",
+     "result_type": "amenity",
+     "lat": 47.9265434,
+     "lon": 106.9144681,
+     "country_code": "mn",
+     "place_id": "510eaf35a586ba5a40598ea960f998f64740f00103f901ebe3427b01000000c002019203124368696e67676973204265657220436c7562e203236f70656e7374726565746d61703a76656e75653a6e6f64652f36333632393438353837",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Chinggis Brewery",
+     "address_line1": "Chinggis Brewery",
+     "result_type": "amenity",
+     "lat": 47.9265449,
+     "lon": 106.9144563,
+     "country_code": "mn",
+     "place_id": "51c187b77386ba5a405947e3f50599f64740f00103f9014c1d5f8a00000000c002019203104368696e676769732042726577657279e203236f70656e7374726565746d61703a76656e75653a6e6f64652f32333231343839323238",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 36,
+   "name": "Khorgo Volcano crater",
+   "country": "Mongolia",
+   "ref": [
+    48.18,
+    99.86
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "khorgo",
+     "address_line1": "khorgo",
+     "result_type": "amenity",
+     "lat": 48.1527481,
+     "lon": 99.8982145,
+     "country_code": "mn",
+     "place_id": "51c092ab587cf95840595803ef3f8d134840f00103f9015db0000301000000c002019203066b686f72676fe203236f70656e7374726565746d61703a76656e75653a6e6f64652f34333435333434303933",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 37,
+   "name": "Turtle Rock",
+   "country": "Mongolia",
+   "ref": [
+    47.8597,
+    107.4297
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Turtle Rock",
+     "address_line1": "Turtle Rock",
+     "result_type": "amenity",
+     "lat": 47.907495,
+     "lon": 107.4228127,
+     "country_code": "mn",
+     "place_id": "5157b5ff5c0fdb5a40594a24d1cb28f44740f00102f901f6d1db1300000000c0020192030b547572746c6520526f636b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Turtle Rock",
+     "address_line1": "Turtle Rock",
+     "result_type": "amenity",
+     "lat": 47.9082811,
+     "lon": 107.423445,
+     "country_code": "mn",
+     "place_id": "51e7a90eb919db5a405997091a8e42f44740f00103f901717ec20c03000000c0020192030b547572746c6520526f636b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Turtle Rock",
+     "address_line1": "Turtle Rock",
+     "result_type": "amenity",
+     "lat": 47.0318054,
+     "lon": 91.7706989,
+     "country_code": "mn",
+     "place_id": "510ba47a2153f1564059096b083312844740f00102f901e61ed83200000000c0020192030b547572746c6520526f636b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 38,
+   "name": "Annapurna South Base Camp",
+   "country": "Nepal",
+   "ref": [
+    28.530744,
+    83.878085
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Annapurna Base Camp",
+     "address_line1": "Annapurna Base Camp",
+     "result_type": "city",
+     "lat": 28.53082,
+     "lon": 83.88072,
+     "country_code": "np",
+     "place_id": "51b83b6bb75df85440590e10ccd1e3873c40c00208920313416e6e617075726e6120426173652043616d70e2031f77686f736f6e66697273743a6c6f63616c6974793a31323736313635323535",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "Annapurna Base Camp Board",
+     "address_line1": "Annapurna Base Camp Board",
+     "result_type": "amenity",
+     "lat": 28.5310167,
+     "lon": 83.8797849,
+     "country_code": "np",
+     "place_id": "51f04053654ef85440593d21e0b5f0873c40f00103f90113f4559f01000000c00201920319416e6e617075726e6120426173652043616d7020426f617264e203236f70656e7374726565746d61703a76656e75653a6e6f64652f36393638313737363833",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 39,
+   "name": "Cho La Pass to Dzongla",
+   "country": "Nepal",
+   "ref": [
+    27.9333,
+    86.7833
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Mohare Danda to Hampal pass",
+     "address_line1": "Mohare Danda to Hampal pass",
+     "result_type": "street",
+     "lat": 28.412377,
+     "lon": 83.677033,
+     "country_code": "np",
+     "place_id": "510454388254eb544059629f008a91693c40c0020492031b4d6f686172652044616e646120746f2048616d70616c2070617373e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3232313832313838",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Pame to Ghatichhina By Pass Road",
+     "address_line1": "Pame to Ghatichhina By Pass Road",
+     "result_type": "street",
+     "lat": 28.239134,
+     "lon": 83.888237,
+     "country_code": "np",
+     "place_id": "51388600e0d8f8544059965cc5e2373d3c40c0020492032050616d6520746f204768617469636868696e61204279205061737320526f6164e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3232323332363339",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Pame to Ghatichhina By pass Raod",
+     "address_line1": "Pame to Ghatichhina By pass Raod",
+     "result_type": "street",
+     "lat": 28.239499,
+     "lon": 83.865966,
+     "country_code": "np",
+     "place_id": "51ab5ca8fc6bf7544059b96c74ce4f3d3c40c0020492032050616d6520746f204768617469636868696e6120427920706173732052616f64e203266f70656e7374726565746d61703a7374726565743a706f6c796c696e653a3232323332363431",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 40,
+   "name": "Zatrwa La Pass",
+   "country": "Nepal",
+   "ref": [
+    27.6667,
+    86.7833
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Zatrwa La",
+     "address_line1": "Zatrwa La",
+     "result_type": "amenity",
+     "lat": 27.64747,
+     "lon": 86.7683234,
+     "country_code": "np",
+     "place_id": "5119f0e8352cb155405920240b98c0a53b40f00103f901943dd61001000000c002019203095a6174727761204c61",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 41,
+   "name": "Gorakshep (5,164m)",
+   "country": "Nepal",
+   "ref": [
+    28.0,
+    86.8583
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "address_line1": "CADRE Kailari 5 164m",
+     "result_type": "amenity",
+     "lat": 28.534502,
+     "lon": 80.800087,
+     "country_code": "np",
+     "place_id": "511bbd1aa0343354405987a5811fd5883c40f00102f9019de0b41f00000000c00201e203216f70656e7374726565746d61703a76656e75653a7761792f353331393437363737",
+     "rank": {
+      "confidence": 0.08333333333333333,
+      "match_type": "inner_part"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Five",
+     "address_line1": "Five",
+     "result_type": "state",
+     "lat": 28.07216,
+     "lon": 82.742907,
+     "country_code": "np",
+     "place_id": "510c3ecdc98baf5440595114e81379123c40c0020a92030446697665e2031d77686f736f6e66697273743a726567696f6e3a31313038383037313331",
+     "rank": {
+      "confidence": 0,
+      "match_type": "match_by_country_or_state"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "ward-5 office",
+     "address_line1": "ward-5 office",
+     "result_type": "amenity",
+     "lat": 27.572208,
+     "lon": 85.336388,
+     "country_code": "np",
+     "place_id": "5114b188618755554059738236397c923b40f00102f901e859731400000000c0020192030d776172642d35206f6666696365e203216f70656e7374726565746d61703a76656e75653a7761792f333433313033393736",
+     "rank": {
+      "confidence": 0,
+      "match_type": "inner_part"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 42,
+   "name": "Koto to Meta",
+   "country": "Nepal",
+   "ref": [
+    28.6333,
+    84.2167
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "R"
+   },
+   "results": [
+    {
+     "name": "Koto",
+     "address_line1": "Koto",
+     "result_type": "city",
+     "lat": 28.55287,
+     "lon": 84.26193,
+     "country_code": "np",
+     "place_id": "51d8f50b76c31055405984f068e3888d3c40c002089203044b6f746fe2031f77686f736f6e66697273743a6c6f63616c6974793a31323433333035353437",
+     "rank": {
+      "confidence": 0.33333333333333337,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "Koto Restaurant",
+     "address_line1": "Koto Restaurant",
+     "result_type": "amenity",
+     "lat": 27.6794528,
+     "lon": 85.316747,
+     "country_code": "np",
+     "place_id": "51cb8635954554554059f62c639ef0ad3b40f00103f901b5a2b6e500000000c0020192030f4b6f746f2052657374617572616e74e203236f70656e7374726565746d61703a76656e75653a6e6f64652f33383533393531363639",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 43,
+   "name": "Phunki Tenga",
+   "country": "Nepal",
+   "ref": [
+    27.8278,
+    86.7583
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 44,
+   "name": "Hahoe Folk Village, Andong",
+   "country": "South Korea",
+   "ref": [
+    36.565434,
+    128.72649
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Andong Folk Village",
+     "address_line1": "Andong Folk Village",
+     "result_type": "amenity",
+     "lat": 36.5764319,
+     "lon": 128.7647691,
+     "country_code": "kr",
+     "place_id": "51b92f0cfd7818604059826f3f85c8494240f00103f90108d80a3600000000c00201920313416e646f6e6720466f6c6b2056696c6c616765e203226f70656e7374726565746d61703a76656e75653a6e6f64652f393036363830333238",
+     "rank": {
+      "confidence": 0.75,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Hahoe Village",
+     "address_line1": "Hahoe Village",
+     "result_type": "amenity",
+     "lat": 36.5401697,
+     "lon": 128.5206903,
+     "country_code": "kr",
+     "place_id": "51063bb47ea91060405923e5dd4724454240f00103f90162af213600000000c0020192030d4861686f652056696c6c616765e203226f70656e7374726565746d61703a76656e75653a6e6f64652f393038313737323530",
+     "rank": {
+      "confidence": 0.5,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "approx. every 60 minutes",
+     "address_line1": "approx. every 60 minutes",
+     "result_type": "amenity",
+     "lat": 36.5632526,
+     "lon": 128.7307423,
+     "country_code": "kr",
+     "place_id": "51b909ad3d6217604059883144a918484240f00103f901fd3ebe8002000000c00201920318617070726f782e206576657279203630206d696e75746573e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3130373439383836323035",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 45,
+   "name": "Hanok Village, Jeonju",
+   "country": "South Korea",
+   "ref": [
+    35.82238,
+    127.147804
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Hanok Maeul Village",
+     "address_line1": "Hanok Maeul Village",
+     "result_type": "amenity",
+     "lat": 35.8148544,
+     "lon": 127.1526241,
+     "country_code": "kr",
+     "place_id": "513685df97c4c95f4059388023264de84140f00103f9018cc31d0c01000000c0020192031348616e6f6b204d6165756c2056696c6c616765",
+     "rank": {
+      "confidence": 0.81,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Jeonju Hanok Village History Hall",
+     "address_line1": "Jeonju Hanok Village History Hall",
+     "result_type": "amenity",
+     "lat": 35.8159507,
+     "lon": 127.1530019,
+     "country_code": "kr",
+     "place_id": "51752e7bc8cac95f4059fcd2911271e84140f00103f9017df7933603000000c002019203214a656f6e6a752048616e6f6b2056696c6c61676520486973746f72792048616c6c",
+     "rank": {
+      "confidence": 0.6561000000000001,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Gijachon Entrance. Hanok Village SeoheaGranbl",
+     "address_line1": "Gijachon Entrance. Hanok Village SeoheaGranbl",
+     "result_type": "amenity",
+     "lat": 35.8272856,
+     "lon": 127.1539489,
+     "country_code": "kr",
+     "place_id": "5155b07c4cdac95f4059d3399a7ee4e94140f00103f901d12aab1c02000000c0020192032d47696a6163686f6e20456e7472616e63652e2048616e6f6b2056696c6c6167652053656f6865614772616e626c",
+     "rank": {
+      "confidence": 0.6561000000000001,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 46,
+   "name": "village center",
+   "country": "South Korea",
+   "ref": [
+    36.5,
+    127.8
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": true,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Seorae Global Village Center",
+     "address_line1": "Seorae Global Village Center",
+     "result_type": "amenity",
+     "lat": 37.4973728,
+     "lon": 126.9984247,
+     "country_code": "kr",
+     "place_id": "513181b630e6bf5f4059c1f572e9a9bf4240f00103f90137e4559c00000000c0020192031c53656f72616520476c6f62616c2056696c6c6167652043656e746572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Seorae Village, Seorae Global Village Center",
+     "address_line1": "Seorae Village, Seorae Global Village Center",
+     "result_type": "amenity",
+     "lat": 37.4979022,
+     "lon": 126.9983804,
+     "country_code": "kr",
+     "place_id": "51eabde776e5bf5f4059a0cd6042bbbf4240f00103f901c3cd4d2b02000000c0020192032c53656f7261652056696c6c6167652c2053656f72616520476c6f62616c2056696c6c6167652043656e746572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Itaewon Global Village Center",
+     "address_line1": "Itaewon Global Village Center",
+     "result_type": "amenity",
+     "lat": 37.5354649,
+     "lon": 126.991888,
+     "country_code": "kr",
+     "place_id": "51df52ce177bbf5f4059f5d3241d8ac44240f00103f901ae60390a03000000c0020192031d49746165776f6e20476c6f62616c2056696c6c6167652043656e746572",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 47,
+   "name": "Daehan Dawon",
+   "country": "South Korea",
+   "ref": [
+    34.7719,
+    127.0797
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Daehan",
+     "address_line1": "Daehan",
+     "result_type": "city",
+     "lat": 36.03912,
+     "lon": 126.72748,
+     "country_code": "kr",
+     "place_id": "519f1f46088fae5f40594c4f58e201054240c0020892030644616568616ee2031a67656f6e616d65733a6c6f63616c6974793a3132303332383635",
+     "rank": {
+      "confidence": 0.5,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Daehan-gamnihoesahoebokjijaedan",
+     "address_line1": "Daehan-gamnihoesahoebokjijaedan",
+     "result_type": "amenity",
+     "lat": 37.44742,
+     "lon": 126.73542,
+     "country_code": "kr",
+     "place_id": "51c2340c1f11af5f4059c5c9fd0e45b94240c0020192031f44616568616e2d67616d6e69686f657361686f65626f6b6a696a616564616ee2031767656f6e616d65733a76656e75653a3133303731313037",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Daehan-nongjang",
+     "address_line1": "Daehan-nongjang",
+     "result_type": "amenity",
+     "lat": 36.40838,
+     "lon": 127.6601,
+     "country_code": "kr",
+     "place_id": "51bc0512143fea5f4059952bbccb45344240c0020192030f44616568616e2d6e6f6e676a616e67e2031767656f6e616d65733a76656e75653a3132303732343431",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 48,
+   "name": "Dolce Hotel or glamping site",
+   "country": "South Korea",
+   "ref": [
+    36.5,
+    127.8
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": true,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 49,
+   "name": "Soesokkak Estuary",
+   "country": "South Korea",
+   "ref": [
+    33.253,
+    126.5194
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 50,
+   "name": "Kelaniya Temple",
+   "country": "Sri Lanka",
+   "ref": [
+    6.950355,
+    79.91734
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Kelaniya Temple",
+     "address_line1": "Kelaniya Temple",
+     "result_type": "amenity",
+     "lat": 6.9517,
+     "lon": 79.9165,
+     "country_code": "lk",
+     "place_id": "512db29defa7fa534059ad69de718ace1b40c0020192030f4b656c616e6979612054656d706c65e2031667656f6e616d65733a76656e75653a37353435333130",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Kelaniya",
+     "address_line1": "Kelaniya",
+     "result_type": "city",
+     "lat": 6.9553,
+     "lon": 79.922,
+     "country_code": "lk",
+     "place_id": "515eba490c02fb534059a779c7293ad21b40c002089203084b656c616e697961e2031e77686f736f6e66697273743a6c6f63616c6974793a343231323033393233",
+     "rank": {
+      "confidence": 0.5,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    },
+    {
+     "name": "Kelaniya Division",
+     "address_line1": "Kelaniya Division",
+     "result_type": "city",
+     "lat": 6.9721,
+     "lon": 79.9108,
+     "country_code": "lk",
+     "place_id": "51984c158c4afa53405933c4b12e6ee31b40c002089203114b656c616e697961204469766973696f6ee2031967656f6e616d65733a6c6f63616c6974793a37353435343135",
+     "rank": {
+      "confidence": 0.5,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 51,
+   "name": "Koneshwara Hindu temple",
+   "country": "Sri Lanka",
+   "ref": [
+    8.5774,
+    81.2337
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "hindu temple",
+     "address_line1": "hindu temple",
+     "result_type": "amenity",
+     "lat": 6.9433109,
+     "lon": 80.7356127,
+     "country_code": "lk",
+     "place_id": "516d414a47142f54405960d7e54af3c51b40f00103f9010a6c816002000000c0020192030c68696e64752074656d706c65e203246f70656e7374726565746d61703a76656e75653a6e6f64652f3130323039303239313330",
+     "rank": {
+      "confidence": 0.6666666666666667,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Hindu Temple",
+     "address_line1": "Hindu Temple",
+     "result_type": "amenity",
+     "lat": 6.7825601,
+     "lon": 81.0035609,
+     "country_code": "lk",
+     "place_id": "51d6427f573a40544059339e526f57211b40f00103f90193ddcd7600000000c0020192030c48696e64752054656d706c65e203236f70656e7374726565746d61703a76656e75653a6e6f64652f31393933323033303931",
+     "rank": {
+      "confidence": 0.6666666666666667,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Hindu Temple",
+     "address_line1": "Hindu Temple",
+     "result_type": "amenity",
+     "lat": 9.0792141,
+     "lon": 80.09376,
+     "country_code": "lk",
+     "place_id": "51126bf12900065440599fc321c08e282240f00103f90188e2561801000000c0020192030c48696e64752054656d706c65e203236f70656e7374726565746d61703a76656e75653a6e6f64652f34373033333134353638",
+     "rank": {
+      "confidence": 0.6666666666666667,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 52,
+   "name": "Ritigala Monastery",
+   "country": "Sri Lanka",
+   "ref": [
+    7.373946,
+    80.13873
+   ],
+   "ref_by": "null",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Ritigala Ancient Buddhist Monastery",
+     "address_line1": "Ritigala Ancient Buddhist Monastery",
+     "result_type": "amenity",
+     "lat": 8.1183328,
+     "lon": 80.6646122,
+     "country_code": "lk",
+     "place_id": "5172e19b01892a5440599516e41d963c2040f00103f9013bd4ebdd00000000c002019203235269746967616c6120416e6369656e74204275646468697374204d6f6e617374657279",
+     "rank": {
+      "confidence": 0.81,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Monastery Ruins",
+     "address_line1": "Monastery Ruins",
+     "result_type": "amenity",
+     "lat": 8.1186344,
+     "lon": 80.6607336,
+     "country_code": "lk",
+     "place_id": "5193d79475492a544059755ce8a5bd3c2040f00103f901eaa0a15401000000c0020192030f4d6f6e617374657279205275696e73",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 53,
+   "name": "Back of Beyond Dehigaha Ela Eco Lodge",
+   "country": "Sri Lanka",
+   "ref": [
+    6.380292,
+    80.31019
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 54,
+   "name": "Balapitiya",
+   "country": "Sri Lanka",
+   "ref": [
+    6.275897,
+    80.03928
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Balapitiya",
+     "address_line1": "Balapitiya",
+     "result_type": "city",
+     "lat": 6.2805756,
+     "lon": 80.0405753,
+     "country_code": "lk",
+     "place_id": "51a0a124c99802544059e938c8354f1f1940f00103f90122e3eb9f00000000c0020892030a42616c61706974697961",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 55,
+   "name": "Galle",
+   "country": "Sri Lanka",
+   "ref": [
+    6.026162,
+    80.21786
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Galle",
+     "address_line1": "Galle",
+     "result_type": "city",
+     "lat": 6.0328139,
+     "lon": 80.214955,
+     "country_code": "lk",
+     "place_id": "5126c79dd2c10d544059b76a8df799211840f00101f901358f510000000000c0020892030547616c6c65",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 56,
+   "name": "Golden Waterfalls",
+   "country": "Taiwan",
+   "ref": [
+    25.1069,
+    121.8583
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Golden Grotto",
+     "address_line1": "Golden Grotto",
+     "result_type": "amenity",
+     "lat": 24.0945906,
+     "lon": 121.5707807,
+     "country_code": "tw",
+     "place_id": "5108ecc5ab87645e40594f82ed1637183840f00103f9017db9934e01000000c0020192030d476f6c64656e2047726f74746f",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Glory Golden Tulip",
+     "address_line1": "Glory Golden Tulip",
+     "result_type": "amenity",
+     "lat": 23.001744,
+     "lon": 120.199543,
+     "country_code": "tw",
+     "place_id": "5154c90050c50c5e4059d7f6764b72003740f00103f9014fb611ef00000000c00201920312476c6f727920476f6c64656e2054756c6970e203236f70656e7374726565746d61703a76656e75653a6e6f64652f34303130393135343037",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Golden (h)",
+     "address_line1": "Golden (h)",
+     "result_type": "amenity",
+     "lat": 25.00495,
+     "lon": 121.48454,
+     "country_code": "tw",
+     "place_id": "51a5660fb4025f5e40597e1d386744013940c0020192030a476f6c64656e20286829e2031767656f6e616d65733a76656e75653a3131303031353935",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 57,
+   "name": "Laomei River (Dream Valley), New Taipei City",
+   "country": "Taiwan",
+   "ref": [
+    25.28765,
+    121.546585
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "F"
+   },
+   "results": [
+    {
+     "name": "New Taipei",
+     "address_line1": "New Taipei City",
+     "result_type": "county",
+     "lat": 24.872182,
+     "lon": 121.560326,
+     "country_code": "tw",
+     "place_id": "514e469561dc635e4059ed28ce5147df3840c0020992030a4e657720546169706569e2032277686f736f6e66697273743a6d6163726f636f756e74793a31313038373536383731",
+     "rank": {
+      "confidence": 0,
+      "match_type": "match_by_country_or_state"
+     },
+     "datasource": {
+      "sourcename": "whosonfirst",
+      "attribution": "Who's On First"
+     }
+    }
+   ]
+  },
+  {
+   "i": 58,
+   "name": "Taipingshan Villa",
+   "country": "Taiwan",
+   "ref": [
+    24.5167,
+    121.6333
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "R"
+   },
+   "results": [
+    {
+     "name": "Taipingshan",
+     "address_line1": "Taipingshan",
+     "result_type": "city",
+     "lat": 24.493333,
+     "lon": 121.536389,
+     "country_code": "tw",
+     "place_id": "51c93b873254625e40599e094d124b7e3840f00103f901590ae4fe00000000c0020892030b54616970696e677368616e",
+     "rank": {
+      "confidence": 0.9,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 59,
+   "name": "Caoling Historic Trail",
+   "country": "Taiwan",
+   "ref": [
+    25.0333,
+    121.9167
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 60,
+   "name": "Jancing Historic Trail",
+   "country": "Taiwan",
+   "ref": [
+    24.502,
+    121.451
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 61,
+   "name": "Taiwan Hemlock Trail",
+   "country": "Taiwan",
+   "ref": [
+    24.5007,
+    121.4537
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {},
+   "results": []
+  },
+  {
+   "i": 62,
+   "name": "Cheow Lan Lake",
+   "country": "Thailand",
+   "ref": [
+    8.9275,
+    98.9069
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "cheow lan lake",
+     "address_line1": "cheow lan lake",
+     "result_type": "amenity",
+     "lat": 8.9540215,
+     "lon": 98.6100825,
+     "country_code": "th",
+     "place_id": "512a5778970ba75840599a5c8c8175e82140f00103f90195981d7c01000000c0020192030e6368656f77206c616e206c616b65",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 63,
+   "name": "Erawan Waterfall",
+   "country": "Thailand",
+   "ref": [
+    14.3717,
+    99.1531
+   ],
+   "ref_by": "llm",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Erawan Waterfall",
+     "address_line1": "Erawan Waterfall",
+     "result_type": "amenity",
+     "lat": 14.3682867,
+     "lon": 99.1442969,
+     "country_code": "th",
+     "place_id": "51829a10293cc9584059811a081390bc2c40f00103f901c7b8929500000000c0020192031045726177616e20576174657266616c6c",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 64,
+   "name": "Koh Phi Phi village",
+   "country": "Thailand",
+   "ref": [
+    7.683056,
+    98.766111
+   ],
+   "ref_by": "mapbox",
+   "hard": true,
+   "generic": false,
+   "labels": {
+    "0": "W",
+    "1": "R"
+   },
+   "results": [
+    {
+     "name": "Ban Phai Koh Don",
+     "address_line1": "Ban Phai Koh Don",
+     "result_type": "city",
+     "lat": 16.9201371,
+     "lon": 100.1922876,
+     "country_code": "th",
+     "place_id": "51495ba6704e0c5940591756e01a8eeb3040f00103f901c96c2f9a00000000c0020892031042616e2050686169204b6f6820446f6e",
+     "rank": {
+      "confidence": 0.23076923076923078,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Phi Phi Natural Resort Koh Phi Phi",
+     "address_line1": "Phi Phi Natural Resort Koh Phi Phi",
+     "result_type": "amenity",
+     "lat": 7.78128,
+     "lon": 98.76176,
+     "country_code": "th",
+     "place_id": "51a9d903adc0b0584059551344dd07201f40c0020192032250686920506869204e61747572616c205265736f7274204b6f682050686920506869e2031767656f6e616d65733a76656e75653a3130313733303531",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Zeavola Koh Phi Phi",
+     "address_line1": "Zeavola Koh Phi Phi",
+     "result_type": "amenity",
+     "lat": 7.77922,
+     "lon": 98.76118,
+     "country_code": "th",
+     "place_id": "51a297512cb7b0584059758e01d9eb1d1f40c002019203135a6561766f6c61204b6f682050686920506869e2031767656f6e616d65733a76656e75653a3130313733303438",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 65,
+   "name": "Chinatown",
+   "country": "Thailand",
+   "ref": [
+    13.7398,
+    100.5144
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W",
+    "1": "N"
+   },
+   "results": [
+    {
+     "name": "Chinatown",
+     "address_line1": "Chinatown",
+     "result_type": "street",
+     "lat": 18.81133,
+     "lon": 98.977993,
+     "country_code": "th",
+     "place_id": "51e2adf36f97be5840598143a852b3cf3240f00102f90134e9c11200000000c002049203094368696e61746f776e",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Chinatown",
+     "address_line1": "Chinatown",
+     "result_type": "amenity",
+     "lat": 13.7408579,
+     "lon": 100.5090398,
+     "country_code": "th",
+     "place_id": "513157ab1b94205940596bf706ba517b2b40f00103f901ed54511501000000c002019203094368696e61746f776e",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Yaowarat",
+     "address_line1": "Yaowarat",
+     "result_type": "suburb",
+     "lat": 13.741907,
+     "lon": 100.5089484,
+     "country_code": "th",
+     "place_id": "517f564f9c9220594059d158fb3bdb7b2b40f00103f901ac81461400000000c0020592030859616f7761726174",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 66,
+   "name": "Houay Fai",
+   "country": "Thailand",
+   "ref": [
+    18.80454,
+    100.788284
+   ],
+   "ref_by": "null",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Houay Nangxot",
+     "address_line1": "Houay Nangxot",
+     "result_type": "amenity",
+     "lat": 17.41685,
+     "lon": 104.78828,
+     "country_code": "th",
+     "place_id": "51d105f52d73325a40596d567daeb66a3140c0020192030d486f756179204e616e67786f74e2031767656f6e616d65733a76656e75653a3131323333383938",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Houay Lôm",
+     "address_line1": "Houay Lôm",
+     "result_type": "amenity",
+     "lat": 20.27941,
+     "lon": 100.4086,
+     "country_code": "th",
+     "place_id": "5152499d80261a594059e42cec6987473440c0020192030a486f756179204cc3b46de2031667656f6e616d65733a76656e75653a31393034343339",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    },
+    {
+     "name": "Houay Mak-Hiao",
+     "address_line1": "Houay Mak-Hiao",
+     "result_type": "amenity",
+     "lat": 17.99499,
+     "lon": 102.91722,
+     "country_code": "th",
+     "place_id": "512dcf83bbb3ba594059d8d825aab7fe3140c0020192030e486f756179204d616b2d4869616fe2031767656f6e616d65733a76656e75653a3131323333313439",
+     "rank": {
+      "confidence": 0,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "geonames",
+      "attribution": "GeoNames"
+     }
+    }
+   ]
+  },
+  {
+   "i": 67,
+   "name": "Sukhothai Historical Park",
+   "country": "Thailand",
+   "ref": [
+    17.0169,
+    99.7027
+   ],
+   "ref_by": "llm",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Sukhothai Historical Park",
+     "address_line1": "Sukhothai Historical Park",
+     "result_type": "amenity",
+     "lat": 17.0203334,
+     "lon": 99.7038571,
+     "country_code": "th",
+     "place_id": "51ac63a6fe0bed5840593804d89134053140f00102f90117f7132000000000c0020192031953756b686f7468616920486973746f726963616c205061726b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Sukhothai Historical Park",
+     "address_line1": "Sukhothai Historical Park",
+     "result_type": "amenity",
+     "lat": 17.0156231,
+     "lon": 99.6684781,
+     "country_code": "th",
+     "place_id": "51e7655e58c8ea584059e88f1fe0ff033140f00102f9016895a41700000000c0020192031953756b686f7468616920486973746f726963616c205061726b",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 68,
+   "name": "An Binh Island",
+   "country": "Vietnam",
+   "ref": [
+    10.012421,
+    105.74875
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "W"
+   },
+   "results": [
+    {
+     "name": "Thái Bình Ward",
+     "address_line1": "Thái Bình Ward",
+     "result_type": "city",
+     "lat": 20.4751012,
+     "lon": 106.3127973,
+     "country_code": "vn",
+     "place_id": "51bc71f7de04945a4059554a743ba0793440f00101f901602f2a0100000000c002089203105468c3a1692042c3ac6e682057617264",
+     "rank": {
+      "confidence": 0,
+      "match_type": "match_by_city_or_disrict"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Vĩnh Bình",
+     "address_line1": "Vĩnh Bình",
+     "result_type": "city",
+     "lat": 10.4413076,
+     "lon": 105.1718222,
+     "country_code": "vn",
+     "place_id": "51836e8a22ff4a5a4059d7f3da11f3e12440f00103f9013422026c00000000c0020892030b56c4a96e682042c3ac6e68",
+     "rank": {
+      "confidence": 0,
+      "match_type": "match_by_city_or_disrict"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    },
+    {
+     "name": "Bình Chuẩn Commune",
+     "address_line1": "Bình Chuẩn Commune",
+     "result_type": "city",
+     "lat": 19.2340928,
+     "lon": 104.9205065,
+     "country_code": "vn",
+     "place_id": "5159501894e93a5a4059a43a7881ed3b3340f00101f9018a11290100000000c0020892031542c3ac6e6820436875e1baa96e20436f6d6d756e65",
+     "rank": {
+      "confidence": 0,
+      "match_type": "match_by_city_or_disrict"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 69,
+   "name": "Chau Doc",
+   "country": "Vietnam",
+   "ref": [
+    10.709042,
+    105.11792
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Châu Đốc",
+     "address_line1": "Châu Đốc",
+     "result_type": "city",
+     "lat": 10.7101604,
+     "lon": 105.1174982,
+     "country_code": "vn",
+     "place_id": "51b0952b1785475a40591cd4d9249a6b2540f00103f901ffab6a0400000000c0020892030c4368c3a27520c490e1bb9163",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  },
+  {
+   "i": 70,
+   "name": "Ho Chi Minh City",
+   "country": "Vietnam",
+   "ref": [
+    10.775525,
+    106.702105
+   ],
+   "ref_by": "mapbox",
+   "hard": false,
+   "generic": false,
+   "labels": {
+    "0": "N"
+   },
+   "results": [
+    {
+     "name": "Ho Chi Minh City",
+     "address_line1": "Ho Chi Minh City",
+     "result_type": "city",
+     "lat": 10.7737261,
+     "lon": 106.7166008,
+     "country_code": "vn",
+     "place_id": "5165129ac9dcad5a40598d1fcfd3258c2540f00101f901fc1d1e0000000000c00208920310486f20436869204d696e682043697479",
+     "rank": {
+      "confidence": 1,
+      "match_type": "full_match"
+     },
+     "datasource": {
+      "sourcename": "openstreetmap",
+      "attribution": "© OpenStreetMap contributors"
+     }
+    }
+   ]
+  }
+ ]
+}

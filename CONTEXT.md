@@ -264,10 +264,21 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
   set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours, dry-run cost
   estimate, refused during a wave); `place_geocode` (debounced, the ONLY writer of
-  `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), a geocoder
-  adapter optionally confirms it (`GEOCODER_PROVIDER` = `model_only` default | `mapbox_permanent` |
-  `amazon_location`), hard country/bbox guard, transit-aware outlier rule → `suspect`; admin-fixed
-  (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
+  `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), **Geoapify**
+  (OpenStreetMap data; S236 decision, all countries; `GEOCODER_PROVIDER` = `geoapify` default |
+  `model_only` for tests / emergency; `mapbox_permanent` / `amazon_location` fail as not supported —
+  Mapbox is the basemap only, Amazon Location is not used) confirms it with the bake-off acceptance
+  rule (`services/places/geomatch.py`: top 3, name match, no admin-area types, ≤ 25 km / 50 km for long
+  features; `rank.confidence` recorded, never a gate) → `located_by='geoapify'`, `geo_precision='point'`;
+  otherwise the model's point stays (`llm`, `geo_precision='area'` — never drawn as a pin; hard kinds
+  such as temple / pass / lake / village get `review_reason` for `/admin/places`). Generic phrases
+  ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
+  429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`). Key: Secrets Manager
+  `aa-cis/dev/geoapify` (plain string), worker task role reads it; never logged. **Attribution
+  required wherever these coordinates are shown (CIS admin and every consumer, TripPlanner first):
+  "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in
+  `geocoder_meta.attribution` (Geoapify storage terms). Hard country/bbox guard, transit-aware outlier
+  rule → `suspect`; admin-fixed (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
   kept). Stages `a3_place_days` (Sonnet, Luna 20% shadow), `a3_place_locate`, `a3_place_embed`
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
@@ -311,7 +322,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 |---|---|---|---|
 | AA-TripPlanner-Web | `gold_aa_internal.published_tours` (tenant RLS, AA tenant), `acp_contract.v_active_tour_atoms` (place/activity columns), `shared.destinations` (read-only), photo views `shared.v_destination_photos` / `v_tour_photos` | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migrations 173 (gateway tables + log), 180 / 216 (atoms), 201 (destinations read-only, photo views) to role `tripplanner` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
-| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
+| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 227 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway

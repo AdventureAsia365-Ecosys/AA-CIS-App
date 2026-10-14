@@ -50,7 +50,8 @@ BBOX = {
 }
 
 OUTLIER_KM = 600.0
-CONFIRM_KM = 25.0
+# Geocoders whose accepted result replaces the model's point (services/places/geocoder.CONFIRMED_BY).
+CONFIRMED_BY = frozenset({"geoapify"})
 
 
 def canonical_country(name: Optional[str]) -> Optional[str]:
@@ -138,7 +139,8 @@ def is_suspect(outlier_sources: int, located_by: Optional[str], geo_status: Opti
 def may_overwrite(old_located_by: Optional[str], old_geo_status: Optional[str], new_located_by: str,
                   force: bool = False) -> bool:
     """Coordinates of an existing destination are replaced only when the new point is confirmed by a
-    geocoder and the old one was the model's (or legacy/unlocated), or an admin forces it. An
+    geocoder (geoapify) and the old one was the model's or a legacy TripPlanner 'mapbox' row (stored from
+    Mapbox Temporary calls, design §4(b): re-confirm), or the row is unlocated, or an admin forces it. An
     admin-fixed ('manual') row is never overwritten by a job."""
     if old_geo_status == "manual" or old_located_by == "manual":
         return False
@@ -146,4 +148,4 @@ def may_overwrite(old_located_by: Optional[str], old_geo_status: Optional[str], 
         return True
     if old_located_by is None:
         return True
-    return new_located_by in ("mapbox", "amazon_location") and old_located_by == "llm"
+    return new_located_by in CONFIRMED_BY and old_located_by in ("llm", "mapbox")

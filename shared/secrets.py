@@ -86,20 +86,21 @@ def get_typesafe_api_key() -> str:
     return _get_cached("typesafe", fetch)
 
 
-def get_mapbox_token() -> str:
-    """AA-712 — Mapbox geocoding token (used only when GEOCODER_PROVIDER=mapbox_permanent). Env
-    `MAPBOX_TOKEN` for local runs; otherwise the Secrets Manager secret named by `SECRET_MAPBOX_ID`
-    (default `aa-cis/dev/mapbox`, read grant on the worker task role — AA-CIS-Infra). The secret may
-    hold the bare token or a JSON object with `token`. Raises if neither is available."""
-    token = os.environ.get("MAPBOX_TOKEN")
-    if token:
-        return token
-    secret_id = os.environ.get("SECRET_MAPBOX_ID", "aa-cis/dev/mapbox")
+def get_geoapify_key() -> str:
+    """AA-712 — Geoapify API key (GEOCODER_PROVIDER=geoapify, the default since S236). Env
+    `GEOAPIFY_API_KEY` for local runs; otherwise the Secrets Manager secret named by `SECRET_GEOAPIFY_ID`
+    (default `aa-cis/dev/geoapify`, a plain string; a JSON object with `api_key` is also accepted). The
+    worker task role needs secretsmanager:GetSecretValue on it (AA-CIS-Infra). Never log the value.
+    Raises if neither is available — the geocode call fails and the names stay pending."""
+    key = os.environ.get("GEOAPIFY_API_KEY")
+    if key:
+        return key.strip()
+    secret_id = os.environ.get("SECRET_GEOAPIFY_ID", "aa-cis/dev/geoapify")
 
     def fetch():
         raw = _fetch_secret_sdk(secret_id).strip()
         if raw.startswith("{"):
-            return json.loads(raw)["token"]
+            return json.loads(raw)["api_key"].strip()
         return raw
 
-    return _get_cached("mapbox", fetch)
+    return _get_cached("geoapify", fetch)

@@ -263,21 +263,35 @@ def name_candidates(name: str, locality: Optional[str], country: Optional[str]) 
 
 _DEST_INSERT_SQL = """
     INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at, geo_status, confidence,
-                                     geocoder_place_id, geo_checked_at, name_norm, locality_norm)
-    VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9)
+                                     geocoder_place_id, geo_checked_at, name_norm, locality_norm,
+                                     geo_precision, geocoder_provider, geocoded_at, geocoder_meta, review_reason)
+    VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9,
+            $10, $11, CASE WHEN $11::text IS NULL THEN NULL ELSE now() END, $12::jsonb, $13)
     ON CONFLICT (name_norm, lower(btrim(country)), locality_norm)
         WHERE duplicate_of IS NULL AND name_norm IS NOT NULL DO NOTHING
     RETURNING id::text
 """
 
 
+def _geo_args(located) -> tuple:
+    """(geo_precision, geocoder_provider, geocoder_meta json, review_reason) of a Located point."""
+    meta = getattr(located, "meta", None)
+    return (located.precision, (meta or {}).get("provider"),
+            json.dumps(meta, ensure_ascii=False, default=str) if meta else None,
+            getattr(located, "review_reason", None))
+
+
 async def _write_point(conn, dest_id: str, located, force: bool) -> None:
     await conn.execute(
         """UPDATE shared.destinations SET lat = $2, lng = $3, located_by = $4, located_at = now(),
                   confidence = $5, geocoder_place_id = $6, geo_checked_at = now(),
-                  geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END
+                  geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END,
+                  geo_precision = $8, geocoder_provider = $9,
+                  geocoded_at = CASE WHEN $9::text IS NULL THEN geocoded_at ELSE now() END,
+                  geocoder_meta = COALESCE($10::jsonb, geocoder_meta), review_reason = $11
             WHERE id = $1::uuid""",
-        dest_id, located.lat, located.lng, located.located_by, located.confidence, located.place_id, force)
+        dest_id, located.lat, located.lng, located.located_by, located.confidence, located.place_id, force,
+        *_geo_args(located))
 
 
 async def _adopt_unkeyed(conn, name: str, key: tuple, located, force: bool) -> Optional[tuple[str, str]]:
@@ -324,7 +338,7 @@ async def upsert_destination(conn, key: tuple, name: str, located, *, locality: 
             async with conn.transaction():
                 row = await conn.fetchrow(
                     _DEST_INSERT_SQL, cand, located.country, located.lat, located.lng, located.located_by,
-                    located.confidence, located.place_id, key[0], key[2])
+                    located.confidence, located.place_id, key[0], key[2], *_geo_args(located))
         except asyncpg.UniqueViolationError as e:
             if getattr(e, "constraint_name", None) != LOWER_NAME_INDEX:
                 raise
@@ -450,6 +464,15 @@ async def apply_suspects(conn) -> list[str]:
             "UPDATE geo.place_name SET status = 'suspect', updated_at = now() "
             "WHERE destination_id = ANY($1::uuid[]) AND status = 'resolved'", ids)
     return ids
+
+
+async def geocoder_requests_today(conn, provider: str) -> int:
+    """Requests this provider was sent today (UTC day — Geoapify's daily credit window) by finished
+    runs: the start value of the daily credit guard."""
+    return int(await conn.fetchval(
+        """SELECT coalesce(sum(requests), 0) FROM geo.geocode_call
+            WHERE provider = $1 AND called_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""",
+        provider) or 0)
 
 
 async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float, job_id: Optional[str]) -> None:

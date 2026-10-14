@@ -40,7 +40,9 @@ def _undo_226(a):
         DROP SCHEMA IF EXISTS geo CASCADE;
         ALTER TABLE shared.destinations DROP COLUMN IF EXISTS duplicate_of, DROP COLUMN IF EXISTS geo_status,
             DROP COLUMN IF EXISTS confidence, DROP COLUMN IF EXISTS geocoder_place_id,
-            DROP COLUMN IF EXISTS geo_checked_at, DROP COLUMN IF EXISTS name_norm, DROP COLUMN IF EXISTS locality_norm;
+            DROP COLUMN IF EXISTS geo_checked_at, DROP COLUMN IF EXISTS name_norm, DROP COLUMN IF EXISTS locality_norm,
+            DROP COLUMN IF EXISTS geo_precision, DROP COLUMN IF EXISTS geocoder_provider,
+            DROP COLUMN IF EXISTS geocoded_at, DROP COLUMN IF EXISTS geocoder_meta, DROP COLUMN IF EXISTS review_reason;
         ALTER TABLE shared.destinations DROP CONSTRAINT IF EXISTS destinations_located_by_check;
         ALTER TABLE shared.destinations ADD CONSTRAINT destinations_located_by_check
             CHECK (located_by IN ('mapbox', 'llm'));
@@ -207,11 +209,15 @@ async def test_upsert_destination_with_the_global_name_index(pool, cur):
     tp_row = str(cur.fetchone()[0])
     async with pool.acquire() as conn:
         async with conn.transaction():
-            dest, action = await store.upsert_destination(conn, ("zz712 pakbeng", "laos", ""), "Zz712 Pakbeng",
-                                                          Located(19.9, 101.14, "Laos", "mapbox"))
+            dest, action = await store.upsert_destination(
+                conn, ("zz712 pakbeng", "laos", ""), "Zz712 Pakbeng",
+                Located(19.9, 101.14, "Laos", "geoapify", "pid",
+                        meta={"provider": "geoapify", "result_type": "city", "confidence": 0.0}))
     assert (dest, action) == (tp_row, "updated")
-    cur.execute("SELECT name_norm, locality_norm, located_by FROM shared.destinations WHERE id = %s", (tp_row,))
-    assert cur.fetchone() == ("zz712 pakbeng", "", "mapbox")
+    cur.execute("SELECT name_norm, locality_norm, located_by, geo_precision, geocoder_provider, "
+                "geocoded_at IS NOT NULL, geocoder_meta->>'result_type', review_reason "
+                "FROM shared.destinations WHERE id = %s", (tp_row,))
+    assert cur.fetchone() == ("zz712 pakbeng", "", "geoapify", "point", "geoapify", True, "city", None)
     # the same name is another place in another country: a qualified name, the caller's
     # transaction survives the clash (savepoint)
     async with pool.acquire() as conn:
@@ -225,11 +231,17 @@ async def test_upsert_destination_with_the_global_name_index(pool, cur):
     # a generic name keeps its plain name; the locality lives in locality_norm (finding 8)
     async with pool.acquire() as conn:
         dest3, _ = await store.upsert_destination(conn, ("zz712 base camp", "nepal", "namche"), "Zz712 Base Camp",
-                                                  Located(27.8, 86.7, "Nepal", "llm"), locality="Namche")
+                                                  Located(27.8, 86.7, "Nepal", "llm",
+                                                          meta={"provider": "geoapify", "outcome": "skipped_generic"},
+                                                          review_reason="unconfirmed_hard_type"),
+                                                  locality="Namche")
         dest4, _ = await store.upsert_destination(conn, ("zz712 base camp", "nepal", "lukla"), "Zz712 Base Camp",
                                                   Located(27.7, 86.73, "Nepal", "llm"), locality="Lukla")
     cur.execute("SELECT id::text, name FROM shared.destinations WHERE id = ANY(%s::uuid[])", ([dest3, dest4],))
     assert dict(cur.fetchall()) == {dest3: "Zz712 Base Camp", dest4: "Zz712 Base Camp (Lukla)"}
+    cur.execute("SELECT located_by, geo_precision, geocoder_provider, review_reason FROM shared.destinations "
+                "WHERE id = %s", (dest3,))
+    assert cur.fetchone() == ("llm", "area", "geoapify", "unconfirmed_hard_type")
     cur.execute("DELETE FROM shared.destinations WHERE id = ANY(%s::uuid[])", ([tp_row, dest2, dest3, dest4],))
 
 
@@ -457,3 +469,22 @@ async def test_backfill_plan_and_estimate_make_no_call(pool, cur):
     assert any(t["aa_name"] == "zz712 backfill" for t in tours)
     assert est["day_calls"] >= 1 and est["new_names"] >= 1 and est["geocoder_requests"] == 0
     assert est["expected_cost_usd"] > 0 and isinstance(busy, dict)
+
+
+@pytest.mark.asyncio
+async def test_geocoder_requests_today_counts_the_utc_day(pool, cur):
+    from services.places import store
+    cur.execute("DELETE FROM geo.geocode_call WHERE provider = 'zz712geo'")
+    cur.execute("INSERT INTO geo.geocode_call (provider, requests, called_at) VALUES "
+                "('zz712geo', 7, now()), ('zz712geo', 5, now()), ('zz712geo', 100, now() - interval '2 days')")
+    async with pool.acquire() as conn:
+        assert await store.geocoder_requests_today(conn, "zz712geo") == 12
+        assert await store.geocoder_requests_today(conn, "nobody") == 0
+    cur.execute("DELETE FROM geo.geocode_call WHERE provider = 'zz712geo'")
+
+
+def test_located_by_accepts_geoapify_not_amazon(cur):
+    cur.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'destinations_located_by_check'")
+    d = cur.fetchone()[0]
+    assert "geoapify" in d and "amazon_location" not in d and "manual" in d

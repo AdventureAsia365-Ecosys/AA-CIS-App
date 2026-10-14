@@ -137,9 +137,8 @@ def test_guard_countries_cover_every_raw_tours_country():
     assert guards.point_ok(3.14, 101.69, "Malaysia") is None            # Kuala Lumpur
     assert guards.point_ok(42.87, 74.59, "Kyrgyzstan") is None          # Bishkek
     assert guards.point_ok(39.65, 66.96, "Uzbekistan") is None          # Samarkand
-    mapbox = gc.MapboxPermanentGeocoder(token="t").params("Ubud", -8.5, 115.3)["country"].split(",")
-    amazon = gc.AmazonLocationGeocoder.request("Ubud", -8.5, 115.3)["Filter"]["IncludeCountries"]
-    assert {"id", "my", "kg", "uz"} <= set(mapbox) and {"IDN", "MYS", "KGZ", "UZB"} <= set(amazon)
+    assert gc.GeoapifyGeocoder.params("Ubud", guards.iso2("Indonesia"))["filter"] == "countrycode:id"
+    assert {"id", "my", "kg", "uz"} <= set(guards.AA_ISO2)
 
 
 def test_point_guard_country_and_bbox():
@@ -176,14 +175,17 @@ def test_outlier_rule_is_transit_aware():
 
 
 def test_suspect_and_overwrite_rules():
-    assert guards.is_suspect(2, "mapbox") and guards.is_suspect(1, "llm")
-    assert not guards.is_suspect(1, "mapbox") and not guards.is_suspect(5, "llm", "manual")
-    assert guards.may_overwrite("llm", "ok", "mapbox")
+    assert guards.is_suspect(2, "geoapify") and guards.is_suspect(1, "llm")
+    assert not guards.is_suspect(1, "geoapify") and not guards.is_suspect(5, "llm", "manual")
+    assert guards.may_overwrite("llm", "ok", "geoapify")
+    assert guards.may_overwrite("mapbox", "ok", "geoapify")                   # legacy TP Temporary row: re-confirm
+    assert not guards.may_overwrite("geoapify", "ok", "llm")
     assert not guards.may_overwrite("mapbox", "ok", "llm")
     assert not guards.may_overwrite("llm", "ok", "llm")
+    assert not guards.may_overwrite("llm", "ok", "mapbox")                    # Mapbox no longer confirms
     assert guards.may_overwrite(None, "ok", "llm")                            # legacy, unlocated row
-    assert not guards.may_overwrite("llm", "manual", "mapbox", force=True)    # admin fix wins always
-    assert guards.may_overwrite("mapbox", "ok", "mapbox", force=True)
+    assert not guards.may_overwrite("llm", "manual", "geoapify", force=True)  # admin fix wins always
+    assert guards.may_overwrite("geoapify", "ok", "geoapify", force=True)
 
 
 # ── locate + geocoder adapter ──────────────────────────────────────────────────────────────────
@@ -192,7 +194,7 @@ def test_parse_answer_keeps_known_places_and_rejects_the_rest():
     raw = 'Sure: {"Chiang Mai": [18.79, 98.98, "thailand"], "Paro": [27.43, 89.41, "Narnia"], ' \
           '"Nowhere": null, "Bad": ["x", 1, "Laos"]}'
     out = locate.parse_answer(raw, ["Chiang Mai", "Paro", "Nowhere", "Bad", "Missing"])
-    assert out["Chiang Mai"] == (18.79, 98.98, "Thailand")
+    assert out["Chiang Mai"] == locate.Proposal(18.79, 98.98, "Thailand")
     assert all(out[k] is None for k in ["Paro", "Nowhere", "Bad", "Missing"])
     with pytest.raises(ValueError):
         locate.parse_answer("no json here", ["A"])
@@ -212,7 +214,7 @@ class _FakeGeocoder:
     def __init__(self, results=None, fail=False):
         self.results, self.fail, self.requests = results or {}, fail, 0
 
-    async def confirm(self, name, lat, lng, country):
+    async def confirm(self, name, lat, lng, country, *, native_name=None):
         self.requests += 1
         if self.fail:
             raise RuntimeError("HTTP 401")
@@ -225,14 +227,15 @@ async def test_locate_many_confirm_mismatch_and_failures():
         return ('{"Delhi": [28.61, 77.21, "India"], "Laya": [28.07, 89.7, "Bhutan"], "Ghost": null, '
                 '"Siem Reap": [13.36, 103.86, "Cambodia"], "Mars": [18.79, 98.98, "Vietnam"]}')
 
-    geo = _FakeGeocoder({"Delhi": gc.Confirmed(28.6, 77.2, "India", "dX", "mapbox"),
-                         "Laya": gc.Confirmed(28.0, 89.7, "Nepal", "n", "mapbox")})   # other country: ignored
+    geo = _FakeGeocoder({"Delhi": gc.Confirmed(28.6, 77.2, "India", "dX", "geoapify"),
+                         "Laya": gc.Confirmed(28.0, 89.7, "Nepal", "n", "geoapify")})   # other country: ignored
     items = [locate.Item(("delhi",), "Delhi", "India"), locate.Item(("laya",), "Laya", "Bhutan"),
              locate.Item(("ghost",), "Ghost", "Laos"), locate.Item(("sr",), "Siem Reap", "Thailand"),
              locate.Item(("mars",), "Mars", "Vietnam")]
     out = await locate.locate_many(items, generate, geo)
-    assert out[("delhi",)].point.located_by == "mapbox" and out[("delhi",)].point.place_id == "dX"
+    assert out[("delhi",)].point.located_by == "geoapify" and out[("delhi",)].point.place_id == "dX"
     assert out[("laya",)].point == locate.Located(28.07, 89.7, "Bhutan", "llm")
+    assert out[("laya",)].point.meta["outcome"] == "rejected_country_guard"
     assert out[("ghost",)].point is None and out[("ghost",)].reason == "unknown_to_model"
     assert out[("sr",)].point.country == "Cambodia"                          # cross-border night kept
     assert out[("mars",)].point is None and out[("mars",)].reason == "outside_country_bbox"
@@ -257,56 +260,19 @@ async def test_locate_many_propagates_budget_stop():
         await locate.locate_many([locate.Item(("a",), "A", "Laos")], over, None)
 
 
-def test_geocoder_factory_defaults_to_model_only(monkeypatch):
-    monkeypatch.delenv("GEOCODER_PROVIDER", raising=False)
-    assert gc.get_geocoder().name == "model_only" and not gc.get_geocoder().calls_external
+def test_geocoder_factory(monkeypatch):
     monkeypatch.setenv("GEOCODER_PROVIDER", "mapbox")                       # typo / unknown → no paid call
-    assert gc.get_geocoder().name == "model_only"
-    monkeypatch.setenv("GEOCODER_PROVIDER", "mapbox_permanent")
+    assert gc.get_geocoder().name == "model_only" and not gc.get_geocoder().calls_external
+    monkeypatch.setenv("GEOCODER_PROVIDER", "geoapify")
     monkeypatch.setenv("GEOCODER_COST_PER_REQUEST_USD", "0.004")
-    g = gc.get_geocoder(token="t")
-    assert g.name == "mapbox_permanent" and g.cost_per_request == 0.004
+    g = gc.get_geocoder(api_key="k")
+    assert g.name == "geoapify" and g.cost_per_request == 0.004 and g.calls_external
 
 
 @pytest.mark.asyncio
 async def test_model_only_never_calls_out():
     g = gc.ModelOnlyGeocoder()
     assert await g.confirm("Paro", 27.4, 89.4, "Bhutan") is None and g.requests == 0
-
-
-@pytest.mark.asyncio
-async def test_mapbox_permanent_request_and_parse_with_mocked_http():
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"features": [
-        {"geometry": {"coordinates": [103.3, 16.0]}, "properties": {"mapbox_id": "far",
-                                                                    "context": {"country": {"country_code": "TH"}}}},
-        {"geometry": {"coordinates": [98.99, 18.79]}, "properties": {"mapbox_id": "near",
-                                                                     "context": {"country": {"country_code": "TH"}}}},
-    ]}
-    http = MagicMock()
-    http.get = AsyncMock(return_value=resp)
-    g = gc.MapboxPermanentGeocoder(http=http, token="tok", rate_per_s=0)
-    got = await g.confirm("Chiang Mai", 18.79, 98.98, "Thailand")
-    assert got == gc.Confirmed(18.79, 98.99, "Thailand", "near", "mapbox")
-    url, kwargs = http.get.call_args[0][0], http.get.call_args[1]
-    assert url == gc.MAPBOX_V6_URL
-    p = kwargs["params"]
-    assert p["permanent"] == "true" and p["proximity"] == "98.98,18.79" and "th" in p["country"].split(",")
-    assert g.requests == 1
-
-
-@pytest.mark.asyncio
-async def test_amazon_location_request_and_parse_with_mocked_client():
-    client = MagicMock()
-    client.geocode.return_value = {"ResultItems": [
-        {"PlaceId": "pid", "Position": [89.41, 27.43], "Address": {"Country": {"Code3": "BTN"}}}]}
-    g = gc.AmazonLocationGeocoder(client=client, rate_per_s=0)
-    got = await g.confirm("Paro", 27.43, 89.42, "Bhutan")
-    assert got == gc.Confirmed(27.43, 89.41, "Bhutan", "pid", "amazon_location")
-    kwargs = client.geocode.call_args[1]
-    assert kwargs["IntendedUse"] == "Storage" and kwargs["BiasPosition"] == [89.42, 27.43]
-    assert "BTN" in kwargs["Filter"]["IncludeCountries"]
 
 
 @pytest.mark.asyncio
