@@ -102,17 +102,19 @@ export function BillingTab({ billing }: { billing: any }) {
   const { tenantName } = usePortalShell();
   const [contactPlan, setContactPlan] = useState<string | null>(null);
 
-  const plan       = String(billing?.plan_tier ?? "starter");
+  // AA-798 — no "starter" fallback: a tenant without a plan sees "No plan attached", not a made-up one.
+  const noPlan     = billing?.plan_attached === false;
+  const plan       = noPlan ? "" : String(billing?.plan_tier ?? "");
   const price      = Number(billing?.price_usd_monthly ?? 0);
   const toursUsed  = Number(billing?.tours_rewritten ?? 0);
-  const toursTotal = Number(billing?.tours_quota_monthly ?? 0);
+  const toursTotal = billing?.tours_quota_monthly == null ? null : Number(billing.tours_quota_monthly);
   const apiUsed    = Number(billing?.api_calls_used ?? 0);
-  const apiTotal   = Number(billing?.api_calls_quota_monthly ?? 0);
+  const apiTotal   = billing?.api_calls_quota_monthly == null ? null : Number(billing.api_calls_quota_monthly);
   const overage    = Number(billing?.overage_usd ?? 0);
   const rpm        = billing?.rate_limit_rpm as number | null | undefined;
   const month      = billing?.billing_month ?? "—";
   const plans: Plan[] = billing?.plans ?? [];
-  const pct = (u: number, t: number) => (t > 0 ? Math.min(100, (u / t) * 100) : 0);
+  const pct = (u: number, t: number | null) => (t != null && t > 0 ? Math.min(100, (u / t) * 100) : 0);
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -132,9 +134,9 @@ export function BillingTab({ billing }: { billing: any }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(255,255,255,0.5)", marginBottom: 8 }}>Current plan</div>
-            <div style={{ fontSize: 32, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{titleCase(plan)}</div>
+            <div style={{ fontSize: 32, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{noPlan ? "No plan attached" : titleCase(plan || "—")}</div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.65)", marginTop: 4 }}>
-              {price > 0 ? `$${price.toLocaleString()} / month · billed monthly` : "Custom pricing"}
+              {noPlan ? "Contact us to set up your plan." : price > 0 ? `$${price.toLocaleString()} / month · billed monthly` : "Custom pricing"}
             </div>
           </div>
           <Btn variant="primary" onClick={() => setContactPlan(plans.find(p => p.plan_name !== plan && (p.price_usd_monthly ?? Infinity) > price)?.plan_name ?? "enterprise")}>
@@ -158,7 +160,7 @@ export function BillingTab({ billing }: { billing: any }) {
           {[
             { l: "Tours rewritten", v: `${toursUsed.toLocaleString()} / ${fmtQuota(toursTotal)}`, sub: `${pct(toursUsed, toursTotal).toFixed(0)}% used` },
             { l: "API calls",       v: `${apiUsed.toLocaleString()} / ${fmtQuota(apiTotal)}`,     sub: `${pct(apiUsed, apiTotal).toFixed(0)}% used` },
-            { l: "Amount due",      v: `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
+            { l: "Amount due",      v: noPlan ? "—" : `$${(price + overage).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, sub: noPlan ? "No plan attached" : overage > 0 ? `Includes $${overage.toLocaleString()} overage` : "Plan fee, no overage" },
           ].map(({ l, v, sub }) => (
             <div key={l} style={{ padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.line}` }}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>

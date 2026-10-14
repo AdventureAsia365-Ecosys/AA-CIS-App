@@ -18,8 +18,9 @@ import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
 
 interface BillingData {
-  tenant_name: string; plan_tier: string; tours_quota_monthly: number;
-  api_calls_quota_monthly: number; price_usd_monthly: number;
+  tenant_name: string | null; plan_tier: string | null; tours_quota_monthly: number | null;
+  api_calls_quota_monthly: number | null; price_usd_monthly: number | null;
+  plan_attached?: boolean;  // AA-798 — false: no plan; plan fields are null
   tours_rewritten: number; api_calls_used: number;
   quota_tours_pct: number; quota_calls_pct: number;
   billing_month: string;
@@ -55,14 +56,17 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
 
   const b = billing;
   const toursUsed  = b?.tours_rewritten ?? 0;
-  const toursTotal = b?.tours_quota_monthly ?? 200;
+  // AA-798 — no invented Growth plan (was 200 tours / 20,000 calls / "growth" when missing).
+  const noPlan     = b?.plan_attached === false;
+  const toursTotal = b?.tours_quota_monthly ?? null;
   const toursPct   = b?.quota_tours_pct ?? 0;
   const apiUsed    = b?.api_calls_used ?? 0;
-  const apiTotal   = b?.api_calls_quota_monthly ?? 20000;
+  const apiTotal   = b?.api_calls_quota_monthly ?? null;
   const apiPct     = b?.quota_calls_pct ?? 0;
   const price      = b?.price_usd_monthly ?? 0;
-  const planName   = (b?.plan_tier ?? "growth");
-  const planLabel  = planName.charAt(0).toUpperCase() + planName.slice(1);
+  const planName   = b?.plan_tier ?? "";
+  const planLabel  = noPlan || !planName ? "No plan attached" : planName.charAt(0).toUpperCase() + planName.slice(1);
+  const fmtTotal   = (n: number | null) => (n == null ? "—" : n.toLocaleString());
   const month      = b?.billing_month ?? "—";
   const activity   = b?.activity ?? [];
   const overage    = b?.overage_usd ?? 0;
@@ -116,7 +120,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </div>
           </div>
           <div style={{ display: "flex", gap: 22, marginTop: 22, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-            {[["Tours/Mo", toursTotal.toLocaleString()], ["API Calls", apiTotal.toLocaleString()], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
+            {[["Tours/Mo", fmtTotal(toursTotal)], ["API Calls", fmtTotal(apiTotal)], ["Rate limit", rpm ? `${rpm.toLocaleString()} RPM` : "—"]].map(([l, v]) => (
               <div key={l}>
                 <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(255,255,255,0.45)", marginBottom: 4 }}>{l}</div>
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{v}</div>
@@ -167,7 +171,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
             <SpendTile label="Plan fee" value={`$${price.toLocaleString()}`} sub={`${planLabel} · billed monthly`} />
-            <SpendTile label="Tours rewritten" value={`${toursUsed.toLocaleString()} / ${toursTotal.toLocaleString()}`}
+            <SpendTile label="Tours rewritten" value={`${toursUsed.toLocaleString()} / ${fmtTotal(toursTotal)}`}
               sub={overage > 0 ? `Overage $${overage.toLocaleString()}` : "No overage"} warn={overage > 0} />
           </div>
         </Card>
@@ -247,7 +251,7 @@ function daysUntil(isoDate: string): number {
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function QuotaRow({ icon, label, used, total, pct, warn = false }: {
-  icon: React.ReactNode; label: string; used: number; total: number; pct: number; warn?: boolean;
+  icon: React.ReactNode; label: string; used: number; total: number | null; pct: number; warn?: boolean;
 }) {
   return (
     <div>
@@ -256,14 +260,14 @@ function QuotaRow({ icon, label, used, total, pct, warn = false }: {
           {icon} {label}
         </div>
         <div style={{ fontFamily: mono, fontSize: 12, color: T.ink, fontVariantNumeric: "tabular-nums" }}>
-          {used.toLocaleString()} <span style={{ color: T.muted2 }}>/ {total.toLocaleString()}</span>
+          {used.toLocaleString()} <span style={{ color: T.muted2 }}>/ {total == null ? "—" : total.toLocaleString()}</span>
         </div>
       </div>
       <ProgressBar pct={pct} warn={warn} />
       <div style={{ fontSize: 11, color: warn ? T.amber : T.muted, marginTop: 6, display: "flex", justifyContent: "space-between" }}>
         <span>{pct.toFixed(0)}% used</span>
         <span style={{ fontWeight: warn ? 600 : 400 }}>
-          {warn ? "Approaching your limit" : `${Math.max(total - used, 0).toLocaleString()} remaining`}
+          {warn ? "Approaching your limit" : total == null ? "No plan attached" : `${Math.max(total - used, 0).toLocaleString()} remaining`}
         </span>
       </div>
     </div>

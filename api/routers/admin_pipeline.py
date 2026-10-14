@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from typing import Awaitable, Callable, Optional, List
 
+from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
@@ -4951,7 +4952,12 @@ async def get_admin_billing(
     x_admin_secret: str = Header(None),
     tenant_id: str = "00000000-0000-0000-0000-000000000001",
 ):
-    """Admin billing view — defaults to aa_internal; pass ?tenant_id= for a specific tenant."""
+    """Admin billing view — defaults to aa_internal; pass ?tenant_id= for a specific tenant.
+
+    AA-798: ``llm_cost_usd`` is the view's column, i.e. real month-to-date
+    ``SUM(shared.llm_call_log.cost_usd)`` for the tenant (migration 223). An unknown tenant is a
+    404 (it used to get an invented Starter plan); a tenant without a plan gets
+    ``plan_attached: false`` and null quotas/price (see ``_billing.usage_row_to_dict``)."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -4979,20 +4985,10 @@ async def get_admin_billing(
         """, tenant_id)
 
     if not row:
-        return {
-            "plan_tier": "starter", "tours_quota_monthly": 50,
-            "api_calls_quota_monthly": 5000, "price_usd_monthly": 299.0,
-            "tours_rewritten": 0, "api_calls_used": 0,
-            "quota_tours_pct": 0.0, "quota_calls_pct": 0.0,
-            "tours_overage": 0, "overage_usd": 0.0,
-            "llm_cost_usd": 0.0, "overage_rate_usd_per_tour": 4.0,
-            "activity": [],
-        }
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
     return {
-        **{k: (float(v) if hasattr(v, '__float__') and not isinstance(v, int) else v)
-           for k, v in dict(row).items() if k != "billing_month"},
-        "billing_month": str(row["billing_month"])[:7] if row["billing_month"] else None,
+        **usage_row_to_dict(row),
         "activity": [
             {
                 "id": str(a["id"]),
