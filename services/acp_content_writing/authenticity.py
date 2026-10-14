@@ -54,6 +54,9 @@ _PERSON = (r"(?:guest|travell?er|customer|client|reviewer|visitor|participant|mu
            r"|hiker|trekker|cyclist)s?")
 _SPEECH = (r"(?:says?|said|writes?|wrote|recalls?|recalled|remembers?|remembered|told us|tells us|explains?"
            r"|explained|adds?|added|puts? it|shared|raved)")
+# The bare '<Name> from <Place> <verb>' frame has no quote to anchor it, so only verbs that are
+# speech in every reading: 'Transfers from Hanoi add an hour' is a trip fact, not an attribution.
+_SAY = r"(?:says|said|writes|wrote|told us|tells us|recalls|recalled|raved)"
 
 _TESTIMONIAL = [
     # '"…" — Sarah, UK' / '"…", - Tom B. (Sydney)'
@@ -64,7 +67,7 @@ _TESTIMONIAL = [
     re.compile(rf"{_QUOTE}\s*,?\s*{_SPEECH}\s+(?:{_NAME}|(?:one|a|another|our|this|last year's)\s+"
                rf"(?:\w+\s+)?{_PERSON})\b"),
     # 'Sarah from Leeds told us' / 'one guest wrote' / 'many of our travellers say'
-    re.compile(rf"\b[A-Z][a-z]+ from [A-Z][a-z]+,? (?:{_SPEECH})\b"),
+    re.compile(rf"\b[A-Z][a-z]+ from [A-Z][a-z]+,? {_SAY}\b"),
     re.compile(rf"\b(?i:(?:one|a|another|our|several|many|most|some|all|every)\s+(?:of\s+our\s+)?"
                rf"(?:recent\s+|past\s+|former\s+|happy\s+|returning\s+|repeat\s+|previous\s+)?{_PERSON}\s+"
                r"(?:ha(?:s|ve)\s+)?(?:said|says|say|wrote|write|writes|told us|tell us|tells us|described|describe|"
@@ -76,11 +79,7 @@ _TESTIMONIAL = [
     re.compile(r"(?i)\bin the words of (?:one|a|another|our)\b"),
     # ratings and review framing
     re.compile(r"[★⭐]{2,}"),
-    # '5/5', '4.9/5', '9/10' — not a fraction ('4/5 of the loop') or a measure
-    re.compile(r"(?i)\b\d(?:\.\d)?\s*/\s*(?:5|10)\b(?!\s*(?:of\b|km|kilomet|days?|hours?|nights?|metres?|meters?|%))"),
-    re.compile(r"(?i)\b\d(?:\.\d)?\s+out of\s+(?:5|five|10|ten)(?:\s+stars?)?\b"),
     re.compile(r"(?i)\b(?:five|four|5|4)[- ]stars?\s+(?:reviews?|ratings?|feedback|rated)\b"),
-    re.compile(r"(?i)\brated\s+(?:\d(?:\.\d)?|five|four)\b"),
     re.compile(r"(?i)\b(?:highly|top|best)[- ]rated\b"),
     re.compile(r"(?i)\b(?:verified|genuine|real|glowing|rave|5-star|five-star)\s+(?:guest\s+|customer\s+|traveller\s+"
                r"|traveler\s+)?(?:reviews?|reviewers?|testimonials?|feedback|ratings?)\b"),
@@ -90,6 +89,18 @@ _TESTIMONIAL = [
                r"describes|agree|agrees)\b"),
     re.compile(r"(?i)\b(?:trip\s?advisor|trustpilot|feefo|google reviews|yelp)\b"),
 ]
+
+# Bare scores ('5/5', '4.9/5', '9/10', '4 out of 5', 'rated 4.9'): a review score, unless the same
+# sentence frames it as a trek grade or a price ('graded 3/5 for difficulty', 'Difficulty: 4/5',
+# '5/10 USD') — seed facts the writer may carry over. Not a fraction ('4/5 of the loop') or a measure.
+_SCORES = [
+    re.compile(r"(?i)\b\d(?:\.\d)?\s*/\s*(?:5|10)\b(?!\s*(?:of\b|km|kilomet|days?|hours?|nights?|metres?|meters?|%"
+               r"|usd|us\$|\$|eur|€|vnd|thb|kip|lak|khr|mmk|inr|npr|btn))"),
+    re.compile(r"(?i)\b\d(?:\.\d)?\s+out of\s+(?:5|five|10|ten)(?:\s+stars?)?\b"),
+    re.compile(r"(?i)\brated\s+(?:\d(?:\.\d)?|five|four)\b"),
+]
+_GRADE_CONTEXT = re.compile(r"(?i)\b(?:difficult\w*|grade[ds]?|grading|level|fitness|challenge|challenging|strenuous"
+                            r"|exertion|intensity|physical(?:ly)?)\b")
 
 _FIRST_PERSON = [
     re.compile(r"\bI(?:\s+(?:just|recently|finally|once|first|also))?\s+(?i:booked|travell?ed\s+with|went\s+on\s+"
@@ -117,7 +128,9 @@ _FIRST_PERSON = [
 ]
 
 _INDEPENDENCE = [
-    re.compile(r"(?i)\b(?:independent|unbiased|impartial|neutral|third[- ]party|unsponsored|non[- ]sponsored|"
+    # 'third-party' alone is ordinary advice ('avoid third-party websites'); only its review framing counts
+    re.compile(r"(?i)\bthird[- ]party\s+(?:reviews?|reviewers?|opinions?|assessments?|verdicts?|rankings?|ratings?)\b"),
+    re.compile(r"(?i)\b(?:independent|unbiased|impartial|neutral|unsponsored|non[- ]sponsored|"
                r"disinterested)\s+(?:travel\s+)?(?:reviews?|reviewers?|opinions?|assessments?|verdicts?|"
                r"comparisons?|rankings?|recommendations?|advice|perspectives?|blogs?|bloggers?|sites?|websites?|"
                r"look|take|guides?\s+to)\b"),
@@ -134,11 +147,22 @@ _INDEPENDENCE = [
 _FAMILIES = (("testimonial", _TESTIMONIAL), ("first_person", _FIRST_PERSON), ("independence", _INDEPENDENCE))
 
 
+def _sentence_around(text: str, start: int, end: int) -> str:
+    """The sentence (or line) a match sits in — enough context to tell a trek grade from a review score."""
+    lo = max(text.rfind(c, 0, start) for c in (".", "!", "?", "\n")) + 1
+    hi = min([i for i in (text.find(c, end) for c in (".", "!", "?", "\n")) if i != -1] or [len(text)])
+    return text[lo:hi]
+
+
 def _matches(text: str) -> list[tuple[str, re.Match]]:
+    text = text or ""
     out: list[tuple[str, re.Match]] = []
     for kind, patterns in _FAMILIES:
         for pattern in patterns:
-            out += [(kind, m) for m in pattern.finditer(text or "") if m.group(0).strip()]
+            out += [(kind, m) for m in pattern.finditer(text) if m.group(0).strip()]
+    for pattern in _SCORES:
+        out += [("testimonial", m) for m in pattern.finditer(text) if m.group(0).strip()
+                and not _GRADE_CONTEXT.search(_sentence_around(text, m.start(), m.end()))]
     return out
 
 

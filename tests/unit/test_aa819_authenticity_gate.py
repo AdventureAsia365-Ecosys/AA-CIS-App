@@ -34,6 +34,9 @@ TESTIMONIALS = [
     "Read our verified reviews before you book.",
     "Our guest reviews speak for themselves.",
     "A 5/5 experience from start to finish.",
+    "Sarah from Leeds told us the river was the highlight.",
+    "Guests rate it 9/10.",
+    "A 4.9 out of 5 average from past guests.",
 ]
 FIRST_PERSON = [
     "I booked this trip last spring and loved it.",
@@ -52,6 +55,7 @@ INDEPENDENCE = [
     "We were not paid to write this.",
     "We have no affiliation with any operator.",
     "An unbiased look at the Bolaven Plateau.",
+    "Third-party reviews rank it first.",
 ]
 BRAND_VOICE = [  # the brand's own voice and ordinary travel copy — never flagged
     "We pick you up at the hotel at dawn.",
@@ -72,6 +76,14 @@ BRAND_VOICE = [  # the brand's own voice and ordinary travel copy — never flag
     "Families with children can join the boat ride.",
     "I.e. the boat leaves at the jetty.",
     "Day 3 covers 4/5 of the loop by road.",
+    # review fixes: trip facts the bare patterns used to cut (fail closed would delete them)
+    "Transfers from Hanoi add about an hour to the day.",
+    "Visitors from Bangkok add a night in Ayutthaya.",
+    "Avoid booking through third-party websites that resell permits.",
+    "The trek is graded 3/5 for difficulty.",
+    "Difficulty: 4/5.",
+    "The trail is rated 3 out of 5 for difficulty.",
+    "Entry tickets are 5/10 USD for adults and children.",
 ]
 
 
