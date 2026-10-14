@@ -217,7 +217,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (AA-621) waits on the same blocker.
 - **Plans and quota (AA-640)**: the tour-rewrite quota comes only from `shared.membership_plans`
   (starter 50 / growth 200 / business 500). Over-quota rewrites are allowed, logged as
-  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds RPM.
+  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds the plan's
+  default RPM; an admin can override one tenant's RPM (`PATCH /admin/tenants/{id}
+  {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
   `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
   billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
@@ -351,6 +353,15 @@ backend re-checks `x-admin-role`. Each write leaves one `acp_shared.audit_log` r
 (`AdminTenantAuditAction`, actor `admin:{x-admin-user-id}`). `plan_id` (→ `shared.membership_plans`)
 is set on create and on every plan change. `GET /admin/tenants` lists only active tenants unless
 `include_inactive=true`.
+
+**Tenant 360 (AA-666, AA-766)** — the inline panel on `/admin/tenants` (no separate page). Settings
+edits plan / RPM (PATCH) and the planning config (`PUT /admin/tenants/{id}/config`: markets,
+channels, posts/week). Admin-only read endpoints in `api/routers/admin_tenant360.py`:
+`/cost` (month-to-date `llm_call_log` per stage, $/piece per channel, $/tour for T2, plan revenue
+vs LLM cost → margin; same cost definition as billing), `/quality` (T10 gate verdicts per gate from
+`content_piece.gate_ledger`, held reasons, tenant edit rate on T2 versions) and `/markets` (SEO
+markets from `tenant_seo_config`, `segment_research_log` coverage over the places in the tenant's
+tours, planning markets, the tenant's `unmapped_market_requests`). None of it is in a tenant API.
 
 ## Boundaries — what this repo does NOT do
 
