@@ -324,7 +324,41 @@ AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → r
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
 can open are narrowed); the backend sees only `x-admin-user-id`. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
-CIS-issued JWT with `aud=booking` (root ADR 0004, O1) — not built yet.
+CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
+
+### Booking staff token (AA-680)
+
+CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
+`api/main.py`, key handling in `api/core/booking_jwt.py`:
+
+- `POST /auth/booking-token` — needs a CIS staff session: the `cis_admin_token` JWT as an
+  `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
+  (must be `is_active`; the role comes from the row, not the session). Returns
+  `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
+  inactive user; 503 when the signing key is not configured.
+- `GET /auth/.well-known/jwks.json` — the public keys (`kty=RSA`, `use=sig`, `alg=RS256`, `kid`),
+  current key first, then `previous` keys, then pre-published `next` keys.
+  `Cache-Control: public, max-age=600`.
+
+Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
+`sub=<admin_users.id>`, `name` and `preferred_username` (= username; `admin_users` has no email or
+display-name column), `cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
+Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
+`aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
+cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
+Booking maps `cis_role` to its own roles (see the mapping above).
+
+Key material: Secrets Manager `BOOKING_JWT_SECRET_NAME` (default
+`aa-cis/dev/booking-jwt-signing-key`), JSON `{"kid", "private_key_pem", "previous": [{"kid",
+"public_key_pem"}], "next": [{"kid", "public_key_pem"}]}`, cached 10 min in-process and read off
+the event loop (bounded 2 s connect / 3 s read timeouts). A missing or malformed secret gives 503 on
+both endpoints and never blocks startup; a blank or repeated `kid` in `previous`/`next` counts as
+malformed (the last good keys keep serving and an error is logged). Rotation, three steps so no
+verifier ever sees an unknown `kid`: (1) add the new public key under `next`, wait ≥ 20 min (CIS key
+cache 10 + Booking JWKS cache 10); (2) put the new private key and kid in place, move the old public
+key to `previous`, empty `next`; (3) after ≥ 25 min (key cache 10 + token 15) drop the `previous`
+entry.
+This is separate from the HS256 `JWT_SECRET` used for CIS sessions — Booking never receives that.
 
 ### Tenant lifecycle (AA-797)
 
