@@ -52,7 +52,9 @@ import re
 import structlog
 
 from services.acp_shared.grounding import find_novel_numeric_claims
-from services.content_generation.seo_meta_utils import SEO_TITLE_MAX, fit_seo_meta, fit_seo_title  # noqa: F401
+from services.content_generation.seo_meta_utils import (  # noqa: F401
+    SEO_TITLE_MAX, fit_seo_meta, fit_seo_meta_final, fit_seo_title,
+)
 from shared.llm_client.decide import decide
 
 logger = structlog.get_logger()
@@ -231,8 +233,14 @@ async def run_t3_qa_gate(
         if isinstance(generated.get("seo_title"), str):
             generated["seo_title"] = fit_seo_title(generated["seo_title"])
         # AA-641: same for an over-long seo_meta (an LLM counting characters is unreliable).
+        # AA-794: the same full deterministic fit the graph runs (clause/word cut, fact clause), not
+        # only the sentence salvage — else a length code here costs a whole-tour rewrite.
         if isinstance(generated.get("seo_meta"), str):
-            generated["seo_meta"] = fit_seo_meta(generated["seo_meta"], brand_rules.get("forbidden_words"))
+            generated["seo_meta"] = fit_seo_meta_final(
+                generated["seo_meta"],
+                {"duration": tour_dict.get("duration"), "country": tour_dict.get("country"),
+                 "name": tour_dict.get("name")},
+                brand_rules.get("forbidden_words"))
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         grounding = _t3_grounding_check(generated, source_texts)
         grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id)   # AA-699 T3-1

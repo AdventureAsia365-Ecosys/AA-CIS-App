@@ -146,7 +146,8 @@ def _apply_seo_fit_before_llm(state: dict, content: dict, fix_keys: set) -> tupl
     tenant_forbidden = state.get("brand_forbidden_words")
     forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
     tour = state.get("tour", {}) or {}
-    facts = {"duration": tour.get("duration"), "country": tour.get("country")}
+    # AA-794: name too, so a multi-country tour never gets an "in <one country>" tail.
+    facts = {"duration": tour.get("duration"), "country": tour.get("country"), "name": tour.get("name")}
 
     # The SEO codes this fix pass is acting on, per field (brand_audit + deterministic validate).
     acting_codes = set(state.get("brand_audit_codes", []) or [])

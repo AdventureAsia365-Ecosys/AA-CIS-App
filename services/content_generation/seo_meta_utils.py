@@ -14,6 +14,10 @@ import re
 import unicodedata
 from typing import Optional
 
+import structlog
+
+logger = structlog.get_logger()
+
 SEO_META_MIN = 140
 SEO_META_MAX = 155
 
@@ -21,6 +25,10 @@ SEO_META_MAX = 155
 BAD_META_ENDINGS = {
     "and", "with", "including", "or", "plus", "to", "for", "from", "in", "on", "at",
 }
+# Words a word-boundary cut must not end on (articles, connectors) besides BAD_META_ENDINGS.
+# AA-794: meta_complete_sentence rejects them too — the deterministic fit already strips them, so
+# META_INCOMPLETE_SENTENCE keeps its deterministic repair path (S218: a hard code needs a fix step).
+_META_WEAK_ENDINGS = frozenset({"a", "an", "the", "by", "of", "via", "into", "through", "between", "as"})
 
 # AA-238/D4: canonical budget/accommodation deny-list for seo_meta (AA audience = $250k+).
 # Single source of truth — graph.validate_node and flag_fix_node both import this.
@@ -53,7 +61,10 @@ def meta_has_forbidden(meta: str, forbidden) -> bool:
 
 def meta_complete_sentence(meta: str) -> bool:
     """True when seo_meta reads as a complete sentence (period end, >=8 words,
-    no trailing preposition/conjunction). No verb-whitelist (AA-201 revision)."""
+    no trailing preposition/conjunction/article). No verb-whitelist (AA-201 revision).
+    AA-794: no noun/adjective heuristic here on purpose — META_INCOMPLETE_SENTENCE hard-blocks A1
+    Master and human-edit approve, and nothing can fix a noun ending deterministically. A cut
+    between two content words is prevented where it is made (_cut_long_meta) instead."""
     t = (meta or "").strip()
     if not t.endswith("."):
         return False
@@ -61,7 +72,7 @@ def meta_complete_sentence(meta: str) -> bool:
     if len(words) < 8:
         return False
     last = re.sub(r"[^a-zA-Z]", "", words[-1].lower()) if words else ""
-    if last in BAD_META_ENDINGS:
+    if last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS:
         return False
     return True
 
@@ -198,6 +209,24 @@ def tour_days(duration) -> Optional[int]:
     return int(m.group(1)) + 1 if m else None
 
 
+# AA-794: a word-boundary cut is only taken right BEFORE one of these words — they open a new
+# phrase, so the text before them reads as complete ("…valleys | with expert guides"). Articles and
+# "of"/"as" are left out on purpose: they usually start the object of the word before them
+# ("visits | the dzong", "a series | of", "such | as"), so a cut there leaves a dangling verb/noun.
+_META_CUT_BEFORE = frozenset(
+    (BAD_META_ENDINGS | _META_WEAK_ENDINGS | {
+        "across", "through", "along", "past", "toward", "towards", "while", "where", "which",
+        "before", "after", "during", "among", "via", "into", "around",
+    }) - {"a", "an", "the", "of", "as"}
+)
+
+
+def _next_word(text: str, space_idx: int) -> str:
+    """The lowercased letters of the word that starts after text[space_idx] (a space)."""
+    rest = text[space_idx + 1:].split(maxsplit=1)
+    return re.sub(r"[^a-z]", "", rest[0].lower()) if rest else ""
+
+
 def _cut_long_meta(meta: str, forbidden) -> Optional[str]:
     t = meta.strip()
     for sep in _META_CLAUSE_CUTS:
@@ -210,9 +239,14 @@ def _cut_long_meta(meta: str, forbidden) -> Optional[str]:
             cand = " ".join(words).rstrip(" ,;:—–-") + "."
             if meta_in_band(cand, forbidden):
                 return cand
-    # last resort: the longest word-boundary cut that lands in band (drops a trailing connector)
+    # last resort: the longest word-boundary cut that lands in band (drops a trailing connector).
+    # AA-794: only where the original's NEXT word opens a new phrase — never between two content
+    # words ("…valleys with expert | guides" became "…with expert." on 5/14 S234 T2 metas). No clean
+    # cut in band → None: the length code stays and flag_fix's LLM meta repair rewrites it.
     for end in range(SEO_META_MAX - 1, SEO_META_MIN - 2, -1):
         if end >= len(t) or t[end] != " ":
+            continue
+        if _next_word(t, end) not in _META_CUT_BEFORE:
             continue
         words = t[:end].split()
         while words and re.sub(r"[^a-z]", "", words[-1].lower()) in BAD_META_ENDINGS | _META_WEAK_ENDINGS:
@@ -223,8 +257,6 @@ def _cut_long_meta(meta: str, forbidden) -> Optional[str]:
     return None
 
 
-# Words a word-boundary cut must not end on (articles, connectors) besides BAD_META_ENDINGS.
-_META_WEAK_ENDINGS = frozenset({"a", "an", "the", "by", "of", "via", "into", "through", "between", "as"})
 _MENTIONS_DAYS = re.compile(
     r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
     r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty)[- ](day|night)s?\b", re.IGNORECASE)
@@ -235,11 +267,34 @@ _MENTIONS_DAY_TRIP = re.compile(
     r"\b(day[- ](trip|tour|excursion)|same[- ]day|half[- ]day|full[- ]day)\b", re.IGNORECASE)
 
 
+def _countries_named(text: str) -> set[str]:
+    """AA-794: canonical names (shared.country_resolver.COUNTRY_MASTER) of the countries a text
+    names, by canonical name or a word alias of 4+ letters ("Viet Nam", "Burma", "Bali"). The short
+    codes (LAO, IND, PRC…) are left out — as words in prose they are noise, not a country."""
+    from shared.country_resolver import COUNTRY_MASTER
+    low = f" {(text or '').lower()} "
+    found = set()
+    for canonical, aliases in COUNTRY_MASTER.items():
+        for name in {canonical.upper(), *(a for a in aliases if len(a) >= 4)}:
+            if re.search(r"(?<![a-z])" + re.escape(name.lower()) + r"(?![a-z])", low):
+                found.add(canonical)
+                break
+    return found
+
+
 def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
     t = meta.strip()
     body = t[:-1] if t.endswith(".") else t
     days = tour_days((facts or {}).get("duration"))
     country = ((facts or {}).get("country") or "").strip()
+    if country:
+        # AA-794: raw_tours.country holds ONE country, so a Laos→Vietnam tour got ", in Laos." after
+        # a meta ending in Cuc Phuong (Vietnam). When the tour name or the meta names any other
+        # country, no "in <country>" tail is added; a days-only tail is still allowed.
+        from shared.country_resolver import resolve_country
+        own = resolve_country(country) or country
+        if _countries_named(f"{(facts or {}).get('name') or ''} {body}") - {own}:
+            country = ""
     if days and (_MENTIONS_DAYS.search(body) or _MENTIONS_DAY_TRIP.search(body)):
         days = None  # the meta already states the length; don't say it twice
     tails = []
@@ -265,9 +320,11 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:
     """AA-740: land seo_meta in [SEO_META_MIN, SEO_META_MAX] as a complete sentence, without an LLM.
     1) already in band → unchanged; 2) AA-641 salvage (complete-sentence prefix); 3) too long →
-    cut at the last clause boundary that lands in band; 4) too short → append one clause built
-    only from tour facts (days, country). Still out of band → returned unchanged, so the
-    SEO_META_TOO_LONG / META_TOO_SHORT hard code keeps blocking Master (AA-736)."""
+    cut at the last clause boundary that lands in band (AA-794: a word cut only before a phrase
+    boundary); 4) too short → append one clause built only from tour facts (days, country; AA-794:
+    no country when ``facts["name"]`` or the meta names another country). Still out of band →
+    returned unchanged, so the SEO_META_TOO_LONG / META_TOO_SHORT hard code keeps blocking Master
+    (AA-736)."""
     if not isinstance(meta, str) or not meta.strip():
         return meta
     forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
@@ -278,9 +335,18 @@ def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden
         return fitted
     t = meta.strip()
     if len(t) > SEO_META_MAX:
-        return _cut_long_meta(t, forbidden) or meta
-    if len(t) < SEO_META_MIN:
-        return _extend_short_meta(t, facts or {}, forbidden) or meta
-    # in length but not a complete sentence: close it if that is all that is missing
-    cand = t.rstrip(" ,;:—–-") + "."
-    return cand if meta_in_band(cand, forbidden) else meta
+        out = _cut_long_meta(t, forbidden)
+        reason = "too_long"
+    elif len(t) < SEO_META_MIN:
+        out = _extend_short_meta(t, facts or {}, forbidden)
+        reason = "too_short"
+    else:
+        # in length but not a complete sentence: close it if that is all that is missing
+        cand = t.rstrip(" ,;:—–-") + "."
+        out = cand if meta_in_band(cand, forbidden) else None
+        reason = "incomplete"
+    if out is None:
+        # AA-794: counts how often the hard code is left to an LLM repair (flag_fix / T3 rewrite).
+        logger.info("seo_meta_fit_unresolved", reason=reason, len=len(t))
+        return meta
+    return out

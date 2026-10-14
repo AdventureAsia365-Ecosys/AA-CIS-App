@@ -603,7 +603,9 @@ def _apply_seo_meta_fit(generated: dict, state: ContentState) -> bool:
     tour = state.get("tour") or {}
     meta = generated.get("seo_meta")
     if isinstance(meta, str):
-        new = fit_seo_meta_final(meta, {"duration": tour.get("duration"), "country": tour.get("country")},
+        # AA-794: name too, so a multi-country tour never gets an "in <one country>" tail.
+        new = fit_seo_meta_final(meta, {"duration": tour.get("duration"), "country": tour.get("country"),
+                                        "name": tour.get("name")},
                                  state.get("brand_forbidden_words"))
         if new != meta:
             generated["seo_meta"], changed = new, True
