@@ -11,7 +11,8 @@ investigation this issue is based on apparently didn't grep exhaustively. All 5 
 `INSERT INTO acp_shared.audit_log ...` statements — no shared helper existed before this file.
 Kept those 5 call sites completely untouched (per this issue's explicit "tránh phá vỡ 2 use case
 hiện tại" instruction, generalized to all 5 found) — this module is used ONLY by the 6 new
-call sites AA-559 adds.
+call sites AA-559 adds. (AA-797 later moved the two admin.py rows onto this writer, with the
+real admin as actor; see AdminTenantAuditAction.)
 
 `actor_type` (acp_shared.audit_actor_type enum: hitl_reviewer/tenant_admin/tenant_reviewer,
 migration 021) is deliberately left NULL by every writer this module has — none of those 3
@@ -64,6 +65,20 @@ class AdminAuditAction:
     SENTENCE_EDITED = "content_piece.admin_sentence_edited"  # the admin's own (or edited) text
     # S234 — an admin re-ran T8 for a request (new 3 angles, choice reset); details keep the old ones.
     ANGLES_REGENERATED = "angle_gate_request.admin_angles_regenerated"
+
+
+class AdminTenantAuditAction:
+    """AA-797 (S235) — every admin write to a tenant account (api/routers/admin.py tenant routes).
+    Actor is `admin:{x-admin-user-id}`; `details` holds before/after where the write changes a
+    value. `agency.onboard` / `agency.offboard` keep the action strings their rows already use."""
+    ONBOARD = "agency.onboard"
+    OFFBOARD = "agency.offboard"
+    STATUS_CHANGED = "tenant.status_changed"  # suspend <-> active (PATCH is_active)
+    PLAN_CHANGED = "tenant.plan_changed"  # plan_tier + plan_id + rate_limit_rpm
+    KEY_ROTATED = "tenant.key_rotated"
+    BRAND_UPDATED = "tenant.brand_updated"
+    CONFIG_UPDATED = "tenant.config_updated"  # markets / channels / posts_per_week
+    PLAN_ID_BACKFILL = "tenant.plan_id_backfill"  # S234 one-off data fix (script, not a route)
 
 
 async def write_audit_log(

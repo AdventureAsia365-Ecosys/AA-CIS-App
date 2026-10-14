@@ -44,7 +44,8 @@ async def test_offboard_revokes_key_writes_audit_and_leaves_allowlist(pool, monk
     from api.routers import admin
     monkeypatch.setattr(admin, "verify_admin_secret", lambda _s: None)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
-    out = await admin.offboard_tenant(TENANT, admin.OffboardRequest(reason="test"), request, "s")
+    out = await admin.offboard_tenant(TENANT, admin.OffboardRequest(reason="test"), request, "s",
+                                      x_admin_role="admin")  # AA-797: tenant writes are admin-only
     assert out["status"] == "offboarded"
 
     t = await pool.fetchrow("SELECT is_active, api_key_hash, cancelled_at FROM shared.tenants "
