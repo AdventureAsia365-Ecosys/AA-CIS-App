@@ -5,6 +5,7 @@ Chạy trực tiếp trong ECS, không cần Lambda/Step Functions.
 """
 import os
 import json
+import hmac
 import uuid
 import asyncio
 import tempfile
@@ -23,7 +24,40 @@ from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredent
 from api.routers.auth import verify_jwt as _verify_jwt
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"])
+
+
+# ── Auth (AA-799) — every /v1/pipeline route is admin-only ─────────────────────
+# These routes act on Adventure Asia's own master content (Excel rewrite, master review queue,
+# approve/reject for export, upload history). Before AA-799, /run had no auth at all and the rest
+# used _get_tenant, which accepted ANY valid JWT — a tenant token could approve/reject masters.
+# Now the backend admin secret (sent only by the staff BFF, server-side) is required. A JWT alone,
+# tenant or staff, is authenticated but not authorized → 403; no credentials at all → 401.
+# Same secret check as admin.verify_admin_secret; the env is read per call (not at import).
+# Applied router-wide (APIRouter dependencies) so a route added later cannot ship open; handlers
+# that need the principal also declare it (FastAPI runs the dependency once per request).
+
+_MASTER_PRINCIPAL = {"sub": "00000000-0000-0000-0000-000000000001", "role": "admin"}
+
+
+def _require_admin(
+    request: Request,
+    credentials: Optional[_Creds] = Depends(_HTTPBearer(auto_error=False)),
+) -> dict:
+    admin_secret = os.environ.get("ADMIN_SECRET", "")
+    x_admin = request.headers.get("x-admin-secret")
+    if x_admin:
+        if not admin_secret:
+            raise HTTPException(status_code=503, detail="Admin secret not configured")
+        if hmac.compare_digest(x_admin.encode(), admin_secret.encode()):
+            return dict(_MASTER_PRINCIPAL)
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    if credentials:
+        _verify_jwt(credentials.credentials)  # 401 on a bad/expired token
+        raise HTTPException(status_code=403, detail="Admin access required")
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"], dependencies=[Depends(_require_admin)])
 
 
 def _normalize_generated(generated: dict, tour: dict) -> dict:
@@ -333,28 +367,6 @@ class TourRunRequest(BaseModel):
     subtitle_focus: str = "standard"
 
 
-# ── Auth helper (used by review-queue + sources + execution) ──────────────────
-
-_security = _HTTPBearer()
-
-
-def _get_tenant(
-    request: Request,
-    credentials: Optional[_Creds] = Depends(_HTTPBearer(auto_error=False)),
-):
-    import os
-    admin_secret = os.environ.get("ADMIN_SECRET", "")
-    x_admin = request.headers.get("x-admin-secret", "")
-    if admin_secret and x_admin == admin_secret:
-        return {"sub": "00000000-0000-0000-0000-000000000001", "role": "admin"}
-    if credentials:
-        try:
-            return _verify_jwt(credentials.credentials)
-        except Exception:
-            pass
-    raise HTTPException(status_code=401, detail="Not authenticated")
-
-
 # ── Step Functions Execution Status ──────────────────────────────────────────
 
 class ExecutionStatus(BaseModel):
@@ -368,7 +380,7 @@ class ExecutionStatus(BaseModel):
 @router.get("/execution/{execution_id:path}", response_model=ExecutionStatus)
 async def get_execution_status(
     execution_id: str,
-    tenant=Depends(_get_tenant),
+    tenant=Depends(_require_admin),
 ):
     """Poll Step Functions execution status by ARN."""
     import json as _json
@@ -394,7 +406,7 @@ async def get_execution_status(
 @router.get("/review-queue")
 async def get_review_queue(
     request: Request,
-    tenant=Depends(_get_tenant),
+    tenant=Depends(_require_admin),
     page: int = 1,
     page_size: int = 20,
 ):
@@ -438,7 +450,7 @@ async def get_review_queue(
 async def approve_review(
     review_id: str,
     request: Request,
-    tenant=Depends(_get_tenant),
+    tenant=Depends(_require_admin),
 ):
     """Approve a tour in review queue.
 
@@ -545,7 +557,7 @@ async def approve_review(
 async def reject_review(
     review_id: str,
     request: Request,
-    tenant=Depends(_get_tenant),
+    tenant=Depends(_require_admin),
 ):
     """Reject a tour → send_task_failure → SF goes to TourRejected.
 
@@ -622,7 +634,7 @@ async def reject_review(
 async def get_sources(
     request: Request,
     limit: int = 20,
-    tenant=Depends(_get_tenant),
+    tenant=Depends(_require_admin),
 ):
     """Return upload history for current tenant."""
     pool = request.app.state.pool

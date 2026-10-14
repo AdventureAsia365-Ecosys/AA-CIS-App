@@ -30,6 +30,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
+from api.routers._tenant_projection import project_version, tenant_version_state  # AA-796 — shared rule
 from api.routers.v1_tours import get_tenant
 from services.acp_shared.marketplace_estimates import parse_price, runway_months
 
@@ -93,19 +94,6 @@ _MARKETPLACE_QUERY = """
 """
 
 
-def tenant_version_state(status):
-    """AA-770 (S233) — the tenant sees whether a tour version is written, not how a gate scored
-    it: ai_generated / needs_review (score < 7) are both simply 'ready'. The tenant's own
-    approve/reject decisions are kept."""
-    if status in ("pending", "processing"):
-        return "writing"
-    if status == "failed":
-        return "failed"
-    if status in ("approved", "rejected"):
-        return status
-    return "ready"
-
-
 @router.get("")
 async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     """Tenant's own Marketplace rollup — see module docstring for the exact join.
@@ -132,8 +120,9 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     tours = []
     total_atoms = 0
     for r in rows:
-        t = _safe(r)
-        t["status"] = tenant_version_state(t.get("status"))  # AA-770 — no QA states on the tenant side
+        t = _safe(project_version(r))  # AA-796 — drops gate fields even if the query ever selects them
+        # AA-770/AA-796 — no QA states on the tenant side (shared rule in _tenant_projection)
+        t["status"] = tenant_version_state(t.get("status"))
         price_raw = t.pop("price_raw")
         price_usd = parse_price(price_raw)
         t["price_usd"] = price_usd

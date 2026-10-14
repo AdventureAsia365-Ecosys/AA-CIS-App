@@ -87,8 +87,9 @@ export function statusLabel(s: string): string {
   switch (s) {
     case "approved": return "Approved";
     case "rejected": return "Rejected";
-    case "ai_generated": return "Ready to review";
-    case "needs_review": return "Needs review";
+    // AA-796 — needs_review only means "T2 score < 7" (an admin signal). The API already maps it
+    // to ai_generated; this is defence in depth so a score-derived state never reaches a tenant.
+    case "ai_generated": case "needs_review": return "Ready to review";
     case "pending": case "generating": return "Writing";
     default: return s ? s.replace(/_/g, " ") : "—";
   }
@@ -97,7 +98,7 @@ export function statusLabel(s: string): string {
 export function statusVariant(s: string): BadgeVariant {
   if (s === "approved") return "success";
   if (s === "rejected") return "error";
-  if (s === "pending" || s === "needs_review") return "warning";
+  if (s === "pending") return "warning";
   return "default";
 }
 
@@ -192,13 +193,6 @@ export function Badge({ children, variant = "default" }: {
       {children}
     </span>
   );
-}
-
-export function ScoreBadge({ score }: { score: number | null }) {
-  if (score == null) return <span style={{ fontSize: 11, color: T.muted2, fontFamily: mono }}>—</span>;
-  const color = score >= 9 ? T.green : score >= 7 ? T.amber : T.red;
-  const bg    = score >= 9 ? "#E4F1E9" : score >= 7 ? "#FBEFD6" : "#FBE7E1";
-  return <span style={{ fontFamily: mono, fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: bg, color }}>★ {score.toFixed(1)}</span>;
 }
 
 export function ProgressBar({ pct, warn = false }: { pct: number; warn?: boolean }) {

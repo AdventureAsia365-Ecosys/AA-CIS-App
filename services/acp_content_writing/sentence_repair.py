@@ -48,6 +48,7 @@ _QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygie
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
 # A scope violation in the SEO title or meta is fixed by the SEO fit, not here.
 _SEO_FIELD_PREFIXES = ("title ", "meta ")
+_SLUG_PREFIXES = ("no slug", "slug ")
 NEIGHBOUR_WINDOW = 4
 
 
@@ -105,6 +106,13 @@ def _seo_fields_only(g: dict) -> bool:
     return g["gate"] in _QUOTED_GATES and bool(vs) and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
 
 
+def _slug_violation(g: dict) -> bool:
+    """An F4 violation about the slug ('no slug' / "slug '…' is not lowercase-kebab" / 'slug is N
+    characters'): the SEO fit only folds the slug to ASCII and never writes a new one, so only a
+    rewrite (a new writer envelope) can fix it."""
+    return g["gate"] == "F4_seo_surface" and any(v.startswith(_SLUG_PREFIXES) for v in g.get("violations") or [])
+
+
 def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     """The sentences to repair, [] when the only failures are a title/meta scope violation the SEO
     fit owns (nothing to change in the text — the attempt re-runs the fit and the gates), or None
@@ -115,7 +123,12 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
     # the same for an F12_scope whose violations are all in the title/meta.
     failed = [g for g in blocking if not _seo_fields_only(g)]
-    if not failed and any(g["gate"] != "F4_seo_surface" and g["gate"] not in OWNED_ELSEWHERE for g in blocking):
+    # AA-776 — that includes an F4 alone: before, an F4-only ledger fell through to None and took a
+    # full Sonnet rewrite (S234: 3 at attempt 1) or was held at attempt 2 without the attempt-3 fit
+    # (5). A slug violation still rewrites (the fit never writes a slug); the contract gates alone
+    # (F16_faq / F14_first_line) still return None — they hold at once.
+    if (not failed and any(g["gate"] not in OWNED_ELSEWHERE for g in blocking)
+            and not any(_slug_violation(g) for g in blocking)):
         return []
     if not failed or any(g["gate"] not in _ELIGIBLE_GATES for g in failed):
         return None
