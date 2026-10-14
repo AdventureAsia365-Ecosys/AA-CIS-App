@@ -10,6 +10,7 @@
 //   Gate stats    — per gate and channel: runs, fails, blocking fails; per tenant outcomes.
 //   Place cards   — AA-772 cards: verify / reject, build the missing cards for one tour (job),
 //                   S234: review duplicate candidates and merge them into one card.
+//                   AA-774 (S235): "Facts" opens a drawer to re-kind / edit / drop a card's facts.
 // UI kit + react-query; view state in the URL (tab, filters, page) like the Jobs page.
 // API: /admin/content-quality/* via the BFF.
 
@@ -23,6 +24,7 @@ import {
   type ColumnDef,
 } from "../../_kit";
 import PieceDrawer from "./PieceDrawer";
+import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import {
   DUPLICATE_REASON_LABELS, GATE_LABELS, fmtTime, gateLabel, usd,
   type DuplicateCluster, type GateStat, type Paged, type PieceRow, type PlaceCard, type TenantStat, type VersionRow,
@@ -359,6 +361,7 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
   const qc = useQueryClient();
   const [tourId, setTourId] = useState("");
   const [force, setForce] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE) });
   if (view.status) qs.set("status", view.status);
   if (view.q) qs.set("q", view.q);
@@ -381,7 +384,7 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
     { accessorKey: "display_name", header: "Place",
       cell: (c) => { const p = c.row.original; return <div><b>{p.display_name}</b><div style={{ fontSize: 11.5, color: A.muted }}>{[p.locality, p.region, p.country].filter(Boolean).join(", ")}</div></div>; } },
     { id: "facts", header: "Checked facts", enableSorting: false,
-      cell: (c) => <div style={{ fontSize: 12, maxWidth: 460 }}>{c.row.original.naming_note && <div style={{ color: A.muted, marginBottom: 2 }}>{c.row.original.naming_note}</div>}{c.row.original.facts.map((f, i) => <div key={i}>• {f.text}</div>)}</div> },
+      cell: (c) => <div style={{ fontSize: 12, maxWidth: 460 }}>{c.row.original.naming_note && <div style={{ color: A.muted, marginBottom: 2 }}>{c.row.original.naming_note}</div>}{c.row.original.facts.map((f, i) => <div key={i}>• {f.text} <span style={{ color: A.muted, fontSize: 11 }}>({f.kind || "what_it_is"})</span></div>)}</div> },
     { accessorKey: "atoms", header: "Atoms" },
     { accessorKey: "status", header: "Status",
       cell: (c) => <Badge tone={c.row.original.status === "verified" ? "success" : c.row.original.status === "rejected" ? "danger" : "neutral"} dot={false}>{c.row.original.status}</Badge> },
@@ -390,6 +393,7 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
         <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
           <Btn size="sm" disabled={verdict.isPending || c.row.original.status === "verified"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "verified" })}>Verify</Btn>
           <Btn size="sm" variant="danger" disabled={verdict.isPending || c.row.original.status === "rejected"} onClick={() => verdict.mutate({ id: c.row.original.card_id, status: "rejected" })}>Reject</Btn>
+          <Btn size="sm" variant="secondary" onClick={() => setEditing(c.row.original.card_id)}>Facts</Btn>
         </div>
       ) },
   ], [verdict]);
@@ -418,6 +422,7 @@ function PlaceCardsTab({ view, update }: { view: View; update: (p: Partial<View>
         </div>
       }
     />
+    {editing && <PlaceCardFactsDrawer cardId={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }

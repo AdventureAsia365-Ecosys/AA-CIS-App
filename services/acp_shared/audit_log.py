@@ -53,6 +53,8 @@ class PlatformAuditAction:
     """`action` strings for admin changes to platform data (no tenant: tenant_id is NULL)."""
     PLACE_CARD_STATUS = "place_card.status"  # AA-772 — admin verified / rejected / reset a card
     PLACE_CARD_MERGE = "place_card.merge"  # AA-772 (S234) — admin merged duplicate cards
+    # AA-774 (S235) — admin re-kinded / re-worded / dropped card facts; details hold before/after per fact
+    PLACE_CARD_FACTS_EDITED = "place_card.facts_edited"
 
 
 class AdminAuditAction:

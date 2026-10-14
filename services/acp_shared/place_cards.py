@@ -847,6 +847,82 @@ async def merge_cards(conn, keep_id: str, from_ids: list[str]) -> dict:
             "cost_usd": round(cost, 6)}
 
 
+class FactEditError(ValueError):
+    """An admin fact edit that cannot be applied (bad index, kind or text): HTTP 422."""
+
+
+class FactEditConflict(ValueError):
+    """The fact at an index is no longer the one the admin loaded (card changed since): HTTP 409."""
+
+
+MAX_FACT_TEXT = 600
+
+
+def stored_facts(raw) -> list:
+    """The stored facts array as-is (jsonb may arrive as a str from asyncpg)."""
+    if isinstance(raw, str):
+        raw = json.loads(raw or "[]")
+    return list(raw) if isinstance(raw, list) else []
+
+
+def apply_fact_edits(raw_facts, edits: list[dict]) -> tuple[list, list[dict]]:
+    """AA-774 (S235) — apply an admin's fact edits to a card's stored facts array.
+
+    Each edit: {"index", "kind"?, "text"?, "drop"?, "expected_text"?}. `index` is the position in the
+    stored array (every index refers to the array as loaded, drops are applied last). A kept fact keeps
+    every other key it had; only `kind` / `text` change. `expected_text` (optional) must equal the
+    stored text at that index, so a stale form cannot edit the wrong fact (FactEditConflict).
+    Returns (new_facts, changes) with one {"index", "action", "before", "after"} per changed fact;
+    an edit that changes nothing is not a change. Raises FactEditError on any invalid edit."""
+    facts = stored_facts(raw_facts)
+    if not edits:
+        raise FactEditError("edits must name at least one fact")
+    out = list(facts)
+    dropped: set[int] = set()
+    changes: list[dict] = []
+    seen: set[int] = set()
+    for e in edits:
+        i = e.get("index")
+        if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(facts):
+            raise FactEditError(f"fact index {i} does not exist (card has {len(facts)} facts)")
+        if i in seen:
+            raise FactEditError(f"fact index {i} is edited twice")
+        seen.add(i)
+        before = facts[i]
+        if not isinstance(before, dict):
+            raise FactEditError(f"fact {i} is not an object and cannot be edited")
+        exp = e.get("expected_text")
+        if exp is not None and " ".join(str(exp).split()) != " ".join(str(before.get("text") or "").split()):
+            raise FactEditConflict(f"fact {i} changed since it was loaded — reload and try again")
+        kind, text, drop = e.get("kind"), e.get("text"), bool(e.get("drop"))
+        if drop:
+            if kind is not None or text is not None:
+                raise FactEditError(f"fact {i}: drop cannot be combined with kind or text")
+            dropped.add(i)
+            changes.append({"index": i, "action": "drop", "before": before, "after": None})
+            continue
+        if kind is None and text is None:
+            raise FactEditError(f"fact {i}: give a kind, a text or drop")
+        after = dict(before)
+        if kind is not None:
+            if kind not in FACT_KINDS:
+                raise FactEditError(f"fact {i}: kind must be one of {', '.join(FACT_KINDS)}")
+            after["kind"] = kind
+        if text is not None:
+            clean = " ".join(str(text).split())
+            if not clean:
+                raise FactEditError(f"fact {i}: text cannot be empty (drop the fact instead)")
+            if len(clean) > MAX_FACT_TEXT:
+                raise FactEditError(f"fact {i}: text is longer than {MAX_FACT_TEXT} characters")
+            after["text"] = clean
+        if after != before:
+            out[i] = after
+            changes.append({"index": i, "action": "edit", "before": before, "after": after})
+    if not changes:
+        raise FactEditError("nothing to change: every edit matches the stored fact")
+    return [f for j, f in enumerate(out) if j not in dropped], sorted(changes, key=lambda c: c["index"])
+
+
 def render_card(card) -> tuple[str, list[str]]:
     """(location line, background fact lines) for the seed."""
     where = ", ".join(p for p in (card["display_name"], card["locality"], card["region"], card["country"]) if p)
