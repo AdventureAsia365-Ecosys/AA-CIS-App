@@ -22,7 +22,7 @@ import structlog
 
 from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
-    _JUDGE_SEED, _JUDGE_TEMPERATURE, has_brand_signals, score_brand_fit,
+    _JUDGE_SEED, _JUDGE_TEMPERATURE, has_brand_signals, runs_signal, score_brand_fit,
 )
 from shared.llm_client.call_log import record_call_sync
 
@@ -53,6 +53,23 @@ T2_JUDGE_GATE_DEFAULT = "brand_fit_mission"
 def t2_judge_gate() -> str:
     mode = os.environ.get(T2_JUDGE_GATE_ENV, "").strip().lower()
     return mode if mode in T2_JUDGE_GATES else T2_JUDGE_GATE_DEFAULT
+
+
+# AA-801 — how many judge calls make one T2 verdict. S235: the same draft scored brand_fit 4..8 across
+# calls and mission_present flipped, so one call decided save-at-6 vs save-at-8 and drove retries.
+#   "single"   (default) one call, plus the AA-714 median-of-3 only when it lands in 6..8 — prod as
+#              before; stays the default until the AA-801 measurement (5 runs x 10 versions) is in;
+#   "median3"  three parallel calls on every draft: median brand_fit/distinct, majority mission;
+#              the three raw scores go into llm_call_log.quality_signal.judge_runs.
+# Flip with the env var (worker task def), like T2_JUDGE_GATE.
+T2_JUDGE_REPEAT_ENV = "T2_JUDGE_REPEAT"
+T2_JUDGE_REPEATS = {"single": 1, "median3": 3}
+T2_JUDGE_REPEAT_DEFAULT = "single"
+
+
+def t2_judge_repeat() -> str:
+    mode = os.environ.get(T2_JUDGE_REPEAT_ENV, "").strip().lower()
+    return mode if mode in T2_JUDGE_REPEATS else T2_JUDGE_REPEAT_DEFAULT
 
 
 def t2_mission(state: dict) -> str:
@@ -174,8 +191,11 @@ def judge_node(state: dict) -> dict:
         is_t2 = bool(state.get("is_tenant_rewrite"))
         if is_t2:
             mission = t2_mission(state)          # AA-792: the tenant's own core_idea, never AA's
+            repeat_mode = t2_judge_repeat()      # AA-801
             result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
-                                     stage=stage_for(state, "s1_judge"), mission=mission or None)
+                                     stage=stage_for(state, "s1_judge"), mission=mission or None,
+                                     **({"repeat": T2_JUDGE_REPEATS[repeat_mode]}
+                                        if repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}))
             gate = t2_judge_gate()
             judge_score = t2_judge_score(result, gate, has_mission=bool(mission))
             mission_source = "tenant_core_idea" if mission else "none"
@@ -188,6 +208,7 @@ def judge_node(state: dict) -> dict:
             gate = "brand_fit"
             judge_score = a1_judge_score(result)
             mission_source = None
+            repeat_mode = None
         tiebreak = None
         if in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
@@ -223,6 +244,9 @@ def judge_node(state: dict) -> dict:
                 **({"mission_source": mission_source,
                     "mission_gated": mission_source == "tenant_core_idea" and gate != "brand_fit"}
                    if is_t2 else {}),
+                # AA-801: the raw calls behind a median3 verdict (absent in the default mode).
+                **({"judge_runs": runs_signal(result, repeat_mode)}
+                   if repeat_mode and repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
             },
             stop_reason=result.stop_reason,
             account=result.account,

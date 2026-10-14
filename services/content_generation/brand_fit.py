@@ -16,8 +16,11 @@ get a `BrandFitResult` back — same shape judge_node.py already built internall
 """
 from __future__ import annotations
 
+import contextvars
+import dataclasses
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 
@@ -42,8 +45,14 @@ _REPEAT_BAND = (6.0, 8.0)          # inclusive; MIN_QUALITY (7.0) sits in the mi
 _REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
 
 
-def _median3(values: list[float]) -> float:
-    return sorted(values)[len(values) // 2]
+def _median(values: list[float]) -> float:
+    """Statistical median: the middle value for an odd count, the mean of the two middle values for
+    an even count (only reached when a median3 call failed and two results remain)."""
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
 
 JUDGE_SYSTEM = """You are a brand-fit judge for Adventure Asia's B2B content pipeline.
 You do NOT rewrite content. You score how well a tour rewrite reflects ONE specific client brand's
@@ -66,6 +75,61 @@ class BrandFitResult:
     stop_reason: Optional[str]
     account: Optional[str]
     fallback_used: Optional[bool]
+    # AA-801: the individual judge calls behind an aggregated verdict (median3 mode); () for a
+    # single call or for the AA-714 near-band repeat (its log line is unchanged).
+    runs: tuple = ()
+
+
+def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
+                   failed: int = 0) -> BrandFitResult:
+    """AA-801 / AA-714: one verdict from several judge calls on the same draft.
+
+    brand_fit and cross_brand_distinct = median (`_median`); mission_present = strict majority, a
+    tie counts as absent (conservative: it can cap, it never lifts); judge_score = min(brand_fit,
+    distinct), mission-capped like a single call. Feedback comes from the run whose brand_fit is
+    closest to the median (the first one on a tie). Cost and tokens are summed: every call is billed.
+    Model/account/stop_reason come from the first run. Raises ValueError on an empty list."""
+    if not results:
+        raise ValueError("aggregate_runs needs at least one result")
+    brand_fits = [r.brand_fit_score for r in results]
+    distincts = [r.cross_brand_distinct for r in results]
+    missions = [bool(r.mission_present) for r in results]
+    brand_fit = _median(brand_fits)
+    distinct = _median(distincts)
+    mission = sum(missions) > len(results) / 2
+    judge_score = min(brand_fit, distinct)
+    if mission_absent_cap is not None and not mission:
+        judge_score = min(judge_score, mission_absent_cap)
+    picked = min(results, key=lambda r: abs(r.brand_fit_score - brand_fit))
+    first = results[0]
+    runs = tuple(
+        {"brand_fit": r.brand_fit_score, "distinct": r.cross_brand_distinct,
+         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used}
+        for r in results)
+    return BrandFitResult(
+        brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
+        feedback=picked.feedback, judge_score=judge_score, model_used=first.model_used,
+        cost_usd=sum((r.cost_usd or 0.0) for r in results),
+        input_tokens=sum((r.input_tokens or 0) for r in results),
+        output_tokens=sum((r.output_tokens or 0) for r in results),
+        stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
+        runs=runs + (({"failed": failed},) if failed else ()),
+    )
+
+
+def runs_signal(result: BrandFitResult, mode: str) -> dict:
+    """AA-801: the quality_signal block that shows the spread behind an aggregated verdict."""
+    runs = [r for r in result.runs if "brand_fit" in r]
+    failed = sum(r.get("failed", 0) for r in result.runs)
+    fits = [r["brand_fit"] for r in runs]
+    return {
+        "mode": mode, "n": len(runs), "failed": failed,
+        "brand_fits": fits, "distincts": [r["distinct"] for r in runs],
+        "missions": [r["mission"] for r in runs],
+        "chosen_brand_fit": result.brand_fit_score, "chosen_distinct": result.cross_brand_distinct,
+        "chosen_mission": result.mission_present,
+        "brand_fit_spread": (max(fits) - min(fits)) if fits else None,
+    }
 
 
 def _coerce_score(value, default: float = 0.0) -> float:
@@ -235,7 +299,7 @@ def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s
 
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
-    mission: Optional[str] = None,
+    mission: Optional[str] = None, repeat: int = 1,
 ) -> BrandFitResult:
     """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
     (same system prompt, same model_tier pin, same temperature/seed, same score-combining
@@ -254,9 +318,18 @@ def score_brand_fit(
 
     AA-792: `mission` — the T2 tenant's own core idea, named in the mission_present axis (see
     `_build_judge_prompt`). Prompt text only; scoring, cap and median are unchanged.
+
+    AA-801: `repeat` > 1 (T2 with `T2_JUDGE_REPEAT=median3`) runs that many calls in parallel on
+    every draft and aggregates them (`aggregate_runs`); the AA-714 near-band layer is then skipped.
+    The default 1 keeps the behaviour above exactly.
     """
     system_prompt = JUDGE_SYSTEM
     user_prompt = _build_judge_prompt(brand_profile, generated, mission)
+
+    if repeat > 1:
+        return _judge_parallel(system_prompt, user_prompt, n=repeat,
+                               mission_absent_cap=mission_absent_cap, stage=stage)
+
     first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
 
     lo, hi = _REPEAT_BAND
@@ -265,25 +338,37 @@ def score_brand_fit(
 
     results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
                          for _ in range(_REPEAT_EXTRA)]
-    brand_fits = [r.brand_fit_score for r in results]
-    distincts = [r.cross_brand_distinct for r in results]
-    mission = sum(r.mission_present for r in results) > len(results) / 2
-    brand_fit = _median3(brand_fits)
-    distinct = _median3(distincts)
-    judge_score = min(brand_fit, distinct)
-    if mission_absent_cap is not None and not mission:
-        judge_score = min(judge_score, mission_absent_cap)
-    picked = min(results, key=lambda r: abs(r.brand_fit_score - brand_fit))   # feedback from a median-ish run
-    logger.info("judge_repeat_median", model=first.model_used, brand_fits=brand_fits,
-                median_brand_fit=brand_fit, median_distinct=distinct)
-    return BrandFitResult(
-        brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
-        feedback=picked.feedback, judge_score=judge_score, model_used=first.model_used,
-        cost_usd=sum(r.cost_usd for r in results),
-        input_tokens=sum((r.input_tokens or 0) for r in results),
-        output_tokens=sum((r.output_tokens or 0) for r in results),
-        stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
-    )
+    out = aggregate_runs(results, mission_absent_cap=mission_absent_cap)
+    logger.info("judge_repeat_median", model=first.model_used,
+                brand_fits=[r.brand_fit_score for r in results],
+                median_brand_fit=out.brand_fit_score, median_distinct=out.cross_brand_distinct)
+    return dataclasses.replace(out, runs=())   # AA-714 path: unchanged result shape
+
+
+def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_absent_cap: Optional[float],
+                    stage: str) -> BrandFitResult:
+    """AA-801 option (a): `n` judge calls at once, aggregated by `aggregate_runs`. Each call runs in
+    its own copy of the caller's contextvars (live-progress sink, tenant/job attribution). A failed
+    call is dropped; when every call fails the first error is raised (the caller degrades)."""
+    def one():
+        return _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
+
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, one) for _ in range(n)]
+    results, errors = [], []
+    for f in futures:
+        try:
+            results.append(f.result())
+        except Exception as e:  # noqa: BLE001 — one noisy call must not drop the verdict
+            errors.append(e)
+    if not results:
+        raise errors[0]
+    if errors:
+        logger.warning("judge_median_partial", failed=len(errors), ok=len(results), error=str(errors[0]))
+    out = aggregate_runs(results, mission_absent_cap=mission_absent_cap, failed=len(errors))
+    logger.info("judge_median", n=n, brand_fits=[r.brand_fit_score for r in results],
+                median_brand_fit=out.brand_fit_score, mission=out.mission_present)
+    return out
 
 
 def _seeded_model(model_used: Optional[str]) -> bool:

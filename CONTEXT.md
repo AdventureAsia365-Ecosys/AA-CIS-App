@@ -780,6 +780,10 @@ _Avoid_: block (alone), delete, filter.
     brand_fit, capped at 6.0 when the tenant's own mission (core idea) is absent from the draft; a
     tenant without a core idea is never mission-capped. Cross-brand distinctness is logged in
     `llm_call_log.quality_signal` and does not gate.
+  - **Judge repeats (AA-801).** Env `T2_JUDGE_REPEAT`: `single` (default) = one call, plus the AA-714
+    median of 3 only when the first brand_fit lands in 6–8; `median3` = three parallel calls on every
+    draft, median brand_fit/distinct and majority mission (a tie counts as absent), raw calls logged in
+    `quality_signal.judge_runs`. `median3` stays off until the AA-801 measurement is in.
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
     (`compile_rubric`), never Adventure Asia's identity.
   - **Stored status.** A version scoring < 7.0 (or escalated by T3) is stored `needs_review` — an
