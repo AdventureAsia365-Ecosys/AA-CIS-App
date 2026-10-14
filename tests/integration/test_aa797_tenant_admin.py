@@ -39,7 +39,7 @@ async def ctx(monkeypatch):
     await p.execute("""
         CREATE TABLE IF NOT EXISTS shared.membership_plans (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            plan_name text NOT NULL,
+            plan_name text NOT NULL UNIQUE,
             tours_quota_monthly integer NOT NULL,
             api_calls_quota_monthly integer NOT NULL,
             price_usd_monthly numeric NOT NULL,
