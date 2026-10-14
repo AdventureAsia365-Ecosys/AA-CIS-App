@@ -326,7 +326,7 @@ def test_plan_title_meta_only_f12_needs_no_text_repair_and_no_rewrite():
     f4 = {"gate": "F4_seo_surface", "passed": False, "blocking": True, "violations": ["title too short"]}
     assert sr.plan("The lake is cold.", [f12]) == []
     assert sr.plan("The lake is cold.", [f12, f4]) == []
-    assert sr.plan("The lake is cold.", [f4]) is None  # F4 alone: unchanged (full rewrite)
+    assert sr.plan("The lake is cold.", [f4]) == []  # AA-776: F4 alone is the fit's too (was None)
     f1 = {"gate": "F3_structure", "passed": False, "blocking": True, "violations": ["no H2"]}
     assert sr.plan("The lake is cold.", [f12, f1]) is None  # anything not repairable still rewrites
     assert sr.plan("The lake is cold.", [{**f12, "blocking": False}]) is None

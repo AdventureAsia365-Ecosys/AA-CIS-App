@@ -549,7 +549,9 @@ class TestRouting:
     def test_delete_flagged_never_cuts_the_hook_the_cta_or_an_add_item(self):
         items = sr.plan(POST, [F9_FRAGMENT])
         assert sr.delete_flagged(POST, items) is None  # the hook
-        f1 = qg.gate_grounding(POST, "Built in 1637–1638.")
+        # AA-785: "the late 1630s" passes F1 when the seed has a 163x year — a seed without one keeps it flagged
+        f1 = qg.gate_grounding(POST, "Built by Zhabdrung Ngawang Namgyal.")
+        assert f1["violations"][0].startswith("sentence states ['1630s']")
         cut = sr.delete_flagged(POST, sr.plan(POST, [f1]))
         assert cut is not None and "1630s" not in cut and "Two rivers" in cut
         add = [dict(sr.plan(POST, [f1])[0], problem="keep this sentence and add ONE short sentence")]
@@ -586,7 +588,7 @@ def _outcome(ledger):
 async def test_attempt_three_cuts_the_flagged_sentence_when_the_repair_call_fails():
     """r2 #13 was held at attempt 2 on one F1 sentence. Attempt 2 repairs it; when the attempt-3 repair
     call fails, the flagged sentence is cut in code and the piece is checked again (not held)."""
-    f1 = qg.gate_grounding(POST, "Built in 1637–1638.")
+    f1 = qg.gate_grounding(POST, "Built by Zhabdrung Ngawang Namgyal.")  # AA-785: no 163x year in this seed
     row = {"piece_id": str(uuid.uuid4()), "attempt_number": 3, "status": "approved"}
     with patch.object(service, "write_content", return_value=(POST, 0.01, {}, None)), \
          patch.object(service, "repair_sentences", side_effect=[
