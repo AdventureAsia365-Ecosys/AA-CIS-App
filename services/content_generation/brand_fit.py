@@ -20,6 +20,7 @@ import contextvars
 import dataclasses
 import json
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
@@ -78,6 +79,14 @@ class BrandFitResult:
     # AA-801: the individual judge calls behind an aggregated verdict (median3 mode); () for a
     # single call or for the AA-714 near-band repeat (its log line is unchanged).
     runs: tuple = ()
+    # AA-801 option (b): the verbatim itinerary sentence the anchored mission test quoted ("" when
+    # the mission is absent or the prompt had no anchors).
+    mission_evidence: str = ""
+    # AA-801 option (b): did the quoted mission sentence check out against the itinerary text the
+    # judge saw? None = not checked (no anchored mission test, or the judge answered no); True = the
+    # judge said yes and the quote was found; False = the judge said yes but the quote was empty or
+    # not in the itinerary, so the yes was overruled (mission_present=False).
+    evidence_verified: Optional[bool] = None
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
@@ -104,9 +113,16 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         judge_score = min(judge_score, mission_absent_cap)
     picked = min(results, key=lambda r: abs(r.brand_fit_score - brand_fit))
     first = results[0]
+    evidence = next((r.mission_evidence for r in results if r.mission_present and r.mission_evidence), "") \
+        if mission else ""
+    checks = [r.evidence_verified for r in results if r.evidence_verified is not None]
+    # median3: True = the majority yes stands (each counted yes was verified); False = no majority yes
+    # and at least one run's yes was overruled; None = nothing was checked or only plain "no"s.
+    verified = None if not checks else True if mission else (False if not all(checks) else None)
     runs = tuple(
         {"brand_fit": r.brand_fit_score, "distinct": r.cross_brand_distinct,
-         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used}
+         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used,
+         **({"evidence_verified": r.evidence_verified} if r.evidence_verified is not None else {})}
         for r in results)
     return BrandFitResult(
         brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
@@ -116,6 +132,8 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         output_tokens=sum((r.output_tokens or 0) for r in results),
         stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
+        mission_evidence=evidence,
+        evidence_verified=verified,
     )
 
 
@@ -216,21 +234,146 @@ def _tenant_mission_axis(mission: str) -> str:
   mission above, never Adventure Asia's or a generic travel mission."""
 
 
-def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[str] = None) -> str:
+# AA-801 option (b) — rubric anchors. S236 measurement: the same T2 draft scored brand_fit 6..8 and
+# mission flipped across calls with median-of-3 as noisy as one call, so the noise is in the rubric
+# ("does it reflect the brand?" leaves the judge to invent its own scale), not in sampling. The anchors
+# say what a 4 / 6 / 7 / 8 / 10 looks like FOR THIS TENANT, built deterministically from its T0 brand pack,
+# and the mission becomes a yes/no test that must quote the itinerary sentence that proves it.
+_ANCHOR_EXAMPLE_CHARS = 400
+_ANCHOR_MAX_VOICE = 6
+_ANCHOR_MAX_FORBIDDEN = 15
+# 7 is anchored on purpose: MIN_QUALITY is 7.0, and with only 6 and 8 anchored a judge that wavers
+# between neighbouring anchors flips pass/fail with a spread of 2 (AA-801 review, finding 2). There
+# is no 1-3 band: a broken or off-brand draft simply lands at or below 4, which is enough for the gate.
+
+
+def _clip(text: str, limit: int) -> str:
+    """Whitespace-normalised `text`, cut at a word boundary to at most `limit` characters."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return cut + " …"
+
+
+def build_rubric_anchors(brand_profile: dict, mission: Optional[str] = None) -> str:
+    """AA-801 option (b): the SCORE ANCHORS block of the T2 judge prompt, built only from the graph
+    state's brand_* fields (the tenant's T0 brand pack) — same inputs, same text, no LLM. Fields the
+    tenant has not filled are left out of the anchors rather than shown as "(none)"."""
+    name = (brand_profile.get("brand_name") or "").strip() or "this brand"
+    core = (mission or brand_profile.get("brand_core_idea") or "").strip()
+    segment = (brand_profile.get("brand_customer_segment") or "").strip()
+    mindset = (brand_profile.get("brand_customer_mindset") or "").strip()
+    voice = [str(v).strip() for v in (brand_profile.get("brand_voice_examples") or []) if str(v).strip()]
+    example = _clip(brand_profile.get("brand_good_examples") or "", _ANCHOR_EXAMPLE_CHARS)
+    forbidden = [str(w).strip() for w in (brand_profile.get("brand_forbidden_words") or []) if str(w).strip()]
+
+    ten = [f"reads unmistakably as {name}"]
+    if core:
+        ten.append(f'the overview and most itinerary days are framed by its core idea ("{core}")')
+    if segment or mindset:
+        who = segment or "its travellers"
+        ten.append(f"it speaks to {who}" + (f" (what they want: {mindset})" if mindset else ""))
+    if voice:
+        ten.append("in its voice (" + ", ".join(voice[:_ANCHOR_MAX_VOICE]) + ")")
+    if example:
+        ten.append(f'as close in voice to this on-brand example as the facts allow: "{example}"')
+    lines = [
+        "SCORE ANCHORS for THIS brand (pick the anchor the copy matches best; use 5 or 9 only when the",
+        "copy fully meets the lower anchor and only part of the higher one):",
+        "brand_fit_score:",
+        "- 10: " + "; ".join(ten) + "; no generic filler anywhere.",
+        "- 8: this brand's angle is clear in the overview and most days and the voice mostly matches; a",
+        "  few passages read as generic travel copy.",
+        "- 7: the angle is clear in the overview and in at least half of the days; the voice matches in",
+        "  places; the other days read as generic travel copy.",
+        "- 6: the brand angle shows only in the summary/overview, or brand words are bolted onto otherwise",
+        "  generic copy; most days read like a standard tour description.",
+        "- 4: generic travel copy that would fit any brand; the core idea and the voice are absent.",
+    ]
+    if forbidden:
+        lines.append("- Any of this brand's forbidden words or phrases in the copy caps brand_fit_score at 6: "
+                     + ", ".join(forbidden[:_ANCHOR_MAX_FORBIDDEN]) + ".")
+    lines += [
+        "cross_brand_distinct:",
+        "- 10: the choice of details, the framing of each day and the voice would all change for another brand.",
+        "- 8: most days emphasise different details than a neutral version would, and the voice is distinct.",
+        "- 7: about half of the days emphasise different details than a neutral version would; the rest",
+        "  keep the neutral structure with brand-specific wording.",
+        "- 6: the same structure and details as a neutral version, with brand-specific wording in places.",
+        "- 4: a synonym swap of a generic description.",
+    ]
+    return "\n".join(lines)
+
+
+def _anchored_mission_axis(mission: str) -> str:
+    """AA-801 option (b): the mission as a crisp yes/no test with a required verbatim quote."""
+    return f"""- mission_present (true/false) — MISSION TEST, answer yes or no: does the copy express this
+  brand's core idea: "{mission}"? Answer true ONLY when you can copy one sentence VERBATIM from the
+  ITINERARIES (a day, not the summary) that expresses it, and put that sentence in mission_evidence.
+  No such sentence → false and mission_evidence "". Judge only against this brand's core idea above,
+  never Adventure Asia's or a generic travel mission.
+- mission_evidence (string): the verbatim itinerary sentence, or "" when mission_present is false."""
+
+
+_QUOTE_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+                             "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u2033": '"',
+                             "\u2013": "-", "\u2014": "-", "\u2212": "-", "\u2026": "...",
+                             "*": None, "_": None, "`": None})
+_EVIDENCE_TRIM = " \t\n\"'.,;:!?-"
+_MIN_EVIDENCE_WORDS = 4
+
+
+def _normalise_quote(text: str) -> str:
+    """Case-folded, whitespace-collapsed text with typographic quotes/dashes folded to ASCII and
+    markdown emphasis removed, so a faithful copy of a sentence matches its source."""
+    text = unicodedata.normalize("NFKC", str(text or "")).translate(_QUOTE_FOLD)
+    return " ".join(text.split()).casefold()
+
+
+def evidence_in_source(evidence: str, source: str) -> bool:
+    """AA-801 option (b): True when `evidence` is a verbatim (after `_normalise_quote`) copy of a
+    passage of `source` — the itinerary digest the judge saw — of at least `_MIN_EVIDENCE_WORDS`
+    words. Surrounding quote marks, trailing punctuation and a trailing ellipsis (the digest cuts
+    long days with " …") are ignored. A paraphrase or an invented sentence returns False."""
+    quote = _normalise_quote(evidence).strip(_EVIDENCE_TRIM)
+    while quote.endswith("..."):
+        quote = quote[:-3].strip(_EVIDENCE_TRIM)
+    if len(quote.split()) < _MIN_EVIDENCE_WORDS:
+        return False
+    return quote in _normalise_quote(source)
+
+
+def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[str] = None,
+                        anchors: bool = False) -> str:
     """Assemble the judge user-prompt: this brand's profile + the content to score. Verbatim
     port of judge_node.py's own `_build_judge_prompt()` (same field names, same prompt text) —
     unchanged so an existing T2 rewrite call and a new Debate call score identically for the
     same inputs, which is the whole point of sharing this module.
 
     AA-792: `mission` (T2 only, the tenant's core idea) names the mission the mission_present axis
-    asks about. None (A1, every other caller) leaves the prompt byte-identical."""
-    mission_axis = _tenant_mission_axis(mission) if mission else _MISSION_AXIS
+    asks about. None (A1, every other caller) leaves the prompt byte-identical.
+
+    AA-801: `anchors=True` (T2 with `T2_JUDGE_ANCHORS` on) adds the tenant's SCORE ANCHORS block and,
+    when there is a mission, turns mission_present into the quoted yes/no test; the reply gains an
+    optional `mission_evidence` key (old parsers ignore it). False leaves the prompt byte-identical."""
+    if anchors and mission:
+        mission_axis = _anchored_mission_axis(mission)
+    else:
+        mission_axis = _tenant_mission_axis(mission) if mission else _MISSION_AXIS
     voice_ex = [v for v in (brand_profile.get("brand_voice_examples") or []) if v]
 
     highlights = generated.get("highlights") or []
     if isinstance(highlights, str):
         highlights = [highlights]
     highlights_text = "\n".join(f"- {h}" for h in highlights)
+    anchors_block = ("\n" + build_rubric_anchors(brand_profile, mission) + "\n") if anchors else ""
+    if anchors and mission:
+        reply_shape = ('{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, '
+                       '"mission_evidence": "<verbatim itinerary sentence or empty>", "feedback": "<string>"}')
+    else:
+        reply_shape = ('{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, '
+                       '"feedback": "<string>"}')
 
     return f"""Score this tour rewrite against THIS client brand's distinct angle.
 
@@ -251,7 +394,7 @@ ITINERARIES (every day, each shortened):
 {itinerary_digest(generated.get("itineraries"))}
 SEO_TITLE: {generated.get("seo_title")}
 SEO_META: {generated.get("seo_meta")}
-
+{anchors_block}
 SCORE on these axes:
 - brand_fit_score (1-10): does the content reflect THIS brand's specific angle and the traveller
   mindset above — not a generic register that fits any travel brand?
@@ -262,7 +405,7 @@ SCORE on these axes:
   THIS brand. If everything is on-brand, return an empty string.
 
 Return JSON ONLY, no markdown, exactly:
-{{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, "feedback": "<string>"}}"""
+{reply_shape}"""
 
 
 CANDIDATE_JUDGE_SYSTEM = """You are a brand-fit judge for Adventure Asia's B2B content pipeline.
@@ -316,7 +459,8 @@ def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s
 
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
-    mission: Optional[str] = None, repeat: int = 1,
+    mission: Optional[str] = None, repeat: int = 1, anchors: bool = False,
+    model_override: Optional[str] = None,
 ) -> BrandFitResult:
     """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
     (same system prompt, same model_tier pin, same temperature/seed, same score-combining
@@ -339,21 +483,42 @@ def score_brand_fit(
     AA-801: `repeat` > 1 (T2 with `T2_JUDGE_REPEAT=median3`) runs that many calls in parallel on
     every draft and aggregates them (`aggregate_runs`); the AA-714 near-band layer is then skipped.
     The default 1 keeps the behaviour above exactly.
+
+    AA-801 option (b): `anchors=True` (T2 with `T2_JUDGE_ANCHORS` on) builds the anchored prompt and,
+    when there is a mission, counts mission_present only when `mission_evidence` is found verbatim in
+    the itinerary digest the judge saw (`evidence_in_source`); a yes without such a quote is overruled
+    and recorded as `evidence_verified=False`.
+
+    AA-801 option (c): `model_override` — a catalog Model Key sent as the request's `model_tier` (the
+    gateway's existing per-request override: one model, no route fallback, no shadow). Measurement
+    only: allowed on an `adhoc_*` stage, never on a production stage route (ValueError), so app code
+    cannot pin a judge model past `shared.llm_role_config`.
     """
+    if model_override and not (stage or "").startswith("adhoc_"):
+        raise ValueError(f"model_override is for adhoc_* measurement stages only, not {stage!r}; "
+                         "change the stage route in shared.llm_role_config instead")
     system_prompt = JUDGE_SYSTEM
-    user_prompt = _build_judge_prompt(brand_profile, generated, mission)
+    user_prompt = (_build_judge_prompt(brand_profile, generated, mission, anchors=True) if anchors
+                   else _build_judge_prompt(brand_profile, generated, mission))
+    extra = {}
+    if anchors and mission:
+        extra["require_evidence"] = True
+        extra["evidence_source"] = itinerary_digest(generated.get("itineraries"))
+    if model_override:
+        extra["model_tier"] = model_override
 
     if repeat > 1:
         return _judge_parallel(system_prompt, user_prompt, n=repeat,
-                               mission_absent_cap=mission_absent_cap, stage=stage)
+                               mission_absent_cap=mission_absent_cap, stage=stage, **extra)
 
-    first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
+    first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage, **extra)
 
     lo, hi = _REPEAT_BAND
     if _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
         return first
 
-    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
+    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage,
+                                **extra)
                          for _ in range(_REPEAT_EXTRA)]
     out = aggregate_runs(results, mission_absent_cap=mission_absent_cap)
     logger.info("judge_repeat_median", model=first.model_used,
@@ -363,7 +528,7 @@ def score_brand_fit(
 
 
 def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_absent_cap: Optional[float],
-                    stage: str) -> BrandFitResult:
+                    stage: str, **extra) -> BrandFitResult:
     """AA-801 option (a): `n` judge calls at once, aggregated by `aggregate_runs`. Each call runs in
     its own copy of the caller's contextvars (live-progress sink, tenant/job attribution). A failed
     call is dropped from the verdict but its known billed spend (`billed_cost`) is kept in cost_usd;
@@ -374,7 +539,7 @@ def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_abs
     each of the n calls: with a shadow configured on the route, median3 samples up to n shadows per
     judgement instead of one (documented in AA-801 implementation notes / CONTEXT.md)."""
     def one():
-        return _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
+        return _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage, **extra)
 
     with ThreadPoolExecutor(max_workers=n) as pool:
         futures = [pool.submit(contextvars.copy_context().run, one) for _ in range(n)]
@@ -417,7 +582,12 @@ def _seeded_model(model_used: Optional[str]) -> bool:
 
 
 def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None,
-           stage: str = "s1_judge") -> BrandFitResult:
+           stage: str = "s1_judge", require_evidence: bool = False, evidence_source: Optional[str] = None,
+           model_tier: Optional[str] = None) -> BrandFitResult:
+    """One judge call. AA-801: `require_evidence` (anchored mission test) counts mission_present only
+    when the reply quotes a non-empty `mission_evidence` that, when `evidence_source` is given, is
+    found verbatim in it (`evidence_in_source`); `model_tier` is the gateway's per-request model
+    override (adhoc measurement only — `score_brand_fit` guards the stage)."""
     request = LLMRequest(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -427,6 +597,7 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         stage=stage,
         temperature=_JUDGE_TEMPERATURE,
         seed=_JUDGE_SEED,
+        **({"model_tier": model_tier} if model_tier else {}),
     )
     client = LLMClient()
     resp = client.generate(request)
@@ -449,6 +620,13 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
     distinct = _coerce_score(result.get("cross_brand_distinct"))
     mission_present = bool(result.get("mission_present", True))
     feedback = (result.get("feedback") or "").strip()
+    evidence = str(result.get("mission_evidence") or "").strip()
+    verified: Optional[bool] = None
+    if require_evidence and mission_present:
+        # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.
+        verified = bool(evidence) and (evidence_source is None or evidence_in_source(evidence, evidence_source))
+        if not verified:
+            mission_present = False
 
     judge_score = min(brand_fit, distinct)
     if mission_absent_cap is not None and not mission_present:
@@ -467,4 +645,6 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
+        mission_evidence=evidence if mission_present else "",
+        evidence_verified=verified,
     )

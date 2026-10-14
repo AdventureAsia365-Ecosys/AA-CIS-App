@@ -833,6 +833,15 @@ _Avoid_: block (alone), delete, filter.
     summed into the logged `cost_usd` (`judge_runs.failed_cost_usd`); when all three fail nothing is
     logged, as with a single failed call. Each call samples the stage-route shadow on its own, so a
     route with a shadow sees up to 3 shadow calls per judgement in `median3`.
+  - **Rubric anchors (AA-801 option b).** Env `T2_JUDGE_ANCHORS` (`on`/`1`/`true`; default off) adds
+    tenant-specific score anchors (what a 4 / 6 / 7 / 8 / 10 looks like, built deterministically from the
+    T0 brand pack: name, core idea, audience, voice, on-brand example, forbidden words) and turns
+    mission_present into a yes/no test that only counts with a verbatim itinerary quote
+    (`mission_evidence`), checked in code against the itinerary digest the judge saw — a paraphrased
+    or invented quote overrules the yes (`evidence_verified=false`); both are logged in
+    `quality_signal` when on. Combines with `median3`; A1 is untouched.
+    The judge model itself is only changed through the `t2_judge` stage route; `score_brand_fit`'s
+    `model_override` is refused on any stage but `adhoc_*` (measurement scripts).
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
     (`compile_rubric`), never Adventure Asia's identity.
   - **Stored status.** A version scoring < 7.0 (or escalated by T3) is stored `needs_review` — an
