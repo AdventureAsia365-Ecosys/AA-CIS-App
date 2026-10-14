@@ -46,7 +46,7 @@ COMMENT ON SCHEMA catalog IS
     'Contract: AA-Ecosys/docs/contracts/catalog.tour.v1.json.';
 
 -- ── Tours ───────────────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW catalog.v_tour AS
+CREATE OR REPLACE VIEW catalog.v_tour WITH (security_barrier = true) AS
 WITH live AS (
     SELECT rt.tour_id,
            COALESCE(rt.source_group_id, rt.tour_id)::text AS source_id,
@@ -123,7 +123,7 @@ COMMENT ON VIEW catalog.v_tour IS
 -- ── Day text (internal: not part of the contract, not granted) ────────────────────────────────
 -- Days parsed from the canonical master itinerary "Day N — Title\nBody" (graph.py
 -- _process_itineraries, AA-353; Python twin itinerary_utils.parse_canonical_itinerary_days).
-CREATE OR REPLACE VIEW catalog._tour_day_text AS
+CREATE OR REPLACE VIEW catalog._tour_day_text WITH (security_barrier = true) AS
 WITH chunk AS (
     SELECT t.source_system, t.source_id, t.tour_id, t.country AS tour_country, c.ord,
            regexp_match(btrim(c.txt, E' \t\r\n'), '^Day\s+(\d+)\s+—[ \t]*([^\n]*)(.*)$') AS m
@@ -153,7 +153,7 @@ COMMENT ON VIEW catalog._tour_day_text IS
 -- the day text does not name, then the place key (C collation) so the result never depends on a
 -- random id. Spelling: the one that appears verbatim in the day text, else the most frequent, else
 -- the first in C collation — deterministic for the same data.
-CREATE OR REPLACE VIEW catalog.v_tour_place AS
+CREATE OR REPLACE VIEW catalog.v_tour_place WITH (security_barrier = true) AS
 WITH atom AS (
     SELECT t.source_system, t.source_id, t.tour_id, t.country AS tour_country,
            a.itinerary_day, btrim(a.place) AS place, lower(btrim(a.place)) AS place_key,
@@ -222,7 +222,7 @@ COMMENT ON VIEW catalog.v_tour_place IS
     'in a stable but not itinerary-meaningful order.';
 
 -- ── Day-by-day itinerary ────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW catalog.v_tour_day AS
+CREATE OR REPLACE VIEW catalog.v_tour_day WITH (security_barrier = true) AS
 SELECT d.source_system, d.source_id, d.tour_id, d.day_number, d.title, d.body,
        COALESCE((SELECT array_agg(p.place_name ORDER BY p.position)
                    FROM catalog.v_tour_place p
@@ -235,7 +235,7 @@ COMMENT ON VIEW catalog.v_tour_day IS
     'A tour whose text is not canonical has no rows (v_tour.itinerary_text keeps the full text).';
 
 -- ── Photos ──────────────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW catalog.v_tour_photo AS
+CREATE OR REPLACE VIEW catalog.v_tour_photo WITH (security_barrier = true) AS
 SELECT t.source_system, t.source_id, p.tour_id, p.photo_id, p.path, p.place_label, p.destination_id,
        p.width, p.height, p.position, p.updated_at
   FROM catalog.v_tour t
@@ -246,7 +246,7 @@ COMMENT ON VIEW catalog.v_tour_photo IS
     '({base}{path}?size=large|small, migration 200); position 1 = cover.';
 
 -- ── Destinations ────────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW catalog.v_destination AS
+CREATE OR REPLACE VIEW catalog.v_destination WITH (security_barrier = true) AS
 SELECT 'cis'::text      AS source_system,
        d.id::text       AS source_id,
        d.id             AS destination_id,
@@ -270,7 +270,7 @@ SELECT 'cis'::text      AS source_system,
 COMMENT ON VIEW catalog.v_destination IS
     'AA-679 — golden record of places (shared.destinations, CIS-owned since ADR 0002) + AA cover photo.';
 
-CREATE OR REPLACE VIEW catalog.v_destination_photo AS
+CREATE OR REPLACE VIEW catalog.v_destination_photo WITH (security_barrier = true) AS
 SELECT p.destination_id, p.photo_id, p.path, p.place_label, p.tour_id, p.width, p.height,
        p.position, p.updated_at
   FROM shared.v_destination_photos p;

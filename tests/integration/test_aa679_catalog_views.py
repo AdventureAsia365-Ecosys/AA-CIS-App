@@ -86,6 +86,22 @@ def test_migration_225_applied(cur):
     assert not cur.fetchone()[0]
 
 
+def test_every_catalog_view_is_security_barrier(cur):
+    """The views run with a BYPASSRLS owner's rights, so their WHERE filters are the only row limit.
+    Without security_barrier a consumer's leaky function / qual can be pushed below those filters and
+    observe hidden (non-master, not-live) rows. Every view in schema catalog must carry the option."""
+    cur.execute("""
+        SELECT c.relname, coalesce(c.reloptions, '{}')
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'catalog' AND c.relkind = 'v'
+        ORDER BY c.relname""")
+    rows = cur.fetchall()
+    names = {r[0] for r in rows}
+    assert set(VIEWS) | {"_tour_day_text"} <= names, names
+    missing = [name for name, opts in rows if "security_barrier=true" not in opts]
+    assert not missing, f"catalog views without security_barrier=true: {missing}"
+
+
 def test_v_tour_keeps_only_live_master_content(cur):
     tag = uuid.uuid4().hex[:8]
     group = str(uuid.uuid4())
