@@ -371,21 +371,30 @@ async def booking_token(request: Request, db: asyncpg.Pool = Depends(get_pool)):
         raise HTTPException(status_code=401, detail="Not a staff session")
     row = await _load_active_staff(db, payload.get("sub"))
     if not row or row["role"] not in STAFF_ROLES:
+        # Visible trail for repeated mint attempts by a deactivated, demoted or unknown user.
+        logger.warning("booking_token_refused", admin_id=str(payload.get("sub")),
+                       session_role=payload.get("role"),
+                       reason="inactive_or_unknown" if not row else "role_not_staff")
         raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
     try:
-        access_token, expires_in = booking_jwt.mint_booking_token(
-            admin_id=row["id"], username=row["username"], role=row["role"],
-        )
+        # Off the event loop: a cache refresh is a blocking Secrets Manager call.
+        keys = await booking_jwt.get_signing_keys_async()
     except booking_jwt.SigningKeyUnavailable:
         raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
-    logger.info("booking_token_issued", admin_id=row["id"], cis_role=row["role"])
+    jti = str(uuid.uuid4())
+    access_token, expires_in = booking_jwt.mint_booking_token(
+        admin_id=row["id"], username=row["username"], role=row["role"], jti=jti, keys=keys,
+    )
+    # jti + kid let a token Booking sees be traced back to this mint.
+    logger.info("booking_token_issued", admin_id=row["id"], cis_role=row["role"], jti=jti,
+                kid=keys.kid)
     return BookingTokenResponse(access_token=access_token, token_type="Bearer", expires_in=expires_in)
 
 
 @app.get("/auth/.well-known/jwks.json", tags=["auth"])
 async def booking_jwks():
     try:
-        body = booking_jwt.jwks()
+        body = booking_jwt.jwks(await booking_jwt.get_signing_keys_async())
     except booking_jwt.SigningKeyUnavailable:
         raise HTTPException(status_code=503, detail="Booking token signing key is not configured")
     return JSONResponse(body, headers={"Cache-Control": _BOOKING_JWKS_CACHE_CONTROL})

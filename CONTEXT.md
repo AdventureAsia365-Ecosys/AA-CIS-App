@@ -335,19 +335,27 @@ CIS is the staff identity provider for AA-Booking. Two public endpoints, both on
   `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
   inactive user; 503 when the signing key is not configured.
 - `GET /auth/.well-known/jwks.json` — the public keys (`kty=RSA`, `use=sig`, `alg=RS256`, `kid`),
-  current key first, then previous keys still in rotation. `Cache-Control: public, max-age=600`.
+  current key first, then `previous` keys, then pre-published `next` keys.
+  `Cache-Control: public, max-age=600`.
 
 Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
 `sub=<admin_users.id>`, `name` and `preferred_username` (= username; `admin_users` has no email or
 display-name column), `cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
 Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
-`aud=booking` and `exp`. Booking maps `cis_role` to its own roles (see the mapping above).
+`aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
+cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
+Booking maps `cis_role` to its own roles (see the mapping above).
 
 Key material: Secrets Manager `BOOKING_JWT_SECRET_NAME` (default
 `aa-cis/dev/booking-jwt-signing-key`), JSON `{"kid", "private_key_pem", "previous": [{"kid",
-"public_key_pem"}]}`, cached 10 min in-process. A missing or malformed secret gives 503 on both
-endpoints and never blocks startup. Rotation: move the current public key into `previous`, put the
-new private key and kid in place; drop the old entry after one JWKS cache + token lifetime (25 min).
+"public_key_pem"}], "next": [{"kid", "public_key_pem"}]}`, cached 10 min in-process and read off
+the event loop (bounded 2 s connect / 3 s read timeouts). A missing or malformed secret gives 503 on
+both endpoints and never blocks startup; a blank or repeated `kid` in `previous`/`next` counts as
+malformed (the last good keys keep serving and an error is logged). Rotation, three steps so no
+verifier ever sees an unknown `kid`: (1) add the new public key under `next`, wait ≥ 20 min (CIS key
+cache 10 + Booking JWKS cache 10); (2) put the new private key and kid in place, move the old public
+key to `previous`, empty `next`; (3) after ≥ 25 min (key cache 10 + token 15) drop the `previous`
+entry.
 This is separate from the HS256 `JWT_SECRET` used for CIS sessions — Booking never receives that.
 
 ### Tenant lifecycle (AA-797)

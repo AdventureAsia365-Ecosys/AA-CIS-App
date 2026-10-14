@@ -290,3 +290,146 @@ def test_failed_load_is_not_retried_every_request(monkeypatch):
             booking_jwt.jwks()
     assert len(calls) == 1
     booking_jwt.reset_key_cache()
+
+
+# ── review fixes: off-loop key load, rotation guards, next key, mint trail ────
+
+def _secret_json(keypair, **extra):
+    base = {"kid": "bk-test-2", "private_key_pem": _pem_private(keypair["current"])}
+    base.update(extra)
+    return json.dumps(base)
+
+
+@pytest.mark.parametrize("entries_field", ["previous", "next"])
+@pytest.mark.parametrize("bad_kid", ["", "  ", "bk-test-2"])
+def test_blank_or_duplicate_rotation_kid_is_rejected(keypair, entries_field, bad_kid):
+    raw = _secret_json(keypair, **{entries_field: [
+        {"kid": bad_kid, "public_key_pem": _pem_public(keypair["previous"])},
+    ]})
+    with pytest.raises(booking_jwt.SigningKeyUnavailable):
+        booking_jwt.parse_signing_secret(raw)
+
+
+def test_kid_repeated_between_previous_and_next_is_rejected(keypair):
+    entry = {"kid": "bk-test-1", "public_key_pem": _pem_public(keypair["previous"])}
+    with pytest.raises(booking_jwt.SigningKeyUnavailable):
+        booking_jwt.parse_signing_secret(_secret_json(keypair, previous=[entry], next=[entry]))
+
+
+def test_next_key_is_published_but_never_signs(keypair):
+    nxt = _rsa_key()
+    keys = booking_jwt.parse_signing_secret(_secret_json(
+        keypair,
+        previous=[{"kid": "bk-test-1", "public_key_pem": _pem_public(keypair["previous"])}],
+        next=[{"kid": "bk-test-3", "public_key_pem": _pem_public(nxt)}],
+    ))
+    doc = booking_jwt.jwks(keys)
+    assert [k["kid"] for k in doc["keys"]] == ["bk-test-2", "bk-test-1", "bk-test-3"]
+    token, _ = booking_jwt.mint_booking_token(admin_id=ADMIN_ID, username="u", role="admin", keys=keys)
+    assert jwt.get_unverified_header(token)["kid"] == "bk-test-2"
+
+
+def test_bad_rotation_edit_keeps_serving_last_good_key(monkeypatch, keypair):
+    good = _secret_json(keypair)
+    bad = _secret_json(keypair, previous=[{"kid": "", "public_key_pem": _pem_public(keypair["previous"])}])
+    values = [good, bad]
+    monkeypatch.setattr(booking_jwt, "_fetch_secret_string", lambda name: values.pop(0))
+    clock = [1000.0]
+    monkeypatch.setattr(booking_jwt.time, "monotonic", lambda: clock[0])
+    booking_jwt.reset_key_cache()
+    try:
+        assert booking_jwt.get_signing_keys().kid == "bk-test-2"
+        clock[0] += booking_jwt._KEY_TTL_S + 1
+        assert booking_jwt.get_signing_keys().kid == "bk-test-2"  # bad reload → old keys stay
+        assert values == []
+    finally:
+        booking_jwt.reset_key_cache()
+
+
+def test_secret_fetch_runs_off_the_event_loop(monkeypatch, keypair):
+    """A slow Secrets Manager read must not freeze other requests on the same loop."""
+    import asyncio
+    import time as _time
+
+    import httpx
+
+    value = _secret_json(keypair)
+
+    def slow_fetch(name):
+        _time.sleep(0.5)
+        return value
+
+    monkeypatch.setattr(booking_jwt, "_fetch_secret_string", slow_fetch)
+    booking_jwt.reset_key_cache()
+    finished = []
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+            async def jwks_call():
+                res = await ac.get("/auth/.well-known/jwks.json")
+                finished.append(("jwks", res.status_code))
+
+            async def health_call():
+                await asyncio.sleep(0.05)  # let the JWKS request start its slow fetch first
+                res = await ac.get("/health")
+                finished.append(("health", res.status_code))
+
+            await asyncio.gather(jwks_call(), health_call())
+
+    try:
+        asyncio.run(run())
+    finally:
+        booking_jwt.reset_key_cache()
+    assert finished == [("health", 200), ("jwks", 200)]
+
+
+def test_secrets_manager_client_has_bounded_timeouts(monkeypatch):
+    import sys
+    import types
+
+    seen = {}
+
+    class _Client:
+        def get_secret_value(self, SecretId):
+            return {"SecretString": "{}"}
+
+    def fake_client(service, region_name=None, config=None):
+        seen["config"] = config
+        return _Client()
+
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(client=fake_client))
+    booking_jwt._fetch_secret_string("x")
+    cfg = seen["config"]
+    assert cfg.connect_timeout <= 5 and cfg.read_timeout <= 5
+    assert cfg.retries["max_attempts"] <= 3
+
+
+def test_refused_mint_and_issued_mint_are_logged_with_ids(client_with, secret, monkeypatch):
+    events = []
+
+    class _Log:
+        def info(self, event, **kw):
+            events.append(("info", event, kw))
+
+        def warning(self, event, **kw):
+            events.append(("warning", event, kw))
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    import api.main as main_mod
+    monkeypatch.setattr(main_mod, "logger", _Log())
+    session = _create_admin_jwt(ADMIN_ID, "linh.sales", "admin")
+
+    client, _ = client_with(None)
+    assert client.post("/auth/booking-token", headers={"Authorization": f"Bearer {session}"}).status_code == 401
+    client, _ = client_with(_staff_row())
+    res = client.post("/auth/booking-token", headers={"Authorization": f"Bearer {session}"})
+    assert res.status_code == 200
+
+    refused = [e for e in events if e[1] == "booking_token_refused"]
+    assert refused and refused[0][0] == "warning" and refused[0][2]["admin_id"] == ADMIN_ID
+    issued = [e for e in events if e[1] == "booking_token_issued"]
+    claims = jwt.decode(res.json()["access_token"], options={"verify_signature": False})
+    assert issued and issued[0][2]["jti"] == claims["jti"] and issued[0][2]["kid"] == "bk-test-2"
