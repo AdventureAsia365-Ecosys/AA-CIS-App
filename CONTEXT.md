@@ -217,7 +217,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (AA-621) waits on the same blocker.
 - **Plans and quota (AA-640)**: the tour-rewrite quota comes only from `shared.membership_plans`
   (starter 50 / growth 200 / business 500). Over-quota rewrites are allowed, logged as
-  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds RPM.
+  `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds the plan's
+  default RPM; an admin can override one tenant's RPM (`PATCH /admin/tenants/{id}
+  {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
   `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
   billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
@@ -322,7 +324,41 @@ AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → r
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
 can open are narrowed); the backend sees only `x-admin-user-id`. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
-CIS-issued JWT with `aud=booking` (root ADR 0004, O1) — not built yet.
+CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
+
+### Booking staff token (AA-680)
+
+CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
+`api/main.py`, key handling in `api/core/booking_jwt.py`:
+
+- `POST /auth/booking-token` — needs a CIS staff session: the `cis_admin_token` JWT as an
+  `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
+  (must be `is_active`; the role comes from the row, not the session). Returns
+  `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
+  inactive user; 503 when the signing key is not configured.
+- `GET /auth/.well-known/jwks.json` — the public keys (`kty=RSA`, `use=sig`, `alg=RS256`, `kid`),
+  current key first, then `previous` keys, then pre-published `next` keys.
+  `Cache-Control: public, max-age=600`.
+
+Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
+`sub=<admin_users.id>`, `name` and `preferred_username` (= username; `admin_users` has no email or
+display-name column), `cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
+Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
+`aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
+cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
+Booking maps `cis_role` to its own roles (see the mapping above).
+
+Key material: Secrets Manager `BOOKING_JWT_SECRET_NAME` (default
+`aa-cis/dev/booking-jwt-signing-key`), JSON `{"kid", "private_key_pem", "previous": [{"kid",
+"public_key_pem"}], "next": [{"kid", "public_key_pem"}]}`, cached 10 min in-process and read off
+the event loop (bounded 2 s connect / 3 s read timeouts). A missing or malformed secret gives 503 on
+both endpoints and never blocks startup; a blank or repeated `kid` in `previous`/`next` counts as
+malformed (the last good keys keep serving and an error is logged). Rotation, three steps so no
+verifier ever sees an unknown `kid`: (1) add the new public key under `next`, wait ≥ 20 min (CIS key
+cache 10 + Booking JWKS cache 10); (2) put the new private key and kid in place, move the old public
+key to `previous`, empty `next`; (3) after ≥ 25 min (key cache 10 + token 15) drop the `previous`
+entry.
+This is separate from the HS256 `JWT_SECRET` used for CIS sessions — Booking never receives that.
 
 ### Tenant lifecycle (AA-797)
 
@@ -351,6 +387,15 @@ backend re-checks `x-admin-role`. Each write leaves one `acp_shared.audit_log` r
 (`AdminTenantAuditAction`, actor `admin:{x-admin-user-id}`). `plan_id` (→ `shared.membership_plans`)
 is set on create and on every plan change. `GET /admin/tenants` lists only active tenants unless
 `include_inactive=true`.
+
+**Tenant 360 (AA-666, AA-766)** — the inline panel on `/admin/tenants` (no separate page). Settings
+edits plan / RPM (PATCH) and the planning config (`PUT /admin/tenants/{id}/config`: markets,
+channels, posts/week). Admin-only read endpoints in `api/routers/admin_tenant360.py`:
+`/cost` (month-to-date `llm_call_log` per stage, $/piece per channel, $/tour for T2, plan revenue
+vs LLM cost → margin; same cost definition as billing), `/quality` (T10 gate verdicts per gate from
+`content_piece.gate_ledger`, held reasons, tenant edit rate on T2 versions) and `/markets` (SEO
+markets from `tenant_seo_config`, `segment_research_log` coverage over the places in the tenant's
+tours, planning markets, the tenant's `unmapped_market_requests`). None of it is in a tenant API.
 
 ## Boundaries — what this repo does NOT do
 
@@ -780,6 +825,14 @@ _Avoid_: block (alone), delete, filter.
     brand_fit, capped at 6.0 when the tenant's own mission (core idea) is absent from the draft; a
     tenant without a core idea is never mission-capped. Cross-brand distinctness is logged in
     `llm_call_log.quality_signal` and does not gate.
+  - **Judge repeats (AA-801).** Env `T2_JUDGE_REPEAT`: `single` (default) = one call, plus the AA-714
+    median of 3 only when the first brand_fit lands in 6–8; `median3` = three parallel calls on every
+    draft, median brand_fit/distinct and majority mission (a tie counts as absent), raw calls logged in
+    `quality_signal.judge_runs`. `median3` stays off until the AA-801 measurement is in. A call that
+    was billed but then failed (malformed JSON) is dropped from the verdict and its cost is still
+    summed into the logged `cost_usd` (`judge_runs.failed_cost_usd`); when all three fail nothing is
+    logged, as with a single failed call. Each call samples the stage-route shadow on its own, so a
+    route with a shadow sees up to 3 shadow calls per judgement in `median3`.
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
     (`compile_rubric`), never Adventure Asia's identity.
   - **Stored status.** A version scoring < 7.0 (or escalated by T3) is stored `needs_review` — an

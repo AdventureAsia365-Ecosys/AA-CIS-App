@@ -77,6 +77,7 @@ class AdminTenantAuditAction:
     OFFBOARD = "agency.offboard"
     STATUS_CHANGED = "tenant.status_changed"  # suspend <-> active (PATCH is_active)
     PLAN_CHANGED = "tenant.plan_changed"  # plan_tier + plan_id + rate_limit_rpm
+    RATE_LIMIT_CHANGED = "tenant.rate_limit_changed"  # AA-766: RPM override without a plan change
     KEY_ROTATED = "tenant.key_rotated"
     BRAND_UPDATED = "tenant.brand_updated"
     CONFIG_UPDATED = "tenant.config_updated"  # markets / channels / posts_per_week

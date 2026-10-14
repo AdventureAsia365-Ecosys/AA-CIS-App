@@ -288,6 +288,13 @@ class VerifyAdminResponse(BaseModel):
     valid: bool
 
 
+class BookingTokenResponse(BaseModel):
+    """AA-680 — POST /auth/booking-token: an RS256 JWT (aud=booking) for AA-Booking."""
+    access_token: str
+    token_type: str
+    expires_in: int
+
+
 def _verify_password(raw_password: str, password_hash: str) -> bool:
     """bcrypt compare. Returns False (not raise) on any malformed-hash error —
     a corrupt/legacy hash should fail closed, not 500."""
