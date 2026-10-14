@@ -56,6 +56,13 @@ async def _recompute_after_status_change(pool, tour_id: str, new_status: str) ->
                   job_id=job_id, created=created, segments=len(segment_ids))
     except Exception:
         _log.warning("aa713_recompute_enqueue_failed", tour_id=tour_id, exc_info=True)
+    # AA-712 — the tour graph follows the live set; a tour (re-)entering also gets its places.
+    try:
+        from services.places.enqueue import after_liveness_change
+        await after_liveness_change(pool, tour_id=str(tour_id), new_status=new_status,
+                                    created_by="admin:status_change")
+    except Exception:
+        _log.warning("aa712_place_enqueue_failed", tour_id=tour_id, exc_info=True)
 
 
 async def _notify_adopting_tenants(conn, tour_id: str, event_type, tour_name: str) -> None:

@@ -82,6 +82,7 @@ class Worker:
         self.max_parallel = max_parallel
         self._stopping = asyncio.Event()
         self._running: dict[str, asyncio.Task] = {}
+        self._running_kinds: dict[str, str] = {}   # job id -> kind (background group cap, AA-712)
         # AA-687: how often this worker writes its shared.job_worker row (liveness for the Jobs page).
         self.beat_every_seconds = 15.0
         # AA-711: a worker on a draining (older) task stops claiming once a newer one is live.
@@ -90,6 +91,29 @@ class Worker:
 
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
+
+    def background_reserve(self) -> int:
+        """AA-712: free slots kept away from background kinds — BACKGROUND_RESERVE, but never so many
+        that a small worker (max_parallel <= 2) could not run a background job at all."""
+        return min(BACKGROUND_RESERVE, max(self.max_parallel - 1, 0))
+
+    def running_background(self) -> int:
+        background = {name for name, k in kinds().items() if k.background}
+        return sum(1 for kind in self._running_kinds.values() if kind in background)
+
+    def claim_caps(self, free_slots: int, running_background: int = 0) -> dict[str, int]:
+        """The caps passed to claim(): every kind, minus the background kinds when only the reserved
+        slots are free OR when BACKGROUND_MAX_RUNNING background jobs already run on this worker.
+        claim() is FIFO across kinds, so without this a background batch queued before a wave could
+        fill the slots a3_atomize needs (S217: 59-minute atomize tail). The reserve alone is not
+        enough: background jobs claimed before a wave keep their slots, and each slot a wave job
+        frees goes to the next s1_rewrite (review finding 2) — so background work is also capped as
+        a group: 8 slots = s1_rewrite 6 + a3_atomize 1 + background 1."""
+        caps = self.caps()
+        if free_slots <= self.background_reserve() or running_background >= BACKGROUND_MAX_RUNNING:
+            background = {name for name, k in kinds().items() if k.background}
+            caps = {name: cap for name, cap in caps.items() if name not in background}
+        return caps
 
     # ── main loop ─────────────────────────────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -140,14 +164,20 @@ class Worker:
             return 0
         self.yielding = False
         while len(self._running) < self.max_parallel and not self._stopping.is_set():
-            job = await queue.claim(self.pool, self.worker_id, self.caps(), self.lease_seconds)
+            caps = self.claim_caps(self.max_parallel - len(self._running), self.running_background())
+            job = await queue.claim(self.pool, self.worker_id, caps, self.lease_seconds)
             if job is None:
                 break
             task = asyncio.create_task(self._execute(job), name=f"job:{job.kind}:{job.id}")
             self._running[job.id] = task
-            task.add_done_callback(lambda _t, jid=job.id: self._running.pop(jid, None))
+            self._running_kinds[job.id] = job.kind
+            task.add_done_callback(lambda _t, jid=job.id: self._forget(jid))
             claimed += 1
         return claimed
+
+    def _forget(self, job_id: str) -> None:
+        self._running.pop(job_id, None)
+        self._running_kinds.pop(job_id, None)
 
     # ── one job ───────────────────────────────────────────────────────────────────────────────
     async def _execute(self, job: queue.Job) -> None:
@@ -250,6 +280,10 @@ class Worker:
 # then atomize ran alone as a ~55 min tail. 8 slots = s1_rewrite (cap 6) + a3_atomize (cap 1, by
 # design) + 1 for prefetch/recompute, so atomize drains alongside the rewrites.
 WORKER_MAX_PARALLEL_DEFAULT = 8
+# AA-712: background kinds (place pipeline) never take the last 2 free slots of a worker, and at
+# most BACKGROUND_MAX_RUNNING of them run at once on a worker (all background kinds together).
+BACKGROUND_RESERVE = 2
+BACKGROUND_MAX_RUNNING = 1
 
 
 def worker_max_parallel() -> int:

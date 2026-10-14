@@ -166,7 +166,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
     (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`).
+    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
+    `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
+    `place_geocode`, `tour_graph_build` — AA-712).
+  - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
+    last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
+    starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -239,7 +244,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     unchanged.
 - **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
   `acp_contract.*` and `acp_shared.*` (the pipeline tables — atoms, segments, ranking, routes,
-  hubs, subjects, pieces, facts), migrations under `api/migrations/` (latest: 223, S235).
+  hubs, subjects, pieces, facts), `geo` (place pipeline, AA-712), migrations under `api/migrations/`.
 - **Removed as dead code (15-21/09)**: the N7/N8 produce/deliver write path and its 5 tables
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
@@ -252,6 +257,32 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GET /content/photos/{id}?size=` (302 to presigned S3). With `match_destinations` it fills empty
   `shared.destinations.cover_image_url` (read by the TripPlanner) — off until the destinations are
   re-extracted from the rerun tours.
+- **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
+  tour's day skeleton (start / end / overnight), places (= itinerary components, stable uuid5 ids),
+  geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
+  schema `geo`, keyed by `source_id` (catalog identity). Jobs (`services/jobs/place_*`,
+  `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
+  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours, dry-run cost
+  estimate, refused during a wave); `place_geocode` (debounced, the ONLY writer of
+  `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), **Geoapify**
+  (OpenStreetMap data; S236 decision, all countries; `GEOCODER_PROVIDER` = `geoapify` default |
+  `model_only` for tests / emergency; `mapbox_permanent` / `amazon_location` fail as not supported —
+  Mapbox is the basemap only, Amazon Location is not used) confirms it with the bake-off acceptance
+  rule (`services/places/geomatch.py`: top 3, name match, no admin-area types, ≤ 25 km / 50 km for long
+  features; `rank.confidence` recorded, never a gate) → `located_by='geoapify'`, `geo_precision='point'`;
+  otherwise the model's point stays (`llm`, `geo_precision='area'` — never drawn as a pin; hard kinds
+  such as temple / pass / lake / village get `review_reason` for `/admin/places`). Generic phrases
+  ("ger camp", "local market") are not geocoded. Free plan 3,000 credits/day: ≤ 5 req/s, retry on
+  429/5xx, daily credit guard 2,500 (UTC day, `geo.geocode_call`). Key: Secrets Manager
+  `aa-cis/dev/geoapify` (plain string), worker task role reads it; never logged. **Attribution
+  required wherever these coordinates are shown (CIS admin and every consumer, TripPlanner first):
+  "Powered by Geoapify" (link) + "© OpenStreetMap contributors"** — also kept per row in
+  `geocoder_meta.attribution` (Geoapify storage terms). Hard country/bbox guard, transit-aware outlier
+  rule → `suspect`; admin-fixed (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
+  kept). Stages `a3_place_days` (Sonnet, Luna 20% shadow), `a3_place_locate`, `a3_place_embed`
+  (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
+  name in two countries = two places). Other apps will read it only through `catalog.*` views
+  (migration 228, next slice); TripPlanner's own extraction is frozen.
 
 ## Deploy & CI
 
@@ -291,7 +322,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 |---|---|---|---|
 | AA-TripPlanner-Web | `gold_aa_internal.published_tours` (tenant RLS, AA tenant), `acp_contract.v_active_tour_atoms` (place/activity columns), `shared.destinations` (read-only), photo views `shared.v_destination_photos` / `v_tour_photos` | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migrations 173 (gateway tables + log), 180 / 216 (atoms), 201 (destinations read-only, photo views) to role `tripplanner` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
-| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
+| AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway

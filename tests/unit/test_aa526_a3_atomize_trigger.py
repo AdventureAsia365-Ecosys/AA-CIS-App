@@ -263,7 +263,9 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
              patch("services.jobs.recompute_job.enqueue_recompute",
                    AsyncMock(return_value=("job-9", False))) as enq, \
              patch("services.acp_contract.atom_ranking.run_atom_ranking", ranking), \
-             patch("services.acp_contract.route_detection.run_route_detection", routes):
+             patch("services.acp_contract.route_detection.run_route_detection", routes), \
+             patch("services.places.enqueue.after_atomize",
+                   AsyncMock(return_value={"place_extract_job": "job-p", "place_extract_job_reused": False})) as pl:
             out = await export_handler._run_a3_atomize_background(
                 tour_id=TOUR_ID, rewritten=rewritten, country="Vietnam", version_id=GC_ID,
             )
@@ -275,8 +277,28 @@ class TestA3RunsSegmentScoreRouteAfterAtomize:
         kw = enq.await_args.kwargs
         assert kw["scope"] == "platform" and kw["segment_ids"] == ["seg_a", "seg_b"]
         assert kw["debounce_s"] > 0
+        # AA-712: the tour's places follow atomize (keyed on the content version)
+        assert pl.await_args.kwargs["tour_id"] == str(TOUR_ID) and pl.await_args.kwargs["version_id"] == str(GC_ID)
         assert out == {"segment_score_route": "ok", "segments": 2, "score_route_job": "job-9",
-                       "score_route_job_reused": True}
+                       "score_route_job_reused": True, "place_extract_job": "job-p",
+                       "place_extract_job_reused": False}
+
+    async def test_place_extract_enqueue_failure_is_recorded_not_raised(self):
+        """AA-712 — best-effort: a failed place_extract enqueue lands in the result, atomize still succeeds."""
+        conn = AsyncMock()
+        conn.close = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        rewritten = {"name": "Tour", "summary": "s", "highlights": "[]", "itineraries": "Day 1..."}
+        with patch("services.export.handler.open_job_pool", AsyncMock(return_value=conn)), \
+             patch("services.acp_contract.a3_atomize.run_a3_atomize", AsyncMock(return_value={"status": "success"})), \
+             patch("services.acp_contract.segment_matching.run_segment_matching", AsyncMock(return_value={})), \
+             patch("services.jobs.recompute_job.enqueue_recompute", AsyncMock(return_value=("job-9", True))), \
+             patch("services.places.enqueue.after_atomize", AsyncMock(side_effect=RuntimeError("db down"))):
+            out = await export_handler._run_a3_atomize_background(
+                tour_id=TOUR_ID, rewritten=rewritten, country="Vietnam", version_id=GC_ID, reraise=True,
+            )
+        assert out["segment_score_route"] == "ok"
+        assert out["place_extract"].startswith("enqueue failed: RuntimeError")
 
     async def test_segment_score_route_failure_is_swallowed_never_raises(self):
         """Best-effort, same precedent as atomize itself — must never surface as the publish
