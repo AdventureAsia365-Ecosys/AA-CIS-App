@@ -26,6 +26,7 @@ from services.content_generation.brand_standards import AA_BRAND_IDENTITY_PROMPT
 _TEST_SECRET = "test-admin-secret"
 
 TENANT_ID = uuid.uuid4()
+PLAN_ID = uuid.uuid4()
 
 
 @pytest.fixture(autouse=True)
@@ -94,20 +95,21 @@ class TestCreateTenantIsActive:
     @pytest.mark.asyncio
     async def test_new_tenant_is_active_true(self):
         conn = _make_conn()
-        # slug-existing check -> None, INSERT RETURNING -> TENANT_ID, has_rules check -> None (no
-        # existing brand_rules row for this brand-new tenant)
-        conn.fetchval.side_effect = [None, TENANT_ID, None]
+        # slug-existing check -> None, plan_id lookup (AA-797) -> PLAN_ID, INSERT RETURNING ->
+        # TENANT_ID, has_rules check -> None (no existing brand_rules row for this brand-new tenant)
+        conn.fetchval.side_effect = [None, PLAN_ID, TENANT_ID, None]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
         body = admin.CreateTenantRequest(name="Test Agency", slug="test-agency", posts_per_week=4)
-        result = await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET)
+        result = await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET, x_admin_role="admin")
 
         assert result.is_active is True
         assert result.posts_per_week == 4
-        insert_args = conn.fetchval.call_args_list[1][0]
-        assert "VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, true)" in insert_args[0]
-        assert insert_args[4] == 4  # posts_per_week bound param
+        insert_args = conn.fetchval.call_args_list[2][0]
+        assert "VALUES ($1, $2, $3::plan_tier_enum, $4, $5, $6, $7, true)" in insert_args[0]
+        assert insert_args[4] == PLAN_ID  # AA-797: plan_id is set on create
+        assert insert_args[5] == 4  # posts_per_week bound param
 
 
 class TestCreateTenantSeedsFindableBrandRules:
@@ -124,14 +126,14 @@ class TestCreateTenantSeedsFindableBrandRules:
     @pytest.mark.asyncio
     async def test_brand_rules_insert_uses_default_not_tenant_name(self):
         conn = _make_conn()
-        conn.fetchval.side_effect = [None, TENANT_ID, None]
+        conn.fetchval.side_effect = [None, PLAN_ID, TENANT_ID, None]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
         body = admin.CreateTenantRequest(
             name="WanderLux Travel", slug="wanderlux-travel", posts_per_week=4,
         )
-        await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET)
+        await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET, x_admin_role="admin")
 
         brand_rules_calls = [
             c for c in conn.execute.call_args_list if "tenant_brand_rules" in c.args[0]
@@ -149,14 +151,14 @@ class TestCreateTenantSeedsFindableBrandRules:
         fetch_brand_rubric_text()'s own real WHERE clause against it -- confirms both halves
         (write + read) agree, the way the live AA-471 verify confirmed against the real DB."""
         conn = _make_conn()
-        conn.fetchval.side_effect = [None, TENANT_ID, None]
+        conn.fetchval.side_effect = [None, PLAN_ID, TENANT_ID, None]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
         body = admin.CreateTenantRequest(
             name="WanderLux Travel", slug="wanderlux-travel", posts_per_week=4,
         )
-        await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET)
+        await admin.create_tenant(body, request, x_admin_secret=_TEST_SECRET, x_admin_role="admin")
 
         brand_rules_calls = [
             c for c in conn.execute.call_args_list if "tenant_brand_rules" in c.args[0]
