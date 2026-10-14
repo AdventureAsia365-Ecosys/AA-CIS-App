@@ -211,6 +211,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Plans and quota (AA-640)**: the tour-rewrite quota comes only from `shared.membership_plans`
   (starter 50 / growth 200 / business 500). Over-quota rewrites are allowed, logged as
   `rewrite_over_quota` and billed as overage. `PLAN_LIMITS` in code now only holds RPM.
+- **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
+  `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
+  billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
+  No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
+  (`/v1/billing` has no `llm_cost_usd`, AA-796).
+- **Pipeline routes are admin-only (AA-799)**: every `/v1/pipeline/*` route requires the admin secret
+  (`_require_admin`, a router-wide dependency in `api/routers/v1_pipeline.py`); a tenant JWT gets 403,
+  no auth 401. The edge (API Gateway / ALB) does not route `/v1/pipeline` today. `/run` has no caller
+  (deletion candidate).
 - **Live writing progress (AA-637, `docs/adr/0004-*.md`)**:
   - Tenant writing jobs run in the background: the T2 tour rewrite and the T9 post write.
   - While running, each job binds a stream sink (`shared/llm_client/stream_sink.py`).
@@ -221,7 +230,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     unchanged.
 - **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
   `acp_contract.*` and `acp_shared.*` (the pipeline tables — atoms, segments, ranking, routes,
-  hubs, subjects, pieces, facts), migrations under `api/migrations/` (latest: 167).
+  hubs, subjects, pieces, facts), migrations under `api/migrations/` (latest: 223, S235).
 - **Removed as dead code (15-21/09)**: the N7/N8 produce/deliver write path and its 5 tables
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
@@ -253,10 +262,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   required check. e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
-- **Migrations are not applied by CI/CD.** Deploy only builds the image and updates the ECS
-  task definition. Apply each new `api/migrations/NNN_*.sql` by hand through ECS exec into the
-  `api` container, using Python + asyncpg with the admin secret `aa-cis/dev/rds` (the container
-  has no `psql`; the app-user secret is filtered by RLS and sees 0 platform rows).
+- **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
+  task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
+  (`check` → `apply`) from a byte-identical copy in `db/migrations/cis/` (S225); never by hand. A
+  migration that the new code needs is applied before that code merges.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
@@ -273,7 +282,7 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 |---|---|---|---|
 | AA-TripPlanner-Web | `gold_aa_internal.published_tours` (tenant RLS, AA tenant), `acp_contract.v_active_tour_atoms` (place/activity columns), `shared.destinations` (read-only), photo views `shared.v_destination_photos` / `v_tour_photos` | `shared.llm_call_log` (rows tagged `quality_signal.app = "tripplanner"`) | CIS migrations 173 (gateway tables + log), 180 / 216 (atoms), 201 (destinations read-only, photo views) to role `tripplanner` |
 | AA-TripPlanner-Web | Model Gateway config `shared.llm_role_config`, `shared.llm_model_catalog` (stages `tp_*`) | — | CIS 173 |
-| AA-Booking (planned) | Catalog: tour templates, activities, destinations through catalog views + an outbox (`catalog.tour.*`, idempotent by `external_ref`, AA-679) | its own `booking.*` | not built yet |
+| AA-Booking (planned) | Catalog: tour templates, activities, destinations through catalog views + an outbox (`catalog.tour.*`, idempotent by `(source_system, source_id)`, ERD v2, AA-679) | its own `booking.*` | not built yet |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
@@ -304,7 +313,37 @@ shows only when the role may open its page).
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed); the backend sees only `x-admin-user-id`.
+can open are narrowed); the backend sees only `x-admin-user-id`. Booking staff log in through this
+same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
+CIS-issued JWT with `aud=booking` (root ADR 0004, O1) — not built yet.
+
+### Tenant lifecycle (AA-797)
+
+A tenant (`shared.tenants`) is in one of three states, derived from two columns
+(`tenant_status()` in `api/routers/admin.py`):
+
+- **active**: `is_active = true`, `cancelled_at IS NULL`.
+- **suspended**: `is_active = false`, `cancelled_at IS NULL`. Reversible through
+  `PATCH /admin/tenants/{id} {"is_active": ...}`. The rate-limit middleware returns 403 "Tenant is
+  deactivated" to the tenant's JWT. The PATCH clears the 30 s Redis `tenant_meta:{id}` cache, so
+  this applies at once.
+- **offboarded**: `cancelled_at` set. Reached only through `POST /admin/tenants/{id}/offboard`,
+  which needs a reason. That call revokes the key (`api_key_hash = 'REVOKED_' || id`), sets
+  `is_active = false`, removes the tenant from the Jev allow-list (snapshotted in the audit row) and
+  cancels its QUEUED `shared.job` rows (running jobs finish). It deletes no data or setting.
+
+PATCH and generate-key on an offboarded tenant return 409. `POST /admin/tenants/{id}/restore`
+(Nghiệp, 14/10/2026) brings it back whole: it clears the offboard markers, sets `is_active`,
+re-adds the snapshotted Jev allow-list row and issues a **new** API key (the old one stays
+revoked); plan and settings are unchanged, and cancelled jobs are listed, not re-enqueued. GDPR
+data deletion is not automated (follow-up).
+
+Every admin write to a tenant (create, plan, status, key, brand identity, config, offboard,
+restore) is admin-role only. The BFF enforces this through `lib/rbac.ts` `API_WRITE_RULES`, and the
+backend re-checks `x-admin-role`. Each write leaves one `acp_shared.audit_log` row
+(`AdminTenantAuditAction`, actor `admin:{x-admin-user-id}`). `plan_id` (→ `shared.membership_plans`)
+is set on create and on every plan change. `GET /admin/tenants` lists only active tenants unless
+`include_inactive=true`.
 
 ## Boundaries — what this repo does NOT do
 
@@ -467,6 +506,14 @@ restate the body); new blocking gates F0_complete (cut-off text), F2_brand_forbi
 tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
 judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
 (it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
+S235 (AA-785): T9/T10 F1 (`quality_gates.gate_grounding`) calls
+`find_novel_numeric_claims(..., year_forms=True)`. In that mode a year range ("1637–38") or a decade
+("the late 1630s") is read as years, and it passes when the seed has the year: for a range, the full
+end year, or the start year when the end is start + 1; for a decade, any seed year inside it.
+Otherwise F1 reports the full year or decade ('1652', '1880s'). T3, A1 and `source_facts` keep the
+default strict digit-run reading. F1 stays blocking. (AA-776: an F4_seo_surface-only ledger is fixed
+by the SEO title/meta fit (`repair_mode: seo_fields`), never by a full rewrite, unless the F4
+violation is about the slug.)
 S234 (AA-768): `services/acp_content_writing/hygiene.py` owns the deterministic text rules (scope
 lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LEAK_RE`,
 `SOCIAL_PROOF_RE`, repeats, hashtag spelling). It fixes what is safe in place before the gates
@@ -520,6 +567,15 @@ mention, deletes a family-brand reassurance that plays down a seed hazard, and r
 made the reader's gateway / base (FAQ included); the rest is F17. A trip place the seed's place background names
 is not out of scope. The blog SEO title may not repeat a title of the tenant's last 50 blog pieces (F4); only the
 blog gets an SEO title/meta (the fit no longer runs for other channels).
+S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
+citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
+product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
+full rewrite. A non-pass F9 verdict with no checkable reason is a warn, never a hold. A claim that is
+not in the body at all but is in the title/meta is a `title …`/`meta …` warn owned by the SEO fit. On
+LinkedIn, at the last attempt, the sentences behind an F9 product-truth failure are cut (never the
+hook or the CTA); F9 is waived only when every flagged sentence was cut and the post stays in its
+length band, otherwise it stays blocking and the piece is held for the admin (the tenant still
+receives it, AA-770). A CTA failure still holds. Blogs keep the plain hold until AA-777.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
@@ -531,8 +587,8 @@ attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer
 and can export and publish a held Piece like an approved one. **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
-`not_ready` means there is no content yet). The same rule covers T2 tour versions (no score / QA
-fields on tenant APIs). `writer_input` (migration 220) stores what the writer was given. Admins
+`not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
+projection** below). `writer_input` (migration 220) stores what the writer was given. Admins
 see everything on **Content Quality** (`/admin/content-quality`, AA-769), plus Content Trace and
 Platform Stats. An **admin** (staff role `admin` only) can cut or rewrite one flagged sentence of
 an approved/held Piece from that drawer (S234): *suggest* is one cheap LLM call (stage
@@ -550,6 +606,21 @@ request's 3 T8 angles (`POST /admin/content-quality/requests/{id}/regenerate-ang
 the request (same tenant, atom, subject, route, channel, CTA, goal) and runs the `t8_angles` job on
 the clone, so the old request, its option rows and its pieces' angle labels never change.
 _Avoid_: post, draft, content (all used loosely elsewhere; Piece is the specific DB row).
+
+**Tenant projection (AA-770, AA-796)**:
+Every tenant-JWT read of tours and tour versions goes through `api/routers/_tenant_projection.py`,
+the single tenant rule:
+- Stored status: T2 still stores `status='needs_review'` when the score is < 7.0 (or the T3 QA gate
+  escalated). That stored value is the admin signal (admins read it in `/admin/content-quality` and
+  in the tenant rewrite activity). Tenant reads map it to `ai_generated` ("Ready to review");
+  Marketplace shows it as `ready`.
+- Hidden fields: no tenant API returns `quality_score`, `quality_score_id`, `qa_*`, judge or writer
+  output (`generated_content`, `quality_scores`), the A1 review state of `raw_tours`, or LLM/Jev cost
+  (`/v1/billing` dropped `llm_cost_usd`, reversing AA-636).
+- Pool: newest-first only, no quality sort or filter.
+- Admin path: `/v1/tours/{id}/full` keeps the full before/after payload only for the X-Admin-Secret
+  path.
+- Test: `tests/unit/test_aa796_tenant_projection.py` key-walks the tenant routes.
 
 **Channel**:
 One of 8 values: `blog`, `linkedin`, `facebook`, `instagram`, `tiktok`, `email`,
@@ -683,20 +754,48 @@ _Avoid_: block (alone), delete, filter.
   fallback for tenants).
 - **T1 — Tour Selection / Rewrite trigger**: tenant picks an A3 (Master Content) tour and fires
   the rewrite (`/portal/t1-rewrite`, `PoolTab.tsx`'s "Rewrite" button).
-- **T2 — Rewrite (execution)**: the actual LLM rewrite of the picked tour into the tenant's own
-  brand voice — no dedicated UI route, runs as part of T1's trigger. Writer stage
-  `t2_generate` (Sonnet); the judge now scores brand-fit for tenants with a real brand profile
-  (AA-612a fixed the brand fields that were not being loaded). The tenant watches the rewrite
-  live (streamed text, AA-637). Counts against the plan quota; over-quota is billed (AA-640).
-- **T3 — QA Gate**: automatic validate→repair loop (max 2 repairs) on T2's output — no manual
-  tenant approval step; `status='approved'` is T3's own automatic result, not a button. Since
-  AA-639 T3 only blocks on `_HARD_BLOCK_CODES`, passes the specific failure feedback into the
-  repair, and fixes an over-long SEO title deterministically (`fit_seo_title()`) instead of
-  rewriting the tour. Typical long tour: 1-2 writer calls, ~$0.10-0.18 (was 4 calls, ~$0.31).
-  AA-699: for Jev allow-listed tenants, each numeric hit is first asked `a1_claim_supported`
-  against the master content (stage `t3_grounding`); a confident "supported" clears it without a
-  rewrite. The T2 judge's tie-break near the retry line asks `a1_brand_fit` (stage
-  `t2_judge_tiebreak`, shadow). Other tenants: `skipped`, T3 unchanged.
+- **T2 — Rewrite (execution)**: the LLM rewrite of the picked tour into the tenant's own brand
+  voice. It has no dedicated UI route and runs as the durable `t2_rewrite` job on the worker (AA-652).
+  - **Writer prompt (AA-792).** T2 has its own writer prompt: `prompts.T2_SYSTEM_PROMPT` plus a
+    CLIENT BRAND block (`brand_pack.render_brand_block`), assembled by
+    `batch_prompt.build_t2_system_prompt`. These builders are chosen only when `is_tenant_rewrite`.
+    The user prompt uses `build_rewrite_prompt(voice="tenant")`. The tenant's core idea
+    (`tenant_brand_rules.core_idea`) is the lens for the overview and each day's framing.
+  - **Shared rules.** T2 keeps A1's truth and structure rules as the same prompt pieces: core
+    forbidden words, structure, source fidelity and the meta band. It drops A1's neutral catalogue
+    voice. The A1 prompts are pinned byte-for-byte by `tests/unit/test_aa792_a1_prompt_golden.py`.
+  - **Brand loading.** The brand is loaded once, through `brand_pack.fetch_brand_pack_conn` (AA-771).
+  - **Itinerary nudge.** The length nudge keeps the draft's tenant voice. T2 flag-fix repairs speak as
+    the tenant's editorial fixer.
+  - **Writer stage.** `t2_generate` (Sonnet).
+  - **Judge.** `t2_judge`. The gate is chosen by env `T2_JUDGE_GATE` (`brand_fit_mission` default,
+    `brand_fit`, `combined`; `services/content_generation/judge_node.py`). Default: judge_score =
+    brand_fit, capped at 6.0 when the tenant's own mission (core idea) is absent from the draft; a
+    tenant without a core idea is never mission-capped. Cross-brand distinctness is logged in
+    `llm_call_log.quality_signal` and does not gate.
+  - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
+    (`compile_rubric`), never Adventure Asia's identity.
+  - **Stored status.** A version scoring < 7.0 (or escalated by T3) is stored `needs_review` — an
+    admin signal only; tenants see it through the tenant projection (see **Tenant projection**).
+  - **Live view and billing.** The tenant watches the rewrite live (streamed text, AA-637). Each
+    rewrite counts against the plan quota; over-quota rewrites are billed (AA-640).
+- **T3 — QA Gate**: an automatic validate→repair loop (max 2 repairs) on T2's output. There is no
+  manual tenant approval step: `status='approved'` is T3's own automatic result, not a button.
+  - **Blocking and repair (AA-639).** T3 blocks only on `_HARD_BLOCK_CODES` and passes the specific
+    failure feedback into the repair.
+  - **Deterministic fixes.** An over-long SEO title is fixed with `fit_seo_title()` instead of a tour
+    rewrite. Since AA-794, seo_meta gets the same deterministic fit as the graph
+    (`fit_seo_meta_final`) before a length code can trigger a rewrite. That fit tries a clause cut,
+    then a word cut only before a phrase boundary, then a fact clause. The fact clause never adds an
+    "in <country>" tail on a multi-country tour.
+  - **Cost.** A typical long tour takes 1-2 writer calls, about $0.10-0.18 (previously 4 calls, about
+    $0.31).
+  - **Jev clearing (AA-699).** For Jev allow-listed tenants, each numeric hit is first checked with
+    `a1_claim_supported` against the master content (stage `t3_grounding`). A confident "supported"
+    verdict clears the hit without a rewrite.
+  - **T2 judge tie-break.** Near the retry line it asks `a1_brand_fit` (stage `t2_judge_tiebreak`,
+    shadow).
+  - **Other tenants.** `skipped`; T3 is unchanged.
 - **T4 — Pool**: the tenant's own rewritten-tours pool (`/portal/t4-pool`) — a T3-approved tour
   here is what a tenant can build T7+ content from.
 
