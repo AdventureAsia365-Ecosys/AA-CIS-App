@@ -88,16 +88,23 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   are called with the Bedrock Converse API on the acc3 satellite.
 - **Stage Route** (AA-659, ADR 0006): each stage has a model plus an ordered fallback list and an
   optional shadow model (A/B, `shared.llm_shadow_log`). Only models the route lists are ever
-  tried. No judge has its own hardcoded model path any more. Routes on Dev (S208, 02/10/2026, AA-714):
-  - `s1_judge`, `t10_judge`, `n7_judge`: GPT-5.6 Luna (Bedrock acc3) → GPT-6 Luna (Bedrock acc3) →
-    GPT-6 Luna (OpenAI API); shadow GPT-6 Luna 100% (was GPT-4.1, which scored every tour 9).
-  - `s1_brand_audit`: GPT-4.1 (OpenAI API) → GPT-5.6 Luna → GPT-6 Luna; shadow GPT-5.6 Luna. Kept on
-    GPT-4.1 because Luna returns `manual_check` on most tours and drops the `status` key on ~15%.
+  tried. No judge has its own hardcoded model path any more. **S235 rule (Nghiệp, 14/10/2026,
+  migration 224): Bedrock first; an OpenAI platform API model may only be the LAST fallback of a
+  route (a Bedrock outage), never a primary or a shadow; GPT-4.1 is retired.** Judge routes on Dev:
+  - `s1_judge`, `t2_judge`, `t7_debate_judge`, `t10_judge`: GPT-5.6 Luna (Bedrock acc3) → GPT-6 Luna
+    (Bedrock acc3) → GPT-6 Luna (OpenAI API, last resort); shadow GPT-6 Luna at the admin-set rate.
+  - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
+  - No acc1 fallback for the Luna models (OpenAI-on-Bedrock is enabled on acc3 only); the
+    acc2 → acc3 → acc1 account chain applies to the legacy Haiku/Sonnet keys.
+  - A call served by the OpenAI API logs `llm_openai_fallback_used` and is recorded in `llm_call_log`
+    with `provider = 'openai'`, `fallback_used = true`.
   - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
     `BRAND_AUDIT_UNAVAILABLE` (held for review), never `pass`.
   - **Where a GPT model runs**: on Bedrock only on acc3 (acc1/acc2 have no OpenAI models), or on the
-    OpenAI platform API (separate account and credit; `gpt-6-luna-openai`, `gpt-4.1`). Admin Settings
-    › LLM Models shows this per model and the full route per stage.
+    OpenAI platform API (`gpt-6-luna-openai`, last resort only). `gpt-4.1` is disabled (migration 224)
+    and admin cannot re-enable it; `LLMClient._call_openai` refuses any model whose catalog row is not
+    enabled, so the legacy Haiku/Sonnet chain no longer falls back to GPT-4.1. Admin rejects an
+    OpenAI-API model as primary, shadow or non-last fallback. Settings › LLM Models shows each route.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
   (catalog `api_style='embed'`, stage role `embed`). The caller writes the `llm_call_log` row.
@@ -114,8 +121,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     invented detail, ~6x cheaper than Haiku. History: Sonnet → Haiku at AA-619 (same quality, ~1/4
     the cost). Atomize goes through the gateway since AA-757 (#642); before that it called
     `invoke_claude` directly.
-  - Judges = OpenAI models (a deliberately different vendor from the Anthropic writer): GPT-5.6 Luna
-    on Bedrock acc3 for the judges, GPT-4.1 on the OpenAI API for brand audit (see Stage Route).
+  - Judges = OpenAI models (a deliberately different vendor from the Anthropic writer): GPT-5.6 Luna →
+    GPT-6 Luna on Bedrock acc3, GPT-6 Luna on the OpenAI API only as the last resort (see Stage Route).
   - Tour writer output ceiling is `GENERATE_MAX_TOKENS=8192` (AA-639); at 4096 long tours were
     truncated and rewritten.
 - **Jev decision layer (AA-660, design `docs/architecture/at-series-v2-design.md`)**: stages ask
@@ -477,7 +484,7 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
 2. **Debate** (AA-631, `services/acp_shared/debate.py`) — two advisory cuts before choosing:
    - _contested_: share of a keyword's SERP taken by "everywhere" domains (wikipedia,
      tripadvisor…). Deterministic and cached; cut threshold 0.5, measured on real SERP data.
-   - _brand-fit_: the same GPT-4.1 brand-fit scorer the T2 judge uses
+   - _brand-fit_: the same brand-fit scorer (judge route) the T2 judge uses
      (`services/content_generation/brand_fit.py`), cached per
      `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`.
    - Safety rules: never cuts more than 50% of a list; an error on a candidate lets it pass; if

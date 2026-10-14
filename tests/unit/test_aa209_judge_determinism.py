@@ -34,6 +34,7 @@ def _create_kwargs(client: LLMClient) -> dict:
     return client._openai.chat.completions.create.call_args.kwargs
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_call_openai_forwards_temperature_and_seed_when_present():
     """Caller explicitly sets temperature + seed → both forwarded to the OpenAI SDK call."""
     client = _make_client()
@@ -54,6 +55,7 @@ def test_call_openai_forwards_temperature_and_seed_when_present():
     assert resp.stop_reason == "stop"  # AA-493 — _make_client()'s fake response finish_reason
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_call_openai_omits_temperature_and_seed_when_absent():
     """Caller relies on defaults (no explicit temperature/seed) → neither is forwarded.
 
@@ -68,6 +70,7 @@ def test_call_openai_omits_temperature_and_seed_when_absent():
     assert "seed" not in kwargs
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_call_openai_omits_seed_when_only_temperature_set():
     """Independent forwarding: temperature set, seed unset → only temperature forwarded."""
     client = _make_client()

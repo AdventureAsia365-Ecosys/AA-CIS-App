@@ -34,6 +34,7 @@ from shared.aws_client.cost_explorer import (
 from shared.dfs_client.balance import read_latest_balance, record_balance_snapshot
 from shared.dfs_client.unmapped_market import list_unmapped_market_requests
 from shared.llm_client.catalog import (
+    CatalogPolicyBlocked,
     CatalogPriceRequired,
     list_catalog_rows,
     list_models,
@@ -70,8 +71,10 @@ _WRITER_OPTIONS = [
     {"model_id": "haiku", "label": "Claude Haiku 4.5", "via": "Bedrock", "available": True},
     {"model_id": "sonnet", "label": "Claude Sonnet 4.5", "via": "Bedrock", "available": True},
 ]
+# S235: GPT-4.1 is retired — shown but not selectable.
 _JUDGE_OPTIONS = [
-    {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": True},
+    {"model_id": "gpt-4.1", "label": "GPT-4.1", "via": "OpenAI API", "available": False,
+     "reason": "S235: retired; OpenAI API kept only as last-resort fallback via gpt-6-luna-openai"},
 ]
 _ACCOUNT_ROUTE_OPTIONS = [
     {"value": "acc3", "label": "acc3 (satellite chính)"},
@@ -161,6 +164,15 @@ async def _load_catalog() -> Optional[list]:
         return None
 
 
+def _openai_api_keys(models: Optional[list]) -> set[str]:
+    """S235 — Model Keys served by the OpenAI platform API (catalog provider 'openai')."""
+    return {m.model_key for m in models or [] if m.provider == "openai"}
+
+
+_OPENAI_LAST_RESORT_ONLY = ("S235: an OpenAI platform API model may only be the last fallback of a "
+                            "route (Bedrock outage), never the primary or the shadow")
+
+
 def _options_for(role: str, stage: str, models: Optional[list]) -> list[dict]:
     if models is None:
         if role == "embed":
@@ -200,11 +212,13 @@ async def patch_llm_config(
     current = next((r for r in await list_stage_configs() if r["stage"] == stage), None)
     if current is None:
         raise HTTPException(status_code=404, detail=f"unknown stage: {stage!r}")
-    allowed = {o["model_id"] for o in _options_for(current["role"], stage, await _load_catalog())
-               if o["available"]}
+    models = await _load_catalog()
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models) if o["available"]}
     if body.model_id not in allowed:
         raise HTTPException(status_code=422,
                             detail=f"model {body.model_id!r} is not selectable for stage {stage!r}")
+    if body.model_id in _openai_api_keys(models):
+        raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
     try:
         updated = await set_stage_config(
             stage, body.model_id, body.account_route, updated_by=f"admin:{admin_actor}",
@@ -261,8 +275,11 @@ async def patch_llm_route(
     if shadow is None:
         sample_pct = 0  # no shadow model → nothing to sample
 
-    allowed = {o["model_id"] for o in _options_for(current["role"], stage, await _load_catalog())
-               if o["available"]}
+    models = await _load_catalog()
+    allowed = {o["model_id"] for o in _options_for(current["role"], stage, models) if o["available"]}
+    openai_api = _openai_api_keys(models)
+    if any(m in openai_api for m in fallbacks[:-1]) or (shadow is not None and shadow in openai_api):
+        raise HTTPException(status_code=422, detail=_OPENAI_LAST_RESORT_ONLY)
 
     # Fallback list: no duplicates, must not contain the primary, every entry available.
     if len(fallbacks) != len(set(fallbacks)):
@@ -332,7 +349,7 @@ async def patch_llm_catalog(
             model_key, fields=fields, updated_by=f"admin:{admin_actor}",
             audit_actor=f"admin:{admin_actor}",
         )
-    except CatalogPriceRequired as e:
+    except (CatalogPriceRequired, CatalogPolicyBlocked) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

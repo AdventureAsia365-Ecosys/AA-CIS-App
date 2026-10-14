@@ -1,4 +1,5 @@
-"""AA-714 (S222) — judge SAFE_DEFAULTS prefer Bedrock; GPT-4.1 (legacy, no catalog) is the last resort."""
+"""AA-714 (S222) — judge SAFE_DEFAULTS prefer Bedrock. S235: GPT-5.6 Luna -> GPT-6 Luna (Bedrock acc3) ->
+GPT-6 Luna on the OpenAI API as the last resort; the legacy GPT-4.1 key is retired."""
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,7 @@ from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest, LLMResponse
 from shared.llm_client.role_config import SAFE_DEFAULTS
 
-JUDGES = ("s1_judge", "s1_brand_audit", "t10_judge")
+JUDGES = tuple(s for s, c in SAFE_DEFAULTS.items() if c.role == "judge")
 
 
 def _model(key, **kw):
@@ -47,11 +48,17 @@ def _run(stage, catalog_get, fail=()):
     return calls, resp
 
 
+def test_every_judge_stage_is_covered():
+    assert set(JUDGES) == {"s1_judge", "s1_brand_audit", "t2_judge", "t2_brand_audit",
+                           "t7_debate_judge", "t10_judge"}
+
+
 @pytest.mark.parametrize("stage", JUDGES)
-def test_judge_default_is_bedrock_luna_first_with_legacy_last_resort(stage):
+def test_judge_default_is_bedrock_luna_first_openai_api_last(stage):
     cfg = SAFE_DEFAULTS[stage]
     assert cfg.model_id == "gpt-5.6-luna" and cfg.account_route == "acc3"
-    assert cfg.fallback_model_ids[-1] in LEGACY_KEYS  # works with no catalog row
+    assert cfg.fallback_model_ids == ("gpt-6-luna", "gpt-6-luna-openai")
+    assert not set(cfg.fallback_model_ids) & LEGACY_KEYS
     assert cfg.shadow_model_id is None
 
 
@@ -62,12 +69,24 @@ def test_catalog_readable_calls_bedrock_first(stage):
 
 
 @pytest.mark.parametrize("stage", JUDGES)
-def test_db_down_skips_luna_and_still_judges_with_gpt41(stage):
-    calls, resp = _run(stage, lambda _key: None)  # catalog unreachable, nothing cached
-    assert calls == ["gpt-4.1"] and resp.model_used == "gpt-4.1" and resp.fallback_used is True
+def test_luna_failure_falls_back_to_the_other_luna(stage):
+    calls, resp = _run(stage, CATALOG.get, fail=("gpt-5.6-luna",))
+    assert calls == ["gpt-5.6-luna", "gpt-6-luna"] and resp.fallback_used is True
 
 
-def test_bedrock_failures_fall_through_to_openai_before_legacy():
+@pytest.mark.parametrize("stage", JUDGES)
+def test_db_down_raises_with_no_gpt41_last_resort(stage):
+    with pytest.raises(RuntimeError, match="All models in the route failed"):
+        _run(stage, lambda _key: None)  # catalog unreachable, nothing cached
+
+
+def test_bedrock_outage_falls_through_to_the_openai_api_last_resort():
     calls, resp = _run("s1_judge", CATALOG.get, fail=("gpt-5.6-luna", "gpt-6-luna"))
     assert calls == ["gpt-5.6-luna", "gpt-6-luna", "gpt-6-luna-openai"]
-    assert resp.model_used == "gpt-6-luna-openai"
+    assert resp.model_used == "gpt-6-luna-openai" and resp.fallback_used is True
+
+
+def test_everything_down_raises_and_never_tries_gpt41():
+    with pytest.raises(RuntimeError) as exc:
+        _run("s1_judge", CATALOG.get, fail=("gpt-5.6-luna", "gpt-6-luna", "gpt-6-luna-openai"))
+    assert "gpt-4.1" not in str(exc.value)
