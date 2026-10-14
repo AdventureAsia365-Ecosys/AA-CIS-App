@@ -72,6 +72,18 @@ def t2_judge_repeat() -> str:
     return mode if mode in T2_JUDGE_REPEATS else T2_JUDGE_REPEAT_DEFAULT
 
 
+# AA-801 option (b) — rubric anchors in the T2 judge prompt: what a 4 / 6 / 8 / 10 looks like for THIS
+# tenant (built from its T0 brand pack) and a yes/no mission test that must quote the itinerary
+# sentence proving it (brand_fit.build_rubric_anchors). Off by default; "on" / "1" / "true" turns it
+# on (worker task def), like T2_JUDGE_REPEAT. Combines with median3. A1 is never affected.
+T2_JUDGE_ANCHORS_ENV = "T2_JUDGE_ANCHORS"
+_ON_VALUES = ("1", "true", "on", "yes")
+
+
+def t2_judge_anchors() -> bool:
+    return os.environ.get(T2_JUDGE_ANCHORS_ENV, "").strip().lower() in _ON_VALUES
+
+
 def t2_mission(state: dict) -> str:
     """AA-792: the T2 tenant's own mission = its brand-pack core_idea ('' when it has none)."""
     from services.content_generation.batch_prompt import brand_pack_from_state
@@ -192,10 +204,12 @@ def judge_node(state: dict) -> dict:
         if is_t2:
             mission = t2_mission(state)          # AA-792: the tenant's own core_idea, never AA's
             repeat_mode = t2_judge_repeat()      # AA-801
+            anchors = t2_judge_anchors()         # AA-801 option (b)
             result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
                                      stage=stage_for(state, "s1_judge"), mission=mission or None,
                                      **({"repeat": T2_JUDGE_REPEATS[repeat_mode]}
-                                        if repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}))
+                                        if repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
+                                     **({"anchors": True} if anchors else {}))
             gate = t2_judge_gate()
             judge_score = t2_judge_score(result, gate, has_mission=bool(mission))
             mission_source = "tenant_core_idea" if mission else "none"
@@ -209,6 +223,7 @@ def judge_node(state: dict) -> dict:
             judge_score = a1_judge_score(result)
             mission_source = None
             repeat_mode = None
+            anchors = False
         tiebreak = None
         if in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
@@ -247,6 +262,10 @@ def judge_node(state: dict) -> dict:
                 # AA-801: the raw calls behind a median3 verdict (absent in the default mode).
                 **({"judge_runs": runs_signal(result, repeat_mode)}
                    if repeat_mode and repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
+                # AA-801 (b): anchored prompt + the quoted mission sentence (absent when the flag is off).
+                **({"judge_anchors": True,
+                    "mission_evidence": (getattr(result, "mission_evidence", "") or "")[:300]}
+                   if anchors else {}),
             },
             stop_reason=result.stop_reason,
             account=result.account,
