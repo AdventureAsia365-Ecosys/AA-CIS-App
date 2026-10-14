@@ -338,10 +338,13 @@ def _anchored_mission_axis(mission: str) -> str:
     the same drafts were judged mission-present 73% of the time without anchors. A brand core idea is
     an abstract, multi-clause line ("Private cultural journeys with depth, beauty, and meaning for
     discerning travellers"); no single itinerary sentence "expresses" all of it, and the digest cuts
-    days mid-sentence, so a strict reader never found a sentence to copy. The bar is now the same as
-    the un-anchored tenant test (the overview and most days reflect the idea in what they emphasise,
-    not quoted), and the quote only has to SHOW the idea: a passage of one day, asked for first so the
-    model looks for it before deciding."""
+    days mid-sentence, so a strict reader never found a sentence to copy. The bar is the overview and
+    at least half of the days reflecting the idea in what they emphasise (not quoted) — the same
+    threshold as the brand_fit 7 anchor, so an anchored 7 (the MIN_QUALITY pass) is not mission-capped
+    to 6 by a stricter "most days" bar; the un-anchored test keeps "most days" since it has no 7
+    anchor. The quote only has to SHOW the idea: a passage of one day, asked for first so the model
+    looks for it before deciding. Its check in code (`evidence_in_source`) proves the passage exists in
+    the digest, not that it reflects the idea — it catches invented quotes, nothing more."""
     return f"""- mission_evidence (string) — fill this BEFORE mission_present. This brand's core idea is:
   "{mission}". Pick the itinerary day whose emphasis reflects that idea most clearly (the details it
   chooses, the angle it takes) and copy a passage of that day WORD FOR WORD from the ITINERARIES text
@@ -349,8 +352,9 @@ def _anchored_mission_axis(mission: str) -> str:
   shortened day. The passage does not have to name or restate the core idea; it has to show it.
   "" only when no itinerary day reflects the core idea.
 - mission_present (true/false) — MISSION TEST: true when mission_evidence is not "" AND the overview
-  and most itinerary days reflect this core idea in what they emphasise (it does not have to be quoted
-  or named, and not every day must carry it). false when it shows only in the summary, or not at all.
+  and at least half of the itinerary days reflect this core idea in what they emphasise (it does not
+  have to be quoted or named, and not every day must carry it). false when it shows only in the
+  summary or overview, or not at all.
   Judge only against this brand's core idea above, never Adventure Asia's or a generic travel mission."""
 
 

@@ -357,11 +357,13 @@ def test_converse_without_cache_keeps_input_tokens():
 
 
 def test_migration_227_turns_sonnet5_temperature_off():
-    """AA-801: the catalog row, not code, decides; Bedrock rejects temperature for Sonnet 5."""
+    """AA-801: the catalog row, not code, decides; Bedrock rejects temperature for Sonnet 5 (Opus 5.5,
+    the other Converse Claude 5 row, is flipped with it)."""
     from pathlib import Path
     sql = (Path(__file__).resolve().parents[2] / "api" / "migrations"
            / "227_sonnet5_no_temperature.sql").read_text(encoding="utf-8")
     body = sql.split("BEGIN;", 1)[1]
     assert "SET supports_temperature = false" in body
-    assert "WHERE model_key = 'sonnet-5'" in body
+    assert "WHERE model_key IN ('sonnet-5', 'opus-5-5')" in body
+    assert "AND supports_temperature;" in body          # idempotent: a re-run touches no row
     assert "VALUES ('227'" in body and body.rstrip().endswith("COMMIT;")

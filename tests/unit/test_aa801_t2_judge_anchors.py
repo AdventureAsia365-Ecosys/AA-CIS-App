@@ -91,11 +91,11 @@ def test_anchored_prompt_with_mission_has_the_quoted_yes_no_test():
 def test_anchored_mission_test_does_not_ask_one_sentence_to_express_the_whole_core_idea():
     """S236 round 2: "answer true ONLY when you can copy one sentence VERBATIM ... that expresses it"
     got mission=false on 45/45 Dev judgements. The quote only has to SHOW the idea, and the yes bar is
-    the un-anchored tenant test's (overview + most days, not quoted)."""
+    the brand_fit 7 anchor's (overview + at least half of the days, not quoted)."""
     p = bf._build_judge_prompt(FULL, GEN, "Movement and freedom.", anchors=True)
     assert "ONLY when you can copy one sentence" not in p
     assert "does not have to name or restate the core idea" in p
-    assert "most itinerary days reflect this core idea" in p
+    assert "at least half of the itinerary days reflect this core idea" in p
     assert 'without the "…" that marks a' in p
 
 
@@ -234,6 +234,16 @@ def test_paraphrased_quote_is_overruled_and_recorded():
                     evidence_source=src)
     assert out.mission_present is False and out.evidence_verified is False
     assert out.judge_score == 6.0 and out.mission_evidence == ""
+
+
+def test_verified_means_the_quote_exists_not_that_it_shows_the_idea():
+    """Design limit (S236 review): evidence_in_source is an existence check. A logistics line copied
+    from the digest verifies even though it says nothing about the core idea, so a verified yes is the
+    judge's un-anchored mission verdict plus "the quote is not invented"."""
+    src = "Day 1 — Arrival\nYour private guide meets you at the airport and drives you to the hotel."
+    out, _ = _judge(_resp(True, "Your private guide meets you at the airport"), require_evidence=True,
+                    evidence_source=src)
+    assert out.mission_present is True and out.evidence_verified is True
 
 
 def test_unquoted_yes_is_recorded_as_unverified():

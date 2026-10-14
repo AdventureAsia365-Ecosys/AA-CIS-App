@@ -839,9 +839,14 @@ _Avoid_: block (alone), delete, filter.
     mission_present into a yes/no test that only counts with a verbatim itinerary quote
     (`mission_evidence`, >= 4 words), checked in code against the itinerary digest the judge saw — a
     paraphrased or invented quote overrules the yes (`evidence_verified=false`); both are logged in
-    `quality_signal` when on. The yes bar is the un-anchored tenant test's (overview + most days reflect
-    the core idea); the quote only has to show the idea in one day, and is asked for before the verdict.
-    A string verdict ("false"/"no") is read as no. Combines with `median3`; A1 is untouched.
+    `quality_signal` when on. The yes bar is the overview + at least half of the days reflecting the
+    core idea (the brand_fit 7 anchor's threshold, so an anchored 7 is not mission-capped; the
+    un-anchored test keeps "most days"); the quote only has to show the idea in one day, and is asked
+    for before the verdict. `evidence_verified` only proves the quote exists in the digest (it catches
+    invented quotes), not that it reflects the idea. Combines with `median3`; A1 is untouched.
+    Parsing for every judge caller (A1 s1_judge, T2, Debate, flag on or off): a boolean answer given
+    as a string counts as yes only for true/yes/y/1 — "false"/"no"/"partially" are no; JSON bools and
+    a missing key (default yes) are unchanged.
     The judge model itself is only changed through the `t2_judge` stage route; `score_brand_fit`'s
     `model_override` is refused on any stage but `adhoc_*` (measurement scripts).
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
