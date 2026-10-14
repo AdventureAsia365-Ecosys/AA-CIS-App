@@ -72,6 +72,14 @@ def _apply_schema(conn):
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'aa_app_user') THEN
                 CREATE ROLE aa_app_user;
             END IF;
+            -- AA-679: the consumer roles of the cross-owner grants (migration 225 grants catalog.*
+            -- to them unguarded, as schema-ownership rule 5 requires; 173/180/201/216 too, guarded).
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tripplanner') THEN
+                CREATE ROLE tripplanner;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'booking') THEN
+                CREATE ROLE booking;
+            END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
@@ -115,6 +123,26 @@ def _apply_schema(conn):
         sql = open(fpath).read()
         # Strip shell redirects that accidentally ended up in SQL
         sql = sql.replace("2>/dev/null", "")
+        if mf.startswith("198_"):
+            # AA-679: shared.destinations is CIS-owned since ADR 0002, but the file that created it is
+            # TripPlanner's migrations/002_shared_destinations.sql (+ 005 located_by/located_at), which
+            # this DB never runs. 198 (place_photo FK), 201 (revoke) and 225 (catalog views) need it,
+            # so create it here in its live shape (db-schema-reference.md).
+            sql = """
+                CREATE TABLE IF NOT EXISTS shared.destinations (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name            TEXT NOT NULL,
+                    country         TEXT NOT NULL,
+                    lat             DOUBLE PRECISION NOT NULL,
+                    lng             DOUBLE PRECISION NOT NULL,
+                    cover_image_url TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    located_by      TEXT,
+                    located_at      TIMESTAMPTZ
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS destinations_lower_name_uidx
+                    ON shared.destinations (lower(name));
+            """ + sql
         if "005_tenant_config" in mf:
             print(f"PATCHING 005: {mf}")
             # Fix: tenant_id TEXT → UUID
