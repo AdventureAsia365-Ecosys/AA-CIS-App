@@ -113,6 +113,31 @@ def test_sync_and_batch_build_the_same_t2_prompt():
     assert out["prompt_version"] == batch_prompt.prompt_version_of(system)
 
 
+# ── pilot fix: the core idea is the lens for the trip (same definition as the judge's mission) ─
+
+def test_t2_system_prompt_asks_the_core_idea_to_frame_overview_and_days():
+    sp = batch_prompt.build_s1_system_prompt(dict(_T2))
+    assert "CORE IDEA AS THE LENS FOR THE WHOLE TRIP" in sp
+    lens = sp.split("CORE IDEA AS THE LENS FOR THE WHOLE TRIP")[1]
+    assert '("Movement, energy, freedom, and social discovery.")' in lens
+    assert "The overview and each itinerary day's framing" in lens
+    assert "using only facts from the source" in lens
+    assert "This is not brand self-reference" in lens and "no invented claims" in lens
+    # the lens sits after the CLIENT BRAND block (whose self-reference limit it clarifies)
+    assert sp.index("Brand self-reference:") < sp.index("CORE IDEA AS THE LENS")
+
+
+@pytest.mark.parametrize("core_idea", ["", "   ", None])
+def test_t2_without_core_idea_gets_no_lens_rule(core_idea):
+    sp = batch_prompt.build_s1_system_prompt({**_T2, "brand_core_idea": core_idea})
+    assert "CORE IDEA AS THE LENS" not in sp
+
+
+def test_a1_system_prompt_never_gets_the_lens_rule():
+    sp = batch_prompt.build_s1_system_prompt({**_T2, "is_tenant_rewrite": False})
+    assert "CORE IDEA AS THE LENS" not in sp
+
+
 def test_t2_brand_pack_without_system_prompt_counts_as_branded():
     # "has brand": the T0 pack (system_prompt empty) is a brand — the unbranded warning must not fire.
     class _Client:
@@ -302,6 +327,23 @@ def test_t2_judge_names_the_tenant_core_idea_as_the_mission():
     _, request, _ = _run_judge(_T2, _judge_resp(mission=True))
     assert 'its core idea: "Movement, energy, freedom, and social discovery."' in request.user_prompt
     assert "never Adventure Asia's" in request.user_prompt
+
+
+def test_t2_judge_mission_axis_uses_the_writer_lens_definition():
+    _, request, _ = _run_judge(_T2, _judge_resp(mission=True))
+    up = request.user_prompt
+    assert "clearly shape how the trip is framed" in up
+    assert "the overview AND most itinerary days reflect it in" in up
+    assert "it does not have to be quoted or named, and not every single day must carry" in up
+    assert "never Adventure Asia's or a generic travel mission" in up
+    # the old "each day's framing" wording made the judge demand the idea in every single day
+    assert "(each day's framing), not only in the summary?" not in up
+
+
+def test_a1_mission_axis_text_unchanged():
+    assert brand_fit._MISSION_AXIS == (
+        "- mission_present (true/false): does this brand's mission-hook actually surface in the ITINERARIES\n"
+        "  (each day's framing), not only in the summary?")
 
 
 def test_t2_mission_present_is_not_capped():

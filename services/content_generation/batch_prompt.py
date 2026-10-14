@@ -124,9 +124,29 @@ def build_t2_system_prompt(state: dict) -> str:
     system += "\n\n" + render_brand_block(brand_pack_from_state(state), heading="CLIENT BRAND")
     if brand_sp:
         system += f"\n\nCLIENT BRAND BRIEF (the brand's own words — part of the brand above):\n{brand_sp}"
+    system += _core_idea_lens_block(brand_pack_from_state(state).get("core_idea"))
     if has_brand_signals(state):
         system += _brand_contrast_rules()
     return system + _forbidden_words_block(state)
+
+
+def _core_idea_lens_block(core_idea) -> str:
+    """AA-792 (pilot fix): the T2 judge gates on mission_present — does the tenant's core idea shape
+    the overview and the itinerary days. The writer was never asked for that (and the CLIENT BRAND
+    block's "at most one sentence about the brand itself" kept the brand out of the days), so the
+    pilot scored mission absent on 27/27 calls. Same definition on both sides: the core idea is the
+    lens for the trip, not brand self-reference. '' when the tenant has no core idea."""
+    core_idea = (core_idea or "").strip()
+    if not core_idea:
+        return ""
+    return (
+        "\n\nCORE IDEA AS THE LENS FOR THE WHOLE TRIP: this brand's core idea"
+        f" (\"{core_idea}\") is the lens for the whole trip. The overview and each itinerary day's"
+        " framing — what the day emphasises and why it matters to this brand's travellers — should"
+        " reflect it naturally, in the brand's voice, using only facts from the source. This is not"
+        " brand self-reference: no slogans, no naming the brand in every day, no quoting the core"
+        " idea word for word, and no invented claims or activities to make a day fit it."
+    )
 
 
 def build_s1_system_prompt(state: dict) -> str:
