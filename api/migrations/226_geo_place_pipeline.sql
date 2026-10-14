@@ -9,9 +9,9 @@
 --    then nothing outside CIS reads geo.*. Written only by the job kinds place_extract,
 --    place_geocode and tour_graph_build (services/jobs/place_*_job.py, tour_graph_job.py).
 -- 2. shared.destinations (CIS-owned since ADR 0002) gains geo_status / confidence / geocoder ids /
---    name_norm / locality_norm / duplicate_of, and its global UNIQUE lower(name) becomes
---    UNIQUE (name_norm, lower(country), locality_norm) — the same name in two countries is two places
---    (design Q2). Every existing id is kept (place_photo, covers and TripPlanner trip events point at
+--    name_norm / locality_norm / duplicate_of, and the key UNIQUE (name_norm, lower(country),
+--    locality_norm) — the same name in two countries is two places (design Q2). The old global
+--    UNIQUE lower(name) stays until TripPlanner's writers are off (dropped by a later migration). Every existing id is kept (place_photo, covers and TripPlanner trip events point at
 --    them). Before the new index: blank countries are filled from the tours that use the place
 --    (TripPlanner's backfill_country rule, when its tables are readable) or the row is marked
 --    suspect; rows that collide on the new key keep one keeper, the others get duplicate_of = keeper
@@ -43,6 +43,9 @@
 -- copy in db/migrations/cis/, BEFORE the code that uses it merges.
 
 BEGIN;
+-- The ALTERs on acp_shared.place_card / shared.destinations take ACCESS EXCLUSIVE locks: fail fast
+-- (and re-run when idle) instead of queueing behind a long job transaction and blocking every reader.
+SET LOCAL lock_timeout = '10s';
 
 -- ── 0. Preconditions ──────────────────────────────────────────────────────────────────────────
 -- shared.destinations was created by TripPlanner migrations 002/005: the runner must own it (or be a
@@ -229,7 +232,7 @@ CREATE TABLE IF NOT EXISTS geo.place_outlier (
     PRIMARY KEY (destination_id, source_id, day_index)
 );
 COMMENT ON TABLE geo.place_outlier IS
-    'AA-712 — a destination > 600 km from the same tour''s day ±1 stops on a non-transit day. Feeds '
+    'AA-712 — a destination > 600 km from every stop of the same tour within ±2 days on a non-transit day. Feeds '
     'geo_status = suspect (≥2 tours, or ≥1 when located_by = llm) and the /admin/places fix list.';
 
 -- Paid geocoder requests (cost guard day spend for provider 'geocoder', /admin/places cost).
@@ -441,12 +444,15 @@ BEGIN
                  (SELECT count(*) FROM shared.destinations WHERE duplicate_of IS NOT NULL);
 END $$;
 
--- 2d. the new key replaces the global lower(name) one (same name, two countries = two places).
+-- 2d. the new key (same name, two countries = two places). The global UNIQUE lower(name) index is
+--     KEPT for now: TripPlanner's extraction writers (backend/extraction/locate.py UPSERT_SQL,
+--     geocode.py) upsert ON CONFLICT (lower(name)) and fail without it. A later migration drops it
+--     once slice 6 has turned those writers off (design §7 rollout). Meanwhile CIS names a second
+--     place with a taken name "<name> (<locality|country>)" (services/places/store.py
+--     upsert_destination), and adopts a same-country row TripPlanner wrote without name_norm.
 CREATE UNIQUE INDEX IF NOT EXISTS destinations_name_country_uidx
     ON shared.destinations (name_norm, lower(btrim(country)), locality_norm)
     WHERE duplicate_of IS NULL AND name_norm IS NOT NULL;
-DROP INDEX IF EXISTS shared.destinations_lower_name_uidx;
-CREATE INDEX IF NOT EXISTS destinations_lower_name_idx ON shared.destinations (lower(name));
 
 -- ── 3. place card → destination ───────────────────────────────────────────────────────────────
 ALTER TABLE acp_shared.place_card

@@ -114,10 +114,16 @@ def text_hash(text: str) -> str:
 
 
 def components_hash(atoms: list[dict]) -> str:
-    """sha256(RULE_VERSION ‖ sorted (day, place, activity_type, text[:280]) of the active atoms)."""
+    """sha256(RULE_VERSION ‖ sorted (day, place, activity_type, text[:280], place-card link fields)
+    of the active atoms). The card fields (card id, display name, country, locality, destination)
+    are in the hash because a card usually arrives AFTER atomize (place_cards_build, T8 on demand)
+    and changes the link key / locality of a component (design §3 "card identity preferred")."""
     rows = sorted(
         (int(a["itinerary_day"]) if a.get("itinerary_day") is not None else -1, (a.get("place") or "").strip(),
-         (a.get("activity_type") or "").strip().lower(), (a.get("text") or "").strip()[:TEXT_MAX])
+         (a.get("activity_type") or "").strip().lower(), (a.get("text") or "").strip()[:TEXT_MAX],
+         str(a.get("card_id") or ""), (a.get("card_display_name") or "").strip(),
+         (a.get("card_country") or "").strip(), (a.get("card_locality") or "").strip(),
+         str(a.get("card_destination_id") or ""))
         for a in atoms)
     blob = "\n".join("\t".join(str(x) for x in r) for r in rows)
     return hashlib.sha256(f"{days_mod.RULE_VERSION}\n{blob}".encode("utf-8")).hexdigest()

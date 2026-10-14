@@ -15,22 +15,28 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-# Country name (lowercase) -> ISO 3166-1 alpha-2 (TripPlanner geocode.COUNTRY_ISO). Tibet is China.
+# Country name (lowercase) -> ISO 3166-1 alpha-2. TripPlanner geocode.COUNTRY_ISO had 14 countries;
+# AA-712 adds Indonesia / Malaysia / Kyrgyzstan / Uzbekistan so the list equals the
+# chk_raw_tours_country constraint (migration 150) — every live tour's country. Tibet is China.
 COUNTRY_ISO2 = {
-    "bhutan": "bt", "cambodia": "kh", "china": "cn", "india": "in", "japan": "jp", "laos": "la",
-    "mongolia": "mn", "myanmar": "mm", "nepal": "np", "south korea": "kr", "sri lanka": "lk",
-    "taiwan": "tw", "thailand": "th", "tibet": "cn", "vietnam": "vn",
+    "bhutan": "bt", "cambodia": "kh", "china": "cn", "india": "in", "indonesia": "id", "japan": "jp",
+    "kyrgyzstan": "kg", "laos": "la", "malaysia": "my", "mongolia": "mn", "myanmar": "mm", "nepal": "np",
+    "south korea": "kr", "sri lanka": "lk", "taiwan": "tw", "thailand": "th", "tibet": "cn",
+    "uzbekistan": "uz", "vietnam": "vn",
 }
-ISO2_COUNTRY = {"bt": "Bhutan", "kh": "Cambodia", "cn": "China", "in": "India", "jp": "Japan", "la": "Laos",
-                "mn": "Mongolia", "mm": "Myanmar", "np": "Nepal", "kr": "South Korea", "lk": "Sri Lanka",
-                "tw": "Taiwan", "th": "Thailand", "vn": "Vietnam"}
-ISO2_ISO3 = {"bt": "BTN", "kh": "KHM", "cn": "CHN", "in": "IND", "jp": "JPN", "la": "LAO", "mn": "MNG",
-             "mm": "MMR", "np": "NPL", "kr": "KOR", "lk": "LKA", "tw": "TWN", "th": "THA", "vn": "VNM"}
+ISO2_COUNTRY = {"bt": "Bhutan", "kh": "Cambodia", "cn": "China", "in": "India", "id": "Indonesia", "jp": "Japan",
+                "kg": "Kyrgyzstan", "la": "Laos", "my": "Malaysia", "mn": "Mongolia", "mm": "Myanmar",
+                "np": "Nepal", "kr": "South Korea", "lk": "Sri Lanka", "tw": "Taiwan", "th": "Thailand",
+                "uz": "Uzbekistan", "vn": "Vietnam"}
+ISO2_ISO3 = {"bt": "BTN", "kh": "KHM", "cn": "CHN", "in": "IND", "id": "IDN", "jp": "JPN", "kg": "KGZ",
+             "la": "LAO", "my": "MYS", "mn": "MNG", "mm": "MMR", "np": "NPL", "kr": "KOR", "lk": "LKA",
+             "tw": "TWN", "th": "THA", "uz": "UZB", "vn": "VNM"}
 ISO3_ISO2 = {v: k for k, v in ISO2_ISO3.items()}
 AA_ISO2 = sorted(ISO2_COUNTRY)
 # Known dirty raw_tours.country values (TripPlanner country_normalize.py) and common variants.
 _ALIASES = {"sri-landka": "sri lanka", "okinawa": "japan", "viet nam": "vietnam", "korea": "south korea",
-            "republic of korea": "south korea", "lao pdr": "laos", "burma": "myanmar"}
+            "republic of korea": "south korea", "lao pdr": "laos", "burma": "myanmar",
+            "kyrgyz republic": "kyrgyzstan"}
 
 # (min_lat, max_lat, min_lng, max_lng), generous by ~0.3°. Kinmen/Matsu are Taiwan; Andaman is India.
 BBOX = {
@@ -39,6 +45,8 @@ BBOX = {
     "mn": (41.3, 52.4, 87.4, 120.2), "mm": (9.3, 28.9, 91.9, 101.5), "np": (26.1, 30.8, 79.8, 88.5),
     "kr": (32.8, 38.9, 124.3, 132.1), "lk": (5.6, 10.1, 79.3, 82.2), "tw": (21.6, 26.6, 118.0, 122.4),
     "th": (5.3, 20.8, 97.1, 105.9), "vn": (8.2, 23.7, 101.9, 109.8),
+    "id": (-11.3, 6.4, 94.7, 141.4), "my": (0.6, 7.7, 99.3, 119.6), "kg": (38.9, 43.6, 69.0, 80.6),
+    "uz": (36.9, 45.9, 55.7, 73.5),
 }
 
 OUTLIER_KM = 600.0

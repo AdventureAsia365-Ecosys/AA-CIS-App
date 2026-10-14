@@ -59,18 +59,18 @@ ATOMS_SQL = """
     SELECT a.atom_id, a.itinerary_day, btrim(a.place) AS place, a.activity_type, a.text,
            pc.card_id::text AS card_id, pc.display_name AS card_display_name, pc.country AS card_country,
            pc.locality AS card_locality, pc.destination_id::text AS card_destination_id
-      FROM acp_contract.tour_atoms a
+      FROM acp_contract.v_active_tour_atoms a
       LEFT JOIN acp_shared.atom_place_card apc ON apc.atom_id = a.atom_id
       LEFT JOIN acp_shared.place_card pc ON pc.card_id = apc.card_id AND pc.status <> 'rejected'
-     WHERE a.tour_id = $1::uuid AND NOT a.deleted AND NOT a.is_empty_marker
-       AND a.place IS NOT NULL AND btrim(a.place) <> ''
+     WHERE a.tour_id = $1::uuid AND a.place IS NOT NULL AND btrim(a.place) <> ''
      ORDER BY a.itinerary_day NULLS LAST, a.atom_id
 """
 
 
 async def tour_atoms(conn, tour_id: str) -> list[dict]:
-    """Active atoms of a tour the caller already found live (the v_active_tour_atoms rule)."""
-    return [dict(r) for r in await conn.fetch(ATOMS_SQL, tour_id)]
+    """Active atoms of a tour, read through acp_contract.v_active_tour_atoms (the A3 read rule; the
+    view joins FORCE-RLS published_tours, so the read pins app.tenant_id like the catalog reads)."""
+    return [dict(r) for r in await _catalog_fetch(conn, ATOMS_SQL, tour_id)]
 
 
 # ── build row ────────────────────────────────────────────────────────────────────────────────
@@ -181,6 +181,8 @@ async def replace_source_rows(conn, source_id: str, tour_id: str, days: list[tup
     """Inside the caller's transaction: the source's day and place rows replaced (DELETE+INSERT per
     source — readers never see a half-written tour; design §2.2)."""
     await conn.execute("DELETE FROM geo.tour_day WHERE source_id = $1", source_id)
+    # the source's nights may have changed: its outlier observations are recomputed by the next geocode
+    await conn.execute("DELETE FROM geo.place_outlier WHERE source_id = $1", source_id)
     if days:
         await conn.executemany(_DAY_INSERT, days)
     await conn.execute("DELETE FROM geo.tour_place WHERE source_id = $1", source_id)
@@ -237,33 +239,112 @@ async def destination_by_key(conn, key: tuple) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def upsert_destination(conn, key: tuple, name: str, located, *, force: bool = False) -> tuple[str, str]:
-    """Returns (destination_id, action) with action inserted | updated | kept. The only writer of
-    shared.destinations coordinates (place_geocode). Never overwrites an admin-fixed row."""
+# TripPlanner's extraction writers still upsert ON CONFLICT (lower(name)) until slice 6 turns them
+# off, so migration 226 keeps the global lower(name) unique index (review finding 1); a later
+# migration drops it after the cutover. Until then a destination name must also be globally unique.
+LOWER_NAME_INDEX = "destinations_lower_name_uidx"
+
+
+def name_candidates(name: str, locality: Optional[str], country: Optional[str]) -> list[str]:
+    """Names to try for a new destination row, in order: the plain place name, then qualified by
+    locality and/or country — used only when the plain name is already another place's (the global
+    lower(name) key that TripPlanner still needs)."""
+    name = (name or "").strip()
+    loc, ctry = (locality or "").strip(), (country or "").strip()
+    out = [name]
+    if loc:
+        out.append(f"{name} ({loc})")
+    if ctry:
+        out.append(f"{name} ({ctry})")
+    if loc and ctry:
+        out.append(f"{name} ({loc}, {ctry})")
+    return list(dict.fromkeys(out))
+
+
+_DEST_INSERT_SQL = """
+    INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at, geo_status, confidence,
+                                     geocoder_place_id, geo_checked_at, name_norm, locality_norm)
+    VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9)
+    ON CONFLICT (name_norm, lower(btrim(country)), locality_norm)
+        WHERE duplicate_of IS NULL AND name_norm IS NOT NULL DO NOTHING
+    RETURNING id::text
+"""
+
+
+async def _write_point(conn, dest_id: str, located, force: bool) -> None:
+    await conn.execute(
+        """UPDATE shared.destinations SET lat = $2, lng = $3, located_by = $4, located_at = now(),
+                  confidence = $5, geocoder_place_id = $6, geo_checked_at = now(),
+                  geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END
+            WHERE id = $1::uuid""",
+        dest_id, located.lat, located.lng, located.located_by, located.confidence, located.place_id, force)
+
+
+async def _adopt_unkeyed(conn, name: str, key: tuple, located, force: bool) -> Optional[tuple[str, str]]:
+    """The plain name clashes on lower(name) with a row TripPlanner wrote after 226 (name_norm NULL):
+    when it is the same place (same country, or none recorded) CIS takes it over — sets its key and,
+    if the overwrite rule allows, the confirmed point — instead of creating a second row."""
     from services.places.guards import may_overwrite
 
-    row = await conn.fetchrow(
-        """INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at, geo_status, confidence,
-                                            geocoder_place_id, geo_checked_at, name_norm, locality_norm)
-           VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9)
-           ON CONFLICT (name_norm, lower(btrim(country)), locality_norm)
-               WHERE duplicate_of IS NULL AND name_norm IS NOT NULL DO NOTHING
-           RETURNING id::text""",
-        name, located.country, located.lat, located.lng, located.located_by, located.confidence,
-        located.place_id, key[0], key[2])
-    if row is not None:
-        return row["id"], "inserted"
+    old = await conn.fetchrow(
+        """SELECT id::text AS id, located_by, geo_status, country, name_norm, duplicate_of
+             FROM shared.destinations WHERE lower(name) = lower($1) FOR UPDATE""", name)
+    if old is None or old["name_norm"] is not None or old["duplicate_of"] is not None:
+        return None
+    old_country = (old["country"] or "").strip().lower()
+    if old_country and old_country != located.country.strip().lower():
+        return None
+    await conn.execute(
+        """UPDATE shared.destinations SET name_norm = $2, locality_norm = $3,
+                  country = COALESCE(NULLIF(btrim(country), ''), $4)
+            WHERE id = $1::uuid""", old["id"], key[0], key[2], located.country)
+    if may_overwrite(old["located_by"], old["geo_status"], located.located_by, force=force):
+        await _write_point(conn, old["id"], located, force)
+        return old["id"], "updated"
+    return old["id"], "kept"
+
+
+async def upsert_destination(conn, key: tuple, name: str, located, *, locality: Optional[str] = None,
+                             force: bool = False) -> tuple[str, str]:
+    """Returns (destination_id, action) with action inserted | updated | kept. The only writer of
+    shared.destinations coordinates (place_geocode). Never overwrites an admin-fixed row.
+
+    `name` is the plain place name (the `name` column agrees with name_norm; the locality of a
+    generic name is in locality_norm, not in the name). While migration 226 keeps the global
+    lower(name) index (TripPlanner cutover), a name taken by another place falls back to a name
+    qualified by locality / country (name_candidates). Each attempt runs in a savepoint, so a clash
+    never aborts the caller's transaction."""
+    import asyncpg
+
+    from services.places.guards import may_overwrite
+
+    row = None
+    for i, cand in enumerate(name_candidates(name, locality, located.country)):
+        try:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    _DEST_INSERT_SQL, cand, located.country, located.lat, located.lng, located.located_by,
+                    located.confidence, located.place_id, key[0], key[2])
+        except asyncpg.UniqueViolationError as e:
+            if getattr(e, "constraint_name", None) != LOWER_NAME_INDEX:
+                raise
+            if i == 0:
+                async with conn.transaction():
+                    adopted = await _adopt_unkeyed(conn, cand, key, located, force)
+                if adopted is not None:
+                    return adopted
+            continue
+        if row is not None:
+            return row["id"], "inserted"
+        break  # the new key already has a row: update it below
+    else:
+        raise RuntimeError(f"no free destination name for {key}: {name!r} is taken in every form")
     # the row is keyed by where the place IS (a Thailand tour's Siem Reap is a Cambodia row)
     old = await destination_by_key(conn, (key[0], located.country.strip().lower(), key[2]))
     if old is None:  # should not happen: the conflict row is that key
         raise RuntimeError(f"destination conflict without a row for {key}")
     if may_overwrite(old["located_by"], old["geo_status"], located.located_by, force=force):
-        await conn.execute(
-            """UPDATE shared.destinations SET lat = $2, lng = $3, located_by = $4, located_at = now(),
-                      confidence = $5, geocoder_place_id = $6, geo_checked_at = now(),
-                      geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END
-                WHERE id = $1::uuid""",
-            old["id"], located.lat, located.lng, located.located_by, located.confidence, located.place_id, force)
+        await _write_point(conn, old["id"], located, force)
         return old["id"], "updated"
     return old["id"], "kept"
 
@@ -329,14 +410,28 @@ async def night_stops(conn, destination_ids: Optional[list[str]] = None) -> list
     return [dict(r) for r in rows]
 
 
-async def record_outliers(conn, observations: list[tuple]) -> None:
-    """(destination_id, source_id, day_index, km)."""
+async def record_outliers(conn, observations: list[tuple], evaluated_sources: Iterable[str] = ()) -> None:
+    """(destination_id, source_id, day_index, km). The observations of every evaluated source are
+    replaced (a re-confirmed point or a rebuilt tour drops the stale ones — review finding 10)."""
+    sources = sorted(set(evaluated_sources))
+    if sources:
+        await conn.execute("DELETE FROM geo.place_outlier WHERE source_id = ANY($1::text[])", sources)
     if observations:
         await conn.executemany(
             """INSERT INTO geo.place_outlier (destination_id, source_id, day_index, km)
                VALUES ($1::uuid, $2, $3, $4)
                ON CONFLICT (destination_id, source_id, day_index) DO UPDATE SET km = EXCLUDED.km,
                    observed_at = now()""", observations)
+
+
+async def prune_outliers(conn, live_source_ids: Iterable[str]) -> int:
+    """Observations of sources that are no longer live (trashed / archived) stop counting toward the
+    suspect rule. No-op when the live set is empty (an RLS or reset read must not wipe the table)."""
+    live = sorted(set(live_source_ids))
+    if not live:
+        return 0
+    status = await conn.execute("DELETE FROM geo.place_outlier WHERE NOT (source_id = ANY($1::text[]))", live)
+    return int(status.split()[-1])
 
 
 async def apply_suspects(conn) -> list[str]:

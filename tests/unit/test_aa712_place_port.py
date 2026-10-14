@@ -246,3 +246,14 @@ def test_stop_rows_pick_the_main_place_destination_per_day():
     rows = tg.stop_rows(days, places, DESTS)
     assert rows[0]["component_destination_id"] == "punakha"
     assert rows[1]["overnight_destination_id"] == "paro"
+
+
+@pytest.mark.asyncio
+async def test_extract_tour_propagates_a_budget_stop():
+    # review finding 6: a budget stop must not become a rules-only `partial` build
+    from shared.cost_guard import BudgetExceeded
+
+    async def gen(system, user):
+        raise BudgetExceeded("bedrock daily budget reached", "bedrock", "per_day")
+    with pytest.raises(BudgetExceeded):
+        await td.extract_tour({"tour_id": "t1", "aa_name": "", "aa_itineraries": LADAKH}, gen)

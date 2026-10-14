@@ -25,6 +25,7 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
 RUNNER_TABLES = ("shared.destinations", "shared.llm_role_config", "shared.spend_budget", "shared.schema_versions",
                  "acp_shared.place_card")
 READ_TABLES = ("gold_aa_internal.published_tours", "silver_aa_internal.raw_tours", "acp_contract.tour_atoms",
+               "acp_contract.v_active_tour_atoms",
                "acp_shared.atom_place_card", "tripplanner.itinerary_components", "tripplanner.tour_day")
 MASTER = "00000000-0000-0000-0000-000000000001"
 SEED_TAG = "zz712"
@@ -167,15 +168,88 @@ def test_destinations_key_dedupe_and_blank_country(cur, rds_like_226):
     # blank country filled from the tour that used it; the unused one is suspect
     assert rows["Paro"][1] == "Bhutan" and rows["Paro"][3] == "ok"
     assert rows["Lost Place"][1] == "" and rows["Lost Place"][3] == "suspect"
-    # the same name in another country is now allowed; the old global key is gone
+    # the same place key in another country is allowed (the name itself must still be globally
+    # unique while TripPlanner's lower(name) index is kept — review finding 1)
     cur.execute("INSERT INTO shared.destinations (name, country, lat, lng, name_norm) VALUES "
-                "(%s, 'Bhutan', 1, 1, %s) RETURNING id", (f"{SEED_TAG} Hoi-An", f"{SEED_TAG} hoi an"))
+                "(%s, 'Bhutan', 1, 1, %s) RETURNING id", (f"{SEED_TAG} Hoi An", f"{SEED_TAG} hoi an"))
     assert cur.fetchone()
     with pytest.raises(psycopg2.errors.UniqueViolation):
         cur.execute("INSERT INTO shared.destinations (name, country, lat, lng, name_norm) VALUES "
                     "(%s, 'vietnam', 1, 1, %s)", (f"{SEED_TAG} Hoi An 2", f"{SEED_TAG} hoi an"))
     cur.execute("SELECT to_regclass('shared.destinations_lower_name_uidx')")
-    assert cur.fetchone()[0] is None
+    assert cur.fetchone()[0] is not None
+
+
+def test_tripplanner_writers_still_work_after_226(cur):
+    # review finding 1: TripPlanner's live writers upsert ON CONFLICT (lower(name)) until slice 6
+    tp_upsert = ("INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at) "
+                 "VALUES (%s, %s, %s, %s, %s, now()) ON CONFLICT (lower(name)) DO UPDATE SET country = "
+                 "EXCLUDED.country, lat = EXCLUDED.lat, lng = EXCLUDED.lng, located_by = EXCLUDED.located_by, "
+                 "located_at = now() RETURNING id")
+    cur.execute(tp_upsert, (f"{SEED_TAG} Tp Place", "Laos", 19.9, 102.1, "llm"))
+    first = cur.fetchone()[0]
+    cur.execute(tp_upsert, (f"{SEED_TAG} TP PLACE", "Laos", 19.8, 102.2, "mapbox"))
+    assert cur.fetchone()[0] == first
+    cur.execute("INSERT INTO shared.destinations (name, country, lat, lng) VALUES (%s, 'Laos', 1, 1) "
+                "ON CONFLICT (lower(name)) DO UPDATE SET name = shared.destinations.name RETURNING id",
+                (f"{SEED_TAG} tp place",))
+    assert cur.fetchone()[0] == first
+    cur.execute("DELETE FROM shared.destinations WHERE id = %s", (first,))
+
+
+@pytest.mark.asyncio
+async def test_upsert_destination_with_the_global_name_index(pool, cur):
+    from services.places import store
+    from services.places.locate import Located
+    # a row TripPlanner wrote after 226 (no name_norm), same country: CIS adopts it
+    cur.execute("INSERT INTO shared.destinations (name, country, lat, lng, located_by) "
+                "VALUES ('Zz712 Pakbeng', 'Laos', 19.89, 101.13, 'llm') RETURNING id")
+    tp_row = str(cur.fetchone()[0])
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            dest, action = await store.upsert_destination(conn, ("zz712 pakbeng", "laos", ""), "Zz712 Pakbeng",
+                                                          Located(19.9, 101.14, "Laos", "mapbox"))
+    assert (dest, action) == (tp_row, "updated")
+    cur.execute("SELECT name_norm, locality_norm, located_by FROM shared.destinations WHERE id = %s", (tp_row,))
+    assert cur.fetchone() == ("zz712 pakbeng", "", "mapbox")
+    # the same name is another place in another country: a qualified name, the caller's
+    # transaction survives the clash (savepoint)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            dest2, action2 = await store.upsert_destination(conn, ("zz712 pakbeng", "thailand", ""),
+                                                            "Zz712 Pakbeng", Located(15.0, 100.0, "Thailand", "llm"))
+            assert await conn.fetchval("SELECT 1") == 1
+    assert action2 == "inserted" and dest2 != tp_row
+    cur.execute("SELECT name, name_norm, country FROM shared.destinations WHERE id = %s", (dest2,))
+    assert cur.fetchone() == ("Zz712 Pakbeng (Thailand)", "zz712 pakbeng", "Thailand")
+    # a generic name keeps its plain name; the locality lives in locality_norm (finding 8)
+    async with pool.acquire() as conn:
+        dest3, _ = await store.upsert_destination(conn, ("zz712 base camp", "nepal", "namche"), "Zz712 Base Camp",
+                                                  Located(27.8, 86.7, "Nepal", "llm"), locality="Namche")
+        dest4, _ = await store.upsert_destination(conn, ("zz712 base camp", "nepal", "lukla"), "Zz712 Base Camp",
+                                                  Located(27.7, 86.73, "Nepal", "llm"), locality="Lukla")
+    cur.execute("SELECT id::text, name FROM shared.destinations WHERE id = ANY(%s::uuid[])", ([dest3, dest4],))
+    assert dict(cur.fetchall()) == {dest3: "Zz712 Base Camp", dest4: "Zz712 Base Camp (Lukla)"}
+    cur.execute("DELETE FROM shared.destinations WHERE id = ANY(%s::uuid[])", ([tp_row, dest2, dest3, dest4],))
+
+
+@pytest.mark.asyncio
+async def test_outlier_observations_are_replaced_and_pruned(pool, cur):
+    from services.places import store
+    cur.execute("INSERT INTO shared.destinations (name, country, lat, lng, located_by, name_norm) "
+                "VALUES ('Zz712 Far', 'Laos', 19.0, 102.0, 'mapbox', 'zz712 far') RETURNING id")
+    d = str(cur.fetchone()[0])
+    async with pool.acquire() as conn:
+        await store.record_outliers(conn, [(d, "zz712-s1", 1, 900.0), (d, "zz712-s2", 2, 800.0)],
+                                    evaluated_sources=["zz712-s1", "zz712-s2"])
+        await store.record_outliers(conn, [], evaluated_sources=["zz712-s1"])   # re-confirmed: no longer
+        cur.execute("SELECT source_id FROM geo.place_outlier WHERE destination_id = %s", (d,))
+        assert [r[0] for r in cur.fetchall()] == ["zz712-s2"]
+        assert await store.prune_outliers(conn, []) == 0                        # empty live set: no wipe
+        assert await store.prune_outliers(conn, ["zz712-s1"]) >= 1              # s2 not live any more
+    cur.execute("SELECT count(*) FROM geo.place_outlier WHERE destination_id = %s", (d,))
+    assert cur.fetchone()[0] == 0
+    cur.execute("DELETE FROM shared.destinations WHERE id = %s", (d,))
 
 
 def test_stage_keys_budgets_and_constraints(cur):

@@ -220,7 +220,8 @@ class DaysResult:
 
 async def extract_tour(tour: dict, generate: Optional[GenerateFn]) -> DaysResult:
     """Day records for one tour dict {tour_id, aa_name, aa_itineraries}. Pure except `generate`.
-    A model failure falls back to the rules alone (never raises for a bad model answer)."""
+    A model failure falls back to the rules alone (never raises for a bad model answer); a
+    BudgetExceeded propagates so the job ends stopped_budget, not as a rules-only `partial` build."""
     blocks = parse_days(tour.get("aa_itineraries") or "")
     if not blocks:
         return DaysResult([])
@@ -236,6 +237,9 @@ async def extract_tour(tour: dict, generate: Optional[GenerateFn]) -> DaysResult
             llm_by_day = {b.day_from: ground_llm_day(parsed[b.day_from], b)
                           for b in blocks if b.day_from in parsed}
         except Exception as e:  # noqa: BLE001 — rules alone are still a usable answer
+            from shared.cost_guard import BudgetExceeded
+            if isinstance(e, BudgetExceeded):  # a budget stop is not a model failure: the job stops
+                raise
             out.model_failed = True
             logger.warning("place_days_model_failed", tour_id=tour.get("tour_id"), error=str(e)[:200])
     for b, r in zip(blocks, rules):

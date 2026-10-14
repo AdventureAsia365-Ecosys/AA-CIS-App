@@ -88,6 +88,31 @@ def test_components_hash_ignores_order_and_sees_text_changes():
     assert cm.components_hash(a) != cm.components_hash([_atom(1, 1, "A", text="changed"), _atom(2, 2, "B")])
 
 
+@pytest.mark.parametrize("field,value", [("card_id", "c1"), ("card_display_name", "Hoi An Ancient Town"),
+                                         ("card_country", "Vietnam"), ("card_locality", "Hoi An"),
+                                         ("card_destination_id", "d1")])
+def test_components_hash_sees_a_card_that_arrives_after_atomize(field, value):
+    # review finding 4: a card linked later must make place_extract rebuild (card identity link)
+    before = [_atom(1, 1, "Ancient Town")]
+    assert cm.components_hash(before) != cm.components_hash([_atom(1, 1, "Ancient Town", **{field: value})])
+
+
+@pytest.mark.asyncio
+async def test_place_cards_build_enqueues_place_extract_when_cards_were_linked(monkeypatch):
+    from services.jobs import place_cards_job as job
+    from services.places import enqueue as enq
+    ctx = SimpleNamespace(payload={"tour_id": "t1"}, pool=_Pool(SimpleNamespace(fetch=AsyncMock(return_value=[]))))
+    extract = AsyncMock(return_value=("pe1", True))
+    monkeypatch.setattr(enq, "enqueue_place_extract", extract)
+    monkeypatch.setattr(job, "ensure_place_cards", AsyncMock(return_value={"linked_existing": 0, "built": 2}))
+    out = await job.run(ctx)
+    assert out["place_extract_job"] == "pe1"
+    assert extract.await_args.kwargs["tour_id"] == "t1" and extract.await_args.kwargs["reason"] == "place_cards_build"
+    extract.reset_mock()
+    monkeypatch.setattr(job, "ensure_place_cards", AsyncMock(return_value={"linked_existing": 0, "built": 0}))
+    assert "place_extract_job" not in await job.run(ctx) and not extract.await_count
+
+
 @pytest.mark.parametrize("at,text,expected", [
     ("other", "Safari in the national park", "wildlife_nature"), ("other", "Kayak the lagoon", "water_activities"),
     ("", "something else", "local_immersion"), ("transit", "x", None), ("bike", "x", "adventure_sport"),
@@ -97,6 +122,25 @@ def test_map_activity(at, text, expected):
 
 
 # ── guards ─────────────────────────────────────────────────────────────────────────────────────
+
+def test_guard_countries_cover_every_raw_tours_country():
+    # review finding 5: a live tour's country outside the guard list never gets a graph
+    sql = (MIGRATION.parent / "150_country_check_constraint.sql").read_text()
+    block = sql[sql.index("chk_raw_tours_country CHECK"):]
+    allowed = set(re.findall(r"'([A-Z][A-Za-z ]+)'", block[:block.index("]")]))
+    assert len(allowed) == 18
+    assert {guards.canonical_country(c) for c in allowed} == allowed
+    for c in allowed:
+        iso = guards.iso2(c)
+        assert iso in guards.BBOX and iso in guards.ISO2_ISO3 and iso in guards.AA_ISO2
+    assert guards.point_ok(-8.65, 115.2, "Indonesia") is None           # Bali
+    assert guards.point_ok(3.14, 101.69, "Malaysia") is None            # Kuala Lumpur
+    assert guards.point_ok(42.87, 74.59, "Kyrgyzstan") is None          # Bishkek
+    assert guards.point_ok(39.65, 66.96, "Uzbekistan") is None          # Samarkand
+    mapbox = gc.MapboxPermanentGeocoder(token="t").params("Ubud", -8.5, 115.3)["country"].split(",")
+    amazon = gc.AmazonLocationGeocoder.request("Ubud", -8.5, 115.3)["Filter"]["IncludeCountries"]
+    assert {"id", "my", "kg", "uz"} <= set(mapbox) and {"IDN", "MYS", "KGZ", "UZB"} <= set(amazon)
+
 
 def test_point_guard_country_and_bbox():
     assert guards.point_ok(18.79, 98.98, "Thailand") is None                 # Chiang Mai
@@ -366,14 +410,34 @@ async def test_kind_scoped_daily_budget_ignores_the_providers_busy_day():
     from shared.cost_guard import BudgetExceeded, load_run_budget
     rows = [{"scope": "job:place_extract", "per_run_usd": 5, "per_day_usd": 40, "hard_stop": True, "alert_pct": 80},
             {"scope": "global", "per_run_usd": None, "per_day_usd": 10, "hard_stop": True, "alert_pct": 80}]
+    rows[1]["per_day_usd"] = 600
     b = await load_run_budget(_Pool(_Conn(rows, provider_day=500.0, kind_day=1.0)), "bedrock", "place_extract",
                               day_scope="kind")
     assert b.per_day_usd == 40 and b.day_spent_at_start == 1.0
     b.check(0.04)
     b2 = await load_run_budget(_Pool(_Conn(rows, provider_day=500.0, kind_day=39.99)), "bedrock",
                                "place_extract", day_scope="kind")
-    with pytest.raises(BudgetExceeded):
+    with pytest.raises(BudgetExceeded) as e:
         b2.check(0.04)
+    assert e.value.limit == "per_day"
+
+
+@pytest.mark.asyncio
+async def test_kind_scoped_budget_still_obeys_the_provider_wide_daily_hard_stop():
+    # review finding 3: the global Bedrock daily cap is checked against the provider's spend
+    from shared.cost_guard import BudgetExceeded, load_run_budget
+    rows = [{"scope": "job:place_extract", "per_run_usd": 5, "per_day_usd": 40, "hard_stop": True, "alert_pct": 80},
+            {"scope": "global", "per_run_usd": None, "per_day_usd": 100, "hard_stop": True, "alert_pct": 80}]
+    b = await load_run_budget(_Pool(_Conn(rows, provider_day=99.99, kind_day=1.0)), "bedrock", "place_extract",
+                              day_scope="kind")
+    assert b.global_day_usd == 100 and b.remaining_usd() == pytest.approx(0.01)
+    with pytest.raises(BudgetExceeded) as e:
+        b.check(0.04)
+    assert e.value.limit == "per_day_global"
+    rows[1]["hard_stop"] = False   # an alert-only global cap never stops the kind
+    b2 = await load_run_budget(_Pool(_Conn(rows, provider_day=99.99, kind_day=1.0)), "bedrock", "place_extract",
+                               day_scope="kind")
+    b2.check(0.04)
 
 
 def test_geocoder_is_a_budget_provider():

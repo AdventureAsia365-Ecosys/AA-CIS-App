@@ -110,6 +110,11 @@ class RunBudget:
     # KAN-90 (29/09/2026): the daily cap can be alert-only while the per-run cap still stops.
     # `hard_stop` governs the per-run cap; `hard_stop_day` the daily cap (None = same as hard_stop).
     hard_stop_day: Optional[bool] = None
+    # AA-712: a kind-scoped budget (load_run_budget day_scope="kind") keeps the provider-wide daily
+    # cap as a second axis — the kind's own spend against its row, the provider's against `global`.
+    global_day_usd: Optional[float] = None
+    global_day_spent_at_start: float = 0.0
+    global_day_hard: bool = True
 
     @property
     def day_is_hard(self) -> bool:
@@ -119,6 +124,10 @@ class RunBudget:
     def day_spent(self) -> float:
         return self.day_spent_at_start + self.run_spent
 
+    @property
+    def global_day_spent(self) -> float:
+        return self.global_day_spent_at_start + self.run_spent
+
     def remaining_usd(self) -> Optional[float]:
         """The most this run may still spend, or None when both axes are unlimited."""
         caps = []
@@ -126,6 +135,8 @@ class RunBudget:
             caps.append(self.per_run_usd - self.run_spent)
         if self.per_day_usd is not None and self.day_is_hard:  # an alert-only cap never limits
             caps.append(self.per_day_usd - self.day_spent)
+        if self.global_day_usd is not None and self.global_day_hard:
+            caps.append(self.global_day_usd - self.global_day_spent)
         return max(min(caps), 0.0) if caps else None
 
     def check(self, estimate_usd: float) -> None:
@@ -140,6 +151,12 @@ class RunBudget:
                 f"{self.provider} daily budget ${self.per_day_usd:.2f} reached "
                 f"(spent today ${self.day_spent:.4f}, next call ~${estimate_usd:.4f})",
                 self.provider, "per_day")
+        if (self.global_day_hard and self.global_day_usd is not None
+                and self.global_day_spent + estimate_usd > self.global_day_usd):
+            raise BudgetExceeded(
+                f"{self.provider} provider-wide daily budget ${self.global_day_usd:.2f} reached "
+                f"(spent today ${self.global_day_spent:.4f}, next call ~${estimate_usd:.4f})",
+                self.provider, "per_day_global")
 
     def charge(self, usd: Optional[float]) -> None:
         self.run_spent += float(usd or 0.0)
@@ -156,6 +173,8 @@ class RunBudget:
             "hard_stop": self.hard_stop, "hard_stop_day": self.day_is_hard,
             "run_spent_usd": round(self.run_spent, 4),
             "day_spent_usd": round(self.day_spent, 4), "remaining_usd": _round(self.remaining_usd()),
+            **({"global_day_usd": self.global_day_usd, "global_day_spent_usd": round(self.global_day_spent, 4)}
+               if self.global_day_usd is not None else {}),
         }
 
 
@@ -213,15 +232,20 @@ async def load_run_budget(pool, provider: str, job_kind: str, *, day_scope: str 
     hard_stop=false makes the daily DFS cap alert-only while `job:segment_research`'s $5 per run
     still stops the run.
 
-    AA-712 — `day_scope="kind"`: the daily figure is this kind's own LLM spend today
-    (kind_day_spend) instead of the provider's, and only the job row's daily cap applies (the
-    global row's cap is about the whole provider)."""
+    AA-712 — `day_scope="kind"`: the job row's daily cap is checked against this kind's own LLM
+    spend today (kind_day_spend), and the global row's daily cap — the provider-wide hard stop —
+    stays a second axis checked against the provider's spend (RunBudget.global_day_usd)."""
     job_scope = f"job:{job_kind}"
     async with pool.acquire() as conn:
         rows = await _read_rows(conn, provider, job_scope)
         spent = await (kind_day_spend(conn, job_kind) if day_scope == "kind" else day_spend(conn, provider))
+        provider_spent = await day_spend(conn, provider) if day_scope == "kind" else spent
+    global_axis = {}
     if day_scope == "kind":
-        rows.pop("global", None)
+        g = rows.pop("global", None) or {}
+        if g.get("per_day_usd") is not None:
+            global_axis = {"global_day_usd": float(g["per_day_usd"]), "global_day_spent_at_start": provider_spent,
+                           "global_day_hard": bool(g.get("hard_stop", True))}
     job, glob = rows.get(job_scope, {}), rows.get("global", {})
     run_row = job if job.get("per_run_usd") is not None else glob
     per_run = run_row.get("per_run_usd")
@@ -235,6 +259,7 @@ async def load_run_budget(pool, provider: str, job_kind: str, *, day_scope: str 
         hard_stop=hard_stop, hard_stop_day=hard_stop_day,
         alert_pct=int(job.get("alert_pct") or glob.get("alert_pct") or 80),
         day_spent_at_start=spent,
+        **global_axis,
     )
 
 

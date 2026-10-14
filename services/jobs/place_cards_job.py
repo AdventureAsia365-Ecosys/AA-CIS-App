@@ -40,4 +40,21 @@ async def run(ctx: JobContext) -> dict:
     counters = await ensure_place_cards(atom_ids, ctx.pool, force=bool(payload.get("force")),
                                         max_places=MAX_PLACES)
     logger.info("place_cards_build_done", tour_id=tour_id, **counters)
-    return {"tour_id": tour_id, "force": bool(payload.get("force")), **counters}
+    out = {"tour_id": tour_id, "force": bool(payload.get("force")), **counters}
+    if counters.get("linked_existing") or counters.get("built"):
+        out["place_extract_job"] = await _relink_places(ctx.pool, tour_id)
+    return out
+
+
+async def _relink_places(pool, tour_id: str):
+    """AA-712: new card links change the tour's place link keys (card identity is preferred), so
+    the tour's places are re-extracted — free when nothing else changed (days reused, no model
+    call). Reuses a queued place_extract of the tour. Best-effort: never fails the card build."""
+    try:
+        from services.places.enqueue import enqueue_place_extract
+        job_id, _ = await enqueue_place_extract(pool, tour_id=str(tour_id), version_id=None,
+                                                reason="place_cards_build", created_by=KIND)
+        return job_id
+    except Exception as e:  # noqa: BLE001
+        logger.warning("place_extract_enqueue_after_cards_failed", tour_id=tour_id, error=str(e)[:200])
+        return None

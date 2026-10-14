@@ -137,7 +137,7 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
                 dest = known.get(key)
                 new_rows.append((key[0], key[1], key[2], anchors[d], country, None, tour.get("aa_name"), dest,
                                  None, "resolved" if dest else "pending"))
-        await store.insert_names(conn, list({r[:3]: r for r in new_rows}.values()))
+    name_rows = list({r[:3]: r for r in new_rows}.values())
     comp_dest = {cid: card_dest.get(cid) or dest_by_key.get(k) for cid, k in comp_keys.items()}
     night_dest = {d: dest_by_key.get(k) if k else None for d, k in anchor_keys.items()}
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
@@ -189,6 +189,8 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
                 await store.lock_build(conn, source_id, tour_id)
                 if await store.live_tour_for_source(conn, source_id) != tour_id:
                     raise _NotLive()
+                # names only once the version is known live: a rolled-back build queues no paid geocode
+                await store.insert_names(conn, name_rows)
                 await store.replace_source_rows(conn, source_id, tour_id, day_rows, place_rows, vectors)
                 await store.write_build(conn, source_id, tour_id=tour_id, country=country, days_hash=dh,
                                         components_hash=ch, rule_version=days_mod.RULE_VERSION, status=status,
@@ -247,7 +249,8 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                         out["unknown" if st == "unknown" else "failed"] += 1
                         continue
                     async with conn.transaction():
-                        dest_id, action = await store.upsert_destination(conn, it.key, it.label, o.point)
+                        dest_id, action = await store.upsert_destination(conn, it.key, it.name, o.point,
+                                                                         locality=it.locality)
                         await store.mark_name(conn, it.key, destination_id=dest_id)
                     out[action] += 1
                     out["resolved"] += 1
@@ -277,7 +280,8 @@ async def apply_outlier_rule(conn, destination_ids: Optional[list[str]]) -> tupl
     for source_id, stops in by_source.items():
         for dest, day, dist in guards.outlier_observations(stops):
             obs.append((dest, source_id, day, dist))
-    await store.record_outliers(conn, obs)
+    await store.record_outliers(conn, obs, evaluated_sources=by_source)
+    await store.prune_outliers(conn, {t["source_id"] for t in await store.live_tours(conn)})
     return len(obs), await store.apply_suspects(conn)
 
 

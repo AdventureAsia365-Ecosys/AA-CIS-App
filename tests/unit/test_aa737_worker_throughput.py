@@ -78,3 +78,53 @@ async def test_fill_slots_passes_the_reduced_caps_to_claim(monkeypatch):
     await w._fill_slots()
     caps = claim.call_args[0][2]
     assert "a3_atomize" in caps and "place_extract" not in caps
+
+
+def _simulate(w, queue_kinds, running):
+    """Fill the worker FIFO from `queue_kinds` (claim order) the way _fill_slots does: each claim
+    takes the first queued job whose kind is in claim_caps() and under that kind's cap."""
+    queued = list(queue_kinds)
+    while len(running) < w.max_parallel:
+        background = {n for n, k in kinds().items() if k.background}
+        caps = w.claim_caps(w.max_parallel - len(running), sum(1 for k in running if k in background))
+        pick = next((i for i, k in enumerate(queued) if k in caps and running.count(k) < caps[k]), None)
+        if pick is None:
+            break
+        running.append(queued.pop(pick))
+    return running, queued
+
+
+def test_background_jobs_running_before_a_wave_cannot_starve_atomize():
+    # review finding 2 (AA-712): with 8 free slots before a wave, the place kinds must not each take
+    # a slot; when the wave arrives and a background job ends, a3_atomize still finds a slot.
+    from unittest.mock import MagicMock
+    load_kinds()
+    w = worker.Worker(MagicMock(), max_parallel=WORKER_MAX_PARALLEL_DEFAULT)
+    running, _ = _simulate(w, ["place_extract", "place_geocode", "tour_graph_build"], [])
+    assert running == ["place_extract"]                        # one background job at a time
+    w._running_kinds = {"j1": "place_extract"}
+    assert not {n for n, k in kinds().items() if k.background} & set(w.claim_caps(7, w.running_background()))
+    # the wave arrives: s1_rewrite floods the queue ahead of atomize
+    running, queued = _simulate(w, ["s1_rewrite"] * 20 + ["a3_atomize"] * 5 + ["place_geocode"], running)
+    assert running.count("s1_rewrite") == 6 and running.count("a3_atomize") == 1
+    assert len(running) == WORKER_MAX_PARALLEL_DEFAULT
+    # the background job ends: its slot never lets a background job back in ahead of the wave
+    running.remove("place_extract")
+    running, queued = _simulate(w, queued, running)
+    assert running.count("a3_atomize") == 1 and "place_geocode" not in running
+
+
+@pytest.mark.asyncio
+async def test_fill_slots_counts_running_background_jobs(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+    from shared.jobs import queue
+    load_kinds()
+    w = worker.Worker(MagicMock(), max_parallel=8)
+    w._running = {"a": MagicMock()}
+    w._running_kinds = {"a": "place_geocode"}                  # 7 free, but one background running
+    monkeypatch.setattr(queue, "newer_worker_alive", AsyncMock(return_value=False))
+    claim = AsyncMock(return_value=None)
+    monkeypatch.setattr(queue, "claim", claim)
+    await w._fill_slots()
+    caps = claim.call_args[0][2]
+    assert "s1_rewrite" in caps and "place_extract" not in caps and "tour_graph_build" not in caps
