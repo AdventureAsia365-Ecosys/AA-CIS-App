@@ -33,6 +33,15 @@ class CatalogPriceRequired(Exception):
     the readable, mapped-to-422 form of the same rule."""
 
 
+# S235 (Nghiệp, 14/10/2026): retired Model Keys — disabled by migration 224 and never re-enabled from
+# the admin UI (bringing one back is a migration + decision, not a toggle).
+RETIRED_KEYS = frozenset({"gpt-4.1"})
+
+
+class CatalogPolicyBlocked(Exception):
+    """S235 — an admin tried to enable a retired catalog row (RETIRED_KEYS). Router -> 422."""
+
+
 @dataclass(frozen=True)
 class CatalogModel:
     model_key: str
@@ -228,6 +237,8 @@ async def set_catalog_price(
             )
             if before is None:
                 raise ValueError(f"unknown model_key: {model_key!r}")
+            if edits.get("enabled") is True and model_key in RETIRED_KEYS:
+                raise CatalogPolicyBlocked(f"{model_key} is retired (S235) and cannot be re-enabled")
             try:
                 row = await conn.fetchrow(
                     f"UPDATE shared.llm_model_catalog SET {', '.join(set_frags)}, "

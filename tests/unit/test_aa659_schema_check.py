@@ -106,6 +106,7 @@ def test_converse_string_encoded_tool_input_is_repaired():
     assert json.loads(resp.content) == GOOD_AUDIT
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_openai_invalid_structured_output_raises():
     c = _client()
     c._openai = MagicMock()

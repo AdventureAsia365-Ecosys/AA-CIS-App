@@ -25,13 +25,29 @@ BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "us-west-1")
 # passes neither an explicit request.model_tier NOR a request.stage (AA-518) — every real call
 # site in this codebase now passes at least one of those two, so this is belt-and-suspenders for
 # an unforeseen caller, not the live default path anymore.
-# Options: "haiku" (cheapest) | "sonnet" (premium) | "gpt-4.1" (OpenAI)
+# Options: "haiku" (cheapest) | "sonnet" (premium). "gpt-4.1" (OpenAI platform API) is retired (S235,
+# migration 224 disables its catalog row) and refused by the gate below.
 DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 
 # BEDROCK_SONNET/BEDROCK_HAIKU/COST_TABLE relocated to pricing.py (AA-518/AA-505) so Mechanism-B
 # call sites (invoke_claude() direct, e.g. T5 atomize, N7 E2-E5) can price a call without
 # importing this whole client — re-exported here unchanged so nothing importing them FROM this
 # module breaks.
+
+class OpenAIPlatformBlocked(RuntimeError):
+    """S235 — a call would go to an OpenAI platform API model whose catalog row is not enabled."""
+
+
+def openai_platform_allowed(model_key: str) -> bool:
+    """S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the last-resort
+    fallback of a stage route (gpt-6-luna-openai at the end of the judge routes). The adapter
+    (`LLMClient._call_openai`) runs only for a catalog row with provider 'openai' that is enabled.
+    Migration 224 retires gpt-4.1 (disabled), so the legacy gpt-4.1 tier and the legacy chain's
+    GPT-4.1 last resort are refused here. Fails closed: an unreadable catalog (DB down, unit tests)
+    means not allowed."""
+    m = get_model_sync(model_key)
+    return m is not None and m.provider == "openai" and m.enabled
+
 
 def _checked_json(model_label: str, value, schema: dict) -> str:
     """AA-659 — a structured output that does not match its schema raises, so the stage route
@@ -60,7 +76,8 @@ class LLMClient:
     T2:    Claude Haiku 4.5  (Bedrock, acc2 native) + prompt caching
     T2.5a: Claude Haiku      (Bedrock satellite, acc3 — AA-397)
     T2.5b: Claude Haiku      (Bedrock satellite, acc1 — AA-296, nay là fallback)
-    T3:    GPT-4.1           (OpenAI)
+    T3:    GPT-4.1           (OpenAI platform API) — S235: retired; runs only if the gpt-4.1
+                                 catalog row is enabled again (openai_platform_allowed)
     """
 
     def __init__(self):
@@ -145,6 +162,13 @@ class LLMClient:
                 continue
             if position > 0:
                 resp.fallback_used = True
+            if resp.provider == "openai":
+                # S235 — the OpenAI platform API is a last resort for a Bedrock outage: tenant
+                # content left AWS. Fixed event name for a CloudWatch metric filter / alarm
+                # (proposed in docs/implementation-notes/S235-bedrock-only.md); llm_call_log gets
+                # provider='openai' + fallback_used=true from the caller's record_call.
+                logger.warning("llm_openai_fallback_used", stage=request.stage, model=key,
+                               position=position, errors=errors)
             logger.info("llm_route_used", stage=request.stage, model=key, position=position)
             return resp
         raise RuntimeError(f"All models in the route failed for stage {request.stage!r}: "
@@ -261,7 +285,14 @@ class LLMClient:
         except Exception as e:
             logger.warning("t2_5b_satellite_failed_trying_t3", model=BEDROCK_HAIKU, account=fallback_acct, error=str(e))
 
-        # T3: GPT-4.1 — last resort for all tiers
+        # T3: GPT-4.1 — last resort for all tiers. S235: GPT-4.1 is retired (migration 224 disables
+        # its catalog row), so a Bedrock outage on a Haiku/Sonnet writer raises here. Writers are
+        # Anthropic; an OpenAI last resort for a writer would change vendor unseen (ADR 0005 §4) —
+        # only the judge routes list an OpenAI-API last resort, explicitly.
+        if not openai_platform_allowed("gpt-4.1"):
+            logger.error("t3_skipped_gpt41_retired", tier=tier,
+                         reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
+            raise RuntimeError("All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)")
         try:
             resp = self._call_openai(request, model="gpt-4.1")
             resp.fallback_used = True
@@ -566,6 +597,12 @@ class LLMClient:
                                 "schema": request.json_schema["schema"]},
             }
         model_label = catalog_model.model_key if catalog_model else model
+        # S235 — the single gate in front of the OpenAI platform API: every path into this adapter
+        # (legacy gpt-4.1 tier, T3, catalog openai_chat rows, shadows) stops here unless the
+        # model's catalog row is provider 'openai' AND enabled.
+        if not openai_platform_allowed(model_label):
+            raise OpenAIPlatformBlocked(
+                f"{model_label}: OpenAI platform API is disabled (S235 Bedrock-only policy)")
         stream_sink.emit_restart(request.stage)  # AA-637
         resp = self._openai.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content or ""

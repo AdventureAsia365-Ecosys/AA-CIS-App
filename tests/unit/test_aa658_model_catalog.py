@@ -261,7 +261,8 @@ def test_validate_stage_may_use_any_vendor():
 def test_catalog_unreachable_falls_back_to_static_lists():
     from api.routers.admin_llm_ops import _options_for
     assert _available(_options_for("writer", "t9_write", None)) == {"haiku", "sonnet"}
-    assert _available(_options_for("judge", "t10_judge", None)) == {"gpt-4.1"}
+    # S235: GPT-4.1 is retired — the static judge fallback shows it but it is not selectable.
+    assert _available(_options_for("judge", "t10_judge", None)) == set()
 
 
 @pytest.mark.asyncio
