@@ -377,6 +377,45 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
     return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
 
 
+# AA-786 (Gate-1 policy, S235) — channels where an F9 product-truth failure left after the last
+# attempt is cut in code and the piece ships, never held (AA-770: the tenant always gets content).
+# The blog keeps the hold until AA-777 extends _cut_truth_items to it.
+F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
+
+
+def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
+                     ignore: frozenset = frozenset(), cta: Optional[str] = None,
+                     moments: Optional[list] = None) -> tuple[str, list, list, Optional[dict]]:
+    """AA-786 — LinkedIn repair-not-hold. When the piece is about to stop with a blocking
+    F9_cta_fact made only of product-truth items (unsupported claims, TEXT_INTEGRITY — never a
+    missing CTA), cut each flagged sentence that is safe to cut (sentence_repair.delete_flagged: not
+    the hook, not the CTA, no orphaned pronoun) and mark the F9 entry `blocking: false, waived: true`
+    (also added to the flags, so the admin still sees it). When nothing can be cut the piece still
+    ships with the flag. Returns (content_text, gate_ledger, flags, repair_log entry or None); a
+    no-op for any other channel or ledger. Built as its own step so AA-777 can extend it to blogs."""
+    if channel not in F9_CUT_NOT_HOLD_CHANNELS:
+        return content_text, gate_ledger, flags, None
+    f9 = next((g for g in gate_ledger if g["gate"] == "F9_cta_fact" and not g["passed"]
+               and g.get("blocking", True)), None)
+    if f9 is None or not sentence_repair.f9_truth_only(f9):
+        return content_text, gate_ledger, flags, None
+    items = sentence_repair.truth_items(content_text, f9)
+    cut = sentence_repair.delete_flagged(content_text, items, ignore=ignore, cta=cta, moments=moments) \
+        if items else None
+    n_cut = 0
+    if cut is not None:
+        plain = " ".join(strip_citation_tags(cut).split())
+        n_cut = sum(1 for it in items if it["sentence"] not in plain)
+        content_text = cut
+    reason = (f"{n_cut} flagged sentence(s) cut on {channel}; shipped, not held (AA-786)" if n_cut
+              else f"flagged sentence could not be cut safely on {channel}; shipped with the flag, not held (AA-786)")
+    waived = {**f9, "blocking": False, "waived": True, "waived_reason": reason}
+    ledger = [waived if g is f9 else g for g in gate_ledger]
+    entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_waived",
+             "sentences_cut": n_cut, "violations": [reason], "repairable": False}
+    return content_text, ledger, list(flags) + [waived], entry
+
+
 def _grounding_text(context: dict) -> str:
     """AA-768 — the gates' view of what the writer was given as fact: the seed (atom or joined
     route moments) + the Facts block + the audience and trip lines build_user_prompt() also
@@ -1252,6 +1291,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
+                    content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
+                        content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
+                        moments=hyg.moments)
+                    if cut_entry:
+                        repair_log.append({"attempt": attempt - 1, **cut_entry})
                     status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
@@ -1468,6 +1512,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # published until the tenant edits it or an admin clears it (v1_publish gate, #8).
                 # S234 review — held only on a product-truth gate; a piece whose only blocking
                 # failure left is style-only (F15_voice stock phrase) ships with it as a flag.
+                # AA-786 — on LinkedIn an F9 product-truth failure is cut and shipped, never held.
+                content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
+                    content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
+                    moments=hyg.moments)
+                if cut_entry:
+                    repair_log.append({"attempt": attempt, **cut_entry})
                 status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
 
