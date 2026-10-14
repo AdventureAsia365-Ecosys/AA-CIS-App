@@ -95,6 +95,11 @@ the country the tour is sold as).
 history and era, its setting and what is physically there). Never write how visitors reach it, what \
 visitors do or see, permits or access, or safety advice: those are trip facts and come only from the \
 itinerary. kind is one of: what_it_is, history, setting, naming.
+- Each fact describes the place only. Never end a background fact with a clause about travellers: \
+how people reach it (roads, drives, distances by road, gateways, staging or stopping points), the \
+views visitors get, what visitors do there, which other sites it is combined with, or "making it a \
+stop / base / standard inclusion". Write such content not at all; a fact that is only about \
+reaching or visiting the place is omitted.
 - Only facts you are confident are widely documented. No prices, fees, opening hours, \
 visitor numbers, rankings or superlatives, and nothing about the tour or trip itself. \
 Write a number only if it is a well-established fact (e.g. a founding century).
@@ -115,6 +120,7 @@ is correct and widely documented; "unsure" when you cannot confirm it; "wrong" w
 # re-drafts an existing card: ensure_place_cards() skips linked atoms and reuses cards by alias / core
 # name, and its only callers are bounded (T8: one atom; place_cards_build: one tour, MAX_PLACES).
 # AA-774 changed the facts bullet: old cards keep their facts and are filtered at seed time.
+# AA-808 added the traveller-clause bullet (hash changes with it; existing cards are not re-drafted).
 PROMPT_SHA = hashlib.sha256(f"{_CARD_SYSTEM}\n{_CHECK_SYSTEM}\nfacts={MAX_FACTS}".encode()).hexdigest()[:16]
 
 
@@ -303,12 +309,69 @@ def _parse_json(raw: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _clean_facts(raw_facts) -> list[dict]:
+# AA-808 — the drafter appends traveller clauses to background facts ("…, making it a natural
+# stopping point", "offers panoramic views"): S235 card-kinds audit, 31 writer-kind facts both
+# reviewers moved out. A writer-kind fact matching one of these is re-kinded so the writer seed
+# (atom_seed.WRITER_FACT_KINDS) never shows it. Measured on that audit: 31/31 leaks caught, 0/22
+# pure-background facts and 2/437 untouched background facts hit (tests/unit/test_aa808_*).
+# Practical (getting there) is checked before visiting (what visitors see / do).
+_KM = r"\d[\d,.]*\s?(?:km|kilomet(?:re|er)s)"
+_TRAVELLER_CLAUSES = tuple((kind, name, re.compile(rx, re.IGNORECASE)) for kind, name, rx in (
+    ("practical", "travellers", r"\btravell?ers?\b"),
+    ("practical", "hub", r"\b(?:transit hub|staging point|stopping point|departure hub|arrival hub|"
+                         r"entry (?:and exit )?points?)\b"
+                         r"|\bstarting point for (?:overland|journeys|travel|trips|treks)\b"
+                         r"|\bgateway (?:town )?(?:for|to) (?:travell?ers|visitors|tourists|overland)\b"),
+    ("practical", "reach", r"\b(?:reached|reachable) (?:from|by|via|on|only)\b|\bto reach (?:it|the)\b"),
+    ("practical", "access", r"\baccess (?:requires|is|via|by|from|to the)\b|\baccessible (?:by|via|from|only)\b"),
+    ("practical", "road", r"\b(?:drive|road|highway) (?:to|from|into)\b|\bthe drive\b"),
+    ("practical", "km_by_road", rf"\b{_KM}\b[^.;]{{0,60}}\b(?:road|highway|drive)\b"
+                                rf"|\b(?:road|highway|drive)\b[^.;]{{0,40}}\b{_KM}\b"),
+    ("practical", "approach", r"\bthe approach\b|\bapproach (?:trail|road|path|route)\b"),
+    ("practical", "permit", r"\bpermits?\b"),
+    ("practical", "trailhead", r"\b(?:car park|parking|round-trip|trailhead)\b"),
+    ("practical", "ride", r"\b(?:horse|reindeer|pony|camel)(?:back)?(?: or \w+)? rides?\b"
+                          r"|\bon (?:bicycle|bike|horseback)\b"),
+    ("practical", "utilities", r"\b(?:electricity|power) grid\b|\bmobile (?:signal|coverage|network)\b"),
+    ("practical", "overland", r"\boverland (?:travel|journeys?)\b"),
+    ("visiting", "views", r"\b(?:offers?|offering|provides?|providing|commands?|commanding|with)\b[^.;]{0,40}\bviews?\b"
+                          r"|\bpanoramic\b|\bviews? (?:of|over|toward|towards|across)\b"),
+    ("visiting", "visible", r"\bvisible from\b|\bon clear days\b|\bin clear (?:conditions|weather)\b"),
+    ("visiting", "visitors", r"\b(?:accessible|open|popular) (?:to|with|among) (?:visitors|tourists|the public)\b"
+                             r"|\bvisitors (?:can|may|often|usually|typically)\b"
+                             r"|\b(?:often|commonly|usually|frequently) visited\b|\bvisited together\b"
+                             r"|\bvisits? (?:to|in)\b"),
+    ("visiting", "trails", r"\b(?:walking|hiking|trekking) (?:trails?|routes?|paths?)\b"),
+    ("visiting", "viewpoint", r"\bviewpoints?\b"),
+    ("visiting", "combined", r"\b(?:combined|paired) with\b|\b(?:standard|common|popular) (?:inclusion|stop)\b"
+                             r"|\binclusion on\b"),
+    ("visiting", "making_it", r"\bmaking (?:it|the \w+)\b[^.;]{0,60}"
+                              r"\b(?:stop|base|inclusion|experience|climb|popular)\b"),
+))
+_WRITER_KINDS = frozenset({"what_it_is", "history", "setting", "naming"})  # = atom_seed.WRITER_FACT_KINDS
+
+
+def traveller_clause(text: str) -> Optional[tuple[str, str]]:
+    """(kind, pattern name) when a fact talks about reaching or visiting the place — the kind it
+    belongs to ('practical' / 'visiting') — or None for a pure background fact."""
+    for kind, name, rx in _TRAVELLER_CLAUSES:
+        if rx.search(text):
+            return kind, name
+    return None
+
+
+def _clean_facts(raw_facts, card_name: str = "") -> list[dict]:
     out = []
     for f in raw_facts if isinstance(raw_facts, list) else []:
         if isinstance(f, dict) and isinstance(f.get("text"), str) and f["text"].strip():
             kind = f.get("kind") if f.get("kind") in FACT_KINDS else "what_it_is"
-            out.append({"text": " ".join(f["text"].split()), "kind": kind})
+            text = " ".join(f["text"].split())
+            hit = traveller_clause(text) if kind in _WRITER_KINDS else None
+            if hit:
+                logger.info("place_card_fact_rekinded", card=card_name, pattern=hit[1],
+                            from_kind=kind, to_kind=hit[0], text=text[:120])
+                kind = hit[0]
+            out.append({"text": text, "kind": kind})
     return out[:MAX_FACTS]
 
 
@@ -566,7 +629,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
     name = (card.get("display_name") or "").strip() if isinstance(card.get("display_name"), str) else ""
     raw_country = card.get("country") if isinstance(card.get("country"), str) else ""
     country = (raw_country or rep.get("country") or "").strip()
-    card["facts"] = _clean_facts(card.get("facts"))
+    card["facts"] = _clean_facts(card.get("facts"), name or rep["place"])
     card["aliases"] = _clean_aliases(card.get("aliases"))
     if not name or not country:
         await _record_miss(pool, group_key, atoms, "no_name", model)
@@ -936,4 +999,4 @@ __all__ = ["ensure_place_cards", "build_card_for_atom", "build_card_for_group", 
            "CARD_FOR_ATOM_QUERY", "draft_card", "check_card", "fold", "place_norm", "core_key", "name_forms",
            "card_skip_reason", "find_existing_cards", "find_local_cards", "pick_local_card", "is_generic_name",
            "atom_group_key", "itinerary_alias_forms", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
-           "duplicate_clusters", "merged_facts", "merge_cards", "MergeError"]
+           "duplicate_clusters", "merged_facts", "merge_cards", "MergeError", "traveller_clause"]
