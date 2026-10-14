@@ -34,6 +34,9 @@ class JobKind:
     on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None
     # AA-687: a running job older than this is flagged on the Jobs page (not stopped).
     expected_seconds: int = 600
+    # AA-712: a background kind never takes one of the worker's last BACKGROUND_RESERVE free
+    # slots (worker.claim_caps), so it cannot starve the pipeline kinds of a wave (S217 lesson).
+    background: bool = False
 
 
 _KINDS: dict[str, JobKind] = {}
@@ -41,9 +44,9 @@ _KINDS: dict[str, JobKind] = {}
 
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
-             expected_seconds: int = 600):
+             expected_seconds: int = 600, background: bool = False):
     def deco(fn):
-        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds)
+        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background)
         return fn
     return deco
 

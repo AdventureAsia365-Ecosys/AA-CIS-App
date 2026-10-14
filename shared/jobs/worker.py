@@ -91,6 +91,21 @@ class Worker:
     def caps(self) -> dict[str, int]:
         return {name: k.concurrency for name, k in kinds().items()}
 
+    def background_reserve(self) -> int:
+        """AA-712: free slots kept away from background kinds — BACKGROUND_RESERVE, but never so many
+        that a small worker (max_parallel <= 2) could not run a background job at all."""
+        return min(BACKGROUND_RESERVE, max(self.max_parallel - 1, 0))
+
+    def claim_caps(self, free_slots: int) -> dict[str, int]:
+        """The caps passed to claim(): every kind, minus the background kinds when only the reserved
+        slots are free. claim() is FIFO across kinds, so without this a background batch queued
+        before a wave could fill the slots a3_atomize needs (S217: 59-minute atomize tail)."""
+        caps = self.caps()
+        if free_slots <= self.background_reserve():
+            background = {name for name, k in kinds().items() if k.background}
+            caps = {name: cap for name, cap in caps.items() if name not in background}
+        return caps
+
     # ── main loop ─────────────────────────────────────────────────────────────────────────────
     async def run(self) -> None:
         logger.info("job_worker_started", worker_id=self.worker_id, kinds=sorted(self.caps()))
@@ -140,7 +155,8 @@ class Worker:
             return 0
         self.yielding = False
         while len(self._running) < self.max_parallel and not self._stopping.is_set():
-            job = await queue.claim(self.pool, self.worker_id, self.caps(), self.lease_seconds)
+            job = await queue.claim(self.pool, self.worker_id,
+                                    self.claim_caps(self.max_parallel - len(self._running)), self.lease_seconds)
             if job is None:
                 break
             task = asyncio.create_task(self._execute(job), name=f"job:{job.kind}:{job.id}")
@@ -250,6 +266,8 @@ class Worker:
 # then atomize ran alone as a ~55 min tail. 8 slots = s1_rewrite (cap 6) + a3_atomize (cap 1, by
 # design) + 1 for prefetch/recompute, so atomize drains alongside the rewrites.
 WORKER_MAX_PARALLEL_DEFAULT = 8
+# AA-712: background kinds (place pipeline) never take the last 2 free slots of a worker.
+BACKGROUND_RESERVE = 2
 
 
 def worker_max_parallel() -> int:

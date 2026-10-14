@@ -49,6 +49,7 @@ from api.routers.admin_job_runner import router as admin_job_runner_router  # AA
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
+from api.routers.admin_places import router as admin_places_router  # AA-712
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
@@ -217,6 +218,7 @@ app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
+app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
 app.include_router(admin_waves_router)  # AA-727 — /admin/waves (expected set, report, check)
 app.include_router(admin_content_quality_router)  # AA-769 — /admin/content-quality (T2/T9 quality, place cards)

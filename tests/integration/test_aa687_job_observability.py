@@ -123,7 +123,8 @@ async def test_llm_calls_lists_the_job_calls_with_totals_and_split(pool):
                                 "cost_usd": pytest.approx(0.3)}]
     assert out["calls"][0]["texts"] == 3 and out["truncated"] is False
     links = await queue.domain_links(pool, job_id, {"tour_id": "t-1"})
-    assert links == {"tour_versions": [], "content_pieces": [], "tour_id": "t-1", "version_id": None}
+    assert links == {"tour_versions": [], "content_pieces": [], "tour_id": "t-1", "version_id": None,
+                     "place_builds": [], "graph_builds": []}   # AA-712
 
 
 @pytest.mark.asyncio

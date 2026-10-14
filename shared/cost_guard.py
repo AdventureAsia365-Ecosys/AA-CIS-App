@@ -26,7 +26,9 @@ import structlog
 
 logger = structlog.get_logger()
 
-PROVIDERS = ("dfs", "bedrock", "openai", "jev")
+# AA-712: 'geocoder' = the external geocoder of the place pipeline (Mapbox Permanent / Amazon
+# Location, services/places/geocoder.py); its spend is logged in geo.geocode_call (migration 226).
+PROVIDERS = ("dfs", "bedrock", "openai", "jev", "geocoder")
 
 # Used only when shared.spend_budget is missing (migration 168 not applied yet). Same values as
 # the migration's seed rows; (per_run_usd, per_day_usd).
@@ -55,7 +57,17 @@ _DAY_SPEND_SQL = {
                "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
     "openai": "SELECT coalesce(sum(cost_usd), 0) FROM shared.llm_call_log WHERE provider = 'openai' "
               "AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+    "geocoder": "SELECT coalesce(sum(cost_usd), 0) FROM geo.geocode_call "
+                "WHERE called_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
 }
+
+# AA-712: today's LLM spend of ONE job kind (its jobs' llm_call_log rows), for a kind whose daily
+# cap is about its own spend — `job:place_extract` $40/day must not trip on a busy S1 wave day,
+# which is what the provider-wide figure would do.
+_KIND_DAY_SPEND_SQL = (
+    "SELECT coalesce(sum(l.cost_usd), 0) FROM shared.llm_call_log l JOIN shared.job j ON j.id = l.job_id "
+    "WHERE j.kind = $1 AND l.created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'"
+)
 
 _RECENT_ALERT_SQL = """
     SELECT 1 FROM shared.notifications
@@ -179,20 +191,37 @@ async def day_spend(conn, provider: str) -> float:
     sql = _DAY_SPEND_SQL.get(provider)
     if sql is None:  # jev has no call log yet (AA-660)
         return 0.0
+    if provider == "geocoder":  # geo.geocode_call exists only once migration 226 is applied
+        try:
+            return float(await conn.fetchval(sql) or 0.0)
+        except Exception as exc:
+            logger.warning("geocoder_day_spend_unavailable", error=str(exc)[:200])
+            return 0.0
     return float(await conn.fetchval(sql) or 0.0)
 
 
-async def load_run_budget(pool, provider: str, job_kind: str) -> RunBudget:
+async def kind_day_spend(conn, job_kind: str) -> float:
+    """Today's (UTC) LLM spend of one job kind's jobs."""
+    return float(await conn.fetchval(_KIND_DAY_SPEND_SQL, job_kind) or 0.0)
+
+
+async def load_run_budget(pool, provider: str, job_kind: str, *, day_scope: str = "provider") -> RunBudget:
     """Effective budget for one run of `job_kind`: per-run from the job row (else global), daily
     cap = the smaller of the job and global daily caps. Each cap stops or only alerts according to
     the row that sets it (KAN-90): the per-run cap follows the hard_stop of the row its value comes
     from; the daily cap is hard if any row that sets a daily value is hard. So `global` with
     hard_stop=false makes the daily DFS cap alert-only while `job:segment_research`'s $5 per run
-    still stops the run."""
+    still stops the run.
+
+    AA-712 — `day_scope="kind"`: the daily figure is this kind's own LLM spend today
+    (kind_day_spend) instead of the provider's, and only the job row's daily cap applies (the
+    global row's cap is about the whole provider)."""
     job_scope = f"job:{job_kind}"
     async with pool.acquire() as conn:
         rows = await _read_rows(conn, provider, job_scope)
-        spent = await day_spend(conn, provider)
+        spent = await (kind_day_spend(conn, job_kind) if day_scope == "kind" else day_spend(conn, provider))
+    if day_scope == "kind":
+        rows.pop("global", None)
     job, glob = rows.get(job_scope, {}), rows.get("global", {})
     run_row = job if job.get("per_run_usd") is not None else glob
     per_run = run_row.get("per_run_usd")

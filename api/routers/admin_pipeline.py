@@ -1849,6 +1849,13 @@ async def set_tour_active(
             """, tour_id)
 
     logger.info("tour_set_active", tour_id=tour_id, group_id=str(group_id))
+    # AA-712 — the newly active version's places + a graph rebuild (best-effort; the previous build
+    # keeps serving the source until the new one lands).
+    try:
+        from services.places.enqueue import after_liveness_change
+        await after_liveness_change(pool, tour_id=str(tour_id), new_status="active", created_by="admin:set_active")
+    except Exception:
+        logger.warning("aa712_place_enqueue_failed", tour_id=tour_id, exc_info=True)
     return {"tour_id": tour_id, "source_status": "active"}
 
 

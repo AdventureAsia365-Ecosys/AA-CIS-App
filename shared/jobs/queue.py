@@ -557,7 +557,7 @@ async def domain_links(pool, job_id: str, payload: Optional[dict]) -> dict:
     async def _rows(sql: str) -> list[dict]:
         try:
             return [dict(r) for r in await pool.fetch(sql, job_id)]
-        except asyncpg.UndefinedTableError:
+        except (asyncpg.UndefinedTableError, asyncpg.InvalidSchemaNameError):
             return []
 
     versions = await _rows(
@@ -567,6 +567,14 @@ async def domain_links(pool, job_id: str, payload: Optional[dict]) -> dict:
     pieces = await _rows(
         "SELECT piece_id::text AS piece_id, tenant_id::text AS tenant_id, status "
         "FROM acp_shared.content_piece WHERE job_id = $1::uuid LIMIT 20")
+    # AA-712: the place-pipeline build rows (geo, migration 226) the job wrote.
+    place_builds = await _rows(
+        "SELECT source_id, tour_id::text AS tour_id, country, status, counts FROM geo.tour_build "
+        "WHERE job_id = $1::uuid LIMIT 20")
+    graph_builds = await _rows(
+        "SELECT build_id::text AS build_id, is_current, stats->'tours' AS tours, stats->'nodes' AS nodes "
+        "FROM geo.graph_build WHERE job_id = $1::uuid LIMIT 5")
     p = payload or {}
     return {"tour_versions": versions, "content_pieces": pieces,
-            "tour_id": p.get("tour_id"), "version_id": p.get("version_id")}
+            "tour_id": p.get("tour_id"), "version_id": p.get("version_id"),
+            "place_builds": place_builds, "graph_builds": graph_builds}

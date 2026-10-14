@@ -203,6 +203,16 @@ async def _run_a3_atomize_background(tour_id: str, rewritten: dict, country: str
             # publish itself having failed. It is still an error, and lands in the job result.
             outcome["segment_score_route"] = f"failed: {type(exc).__name__}: {str(exc)[:200]}"
             logger.error("a3_segment_score_route_failed", tour_id=tour_id, exc_info=True)
+        # AA-712 — the tour's places / day skeleton (place_extract job, background kind). Best-effort
+        # like the recompute enqueue; a failure is visible in the job result, never fails atomize.
+        try:
+            from services.places.enqueue import after_atomize
+            from shared.llm_client.call_log import current_job_id
+            outcome.update(await after_atomize(pool, tour_id=str(tour_id), version_id=str(version_id),
+                                               atomize_job_id=current_job_id()))
+        except Exception as exc:
+            outcome["place_extract"] = f"enqueue failed: {type(exc).__name__}: {str(exc)[:200]}"
+            logger.warning("a3_place_extract_enqueue_failed", tour_id=tour_id, exc_info=True)
     except Exception as exc:
         # Best-effort, same precedent as this file's own ACP-S1 manifest fanout (process_export()
         # below) — atomize failing must never be mistaken for the publish itself having failed;

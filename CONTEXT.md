@@ -166,7 +166,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
     (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
-    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`).
+    `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
+    `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
+    `place_geocode`, `tour_graph_build` — AA-712).
+  - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
+    last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
+    starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -239,7 +244,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     unchanged.
 - **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
   `acp_contract.*` and `acp_shared.*` (the pipeline tables — atoms, segments, ranking, routes,
-  hubs, subjects, pieces, facts), migrations under `api/migrations/` (latest: 223, S235).
+  hubs, subjects, pieces, facts), `geo` (place pipeline, AA-712), migrations under `api/migrations/`.
 - **Removed as dead code (15-21/09)**: the N7/N8 produce/deliver write path and its 5 tables
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
@@ -252,6 +257,21 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GET /content/photos/{id}?size=` (302 to presigned S3). With `match_destinations` it fills empty
   `shared.destinations.cover_image_url` (read by the TripPlanner) — off until the destinations are
   re-extracted from the rerun tours.
+- **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
+  tour's day skeleton (start / end / overnight), places (= itinerary components, stable uuid5 ids),
+  geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
+  schema `geo`, keyed by `source_id` (catalog identity). Jobs (`services/jobs/place_*`,
+  `tour_graph_job.py`; logic in `services/places/`): `place_extract` per tour (after A3 atomize,
+  set-active / restore, admin backfill `POST /admin/places/backfill`, ≤ 50 tours, dry-run cost
+  estimate, refused during a wave); `place_geocode` (debounced, the ONLY writer of
+  `shared.destinations` coordinates) — the model proposes a point (`a3_place_locate`), a geocoder
+  adapter optionally confirms it (`GEOCODER_PROVIDER` = `model_only` default | `mapbox_permanent` |
+  `amazon_location`), hard country/bbox guard, transit-aware outlier rule → `suspect`; admin-fixed
+  (`manual`) rows are never overwritten; `tour_graph_build` (debounced, versioned swap, current + 2
+  kept). Stages `a3_place_days` (Sonnet, Luna 20% shadow), `a3_place_locate`, `a3_place_embed`
+  (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
+  name in two countries = two places). Other apps will read it only through `catalog.*` views
+  (migration 227, next slice); TripPlanner's own extraction is frozen.
 
 ## Deploy & CI
 
