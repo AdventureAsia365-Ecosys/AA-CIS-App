@@ -401,9 +401,9 @@ def canonicalize_route_cards(parts: list[dict]) -> tuple[list[dict], dict]:
 
 
 def _same_place(a: dict, b: dict) -> bool:
-    """Two route moments are at the same place unless both have merge keys and none is shared."""
-    ka, kb = set(merge_keys(a)), set(merge_keys(b))
-    return not (ka and kb) or bool(ka & kb)
+    """Two route moments are at the same place when they share a merge key (place card id or core
+    place name). A moment without a card is never at the same place (review S235)."""
+    return bool(set(merge_keys(a)) & set(merge_keys(b)))
 
 
 def route_moment_statuses(parts: list[dict]) -> list[dict]:

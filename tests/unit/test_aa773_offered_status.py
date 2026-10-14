@@ -225,5 +225,106 @@ def test_atom_seed_does_not_import_quality_gates():
 
 
 def test_system_prompt_has_status_rule():
-    assert "Status line says OFFERED, NOT INCLUDED is described as a choice" in SYSTEM_PROMPT
+    assert "Status line says OFFERED, NOT INCLUDED is kept in the piece and described as a" in SYSTEM_PROMPT
     assert 'says included is never called optional, extra or "if you wish"' in SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------- review S235 (B1-B3 + follow-ups)
+
+@pytest.mark.parametrize("evidence,label", [
+    ("Visit the Tiger's Nest monastery (entrance fees not included).", "Paro — visit Tiger's Nest monastery"),
+    ("Hike to the Tiger's Nest, lunch not included.", "Paro — hike to Tiger's Nest"),
+    ("Hike to the Tiger's Nest. Lunch is not included.", "Paro — hike to Tiger's Nest"),
+    ("Overnight in a ger camp with a single supplement for solo travellers.", "Steppe — overnight in a ger camp"),
+    ("Perhaps the highlight of the trip, the Tsaatan camp visit includes a night in a tepee.",
+     "Taiga — Tsaatan camp visit"),
+    ("A perfect day for those who love history: tour the Punakha Dzong.", "Punakha — tour the Punakha Dzong"),
+    ("Visit the market; a cooking class is possible at additional cost.", "Hanoi — visit the market"),
+    ("Enjoy a boat trip on Ha Long Bay (pre-booked for the group).", "Ha Long — boat trip"),
+    ("Kayaks are available for those who wish to paddle; we hike the ridge trail.", "Lake — hike the ridge trail"),
+])
+def test_b3_included_content_is_never_offered(evidence, label):
+    assert off.evidence_status(evidence, label)[0] != off.OFFERED
+
+
+@pytest.mark.parametrize("evidence,label", [
+    ("Drive to the lake. Horse riding is available at extra cost.", "Lake — horse riding"),
+    ("Kayaking at an additional fee.", "Lake — kayaking"),
+    ("Horse riding at an extra charge.", "Lake — horse riding"),
+    ("A cooking class for a fee.", "Hanoi — cooking class"),
+    ("Visit the market; a cooking class is possible at additional cost.", "Hanoi — cooking class"),
+    ("Hike the ridge trail. Optional kayaking or a sunset cruise can be arranged.", "Lake — sunset cruise"),
+])
+def test_b2_cost_wording_is_offered(evidence, label):
+    assert off.evidence_status(evidence, label)[0] == off.OFFERED
+
+
+def test_b2_loose_mark_without_offer_gets_no_line():
+    assert off.evidence_status("Kayaks are available at the camp.", "Lake — kayaks") == (None, None)
+    parts = route_moment_statuses([
+        _part("a", 5, "Khövsgöl Lake — boat rides", OPT, KHOV),
+        _part("b", 5, "Khövsgöl Lake — kayaks", "Kayaks are available at the camp.", KHOV),
+    ])
+    assert parts[1]["status_line"] is None
+
+
+def test_b2_market_moment_is_included_against_the_cooking_class():
+    ev = "Visit the market; a cooking class is possible at additional cost."
+    assert off.single_status_line(ev, "Hanoi — visit the market") == off.INCLUDED_LINE
+    assert off.single_status_line(ev, "Hanoi — cooking class").startswith("Status: OFFERED")
+
+
+def test_b1_included_status_keeps_other_offers_on_the_line():
+    seed = compose_seed("Khövsgöl Lake — drive to the lake",
+                        "Drive to the lake. Optional boat rides. Horse riding is available at extra cost.",
+                        None, None, [], day=5)
+    assert off.INCLUDED_LINE in seed
+    phrases = {a.phrase for a in tf.optional_activities(tf.parse_moments(seed))}
+    assert any("boat rides" in p for p in phrases) and any("Horse riding" in p for p in phrases)
+
+
+def test_b1_offered_status_covers_only_its_own_sentence():
+    seed = compose_seed("Khövsgöl Lake — horse riding",
+                        "Drive to the lake shore and hike the ridge trail. Horse riding at an extra charge.",
+                        None, None, [], day=5)
+    ms = tf.parse_moments(seed)
+    assert [a.phrase for a in tf.optional_activities(ms)] == ["Horse riding"]
+    assert tf.optional_as_fixed("We drive to the lake shore and hike the ridge trail together.", ms) == []
+    assert tf.optional_as_fixed("We go horse riding along the shore.", ms)
+
+
+def test_b1_horse_moment_keeps_boat_rides_from_the_same_line():
+    seed = compose_seed("Khövsgöl Lake — horse riding",
+                        "Drive to the lake. Optional boat rides. Horse riding is available at extra cost.",
+                        None, None, [], day=5)
+    phrases = {a.phrase for a in tf.optional_activities(tf.parse_moments(seed))}
+    assert "Horse riding" in phrases and any("boat rides" in p for p in phrases)
+
+
+def test_continuation_breaks_on_included_fragment():
+    parts = route_moment_statuses([
+        _part("a", 5, "Khövsgöl Lake — boat rides", OPT, KHOV),
+        _part("b", 5, "Khövsgöl Lake — visit to the Tsaatan",
+              "visit to the Tsaatan reindeer herders included in the trip", KHOV),
+    ])
+    assert parts[1]["status"] == off.INCLUDED
+
+
+def test_continuation_needs_a_shared_place_card():
+    parts = route_moment_statuses([
+        _part("a", 5, "Lake — boat rides", OPT, KHOV),
+        _part("b", 5, "Lake — hike to the ridge", "hike to the ridge with your guide"),  # no card
+    ])
+    assert parts[1]["status"] == off.INCLUDED
+
+
+def test_names_offered_falls_back_when_no_activity_parsed():
+    assert qg._names_offered("any sentence at all", None)
+    assert qg._names_offered("any sentence at all", [])
+
+
+def test_status_words_never_become_allowed_scope_words():
+    from services.acp_content_writing import hygiene as h
+    seed = compose_seed("Khövsgöl Lake — take boat rides on the water", OPT, None, None, [])
+    lex = h.build_scope_lexicon(seed)
+    assert "Status:" not in lex.own_text and "NOT INCLUDED" not in lex.own_text

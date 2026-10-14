@@ -25,6 +25,7 @@ through `status_of_line` / `is_status_line` or skips lines starting with `STATUS
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from services.acp_content_writing.hygiene import content_words
@@ -58,11 +59,55 @@ _LABEL_STOP = frozenset(content_words(
     "take takes visit visits stop stops enjoy explore experience overnight see local surrounding across along "
     "water terrain trip day journey continue arrive"))
 
+# Review S235 (B2/B3) — what makes a CLAUSE offered for the Status line. Stricter than the warn-only
+# gate's `OFFERED_PHRASES`: 'perhaps' ('Perhaps the highlight…') and 'for those who' ('a perfect day
+# for those who love history') describe included content, and 'pre-book' must not match 'pre-booked
+# for the group'. Cost wording the origin list misses ('at extra cost', 'additional fee') is added.
+_STATUS_PHRASES = sorted(OFFERED_PHRASES - {"perhaps", "for those who", "pre-book", "supplement"}, key=len,
+                         reverse=True)
+_STATUS_OFFERED_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(p) for p in _STATUS_PHRASES) + r")\b"
+    r"|\bpre-book(?:able)?\b(?!ed)|\bsupplement\b"
+    r"|\bat (?:an )?extra\b|\bextra (?:cost|fee|charge)s?\b|\badditional (?:fee|charge|cost)s?\b"
+    r"|\bfor a fee\b|\bsurcharge\b", re.I)
+# Said of something that is part of the trip: never a reason to mark the moment offered.
+_NOT_OFFERED_RE = re.compile(
+    r"\b(?:fee|fees|meal|meals|lunch|dinner|breakfast|tips?|drinks?|entrance\w*|admission)\b[^.]{0,20}?"
+    r"\bnot included\b|\bsingle supplement\b|\bpre-booked\b", re.I)
+# F17's own loose marks (trip_facts.optional_activities reads this same pattern): a clause with one
+# of them and no offered phrase gets NO Status line — unknown beats a wrong "Never call it optional".
+LOOSE_MARK_RE = re.compile(r"\b(?:optional(?:ly)?|if you wish|if desired|on request|available|can|may)\b", re.I)
+# A clause that opens a list ('Optional activities include boat rides, horseback riding…'): the
+# items after it in the same clause run share its offered-ness.
+_LIST_INTRO_RE = re.compile(r"\b(?:include|includes|including|such as|activities|options)\b", re.I)
+_STRONG_SPLIT_RE = re.compile(r"\s*[;()]\s*|\s+[—–]\s+")
+_CLAUSE_SPLIT_RE = re.compile(r"(\s*[,:]\s*)")
+_INCLUDED_RE = re.compile(r"\bincluded\b", re.I)
+
 
 def has_offered_phrase(text: Optional[str]) -> bool:
     """The origin's rule: one of `OFFERED_PHRASES` anywhere in `text` (lower case, substring)."""
     plain = (text or "").lower()
     return any(phrase in plain for phrase in OFFERED_PHRASES)
+
+
+def offered_clause(text: Optional[str]) -> bool:
+    """The Status line's rule for one clause: an offered or cost phrase once the 'not offered' wording
+    ('lunch not included', 'single supplement', 'pre-booked') is taken out."""
+    return bool(_STATUS_OFFERED_RE.search(_NOT_OFFERED_RE.sub(" ", text or "")))
+
+
+def activity_text(clause: Optional[str]) -> str:
+    """The activity an offered clause names, without its offer wording: 'Optional boat rides' → 'boat
+    rides'; 'Horse riding is available at extra cost.' → 'Horse riding' (F17 quotes it)."""
+    text = " ".join((clause or "").split()).strip(" .")
+    lead = LOOSE_MARK_RE.match(text)
+    if lead:
+        text = text[lead.end():].strip()
+    cuts = [m.start() for rx in (LOOSE_MARK_RE, _STATUS_OFFERED_RE) for m in rx.finditer(text) if m.start() > 0]
+    if cuts:
+        text = re.sub(r"(?:\s+(?:is|are|at|for|an|a))+\s*$", "", text[:min(cuts)].strip(), flags=re.I)
+    return text.strip(" ,.;")
 
 
 def sentences(text: Optional[str]) -> list[str]:
@@ -84,52 +129,126 @@ def _stems(text: str) -> set[str]:
     return {_stem(w) for w in content_words(text) if w not in _LABEL_STOP}
 
 
+def _label_stems(label: Optional[str]) -> tuple[set[str], set[str]]:
+    parts = _LABEL_SPLIT_RE.split((label or "").strip(), 1)
+    place, action = (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
+    return _stems(action), _stems(place)
+
+
+def _score(text: str, label: Optional[str]) -> tuple[int, int]:
+    act, plc = _label_stems(label)
+    have = _stems(text)
+    return len(act & have), len(plc & have)
+
+
+@dataclass(frozen=True)
+class Decision:
+    """`status` OFFERED / INCLUDED / None (unknown); `quote` the itinerary text an OFFERED Status line
+    quotes; `span` the evidence clause that names the moment (a substring of the evidence, '' when
+    unknown) — trip_facts reads the rest of the line with its own rule."""
+    status: Optional[str]
+    quote: Optional[str] = None
+    span: str = ""
+
+
+def _clauses(sentence: str) -> list[tuple[int, list[tuple[str, str]]]]:
+    """[(segment index, [(clause, separator before it)])] — segments split at ; ( ) and dashes (a new
+    statement), clauses at , and : (list items)."""
+    out = []
+    for si, seg in enumerate(x for x in _STRONG_SPLIT_RE.split(sentence) if x and x.strip()):
+        bits = _CLAUSE_SPLIT_RE.split(seg)
+        items, sep = [], ""
+        for i, b in enumerate(bits):
+            if i % 2:
+                sep = b.strip()
+            elif b.strip():
+                items.append((b.strip(), sep))
+        out.append((si, items))
+    return out
+
+
+def _decide_sentence(sent: str, label: Optional[str]) -> Decision:
+    """Clause level (review S235 B3): the clause that names the moment decides. It is OFFERED when it
+    has an offered phrase itself, or when an earlier clause of the same segment opens a list with one
+    ('Optional activities include boat rides …, horseback riding …'). Not offered and a loose F17 mark
+    in its segment ('Kayaks are available …') → unknown. A sentence whose clauses name the moment
+    nowhere is decided whole only when it is one plain clause."""
+    best: Optional[tuple] = None
+    for si, items in _clauses(sent):
+        for ci, (clause, _) in enumerate(items):
+            score = _score(clause, label)
+            if best is None or score > best[0]:
+                best = (score, si, ci, items)
+    if best is None:
+        return Decision(None)
+    score, _, ci, items = best
+    if score == (0, 0):
+        flat = [c for _, its in _clauses(sent) for c in its]
+        if len(flat) != 1:
+            return Decision(None)
+    clause = items[ci][0]
+    offered = offered_clause(clause)
+    if not offered:
+        for cj in range(ci - 1, -1, -1):
+            prev, _ = items[cj]
+            sep_after = items[cj + 1][1]
+            if offered_clause(prev) and (_LIST_INTRO_RE.search(prev) or sep_after == ":"):
+                offered = True
+                break
+    if offered:
+        return Decision(OFFERED, sent, clause)
+    segment = " ".join(c for c, _ in items)
+    if LOOSE_MARK_RE.search(segment):
+        return Decision(None, None, clause)
+    return Decision(INCLUDED, None, clause)
+
+
 def moment_sentence(evidence: Optional[str], label: Optional[str]) -> Optional[str]:
     """The evidence sentence that names this moment: most words of the label's action part
     ('boat rides'), then of its place part; a one-sentence evidence is its own sentence. None when
-    no sentence shares a label word, or when the best-scoring sentences disagree on offered-ness
+    no sentence shares a label word, or when the best-scoring sentences decide differently
     (unknown beats a wrong Status)."""
     sents = sentences(evidence)
     if not sents:
         return None
     if len(sents) == 1:
         return sents[0]
-    parts = _LABEL_SPLIT_RE.split((label or "").strip(), 1)
-    place, action = (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
-    act, plc = _stems(action), _stems(place)
-    scored = []
-    for s in sents:
-        have = _stems(s)
-        scored.append(((len(act & have), len(plc & have)), s))
+    scored = [(_score(s, label), s) for s in sents]
     best = max(score for score, _ in scored)
     if best == (0, 0):
         return None
     top = [s for score, s in scored if score == best]
-    if len({has_offered_phrase(s) for s in top}) > 1:
+    if len({_decide_sentence(s, label).status for s in top}) > 1:
         return None
     return top[0]
 
 
-def evidence_status(evidence: Optional[str], label: Optional[str], *,
-                    prev_offered_quote: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
-    """(OFFERED | INCLUDED | None, the quoted itinerary text for an OFFERED moment).
-
-    Sentence level: only the sentence that names this moment decides ('Day starts at the lake.
-    Optional boat rides are available.' makes the boat ride OFFERED and the lake INCLUDED). An
-    evidence that starts in lower case right after an OFFERED moment of the same place and day
-    (`prev_offered_quote`) continues that list: A3 split 'Optional activities include …, visits to
-    local nomadic families, trekking along shorelines and forest paths' into one atom per item, and
-    the last one's evidence is only 'trekking along shorelines and forest paths' (same rule as
-    trip_facts.optional_activities)."""
+def decide(evidence: Optional[str], label: Optional[str], *,
+           prev_offered_quote: Optional[str] = None) -> Decision:
+    """The moment's Decision. Sentence, then clause level: only the clause that names this moment
+    decides ('Day starts at the lake. Optional boat rides are available.' makes the boat ride OFFERED
+    and the lake INCLUDED). An evidence that starts in lower case right after an OFFERED moment of the
+    same place and day (`prev_offered_quote`) continues that list: A3 split 'Optional activities
+    include …, visits to local nomadic families, trekking along shorelines and forest paths' into one
+    atom per item, and the last one's evidence is only 'trekking along shorelines and forest paths'
+    (same rule as trip_facts.optional_activities) — unless the fragment says it is included."""
     ev = " ".join((evidence or "").split())
     if not ev:
-        return None, None
-    if prev_offered_quote and ev[:1].islower():
-        return OFFERED, f"{prev_offered_quote.rstrip(' .')} … {ev}"
+        return Decision(None)
+    if (prev_offered_quote and ev[:1].islower()
+            and not (_INCLUDED_RE.search(ev) and not re.search(r"\bnot included\b", ev, re.I))):
+        return Decision(OFFERED, f"{prev_offered_quote.rstrip(' .')} … {ev}", ev)
     sent = moment_sentence(ev, label)
     if sent is None:
-        return None, None
-    return (OFFERED, sent) if has_offered_phrase(sent) else (INCLUDED, None)
+        return Decision(None)
+    return _decide_sentence(sent, label)
+
+
+def evidence_status(evidence: Optional[str], label: Optional[str], *,
+                    prev_offered_quote: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    """(OFFERED | INCLUDED | None, the quoted itinerary text for an OFFERED moment) — see `decide`."""
+    d = decide(evidence, label, prev_offered_quote=prev_offered_quote)
+    return d.status, d.quote
 
 
 def offered_line(quote: str) -> str:
@@ -152,7 +271,7 @@ def single_status_line(evidence: Optional[str], label: Optional[str]) -> Optiona
     """A one-atom seed's Status line: OFFERED from its own sentence; included only when another
     sentence of the same evidence is offered."""
     status, quote = evidence_status(evidence, label)
-    contrast = status == INCLUDED and any(has_offered_phrase(s) for s in sentences(evidence))
+    contrast = status == INCLUDED and any(offered_clause(s) for s in sentences(evidence))
     return status_line(status, quote, contrast=contrast)
 
 

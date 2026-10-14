@@ -214,8 +214,8 @@ Rules:
   content seed in front of them.
 - Include the given call to action, worked naturally into the piece — not pasted on as a bare
   final sentence unless the channel's own style calls for that.
-- A moment whose Status line says OFFERED, NOT INCLUDED is described as a choice ("there is time
-  to…", "you can choose to…"), never as something the reader will do. A moment whose Status line
+- A moment whose Status line says OFFERED, NOT INCLUDED is kept in the piece and described as a
+  choice ("there is time to…", "you can choose to…"), never as something the reader will do. A moment whose Status line
   says included is never called optional, extra or "if you wish".
 - Avoid generic AI-style writing: no vague benefit stacks, no fake urgency, no unsupported
   superlatives, no manipulative language, no rhetorical-question padding, no clichés ("hidden

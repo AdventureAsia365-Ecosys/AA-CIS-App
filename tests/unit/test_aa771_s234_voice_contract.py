@@ -448,7 +448,7 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "cb1e723d50a9a698a65098009a48c71e6b6c6512d1930d835f27ff93abdf3d4c"
+        assert sha(SYSTEM_PROMPT) == "3aa6eeba9f057aeef6043d70155753b6e69e88b8a30c5438ddab89f98abebb27"
         assert sha(single) == "c282fdddb68017597157bfa4e92275a70c988d55dd30b2c4d9edf59b7b2db6fd"
         assert sha(route) == "fc26b65199ddee7b9cdefdafd350aa5781cb34a752d6e4ad12bff76195e8efbe"
 

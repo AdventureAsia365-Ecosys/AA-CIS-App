@@ -113,6 +113,11 @@ def _plural_pair(a: str, b: str) -> bool:
 SIBLING_HEADER = "Other trips that include"
 
 
+# AA-773 — same prefix as services/acp_shared/offered.STATUS_PREFIX (offered imports this module, so
+# the constant is repeated here rather than imported).
+STATUS_LINE_PREFIX = "Status:"
+
+
 def split_seed(seed: Optional[str]) -> tuple[str, str]:
     """(own text, sibling text) of a seed: the "Other trips that include this same moment" bullet
     lines are the siblings, every other line is the moment's own source."""
@@ -217,8 +222,11 @@ def build_scope_lexicon(seed: Optional[str], scope: Optional[str] = None,
     marketing words never count, so 'Bhutan Cultural Discovery' adds nothing when Bhutan is the
     moment's country, and 'Mongolia Gobi' on a Mongolia piece adds 'gobi'). A romanisation
     variant of an allowed token is never out of scope. Matching only against this gazetteer —
-    never against "any unknown proper noun" — is what kept r1 LinkedIn at 0 hits."""
+    never against "any unknown proper noun" — is what kept r1 LinkedIn at 0 hits.
+    AA-773: the seed's "Status:" lines (offered / included instructions, acp_shared/offered.py) are
+    not source text: 'OFFERED', 'NOT INCLUDED', 'Never' must not become allowed words."""
     own, sib = split_seed(seed)
+    own = "\n".join(ln for ln in own.split("\n") if not ln.lstrip().startswith(STATUS_LINE_PREFIX))
     allowed: set[str] = set()
     for p in proper_nouns(own, keep_initial=True) | proper_nouns(scope, keep_initial=True):
         toks = phrase_tokens(p)
