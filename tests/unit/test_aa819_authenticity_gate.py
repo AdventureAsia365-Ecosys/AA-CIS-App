@@ -250,6 +250,34 @@ def test_enforce_keeps_another_hold():
     assert status == "held" and held.startswith("F1_grounding")
 
 
+def _blog_with_faq(questions):
+    pairs = "\n\n".join(f"**Q: {q}**\nA: The boat leaves the jetty at eight." for q in questions)
+    return "The loop starts in Vientiane and follows the Mekong south.\n\n## FAQ\n\n" + pairs + "\n"
+
+
+def test_cut_question_takes_its_answer_with_it():
+    """Review fix — a cut FAQ question used to leave its answer under the previous pair."""
+    text = _blog_with_faq(["When does the boat leave?", "Is the tour highly rated?", "What should I bring?"])
+    out, cut = authenticity.cut_flagged(text)
+    assert cut == ["**Q: Is the tour highly rated?**"]
+    assert qg.faq_pairs(out) == [("When does the boat leave?", "The boat leaves the jetty at eight."),
+                                 ("What should I bring?", "The boat leaves the jetty at eight.")]
+    assert "A:" not in out.split("**Q: When does the boat leave?**")[0]
+
+
+def test_enforce_on_a_blog_reruns_the_faq_contract():
+    """Review fix — cutting a FAQ pair can leave the blog under FAQ_MIN_PAIRS: F16 must see the cut text."""
+    qs = [f"Question number {i} about the boat?" for i in range(qg.FAQ_MIN_PAIRS - 1)] + ["Is the tour highly rated?"]
+    text = _blog_with_faq(qs)
+    ledger = [qg.gate_faq_contract(text), _f19(text)]
+    assert ledger[0]["passed"]
+    out, new, _, status, held, _ = service._enforce_authenticity(
+        text, ledger, [], "held", "x", cta=None, channel="blog")
+    assert "highly rated" not in out
+    f16 = next(g for g in new if g["gate"] == "F16_faq")
+    assert not f16["passed"] and status == "held" and held.startswith("F16_faq")
+
+
 # ---------------------------------------------------------------- prompts, SEO fit, admin edits
 
 def test_writer_and_repair_prompts_carry_the_rule():

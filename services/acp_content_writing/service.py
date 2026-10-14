@@ -461,8 +461,9 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
       to the flags.
     - A title / meta hit left (the SEO fit refused to keep one but could not replace it) → F19 stays
       blocking with what is left; the piece is held for the admin.
-    The deterministic shape gates (F4 extreme length, F0 complete, F14 social shape / first line) are
-    re-run on the cut text and replace their entries; the status is re-derived from the new ledger.
+    The deterministic shape gates (F4 extreme length, F0 complete, F14 social shape / first line, and
+    F16 FAQ on a blog) are re-run on the cut text and replace their entries; the status is re-derived
+    from the new ledger.
     Returns (content_text, gate_ledger, flags, status, held_reason, repair_log entry or None)."""
     f19 = next((g for g in gate_ledger if g["gate"] == F19_GATE and not g["passed"]), None)
     if f19 is None:
@@ -470,10 +471,12 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     cut_text, cut = authenticity.cut_flagged(content_text, cta)
     if not cut:
         return content_text, gate_ledger, flags, status, held_reason, None
-    from services.acp_content_writing.quality_gates import (gate_complete, gate_extreme_length, gate_first_line,
-                                                            gate_social_shape)
+    from services.acp_content_writing.quality_gates import (gate_complete, gate_extreme_length, gate_faq_contract,
+                                                            gate_first_line, gate_social_shape)
     fresh = {r["gate"]: r for r in (gate_extreme_length(_plain(cut_text), channel), gate_complete(cut_text),
-                                    gate_social_shape(cut_text, spec), gate_first_line(cut_text, spec))}
+                                    gate_social_shape(cut_text, spec), gate_first_line(cut_text, spec),
+                                    # review fix — a cut FAQ pair can leave the blog under FAQ_MIN_PAIRS
+                                    gate_faq_contract(cut_text))}
     left = authenticity.find_issues(cut_text, cta) + [v for v in f19["violations"]
                                                        if v.startswith(("title ", "meta "))]
     marks = {"sentences_cut": len(cut), "cut_sentences": [c[:200] for c in cut]}

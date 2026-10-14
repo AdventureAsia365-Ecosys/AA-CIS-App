@@ -219,10 +219,36 @@ def cut_flagged(content_text: str, cta: Optional[str] = None) -> tuple[str, list
     if not groups:
         return content_text, []
     text = content_text
-    for g in sorted(groups, key=lambda g: g["start"], reverse=True):
-        end = g["end"] + 1 if text[g["end"]:g["end"] + 1] == " " else g["end"]
-        text = text[:g["start"]] + text[end:]
+    ranges = sorted(_with_faq_answers(content_text, [(g["start"], g["end"]) for g in groups]))
+    merged: list[list[int]] = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    for start, end in reversed(merged):
+        end = end + 1 if text[end:end + 1] == " " else end
+        text = text[:start] + text[end:]
     return tidy_after_cut(text), [g["sentence"] for g in groups]
+
+
+def _with_faq_answers(content_text: str, ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """A cut FAQ question takes its answer with it: an answer left under no question (or under the
+    previous pair's) is a broken FAQ. tidy_after_cut then drops the empty "A:" line. (An answer cut
+    to nothing already takes its question — tidy_after_cut.)"""
+    spans = sentence_spans(content_text)
+    out = list(ranges)
+    for i, s in enumerate(spans):
+        if s["kind"] != "faq_q" or not any(a < s["end"] and s["start"] < b for a, b in ranges):
+            continue
+        answer = []
+        for nxt in spans[i + 1:]:
+            if nxt["kind"] != "faq_a":
+                break
+            answer.append(nxt)
+        if answer:
+            out.append((answer[0]["start"], answer[-1]["end"]))
+    return out
 
 
 __all__ = ["GATE", "cut_flagged", "field_hits", "find_issues", "flagged"]
