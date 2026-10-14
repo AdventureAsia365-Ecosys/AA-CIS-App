@@ -28,6 +28,7 @@ from typing import Optional
 from services.acp_content_writing.hygiene import (
     COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
+from services.acp_shared.offered import OFFERED, is_status_line, status_of_line
 
 # ---------------------------------------------------------------- seed moments
 
@@ -55,6 +56,10 @@ class Moment:
     # S234 round 4 — the seed builder's "Thin moment: only N source fact(s)…" note
     # (atom_seed.thin_note, < THIN_FACTS facts): the moment may not carry a heading or the coda
     thin: bool = False
+    # AA-773 — the seed's "Status:" line for a trip line, by its index in `trip_lines` (OFFERED /
+    # INCLUDED). The Status line itself is never a trip line: its 'optional' / 'not included' are
+    # instructions, not itinerary text.
+    statuses: dict = field(default_factory=dict)
 
     @property
     def lines(self) -> list[str]:
@@ -95,6 +100,11 @@ def parse_moments(seed: Optional[str]) -> list[Moment]:
             in_bg = False
             if ln.startswith(_THIN_PREFIX):
                 m.thin = True
+            if is_status_line(ln):
+                status = status_of_line(ln)
+                if status:
+                    m.statuses[len(m.trip_lines) - 1] = status
+                continue
             day = _DAY_LINE_RE.match(ln)
             if day:
                 m.days.append(int(day.group(1)))
@@ -182,19 +192,27 @@ def optional_activities(moments: list[Moment]) -> list[OptionalActivity]:
     lower pools' is what the place allows, not the trip's plan). A source fragment that starts in
     lower case right after an optional line of the same block continues that list (A3 split
     'Optional activities include …, visits to local nomadic families, trekking along shorelines…'
-    into one atom per item)."""
+    into one atom per item).
+
+    AA-773 — a trip line the seed gave a Status line is decided by it (offered.py, the same function
+    that wrote it): OFFERED is optional, included is not, whatever words the line uses ('Kayaks are
+    available'). A line without one keeps the rule above."""
     out: list[OptionalActivity] = []
     seen: set[str] = set()
     for m in moments:
         prev_optional = False
-        for line in m.trip_lines:
+        for i, line in enumerate(m.trip_lines):
             src = line.split("Source itinerary:", 1)[1].strip() if "Source itinerary:" in line else ""
             if not src:
                 continue
+            status = m.statuses.get(i)
             mark = _OPTIONAL_MARK_RE.search(src)
+            if status is not None and status != OFFERED:
+                prev_optional = False
+                continue
             if mark:
                 clause = src[mark.end():]
-            elif prev_optional and src[:1].islower():
+            elif (prev_optional and src[:1].islower()) or status == OFFERED:
                 clause = src
             else:
                 prev_optional = False
@@ -234,6 +252,11 @@ def _mentions_activity(clause: str, act: OptionalActivity) -> bool:
     specific = hits - generic
     single = {_stem(w) for w in _SINGLE_WORD_ACTIVITIES}
     return (len(hits) >= min(2, len(act.words)) and bool(specific)) or bool(hits & single)
+
+
+def mentions_activity(clause: str, act: OptionalActivity) -> bool:
+    """Public name of `_mentions_activity` (quality_gates.promises_an_option reads it, AA-773)."""
+    return _mentions_activity(clause, act)
 
 
 def optional_as_fixed(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
@@ -1314,6 +1337,6 @@ __all__ = [
     "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
-    "moments_named", "names_moment", "optional_activities", "optional_as_fixed", "parse_moments", "rarity_claims",
-    "timing_claims", "with_date_spans",
+    "mentions_activity", "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
+    "parse_moments", "rarity_claims", "timing_claims", "with_date_spans",
 ]

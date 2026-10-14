@@ -55,12 +55,14 @@ from services.acp_content_writing.framework_rubrics import get_framework_rubric
 from services.acp_content_writing.hygiene import (HygieneContext, brief_phrases, content_words, contrast_excess,
                                                   copies, dangling_opener, find_issues, near_verbatim,
                                                   sentence_spans, sibling_templates, template_lines)
-from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
+from services.acp_content_writing.trip_facts import (TripFactContext, find_trip_fact_issues, mentions_activity,
+                                                     optional_activities, parse_moments)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json
 from services.acp_shared.grounding import find_novel_numeric_claims
+from services.acp_shared.offered import OFFERED_PHRASES, STATUS_PREFIX, has_status_lines, is_offered_seed
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -85,16 +87,9 @@ ATOM_DENSITY_WORDS = 300
 # see docs/claude_audit/AA-514-step0-investigation.md §5). Said of something the traveller has
 # not bought (at_a_price) or something included but not compulsory (offered) — both want the same
 # hedge in the prose, so gate_promises_an_option() treats them as one list, same as the origin.
-_OFFERED_PHRASES = frozenset({
-    "additional cost", "at own expense", "at your own expense", "extra charge",
-    "not included", "own expense", "pre-book", "pre-bookable", "supplementary charge",
-    "supplement",
-    "at your leisure", "can be arranged", "choice is yours", "for those who",
-    "if desired", "if time allows", "if you prefer", "if you wish", "may wish",
-    "on request", "optional", "optionally", "perhaps", "should you wish",
-    "the option of", "those who wish", "upon request", "you may choose",
-    "you may visit", "your choice",
-})
+# AA-773: the list now lives in services/acp_shared/offered.py (the seed builder reads it too and
+# must not import this module); re-exported here under its old name.
+_OFFERED_PHRASES = OFFERED_PHRASES
 # What a sentence has to say for an offered moment to be described rather than promised — read
 # by the gate, ported verbatim from the same reference file.
 _HEDGE_PHRASES = frozenset({
@@ -436,6 +431,9 @@ def promised_sentences(
     so both read the same detection."""
     out: list[tuple[str, list[str], str]] = []
     if route_segments and len(route_segments) > 1:
+        # AA-773 — a block with Status lines flags only the sentences that name one of ITS offered
+        # activities (the Khövsgöl block holds the included steppe/taiga moment too).
+        acts_by_id = {aid: _status_activities(text) for aid, text in route_segments}
         text_by_id = {aid: text for aid, text in route_segments}
         for sent in _SENT_SPLIT_RE.split(content_text or ""):
             tags = TAG_RE.findall(sent)
@@ -445,22 +443,45 @@ def promised_sentences(
             plain = strip_citation_tags(sent).lower()
             if any(h in plain for h in _HEDGE_PHRASES):
                 continue
+            offered_ids = [t for t in offered_ids if _names_offered(plain, acts_by_id.get(t))]
+            if not offered_ids:
+                continue
             ids = sorted(set(offered_ids))
             out.append((strip_citation_tags(sent.strip()), ids, "\n".join(text_by_id[i] for i in ids)))
     elif _is_offered(atom_text):
+        acts = _status_activities(atom_text)
         for sent in _SENT_SPLIT_RE.split(content_text or ""):
             plain = strip_citation_tags(sent).lower()
             if not plain.strip():
                 continue
             if any(h in plain for h in _HEDGE_PHRASES):
                 continue
+            if not _names_offered(plain, acts):
+                continue
             out.append((strip_citation_tags(sent.strip()), [], atom_text))
     return out
 
 
 def _is_offered(text: str) -> bool:
-    plain = (text or "").lower()
-    return any(phrase in plain for phrase in _OFFERED_PHRASES)
+    """AA-773 — Status-aware (offered.is_offered_seed): a seed with Status lines is offered only when
+    one says OFFERED; the Status text's own 'optional' / 'not included' never counts."""
+    return is_offered_seed(text)
+
+
+def _status_activities(seed: str) -> Optional[list]:
+    """The offered activities F17 reads from a seed that carries Status lines
+    (trip_facts.optional_activities, Status-aware), or None for a pre-AA-773 seed: every sentence is
+    then checked, as before."""
+    if not has_status_lines(seed):
+        return None
+    return optional_activities(parse_moments(seed))
+
+
+def _names_offered(sentence: str, acts: Optional[list]) -> bool:
+    """None (no Status lines) or no activity parsed → True (check the sentence, as before)."""
+    if not acts:
+        return True
+    return any(mentions_activity(sentence, a) for a in acts)
 
 
 # ---------------------------------------------------------------- F4-adjusted (extreme length only)
@@ -1365,7 +1386,7 @@ _UNUSED_WORD_COVER = 0.75
 _UNUSED_TRIGRAM_COVER = 0.25
 _SEED_META_LINE_RE = re.compile(
     r"^(?:Location|Naming|Days? \d|Thin moment|Place background|SCOPE|TRIP|AUDIENCE|BRAND|FACTS:"
-    r"|\[Moment\b|\[Fact\b|Other trips)", re.I)
+    r"|\[Moment\b|\[Fact\b|Other trips|" + STATUS_PREFIX + ")", re.I)
 _SEED_LINE_PREFIX_RE = re.compile(r"^(?:[-*•]\s*)?(?:(?:Source itinerary|Why it matters):\s*)?")
 
 
