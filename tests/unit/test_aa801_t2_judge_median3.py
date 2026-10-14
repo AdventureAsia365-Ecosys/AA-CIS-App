@@ -141,6 +141,58 @@ def test_repeat3_all_failed_raises():
             bf.score_brand_fit(BRAND, GEN, repeat=3)
 
 
+def _billed_error(cost):
+    e = ValueError("malformed judge JSON")
+    e.billed_cost_usd = cost
+    return e
+
+
+def test_repeat3_counts_the_billed_cost_of_a_failed_call():
+    calls = iter([_res(6.0, cost=0.01), _billed_error(0.02), _res(8.0, cost=0.01)])
+
+    def fake(*_a, **_k):
+        v = next(calls)
+        if isinstance(v, Exception):
+            raise v
+        return v
+    with patch.object(bf, "_judge", side_effect=fake):
+        out = bf.score_brand_fit(BRAND, GEN, repeat=3)
+    assert out.cost_usd == pytest.approx(0.04)
+    assert {"failed": 1, "failed_cost_usd": 0.02} in out.runs
+    sig = runs_signal(out, "median3")
+    assert sig["failed"] == 1 and sig["failed_cost_usd"] == pytest.approx(0.02)
+
+
+def test_repeat3_all_failed_raises_with_the_summed_billed_cost():
+    with patch.object(bf, "_judge", side_effect=[_billed_error(0.01), _billed_error(0.02), RuntimeError("x")]):
+        with pytest.raises(Exception) as info:
+            bf.score_brand_fit(BRAND, GEN, repeat=3)
+    assert bf.billed_cost(info.value) == pytest.approx(0.03)
+
+
+def test_judge_attaches_the_billed_cost_to_a_parse_error():
+    with patch.object(bf, "LLMClient") as client:
+        client.return_value.generate.return_value = LLMResponse(
+            content="not json", model_used="gpt-4.1", cost_usd=0.004, provider="openai")
+        with pytest.raises(ValueError) as info:
+            bf.score_brand_fit(BRAND, GEN)
+    assert bf.billed_cost(info.value) == pytest.approx(0.004)
+
+
+def test_repeat3_calls_see_the_callers_contextvars():
+    from shared.llm_client.call_log import bind_tenant, current_tenant_id
+    seen, lock = [], threading.Lock()
+
+    def fake(*_a, **_k):
+        with lock:
+            seen.append((current_tenant_id(), threading.get_ident()))
+        return _res(8.0)
+    with patch.object(bf, "_judge", side_effect=fake), bind_tenant("tenant-abc"):
+        bf.score_brand_fit(BRAND, GEN, repeat=3)
+    assert [t for t, _ in seen] == ["tenant-abc"] * 3
+    assert all(ident != threading.get_ident() for _, ident in seen)   # ran in pool threads
+
+
 def test_repeat_default_keeps_single_call_and_empty_runs():
     with patch.object(bf, "_judge", side_effect=[_res(9.0)]) as j, \
             patch.object(bf, "_seeded_model", return_value=False):

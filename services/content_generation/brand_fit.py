@@ -81,14 +81,16 @@ class BrandFitResult:
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
-                   failed: int = 0) -> BrandFitResult:
+                   failed: int = 0, failed_cost_usd: float = 0.0) -> BrandFitResult:
     """AA-801 / AA-714: one verdict from several judge calls on the same draft.
 
     brand_fit and cross_brand_distinct = median (`_median`); mission_present = strict majority, a
     tie counts as absent (conservative: it can cap, it never lifts); judge_score = min(brand_fit,
     distinct), mission-capped like a single call. Feedback comes from the run whose brand_fit is
-    closest to the median (the first one on a tie). Cost and tokens are summed: every call is billed.
-    Model/account/stop_reason come from the first run. Raises ValueError on an empty list."""
+    closest to the median (the first one on a tie). Cost and tokens are summed: every call is billed,
+    including `failed_cost_usd` = the known spend of calls that were billed but then failed (e.g. a
+    malformed JSON reply). Model/account/stop_reason come from the first run. Raises ValueError on
+    an empty list."""
     if not results:
         raise ValueError("aggregate_runs needs at least one result")
     brand_fits = [r.brand_fit_score for r in results]
@@ -109,18 +111,32 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
     return BrandFitResult(
         brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
         feedback=picked.feedback, judge_score=judge_score, model_used=first.model_used,
-        cost_usd=sum((r.cost_usd or 0.0) for r in results),
+        cost_usd=sum((r.cost_usd or 0.0) for r in results) + (failed_cost_usd or 0.0),
         input_tokens=sum((r.input_tokens or 0) for r in results),
         output_tokens=sum((r.output_tokens or 0) for r in results),
         stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
-        runs=runs + (({"failed": failed},) if failed else ()),
+        runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
     )
+
+
+def _failed_entry(failed: int, failed_cost_usd: float) -> dict:
+    entry = {"failed": failed}
+    if failed_cost_usd:
+        entry["failed_cost_usd"] = failed_cost_usd
+    return entry
+
+
+def billed_cost(exc: BaseException) -> float:
+    """AA-801: the spend `_judge` attached to an exception raised AFTER a billed LLM reply (0.0 when
+    the call failed before anything was billed, or the exception came from elsewhere)."""
+    return float(getattr(exc, "billed_cost_usd", 0.0) or 0.0)
 
 
 def runs_signal(result: BrandFitResult, mode: str) -> dict:
     """AA-801: the quality_signal block that shows the spread behind an aggregated verdict."""
     runs = [r for r in result.runs if "brand_fit" in r]
     failed = sum(r.get("failed", 0) for r in result.runs)
+    failed_cost = sum(r.get("failed_cost_usd", 0.0) for r in result.runs)
     fits = [r["brand_fit"] for r in runs]
     return {
         "mode": mode, "n": len(runs), "failed": failed,
@@ -129,6 +145,7 @@ def runs_signal(result: BrandFitResult, mode: str) -> dict:
         "chosen_brand_fit": result.brand_fit_score, "chosen_distinct": result.cross_brand_distinct,
         "chosen_mission": result.mission_present,
         "brand_fit_spread": (max(fits) - min(fits)) if fits else None,
+        **({"failed_cost_usd": failed_cost} if failed_cost else {}),
     }
 
 
@@ -349,7 +366,13 @@ def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_abs
                     stage: str) -> BrandFitResult:
     """AA-801 option (a): `n` judge calls at once, aggregated by `aggregate_runs`. Each call runs in
     its own copy of the caller's contextvars (live-progress sink, tenant/job attribution). A failed
-    call is dropped; when every call fails the first error is raised (the caller degrades)."""
+    call is dropped from the verdict but its known billed spend (`billed_cost`) is kept in cost_usd;
+    when every call fails the first error is raised (the caller degrades) carrying the summed
+    `billed_cost_usd` of all of them.
+
+    Each call is a full `LLMClient.generate`, so a stage-route shadow (sampled per call) can fire on
+    each of the n calls: with a shadow configured on the route, median3 samples up to n shadows per
+    judgement instead of one (documented in AA-801 implementation notes / CONTEXT.md)."""
     def one():
         return _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
 
@@ -361,14 +384,25 @@ def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_abs
             results.append(f.result())
         except Exception as e:  # noqa: BLE001 — one noisy call must not drop the verdict
             errors.append(e)
+    failed_cost = sum(billed_cost(e) for e in errors)
     if not results:
+        _attach_cost(errors[0], failed_cost)
         raise errors[0]
     if errors:
-        logger.warning("judge_median_partial", failed=len(errors), ok=len(results), error=str(errors[0]))
-    out = aggregate_runs(results, mission_absent_cap=mission_absent_cap, failed=len(errors))
+        logger.warning("judge_median_partial", failed=len(errors), ok=len(results), error=str(errors[0]),
+                       failed_cost_usd=failed_cost)
+    out = aggregate_runs(results, mission_absent_cap=mission_absent_cap, failed=len(errors),
+                         failed_cost_usd=failed_cost)
     logger.info("judge_median", n=n, brand_fits=[r.brand_fit_score for r in results],
                 median_brand_fit=out.brand_fit_score, mission=out.mission_present)
     return out
+
+
+def _attach_cost(exc: BaseException, cost_usd: float) -> None:
+    try:
+        exc.billed_cost_usd = cost_usd
+    except (AttributeError, TypeError):   # an exception type without __dict__: the cost is lost
+        pass
 
 
 def _seeded_model(model_used: Optional[str]) -> bool:
@@ -397,13 +431,19 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
     client = LLMClient()
     resp = client.generate(request)
 
-    raw = resp.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    result = json.loads(raw)
+    try:
+        raw = resp.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        result = json.loads(raw)
+    except Exception as e:
+        # AA-801: the reply was billed even though it is unusable — keep its cost on the exception
+        # so median3 (and ad-hoc scripts) can count it.
+        _attach_cost(e, float(getattr(resp, "cost_usd", 0.0) or 0.0))
+        raise
 
     brand_fit = _coerce_score(result.get("brand_fit_score"))
     distinct = _coerce_score(result.get("cross_brand_distinct"))
