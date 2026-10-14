@@ -289,7 +289,13 @@ class TestMarketsRoute:
 
 
 def test_routes_registered_on_app():
-    from api.main import app
-    paths = {getattr(r, "path", "") for r in app.routes}
+    # Other unit tests reload api.main with a stripped app, so the shared app object is not a
+    # reliable witness in a full run; check the router itself plus its include in main.py.
+    from pathlib import Path
+
+    from api.routers.admin_tenant360 import router
+    paths = {getattr(r, "path", "") for r in router.routes}
     for suffix in ("cost", "quality", "markets"):
         assert f"/admin/tenants/{{tenant_id}}/{suffix}" in paths
+    main_src = (Path(__file__).resolve().parents[2] / "api" / "main.py").read_text()
+    assert "app.include_router(admin_tenant360_router)" in main_src
