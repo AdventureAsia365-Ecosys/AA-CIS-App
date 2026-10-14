@@ -1,9 +1,10 @@
 "use client";
 import { T, sans } from "./ui";
 
+// AA-796 — the "Best quality first" sort is gone (no A1 quality score on the tenant side); the
+// pool is always newest first, so there is no sort control.
 export interface PoolFiltersState {
   duration: string;  // "all" | "1-3" | "4-7" | "8+"
-  sort: string;      // "newest" | "quality"
 }
 
 interface PoolFiltersProps {
@@ -19,17 +20,11 @@ const selectStyle = {
 
 export function PoolFilters({ filters, onChange }: PoolFiltersProps) {
   return (
-    <>
-      <select value={filters.duration} onChange={e => onChange({ duration: e.target.value })} style={selectStyle}>
-        <option value="all">All durations</option>
-        <option value="1-3">1–3 days</option>
-        <option value="4-7">4–7 days</option>
-        <option value="8+">8+ days</option>
-      </select>
-      <select value={filters.sort} onChange={e => onChange({ sort: e.target.value })} style={selectStyle}>
-        <option value="newest">Newest first</option>
-        <option value="quality">Best quality first</option>
-      </select>
-    </>
+    <select value={filters.duration} onChange={e => onChange({ duration: e.target.value })} style={selectStyle}>
+      <option value="all">All durations</option>
+      <option value="1-3">1–3 days</option>
+      <option value="4-7">4–7 days</option>
+      <option value="8+">8+ days</option>
+    </select>
   );
 }

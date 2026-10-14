@@ -6,6 +6,10 @@ from pydantic import BaseModel as _BM
 from api.routers.auth import verify_tenant_jwt
 from api.routers.admin import PLAN_LIMITS
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from api.routers._tenant_projection import (
+    project_billing, project_raw, project_tour, project_version,
+    tenant_status_filter, tenant_version_status,
+)
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/tours", tags=["B2B Tours"])
@@ -50,7 +54,6 @@ async def browse_pool(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     country: Optional[str] = Query(None),
-    min_quality: Optional[float] = Query(None, ge=0, le=10),
     search: Optional[str] = Query(None),
     duration_min: Optional[int] = Query(None, ge=1),
     duration_max: Optional[int] = Query(None),
@@ -58,6 +61,11 @@ async def browse_pool(
 ):
     """Browse AA shared pool (published_tours from aa_internal).
     All active tenants can read the pool — RLS bypassed via aa_internal filter.
+
+    AA-796: no A1 quality score on the tenant side — the `min_quality` filter, the
+    `sort=quality` order and the `quality_score` column are gone. An old client still sending
+    `min_quality` / `sort=quality` gets the unfiltered, newest-first list (FastAPI ignores
+    unknown query params).
     """
     tenant_id = tenant["sub"]
     # INTENTIONAL: cross-tenant read via admin pool — see AA-544. All 3 queries below scan
@@ -89,9 +97,6 @@ async def browse_pool(
     if country:
         params.append(country)
         conditions.append(f"LOWER(rt.country) = LOWER(${len(params)})")
-    if min_quality is not None:
-        params.append(min_quality)
-        conditions.append(f"pt.quality_score >= ${len(params)}")
     if search:
         params.append(f"%{search}%")
         conditions.append(f"pt.aa_name ILIKE ${len(params)}")
@@ -106,7 +111,7 @@ async def browse_pool(
             f"CAST(NULLIF(REGEXP_REPLACE(COALESCE(rt.duration,''),'[^0-9]','','g'),'') AS INTEGER) <= ${len(params)}"
         )
 
-    order_by = "pt.published_at DESC" if sort == "newest" else "pt.quality_score DESC, pt.published_at DESC"
+    order_by = "pt.published_at DESC"  # AA-796 — the only tenant sort; `sort` kept for old clients
     where = "WHERE " + " AND ".join(conditions)
 
     async with pool.acquire() as conn:
@@ -124,7 +129,7 @@ async def browse_pool(
             SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
                    pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
                    pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
-                   pt.quality_score, pt.published_at,
+                   pt.published_at,
                    rt.country, rt.duration, rt.price_raw,
                    EXISTS(
                        SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
@@ -152,7 +157,7 @@ async def browse_pool(
         """)
 
     return {
-        "data": [dict(r) for r in rows],
+        "data": [project_tour(r) for r in rows],
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
         "countries": [r["country"] for r in countries],
@@ -279,7 +284,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
                 v.price_usd_monthly,
                 v.tours_rewritten, v.api_calls_used,
                 v.quota_tours_pct, v.quota_calls_pct,
-                v.tours_overage, v.overage_usd, v.llm_cost_usd,
+                v.tours_overage, v.overage_usd,
                 v.overage_rate_usd_per_tour
             FROM shared.v_tenant_monthly_usage v
             WHERE v.tenant_id = $1::uuid
@@ -356,14 +361,14 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "tours_rewritten": 0, "api_calls_used": 0,
             "quota_tours_pct": 0.0, "quota_calls_pct": 0.0,
             "tours_overage": 0, "overage_usd": 0.0,
-            "llm_cost_usd": 0.0, "overage_rate_usd_per_tour": 4.0,
+            "overage_rate_usd_per_tour": 4.0,
             "rate_limit_rpm": rate_limit_rpm, "plans": plans, "daily": daily,
             "activity": [],
         }
 
     return {
         **{k: (float(v) if hasattr(v, '__float__') and not isinstance(v, int) else v)
-           for k, v in dict(row).items() if k != "billing_month"},
+           for k, v in project_billing(row).items() if k != "billing_month"},
         "billing_month": str(row["billing_month"])[:7] if row["billing_month"] else None,
         "rate_limit_rpm": rate_limit_rpm,
         "plans": plans,
@@ -372,7 +377,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             {
                 "id": str(a["id"]),
                 "created_at": a["created_at"].isoformat(),
-                "status": a["status"],
+                "status": tenant_version_status(a["status"]),  # AA-796
                 "edit_source": a["edit_source"],
                 "tour_name": a["aa_name"],
                 "country": a["country"],
@@ -526,8 +531,10 @@ async def list_my_versions(
     params: list = [tenant_id]
 
     if status:
-        params.append(status)
-        conditions.append(f"ttv.status = ${len(params)}")
+        # AA-796 — the tenant only ever sees ai_generated; asking for it (or for the stored
+        # needs_review) matches both stored values.
+        params.append(tenant_status_filter(status))
+        conditions.append(f"ttv.status = ANY(${len(params)}::text[])")
     if country:
         params.append(country)
         conditions.append(f"LOWER(rt.country) = LOWER(${len(params)})")
@@ -563,7 +570,7 @@ async def list_my_versions(
         """, *params_paged)
 
     return {
-        "data": [dict(r) for r in rows],
+        "data": [project_version(r) for r in rows],
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
     }
@@ -660,18 +667,21 @@ async def get_tour_full(
             WHERE tour_id = $1::uuid
         """, pt["tour_id"])
 
-        gen = await conn.fetchrow("""
-            SELECT * FROM silver_aa_internal.generated_content
-            WHERE tour_id = $1::uuid
-            ORDER BY version_num DESC LIMIT 1
-        """, pt["tour_id"])
+        # AA-796 — generated_content (A1 writer output incl. metadata llm_cost/model) and its
+        # quality_scores row are admin review data; the tenant-JWT branch never reads them.
+        gen = qs = None
+        if is_admin:
+            gen = await conn.fetchrow("""
+                SELECT * FROM silver_aa_internal.generated_content
+                WHERE tour_id = $1::uuid
+                ORDER BY version_num DESC LIMIT 1
+            """, pt["tour_id"])
 
-        qs = await conn.fetchrow("""
-            SELECT * FROM silver_aa_internal.quality_scores
-            WHERE generated_content_id = $1::uuid
-            ORDER BY evaluated_at DESC LIMIT 1
-        """, gen["id"] if gen else None
-        ) if gen else None
+            qs = await conn.fetchrow("""
+                SELECT * FROM silver_aa_internal.quality_scores
+                WHERE generated_content_id = $1::uuid
+                ORDER BY evaluated_at DESC LIMIT 1
+            """, gen["id"]) if gen else None
 
         sc = await conn.fetchrow("""
             SELECT top_keywords, keyword_search, keyword_ideas, fetched_at
@@ -694,11 +704,19 @@ async def get_tour_full(
                 d[k] = v.isoformat()
         return d
 
+    if is_admin:  # admin tour-full/[id] review panel — unchanged
+        return {
+            "published": safe(pt),
+            "raw": safe(raw),
+            "generated": safe(gen),
+            "quality": safe(qs),
+            "seo": safe(sc),
+        }
+    # AA-796 — tenant JWT (reachable through the generic /api/tenant/[...path] proxy): content
+    # only, no A1 score / review state / writer output.
     return {
-        "published": safe(pt),
-        "raw": safe(raw),
-        "generated": safe(gen),
-        "quality": safe(qs),
+        "published": safe(project_tour(pt)),
+        "raw": safe(project_raw(raw) if raw else None),
         "seo": safe(sc),
     }
 
@@ -732,14 +750,12 @@ async def get_tour(
     if not row:
         raise HTTPException(status_code=404, detail="Tour not found")
 
-    return dict(row)
+    return project_tour(row)  # AA-796 — no quality_score / quality_score_id
 
 
 # ── P3-S4: Version Detail + Approve/Reject/Edit ───────────────────────────────
 
-_TENANT_HIDDEN_VERSION_FIELDS = {"quality_score", "qa_status", "qa_repair_count", "qa_checked_at",
-                                 "qa_auto_passed"}
-
+# AA-796 — the hidden version fields now live in api/routers/_tenant_projection.py.
 
 @router.get("/versions/{version_id}")
 async def get_version(
@@ -778,10 +794,10 @@ async def get_version(
         """, tenant_id, row["published_tour_id"])
 
     # AA-770 (S233) — scores and QA state stay admin-side (/admin/content-quality).
-    version = {k: v for k, v in dict(row).items() if k not in _TENANT_HIDDEN_VERSION_FIELDS}
+    # AA-796 — and the score-derived needs_review status reads as ai_generated.
     return {
-        **version,
-        "version_history": [dict(h) for h in history],
+        **project_version(row),
+        "version_history": [project_version(h) for h in history],
     }
 
 

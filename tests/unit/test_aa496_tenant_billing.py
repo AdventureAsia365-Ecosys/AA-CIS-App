@@ -72,9 +72,12 @@ class TestAA496TenantBilling:
             "tenant_name", "plan_tier", "billing_month", "tours_quota_monthly",
             "api_calls_quota_monthly", "price_usd_monthly", "tours_rewritten",
             "api_calls_used", "quota_tours_pct", "quota_calls_pct", "tours_overage",
-            "overage_usd", "llm_cost_usd", "overage_rate_usd_per_tour", "activity",
+            "overage_usd", "overage_rate_usd_per_tour", "activity",
         ):
             assert key in result, f"missing field {key}"
+        # AA-796 — LLM spend is AA's cost, not part of the tenant's bill (reverses AA-636)
+        assert "llm_cost_usd" not in result and "jev_cost_usd" not in result
+        assert "llm_cost_usd" not in conn.fetchrow.await_args.args[0]
         assert result["plan_tier"] == "growth"
         assert result["tours_rewritten"] == 12
 

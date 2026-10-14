@@ -22,7 +22,7 @@ interface BillingData {
   api_calls_quota_monthly: number; price_usd_monthly: number;
   tours_rewritten: number; api_calls_used: number;
   quota_tours_pct: number; quota_calls_pct: number;
-  llm_cost_usd: number; billing_month: string;
+  billing_month: string;
   overage_usd: number; overage_rate_usd_per_tour: number; tours_overage?: number;
   rate_limit_rpm?: number | null;
   daily?: DailyPoint[];

@@ -27,7 +27,7 @@ interface PoolTour {
   id: string; tour_id: string; aa_name: string; aa_subtitle: string;
   aa_summary: string; aa_highlights: string; aa_itineraries: string | null;
   seo_title: string; seo_meta: string; seo_keywords_used: string;
-  quality_score: number; published_at: string;
+  published_at: string;
   country: string | null; duration: string | null; price_raw: string | null;
   already_rewritten: boolean;
 }
@@ -44,7 +44,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
   // Sync external search (from topbar)
   useEffect(() => { if (externalSearch !== undefined) { setSearch(externalSearch); setPage(1); } }, [externalSearch]);
   const [country, setCountry] = useState("");
-  const [poolFilters, setPoolFilters] = useState<PoolFiltersState>({ duration: "all", sort: "newest" });
+  const [poolFilters, setPoolFilters] = useState<PoolFiltersState>({ duration: "all" });
   const [inCatalogSet, setInCatalogSet] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<PoolTour | null>(null);
@@ -58,7 +58,6 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
       const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
       if (search)  params.set("search", search);
       if (country) params.set("country", country);
-      params.set("sort", poolFilters.sort);
       if (poolFilters.duration !== "all") {
         if (poolFilters.duration === "8+") {
           params.set("duration_min", "8");
