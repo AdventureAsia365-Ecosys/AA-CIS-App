@@ -162,6 +162,7 @@ def _openai_completion(content='{"a": 1}', finish="stop"):
     )
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_openai_catalog_model_uses_reasoning_params_and_schema():
     c = _client()
     c._openai = MagicMock()
@@ -181,6 +182,7 @@ def test_openai_catalog_model_uses_reasoning_params_and_schema():
     assert resp.cost_usd == pytest.approx(0.0006)
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_legacy_gpt41_call_is_unchanged():
     c = _client()
     c._openai = MagicMock()
@@ -191,6 +193,7 @@ def test_legacy_gpt41_call_is_unchanged():
     assert "response_format" not in kwargs
 
 
+@patch("shared.llm_client.client.openai_platform_allowed", new=lambda _key: True)  # S235: adapter test, gate open
 def test_empty_reasoning_output_raises_so_the_route_moves_on():
     c = _client()
     c._openai = MagicMock()

@@ -62,12 +62,14 @@ class StageConfig:
     shadow_sample_pct: int = 0
 
 
-# AA-714 (S222, Nghiệp): every path prefers Bedrock. The judge defaults mirror the live judge route
-# (migration 171: GPT-5.6 Luna -> GPT-6 Luna on Bedrock acc3 -> GPT-6 Luna on the OpenAI API) and end
-# with GPT-4.1 — a LEGACY key that needs no catalog row. If the DB (and so the catalog) cannot be read,
-# the Luna keys are skipped as "not in catalog" and GPT-4.1 still judges; with a readable catalog the
-# call always goes to Bedrock first. (Before AA-714 the defaults were GPT-4.1 alone, OpenAI direct.)
-_JUDGE_ROUTE_DEFAULT = ("gpt-6-luna", "gpt-6-luna-openai", "gpt-4.1")
+# S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
+# a Bedrock outage — never a primary or a shadow (tests/unit/test_s235_openai_last_resort.py). The judge
+# default mirrors the live judge route after migration 224: GPT-5.6 Luna (Bedrock acc3) -> GPT-6 Luna
+# (Bedrock acc3) -> GPT-6 Luna (OpenAI API). All three are non-Anthropic, so vendor separation holds.
+# GPT-4.1 is retired (AA-714 kept it last so a judge could run with the DB unreachable: it was a legacy
+# key that needed no catalog row). Now a cold process that cannot read the catalog skips every key
+# here as "not in catalog" and the judge call raises.
+_JUDGE_ROUTE_DEFAULT = ("gpt-6-luna", "gpt-6-luna-openai")
 # Matches shared.llm_role_config's own seed data (migration 137) exactly — see that file's
 # header for why each value is what it is. This is the fallback when the DB is unreachable OR a
 # stage has no row yet (e.g. a new call site shipped before its migration/seed caught up).
