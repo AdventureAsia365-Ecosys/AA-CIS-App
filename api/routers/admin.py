@@ -91,6 +91,9 @@ PLAN_LIMITS = {
     "business": {"rpm": 1000},
     "internal": {"rpm": 60},
 }
+# AA-766: upper bound for an admin RPM override — a technical guard against typos (10x the largest
+# plan default), not a commercial limit.
+RATE_LIMIT_RPM_MAX = 10000
 
 # ── Auth guard ────────────────────────────────────────────────────────────────
 
@@ -489,9 +492,12 @@ class UpdateTenantRequest(BaseModel):
     body, so the Active toggle returned 200 and changed nothing."""
     plan_tier: Optional[str] = None
     is_active: Optional[bool] = None
+    # AA-766: an explicit per-tenant override of the plan's default RPM (PLAN_LIMITS). Sent alone
+    # it changes only the limit; sent with plan_tier it wins over that plan's default.
+    rate_limit_rpm: Optional[int] = Field(None, ge=1, le=RATE_LIMIT_RPM_MAX)
 
 
-@router.patch("/tenants/{tenant_id}", summary="Update tenant plan or status (suspend / resume)")
+@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit or status (suspend / resume)")
 async def update_tenant(
     tenant_id: UUID,
     body: UpdateTenantRequest,
@@ -500,14 +506,16 @@ async def update_tenant(
     x_admin_user_id: Optional[str] = Header(None),
     x_admin_role: Optional[str] = Header(None),
 ):
-    """Plan change (plan_tier + plan_id + rate_limit_rpm together) and/or suspend/resume
-    (is_active). An offboarded tenant (cancelled_at set) gets 409 here: it comes back only through
-    POST /tenants/{id}/restore, which also issues a new key.
+    """Plan change (plan_tier + plan_id + rate_limit_rpm together), an RPM override
+    (rate_limit_rpm, AA-766) and/or suspend/resume (is_active). An offboarded tenant (cancelled_at
+    set) gets 409 here: it comes back only through POST /tenants/{id}/restore, which also issues a
+    new key.
     Each change writes one audit row with before/after, in the same transaction."""
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
-    if body.plan_tier is None and body.is_active is None:
-        raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier and/or is_active")
+    if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None:
+        raise HTTPException(status_code=422,
+                            detail="Nothing to update: send plan_tier, rate_limit_rpm and/or is_active")
     if body.plan_tier is not None and body.plan_tier not in PLAN_LIMITS:
         raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
 
@@ -528,9 +536,11 @@ async def update_tenant(
                         "restore it first (POST /admin/tenants/{id}/restore)"),
             )
 
+        rpm_now = before["rate_limit_rpm"]
         if body.plan_tier is not None and body.plan_tier != before["plan_tier"]:
             plan_id = await _resolve_plan_id(conn, body.plan_tier)
-            rpm = PLAN_LIMITS[body.plan_tier]["rpm"]
+            rpm = body.rate_limit_rpm if body.rate_limit_rpm is not None else PLAN_LIMITS[body.plan_tier]["rpm"]
+            rpm_now = rpm
             await conn.execute("""
                 UPDATE shared.tenants
                 SET plan_tier = $2::plan_tier_enum, plan_id = $3, rate_limit_rpm = $4, updated_at = NOW()
@@ -546,6 +556,18 @@ async def update_tenant(
                 },
             )
             changed.append("plan")
+
+        if body.rate_limit_rpm is not None and body.rate_limit_rpm != rpm_now:
+            # AA-766 — RPM override without a plan change (or the same plan re-sent).
+            await conn.execute("""
+                UPDATE shared.tenants SET rate_limit_rpm = $2, updated_at = NOW() WHERE tenant_id = $1
+            """, tenant_id, body.rate_limit_rpm)
+            await write_audit_log(
+                conn, tenant_id=str(tenant_id), actor=actor, action=AdminTenantAuditAction.RATE_LIMIT_CHANGED,
+                resource_type="tenant", resource_id=str(tenant_id),
+                details={"before": {"rate_limit_rpm": rpm_now}, "after": {"rate_limit_rpm": body.rate_limit_rpm}},
+            )
+            changed.append("rate_limit")
 
         if body.is_active is not None and body.is_active != before["is_active"]:
             await conn.execute("""
@@ -569,6 +591,10 @@ async def update_tenant(
         "tenant_id": str(tenant_id),
         "changed": changed,
         "tenant_status": tenant_status(is_active, None),
+        # AA-766: the values now stored, so the Settings editor can show the plan default RPM a
+        # plan change applied without re-reading the tenant.
+        "plan_tier": body.plan_tier if body.plan_tier is not None else before["plan_tier"],
+        "rate_limit_rpm": body.rate_limit_rpm if body.rate_limit_rpm is not None else rpm_now,
     }
 
 def _parse_fw(value) -> list:

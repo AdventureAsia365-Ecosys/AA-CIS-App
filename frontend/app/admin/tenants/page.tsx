@@ -6,7 +6,9 @@
 // AA-797: three states (active / suspended / offboarded). Suspend <-> active is the status
 // toggle (PATCH body); Offboard (reason required) revokes the key and replaces the old unaudited
 // Delete; Restore (Nghiệp 14/10/2026) brings an offboarded tenant back with its data and settings
-// and a new key. AA-766 rebuilds this page; these edits are deliberately minimal.
+// and a new key.
+// AA-766 (S236): Tenant 360 — Settings editors (plan, RPM, markets, channels, posts/week), and new
+// Cost, Quality (per T10 gate + edit rate) and Markets tabs, in ./_components (admin-only data).
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
@@ -19,6 +21,10 @@ import {
   Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
 } from "../_components/adminUi";
 import { Modal, PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
+import { Tenant360Settings } from "./_components/Tenant360Settings";
+import { Tenant360Cost } from "./_components/Tenant360Cost";
+import { Tenant360Quality } from "./_components/Tenant360Quality";
+import { Tenant360Markets } from "./_components/Tenant360Markets";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -682,13 +688,15 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
 
 // AA-666: Tenant 360 — the detail panel is expanded IN PLACE (inline, under the list row), not a
 // separate page. Added tabs: Usage & Billing, Quality (gate telemetry), Audit, Settings.
+// AA-766: + Cost and Markets; Quality and Settings rebuilt (./_components).
 type DTab = "tours" | "pipeline" | "activity" | "api" | "brand" | "social_content"
-          | "billing" | "quality" | "audit" | "settings";
+          | "billing" | "cost" | "quality" | "markets" | "audit" | "settings";
 
-function TenantDetail({ tenantId, planTier }: {
-  tenantId: string; planTier: string;
+function TenantDetail({ tenant, onChanged }: {
+  tenant: Tenant; onChanged: () => void;
 }) {
-  const isInternal = planTier === "internal";
+  const tenantId = tenant.tenant_id;
+  const isInternal = tenant.plan_tier === "internal";
   const [data, setData]         = useState<TenantDetails | null>(null);
   const [loading, setLoading]   = useState(true);
   const [tab, setTab]           = useState<DTab>("tours");
@@ -736,7 +744,9 @@ function TenantDetail({ tenantId, planTier }: {
     { key: "social_content", label: "Social Content" },
     // AA-666 — Tenant 360: the remaining management facets, added to the inline panel.
     { key: "billing" as DTab,  label: "Usage & Billing" },
+    { key: "cost" as DTab,     label: "Cost" },
     { key: "quality" as DTab,  label: "Quality" },
+    { key: "markets" as DTab,  label: "Markets" },
     { key: "audit" as DTab,    label: "Audit" },
     { key: "settings" as DTab, label: "Settings" },
   ];
@@ -753,8 +763,9 @@ function TenantDetail({ tenantId, planTier }: {
           // AA-557 I.19 — real data, already fetched (`shared.tenants.rate_limit_rpm` via
           // `api_usage.rate_limit_per_min`, same value the API Usage tab below already showed) —
           // just also surfaced at header level so an admin doesn't need to open that tab for it.
-          ["Rate Limit",     `${data.api_usage.rate_limit_per_min}/min`, A.body],
-          ["Plan",           s.plan_name,                           A.body],
+          // AA-766: plan / RPM from the list row, which reloads after a Settings save.
+          ["Rate Limit",     `${tenant.rate_limit_rpm}/min`,        A.body],
+          ["Plan",           tenant.plan_tier,                      A.body],
           ["Member Since",   s.member_since,                        A.muted],
         ] as [string, string, string][]).map(([l, v, c]) => (
           <div key={l} style={{ minWidth: 80 }}>
@@ -782,9 +793,14 @@ function TenantDetail({ tenantId, planTier }: {
       {tab === "brand"    && <BrandTabContent    rules={data.brand_rules} tenantId={tenantId} />}
       {tab === "social_content" && <SocialContentTabContent tenantId={tenantId} />}
       {tab === "billing"  && <BillingTabContent  tenantId={tenantId} />}
-      {tab === "quality"  && <QualityTabContent  tenantId={tenantId} />}
+      {tab === "cost"     && <Tenant360Cost      tenantId={tenantId} />}
+      {tab === "quality"  && <Tenant360Quality   tenantId={tenantId} byChannel={<ChannelGateTelemetry tenantId={tenantId} />} />}
+      {tab === "markets"  && <Tenant360Markets   tenantId={tenantId} />}
       {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
-      {tab === "settings" && <SettingsTabContent summary={s} apiUsage={data.api_usage} />}
+      {tab === "settings" && (
+        <Tenant360Settings tenantId={tenantId} planTier={tenant.plan_tier} rateLimitRpm={tenant.rate_limit_rpm}
+          status={tenant.status ?? (tenant.is_active ? "active" : "suspended")} onChanged={onChanged} />
+      )}
     </div>
   );
 }
@@ -832,14 +848,15 @@ function BillingTabContent({ tenantId }: { tenantId: string }) {
       {meter("API calls quota", num(b.quota_calls_pct), num(b.api_calls_used), b.api_calls_quota_monthly == null ? null : num(b.api_calls_quota_monthly))}
       <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>
         LLM cost = this calendar month&apos;s spend in llm_call_log for this tenant (Jev included, shadow runs excluded).
-        Invoices and per-stage cost are deferred (no endpoint yet).
+        Per-stage cost, $/piece and margin: Cost tab. Invoices are not built yet.
       </div>
     </div>
   );
 }
 
-// AA-666 — Quality: gate telemetry for this tenant (client-filtered from the platform endpoint).
-function QualityTabContent({ tenantId }: { tenantId: string }) {
+// AA-666 — per-channel gate telemetry for this tenant (client-filtered from the platform endpoint);
+// AA-766 shows it under the per-gate Quality view.
+function ChannelGateTelemetry({ tenantId }: { tenantId: string }) {
   const [rows, setRows] = useState<Record<string, number | string>[] | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ok">("loading");
   useEffect(() => {
@@ -900,30 +917,6 @@ function AuditTabContent({ tenantId }: { tenantId: string }) {
     </div>
   );
 }
-
-// AA-666 — Settings: read-only view of plan/RPM (edit via existing PATCH endpoints, follow-up).
-function SettingsTabContent({ summary, apiUsage }: {
-  summary: TenantDetails["summary"]; apiUsage: TenantDetails["api_usage"];
-}) {
-  const line = (l: string, v: React.ReactNode) => (
-    <div style={{ display: "flex", gap: 12, padding: "7px 0", borderBottom: `1px solid ${A.line2}` }}>
-      <div style={{ width: 160, fontSize: 12, fontWeight: 600, color: A.muted }}>{l}</div>
-      <div style={{ fontSize: 13, color: A.body }}>{v}</div>
-    </div>
-  );
-  return (
-    <div>
-      {line("Plan", summary.plan_name)}
-      {line("Rate limit", `${apiUsage.rate_limit_per_min}/min`)}
-      {line("Member since", summary.member_since)}
-      <div style={{ fontSize: 11, color: A.muted2, marginTop: 8 }}>
-        Inline editing (plan, RPM, markets, posts/week, activate/deactivate) uses the existing
-        PATCH/PUT tenant endpoints — wiring the editors here is a follow-up.
-      </div>
-    </div>
-  );
-}
-
 
 // ─── Tenant Row ───────────────────────────────────────────────────────────────
 
@@ -1157,7 +1150,7 @@ function TenantRow({ tenant, onRotateKey, onChanged, onRestored, initialExpanded
 
         {expanded && (
           <div style={{ marginTop: 12 }}>
-            <TenantDetail tenantId={tenant.tenant_id} planTier={tenant.plan_tier} />
+            <TenantDetail tenant={tenant} onChanged={onChanged} />
           </div>
         )}
       </div>
@@ -1234,9 +1227,7 @@ function TenantRow({ tenant, onRotateKey, onChanged, onRestored, initialExpanded
       {expanded && (
         <tr>
           <td colSpan={7} style={{ padding: "0 16px 14px", background: A.bg }}>
-            <TenantDetail
-              tenantId={tenant.tenant_id} planTier={tenant.plan_tier}
-            />
+            <TenantDetail tenant={tenant} onChanged={onChanged} />
           </td>
         </tr>
       )}
