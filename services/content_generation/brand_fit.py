@@ -20,6 +20,7 @@ import contextvars
 import dataclasses
 import json
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
@@ -81,6 +82,11 @@ class BrandFitResult:
     # AA-801 option (b): the verbatim itinerary sentence the anchored mission test quoted ("" when
     # the mission is absent or the prompt had no anchors).
     mission_evidence: str = ""
+    # AA-801 option (b): did the quoted mission sentence check out against the itinerary text the
+    # judge saw? None = not checked (no anchored mission test, or the judge answered no); True = the
+    # judge said yes and the quote was found; False = the judge said yes but the quote was empty or
+    # not in the itinerary, so the yes was overruled (mission_present=False).
+    evidence_verified: Optional[bool] = None
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
@@ -109,9 +115,14 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
     first = results[0]
     evidence = next((r.mission_evidence for r in results if r.mission_present and r.mission_evidence), "") \
         if mission else ""
+    checks = [r.evidence_verified for r in results if r.evidence_verified is not None]
+    # median3: True = the majority yes stands (each counted yes was verified); False = no majority yes
+    # and at least one run's yes was overruled; None = nothing was checked or only plain "no"s.
+    verified = None if not checks else True if mission else (False if not all(checks) else None)
     runs = tuple(
         {"brand_fit": r.brand_fit_score, "distinct": r.cross_brand_distinct,
-         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used}
+         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used,
+         **({"evidence_verified": r.evidence_verified} if r.evidence_verified is not None else {})}
         for r in results)
     return BrandFitResult(
         brand_fit_score=brand_fit, cross_brand_distinct=distinct, mission_present=mission,
@@ -122,6 +133,7 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         stop_reason=first.stop_reason, account=first.account, fallback_used=first.fallback_used,
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
+        evidence_verified=verified,
     )
 
 
@@ -225,11 +237,14 @@ def _tenant_mission_axis(mission: str) -> str:
 # AA-801 option (b) — rubric anchors. S236 measurement: the same T2 draft scored brand_fit 6..8 and
 # mission flipped across calls with median-of-3 as noisy as one call, so the noise is in the rubric
 # ("does it reflect the brand?" leaves the judge to invent its own scale), not in sampling. The anchors
-# say what a 4 / 6 / 8 / 10 looks like FOR THIS TENANT, built deterministically from its T0 brand pack,
+# say what a 4 / 6 / 7 / 8 / 10 looks like FOR THIS TENANT, built deterministically from its T0 brand pack,
 # and the mission becomes a yes/no test that must quote the itinerary sentence that proves it.
 _ANCHOR_EXAMPLE_CHARS = 400
 _ANCHOR_MAX_VOICE = 6
 _ANCHOR_MAX_FORBIDDEN = 15
+# 7 is anchored on purpose: MIN_QUALITY is 7.0, and with only 6 and 8 anchored a judge that wavers
+# between neighbouring anchors flips pass/fail with a spread of 2 (AA-801 review, finding 2). There
+# is no 1-3 band: a broken or off-brand draft simply lands at or below 4, which is enough for the gate.
 
 
 def _clip(text: str, limit: int) -> str:
@@ -264,12 +279,14 @@ def build_rubric_anchors(brand_profile: dict, mission: Optional[str] = None) -> 
     if example:
         ten.append(f'as close in voice to this on-brand example as the facts allow: "{example}"')
     lines = [
-        "SCORE ANCHORS for THIS brand (pick the anchor the copy matches best; use 5, 7 or 9 only when",
-        "the copy fully meets the lower anchor and only part of the higher one):",
+        "SCORE ANCHORS for THIS brand (pick the anchor the copy matches best; use 5 or 9 only when the",
+        "copy fully meets the lower anchor and only part of the higher one):",
         "brand_fit_score:",
         "- 10: " + "; ".join(ten) + "; no generic filler anywhere.",
         "- 8: this brand's angle is clear in the overview and most days and the voice mostly matches; a",
         "  few passages read as generic travel copy.",
+        "- 7: the angle is clear in the overview and in at least half of the days; the voice matches in",
+        "  places; the other days read as generic travel copy.",
         "- 6: the brand angle shows only in the summary/overview, or brand words are bolted onto otherwise",
         "  generic copy; most days read like a standard tour description.",
         "- 4: generic travel copy that would fit any brand; the core idea and the voice are absent.",
@@ -281,6 +298,8 @@ def build_rubric_anchors(brand_profile: dict, mission: Optional[str] = None) -> 
         "cross_brand_distinct:",
         "- 10: the choice of details, the framing of each day and the voice would all change for another brand.",
         "- 8: most days emphasise different details than a neutral version would, and the voice is distinct.",
+        "- 7: about half of the days emphasise different details than a neutral version would; the rest",
+        "  keep the neutral structure with brand-specific wording.",
         "- 6: the same structure and details as a neutral version, with brand-specific wording in places.",
         "- 4: a synonym swap of a generic description.",
     ]
@@ -295,6 +314,34 @@ def _anchored_mission_axis(mission: str) -> str:
   No such sentence → false and mission_evidence "". Judge only against this brand's core idea above,
   never Adventure Asia's or a generic travel mission.
 - mission_evidence (string): the verbatim itinerary sentence, or "" when mission_present is false."""
+
+
+_QUOTE_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
+                             "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u2033": '"',
+                             "\u2013": "-", "\u2014": "-", "\u2212": "-", "\u2026": "...",
+                             "*": None, "_": None, "`": None})
+_EVIDENCE_TRIM = " \t\n\"'.,;:!?-"
+_MIN_EVIDENCE_WORDS = 4
+
+
+def _normalise_quote(text: str) -> str:
+    """Case-folded, whitespace-collapsed text with typographic quotes/dashes folded to ASCII and
+    markdown emphasis removed, so a faithful copy of a sentence matches its source."""
+    text = unicodedata.normalize("NFKC", str(text or "")).translate(_QUOTE_FOLD)
+    return " ".join(text.split()).casefold()
+
+
+def evidence_in_source(evidence: str, source: str) -> bool:
+    """AA-801 option (b): True when `evidence` is a verbatim (after `_normalise_quote`) copy of a
+    passage of `source` — the itinerary digest the judge saw — of at least `_MIN_EVIDENCE_WORDS`
+    words. Surrounding quote marks, trailing punctuation and a trailing ellipsis (the digest cuts
+    long days with " …") are ignored. A paraphrase or an invented sentence returns False."""
+    quote = _normalise_quote(evidence).strip(_EVIDENCE_TRIM)
+    while quote.endswith("..."):
+        quote = quote[:-3].strip(_EVIDENCE_TRIM)
+    if len(quote.split()) < _MIN_EVIDENCE_WORDS:
+        return False
+    return quote in _normalise_quote(source)
 
 
 def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[str] = None,
@@ -438,7 +485,9 @@ def score_brand_fit(
     The default 1 keeps the behaviour above exactly.
 
     AA-801 option (b): `anchors=True` (T2 with `T2_JUDGE_ANCHORS` on) builds the anchored prompt and,
-    when there is a mission, counts mission_present only with a quoted `mission_evidence`.
+    when there is a mission, counts mission_present only when `mission_evidence` is found verbatim in
+    the itinerary digest the judge saw (`evidence_in_source`); a yes without such a quote is overruled
+    and recorded as `evidence_verified=False`.
 
     AA-801 option (c): `model_override` — a catalog Model Key sent as the request's `model_tier` (the
     gateway's existing per-request override: one model, no route fallback, no shadow). Measurement
@@ -454,6 +503,7 @@ def score_brand_fit(
     extra = {}
     if anchors and mission:
         extra["require_evidence"] = True
+        extra["evidence_source"] = itinerary_digest(generated.get("itineraries"))
     if model_override:
         extra["model_tier"] = model_override
 
@@ -532,11 +582,12 @@ def _seeded_model(model_used: Optional[str]) -> bool:
 
 
 def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | None,
-           stage: str = "s1_judge", require_evidence: bool = False,
+           stage: str = "s1_judge", require_evidence: bool = False, evidence_source: Optional[str] = None,
            model_tier: Optional[str] = None) -> BrandFitResult:
     """One judge call. AA-801: `require_evidence` (anchored mission test) counts mission_present only
-    when the reply quotes a non-empty `mission_evidence`; `model_tier` is the gateway's per-request
-    model override (adhoc measurement only — `score_brand_fit` guards the stage)."""
+    when the reply quotes a non-empty `mission_evidence` that, when `evidence_source` is given, is
+    found verbatim in it (`evidence_in_source`); `model_tier` is the gateway's per-request model
+    override (adhoc measurement only — `score_brand_fit` guards the stage)."""
     request = LLMRequest(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -570,8 +621,12 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
     mission_present = bool(result.get("mission_present", True))
     feedback = (result.get("feedback") or "").strip()
     evidence = str(result.get("mission_evidence") or "").strip()
-    if require_evidence and mission_present and not evidence:
-        mission_present = False          # AA-801 (b): an unquoted "yes" does not count
+    verified: Optional[bool] = None
+    if require_evidence and mission_present:
+        # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.
+        verified = bool(evidence) and (evidence_source is None or evidence_in_source(evidence, evidence_source))
+        if not verified:
+            mission_present = False
 
     judge_score = min(brand_fit, distinct)
     if mission_absent_cap is not None and not mission_present:
@@ -591,4 +646,5 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
         mission_evidence=evidence if mission_present else "",
+        evidence_verified=verified,
     )

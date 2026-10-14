@@ -72,7 +72,7 @@ def t2_judge_repeat() -> str:
     return mode if mode in T2_JUDGE_REPEATS else T2_JUDGE_REPEAT_DEFAULT
 
 
-# AA-801 option (b) — rubric anchors in the T2 judge prompt: what a 4 / 6 / 8 / 10 looks like for THIS
+# AA-801 option (b) — rubric anchors in the T2 judge prompt: what a 4 / 6 / 7 / 8 / 10 looks like for THIS
 # tenant (built from its T0 brand pack) and a yes/no mission test that must quote the itinerary
 # sentence proving it (brand_fit.build_rubric_anchors). Off by default; "on" / "1" / "true" turns it
 # on (worker task def), like T2_JUDGE_REPEAT. Combines with median3. A1 is never affected.
@@ -264,7 +264,8 @@ def judge_node(state: dict) -> dict:
                    if repeat_mode and repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),
                 # AA-801 (b): anchored prompt + the quoted mission sentence (absent when the flag is off).
                 **({"judge_anchors": True,
-                    "mission_evidence": (getattr(result, "mission_evidence", "") or "")[:300]}
+                    "mission_evidence": (getattr(result, "mission_evidence", "") or "")[:300],
+                    "evidence_verified": getattr(result, "evidence_verified", None)}
                    if anchors else {}),
             },
             stop_reason=result.stop_reason,

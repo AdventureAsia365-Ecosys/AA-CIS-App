@@ -1,6 +1,7 @@
 """AA-801 option (b) rubric anchors (T2_JUDGE_ANCHORS, default off) and option (c) the adhoc-only
 judge model override. All mock-only: no AWS, no DB, no LLM.
 """
+import dataclasses
 import json
 from unittest.mock import patch
 
@@ -11,7 +12,8 @@ from services.content_generation import judge_node as jn
 from shared.llm_client.models import LLMResponse
 
 GEN = {"name": "Kyoto Days", "subtitle": "Quiet temples", "summary": "Calm.", "highlights": ["Nanzen-ji"],
-       "itineraries": "Day 1 — Arrive Kyoto.", "seo_title": "Kyoto", "seo_meta": "A calm Kyoto trip."}
+       "itineraries": "Day 1 — Arrive Kyoto.\nWe ride out at dawn, legs burning, toward the temples.",
+       "seo_title": "Kyoto", "seo_meta": "A calm Kyoto trip."}
 
 FULL = {"brand_name": "Trail Pulse", "brand_core_idea": "Movement and freedom.",
         "brand_customer_segment": "active couples", "brand_customer_mindset": "to feel alive",
@@ -32,7 +34,7 @@ def _flags(monkeypatch):
 def test_anchors_use_every_brand_pack_field():
     text = bf.build_rubric_anchors(FULL, "Movement and freedom.")
     assert "SCORE ANCHORS" in text
-    for anchor in ("- 10:", "- 8:", "- 6:", "- 4:"):
+    for anchor in ("- 10:", "- 8:", "- 7:", "- 6:", "- 4:"):
         assert text.count(anchor) == 2            # brand_fit and cross_brand_distinct
     assert "Trail Pulse" in text
     assert '"Movement and freedom."' in text
@@ -123,6 +125,46 @@ def test_without_the_requirement_an_unquoted_yes_still_counts():
     assert req.model_tier is None and "model_tier" not in req.model_fields_set
 
 
+def test_quote_found_in_the_source_is_verified():
+    src = "Day 2 — Hills\nWe ride out at dawn, legs **burning**, the valley opening below us."
+    out, _ = _judge(_resp(True, "\u201cWe ride out at dawn, legs burning\u2026\u201d"), require_evidence=True,
+                    evidence_source=src)
+    assert out.mission_present is True and out.evidence_verified is True and out.judge_score == 7.0
+
+
+def test_paraphrased_quote_is_overruled_and_recorded():
+    src = "Day 2 — Hills\nWe ride out at dawn, legs burning, the valley opening below us."
+    out, _ = _judge(_resp(True, "At sunrise we cycle out with burning legs."), require_evidence=True,
+                    evidence_source=src)
+    assert out.mission_present is False and out.evidence_verified is False
+    assert out.judge_score == 6.0 and out.mission_evidence == ""
+
+
+def test_unquoted_yes_is_recorded_as_unverified():
+    out, _ = _judge(_resp(True, ""), require_evidence=True, evidence_source="anything at all here")
+    assert out.evidence_verified is False
+
+
+def test_a_plain_no_is_not_an_evidence_check():
+    out, _ = _judge(_resp(False, ""), require_evidence=True, evidence_source="x")
+    assert out.evidence_verified is None
+    out, _ = _judge(_resp(True))
+    assert out.evidence_verified is None
+
+
+@pytest.mark.parametrize("quote,ok", [
+    ("we ride out at dawn", True),                       # case and trailing punctuation ignored
+    ("We  ride out\nat dawn.", True),                   # whitespace collapsed
+    ("ride out at", False),                              # too short to be a sentence
+    ("We ride out at noon", False),                      # not in the source
+    ("the valley opening below us", False),              # cut off by the digest, never seen
+])
+def test_evidence_in_source(quote, ok):
+    src = bf.itinerary_digest([{"day": 1, "title": "Hills", "body": "We ride out at dawn. " + "x" * 400
+                                + " the valley opening below us."}])
+    assert bf.evidence_in_source(quote, src) is ok
+
+
 def test_evidence_is_dropped_when_mission_is_false():
     out, _ = _judge(_resp(False, "something"), require_evidence=True)
     assert out.mission_present is False and out.mission_evidence == ""
@@ -143,6 +185,7 @@ def test_anchors_build_the_anchored_prompt_and_require_evidence():
         bf.score_brand_fit(FULL, GEN, stage="t2_judge", mission="Movement and freedom.", anchors=True)
     assert "SCORE ANCHORS" in j.call_args.args[1]
     assert j.call_args.kwargs["require_evidence"] is True
+    assert "We ride out at dawn" in j.call_args.kwargs["evidence_source"]   # the digest the judge saw
     assert "model_tier" not in j.call_args.kwargs
 
 
@@ -150,7 +193,7 @@ def test_anchors_without_mission_do_not_require_evidence():
     with patch.object(bf, "_judge", return_value=_res()) as j, \
             patch.object(bf, "_seeded_model", return_value=True):
         bf.score_brand_fit(BARE, GEN, stage="t2_judge", anchors=True)
-    assert "require_evidence" not in j.call_args.kwargs
+    assert "require_evidence" not in j.call_args.kwargs and "evidence_source" not in j.call_args.kwargs
 
 
 def test_anchors_with_median3_pass_the_requirement_to_every_call():
@@ -216,7 +259,15 @@ def test_flag_on_t2_uses_anchors_and_logs_the_quote(monkeypatch):
     assert "SCORE ANCHORS" in req.user_prompt and "MISSION TEST" in req.user_prompt
     assert rec["quality_signal"]["judge_anchors"] is True
     assert rec["quality_signal"]["mission_evidence"] == "We ride out at dawn."
+    assert rec["quality_signal"]["evidence_verified"] is True
     assert out["judge_score"] == 8.0
+
+
+def test_flag_on_invented_quote_is_capped(monkeypatch):
+    monkeypatch.setenv("T2_JUDGE_ANCHORS", "on")
+    out, _, rec = _run(_T2, _resp(True, "Every day is about movement and freedom."))
+    assert out["judge_mission_present"] is False and out["judge_score"] == 6.0
+    assert rec["quality_signal"]["evidence_verified"] is False
 
 
 def test_flag_on_unquoted_mission_is_capped(monkeypatch):
@@ -224,6 +275,17 @@ def test_flag_on_unquoted_mission_is_capped(monkeypatch):
     out, _, rec = _run(_T2, _resp(True, ""))
     assert out["judge_mission_present"] is False and out["judge_score"] == 6.0
     assert rec["quality_signal"]["mission_evidence"] == ""
+
+
+def test_median3_aggregates_evidence_verified():
+    yes = dataclasses.replace(_res(evidence="q"), evidence_verified=True)
+    overruled = dataclasses.replace(_res(mission=False), evidence_verified=False)
+    plain_no = _res(mission=False)
+    assert bf.aggregate_runs([yes, yes, overruled], mission_absent_cap=6.0).evidence_verified is True
+    agg = bf.aggregate_runs([yes, overruled, overruled], mission_absent_cap=6.0)
+    assert agg.mission_present is False and agg.evidence_verified is False
+    assert [r.get("evidence_verified") for r in agg.runs] == [True, False, False]
+    assert bf.aggregate_runs([plain_no] * 3, mission_absent_cap=6.0).evidence_verified is None
 
 
 def test_flag_on_does_not_touch_a1(monkeypatch):
