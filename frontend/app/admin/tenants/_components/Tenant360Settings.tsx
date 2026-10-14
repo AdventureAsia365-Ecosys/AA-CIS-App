@@ -2,6 +2,8 @@
 // app/admin/tenants/_components/Tenant360Settings.tsx
 // AA-766 — Tenant 360 Settings tab: the editors AA-666 left as "a follow-up".
 //   - Plan & rate limit -> PATCH /admin/tenants/{id} {plan_tier?, rate_limit_rpm?}
+//   - Daily publish limit (AA-819) -> PATCH /admin/tenants/{id} {daily_publish_limit: int | null}
+//     (null clears the per-tenant override; the publish route then uses its code default)
 //   - Planning config   -> PUT   /admin/tenants/{id}/config {markets, channels, posts_per_week}
 // Both writes are admin-only (lib/rbac.ts API_WRITE_RULES "tenants" + backend
 // _require_tenant_admin) and each writes an acp_shared.audit_log row with before/after (AA-797),
@@ -16,8 +18,9 @@ import {
   Badge, Button, ErrorState, Spinner, ToastProvider, apiGet, apiSend, useToast,
 } from "../../../_kit";
 import {
-  PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX, SEO_SUPPORTED_MARKETS, type TenantConfig,
-  parseMarkets, validateConfig, validateRpm,
+  DAILY_PUBLISH_LIMIT_DEFAULT, DAILY_PUBLISH_LIMIT_MAX, PLANNING_CHANNELS, RATE_LIMIT_RPM_MAX,
+  SEO_SUPPORTED_MARKETS, type TenantConfig, fmtDailyPublishLimit, parseDailyPublishLimit,
+  parseMarkets, validateConfig, validateDailyPublishLimit, validateRpm,
 } from "./tenant360";
 
 const PLAN_CHOICES = ["starter", "growth", "business"];
@@ -131,6 +134,76 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
   );
 }
 
+// ── Daily publish limit (AA-819) ──────────────────────────────────────────────
+
+// The PATCH answers with the stored override when the backend knows the column; until then the
+// key may be absent, so fall back to what was sent.
+interface PublishLimitPatchResult { changed: string[]; daily_publish_limit?: number | null }
+
+function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
+  tenantId: string; dailyPublishLimit: number | null | undefined; locked: boolean; onChanged: () => void;
+}) {
+  const toast = useToast();
+  // undefined = GET /admin/tenants does not return the key: the AA-819 backend is not deployed, so
+  // there is no limit to show or set yet. Keep the field read-only rather than let a save 422.
+  const supported = dailyPublishLimit !== undefined;
+  const [saved, setSaved] = useState<number | null>(dailyPublishLimit ?? null);
+  const [value, setValue] = useState(dailyPublishLimit == null ? "" : String(dailyPublishLimit));
+  const error = validateDailyPublishLimit(value);
+  const dirty = !error && parseDailyPublishLimit(value) !== saved;
+
+  const m = useMutation({
+    mutationFn: (limit: number | null) =>
+      apiSend<PublishLimitPatchResult>(`/api/admin/tenants/${tenantId}`, {
+        method: "PATCH", body: { daily_publish_limit: limit }, admin: true,
+      }),
+    onMutate: (limit) => {
+      const prev = saved;
+      setSaved(limit);
+      return { prev };
+    },
+    onError: (err, _limit, ctx) => {
+      if (ctx) { setSaved(ctx.prev); setValue(ctx.prev == null ? "" : String(ctx.prev)); }
+      toast.error(`Daily publish limit not saved: ${(err as Error).message}`);
+    },
+    onSuccess: (res, limit) => {
+      const stored = res.daily_publish_limit === undefined ? limit : res.daily_publish_limit;
+      setSaved(stored);
+      setValue(stored == null ? "" : String(stored));
+      toast.success(res.changed.length ? `Saved: ${res.changed.join(", ")}` : "Nothing changed");
+      onChanged();
+    },
+  });
+
+  return (
+    <Section title="Daily publish limit"
+      hint={supported
+        ? `Publishes this tenant can make per UTC day. Leave empty to use the default (${DAILY_PUBLISH_LIMIT_DEFAULT}/day).`
+        : "Not available yet: the server does not report a daily publish limit for this tenant."}>
+      <div>
+        <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>Publishes per day (override)</label>
+        <input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
+          placeholder={`default ${DAILY_PUBLISH_LIMIT_DEFAULT}`}
+          disabled={!supported || locked || m.isPending} onChange={e => setValue(e.target.value)}
+          aria-invalid={!!error} style={{ ...inputStyle, width: 160 }} />
+        <FieldError msg={error} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <Button variant="primary" size="sm" onClick={() => m.mutate(parseDailyPublishLimit(value))}
+          disabled={!supported || locked || m.isPending || !!error || !dirty}>
+          {m.isPending ? <><Spinner size={12} /> Saving…</> : "Save limit"}
+        </Button>
+        {supported && saved != null && !m.isPending && (
+          <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>Use default</Button>
+        )}
+        <span style={{ fontSize: 11.5, color: A.muted2 }}>
+          Current: <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined)}</span>
+        </span>
+      </div>
+    </Section>
+  );
+}
+
 // ── Planning config (markets / channels / posts per week) ─────────────────────
 
 // `server` is the react-query cache value (the parent's useQuery re-renders on every optimistic
@@ -237,7 +310,7 @@ function ConfigForm({ tenantId, server, locked }: { tenantId: string; server: Te
   );
 }
 
-function SettingsInner({ tenantId, planTier, rateLimitRpm, status, onChanged }: Tenant360SettingsProps) {
+function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, status, onChanged }: Tenant360SettingsProps) {
   const locked = status === "offboarded";
   const cfg = useQuery({
     queryKey: ["tenant360", tenantId, "config"],
@@ -251,6 +324,7 @@ function SettingsInner({ tenantId, planTier, rateLimitRpm, status, onChanged }: 
         </div>
       )}
       <PlanForm tenantId={tenantId} planTier={planTier} rateLimitRpm={rateLimitRpm} locked={locked} onChanged={onChanged} />
+      <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} locked={locked} onChanged={onChanged} />
       {cfg.isLoading ? (
         <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> Loading planning config…</div>
       ) : cfg.isError || !cfg.data ? (
@@ -269,6 +343,9 @@ export interface Tenant360SettingsProps {
   tenantId: string;
   planTier: string;
   rateLimitRpm: number;
+  /** AA-819 — null: no override, the code default applies; undefined: the server does not
+   *  report the field yet (backend not deployed), so the editor stays read-only. */
+  dailyPublishLimit?: number | null;
   status: "active" | "suspended" | "offboarded";
   onChanged: () => void;
 }

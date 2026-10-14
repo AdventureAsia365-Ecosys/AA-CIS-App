@@ -8,6 +8,7 @@ import { Download, HelpCircle, Loader2, Pencil, Save, Search, Sparkles, X } from
 import { useState } from "react";
 import { T, sans, mono, Btn } from "./ui";
 import { type ReviewItem } from "./reviewListApi";
+import { AiContentNotice } from "./AiContentNotice";
 
 export function ReviewDrawer({
   item,
@@ -84,6 +85,9 @@ export function ReviewDrawer({
           {item.content_text}
         </div>
       )}
+
+      {/* AA-819 — AUP notice next to the export actions (the drawer covers the page's own line). */}
+      {editable && <AiContentNotice />}
 
       {/* actions */}
       {editable &&

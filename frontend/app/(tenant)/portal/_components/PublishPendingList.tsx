@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
 import { T, sans, Card, CardHead, Btn, Badge, EmptyState, StickyBar } from "./ui";
+import { AiContentNotice } from "./AiContentNotice";
 
 interface PendingPiece {
   piece_id: string;
@@ -87,6 +88,8 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
       >
         <CardHead title="Ready to Publish" />
       </StickyBar>
+      {/* AA-819 — AUP notice above the Publish buttons. */}
+      <AiContentNotice style={{ marginBottom: 14 }} />
       {pieces === null ? (
         <div style={{ padding: 24, textAlign: "center", color: T.muted, fontSize: 13 }}>Loading…</div>
       ) : pieces.length === 0 ? (
