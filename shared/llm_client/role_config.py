@@ -134,6 +134,14 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # AA-685 (migration 172) — call sites that bypassed the gateway before.
     "a0_column_map":      StageConfig("a0_column_map", "writer", "claude", "haiku", "acc3"),
     "f10_embed":          StageConfig("f10_embed", "embed", "cohere", "cohere-embed-v4", None),
+    # AA-712 (migration 226) — the place pipeline moved from TripPlanner (tp_extract /
+    # tp_component_embed) into CIS jobs. Day skeleton: Sonnet (parity with TripPlanner's grounded
+    # prompt) with GPT-5.6 Luna (Bedrock acc3) as a 20% shadow (design Q4); locate: Sonnet; embed:
+    # Cohere v4 1536-d (= tp_search_embed). Extraction of reference data → `validate` (ADR 0008).
+    "a3_place_days":      StageConfig("a3_place_days", "validate", "claude", "sonnet", "acc3",
+                                      shadow_model_id="gpt-5.6-luna", shadow_sample_pct=20),
+    "a3_place_locate":    StageConfig("a3_place_locate", "validate", "claude", "sonnet", "acc3"),
+    "a3_place_embed":     StageConfig("a3_place_embed", "embed", "cohere", "cohere-embed-v4", None),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")
