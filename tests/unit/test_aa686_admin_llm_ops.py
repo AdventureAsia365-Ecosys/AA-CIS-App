@@ -41,7 +41,10 @@ LUNA = _model("gpt-5.6-luna", vendor="openai", supports_temperature=False,
 GPT41 = _model("gpt-4.1", vendor="openai", provider="openai", api_style="openai_chat",
                bedrock_profile_ids={}, callable_via=("llm_client", "openai_direct", "pinned"),
                price_in_per_mtok=2.0, price_out_per_mtok=8.0)
-ALL = [SONNET5, HAIKU, LUNA, GPT41]
+LUNA6 = _model("gpt-6-luna", vendor="openai", supports_temperature=False,
+               bedrock_profile_ids={"acc3": "global.openai.gpt-6-luna"},
+               price_in_per_mtok=0.1, price_out_per_mtok=0.5)
+ALL = [SONNET5, HAIKU, LUNA, LUNA6, GPT41]
 
 
 # ── test doubles for asyncpg ────────────────────────────────────────────────────────────────────
@@ -134,7 +137,7 @@ async def test_route_rejects_wrong_vendor_fallback():
 @pytest.mark.asyncio
 async def test_route_rejects_duplicate_fallback():
     with pytest.raises(HTTPException) as exc:
-        await _call_route({"fallback_model_ids": ["gpt-4.1", "gpt-4.1"]}, stage_rows=[JUDGE_STAGE])
+        await _call_route({"fallback_model_ids": ["gpt-6-luna", "gpt-6-luna"]}, stage_rows=[JUDGE_STAGE])
     assert exc.value.status_code == 422
     assert "duplicate" in exc.value.detail
 
@@ -173,13 +176,14 @@ async def test_route_valid_update_calls_setter():
                 "shadow_model_id": kw["shadow_model_id"],
                 "shadow_sample_pct": kw["shadow_sample_pct"]}
 
-    res = await _call_route({"fallback_model_ids": ["gpt-4.1"], "shadow_model_id": "gpt-4.1",
+    # S235: an OpenAI-API model (GPT41 here) may be the LAST fallback; the shadow is a Bedrock model.
+    res = await _call_route({"fallback_model_ids": ["gpt-6-luna", "gpt-4.1"], "shadow_model_id": "gpt-6-luna",
                              "shadow_sample_pct": 50}, stage_rows=[JUDGE_STAGE], setter=setter)
-    assert captured["fallback_model_ids"] == ["gpt-4.1"]
-    assert captured["shadow_model_id"] == "gpt-4.1"
+    assert captured["fallback_model_ids"] == ["gpt-6-luna", "gpt-4.1"]
+    assert captured["shadow_model_id"] == "gpt-6-luna"
     assert captured["shadow_sample_pct"] == 50
     assert captured["audit_actor"] == "admin:admin1"
-    assert res["route"]["shadow"]["model_id"] == "gpt-4.1"
+    assert res["route"]["shadow"]["model_id"] == "gpt-6-luna"
 
 
 @pytest.mark.asyncio
@@ -190,13 +194,13 @@ async def test_route_explicit_null_clears_shadow_omitted_keeps_it():
         captured.update(kw)
         return {"stage": stage, "model_id": "gpt-5.6-luna", "updated_at": None, **kw}
 
-    with_shadow = {**JUDGE_STAGE, "shadow_model_id": "gpt-4.1", "shadow_sample_pct": 20}
+    with_shadow = {**JUDGE_STAGE, "shadow_model_id": "gpt-6-luna", "shadow_sample_pct": 20}
     await _call_route({"shadow_model_id": None}, stage_rows=[with_shadow], setter=setter)
     assert captured["shadow_model_id"] is None
     assert captured["shadow_sample_pct"] == 0  # no shadow -> nothing to sample
 
     await _call_route({"fallback_model_ids": ["gpt-4.1"]}, stage_rows=[with_shadow], setter=setter)
-    assert captured["shadow_model_id"] == "gpt-4.1"
+    assert captured["shadow_model_id"] == "gpt-6-luna"
     assert captured["shadow_sample_pct"] == 20
 
 
