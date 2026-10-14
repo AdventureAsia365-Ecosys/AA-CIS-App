@@ -79,6 +79,7 @@ class AdminTenantAuditAction:
     BRAND_UPDATED = "tenant.brand_updated"
     CONFIG_UPDATED = "tenant.config_updated"  # markets / channels / posts_per_week
     PLAN_ID_BACKFILL = "tenant.plan_id_backfill"  # S234 one-off data fix (script, not a route)
+    RESTORED = "tenant.restored"  # offboarded -> active, new key (Nghiệp 14/10/2026)
 
 
 async def write_audit_log(

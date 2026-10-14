@@ -120,8 +120,9 @@ def _admin_actor(x_admin_user_id: Optional[str]) -> str:
 
 
 def tenant_status(is_active: bool, cancelled_at) -> str:
-    """The three tenant states (AA-797): offboarded is terminal (cancelled_at set, key revoked),
-    suspended is a reversible is_active=false, everything else is active."""
+    """The three tenant states (AA-797): offboarded (cancelled_at set, key revoked; reversible only
+    through POST /tenants/{id}/restore), suspended is a reversible is_active=false, everything
+    else is active."""
     if cancelled_at is not None:
         return "offboarded"
     return "active" if is_active else "suspended"
@@ -495,7 +496,8 @@ async def update_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """Plan change (plan_tier + plan_id + rate_limit_rpm together) and/or suspend/resume
-    (is_active). An offboarded tenant (cancelled_at set) is terminal: 409, never reactivated here.
+    (is_active). An offboarded tenant (cancelled_at set) gets 409 here: it comes back only through
+    POST /tenants/{id}/restore, which also issues a new key.
     Each change writes one audit row with before/after, in the same transaction."""
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
@@ -517,7 +519,8 @@ async def update_tenant(
         if before["cancelled_at"] is not None:
             raise HTTPException(
                 status_code=409,
-                detail=f"Tenant was offboarded at {before['cancelled_at'].isoformat()}; it cannot be changed",
+                detail=(f"Tenant was offboarded at {before['cancelled_at'].isoformat()}; "
+                        "restore it first (POST /admin/tenants/{id}/restore)"),
             )
 
         if body.plan_tier is not None and body.plan_tier != before["plan_tier"]:
@@ -1162,11 +1165,12 @@ async def generate_api_key(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Tenant not found")
-        # AA-797: an offboarded tenant's key stays revoked (offboarding is terminal).
+        # AA-797: an offboarded tenant's key stays revoked; restore issues the new key.
         if row["cancelled_at"] is not None:
             raise HTTPException(
                 status_code=409,
-                detail=f"Tenant was offboarded at {row['cancelled_at'].isoformat()}; no new key can be issued",
+                detail=(f"Tenant was offboarded at {row['cancelled_at'].isoformat()}; restore it to issue a "
+                        "new API key (POST /admin/tenants/{id}/restore)"),
             )
         plaintext = f"cis_{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
@@ -1211,9 +1215,12 @@ async def offboard_tenant(
 ):
     """
     GDPR offboarding: cancel tenant, revoke API key, log for data deletion. PRD v1.0 §3.2.
-    Terminal (AA-797): no route reactivates an offboarded tenant, and PATCH / generate-key on it
-    return 409. The tenant's QUEUED jobs are cancelled (running ones finish); its data is kept —
-    GDPR data deletion is a separate follow-up, not automated here.
+    Soft state only (AA-797, Nghiệp 14/10/2026): no tenant data or setting is deleted or
+    overwritten (brand rules, planning config, T2 versions, content, markets, plan_id, users), so
+    POST /tenants/{id}/restore brings the tenant back whole. PATCH / generate-key on an
+    offboarded tenant return 409. The tenant's QUEUED jobs are cancelled (running ones finish).
+    The Jev allow-list row is removed (AA-741) but snapshotted into the audit row so restore can
+    put it back. GDPR data deletion is a separate follow-up, not automated here.
     """
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
@@ -1242,6 +1249,11 @@ async def offboard_tenant(
             )
 
         async with conn.transaction():
+            # AA-797: the allow-list row is a setting; keep a copy so restore can re-add it.
+            allow = await conn.fetchrow(
+                "SELECT reason, added_at, added_by FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid",
+                tenant_id,
+            )
             await conn.execute(
                 """
                 UPDATE shared.tenants
@@ -1275,7 +1287,9 @@ async def offboard_tenant(
                     "reason": body.reason,
                     "name": tenant["name"],
                     "cancelled_jobs": [{"id": r["id"], "kind": r["kind"]} for r in cancelled],
-                    "note": "GDPR data deletion is a follow-up; nothing is deleted by this call",
+                    "jev_allowlist": ({"reason": allow["reason"], "added_at": allow["added_at"].isoformat(),
+                                       "added_by": allow["added_by"]} if allow else None),
+                    "note": "Nothing is deleted; POST /admin/tenants/{id}/restore brings the tenant back",
                 },
             )
             # AA-741 (S229): an offboarded tenant's content must never reach Jev again.
@@ -1294,8 +1308,117 @@ async def offboard_tenant(
         "status": "offboarded",
         "api_key": "REVOKED",
         "cancelled_jobs": len(cancelled),
-        "note": "Tenant data is kept. GDPR data deletion is not automated yet (follow-up).",
+        "note": "Tenant data and settings are kept; POST /admin/tenants/{id}/restore brings the tenant back.",
     }
+
+
+# ── POST /admin/tenants/{id}/restore — undo an offboard (AA-797) ─────────────
+
+class RestoreTenantResponse(BaseModel):
+    tenant_id: str
+    tenant_name: str
+    status: str
+    api_key: str
+    previous_offboarded_at: str
+    previous_reason: Optional[str]
+    jev_allowlist_restored: bool
+    cancelled_jobs: list[dict]
+    message: str
+
+
+@router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
+             summary="AA-797 — restore an offboarded tenant with its data and settings")
+async def restore_tenant(
+    tenant_id: UUID,
+    request: Request,
+    x_admin_secret: str = Header(None),
+    x_admin_user_id: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+):
+    """Nghiệp (14/10/2026): an offboarded tenant must come back quickly with its data and settings.
+    Offboard deletes nothing, so restore only clears the offboard markers (cancelled_at,
+    cancellation_reason), sets is_active, re-adds the Jev allow-list row offboard snapshotted, and
+    issues a NEW API key (the old one stays revoked). plan_tier / plan_id / rate limit and every
+    setting are left exactly as they were. Jobs offboard cancelled are NOT re-enqueued; they are
+    listed so the admin can re-run them. 409 unless the tenant is offboarded."""
+    verify_admin_secret(x_admin_secret)
+    _require_tenant_admin(x_admin_role)
+    tid = str(tenant_id)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow("""
+            SELECT tenant_id, name, is_active, cancelled_at, cancellation_reason
+            FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE
+        """, tenant_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        if row["cancelled_at"] is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Tenant is {tenant_status(row['is_active'], None)}, not offboarded; "
+                        "only an offboarded tenant can be restored"),
+            )
+        offboarded_at = row["cancelled_at"]
+
+        # The jobs this offboard cancelled (same transaction set finished_at = cancelled_at).
+        jobs = await conn.fetch("""
+            SELECT id::text AS id, kind FROM shared.job
+            WHERE payload->>'tenant_id' = $1 AND status = 'cancelled'
+              AND error = 'cancelled: tenant offboarded' AND finished_at >= $2
+            ORDER BY created_at
+        """, tid, offboarded_at)
+        cancelled_jobs = [{"id": j["id"], "kind": j["kind"]} for j in jobs]
+
+        # Re-add the Jev allow-list row from the latest offboard audit snapshot (AA-741 removed it).
+        details = await conn.fetchval("""
+            SELECT details FROM acp_shared.audit_log
+            WHERE tenant_id = $1 AND action = $2 ORDER BY created_at DESC LIMIT 1
+        """, tid, AdminTenantAuditAction.OFFBOARD)
+        if isinstance(details, str):
+            details = json.loads(details)
+        allow = (details or {}).get("jev_allowlist")
+        allow_restored = False
+        if allow:
+            inserted = await conn.execute("""
+                INSERT INTO shared.jev_tenant_allowlist (tenant_id, reason, added_at, added_by)
+                VALUES ($1, $2, $3::timestamptz, $4) ON CONFLICT (tenant_id) DO NOTHING
+            """, tenant_id, allow["reason"], datetime.fromisoformat(allow["added_at"]), allow["added_by"])
+            allow_restored = inserted.endswith(" 1")
+
+        plaintext = f"cis_{secrets.token_urlsafe(32)}"
+        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+        await conn.execute("""
+            UPDATE shared.tenants
+            SET cancelled_at = NULL, cancellation_reason = NULL, is_active = TRUE,
+                api_key_hash = $2, updated_at = NOW()
+            WHERE tenant_id = $1
+        """, tenant_id, key_hash)
+        await write_audit_log(
+            conn, tenant_id=tid, actor=_admin_actor(x_admin_user_id),
+            action=AdminTenantAuditAction.RESTORED, resource_type="tenant", resource_id=tid,
+            details={
+                "name": row["name"],
+                "previous_offboarded_at": offboarded_at.isoformat(),
+                "previous_reason": row["cancellation_reason"],
+                "restored": ["status:active", "api_key:new"] + (["jev_allowlist"] if allow_restored else []),
+                "unchanged": "plan_tier, plan_id, rate limit, brand rules, planning config, content, users",
+                "cancelled_jobs_not_rerun": cancelled_jobs,
+            },
+        )
+
+    await _forget_tenant_meta(request, tenant_id)
+    return RestoreTenantResponse(
+        tenant_id=tid,
+        tenant_name=row["name"],
+        status="active",
+        api_key=plaintext,
+        previous_offboarded_at=offboarded_at.isoformat(),
+        previous_reason=row["cancellation_reason"],
+        jev_allowlist_restored=allow_restored,
+        cancelled_jobs=cancelled_jobs,
+        message=("Store this key securely — it will not be shown again. "
+                 f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run."),
+    )
 
 
 # ── GET/PUT /admin/tenants/{id}/config — AA-323 Gap 3: N4-N6 markets/channels/

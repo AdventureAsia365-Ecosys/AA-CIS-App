@@ -1,6 +1,8 @@
 """AA-797 (S235) — admin tenant writes against real Postgres: create sets plan_id, PATCH body
-suspends/resumes and changes plan with audit rows, offboarded is terminal (409), offboard cancels
-only QUEUED jobs, generate-key is audited, /usage returns 200 from shared.tenant_api_usage.
+suspends/resumes and changes plan with audit rows, offboard cancels only QUEUED jobs and keeps
+every setting, offboarded tenants get 409 on PATCH / generate-key, restore brings the tenant back
+with its plan, brand rules, planning config and Jev allow-list plus a new key, generate-key is
+audited, /usage returns 200 from shared.tenant_api_usage.
 
 shared.membership_plans and shared.tenants.plan_id exist live but in no repo migration yet (the
 AA-798 baseline, migration 223, adds them). Until then this fixture creates both with
@@ -9,6 +11,8 @@ test runs on the 007-shaped CI DB; once 223 lands the DDL is a no-op. Same for a
 stand-in of gold_aa_internal.tenant_tour_versions (only migration 001 creates it; the test DB
 skips 001).
 """
+import hashlib
+import json
 import os
 import sys
 import uuid
@@ -73,6 +77,7 @@ async def ctx(monkeypatch):
         await p.execute("DELETE FROM shared.job WHERE payload->>'tenant_id' = $1", tid)
         await p.execute("DELETE FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid", tid)
         await p.execute("DELETE FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid", tid)
+        await p.execute("DELETE FROM acp_shared.tenant_config WHERE tenant_id = $1::uuid", tid)
         await p.execute("DELETE FROM acp_shared.acp_quota_ledger WHERE tenant_id = $1::uuid", tid)
         await p.execute("DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid", tid)
         await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1::uuid", tid)
@@ -146,6 +151,27 @@ async def test_tenant_lifecycle_end_to_end(ctx):
     [m] = usage["monthly_usage"]
     assert (m["total_calls"], m["successful_calls"], m["rate_limited_calls"]) == (3, 2, 1)
 
+    # settings that offboard must keep: planning config, a brand rule field, a Jev allow-list row
+    await admin.update_tenant_config(
+        uuid.UUID(tid), admin.TenantConfigRequest(markets=["US", "AU"], channels=["blog", "email"], posts_per_week=5),
+        req, **HDR)
+    await pool.execute("UPDATE shared.tenant_brand_rules SET system_prompt = 'aa797 voice' "
+                       "WHERE tenant_id = $1::uuid", tid)
+    await pool.execute("INSERT INTO shared.jev_tenant_allowlist (tenant_id, reason, added_by) "
+                       "VALUES ($1::uuid, 'aa797 test', 'aa797')", tid)
+
+    async def settings():
+        t_row = await pool.fetchrow(
+            "SELECT plan_tier::text AS tier, plan_id, rate_limit_rpm, posts_per_week, slug, name "
+            "FROM shared.tenants WHERE tenant_id = $1::uuid", tid)
+        cfg = await pool.fetchrow(
+            "SELECT markets, channels FROM acp_shared.tenant_config WHERE tenant_id = $1::uuid", tid)
+        brand = await pool.fetch("SELECT brand_name, system_prompt FROM shared.tenant_brand_rules "
+                                 "WHERE tenant_id = $1::uuid ORDER BY brand_name", tid)
+        return dict(t_row), dict(cfg), [dict(b) for b in brand]
+    kept = await settings()
+    assert kept[1]["markets"] == ["US", "AU"] and kept[2] == [{"brand_name": "default", "system_prompt": "aa797 voice"}]
+
     # offboard: queued job cancelled, running job untouched, key revoked, audit row
     queued = await pool.fetchval(
         "INSERT INTO shared.job (kind, payload) VALUES ('aa797_test', jsonb_build_object('tenant_id', $1::text)) "
@@ -163,7 +189,12 @@ async def test_tenant_lifecycle_end_to_end(ctx):
     assert t["is_active"] is False and t["api_key_hash"].startswith("REVOKED_") and t["cancelled_at"]
     assert [a["actor"] for a in await _audit(pool, tid, A.OFFBOARD)] == ["admin:admin-797"]
 
-    # offboarded is terminal
+    assert await settings() == kept  # offboard is soft: nothing deleted or overwritten
+    assert await pool.fetchval("SELECT count(*) FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid",
+                               tid) == 0  # AA-741 still holds while offboarded
+    revoked_hash = t["api_key_hash"]
+
+    # offboarded: PATCH / generate-key / second offboard are 409; generate-key points at restore
     for call in (
         admin.update_tenant(uuid.UUID(tid), admin.UpdateTenantRequest(is_active=True), req, **HDR),
         admin.generate_api_key(uuid.UUID(tid), req, **HDR),
@@ -172,4 +203,39 @@ async def test_tenant_lifecycle_end_to_end(ctx):
         with pytest.raises(HTTPException) as e:
             await call
         assert e.value.status_code == 409
+    with pytest.raises(HTTPException) as e:
+        await admin.generate_api_key(uuid.UUID(tid), req, **HDR)
+    assert "restore" in e.value.detail
     assert await _list_status(admin, pool, req, tid, True) in (None, ["offboarded"])
+
+    # restore: active again, markers cleared, new key, settings and allow-list back, jobs listed not re-run
+    restored = await admin.restore_tenant(uuid.UUID(tid), req, **HDR)
+    assert restored.status == "active" and restored.api_key.startswith("cis_")
+    assert restored.cancelled_jobs == [{"id": str(queued), "kind": "aa797_test"}]
+    assert restored.jev_allowlist_restored is True and restored.previous_reason == "aa797 test"
+    t = await pool.fetchrow("SELECT is_active, api_key_hash, cancelled_at, cancellation_reason FROM shared.tenants "
+                            "WHERE tenant_id = $1::uuid", tid)
+    assert t["is_active"] is True and t["cancelled_at"] is None and t["cancellation_reason"] is None
+    assert t["api_key_hash"] == hashlib.sha256(restored.api_key.encode()).hexdigest() != revoked_hash
+    assert await settings() == kept
+    allow = await pool.fetchrow("SELECT reason, added_by FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid",
+                                tid)
+    assert dict(allow) == {"reason": "aa797 test", "added_by": "aa797"}
+    assert await pool.fetchval("SELECT status FROM shared.job WHERE id = $1", queued) == "cancelled"  # not re-run
+    [a] = await _audit(pool, tid, A.RESTORED)
+    assert a["actor"] == "admin:admin-797"
+    details = json.loads(a["details"]) if isinstance(a["details"], str) else a["details"]
+    assert details["cancelled_jobs_not_rerun"] == [{"id": str(queued), "kind": "aa797_test"}]
+    assert details["previous_reason"] == "aa797 test"
+    assert await _list_status(admin, pool, req, tid, True) in (None, ["active"])
+
+    # restore is only valid from offboarded
+    with pytest.raises(HTTPException) as e:
+        await admin.restore_tenant(uuid.UUID(tid), req, **HDR)
+    assert e.value.status_code == 409
+    # and the round trip can repeat: the restored tenant can rotate keys and be offboarded again
+    await admin.generate_api_key(uuid.UUID(tid), req, **HDR)
+    await admin.offboard_tenant(tid, admin.OffboardRequest(reason="second"), req, **HDR)
+    again = await admin.restore_tenant(uuid.UUID(tid), req, **HDR)
+    assert again.cancelled_jobs == [] and again.previous_reason == "second" and again.jev_allowlist_restored
+    assert await settings() == kept

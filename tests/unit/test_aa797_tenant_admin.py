@@ -1,5 +1,5 @@
 """AA-797 (S235) — admin tenant writes: PATCH body, three tenant states, audit on every write,
-offboarded is terminal, /usage on live columns. Mocked asyncpg (same pool/conn shape as
+offboard is soft and restorable, /usage on live columns. Mocked asyncpg (same pool/conn shape as
 test_aa309_tenant_onboarding.py); the real-SQL checks live in
 tests/integration/test_aa797_tenant_admin.py."""
 import json
@@ -206,6 +206,7 @@ class TestGenerateKey:
             await admin.generate_api_key(TENANT_ID, _request(conn), x_admin_secret=_SECRET,
                                          x_admin_user_id="u", x_admin_role="admin")
         assert e.value.status_code == 409
+        assert "restore" in e.value.detail
         assert conn.execute.call_count == 0
 
     @pytest.mark.asyncio
@@ -236,7 +237,10 @@ class TestOffboard:
     @pytest.mark.asyncio
     async def test_no_stale_acc1_bucket_note_and_queued_only_cancel(self, monkeypatch):
         conn = _conn()
-        conn.fetchrow.return_value = {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}
+        conn.fetchrow.side_effect = [
+            {"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None},
+            {"reason": "AA test tenant", "added_at": CANCELLED, "added_by": "migration-181"},
+        ]
         conn.fetch.return_value = [{"id": "j1", "kind": "t2_rewrite"}]
         hook = AsyncMock()
         monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", hook)
@@ -251,7 +255,103 @@ class TestOffboard:
         assert action == AdminTenantAuditAction.OFFBOARD and actor == "admin:u-2"
         assert "867490540162" not in json.dumps(details)
         assert details["cancelled_jobs"] == [{"id": "j1", "kind": "t2_rewrite"}]
+        assert details["jev_allowlist"] == {"reason": "AA test tenant", "added_at": CANCELLED.isoformat(),
+                                            "added_by": "migration-181"}
         hook.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_offboard_is_soft_state_only(self, monkeypatch):
+        """Nghiệp 14/10: restore must bring data + settings back, so offboard deletes nothing but
+        the Jev allow-list row (snapshotted in the audit row) and only UPDATEs shared.tenants."""
+        conn = _conn()
+        conn.fetchrow.side_effect = [{"tenant_id": TENANT_ID, "name": "T", "cancelled_at": None}, None]
+        conn.fetch.return_value = []
+        monkeypatch.setattr("shared.jobs.registry.run_terminal_hook", AsyncMock())
+        await admin.offboard_tenant(str(TENANT_ID), admin.OffboardRequest(reason="left"), _request(conn),
+                                    x_admin_secret=_SECRET, x_admin_role="admin")
+        sqls = [c.args[0] for c in conn.execute.call_args_list] + [c.args[0] for c in conn.fetch.call_args_list]
+        deletes = [q for q in sqls if "DELETE" in q.upper()]
+        assert deletes == ["DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid"]
+        updates = [q for q in sqls if "UPDATE" in q.upper()]
+        assert len(updates) == 2 and "shared.tenants" in updates[0] and "shared.job" in updates[1]
+        tenant_upd = updates[0]
+        for kept in ("plan_id", "plan_tier", "posts_per_week", "rate_limit_rpm"):
+            assert kept not in tenant_upd
+        for table in ("brand_rules", "tenant_config", "tenant_tour_versions", "content_piece", "users"):
+            assert not any(table in q for q in sqls)
+
+
+class TestRestore:
+    async def _restore(self, conn, role="admin", redis=None):
+        return await admin.restore_tenant(TENANT_ID, _request(conn, redis=redis), x_admin_secret=_SECRET,
+                                          x_admin_user_id="u-5", x_admin_role=role)
+
+    def _offboarded(self):
+        return {"tenant_id": TENANT_ID, "name": "T", "is_active": False, "cancelled_at": CANCELLED,
+                "cancellation_reason": "contract ended"}
+
+    @pytest.mark.asyncio
+    async def test_requires_admin_role(self):
+        with pytest.raises(HTTPException) as e:
+            await self._restore(_conn(), role="reviewer")
+        assert e.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_not_found_is_404(self):
+        conn = _conn()
+        conn.fetchrow.return_value = None
+        with pytest.raises(HTTPException) as e:
+            await self._restore(conn)
+        assert e.value.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("is_active", [True, False])
+    async def test_not_offboarded_is_409(self, is_active):
+        conn = _conn()
+        conn.fetchrow.return_value = {**self._offboarded(), "is_active": is_active, "cancelled_at": None}
+        with pytest.raises(HTTPException) as e:
+            await self._restore(conn)
+        assert e.value.status_code == 409
+        assert ("active" if is_active else "suspended") in e.value.detail
+        assert conn.execute.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_happy_path_new_key_markers_cleared_settings_untouched(self):
+        conn = _conn()
+        conn.fetchrow.return_value = self._offboarded()
+        conn.fetch.return_value = [{"id": "j1", "kind": "t9_write"}]
+        conn.fetchval.return_value = json.dumps({"jev_allowlist": {
+            "reason": "AA test tenant", "added_at": CANCELLED.isoformat(), "added_by": "migration-181"}})
+        conn.execute.side_effect = lambda sql, *a: "INSERT 0 1" if "INSERT" in sql else "UPDATE 1"
+        redis = AsyncMock()
+        out = await self._restore(conn, redis=redis)
+
+        assert out.status == "active" and out.api_key.startswith("cis_")
+        assert out.previous_offboarded_at == CANCELLED.isoformat() and out.previous_reason == "contract ended"
+        assert out.jev_allowlist_restored is True
+        assert out.cancelled_jobs == [{"id": "j1", "kind": "t9_write"}]
+        [upd] = [c for c in conn.execute.call_args_list if "UPDATE shared.tenants" in c.args[0]]
+        sql = upd.args[0]
+        assert "cancelled_at = NULL" in sql and "is_active = TRUE" in sql
+        for kept in ("plan_id", "plan_tier", "rate_limit_rpm", "posts_per_week"):
+            assert kept not in sql
+        assert upd.args[2] != "" and not upd.args[2].startswith("REVOKED_")
+        [(action, actor, details)] = _audit_rows(conn)
+        assert action == AdminTenantAuditAction.RESTORED == "tenant.restored" and actor == "admin:u-5"
+        assert details["previous_offboarded_at"] == CANCELLED.isoformat()
+        assert details["cancelled_jobs_not_rerun"] == [{"id": "j1", "kind": "t9_write"}]
+        assert "jev_allowlist" in details["restored"]
+        redis.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_allowlist_snapshot_restores_without_it(self):
+        conn = _conn()
+        conn.fetchrow.return_value = self._offboarded()
+        conn.fetch.return_value = []
+        conn.fetchval.return_value = None
+        out = await self._restore(conn)
+        assert out.jev_allowlist_restored is False and out.cancelled_jobs == []
+        assert not any("jev_tenant_allowlist" in c.args[0] for c in conn.execute.call_args_list)
 
 
 class TestUsageSql:
