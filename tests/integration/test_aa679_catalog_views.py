@@ -78,6 +78,9 @@ def test_migration_225_applied(cur):
         for v in VIEWS:
             cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT')", (role, f"catalog.{v}"))
             assert cur.fetchone()[0], (role, v)
+    # the internal helper is not part of the contract
+    cur.execute("SELECT has_table_privilege('booking', 'catalog._tour_day_text', 'SELECT')")
+    assert not cur.fetchone()[0]
     # the consumer roles get the read model only, never the pipeline tables behind it
     cur.execute("SELECT has_table_privilege('booking', 'gold_aa_internal.published_tours', 'SELECT')")
     assert not cur.fetchone()[0]
@@ -141,11 +144,19 @@ def test_v_tour_day_matches_python_parser(cur):
 
 def test_v_tour_place_and_day_places(cur):
     tag = uuid.uuid4().hex[:8]
-    hanoi, halong = f"Hanoi {tag}", f"Ha Long Bay {tag}"
-    t = _tour(cur, name=f"Places {tag}", itinerary=CANONICAL)
-    a1 = _atom(cur, t, day=1, place=hanoi, activity="food")
-    _atom(cur, t, day=1, place=hanoi.lower(), activity="culture")           # same place, other case
-    _atom(cur, t, day=2, place=halong, activity="cruise")
+    hanoi, halong, cave = f"Hanoi {tag}", f"Ha Long Bay {tag}", f"Sung Sot Cave {tag}"
+    itinerary = (
+        f"Day 1 — Arrive in {hanoi}\nWelcome dinner in the Old Quarter.\n\n"
+        f"Day 2 — {halong}\nCruise among the karsts, then visit {cave.lower()}.\n\n"
+        "Day 3 — Depart\nTransfer to the airport."
+    )
+    t = _tour(cur, name=f"Places {tag}", itinerary=itinerary)
+    a1 = _atom(cur, t, day=1, place=hanoi.lower(), activity="culture")     # same place, other case,
+    _atom(cur, t, day=1, place=hanoi.lower())                              # more frequent than the
+    _atom(cur, t, day=1, place=hanoi, activity="food")                     # spelling of the text
+    _atom(cur, t, day=2, place=f"Zz Unnamed {tag}")                        # not in the day text: last
+    _atom(cur, t, day=2, place=cave, activity="caving")                    # inserted before Ha Long Bay
+    _atom(cur, t, day=2, place=halong, activity="cruise")                  # but named first in the text
     _atom(cur, t, day=2, place=f"Ghost {tag}", deleted=True)                # deleted atom: not a place
     _atom(cur, t, day=2, place=f"Marker {tag}", empty=True)                 # empty marker: not a place
     _atom(cur, t, day=3, place="  ")                                        # blank place: skipped
@@ -166,15 +177,31 @@ def test_v_tour_place_and_day_places(cur):
                destination_id::text, lat, lng, activity_types, atom_count
           FROM catalog.v_tour_place WHERE tour_id = %s ORDER BY day_number, position""", (t,))
     rows = cur.fetchall()
-    assert [(r[0], r[1], r[2]) for r in rows] == [(1, 1, hanoi), (2, 1, halong)]
-    day1, day2 = rows
+    # itinerary order (first mention in the day text), spelling as the text writes it
+    assert [(r[0], r[1], r[2]) for r in rows] == [
+        (1, 1, hanoi), (2, 1, halong), (2, 2, cave), (2, 3, f"Zz Unnamed {tag}"),
+    ]
+    day1, halong_row, cave_row, _ = rows
     assert day1[3:9] == (card, "Hoan Kiem", "Vietnam", dest, 21.03, 105.85)
-    assert sorted(day1[9]) == ["culture", "food"] and day1[10] == 2
-    assert day2[3] is None and day2[6] is None and day2[7] is None      # no card, no pin
-    assert day2[9] == ["cruise"]
+    assert sorted(day1[9]) == ["culture", "food"] and day1[10] == 3
+    assert halong_row[3] is None and halong_row[6] is None and halong_row[7] is None  # no card, no pin
+    assert halong_row[9] == ["cruise"] and cave_row[9] == ["caving"]
 
     cur.execute("SELECT day_number, places FROM catalog.v_tour_day WHERE tour_id = %s ORDER BY 1", (t,))
-    assert cur.fetchall() == [(1, [hanoi]), (2, [halong]), (3, [])]
+    assert cur.fetchall() == [(1, [hanoi]), (2, [halong, cave, f"Zz Unnamed {tag}"]), (3, [])]
+
+
+def test_place_spelling_without_text_match_is_deterministic(cur):
+    """No spelling in the day text: the most frequent wins, a tie goes to C collation — never a random id."""
+    tag = uuid.uuid4().hex[:8]
+    t = _tour(cur, name=f"Spelling {tag}", itinerary=CANONICAL)
+    for place in (f"hue {tag}", f"Hue {tag}", f"HUE {tag}", f"Hue {tag}"):
+        _atom(cur, t, day=2, place=place)
+    _atom(cur, t, day=3, place=f"hoi an {tag}")
+    _atom(cur, t, day=3, place=f"Hoi An {tag}")
+    cur.execute("""SELECT day_number, place_name FROM catalog.v_tour_place
+                    WHERE tour_id = %s ORDER BY day_number""", (t,))
+    assert cur.fetchall() == [(2, f"Hue {tag}"), (3, f"Hoi An {tag}")]  # 'H' < 'h' in C collation
 
 
 def test_photos_and_destinations(cur):

@@ -18,7 +18,9 @@
 -- RLS: published_tours / raw_tours FORCE row-level security on app.tenant_id. These views are not
 -- security_invoker, so they read with their owner's rights; DB Migrate runs as aa_cis_admin
 -- (BYPASSRLS, migration 007b). The tenant filter below is therefore what scopes the rows, and
--- readers do not set app.tenant_id.
+-- readers do not set app.tenant_id. The first statement asserts the runner bypasses RLS: under any
+-- other role the views would silently return no rows (or fail on app.tenant_id) for every consumer,
+-- so the file fails loudly instead and is not registered.
 --
 -- Not here: prices (owned by AA-Booking, ADR 0005), events catalog.tour.published|updated|trashed
 -- (next AA-679 slice: an outbox; until then consumers poll v_tour and compare content_hash).
@@ -28,6 +30,15 @@
 -- registered, so it can be re-run.
 
 BEGIN;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles
+                    WHERE rolname = current_user AND (rolbypassrls OR rolsuper)) THEN
+        RAISE EXCEPTION 'migration 225 must run as a BYPASSRLS role (aa_cis_admin), not %: the catalog '
+                        'views read RLS tables with their owner''s rights', current_user;
+    END IF;
+END $$;
 
 CREATE SCHEMA IF NOT EXISTS catalog;
 COMMENT ON SCHEMA catalog IS
@@ -95,6 +106,8 @@ SELECT 'cis'::text                AS source_system,
        e.cover_photo_path,
        e.photo_count,
        e.published_at,
+       -- not a change cursor: published_tours has no updated_at, so an in-place Master Content edit
+       -- moves content_hash but not this. Consumers diff content_hash (contract catalog.tour.v1).
        GREATEST(e.published_at, e.photos_updated_at) AS updated_at,
        md5(jsonb_build_array(
            e.aa_name, e.aa_subtitle, e.aa_summary, e.aa_description, e.aa_highlights, e.aa_itineraries,
@@ -105,36 +118,80 @@ SELECT 'cis'::text                AS source_system,
 
 COMMENT ON VIEW catalog.v_tour IS
     'AA-679 — live AA tours (Master Content active, active source). Key (source_system, source_id); '
-    'contract catalog.tour.v1.';
+    'contract catalog.tour.v1. updated_at is informative, not a change cursor: re-sync on content_hash.';
+
+-- ── Day text (internal: not part of the contract, not granted) ────────────────────────────────
+-- Days parsed from the canonical master itinerary "Day N — Title\nBody" (graph.py
+-- _process_itineraries, AA-353; Python twin itinerary_utils.parse_canonical_itinerary_days).
+CREATE OR REPLACE VIEW catalog._tour_day_text AS
+WITH chunk AS (
+    SELECT t.source_system, t.source_id, t.tour_id, t.country AS tour_country, c.ord,
+           regexp_match(btrim(c.txt, E' \t\r\n'), '^Day\s+(\d+)\s+—[ \t]*([^\n]*)(.*)$') AS m
+      FROM catalog.v_tour t
+     CROSS JOIN LATERAL regexp_split_to_table(t.itinerary_text, '\n(?=Day\s+\d+\s+—)')
+           WITH ORDINALITY AS c(txt, ord)
+     WHERE t.itinerary_text IS NOT NULL
+)
+-- a repeated day number keeps the LAST block (parse_canonical_itinerary_days dict semantics)
+SELECT DISTINCT ON (tour_id, (m[1])::int)
+       source_system, source_id, tour_id, tour_country,
+       (m[1])::int             AS day_number,
+       btrim(m[2])             AS title,
+       btrim(m[3], E' \t\r\n') AS body
+  FROM chunk
+ WHERE m IS NOT NULL
+ ORDER BY tour_id, (m[1])::int, ord DESC;
+
+COMMENT ON VIEW catalog._tour_day_text IS
+    'AA-679 — INTERNAL helper of v_tour_day / v_tour_place (parsed day title + body). Not part of '
+    'contract catalog.tour.v1 and not granted to consumers; may change without notice.';
 
 -- ── Places per tour day (from active atoms) ─────────────────────────────────────────────────────
+-- Order within a day = itinerary order: where the place first appears (case-insensitive) in that
+-- day's title + body. Atoms of a tour are written in one a3_atomize run with random ids
+-- (atom_<uuid hex>), so created_at / atom_id carry no order; they are only the fallback for a place
+-- the day text does not name, then the place key (C collation) so the result never depends on a
+-- random id. Spelling: the one that appears verbatim in the day text, else the most frequent, else
+-- the first in C collation — deterministic for the same data.
 CREATE OR REPLACE VIEW catalog.v_tour_place AS
 WITH atom AS (
     SELECT t.source_system, t.source_id, t.tour_id, t.country AS tour_country,
-           a.itinerary_day, btrim(a.place) AS place, a.atom_id, a.activity_type, a.created_at,
-           pc.card_id, pc.display_name, pc.locality, pc.region, pc.country AS card_country
+           a.itinerary_day, btrim(a.place) AS place, lower(btrim(a.place)) AS place_key,
+           a.atom_id, a.activity_type, a.created_at,
+           dt.title || E'\n' || dt.body AS day_text,
+           pc.card_id
       FROM catalog.v_tour t
       JOIN acp_contract.v_active_tour_atoms a ON a.tour_id = t.tour_id
+      LEFT JOIN catalog._tour_day_text dt ON dt.tour_id = t.tour_id AND dt.day_number = a.itinerary_day
       LEFT JOIN acp_shared.atom_place_card apc ON apc.atom_id = a.atom_id
       LEFT JOIN acp_shared.place_card pc ON pc.card_id = apc.card_id AND pc.status <> 'rejected'
      WHERE a.place IS NOT NULL AND btrim(a.place) <> ''
 ),
+spelled AS (
+    SELECT atom.*,
+           count(*) OVER (PARTITION BY tour_id, itinerary_day, place) AS spelling_n,
+           strpos(COALESCE(day_text, ''), place) > 0                  AS spelled_in_text
+      FROM atom
+),
 grouped AS (
     SELECT source_system, source_id, tour_id, tour_country,
            itinerary_day                                                      AS day_number,
-           (array_agg(place ORDER BY created_at, atom_id))[1]                 AS place_name,
-           (array_agg(card_id ORDER BY created_at, atom_id)
+           place_key,
+           (array_agg(place ORDER BY spelled_in_text DESC, spelling_n DESC,
+                                     place COLLATE "C"))[1]                   AS place_name,
+           (array_agg(card_id ORDER BY created_at, card_id)
                 FILTER (WHERE card_id IS NOT NULL))[1]                        AS place_card_id,
            array_agg(DISTINCT activity_type) FILTER (WHERE activity_type IS NOT NULL) AS activity_types,
            count(*)                                                           AS atom_count,
            min(created_at)                                                    AS first_seen_at,
-           min(atom_id)                                                       AS first_atom_id
-      FROM atom
-     GROUP BY source_system, source_id, tour_id, tour_country, itinerary_day, lower(place)
+           NULLIF(strpos(lower(COALESCE(max(day_text), '')), place_key), 0)   AS text_pos
+      FROM spelled
+     GROUP BY source_system, source_id, tour_id, tour_country, itinerary_day, place_key
 )
 SELECT g.source_system, g.source_id, g.tour_id, g.day_number,
        row_number() OVER (PARTITION BY g.tour_id, g.day_number
-                          ORDER BY g.first_seen_at, g.first_atom_id) AS position,
+                          ORDER BY g.text_pos NULLS LAST, g.first_seen_at,
+                                   g.place_key COLLATE "C") AS position,
        g.place_name,
        g.place_card_id,
        pc.display_name AS place_display_name,
@@ -160,35 +217,18 @@ SELECT g.source_system, g.source_id, g.tour_id, g.day_number,
 
 COMMENT ON VIEW catalog.v_tour_place IS
     'AA-679 — places of a live tour per itinerary day, from active atoms (+ AA-772 place card, + '
-    'shared.destinations lat/lng on exact name and country match). day_number NULL = atom without a day.';
+    'shared.destinations lat/lng on exact name and country match). day_number NULL = atom without a day. '
+    'position = order of first mention in the day text; places the text does not name come after, '
+    'in a stable but not itinerary-meaningful order.';
 
--- ── Day-by-day itinerary (canonical "Day N — Title\nBody" master text) ──────────────────────────
+-- ── Day-by-day itinerary ────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW catalog.v_tour_day AS
-WITH chunk AS (
-    SELECT t.source_system, t.source_id, t.tour_id, c.ord,
-           regexp_match(btrim(c.txt, E' \t\r\n'), '^Day\s+(\d+)\s+—[ \t]*([^\n]*)(.*)$') AS m
-      FROM catalog.v_tour t
-     CROSS JOIN LATERAL regexp_split_to_table(t.itinerary_text, '\n(?=Day\s+\d+\s+—)')
-           WITH ORDINALITY AS c(txt, ord)
-     WHERE t.itinerary_text IS NOT NULL
-),
-day AS (
-    -- a repeated day number keeps the LAST block (parse_canonical_itinerary_days dict semantics)
-    SELECT DISTINCT ON (tour_id, (m[1])::int)
-           source_system, source_id, tour_id,
-           (m[1])::int        AS day_number,
-           btrim(m[2])        AS title,
-           btrim(m[3], E' \t\r\n') AS body
-      FROM chunk
-     WHERE m IS NOT NULL
-     ORDER BY tour_id, (m[1])::int, ord DESC
-)
 SELECT d.source_system, d.source_id, d.tour_id, d.day_number, d.title, d.body,
        COALESCE((SELECT array_agg(p.place_name ORDER BY p.position)
                    FROM catalog.v_tour_place p
                   WHERE p.tour_id = d.tour_id AND p.day_number = d.day_number),
                 ARRAY[]::text[]) AS places
-  FROM day d;
+  FROM catalog._tour_day_text d;
 
 COMMENT ON VIEW catalog.v_tour_day IS
     'AA-679 — day-by-day itinerary of a live tour, parsed from the canonical master itinerary. '

@@ -4,8 +4,12 @@ NO Docker required — connects to local PostgreSQL 16 + fakeredis.
 Test DB: cis_integration_test / cistest
 
 Setup (one-time):
-    su -c "psql -c \"CREATE USER cistest WITH PASSWORD 'cistest';\"" postgres
+    su -c "psql -c \"CREATE USER cistest WITH PASSWORD 'cistest' SUPERUSER;\"" postgres
     su -c "psql -c \"CREATE DATABASE cis_integration_test OWNER cistest;\"" postgres
+
+cistest must be SUPERUSER, as in CI (.github/workflows: postgres:15 service). Without it the role
+creation below and every migration that grants to / asserts on other roles (203, 225 ...) fail;
+_apply_schema swallows migration errors, so the symptom is failing tests, not a setup error.
 """
 
 import sys, os
