@@ -46,7 +46,7 @@ interface Tenant {
   posts_per_week: number;
   country: string | null;
   rate_limit_rpm: number;
-  daily_publish_limit?: number | null; // AA-819 — per-tenant override; null/absent = code default
+  daily_publish_limit?: number | null; // AA-819 — per-tenant override; null = code default, absent = backend not deployed
   is_active: boolean;
   status: TenantStatus;           // AA-797 — derived by GET /admin/tenants
   cancelled_at: string | null;

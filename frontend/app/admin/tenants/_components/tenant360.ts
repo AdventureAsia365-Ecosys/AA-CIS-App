@@ -80,9 +80,12 @@ export function parseDailyPublishLimit(value: string): number | null {
   return value.trim() === "" ? null : Number(value);
 }
 
-/** "20/day (default)" when there is no override, "5/day" when there is. */
+/** "20/day (default)" when there is no override (null), "5/day" when there is, and "—" when the
+ *  server does not report the field at all (undefined: the AA-819 backend is not deployed yet, so
+ *  no limit is enforced and claiming "20/day" would be false). */
 export function fmtDailyPublishLimit(limit: number | null | undefined): string {
-  return limit == null ? `${DAILY_PUBLISH_LIMIT_DEFAULT}/day (default)` : `${limit}/day`;
+  if (limit === undefined) return "—";
+  return limit === null ? `${DAILY_PUBLISH_LIMIT_DEFAULT}/day (default)` : `${limit}/day`;
 }
 
 // ── Cost ──────────────────────────────────────────────────────────────────────

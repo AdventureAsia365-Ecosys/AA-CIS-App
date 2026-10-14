@@ -141,10 +141,13 @@ function PlanForm({ tenantId, planTier, rateLimitRpm, locked, onChanged }: {
 interface PublishLimitPatchResult { changed: string[]; daily_publish_limit?: number | null }
 
 function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
-  tenantId: string; dailyPublishLimit: number | null; locked: boolean; onChanged: () => void;
+  tenantId: string; dailyPublishLimit: number | null | undefined; locked: boolean; onChanged: () => void;
 }) {
   const toast = useToast();
-  const [saved, setSaved] = useState<number | null>(dailyPublishLimit);
+  // undefined = GET /admin/tenants does not return the key: the AA-819 backend is not deployed, so
+  // there is no limit to show or set yet. Keep the field read-only rather than let a save 422.
+  const supported = dailyPublishLimit !== undefined;
+  const [saved, setSaved] = useState<number | null>(dailyPublishLimit ?? null);
   const [value, setValue] = useState(dailyPublishLimit == null ? "" : String(dailyPublishLimit));
   const error = validateDailyPublishLimit(value);
   const dirty = !error && parseDailyPublishLimit(value) !== saved;
@@ -174,25 +177,27 @@ function PublishLimitForm({ tenantId, dailyPublishLimit, locked, onChanged }: {
 
   return (
     <Section title="Daily publish limit"
-      hint={`Publishes this tenant can make per UTC day. Leave empty to use the default (${DAILY_PUBLISH_LIMIT_DEFAULT}/day).`}>
+      hint={supported
+        ? `Publishes this tenant can make per UTC day. Leave empty to use the default (${DAILY_PUBLISH_LIMIT_DEFAULT}/day).`
+        : "Not available yet: the server does not report a daily publish limit for this tenant."}>
       <div>
         <label style={labelStyle} htmlFor={`dpl-${tenantId}`}>Publishes per day (override)</label>
         <input id={`dpl-${tenantId}`} type="number" min={1} max={DAILY_PUBLISH_LIMIT_MAX} value={value}
           placeholder={`default ${DAILY_PUBLISH_LIMIT_DEFAULT}`}
-          disabled={locked || m.isPending} onChange={e => setValue(e.target.value)}
+          disabled={!supported || locked || m.isPending} onChange={e => setValue(e.target.value)}
           aria-invalid={!!error} style={{ ...inputStyle, width: 160 }} />
         <FieldError msg={error} />
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" onClick={() => m.mutate(parseDailyPublishLimit(value))}
-          disabled={locked || m.isPending || !!error || !dirty}>
+          disabled={!supported || locked || m.isPending || !!error || !dirty}>
           {m.isPending ? <><Spinner size={12} /> Saving…</> : "Save limit"}
         </Button>
-        {saved != null && !m.isPending && (
+        {supported && saved != null && !m.isPending && (
           <Button variant="ghost" size="sm" disabled={locked} onClick={() => m.mutate(null)}>Use default</Button>
         )}
         <span style={{ fontSize: 11.5, color: A.muted2 }}>
-          Current: <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(saved)}</span>
+          Current: <span style={{ fontFamily: mono }}>{fmtDailyPublishLimit(supported ? saved : undefined)}</span>
         </span>
       </div>
     </Section>
@@ -319,7 +324,7 @@ function SettingsInner({ tenantId, planTier, rateLimitRpm, dailyPublishLimit, st
         </div>
       )}
       <PlanForm tenantId={tenantId} planTier={planTier} rateLimitRpm={rateLimitRpm} locked={locked} onChanged={onChanged} />
-      <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit ?? null} locked={locked} onChanged={onChanged} />
+      <PublishLimitForm tenantId={tenantId} dailyPublishLimit={dailyPublishLimit} locked={locked} onChanged={onChanged} />
       {cfg.isLoading ? (
         <div style={{ fontSize: 12, color: A.muted, display: "flex", gap: 6, alignItems: "center" }}><Spinner size={12} /> Loading planning config…</div>
       ) : cfg.isError || !cfg.data ? (
@@ -338,7 +343,8 @@ export interface Tenant360SettingsProps {
   tenantId: string;
   planTier: string;
   rateLimitRpm: number;
-  /** AA-819 — null/absent: no override, the code default applies. */
+  /** AA-819 — null: no override, the code default applies; undefined: the server does not
+   *  report the field yet (backend not deployed), so the editor stays read-only. */
   dailyPublishLimit?: number | null;
   status: "active" | "suspended" | "offboarded";
   onChanged: () => void;
