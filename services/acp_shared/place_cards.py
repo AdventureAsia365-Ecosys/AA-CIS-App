@@ -19,7 +19,8 @@ How a card is made (once per PLACE, in a job — never in an HTTP request, and n
 1. `a3_place_card` (validate route; GPT-5.6 Luna since S234 migration 222) gets the place, its
    itinerary sentence(s), the tour name and the country the tour is sold as, and returns the
    place's identity (display name, locality, region, country, naming note, aliases) plus 4-6
-   short background facts.
+   short background facts. AA-774: only what the place is, its history, setting and naming — never
+   access, permits, what visitors do or safety (trip facts come from the itinerary only).
 2. `a3_place_card_check` (validate route; Claude Haiku, another vendor than the draft) checks the
    identity and each fact; only facts it marks "supported" are kept. Nothing about the trip
    itself (prices, hours, what the tour does) is ever a card fact.
@@ -59,6 +60,9 @@ MAX_FACTS = 6
 MAX_ALIASES = 6
 DRAFT_MAX_TOKENS = 1500  # Luna spends part of it on reasoning
 _CONCURRENCY = 4
+# 'visiting' / 'practical' stay valid so cards drafted before AA-774 still validate and the admin view
+# lists them; the drafter no longer asks for them and the writer seed never shows them
+# (atom_seed.WRITER_FACT_KINDS).
 FACT_KINDS = ("what_it_is", "history", "setting", "visiting", "practical", "naming")
 
 # Bump when card_skip_reason()/place_norm() change: stored misses written under an older rule are
@@ -88,8 +92,9 @@ the country the tour is sold as).
 (e.g. a widely used region name), and any spelling variants. Empty string if nothing to say.
 - aliases: up to 4 other names or spellings people use for this same place (may be empty).
 - facts: 4-6 short, standalone, well-established facts about the PLACE ITSELF (what it is, its \
-history and era, its setting, what visitors typically see there, practical or safety notes that \
-hold year-round). kind is one of: what_it_is, history, setting, visiting, practical, naming.
+history and era, its setting and what is physically there). Never write how visitors reach it, what \
+visitors do or see, permits or access, or safety advice: those are trip facts and come only from the \
+itinerary. kind is one of: what_it_is, history, setting, naming.
 - Only facts you are confident are widely documented. No prices, fees, opening hours, \
 visitor numbers, rankings or superlatives, and nothing about the tour or trip itself. \
 Write a number only if it is a well-established fact (e.g. a founding century).
@@ -106,7 +111,10 @@ neighbouring country of the one the tour is sold as.
 - One verdict per numbered fact, same order. "supported" only when you are confident the fact \
 is correct and widely documented; "unsure" when you cannot confirm it; "wrong" when it is false."""
 
-# A changed prompt invalidates every stored miss (a new prompt may identify the place).
+# A changed prompt invalidates every stored miss (a new prompt may identify the place). It never
+# re-drafts an existing card: ensure_place_cards() skips linked atoms and reuses cards by alias / core
+# name, and its only callers are bounded (T8: one atom; place_cards_build: one tour, MAX_PLACES).
+# AA-774 changed the facts bullet: old cards keep their facts and are filtered at seed time.
 PROMPT_SHA = hashlib.sha256(f"{_CARD_SYSTEM}\n{_CHECK_SYSTEM}\nfacts={MAX_FACTS}".encode()).hexdigest()[:16]
 
 
