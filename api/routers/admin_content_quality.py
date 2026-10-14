@@ -39,6 +39,7 @@ from services.acp_content_writing.generate import SentenceRepairError, repair_se
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
 from services.acp_shared import place_cards
+from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"])
@@ -830,6 +831,103 @@ async def merge_place_cards(keep_id: str, body: PlaceCardMerge, request: Request
             conn, tenant_id=None, actor=f"admin:{actor}", action=PlatformAuditAction.PLACE_CARD_MERGE,
             resource_type="place_card", resource_id=ids[0], details=out)
     return out
+
+
+# ── AA-774 (S235): correct one card's facts (admin only) ────────────────────────────────────────
+
+_CARD_DETAIL_SQL = """
+    SELECT pc.card_id, pc.display_name, pc.locality, pc.region, pc.country, pc.naming_note, pc.facts,
+           pc.status, pc.cost_usd, pc.verified_by, pc.verified_at, pc.created_at, pc.updated_at,
+           (SELECT count(*) FROM acp_shared.atom_place_card a WHERE a.card_id = pc.card_id) AS atoms
+    FROM acp_shared.place_card pc
+    WHERE pc.card_id = $1::uuid
+"""
+
+
+def _card_detail(row) -> dict:
+    """One card for the admin editor: the stored facts array unchanged, plus `fact_rows` — each fact
+    with its `index` in that array and whether the T9 writer seed shows it (WRITER_FACT_KINDS)."""
+    out = _row(row)
+    facts = out.get("facts") if isinstance(out.get("facts"), list) else []
+    out["fact_rows"] = [
+        {"index": i, "kind": f.get("kind") or "what_it_is", "text": f.get("text") or "",
+         "in_writer_seed": (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS}
+        for i, f in enumerate(facts) if isinstance(f, dict)]
+    out["fact_kinds"] = list(place_cards.FACT_KINDS)
+    return out
+
+
+def _card_uuid(card_id: str) -> str:
+    try:
+        return str(UUID(card_id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="card_id must be a UUID")
+
+
+@router.get("/place-cards/{card_id}")
+async def get_place_card(card_id: str, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    cid = _card_uuid(card_id)
+    async with request.app.state.pool.acquire() as conn:
+        row = await conn.fetchrow(_CARD_DETAIL_SQL, cid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Place card not found")
+    return _card_detail(row)
+
+
+class FactEdit(BaseModel):
+    index: int = Field(ge=0)
+    kind: Optional[str] = None
+    text: Optional[str] = Field(None, max_length=place_cards.MAX_FACT_TEXT)
+    drop: bool = False
+    expected_text: Optional[str] = None  # the text the admin loaded; mismatch → 409
+
+
+class PlaceCardFactsEdit(BaseModel):
+    edits: list[FactEdit] = Field(min_length=1, max_length=place_cards.MAX_FACTS * 2)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.patch("/place-cards/{card_id}/facts")
+async def edit_place_card_facts(card_id: str, body: PlaceCardFactsEdit, request: Request,
+                                x_admin_secret: str = Header(None),
+                                x_admin_user_id: Optional[str] = Header(None),
+                                x_admin_role: Optional[str] = Header(None)):
+    """AA-774 (S235) — re-kind, re-word or drop facts on one card (one transaction, one audit row
+    with before/after per changed fact). A fact re-kinded to visiting/practical stays on the card but
+    leaves the T9 writer seed (atom_seed.writer_facts). Status / verified_by are not touched."""
+    verify_admin_secret(x_admin_secret)
+    if x_admin_role != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can edit place-card facts")
+    cid = _card_uuid(card_id)
+    reason = " ".join(body.reason.split())
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="reason is required")
+    actor = x_admin_user_id or "admin"
+    async with request.app.state.pool.acquire() as conn, conn.transaction():
+        cur = await conn.fetchrow(
+            "SELECT card_id, display_name, country, facts FROM acp_shared.place_card "
+            "WHERE card_id = $1::uuid FOR UPDATE", cid)
+        if cur is None:
+            raise HTTPException(status_code=404, detail="Place card not found")
+        try:
+            facts, changes = place_cards.apply_fact_edits(
+                cur["facts"], [e.model_dump(exclude_none=True) for e in body.edits])
+        except place_cards.FactEditConflict as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except place_cards.FactEditError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        await conn.execute(
+            "UPDATE acp_shared.place_card SET facts = $2::jsonb, updated_at = now() WHERE card_id = $1::uuid",
+            cid, json.dumps(facts))
+        await write_audit_log(
+            conn, tenant_id=None, actor=f"admin:{actor}", action=PlatformAuditAction.PLACE_CARD_FACTS_EDITED,
+            resource_type="place_card", resource_id=cid,
+            details={"reason": reason, "display_name": cur["display_name"], "country": cur["country"],
+                     "facts_before": len(place_cards.stored_facts(cur["facts"])), "facts_after": len(facts),
+                     "changes": changes})
+        row = await conn.fetchrow(_CARD_DETAIL_SQL, cid)
+    return _card_detail(row)
 
 
 class PlaceCardBuild(BaseModel):

@@ -128,6 +128,16 @@ export interface PlaceCard {
   atoms: number;
 }
 
+// AA-774 (S235) — GET /place-cards/{id} and PATCH /place-cards/{id}/facts: one card with each fact's
+// index in the stored array and whether the T9 writer seed shows it (what_it_is/history/setting/naming).
+export interface PlaceCardFactRow { index: number; kind: string; text: string; in_writer_seed: boolean }
+export interface PlaceCardDetail extends PlaceCard {
+  updated_at: string;
+  fact_rows: PlaceCardFactRow[];
+  fact_kinds: string[];
+}
+export interface FactEdit { index: number; kind?: string; text?: string; drop?: boolean; expected_text?: string }
+
 // S234 (AA-772) — GET /place-cards/duplicates: candidate clusters an admin may merge.
 export interface DuplicateCard {
   card_id: string;
