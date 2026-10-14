@@ -3,18 +3,22 @@
 // AA-473: Gate A removed entirely (ADR-2026-038 §0.2) — a new tenant is is_active=true
 // immediately, no onboarding approval step left. The "Onboarding" tab and its pending-tenant
 // UI (added AA-389, trimmed AA-472) are gone.
+// AA-797: three states (active / suspended / offboarded). Suspend <-> active is the status
+// toggle (PATCH body); Offboard (reason required) revokes the key and replaces the old unaudited
+// Delete; Restore (Nghiệp 14/10/2026) brings an offboarded tenant back with its data and settings
+// and a new key. AA-766 rebuilds this page; these edits are deliberately minimal.
 
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Users, Plus, Key, RefreshCw, ChevronDown, ChevronUp,
-  AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Trash2, Globe,
+  AlertCircle, Loader2, CheckCircle, Eye, EyeOff, Copy, X, Ban, Globe, RotateCcw,
 } from "lucide-react";
 import {
   A, serif, mono, sans,
   Card, SLabel, Btn, Badge, LoadingScreen, TH, TD,
 } from "../_components/adminUi";
-import { PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
+import { Modal, PageHeader, formatDate, formatDateTime, useIsPhone } from "../../_kit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +40,8 @@ interface Tenant {
   country: string | null;
   rate_limit_rpm: number;
   is_active: boolean;
+  status: TenantStatus;           // AA-797 — derived by GET /admin/tenants
+  cancelled_at: string | null;
   created_at: string;
   plan: { tours_quota_monthly: number; api_calls_quota_monthly: number; price_usd_monthly: number };
   this_month: {
@@ -46,7 +52,18 @@ interface Tenant {
   lifecycle: Lifecycle;
 }
 
-interface NewApiKey { tenant_id: string; tenant_name: string; api_key: string; rotated?: boolean; }
+type TenantStatus = "active" | "suspended" | "offboarded";
+type StatusFilter = "all" | TenantStatus;
+const TENANT_STATUS_STYLE: Record<TenantStatus, { label: string; bg: string; color: string }> = {
+  active:     { label: "Active",     bg: A.greenSoft, color: A.green },
+  suspended:  { label: "Suspended",  bg: A.amberSoft, color: A.amber },
+  offboarded: { label: "Offboarded", bg: A.redSoft,   color: A.red },
+};
+
+interface NewApiKey {
+  tenant_id: string; tenant_name: string; api_key: string; rotated?: boolean;
+  title?: string; note?: string;  // AA-797 — restore reuses this modal
+}
 
 // AA-629 Tier 2 — GET /admin/unmapped-market-requests
 interface UnmappedMarketRequest {
@@ -208,8 +225,9 @@ function ApiKeyModal({ keyData, onClose }: { keyData: NewApiKey; onClose: () => 
       <div style={{ background: A.card, border: "1px solid var(--aa-green-border)", borderRadius: 16, padding: 32, width: 460 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <CheckCircle size={20} color={A.green} />
-          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>{keyData.rotated ? "New API Key" : "Tenant Created"}</div>
+          <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 500, color: A.green }}>{keyData.title ?? (keyData.rotated ? "New API Key" : "Tenant Created")}</div>
         </div>
+        {keyData.note && <p style={{ fontSize: 13, color: A.muted, margin: "0 0 12px" }}>{keyData.note}</p>}
         <p style={{ fontSize: 13, color: A.muted, marginBottom: 24 }}>
           <strong style={{ color: A.ink }}>{keyData.tenant_name}</strong> — share this API key once. It will <strong style={{ color: A.red }}>never be shown again</strong>.
         </p>
@@ -903,42 +921,176 @@ function SettingsTabContent({ summary, apiUsage }: {
 
 // ─── Tenant Row ───────────────────────────────────────────────────────────────
 
-function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false, isPhone = false }: {
+async function errorDetail(res: Response, fallback: string): Promise<string> {
+  const body = await res.json().catch(() => ({}));
+  return typeof body?.detail === "string" ? body.detail : fallback;
+}
+
+// AA-797 — Offboard needs a reason (GDPR audit trail): the key is revoked and queued jobs are
+// cancelled. Data and settings are kept, so Restore can bring the tenant back.
+function OffboardModal({ tenant, onClose, onDone }: {
+  tenant: Tenant; onClose: () => void; onDone: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit() {
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    setBusy(true); setError("");
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}/offboard`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      if (!res.ok) { setError(await errorDetail(res, "Offboarding failed")); return; }
+      onDone();
+    } catch { setError("Connection error"); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={busy ? () => {} : onClose} title={`Offboard ${tenant.name}?`}
+      footer={
+        <>
+          <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn variant="danger" onClick={submit} disabled={busy}>
+            {busy && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />} Offboard
+          </Btn>
+        </>
+      }>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: A.muted }}>
+        This revokes the API key and cancels queued jobs. Data and settings are kept, so the tenant can be
+        restored later (with a new key). To pause a tenant instead, use the status toggle (Suspend).
+      </p>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: A.ink, marginBottom: 6 }}>Reason (required)</label>
+      <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+        style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 8, border: `1px solid ${A.line}`,
+          background: A.bg, color: A.ink, fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: A.red, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertCircle size={13} /> {error}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+interface RestoreResult {
+  tenant_id: string; tenant_name: string; api_key: string;
+  cancelled_jobs: { id: string; kind: string }[];
+}
+
+// AA-797 — Restore (Nghiệp 14/10/2026): offboarded -> active with the same plan, brand rules,
+// config and content. A new API key is issued (the old one stays revoked); jobs the offboard
+// cancelled are not re-run.
+function RestoreModal({ tenant, onClose, onDone }: {
+  tenant: Tenant; onClose: () => void; onDone: (r: RestoreResult) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit() {
+    setBusy(true); setError("");
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}/restore`, { method: "POST" });
+      if (!res.ok) { setError(await errorDetail(res, "Restore failed")); return; }
+      onDone(await res.json());
+    } catch { setError("Connection error"); } finally { setBusy(false); }
+  }
+  return (
+    <Modal open onClose={busy ? () => {} : onClose} title={`Restore ${tenant.name}?`}
+      footer={
+        <>
+          <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn variant="primary" onClick={submit} disabled={busy}>
+            {busy && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />} Restore
+          </Btn>
+        </>
+      }>
+      <p style={{ margin: "0 0 8px", fontSize: 13, color: A.muted }}>
+        The tenant becomes active again with its plan, brand rules, planning config and content unchanged.
+      </p>
+      <ul style={{ margin: "0 0 4px", paddingLeft: 18, fontSize: 13, color: A.muted }}>
+        <li>A <strong style={{ color: A.ink }}>new API key</strong> is issued and shown once; the old key stays revoked.</li>
+        <li>Jobs cancelled by the offboard are <strong style={{ color: A.ink }}>not re-run</strong>; re-run them from the portal or Job runner.</li>
+      </ul>
+      {error && (
+        <div style={{ marginTop: 10, fontSize: 12, color: A.red, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertCircle size={13} /> {error}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function TenantRow({ tenant, onRotateKey, onChanged, onRestored, initialExpanded = false, isPhone = false }: {
   tenant: Tenant;
   onRotateKey: (t: Tenant) => void;
-  onDeleted: (id: string) => void;
+  onChanged: () => void;
+  onRestored: (r: RestoreResult) => void;
   initialExpanded?: boolean;
   isPhone?: boolean;
 }) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [toggling, setToggling] = useState(false);
-  const [isActive, setIsActive] = useState(tenant.is_active);
-  const [deleting, setDeleting] = useState(false);
+  const [rowError, setRowError] = useState("");
+  const [offboarding, setOffboarding] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const status: TenantStatus = tenant.status ?? (tenant.is_active ? "active" : "suspended");
+  const offboarded = status === "offboarded";
+  const chip = TENANT_STATUS_STYLE[status];
 
   async function toggle() {
-    setToggling(true);
+    if (offboarded) return;
+    setToggling(true); setRowError("");
     try {
       const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: !isActive }),
+        body: JSON.stringify({ is_active: status !== "active" }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(body.detail ?? "Failed to update tenant status");
-        return;
-      }
-      setIsActive(!isActive);
-    } finally { setToggling(false); }
+      if (!res.ok) { setRowError(await errorDetail(res, "Failed to update tenant status")); return; }
+      onChanged();
+    } catch { setRowError("Connection error"); } finally { setToggling(false); }
   }
 
-  async function deleteTenant() {
-    if (!confirm(`Delete tenant "${tenant.name}"? This cannot be undone.`)) return;
-    setDeleting(true);
-    try {
-      await fetch(`/api/admin/tenants/${tenant.tenant_id}`, { method: "DELETE" });
-      onDeleted(tenant.tenant_id);
-    } finally { setDeleting(false); }
-  }
+  const toggleTitle = offboarded ? "Offboarded — use Restore to bring the tenant back"
+    : status === "active" ? "Suspend tenant (reversible)" : "Resume tenant";
+  const statusButton = (extra: React.CSSProperties = {}) => (
+    <button onClick={toggle} disabled={toggling || offboarded} title={toggleTitle} style={{
+      padding: "4px 12px", borderRadius: 20, border: "none", cursor: offboarded ? "default" : "pointer",
+      fontSize: 11, fontWeight: 700, background: chip.bg, color: chip.color, ...extra,
+    }}>
+      {toggling ? "…" : chip.label}
+    </button>
+  );
+  // Offboarded rows swap Offboard for Restore (same slot).
+  const offboardButton = offboarded ? (
+    <button onClick={() => setRestoring(true)} title="Restore tenant (issues a new API key)"
+      style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6,
+        cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+      <RotateCcw size={12} /> Restore
+    </button>
+  ) : (
+    <button onClick={() => setOffboarding(true)} title="Offboard tenant"
+      style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6,
+        cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+      <Ban size={12} />{isPhone && " Offboard"}
+    </button>
+  );
+  const offboardModal = (
+    <>
+      {offboarding && (
+        <OffboardModal tenant={tenant} onClose={() => setOffboarding(false)}
+          onDone={() => { setOffboarding(false); onChanged(); }} />
+      )}
+      {restoring && (
+        <RestoreModal tenant={tenant} onClose={() => setRestoring(false)}
+          onDone={r => { setRestoring(false); onRestored(r); }} />
+      )}
+    </>
+  );
+  const errorLine = rowError && (
+    <div style={{ marginTop: 6, fontSize: 11.5, color: A.red, display: "flex", alignItems: "center", gap: 4 }}>
+      <AlertCircle size={12} /> {rowError}
+    </div>
+  );
 
   const lc = tenant.lifecycle ?? {
     source_active: 0, source_superseded: 0, source_trashed: 0,
@@ -963,14 +1115,9 @@ function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false, is
               )}
             </div>
           </div>
-          <button onClick={toggle} disabled={toggling} style={{
-            padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer", flexShrink: 0,
-            fontSize: 11, fontWeight: 700,
-            background: isActive ? A.greenSoft : A.redSoft, color: isActive ? A.green : A.red,
-          }}>
-            {toggling ? "…" : isActive ? "Active" : "Inactive"}
-          </button>
+          {statusButton({ flexShrink: 0 })}
         </div>
+        {errorLine}
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <Badge color={PLAN_BADGE[tenant.plan_tier] ?? "gray"}>{tenant.plan_tier}</Badge>
@@ -990,19 +1137,17 @@ function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false, is
         </div>
 
         <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-          <button onClick={() => onRotateKey(tenant)} title="Rotate API key"
-            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <button onClick={() => onRotateKey(tenant)} disabled={offboarded} title={offboarded ? "Key revoked (offboarded)" : "Rotate API key"}
+            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: offboarded ? "not-allowed" : "pointer", color: offboarded ? A.muted2 : A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <Key size={12} /> Key
           </button>
-          <button onClick={deleteTenant} disabled={deleting} title="Delete tenant"
-            style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.red, display: "flex", alignItems: "center" }}>
-            {deleting ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
-          </button>
+          {offboardButton}
           <button onClick={() => setExpanded(!expanded)}
             style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />} Detail
           </button>
         </div>
+        {offboardModal}
 
         {expanded && (
           <div style={{ marginTop: 12 }}>
@@ -1058,34 +1203,26 @@ function TenantRow({ tenant, onRotateKey, onDeleted, initialExpanded = false, is
           {tenant.this_month.quota_tours_pct}% tour quota
         </td>
 
-        {/* Status toggle */}
+        {/* Status toggle (AA-797: active <-> suspended; offboarded is read-only) */}
         <td style={TD}>
-          <button onClick={toggle} disabled={toggling} style={{
-            padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer",
-            fontSize: 11, fontWeight: 700,
-            background: isActive ? A.greenSoft : A.redSoft,
-            color: isActive ? A.green : A.red,
-          }}>
-            {toggling ? "…" : isActive ? "Active" : "Inactive"}
-          </button>
+          {statusButton()}
+          {errorLine}
         </td>
 
         {/* Actions */}
         <td style={TD}>
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-            <button onClick={() => onRotateKey(tenant)} title="Rotate API key"
-              style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <button onClick={() => onRotateKey(tenant)} disabled={offboarded} title={offboarded ? "Key revoked (offboarded)" : "Rotate API key"}
+              style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: offboarded ? "not-allowed" : "pointer", color: offboarded ? A.muted2 : A.muted, display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
               <Key size={12} /> Key
             </button>
-            <button onClick={deleteTenant} disabled={deleting} title="Delete tenant"
-              style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.red, display: "flex", alignItems: "center" }}>
-              {deleting ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
-            </button>
+            {offboardButton}
             <button onClick={() => setExpanded(!expanded)}
               style={{ padding: "5px 10px", background: A.bg, border: `1px solid ${A.line}`, borderRadius: 6, cursor: "pointer", color: A.muted, display: "flex", alignItems: "center" }}>
               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
           </div>
+          {offboardModal}
         </td>
       </tr>
       {expanded && (
@@ -1122,13 +1259,17 @@ function TenantsPageInner() {
   const [showCreate, setShowCreate] = useState(false);
   const [newKey, setNewKey]         = useState<NewApiKey | null>(null);
   const [error, setError]           = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   // AA-629 Tier 2 — best-effort, tolerate failure so the whole page still loads without it.
   const [unmappedMarkets, setUnmappedMarkets] = useState<UnmappedMarketRequest[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  // silent = refresh in place after a row action (keeps expanded rows; no loading screen).
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError("");
     try {
-      const res = await fetch("/api/admin/tenants");
+      // AA-797 — this page manages suspended/offboarded tenants too; other callers stay active-only.
+      const res = await fetch("/api/admin/tenants?include_inactive=true");
       if (!res.ok) { setError("Failed to load tenants"); return; }
       const data = await res.json();
       setTenants(data.tenants ?? []);
@@ -1141,20 +1282,32 @@ function TenantsPageInner() {
 
   useEffect(() => { load(); }, [load]);
 
+  function restored(r: RestoreResult) {
+    const n = r.cancelled_jobs?.length ?? 0;
+    setNewKey({
+      tenant_id: r.tenant_id, tenant_name: r.tenant_name, api_key: r.api_key, rotated: true,
+      title: "Tenant Restored",
+      note: n ? `${n} job(s) cancelled by the offboard were not re-run: ${r.cancelled_jobs.map(j => j.kind).join(", ")}.`
+        : "No jobs were cancelled by the offboard.",
+    });
+    load(true);
+  }
+
   async function rotateKey(tenant: Tenant) {
     if (!confirm(`Rotate API key for ${tenant.name}? Old key stops working immediately.`)) return;
+    setError("");
     try {
       const res = await fetch(`/api/admin/tenants/${tenant.tenant_id}/generate-key`, { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) setNewKey({ tenant_id: tenant.tenant_id, tenant_name: tenant.name, api_key: data.api_key, rotated: true });
-    } catch { /* silent */ }
+      else setError(typeof data?.detail === "string" ? data.detail : "Key rotation failed");
+    } catch { setError("Connection error"); }
   }
 
-  function handleDeleted(tenantId: string) {
-    setTenants(prev => prev.filter(t => t.tenant_id !== tenantId));
-  }
-
-  const totalActive     = tenants.filter(t => t.is_active).length;
+  const statusOf = (t: Tenant): TenantStatus => t.status ?? (t.is_active ? "active" : "suspended");
+  const countBy = (st: TenantStatus) => tenants.filter(t => statusOf(t) === st).length;
+  const totalActive     = countBy("active");
+  const shown = statusFilter === "all" ? tenants : tenants.filter(t => statusOf(t) === statusFilter);
   const totalSrcActive  = tenants.reduce((s, t) => s + (t.lifecycle?.source_active ?? 0), 0);
   const totalMstrActive = tenants.reduce((s, t) => s + (t.lifecycle?.master_active ?? 0), 0);
 
@@ -1166,7 +1319,7 @@ function TenantsPageInner() {
             description={`${totalActive} active · ${totalSrcActive.toLocaleString()} source tours · ${totalMstrActive.toLocaleString()} published`}
             actions={
               <>
-                <Btn variant="secondary" onClick={load}><RefreshCw size={13} /> Refresh</Btn>
+                <Btn variant="secondary" onClick={() => load()}><RefreshCw size={13} /> Refresh</Btn>
                 <Btn variant="primary" onClick={() => setShowCreate(true)}><Plus size={14} /> New Tenant</Btn>
               </>
             }
@@ -1198,9 +1351,9 @@ function TenantsPageInner() {
           {/* Summary cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 20 }}>
             {[
-              { label: "Total Tenants",    value: String(tenants.length),            color: A.accent },
               { label: "Active",           value: String(totalActive),               color: A.green },
-              { label: "Source (active)",  value: totalSrcActive.toLocaleString(),   color: A.gold },
+              { label: "Suspended",        value: String(countBy("suspended")),      color: A.amber },
+              { label: "Offboarded",       value: String(countBy("offboarded")),     color: A.red },
               { label: "Master (active)",  value: totalMstrActive.toLocaleString(),  color: A.ink },
             ].map(c => (
               <Card key={c.label}>
@@ -1210,16 +1363,31 @@ function TenantsPageInner() {
             ))}
           </div>
 
+          {/* AA-797 — status filter */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+            {(["all", "active", "suspended", "offboarded"] as StatusFilter[]).map(f => {
+              const on = statusFilter === f;
+              const n = f === "all" ? tenants.length : countBy(f);
+              return (
+                <button key={f} onClick={() => setStatusFilter(f)} aria-pressed={on}
+                  style={{ padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    border: `1px solid ${on ? A.accent : A.line}`, background: on ? A.accent : A.bg, color: on ? "#fff" : A.muted }}>
+                  {f === "all" ? "All" : TENANT_STATUS_STYLE[f].label} ({n})
+                </button>
+              );
+            })}
+          </div>
+
           {/* Table */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             {loading ? <LoadingScreen msg="Loading tenants…" /> : isPhone ? (
               // AA-752 — phone card list (< 768px) instead of the wide table.
-              tenants.length === 0 ? (
-                <div style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants yet</div>
+              shown.length === 0 ? (
+                <div style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants</div>
               ) : (
                 <div>
-                  {tenants.map(t => (
-                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onDeleted={handleDeleted} initialExpanded={t.tenant_id === deepTenant} isPhone />
+                  {shown.map(t => (
+                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onChanged={() => load(true)} onRestored={restored} initialExpanded={t.tenant_id === deepTenant} isPhone />
                   ))}
                 </div>
               )
@@ -1233,10 +1401,10 @@ function TenantsPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tenants.length === 0 ? (
-                    <tr><td colSpan={7} style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants yet</td></tr>
-                  ) : tenants.map(t => (
-                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onDeleted={handleDeleted} initialExpanded={t.tenant_id === deepTenant} />
+                  {shown.length === 0 ? (
+                    <tr><td colSpan={7} style={{ padding: 48, textAlign: "center", color: A.muted, fontSize: 13 }}>No tenants</td></tr>
+                  ) : shown.map(t => (
+                    <TenantRow key={t.tenant_id} tenant={t} onRotateKey={rotateKey} onChanged={() => load(true)} onRestored={restored} initialExpanded={t.tenant_id === deepTenant} />
                   ))}
                 </tbody>
               </table>
