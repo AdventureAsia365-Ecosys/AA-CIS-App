@@ -1199,7 +1199,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     trip_ctx = trip_facts.TripFactContext(
         seed=atom_text, source=f"{hyg.lexicon.own_text}\n{facts_text}",
         audience=(brand_audience or {}).get("customer_segment"), cta=cta,
-        trip_places=tuple(context.get("trip_places") or ()))
+        trip_places=tuple(context.get("trip_places") or ()),
+        channel=channel, brand_name=(brand_audience or {}).get("brand_name"))  # AA-775 — pace_promise
     briefs = hygiene.brief_texts(brand_audience, chosen)
     # S234 round 2 (panel §5 fix 4) — a part-of-trip piece gets the trip name without its duration
     # and its out-of-scope places ('Mongolia: Khövsgöl Lake and Gobi Desert — 15 Days' → 'Mongolia:
