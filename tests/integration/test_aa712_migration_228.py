@@ -447,6 +447,40 @@ def test_v_tour_place_name_match_follows_a_duplicate_to_its_keeper(cur):
     assert cur.fetchall() == [(keeper,)]
 
 
+def test_v_tour_place_name_match_skips_a_suspect_card_name_match(cur):
+    """The card's display name matches a suspect row first (225's ORDER BY); the itinerary name matches a
+    usable row. The first USABLE match wins instead of the pin going null."""
+    tag = uuid.uuid4().hex[:8]
+    t, _ = _tour(cur, name=f"Card {tag}")
+    _dest(cur, f"Punakha Dzong {tag}", geo_status="suspect")
+    usable = _dest(cur, f"Punakha {tag}")
+    a = _atom(cur, t, day=1, place=f"Punakha {tag}")
+    card = str(uuid.uuid4())
+    cur.execute("""INSERT INTO acp_shared.place_card (card_id, place_key, display_name, country)
+                   VALUES (%s, %s, %s, 'Bhutan')""", (card, f"punakha-dzong-{tag}", f"Punakha Dzong {tag}"))
+    cur.execute("INSERT INTO acp_shared.atom_place_card (atom_id, card_id) VALUES (%s, %s)", (a, card))
+    with _as(cur, "tripplanner"):
+        cur.execute("SELECT destination_id::text FROM catalog.v_tour_place WHERE tour_id = %s", (t,))
+        assert cur.fetchall() == [(usable,)]
+
+
+def test_place_views_survive_revoking_public_execute_on_geo_functions(cur):
+    """A view calls functions with the READER's EXECUTE right: v_tour_place must not depend on the default
+    EXECUTE TO PUBLIC of geo.name_norm (hardening geo must not break every catalog place read)."""
+    tag = uuid.uuid4().hex[:8]
+    t, src = _tour(cur, name=f"Exec {tag}")
+    dest = _dest(cur, f"Paro {tag}")
+    _atom(cur, t, day=1, place=f"Paro {tag}")
+    _component(cur, src, t, day=1, name=f"Paro {tag}", destination_id=dest)
+    cur.execute("REVOKE EXECUTE ON FUNCTION geo.name_norm(text) FROM PUBLIC")   # rolled back with the test
+    for role in ("aa_app_user",) + CONSUMERS:
+        with _as(cur, role):
+            cur.execute("SELECT destination_id::text FROM catalog.v_tour_place WHERE tour_id = %s", (t,))
+            assert cur.fetchall() == [(dest,)], role
+            cur.execute("SELECT count(*) FROM catalog.v_tour_day WHERE tour_id = %s", (t,))
+            assert cur.fetchone()[0] >= 1, role
+
+
 def test_v_destination_exposes_geo_quality(cur):
     tag = uuid.uuid4().hex[:8]
     d = _dest(cur, f"Bumthang {tag}", located_by="llm", precision="area", geo_status="suspect")

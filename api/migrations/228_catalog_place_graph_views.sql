@@ -41,8 +41,9 @@
 --     re-confirmed; precision NULL = legacy row the CIS pipeline has not processed yet.
 --
 -- RLS: same catalog_owner dance as migration 225 (read its header). geo.* has no RLS; catalog_owner
--- gets USAGE on schema geo + SELECT on exactly the geo tables the views read (geo stays ungranted to
--- every other app). The runner is a member of catalog_owner for this transaction only.
+-- gets USAGE on schema geo + SELECT on exactly the geo tables the views read (no other app gets USAGE on
+-- geo or any geo table; the consumers only get EXECUTE on the pure geo.name_norm, which a view calls with
+-- the reader's rights). The runner is a member of catalog_owner for this transaction only.
 --
 -- pgvector: geo.tour_place.embedding exists only where the vector type exists (226). Without it (CI
 -- Postgres) v_tour_component is created without its last column, embedding, with a NOTICE; the other
@@ -89,7 +90,11 @@ GRANT USAGE ON SCHEMA geo TO catalog_owner;
 GRANT SELECT ON geo.tour_place, geo.tour_day, geo.graph_build, geo.tour_stop, geo.graph_node,
                 geo.graph_edge, geo.tour_leg, geo.tour_junction
     TO catalog_owner;
-GRANT EXECUTE ON FUNCTION geo.name_norm(text) TO catalog_owner;
+-- v_tour_place calls geo.name_norm. A function in a view runs with the READER's EXECUTE right (unlike the
+-- tables, which are checked as the view owner), so the consumers need it too. Granted explicitly instead
+-- of relying on the default EXECUTE TO PUBLIC, so hardening geo (REVOKE ... FROM PUBLIC) cannot break
+-- every catalog place read; without USAGE on schema geo they still cannot call it by name.
+GRANT EXECUTE ON FUNCTION geo.name_norm(text) TO catalog_owner, aa_app_user, tripplanner, booking;
 
 -- ── Destinations: + geo_status, located_by, precision (appended) ────────────────────────────────
 CREATE OR REPLACE VIEW catalog.v_destination WITH (security_barrier = true) AS
@@ -195,12 +200,15 @@ SELECT g.source_system, g.source_id, g.tour_id, g.day_number,
        ORDER BY gp.component_id
        LIMIT 1
   ) pipeline ON true
-  -- 3. 225's exact name + country match (a 226 duplicate row resolves to its keeper)
+  -- 3. 225's exact name + country match (a 226 duplicate row resolves to its keeper); the first USABLE
+  --    match, so a suspect card-name match does not hide a usable itinerary-name match
   LEFT JOIN LATERAL (
-      SELECT COALESCE(dd.duplicate_of, dd.id) AS id
+      SELECT k.id
         FROM shared.destinations dd
+        JOIN shared.destinations k ON k.id = COALESCE(dd.duplicate_of, dd.id)
        WHERE lower(dd.name) IN (lower(pc.display_name), lower(g.place_name))
          AND lower(dd.country) = lower(COALESCE(pc.country, g.tour_country))
+         AND k.geo_status <> 'suspect' AND k.duplicate_of IS NULL
        ORDER BY (lower(dd.name) = lower(pc.display_name)) DESC NULLS LAST, dd.id
        LIMIT 1
   ) legacy ON true
@@ -452,9 +460,11 @@ DECLARE
 BEGIN
     PERFORM set_config('app.tenant_id', '00000000-0000-0000-0000-000000000000', true);
     SET LOCAL ROLE catalog_owner;
+    -- privileges are checked when the plan starts, so LIMIT 1 is enough to raise on a missing one and keeps
+    -- the ACCESS EXCLUSIVE locks on v_tour_place / v_destination short (no full scan of every live tour)
     FOREACH v IN ARRAY ARRAY['v_tour_day_route', 'v_tour_stop', 'v_tour_leg', 'v_graph_node',
                              'v_graph_edge', 'v_tour_junction', 'v_tour_place', 'v_destination'] LOOP
-        EXECUTE format('SELECT count(*) FROM catalog.%I', v);   -- raises on a missing privilege
+        EXECUTE format('SELECT 1 FROM catalog.%I LIMIT 1', v);
     END LOOP;
     SELECT count(*) INTO n_view FROM catalog.v_tour_component;
     RESET ROLE;
