@@ -81,7 +81,9 @@ _TOP_PREFIXES = (
     ("BRAND CORE IDEA:", KIND_BRAND), ("BRAND:", KIND_BRAND), ("AUDIENCE", KIND_AUDIENCE),
     ("TRIP:", KIND_TRIP_NAME), ("DESTINATION:", KIND_TRIP_NAME), ("SCOPE:", KIND_TRIP_NAME),
 )
-_SKIP_PREFIXES = ("Thin moment:",)
+# AA-773 — "Status:" (offered / included, atom_seed + acp_shared/offered.py) is an instruction to the
+# writer, not a fact a claim can rest on: its "the itinerary says" quote repeats the Source line.
+_SKIP_PREFIXES = ("Thin moment:", "Status:")
 
 
 @dataclass(frozen=True)

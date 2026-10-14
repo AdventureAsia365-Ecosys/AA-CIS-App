@@ -28,6 +28,8 @@ from typing import Optional
 from services.acp_content_writing.hygiene import (
     COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
+from services.acp_shared.offered import (LOOSE_MARK_RE, OFFERED, activity_text, decide, is_status_line,
+                                         status_of_line, strip_status_lines)
 
 # ---------------------------------------------------------------- seed moments
 
@@ -55,6 +57,10 @@ class Moment:
     # S234 round 4 — the seed builder's "Thin moment: only N source fact(s)…" note
     # (atom_seed.thin_note, < THIN_FACTS facts): the moment may not carry a heading or the coda
     thin: bool = False
+    # AA-773 — the seed's "Status:" line for a trip line, by its index in `trip_lines` (OFFERED /
+    # INCLUDED). The Status line itself is never a trip line: its 'optional' / 'not included' are
+    # instructions, not itinerary text.
+    statuses: dict = field(default_factory=dict)
 
     @property
     def lines(self) -> list[str]:
@@ -95,6 +101,11 @@ def parse_moments(seed: Optional[str]) -> list[Moment]:
             in_bg = False
             if ln.startswith(_THIN_PREFIX):
                 m.thin = True
+            if is_status_line(ln):
+                status = status_of_line(ln)
+                if status:
+                    m.statuses[len(m.trip_lines) - 1] = status
+                continue
             day = _DAY_LINE_RE.match(ln)
             if day:
                 m.days.append(int(day.group(1)))
@@ -149,7 +160,8 @@ def _paragraph_lead(text: str, span: dict, spans: list[dict]) -> Optional[str]:
 
 # ---------------------------------------------------------------- (a) optional activities
 
-_OPTIONAL_MARK_RE = re.compile(r"\b(?:optional(?:ly)?|if you wish|if desired|on request|available|can|may)\b", re.I)
+# AA-773 — the same pattern offered.py uses for "no Status line" (one definition).
+_OPTIONAL_MARK_RE = LOOSE_MARK_RE
 # A hedge in the same clause (or the sentence / list lead-in before it). 'offers' and 'allows' are
 # not hedges: 'Boat rides on the water offer a perspective…' and 'Time at the lake allows for days
 # shaped around … nomadic families' (S234 r2 #14, #18) both state the plan.
@@ -165,7 +177,8 @@ _GENERIC_ACTIVITY_WORDS = ("visit", "visits", "families", "family", "people", "d
 # a list splits at commas / semicolons (", and" too); a bare "and" stays inside an item
 # ('trekking along shorelines and forest paths' is one activity)
 _ITEM_SPLIT_RE = re.compile(r"\s*(?:,|;)\s*(?:and\s+|or\s+)?")
-_ACTIVITY_STOP = frozenset(content_words("activities activity include includes including optional surrounding local "
+_ACTIVITY_STOP = frozenset(content_words("available extra cost fee charge additional arranged supplement surcharge "
+                                         "activities activity include includes including optional surrounding local "
                                          "across along water terrain"))
 _SINGLE_WORD_ACTIVITIES = frozenset({"horseback", "kayaking", "rafting"})
 
@@ -182,34 +195,66 @@ def optional_activities(moments: list[Moment]) -> list[OptionalActivity]:
     lower pools' is what the place allows, not the trip's plan). A source fragment that starts in
     lower case right after an optional line of the same block continues that list (A3 split
     'Optional activities include …, visits to local nomadic families, trekking along shorelines…'
-    into one atom per item)."""
+    into one atom per item).
+
+    AA-773 — a trip line the seed gave a Status line is read with the function that wrote it
+    (offered.decide): the Status covers ONE clause of the line (the one naming the moment), so an
+    OFFERED moment adds that clause's activity and an included one drops only that clause; the rest
+    of the line keeps the rule above (review S235 B1: 'Drive to the lake. Optional boat rides. Horse
+    riding is available at extra cost.' still lists the boat rides)."""
     out: list[OptionalActivity] = []
     seen: set[str] = set()
+
+    def add(clause: str) -> None:
+        for item in _ITEM_SPLIT_RE.split(clause):
+            words = [w for w in content_words(item) if w not in _ACTIVITY_STOP]
+            key = " ".join(words)
+            if not words or key in seen:
+                continue
+            seen.add(key)
+            phrase = re.sub(r"^(?:activities\s+)?(?:include|includes|including)\s+", "", item.strip(" .").strip(),
+                            flags=re.I)
+            out.append(OptionalActivity(phrase=phrase, words=frozenset(words)))
+
+    def legacy(src: str, prev_optional: bool) -> bool:
+        mark = _OPTIONAL_MARK_RE.search(src)
+        if mark:
+            add(src[mark.end():])
+        elif prev_optional and src[:1].islower():
+            add(src)
+        else:
+            return False
+        return True
+
     for m in moments:
         prev_optional = False
-        for line in m.trip_lines:
+        for i, line in enumerate(m.trip_lines):
             src = line.split("Source itinerary:", 1)[1].strip() if "Source itinerary:" in line else ""
             if not src:
                 continue
-            mark = _OPTIONAL_MARK_RE.search(src)
-            if mark:
-                clause = src[mark.end():]
-            elif prev_optional and src[:1].islower():
-                clause = src
-            else:
-                prev_optional = False
+            status = m.statuses.get(i)
+            if status is None:
+                prev_optional = legacy(src, prev_optional)
                 continue
-            prev_optional = True
-            for item in _ITEM_SPLIT_RE.split(clause):
-                words = [w for w in content_words(item) if w not in _ACTIVITY_STOP]
-                key = " ".join(words)
-                if not words or key in seen:
-                    continue
-                seen.add(key)
-                phrase = re.sub(r"^(?:activities\s+)?(?:include|includes|including)\s+", "", item.strip(" .").strip(),
-                                flags=re.I)
-                out.append(OptionalActivity(phrase=phrase, words=frozenset(words)))
+            src = " ".join(src.split())
+            span = "" if (status == OFFERED and prev_optional and src[:1].islower()) \
+                else decide(src, _line_label(m, line)).span
+            if status == OFFERED:
+                add(activity_text(span or src) or (span or src))
+            rest = src.replace(span, " ", 1) if span else ("" if status == OFFERED else src)
+            prev_optional = legacy(rest, False) if rest.strip(" .,;") else False
+            prev_optional = prev_optional or status == OFFERED
     return out
+
+
+def _line_label(m: Moment, line: str) -> str:
+    """The moment label a trip line belongs to: 'Day N of the trip: <label> — Source itinerary: …' in a
+    merged block, else the block's label line."""
+    head = line.split(" — Source itinerary:", 1)[0]
+    day = _DAY_LINE_RE.match(head)
+    if day and day.group(2) and _LABEL_SPLIT_RE.search(day.group(2)):
+        return day.group(2)
+    return m.trip_lines[0] if m.trip_lines else ""
 
 
 def _stem(word: str) -> str:
@@ -234,6 +279,11 @@ def _mentions_activity(clause: str, act: OptionalActivity) -> bool:
     specific = hits - generic
     single = {_stem(w) for w in _SINGLE_WORD_ACTIVITIES}
     return (len(hits) >= min(2, len(act.words)) and bool(specific)) or bool(hits & single)
+
+
+def mentions_activity(clause: str, act: OptionalActivity) -> bool:
+    """Public name of `_mentions_activity` (quality_gates.promises_an_option reads it, AA-773)."""
+    return _mentions_activity(clause, act)
 
 
 def optional_as_fixed(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
@@ -1174,7 +1224,7 @@ def _background_places(seed: Optional[str], trip_places: tuple = ()) -> dict[str
     moment's label / Location / Naming / Source itinerary / SCOPE lines) and not a place of the trip
     itself (`trip_places`, the whitelist: Ulaanbaatar via the Mörön airport fact)."""
     from services.acp_content_writing.hygiene import _near_allowed, proper_nouns
-    own = split_seed(seed)[0]
+    own = strip_status_lines(split_seed(seed)[0])
     core: set[str] = set()
     core_text = "\n".join(ln for ln in own.splitlines() if not ln.lstrip().startswith("- "))
     for p in proper_nouns(core_text, keep_initial=True):
@@ -1314,6 +1364,6 @@ __all__ = [
     "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
-    "moments_named", "names_moment", "optional_activities", "optional_as_fixed", "parse_moments", "rarity_claims",
-    "timing_claims", "with_date_spans",
+    "mentions_activity", "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
+    "parse_moments", "rarity_claims", "timing_claims", "with_date_spans",
 ]

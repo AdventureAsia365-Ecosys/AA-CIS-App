@@ -31,6 +31,13 @@ requires a multi-hour horse ride", dress codes, hike durations) read as trip pro
 the permit sentence in 7/8 blogs. They stay on the card (admin view, FACT_KINDS) and are filtered at
 read time only. The sibling gate (`RICH_CARD_FACTS`) still counts EVERY checked fact on the card, so a
 card that loses its practical facts does not bring back the S233 'Other trips' lines.
+
+AA-773 (S235) — every moment whose itinerary sentence offers it (optional / at extra cost) gets a
+"Status: OFFERED, NOT INCLUDED (the itinerary says: …)" line under its source line, and an included
+moment on a day that also has offered items gets "Status: included in the trip. Never call it
+optional." (`services/acp_shared/offered.py` decides, sentence level). The Status line is its own
+line, never appended to "Source itinerary:" (`_SOURCE_RE` reads to end of line, so it would be counted
+as a fact by `moment_fact_count`).
 """
 from __future__ import annotations
 
@@ -42,6 +49,7 @@ from typing import Optional
 import structlog
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
+from services.acp_shared.offered import OFFERED, evidence_status, single_status_line, status_line
 from services.acp_shared.place_cards import core_key, is_generic_name, place_key
 from services.acp_shared.place_cards import fold as place_fold
 from services.acp_shared.seed_canon import canonical_facts, overnight_card_off_route
@@ -190,20 +198,27 @@ def pick_siblings(sibling_evidence: list[str], own_text: str, *, own_evidence: O
 def compose_seed(text: str, evidence: Optional[str], hook: Optional[str], season: Optional[str],
                  sibling_evidence: list[str], *, place: Optional[str] = None,
                  country: Optional[str] = None, day: Optional[int] = None,
-                 card: Optional[dict] = None) -> str:
+                 card: Optional[dict] = None, status: Optional[str] = "auto") -> str:
     """Pure: the seed block from an atom's fields. Empty fields are left out; sibling evidence
     follows `pick_siblings` (S234). `card` (AA-772) is the atom's place card: its location
     replaces the bare place + country line, and its checked facts of `WRITER_FACT_KINDS` (AA-774)
     become the PLACE BACKGROUND the writer may cite. The sibling gate counts every checked fact.
 
     The line prefixes ('Location:', 'Naming:', 'Day N', 'Source itinerary:', 'Why it matters:',
-    'Season:', 'Place background', 'Other trips that include') are a parsing contract for F9 v2
-    (`claim_rules.number_source_lines`, S234 PR5) — a rename needs the round-trip test updated."""
+    'Season:', 'Place background', 'Other trips that include', 'Status:') are a parsing contract for
+    F9 v2 (`claim_rules.number_source_lines`, S234 PR5) — a rename needs the round-trip test updated.
+
+    `status` (AA-773): the Status line under "Source itinerary:". "auto" (default) derives it from
+    this evidence alone (`offered.single_status_line`); a route passes the line it computed across
+    the day, or None for no line."""
     lines = [text.strip()] + _location_lines(place, country, card)
     if day:
         lines.append(f"Day {day} of the trip")
     if evidence and evidence.strip():
         lines.append(f"Source itinerary: {evidence.strip()}")
+        line = single_status_line(evidence, text) if status == "auto" else status
+        if line:
+            lines.append(line)
     if hook and hook.strip():
         lines.append(f"Why it matters: {hook.strip()}")
     if season and season.strip():
@@ -297,18 +312,25 @@ def compose_route_moment(group: list[dict]) -> str:
     moment's label and location, one "Day N: <label> — Source itinerary: …" line per moment, the
     hooks and seasons de-duplicated, and the background of the richest card only (S233: the 5
     Khövsgöl cards disagreed — 2% / 0.4% / 70% of the fresh water; AA-774: richest in WRITER facts).
-    No sibling lines. Tagged thin when it has fewer than `THIN_FACTS` facts."""
+    No sibling lines. Tagged thin when it has fewer than `THIN_FACTS` facts. Each member's Status
+    line (AA-773) follows its own source line: `status_line` from `route_moment_statuses`, else
+    derived from the member's evidence alone."""
     first = group[0]
     if len(group) == 1:
         block = compose_seed(first["text"], first.get("evidence"), first.get("hook"), first.get("season"), [],
                              place=first.get("place"), country=first.get("country"), day=first.get("day"),
-                             card=first.get("card"))
+                             card=first.get("card"), status=first.get("status_line", "auto"))
     else:
         lines = [first["text"].strip()] + _location_lines(first.get("place"), first.get("country"), first.get("card"))
         for part in group:
             day = f"Day {part['day']}" if part.get("day") else "Another day"
             ev = (part.get("evidence") or "").strip()
             lines.append(f"{day} of the trip: {part['text'].strip()}" + (f" — Source itinerary: {ev}" if ev else ""))
+            line = part.get("status_line", "auto")
+            if line == "auto":
+                line = single_status_line(ev, part["text"]) if ev else None
+            if line:
+                lines.append(line)
         for key, label in (("hook", "Why it matters"), ("season", "Season")):
             for value in dict.fromkeys((p.get(key) or "").strip() for p in group):
                 if value:
@@ -378,6 +400,44 @@ def canonicalize_route_cards(parts: list[dict]) -> tuple[list[dict], dict]:
     return out, {"overnight_cards_dropped": off_route, "facts_dropped": dropped}
 
 
+def _same_place(a: dict, b: dict) -> bool:
+    """Two route moments are at the same place when they share a merge key (place card id or core
+    place name). A moment without a card is never at the same place (review S235)."""
+    return bool(set(merge_keys(a)) & set(merge_keys(b)))
+
+
+def route_moment_statuses(parts: list[dict]) -> list[dict]:
+    """AA-773 — pure: each part (day order) with its `status` (OFFERED / INCLUDED / None, from
+    `offered.evidence_status` on the sentence that names it) and the `status_line` to render.
+    Computed BEFORE grouping, so 'this day has an offered item' is known across blocks: an included
+    moment gets the included line only on such a day, or when it shares a place (merge key) with an
+    offered moment. A lower-case evidence fragment right after an
+    OFFERED part of the same day and place continues its list ('trekking along shorelines and
+    forest paths')."""
+    out: list[dict] = []
+    prev: Optional[dict] = None
+    for p in parts:
+        follows = (prev is not None and prev.get("status") == OFFERED and prev.get("day") is not None
+                   and prev.get("day") == p.get("day") and _same_place(prev, p))
+        if p.get("label_only"):
+            st, quote = None, None
+        else:
+            st, quote = evidence_status(p.get("evidence"), p.get("text"),
+                                        prev_offered_quote=prev.get("status_quote") if follows else None)
+        q = {**p, "status": st, "status_quote": quote}
+        out.append(q)
+        prev = q
+    offered = [p for p in out if p["status"] == OFFERED]
+    offered_days = {p.get("day") for p in offered if p.get("day") is not None}
+    offered_keys = {k for p in offered for k in merge_keys(p)}
+
+    def contrast(p: dict) -> bool:
+        # same day, or same place block (Day 4 'boundary between steppes and taiga' sits in the
+        # Khövsgöl block with the Day 5 offered boat rides)
+        return p.get("day") in offered_days or bool(offered_keys & set(merge_keys(p)))
+    return [{**p, "status_line": status_line(p["status"], p["status_quote"], contrast=contrast(p))} for p in out]
+
+
 async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[str, str]]:
     """S234 — a route's moments as [(first atom_id, seed block)], in the given (day) order, with
     same-place moments merged into one block (C10) and no sibling lines. `atoms` is
@@ -389,6 +449,7 @@ async def route_moment_seeds(conn, atoms: list, tenant_id: str) -> list[tuple[st
         parts.append(p if p is not None else {"atom_id": atom_id, "text": label or "", "card": None,
                                               "label_only": True})
     parts, report = canonicalize_route_cards(parts)
+    parts = route_moment_statuses(parts)
     if report["overnight_cards_dropped"] or report["facts_dropped"]:
         logger.info("t9_route_seed_canon", overnight_cards_dropped=report["overnight_cards_dropped"],
                     facts_dropped=[d["fact"][:120] for d in report["facts_dropped"]])
