@@ -328,3 +328,51 @@ def test_status_words_never_become_allowed_scope_words():
     seed = compose_seed("Khövsgöl Lake — take boat rides on the water", OPT, None, None, [])
     lex = h.build_scope_lexicon(seed)
     assert "Status:" not in lex.own_text and "NOT INCLUDED" not in lex.own_text
+
+
+# ---------------------------------------------------------------- review S235 round 2 (N1)
+
+@pytest.mark.parametrize("clause,activity", [
+    ("kayaking and an optional hot-air balloon flight.", "hot-air balloon flight"),
+    ("with an optional stop at the water puppet show.", "stop at the water puppet show"),
+    ("then an optional sunset cruise.", "sunset cruise"),
+    ("Optional boat rides", "boat rides"),
+    ("Horse riding is available at extra cost.", "Horse riding"),
+    ("Kayaking at an additional fee.", "Kayaking"),
+    ("Optional kayaking or a sunset cruise can be arranged.", "kayaking or a sunset cruise"),
+])
+def test_n1_activity_text_takes_the_offered_side(clause, activity):
+    assert off.activity_text(clause) == activity
+
+
+def test_n1_list_with_one_optional_item():
+    seed = compose_seed("Mekong — hot-air balloon flight",
+                        "Activities include hiking, kayaking and an optional hot-air balloon flight.", None, None, [],
+                        day=3)
+    assert seed.count("Status: OFFERED") == 1
+    ms = tf.parse_moments(seed)
+    assert [a.phrase for a in tf.optional_activities(ms)] == ["hot-air balloon flight"]
+    assert tf.optional_as_fixed("We spend the morning kayaking on the river.", ms) == []
+    assert tf.optional_as_fixed("At dawn we take a hot-air balloon flight over the river.", ms)
+
+
+@pytest.mark.parametrize("evidence,label,phrase,promise", [
+    ("Walk the old quarter, with an optional stop at the water puppet show.", "Hanoi — water puppet show",
+     "stop at the water puppet show", "We stop at the water puppet show in the evening."),
+    ("Walk the river bank, then an optional sunset cruise.", "Mekong — sunset cruise",
+     "sunset cruise", "We end the day on a sunset cruise."),
+])
+def test_n1_trailing_optional_item_is_the_one_caught(evidence, label, phrase, promise):
+    ms = tf.parse_moments(compose_seed(label, evidence, None, None, [], day=2))
+    assert [a.phrase for a in tf.optional_activities(ms)] == [phrase]
+    assert tf.optional_as_fixed(promise, ms)
+
+
+def test_not_included_window_covers_longer_fee_wording():
+    ev = "Entrance fees to the monastery and museum are not included."
+    assert off.evidence_status(ev, "Paro — monastery")[0] != off.OFFERED
+
+
+def test_hygiene_status_prefix_matches_offered():
+    from services.acp_content_writing import hygiene as h
+    assert h.STATUS_LINE_PREFIX == off.STATUS_PREFIX

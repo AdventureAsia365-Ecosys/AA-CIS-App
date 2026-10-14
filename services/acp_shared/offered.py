@@ -72,7 +72,7 @@ _STATUS_OFFERED_RE = re.compile(
     r"|\bfor a fee\b|\bsurcharge\b", re.I)
 # Said of something that is part of the trip: never a reason to mark the moment offered.
 _NOT_OFFERED_RE = re.compile(
-    r"\b(?:fee|fees|meal|meals|lunch|dinner|breakfast|tips?|drinks?|entrance\w*|admission)\b[^.]{0,20}?"
+    r"\b(?:fee|fees|meal|meals|lunch|dinner|breakfast|tips?|drinks?|entrance\w*|admission)\b[^.]{0,40}?"
     r"\bnot included\b|\bsingle supplement\b|\bpre-booked\b", re.I)
 # F17's own loose marks (trip_facts.optional_activities reads this same pattern): a clause with one
 # of them and no offered phrase gets NO Status line — unknown beats a wrong "Never call it optional".
@@ -98,16 +98,31 @@ def offered_clause(text: Optional[str]) -> bool:
 
 
 def activity_text(clause: Optional[str]) -> str:
-    """The activity an offered clause names, without its offer wording: 'Optional boat rides' → 'boat
-    rides'; 'Horse riding is available at extra cost.' → 'Horse riding' (F17 quotes it)."""
+    """The activity an offered clause names, without its offer wording (F17 quotes it). At the first
+    offer mark, the activity is the text AFTER it when that has content words ('kayaking and an
+    optional hot-air balloon flight' → 'hot-air balloon flight'; 'with an optional stop at the water
+    puppet show' → 'stop at the water puppet show'; 'Optional boat rides' → 'boat rides'), cut at the
+    next mark; otherwise the text BEFORE it ('Horse riding is available at extra cost' → 'Horse
+    riding'). Review S235 N1: taking the text before the mark made 'kayaking' the optional one."""
     text = " ".join((clause or "").split()).strip(" .")
-    lead = LOOSE_MARK_RE.match(text)
-    if lead:
-        text = text[lead.end():].strip()
-    cuts = [m.start() for rx in (LOOSE_MARK_RE, _STATUS_OFFERED_RE) for m in rx.finditer(text) if m.start() > 0]
-    if cuts:
-        text = re.sub(r"(?:\s+(?:is|are|at|for|an|a))+\s*$", "", text[:min(cuts)].strip(), flags=re.I)
-    return text.strip(" ,.;")
+    marks = sorted((m for rx in (LOOSE_MARK_RE, _STATUS_OFFERED_RE) for m in rx.finditer(text)),
+                   key=lambda m: m.start())
+    if not marks:
+        return text.strip(" ,.;")
+    first = marks[0]
+    later = [m.start() for m in marks if m.start() >= first.end()]
+    after = text[first.end():min(later) if later else len(text)]
+    after = re.sub(r"(?:\s+(?:is|are|at|for|an|a|be))+\s*$", "", " " + after.strip(), flags=re.I).strip()
+    if [w for w in content_words(after) if w not in _OFFER_STOP]:
+        return after.strip(" ,.;")
+    before = re.sub(r"(?:\s+(?:is|are|at|for|an|a|and|or|with|then))+\s*$", "", " " + text[:first.start()].strip(),
+                    flags=re.I).strip()
+    return before.strip(" ,.;")
+
+
+_OFFER_STOP = frozenset(content_words(
+    "available extra cost fee charge additional arranged supplement surcharge activities activity include includes "
+    "including optional request wish desired"))
 
 
 def sentences(text: Optional[str]) -> list[str]:
