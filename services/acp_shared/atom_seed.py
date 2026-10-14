@@ -24,6 +24,13 @@ S234 round 2 (AA-772) — a route seed keeps one value per fact across its cards
 unverified overnight moment whose card region no other moment of that day shares, and that the next
 day travels on to a lodging in, loses its card (`seed_canon.overnight_card_off_route`: the Day 3
 'Sod Camp' card sat on the Khövsgöl lakeshore that the route only reaches on Day 4).
+
+AA-774 (S235) — only `WRITER_FACT_KINDS` card facts (what the place is, its history, its setting,
+its naming) are rendered as "Place background". 'visiting' / 'practical' facts (permits, "access
+requires a multi-hour horse ride", dress codes, hike durations) read as trip promises: S234 r4 put
+the permit sentence in 7/8 blogs. They stay on the card (admin view, FACT_KINDS) and are filtered at
+read time only. The sibling gate (`RICH_CARD_FACTS`) still counts EVERY checked fact on the card, so a
+card that loses its practical facts does not bring back the S233 'Other trips' lines.
 """
 from __future__ import annotations
 
@@ -45,6 +52,9 @@ MAX_SIBLINGS = 2
 MAX_EVIDENCE_CHARS = 500
 RICH_CARD_FACTS = 3  # a card with this many checked facts needs no "other trips" lines
 THIN_FACTS = 3  # a moment with fewer facts (card facts + source sentences) is thin
+# AA-774 — the card fact kinds a writer may see. 'visiting' / 'practical' are trip facts: they come
+# only from the itinerary. A fact without a kind counts as what_it_is (place_cards._clean_facts).
+WRITER_FACT_KINDS = frozenset({"what_it_is", "history", "setting", "naming"})
 
 # AA-768 round 5 — + the atom's place and its source tour's country.
 # S233 — reads acp_contract.v_active_tour_atoms (a retracted/trashed Master tour never feeds a
@@ -109,11 +119,22 @@ def trim_evidence(evidence: Optional[str], place: Optional[str]) -> Optional[str
     return out or sents[0][:MAX_EVIDENCE_CHARS]
 
 
-def _card_facts(card: Optional[dict]) -> list[str]:
+def _card_fact_dicts(card: Optional[dict]) -> list[dict]:
     facts = (card or {}).get("facts") or []
     if isinstance(facts, str):
         facts = json.loads(facts or "[]")
-    return [f["text"] for f in facts if isinstance(f, dict) and f.get("text")]
+    return [f for f in facts if isinstance(f, dict) and f.get("text")]
+
+
+def _card_facts(card: Optional[dict]) -> list[str]:
+    """Every checked fact on the card, any kind — the count the sibling gate uses."""
+    return [f["text"] for f in _card_fact_dicts(card)]
+
+
+def writer_facts(card: Optional[dict]) -> list[str]:
+    """AA-774 — the card facts rendered for the writer: `WRITER_FACT_KINDS` only (a missing kind
+    counts as what_it_is)."""
+    return [f["text"] for f in _card_fact_dicts(card) if (f.get("kind") or "what_it_is") in WRITER_FACT_KINDS]
 
 
 def _location_lines(place: Optional[str], country: Optional[str], card: Optional[dict]) -> list[str]:
@@ -172,8 +193,8 @@ def compose_seed(text: str, evidence: Optional[str], hook: Optional[str], season
                  card: Optional[dict] = None) -> str:
     """Pure: the seed block from an atom's fields. Empty fields are left out; sibling evidence
     follows `pick_siblings` (S234). `card` (AA-772) is the atom's place card: its location
-    replaces the bare place + country line, and its checked facts become the PLACE BACKGROUND the
-    writer may cite.
+    replaces the bare place + country line, and its checked facts of `WRITER_FACT_KINDS` (AA-774)
+    become the PLACE BACKGROUND the writer may cite. The sibling gate counts every checked fact.
 
     The line prefixes ('Location:', 'Naming:', 'Day N', 'Source itinerary:', 'Why it matters:',
     'Season:', 'Place background', 'Other trips that include') are a parsing contract for F9 v2
@@ -187,11 +208,13 @@ def compose_seed(text: str, evidence: Optional[str], hook: Optional[str], season
         lines.append(f"Why it matters: {hook.strip()}")
     if season and season.strip():
         lines.append(f"Season: {season.strip()}")
-    fact_lines = _card_facts(card)
+    fact_lines = writer_facts(card)
     if fact_lines:
         lines.append(_background_block(fact_lines))
+    # AA-774: the UNFILTERED count — a card rich in checked facts needs no 'Other trips' lines even
+    # when some of them are visiting/practical and not shown (S233 borrowed-places regression).
     others = pick_siblings(sibling_evidence, "\n".join(lines), own_evidence=evidence,
-                           card_fact_count=len(fact_lines))
+                           card_fact_count=len(_card_facts(card)))
     if others:
         lines.append("Other trips that include this same moment (for context only — never promise "
                      "these details for this trip):\n" + "\n".join(f"- {o}" for o in others))
@@ -273,8 +296,8 @@ def compose_route_moment(group: list[dict]) -> str:
     """One seed block for one or more route moments at the same place (day order): the first
     moment's label and location, one "Day N: <label> — Source itinerary: …" line per moment, the
     hooks and seasons de-duplicated, and the background of the richest card only (S233: the 5
-    Khövsgöl cards disagreed — 2% / 0.4% / 70% of the fresh water). No sibling lines. Tagged thin
-    when it has fewer than `THIN_FACTS` facts."""
+    Khövsgöl cards disagreed — 2% / 0.4% / 70% of the fresh water; AA-774: richest in WRITER facts).
+    No sibling lines. Tagged thin when it has fewer than `THIN_FACTS` facts."""
     first = group[0]
     if len(group) == 1:
         block = compose_seed(first["text"], first.get("evidence"), first.get("hook"), first.get("season"), [],
@@ -290,9 +313,9 @@ def compose_route_moment(group: list[dict]) -> str:
             for value in dict.fromkeys((p.get(key) or "").strip() for p in group):
                 if value:
                     lines.append(f"{label}: {value}")
-        richest = max((p.get("card") for p in group), key=lambda c: len(_card_facts(c)))
-        if _card_facts(richest):
-            lines.append(_background_block(_card_facts(richest)))
+        richest = max((p.get("card") for p in group), key=lambda c: len(writer_facts(c)))
+        if writer_facts(richest):
+            lines.append(_background_block(writer_facts(richest)))
         block = "\n".join(lines)
     n = moment_fact_count(block)
     return block + ("\n" + thin_note(n) if n < THIN_FACTS else "")
@@ -300,7 +323,8 @@ def compose_route_moment(group: list[dict]) -> str:
 
 async def atom_seed_parts(conn, atom_id: str, tenant_id: str, *, siblings: bool = True) -> Optional[dict]:
     """The atom's seed fields (None when not live/visible for this tenant). The sibling query
-    runs only when `siblings` is set and the place card is not already rich."""
+    runs only when `siblings` is set and the place card is not already rich (every checked fact
+    counts, AA-774)."""
     row = await conn.fetchrow(_ATOM_QUERY, atom_id, str(tenant_id))
     if row is None:
         return None
