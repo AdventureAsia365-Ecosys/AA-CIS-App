@@ -837,9 +837,11 @@ _Avoid_: block (alone), delete, filter.
     tenant-specific score anchors (what a 4 / 6 / 7 / 8 / 10 looks like, built deterministically from the
     T0 brand pack: name, core idea, audience, voice, on-brand example, forbidden words) and turns
     mission_present into a yes/no test that only counts with a verbatim itinerary quote
-    (`mission_evidence`), checked in code against the itinerary digest the judge saw — a paraphrased
-    or invented quote overrules the yes (`evidence_verified=false`); both are logged in
-    `quality_signal` when on. Combines with `median3`; A1 is untouched.
+    (`mission_evidence`, >= 4 words), checked in code against the itinerary digest the judge saw — a
+    paraphrased or invented quote overrules the yes (`evidence_verified=false`); both are logged in
+    `quality_signal` when on. The yes bar is the un-anchored tenant test's (overview + most days reflect
+    the core idea); the quote only has to show the idea in one day, and is asked for before the verdict.
+    A string verdict ("false"/"no") is read as no. Combines with `median3`; A1 is untouched.
     The judge model itself is only changed through the `t2_judge` stage route; `score_brand_fit`'s
     `model_override` is refused on any stage but `adhoc_*` (measurement scripts).
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric

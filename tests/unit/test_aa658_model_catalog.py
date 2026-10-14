@@ -19,7 +19,9 @@ def _model(key, **kw):
     return CatalogModel(**base)
 
 
-SONNET5 = _model("sonnet-5")
+# AA-801 / migration 227: Sonnet 5 rejects `temperature` ("deprecated for this model").
+SONNET5 = _model("sonnet-5", supports_temperature=False)
+TEMP_OK = _model("haiku-converse")          # a Converse model that still takes a temperature
 LUNA = _model("gpt-5.6-luna", vendor="openai", supports_temperature=False,
               bedrock_profile_ids={"acc3": "global.openai.gpt-5.6-luna"},
               price_in_per_mtok=0.1, price_out_per_mtok=0.5)
@@ -154,15 +156,51 @@ def test_converse_model_is_called_on_acc3_and_priced_from_catalog():
 def test_temperature_forwarded_only_when_set_and_supported():
     rt = MagicMock()
     rt.converse.return_value = _converse_response()
-    _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="sonnet-5", temperature=0.2),
-         SONNET5, rt)
+    _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="haiku-converse", temperature=0.2),
+         TEMP_OK, rt)
     assert rt.converse.call_args.kwargs["inferenceConfig"]["temperature"] == 0.2
+
+    rt1 = MagicMock()
+    rt1.converse.return_value = _converse_response()
+    _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="sonnet-5", temperature=0.1, seed=42),
+         SONNET5, rt1)
+    assert rt1.converse.call_count == 1
+    assert "temperature" not in rt1.converse.call_args.kwargs["inferenceConfig"]
 
     rt2 = MagicMock()
     rt2.converse.return_value = _converse_response()
     _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="gpt-5.6-luna", temperature=0.2),
          LUNA, rt2)
     assert "temperature" not in rt2.converse.call_args.kwargs["inferenceConfig"]
+
+
+class ValidationException(Exception):
+    """Stand-in for botocore's ClientError subclass of the same name."""
+
+
+def test_temperature_rejected_by_bedrock_is_retried_once_without_it():
+    """AA-801: a catalog row that still says supports_temperature (stale flag) must not fail every
+    call with "temperature is deprecated for this model"."""
+    rt = MagicMock()
+    rt.converse.side_effect = [
+        ValidationException("An error occurred (ValidationException) when calling the Converse operation: "
+                            "temperature is deprecated for this model"),
+        _converse_response("ok"),
+    ]
+    resp, _ = _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="haiku-converse", temperature=0.1),
+                   TEMP_OK, rt)
+    assert resp.content == "ok"
+    first, second = (c.kwargs["inferenceConfig"] for c in rt.converse.call_args_list)
+    assert "temperature" not in second and second["maxTokens"] == first["maxTokens"]
+
+
+def test_other_validation_errors_are_not_retried():
+    rt = MagicMock()
+    rt.converse.side_effect = ValidationException("ValidationException: maxTokens exceeds the limit")
+    with pytest.raises(ValidationException):
+        _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="haiku-converse", temperature=0.1),
+             TEMP_OK, rt)
+    assert rt.converse.call_count == 1
 
 
 def test_converse_stream_feeds_live_progress_sink():
@@ -316,3 +354,14 @@ def test_converse_without_cache_keeps_input_tokens():
     rt.converse.return_value = _converse_response(usage={"inputTokens": 491, "outputTokens": 435})
     resp, _ = _run(LLMRequest(system_prompt="s", user_prompt="u", model_tier="gpt-5.6-luna"), LUNA, rt)
     assert (resp.input_tokens, resp.cache_read_tokens, resp.cache_write_tokens) == (491, 0, 0)
+
+
+def test_migration_227_turns_sonnet5_temperature_off():
+    """AA-801: the catalog row, not code, decides; Bedrock rejects temperature for Sonnet 5."""
+    from pathlib import Path
+    sql = (Path(__file__).resolve().parents[2] / "api" / "migrations"
+           / "227_sonnet5_no_temperature.sql").read_text(encoding="utf-8")
+    body = sql.split("BEGIN;", 1)[1]
+    assert "SET supports_temperature = false" in body
+    assert "WHERE model_key = 'sonnet-5'" in body
+    assert "VALUES ('227'" in body and body.rstrip().endswith("COMMIT;")

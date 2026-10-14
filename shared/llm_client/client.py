@@ -66,6 +66,31 @@ def _first_tool_input(blocks: list, schema: dict, model) -> dict:
     return tool_inputs[0]
 
 
+def _temperature_rejected(exc: BaseException) -> bool:
+    """AA-801: Bedrock's answer to a temperature the model no longer takes, e.g. Claude Sonnet 5:
+    "ValidationException ... temperature is deprecated for this model"."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "validationexception" in text and "temperature" in text and any(
+        w in text for w in ("deprecated", "not supported", "unsupported", "not allowed"))
+
+
+def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
+    """AA-801: one Converse call; when Bedrock rejects the temperature we sent (the catalog row still
+    says `supports_temperature`), retry ONCE without it and drop it from `kwargs` for any follow-up
+    call. A ValidationException is not billed, so the retry costs nothing extra. The real fix is the
+    catalog flag (migration 227 for sonnet-5); this keeps a stale flag from failing every call."""
+    try:
+        return call(**kwargs)
+    except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
+        inference = kwargs.get("inferenceConfig") or {}
+        if "temperature" not in inference or not _temperature_rejected(e):
+            raise
+        logger.warning("converse_temperature_rejected", model=model_key, error=str(e)[:200],
+                       action="retry_without_temperature; set supports_temperature=false in the catalog")
+        kwargs["inferenceConfig"] = {k: v for k, v in inference.items() if k != "temperature"}
+        return call(**kwargs)
+
+
 class LLMClient:
     """
     Fallback chain (AA-397/398 — acc3 satellite thêm vào làm satellite chính,
@@ -494,7 +519,7 @@ class LLMClient:
         in_tok = out_tok = cache_read = cache_write = 0
         stop_reason = None
         if on_delta is None:
-            resp = rt.converse(**kwargs)
+            resp = _converse_dropping_rejected_temperature(rt.converse, kwargs, model.model_key)
             blocks = resp["output"]["message"]["content"]
             if schema:
                 # AA-714: Converse does not enforce the tool schema, so a model may omit a required
@@ -522,7 +547,7 @@ class LLMClient:
             usage = resp.get("usage", {})
             stop_reason = resp.get("stopReason")
         else:
-            resp = rt.converse_stream(**kwargs)
+            resp = _converse_dropping_rejected_temperature(rt.converse_stream, kwargs, model.model_key)
             parts = []
             usage = {}
             for event in resp["stream"]:

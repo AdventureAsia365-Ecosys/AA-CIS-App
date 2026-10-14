@@ -175,6 +175,30 @@ def _coerce_score(value, default: float = 0.0) -> float:
         return default
 
 
+_TRUE_WORDS = frozenset({"true", "yes", "y", "1"})
+
+
+def _coerce_bool(value) -> bool:
+    """A judge's yes/no as a bool. AA-801: `bool("false")` is True, so a model that answers the mission
+    test as a string ("no", "false") used to count as a yes. (A missing key is the caller's default.)
+    null or any string other than true/yes/y/1 -> False (conservative: it can cap, it never lifts)."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().strip(".!").casefold() in _TRUE_WORDS
+
+
+def _coerce_text(value) -> str:
+    """A judge's free-text field as a stripped string; a list (some models return the quote as a
+    one-element array) gives its first non-empty item."""
+    if isinstance(value, (list, tuple)):
+        value = next((v for v in value if str(v or "").strip()), "")
+    return str(value or "").strip()
+
+
 def has_brand_signals(brand_profile: dict) -> bool:
     """The exact guard judge_node.py used to inline (and graph.py's `_build_brand_diff_block`
     duplicated separately, per judge_node.py's own comment "inlined to avoid a circular
@@ -307,13 +331,27 @@ def build_rubric_anchors(brand_profile: dict, mission: Optional[str] = None) -> 
 
 
 def _anchored_mission_axis(mission: str) -> str:
-    """AA-801 option (b): the mission as a crisp yes/no test with a required verbatim quote."""
-    return f"""- mission_present (true/false) — MISSION TEST, answer yes or no: does the copy express this
-  brand's core idea: "{mission}"? Answer true ONLY when you can copy one sentence VERBATIM from the
-  ITINERARIES (a day, not the summary) that expresses it, and put that sentence in mission_evidence.
-  No such sentence → false and mission_evidence "". Judge only against this brand's core idea above,
-  never Adventure Asia's or a generic travel mission.
-- mission_evidence (string): the verbatim itinerary sentence, or "" when mission_present is false."""
+    """AA-801 option (b): the mission as a yes/no test backed by a verbatim itinerary quote.
+
+    S236 round 2 on Dev: the first wording ("answer true ONLY when you can copy one sentence VERBATIM
+    ... that expresses it") got mission=false on 45/45 judgements (gpt-5.6-luna), never a quote, while
+    the same drafts were judged mission-present 73% of the time without anchors. A brand core idea is
+    an abstract, multi-clause line ("Private cultural journeys with depth, beauty, and meaning for
+    discerning travellers"); no single itinerary sentence "expresses" all of it, and the digest cuts
+    days mid-sentence, so a strict reader never found a sentence to copy. The bar is now the same as
+    the un-anchored tenant test (the overview and most days reflect the idea in what they emphasise,
+    not quoted), and the quote only has to SHOW the idea: a passage of one day, asked for first so the
+    model looks for it before deciding."""
+    return f"""- mission_evidence (string) — fill this BEFORE mission_present. This brand's core idea is:
+  "{mission}". Pick the itinerary day whose emphasis reflects that idea most clearly (the details it
+  chooses, the angle it takes) and copy a passage of that day WORD FOR WORD from the ITINERARIES text
+  above: at least 6 consecutive words, one sentence or part of one, without the "…" that marks a
+  shortened day. The passage does not have to name or restate the core idea; it has to show it.
+  "" only when no itinerary day reflects the core idea.
+- mission_present (true/false) — MISSION TEST: true when mission_evidence is not "" AND the overview
+  and most itinerary days reflect this core idea in what they emphasise (it does not have to be quoted
+  or named, and not every day must carry it). false when it shows only in the summary, or not at all.
+  Judge only against this brand's core idea above, never Adventure Asia's or a generic travel mission."""
 
 
 _QUOTE_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'",
@@ -369,8 +407,10 @@ def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[
     highlights_text = "\n".join(f"- {h}" for h in highlights)
     anchors_block = ("\n" + build_rubric_anchors(brand_profile, mission) + "\n") if anchors else ""
     if anchors and mission:
-        reply_shape = ('{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, '
-                       '"mission_evidence": "<verbatim itinerary sentence or empty>", "feedback": "<string>"}')
+        # mission_evidence before mission_present: the model commits to a quote before the verdict.
+        reply_shape = ('{"brand_fit_score": <int>, "cross_brand_distinct": <int>, '
+                       '"mission_evidence": "<passage copied word for word from one itinerary day, or empty>", '
+                       '"mission_present": <bool>, "feedback": "<string>"}')
     else:
         reply_shape = ('{"brand_fit_score": <int>, "cross_brand_distinct": <int>, "mission_present": <bool>, '
                        '"feedback": "<string>"}')
@@ -618,9 +658,9 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
 
     brand_fit = _coerce_score(result.get("brand_fit_score"))
     distinct = _coerce_score(result.get("cross_brand_distinct"))
-    mission_present = bool(result.get("mission_present", True))
-    feedback = (result.get("feedback") or "").strip()
-    evidence = str(result.get("mission_evidence") or "").strip()
+    mission_present = _coerce_bool(result.get("mission_present", True))
+    feedback = _coerce_text(result.get("feedback"))
+    evidence = _coerce_text(result.get("mission_evidence"))
     verified: Optional[bool] = None
     if require_evidence and mission_present:
         # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.

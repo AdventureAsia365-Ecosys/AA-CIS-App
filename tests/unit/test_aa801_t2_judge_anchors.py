@@ -78,11 +78,107 @@ def test_prompt_without_anchors_has_no_anchor_block():
 def test_anchored_prompt_with_mission_has_the_quoted_yes_no_test():
     p = bf._build_judge_prompt(FULL, GEN, "Movement and freedom.", anchors=True)
     assert "SCORE ANCHORS" in p
-    assert "MISSION TEST, answer yes or no" in p and 'core idea: "Movement and freedom."' in p
-    assert "VERBATIM" in p
+    assert "MISSION TEST" in p and 'core idea is:\n  "Movement and freedom."' in p
+    assert "WORD FOR WORD" in p
     shape = p.rsplit("exactly:\n", 1)[1]
-    keys = set(json.loads(shape.replace("<int>", "1").replace("<bool>", "true")))
-    assert keys == {"brand_fit_score", "cross_brand_distinct", "mission_present", "mission_evidence", "feedback"}
+    keys = list(json.loads(shape.replace("<int>", "1").replace("<bool>", "true")))
+    assert set(keys) == {"brand_fit_score", "cross_brand_distinct", "mission_present", "mission_evidence",
+                         "feedback"}
+    # the quote is asked for before the verdict
+    assert keys.index("mission_evidence") < keys.index("mission_present")
+
+
+def test_anchored_mission_test_does_not_ask_one_sentence_to_express_the_whole_core_idea():
+    """S236 round 2: "answer true ONLY when you can copy one sentence VERBATIM ... that expresses it"
+    got mission=false on 45/45 Dev judgements. The quote only has to SHOW the idea, and the yes bar is
+    the un-anchored tenant test's (overview + most days, not quoted)."""
+    p = bf._build_judge_prompt(FULL, GEN, "Movement and freedom.", anchors=True)
+    assert "ONLY when you can copy one sentence" not in p
+    assert "does not have to name or restate the core idea" in p
+    assert "most itinerary days reflect this core idea" in p
+    assert 'without the "…" that marks a' in p
+
+
+# ── offline replay: render the real prompt, parse realistic replies ────────────────────────────
+
+_PACK = {"brand_name": "Atlas & Hearth",
+         "brand_core_idea": "Private cultural journeys with depth, beauty, and meaning for discerning travellers",
+         "brand_customer_segment": "Senior executives, private wealth, cultural philanthropists aged 45-65",
+         "brand_customer_mindset": "They seek depth over access, meaning over spectacle.",
+         "brand_voice_examples": ["elegant", "discreet", "cultured", "calm", "precise"],
+         "brand_good_examples": "At dusk the monastery courtyard empties.",
+         "brand_forbidden_words": ["bucket list"]}
+_DRAFT = {"name": "Mongolia: Khövsgöl Lake and Gobi Desert", "subtitle": "Private steppe journey",
+          "summary": "A private journey into the Mongolian steppe.", "highlights": ["Gandan library"],
+          "itineraries": [
+              {"day": 1, "title": "Ulaanbaatar",
+               "body": "Your private guide meets you at the airport. In the afternoon a curator opens the "
+                       "Gandan monastery library for a quiet hour among its sutras."},
+              {"day": 2, "title": "Khövsgöl",
+               "body": "Fly north to the lake. Evening by the water with a herder family who share the "
+                       "story of their reindeer. " + "The shore path continues. " * 20},
+          ],
+          "seo_title": "Mongolia", "seo_meta": "Private Mongolia."}
+
+
+def _replay(reply: str):
+    """score_brand_fit end to end on the rendered prompt with a canned model reply."""
+    with patch.object(bf, "LLMClient") as client, patch.object(bf, "_seeded_model", return_value=True):
+        client.return_value.generate.return_value = LLMResponse(
+            content=reply, model_used="satellite-gpt-5.6-luna", cost_usd=0.001, provider="bedrock")
+        out = bf.score_brand_fit(_PACK, _DRAFT, stage="t2_judge", mission=_PACK["brand_core_idea"],
+                                 anchors=True)
+    return out, client.return_value.generate.call_args.args[0].user_prompt
+
+
+def test_replay_yes_with_a_quote_from_the_digest_counts():
+    reply = ('{"brand_fit_score": 8, "cross_brand_distinct": 7, "mission_evidence": '
+             '"In the afternoon a curator opens the Gandan monastery library for a quiet hour among its '
+             'sutras.", "mission_present": true, "feedback": ""}')
+    out, prompt = _replay(reply)
+    assert "a curator opens the Gandan monastery library" in prompt      # the judge saw it
+    assert out.mission_present is True and out.evidence_verified is True
+    assert out.mission_evidence.startswith("In the afternoon") and out.judge_score == 7.0
+
+
+def test_replay_quote_with_day_header_and_cut_marker_still_verifies():
+    reply = ('```json\n{"brand_fit_score": 8, "cross_brand_distinct": 8, "mission_evidence": '
+             '"Evening by the water with a herder family who share the story of their reindeer. The shore\u2026",'
+             ' "mission_present": "true", "feedback": ""}\n```')
+    out, _ = _replay(reply)
+    assert out.mission_present is True and out.evidence_verified is True and out.judge_score == 8.0
+
+
+def test_replay_no_reply_is_capped_and_not_an_evidence_check():
+    reply = ('{"brand_fit_score": 8, "cross_brand_distinct": 8, "mission_evidence": "", '
+             '"mission_present": false, "feedback": "Frame each day around a private encounter."}')
+    out, _ = _replay(reply)
+    assert out.mission_present is False and out.evidence_verified is None and out.judge_score == 6.0
+
+
+def test_replay_string_no_is_a_no_not_a_yes():
+    """`bool("false")` is True: a string verdict used to count as a yes (then be overruled as unquoted)."""
+    reply = ('{"brand_fit_score": 8, "cross_brand_distinct": 8, "mission_evidence": "", '
+             '"mission_present": "false", "feedback": ""}')
+    out, _ = _replay(reply)
+    assert out.mission_present is False and out.evidence_verified is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    (True, True), (False, False), ("true", True), ("Yes", True), ("yes.", True), ("1", True), (1, True),
+    ("false", False), ("no", False), ("", False), (None, False), (0, False), ("maybe", False),
+])
+def test_coerce_bool(value, expected):
+    assert bf._coerce_bool(value) is expected
+
+
+def test_quote_returned_as_a_list_is_read():
+    out, _ = _judge(LLMResponse(content=json.dumps({
+        "brand_fit_score": 8, "cross_brand_distinct": 7, "mission_present": True,
+        "mission_evidence": ["", "We ride out at dawn, legs burning"], "feedback": "f"}),
+        model_used="m", cost_usd=0.0, provider="bedrock"),
+        require_evidence=True, evidence_source="Day 1\nWe ride out at dawn, legs burning, below.")
+    assert out.mission_present is True and out.evidence_verified is True
 
 
 def test_anchored_prompt_without_mission_keeps_the_old_mission_axis_and_shape():
