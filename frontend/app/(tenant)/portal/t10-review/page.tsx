@@ -9,6 +9,7 @@
 import { Suspense } from "react";
 import { T, serif } from "../_components/ui";
 import { ReviewList } from "../_components/ReviewList";
+import { AiContentNotice } from "../_components/AiContentNotice";
 
 export default function T10ReviewPage() {
   return (
@@ -31,6 +32,8 @@ export default function T10ReviewPage() {
           See everything you&rsquo;ve written — where it came from and whether it&rsquo;s ready —
           before you publish.
         </p>
+        {/* AA-819 — AUP notice; covers the list's bulk export/publish too. */}
+        <AiContentNotice style={{ marginTop: 8 }} />
       </div>
 
       {/* AA-569 — ReviewList now reads useSearchParams() (?piece= from the write-done popup's

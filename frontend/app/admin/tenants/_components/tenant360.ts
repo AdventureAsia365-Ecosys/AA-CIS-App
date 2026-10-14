@@ -59,6 +59,32 @@ export function validateRpm(rpm: string): string | null {
   return null;
 }
 
+/** AA-819 — mirrors the code default in api/routers/v1_publish.py publish() (used while
+ *  shared.tenants.daily_publish_limit is NULL, or before migration 230 is applied). */
+export const DAILY_PUBLISH_LIMIT_DEFAULT = 20;
+/** AA-819 — a typo guard for the override, not a commercial limit. */
+export const DAILY_PUBLISH_LIMIT_MAX = 1000;
+
+/** "" means "no override" (send null → the code default applies). */
+export function validateDailyPublishLimit(value: string): string | null {
+  if (value.trim() === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > DAILY_PUBLISH_LIMIT_MAX) {
+    return `Daily publish limit must be an integer from 1 to ${DAILY_PUBLISH_LIMIT_MAX}, or empty for the default.`;
+  }
+  return null;
+}
+
+/** Form text -> PATCH value: "" -> null (clear the override), "15" -> 15. Call only when valid. */
+export function parseDailyPublishLimit(value: string): number | null {
+  return value.trim() === "" ? null : Number(value);
+}
+
+/** "20/day (default)" when there is no override, "5/day" when there is. */
+export function fmtDailyPublishLimit(limit: number | null | undefined): string {
+  return limit == null ? `${DAILY_PUBLISH_LIMIT_DEFAULT}/day (default)` : `${limit}/day`;
+}
+
 // ── Cost ──────────────────────────────────────────────────────────────────────
 
 export interface TenantCost {

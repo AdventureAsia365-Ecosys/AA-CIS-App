@@ -23,6 +23,7 @@ import {
   useToast,
 } from "../../../_kit";
 import { CatalogDrawer } from "./CatalogDrawer";
+import { AiContentNotice } from "./AiContentNotice";
 import {
   fetchMyVersions,
   fetchVersionDetail,
@@ -318,6 +319,8 @@ function CatalogInner() {
           {visible.length < grouped.length ? `${visible.length} of ${grouped.length}` : `${grouped.length}`} tours
         </span>
       </div>
+      {/* AA-819 — AUP notice for the CSV/XLSX/DOCX exports on this page. */}
+      <AiContentNotice style={{ marginBottom: 12 }} />
 
       <DataTable<Version>
         data={visible}

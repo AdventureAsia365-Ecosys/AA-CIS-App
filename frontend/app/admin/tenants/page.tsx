@@ -25,6 +25,7 @@ import { Tenant360Settings } from "./_components/Tenant360Settings";
 import { Tenant360Cost } from "./_components/Tenant360Cost";
 import { Tenant360Quality } from "./_components/Tenant360Quality";
 import { Tenant360Markets } from "./_components/Tenant360Markets";
+import { fmtDailyPublishLimit } from "./_components/tenant360";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ interface Tenant {
   posts_per_week: number;
   country: string | null;
   rate_limit_rpm: number;
+  daily_publish_limit?: number | null; // AA-819 — per-tenant override; null/absent = code default
   is_active: boolean;
   status: TenantStatus;           // AA-797 — derived by GET /admin/tenants
   cancelled_at: string | null;
@@ -765,6 +767,7 @@ function TenantDetail({ tenant, onChanged }: {
           // just also surfaced at header level so an admin doesn't need to open that tab for it.
           // AA-766: plan / RPM from the list row, which reloads after a Settings save.
           ["Rate Limit",     `${tenant.rate_limit_rpm}/min`,        A.body],
+          ["Publish Limit",  fmtDailyPublishLimit(tenant.daily_publish_limit), A.body], // AA-819
           ["Plan",           tenant.plan_tier,                      A.body],
           ["Member Since",   s.member_since,                        A.muted],
         ] as [string, string, string][]).map(([l, v, c]) => (
@@ -799,6 +802,7 @@ function TenantDetail({ tenant, onChanged }: {
       {tab === "audit"    && <AuditTabContent    tenantId={tenantId} />}
       {tab === "settings" && (
         <Tenant360Settings tenantId={tenantId} planTier={tenant.plan_tier} rateLimitRpm={tenant.rate_limit_rpm}
+          dailyPublishLimit={tenant.daily_publish_limit}
           status={tenant.status ?? (tenant.is_active ? "active" : "suspended")} onChanged={onChanged} />
       )}
     </div>
