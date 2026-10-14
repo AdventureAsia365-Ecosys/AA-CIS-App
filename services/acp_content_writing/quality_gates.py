@@ -768,7 +768,7 @@ def _seo_field_of(sentence: str, seo_title: Optional[str], meta_description: Opt
     """'title' / 'meta' when a claim's sentence is the search title or the meta description (or a part
     of it); None otherwise. Only asked after the sentence was NOT found in the body."""
     s = _cmp_fold(sentence)
-    if len(s.split()) < 3:
+    if len(s.split()) < 4:  # the same floor as sentence_repair.locate_sentence
         return None
     for prefix, field in (("title", seo_title), ("meta", meta_description)):
         f = _cmp_fold(field)
@@ -922,7 +922,11 @@ def gate_brand_voice(
     body_claims, field_viol = [], []
     for c in claims:
         sentence = str(c.get("sentence") or c["claim"])
-        field = None if _locate_in(content_text, sentence) else _seo_field_of(sentence, seo_title, meta_description)
+        # PR #709 review B1 — a claim that is in the body at all (located, or a short / paraphrased quote whose
+        # words still appear in it) stays a blocking body claim even when the title or meta repeats it.
+        in_body = bool(_locate_in(content_text, sentence)) or (
+            bool(_cmp_fold(sentence)) and _cmp_fold(sentence) in _cmp_fold(content_text))
+        field = None if in_body else _seo_field_of(sentence, seo_title, meta_description)
         if field is None:
             body_claims.append(c)
         else:

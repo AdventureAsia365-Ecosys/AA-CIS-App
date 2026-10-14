@@ -378,42 +378,84 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
 
 
 # AA-786 (Gate-1 policy, S235) — channels where an F9 product-truth failure left after the last
-# attempt is cut in code and the piece ships, never held (AA-770: the tenant always gets content).
-# The blog keeps the hold until AA-777 extends _cut_truth_items to it.
+# attempt is cut in code. PR #709 review (orchestrator, under AA-770 "held = admin-only label; the
+# tenant always receives content"): the F9 entry is waived only when EVERY flagged sentence was cut;
+# anything left keeps F9 blocking, so the piece is labelled held for the admin. The blog keeps the
+# plain hold until AA-777 extends _cut_truth_items to it.
 F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
+
+
+def _plain(text: Optional[str]) -> str:
+    return " ".join(strip_citation_tags(text or "").split())
 
 
 def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
                      ignore: frozenset = frozenset(), cta: Optional[str] = None,
-                     moments: Optional[list] = None) -> tuple[str, list, list, Optional[dict]]:
-    """AA-786 — LinkedIn repair-not-hold. When the piece is about to stop with a blocking
-    F9_cta_fact made only of product-truth items (unsupported claims, TEXT_INTEGRITY — never a
-    missing CTA), cut each flagged sentence that is safe to cut (sentence_repair.delete_flagged: not
-    the hook, not the CTA, no orphaned pronoun) and mark the F9 entry `blocking: false, waived: true`
-    (also added to the flags, so the admin still sees it). When nothing can be cut the piece still
-    ships with the flag. Returns (content_text, gate_ledger, flags, repair_log entry or None); a
-    no-op for any other channel or ledger. Built as its own step so AA-777 can extend it to blogs."""
+                     moments: Optional[list] = None, spec=None) -> tuple[str, list, list, Optional[dict]]:
+    """AA-786 — LinkedIn cut-not-rewrite, run once on the LAST attempt. When the piece is about to stop
+    with a blocking F9_cta_fact made only of product-truth items (unsupported claims, TEXT_INTEGRITY —
+    never a missing CTA), cut each flagged sentence that is safe to cut (sentence_repair.delete_flagged:
+    not the hook, not the CTA, no orphaned pronoun).
+    - Every flagged sentence gone → the F9 entry is stored `blocking: false, waived: true` (and added to
+      the flags, so the admin still sees it).
+    - Any flagged sentence left (a refused cut, a quote that matches no sentence) → F9 stays blocking and
+      the piece is held (an admin label; the tenant still receives it, AA-770).
+    Both cases record `sentences_cut` / `sentences_left` on the F9 entry and in the repair_log entry.
+    After a cut the length gates (F4 extreme length, F14 social shape) are re-run on the cut text and
+    replace their ledger entries, so a piece cut below the band is held on that gate.
+    Returns (content_text, gate_ledger, flags, repair_log entry or None); a no-op for any other channel
+    or ledger. Built as its own step so AA-777 can extend it to blogs."""
     if channel not in F9_CUT_NOT_HOLD_CHANNELS:
         return content_text, gate_ledger, flags, None
     f9 = next((g for g in gate_ledger if g["gate"] == "F9_cta_fact" and not g["passed"]
                and g.get("blocking", True)), None)
     if f9 is None or not sentence_repair.f9_truth_only(f9):
         return content_text, gate_ledger, flags, None
-    items = sentence_repair.truth_items(content_text, f9)
+    items, unlocated = sentence_repair.truth_items(content_text, f9)
     cut = sentence_repair.delete_flagged(content_text, items, ignore=ignore, cta=cta, moments=moments) \
         if items else None
-    n_cut = 0
-    if cut is not None:
-        plain = " ".join(strip_citation_tags(cut).split())
-        n_cut = sum(1 for it in items if it["sentence"] not in plain)
+    plain_after = _plain(cut if cut is not None else content_text)
+    left = [it["sentence"] for it in items if _plain(it["sentence"]) in plain_after] + unlocated
+    n_cut = len(items) - (len(left) - len(unlocated))
+    pre_cut = content_text
+    if cut is not None and n_cut:
         content_text = cut
-    reason = (f"{n_cut} flagged sentence(s) cut on {channel}; shipped, not held (AA-786)" if n_cut
-              else f"flagged sentence could not be cut safely on {channel}; shipped with the flag, not held (AA-786)")
-    waived = {**f9, "blocking": False, "waived": True, "waived_reason": reason}
-    ledger = [waived if g is f9 else g for g in gate_ledger]
-    entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_waived",
-             "sentences_cut": n_cut, "violations": [reason], "repairable": False}
-    return content_text, ledger, list(flags) + [waived], entry
+    else:
+        n_cut = 0
+    fresh: dict = {}
+    too_short = False
+    if n_cut:  # review N1 — the length gates read the cut text, not the pre-cut one
+        from services.acp_content_writing.quality_gates import gate_extreme_length, gate_social_shape
+        length, shape = gate_extreme_length(_plain(content_text), channel), gate_social_shape(content_text, spec)
+        fresh = {length["gate"]: length, shape["gate"]: shape}
+        before = gate_social_shape(pre_cut, spec)  # the same check on the text before the cut
+
+        def under(r: dict) -> bool:
+            return any(" under the " in v for v in r.get("violations") or [])
+        # a post the cut pushed under its band (or to an empty text) is not waived
+        too_short = (under(shape) and not under(before)) or not length["passed"]
+    all_cut = n_cut > 0 and not left and not too_short
+    reason = (f"{n_cut} flagged sentence(s) cut on {channel}"
+              + (f"; {len(left)} flagged sentence(s) left — held for admin review" if left else "")
+              + ("; the cut left the post under its length band — held for admin review" if too_short else "")
+              + " (AA-786)")
+    marks = {"sentences_cut": n_cut, "sentences_left": left}
+    new_f9 = ({**f9, **marks, "blocking": False, "waived": True, "waived_reason": reason} if all_cut
+              else {**f9, **marks, "cut_reason": reason})
+    ledger = [fresh.get(g["gate"], new_f9 if g is f9 else g) for g in gate_ledger]
+    entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_cut_refused",
+             **marks, "violations": [reason], "repairable": False}
+    return content_text, ledger, list(flags) + ([new_f9] if all_cut else []), entry
+
+
+async def _after_cut(content_text: str, tenant_id: Optional[str], embedding):
+    """AA-786 review N1 — after the LinkedIn cut: the writer's summary may still state the cut claim, so
+    it is cleared (a None summary is a normal soft-fail outcome, AA-498); the embedding is recomputed on
+    the cut text (one embedding call; the old one is kept if that call fails). Returns (summary, embedding)."""
+    if not tenant_id:
+        return None, embedding
+    fresh = await asyncio.to_thread(compute_embedding, strip_citation_tags(content_text))
+    return None, fresh if fresh is not None else embedding
 
 
 def _grounding_text(context: dict) -> str:
@@ -1291,14 +1333,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
-                    content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
-                        content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
-                        moments=hyg.moments)
-                    if cut_entry:
-                        repair_log.append({"attempt": attempt - 1, **cut_entry})
-                    status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                     seo_meta, summary = prev_snapshot["seo_meta"], prev_snapshot["summary"]
                     embedding = prev_snapshot["embedding"]
+                    # AA-786 — the last attempt: LinkedIn cuts the flagged F9 sentences (review P2).
+                    content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
+                        content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
+                        moments=hyg.moments, spec=spec)
+                    if cut_entry:
+                        repair_log.append({"attempt": attempt - 1, **cut_entry})
+                        if cut_entry["sentences_cut"]:
+                            summary, embedding = await _after_cut(content_text, tenant_id, embedding)
+                    status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                     prev_snapshot = None  # nothing was discarded by this attempt
                     attempt -= 1
                     break
@@ -1512,12 +1557,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # published until the tenant edits it or an admin clears it (v1_publish gate, #8).
                 # S234 review — held only on a product-truth gate; a piece whose only blocking
                 # failure left is style-only (F15_voice stock phrase) ships with it as a flag.
-                # AA-786 — on LinkedIn an F9 product-truth failure is cut and shipped, never held.
-                content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
-                    content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
-                    moments=hyg.moments)
-                if cut_entry:
-                    repair_log.append({"attempt": attempt, **cut_entry})
+                # AA-786 — on the LAST attempt only (review P2), LinkedIn cuts the flagged F9 sentences;
+                # F9 is waived only when every one of them is gone.
+                if last_try:
+                    content_text, gate_ledger, flags, cut_entry = _cut_truth_items(
+                        content_text, gate_ledger, flags, channel=channel, ignore=brand_ignore, cta=cta,
+                        moments=hyg.moments, spec=spec)
+                    if cut_entry:
+                        repair_log.append({"attempt": attempt, **cut_entry})
+                        if cut_entry["sentences_cut"]:
+                            summary, embedding = await _after_cut(content_text, tenant_id, embedding)
                 status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
 

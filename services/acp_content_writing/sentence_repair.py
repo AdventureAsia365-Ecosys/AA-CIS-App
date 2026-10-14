@@ -139,18 +139,30 @@ def f9_truth_only(g: dict) -> bool:
             and not any("CTA_NOT_REFLECTED" in v for v in vs))
 
 
-def truth_items(content_text: str, g: dict) -> list[dict]:
-    """AA-786 — the located sentences of one F9_cta_fact entry (claims and TEXT_INTEGRITY; never the
-    CTA, the title or the meta), in plan()'s item shape — what the LinkedIn repair-not-hold cuts."""
-    out: list[dict] = []
+def truth_quotes(g: dict) -> list[tuple[str, str]]:
+    """AA-786 — every (quote, problem) of one F9_cta_fact entry that is product truth about the body:
+    unsupported claims and TEXT_INTEGRITY sentences — never the CTA, the title or the meta."""
+    out: list[tuple[str, str]] = []
     for v in g.get("violations") or []:
-        for quote, problem, _ in _f9_items(v, allow_cta=True) or []:
-            span = locate_sentence(content_text, quote)
-            if span is None or any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
-                continue
-            sentence = " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
-            out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem})
+        out += [(quote, problem) for quote, problem, _ in _f9_items(v, allow_cta=True) or []]
     return out
+
+
+def truth_items(content_text: str, g: dict) -> tuple[list[dict], list[str]]:
+    """AA-786 — (items, unlocated): the located sentences of truth_quotes(g) in plan()'s item shape —
+    what the LinkedIn repair-not-hold cuts — and the quotes that match no sentence of the text."""
+    out: list[dict] = []
+    unlocated: list[str] = []
+    for quote, problem in truth_quotes(g):
+        span = locate_sentence(content_text, quote)
+        if span is None:
+            unlocated.append(_clean_quote(quote))
+            continue
+        if any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
+            continue
+        sentence = " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
+        out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem})
+    return out, unlocated
 
 
 def _slug_violation(g: dict) -> bool:

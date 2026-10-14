@@ -3,6 +3,7 @@ quoted (TEXT_INTEGRITY) and repairable, a reason-less verdict is a warn (not a h
 search title / meta are judged (and never hold on their own), and on LinkedIn an F9 product-truth
 failure is cut and the piece ships instead of being held."""
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -169,6 +170,23 @@ class TestTitleMeta:
         items = sentence_repair.plan(PIECE, [f9])
         assert [i["sentence"] for i in items] == ["Every guest gets a private chef at dinner each night."]
 
+    def test_claim_in_body_and_meta_stays_blocking(self):
+        """PR #709 review B1 — a short / paraphrased quote that locate_sentence cannot place, whose words are in
+        the body AND the meta, is a body claim: it blocks."""
+        body = ("Taktsang clings to the cliff above the valley floor. It was built in 1692 by monks who climbed "
+                "for days. Ask us about the dates.")
+        meta = "Visit Taktsang, the cliffside monastery built in 1692 above Paro, on a guided day hike."
+        f9, _, _ = _run_f9({"status": "manual_check", "failure_codes": ["FACT_CHECK_MANUAL_CHECK"],
+                            "unsupported_claims": [{"sentence": "built in 1692", "claim": "built in 1692",
+                                                    "why_not_in_source": "the source gives no date"}]},
+                           text=body, seo_title=self.TITLE, meta_description=meta)
+        assert f9["blocking"] is True
+        assert not any(v.startswith(("title ", "meta ")) for v in f9["violations"])
+
+    def test_three_word_quote_is_never_attributed_to_a_seo_field(self):
+        assert qg._seo_field_of("built in 1692", None, "Monastery built in 1692 above Paro.") is None
+        assert qg._seo_field_of("monastery built in 1692", None, "Monastery built in 1692 above Paro.") == "meta"
+
     def test_run_quality_gates_passes_title_meta_for_blog_only(self):
         res = [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]
         for channel, expect in (("blog", self.TITLE), ("linkedin", None)):
@@ -191,7 +209,17 @@ def _f9_fail(violations=None):
             "violations": violations or [CLAIM_V]}
 
 
+HOOK_V = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '
+          '"The dzong stands where two rivers meet in Punakha." (claims: rivers; source: silent)')
+
+
+def _spec(lo=10):
+    return SimpleNamespace(words=(lo, 250), target_words=(lo, 200), block_words=325, hashtags_max=3)
+
+
 class TestCutTruthItems:
+    """PR #709 review P1 (orchestrator, AA-770): waive F9 only when every flagged sentence was cut."""
+
     def test_linkedin_truth_failure_is_cut_and_waived(self):
         ledger = [{"gate": "F6_cta_present", "passed": True, "violations": [], "blocking": True}, _f9_fail()]
         text, new_ledger, flags, entry = service._cut_truth_items(PIECE, ledger, [], channel="linkedin",
@@ -199,26 +227,75 @@ class TestCutTruthItems:
         assert "private chef" not in text and "Ask us about the dates." in text
         f9 = next(g for g in new_ledger if g["gate"] == "F9_cta_fact")
         assert f9["blocking"] is False and f9["waived"] is True
+        assert f9["sentences_cut"] == 1 and f9["sentences_left"] == []
         assert entry["repair_mode"] == "f9_truth_cut" and entry["sentences_cut"] == 1
+        assert entry["sentences_left"] == []
         assert service._hold_or_ship(new_ledger, flags)[0] == "approved"
         assert any(g["gate"] == "F9_cta_fact" for g in flags)
 
-    def test_linkedin_cut_impossible_ships_flagged(self):
-        hook = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '
-                '"The dzong stands where two rivers meet in Punakha." (claims: rivers; source: silent)')
-        text, ledger, flags, entry = service._cut_truth_items(PIECE, [_f9_fail([hook])], [], channel="linkedin",
+    def test_refused_cut_keeps_f9_blocking(self):
+        """The hook is never cut → the false sentence is still there → held for admin (tenant still gets it)."""
+        text, ledger, flags, entry = service._cut_truth_items(PIECE, [_f9_fail([HOOK_V])], [], channel="linkedin",
                                                               cta="Ask us about the dates.")
-        assert text == PIECE  # the hook is never cut
-        assert entry["repair_mode"] == "f9_waived"
-        status, reason, flags = service._hold_or_ship(ledger, flags)
-        assert (status, reason) == ("approved", None)
-        assert any(g["gate"] == "F9_cta_fact" and g["waived"] for g in flags)
+        assert text == PIECE
+        assert entry["repair_mode"] == "f9_cut_refused" and entry["sentences_cut"] == 0
+        assert entry["sentences_left"] == ["The dzong stands where two rivers meet in Punakha."]
+        assert ledger[0]["blocking"] is True and "waived" not in ledger[0]
+        assert ledger[0]["sentences_left"] == entry["sentences_left"]
+        assert service._hold_or_ship(ledger, flags)[0] == "held"
+
+    def test_partial_cut_keeps_f9_blocking_with_the_sentence_left(self):
+        both = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '
+                '"The dzong stands where two rivers meet in Punakha." (claims: rivers; source: silent); '
+                '"Every guest gets a private chef at dinner each night." (claims: chef; source: no meals)')
+        text, ledger, _, entry = service._cut_truth_items(PIECE, [_f9_fail([both])], [], channel="linkedin",
+                                                          cta="Ask us about the dates.")
+        assert "private chef" not in text  # the safe one is still cut
+        assert entry["sentences_cut"] == 1
+        assert entry["sentences_left"] == ["The dzong stands where two rivers meet in Punakha."]
+        assert ledger[0]["blocking"] is True
+        assert service._hold_or_ship(ledger, [])[0] == "held"
+
+    def test_unlocatable_quote_counts_as_left(self):
+        ghost = ('audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): '
+                 '"A sentence the piece never contained at all." (claims: x; source: y); '
+                 '"Every guest gets a private chef at dinner each night." (claims: chef; source: no meals)')
+        _, ledger, _, entry = service._cut_truth_items(PIECE, [_f9_fail([ghost])], [], channel="linkedin",
+                                                       cta="Ask us about the dates.")
+        assert entry["sentences_cut"] == 1
+        assert entry["sentences_left"] == ["A sentence the piece never contained at all."]
+        assert ledger[0]["blocking"] is True
 
     def test_text_integrity_on_linkedin_is_cut(self):
         v = "TEXT_INTEGRITY: 'It was built in 1637 by the Zhabdrung.'"
         text, ledger, _, _ = service._cut_truth_items(PIECE, [_f9_fail([v])], [], channel="linkedin",
                                                       cta="Ask us about the dates.")
         assert "1637" not in text and ledger[0]["waived"] is True
+
+    def test_cut_below_the_word_band_is_not_waived(self):
+        """Review N1 — the length gates are re-run on the cut text; a cut that leaves the post under its
+        band keeps F9 blocking, and the fresh F14 result replaces the stale one."""
+        shape = qg._result("F14_social_shape", [], repairable=False, blocking=False)
+        ledger = [shape, _f9_fail()]
+        _, new_ledger, _, entry = service._cut_truth_items(PIECE, ledger, [], channel="linkedin",
+                                                           cta="Ask us about the dates.", spec=_spec(lo=25))
+        gates = {g["gate"]: g for g in new_ledger}
+        assert entry["sentences_cut"] == 1
+        assert "under the 25–250-word band" in gates["F14_social_shape"]["violations"][0]
+        assert gates["F9_cta_fact"]["blocking"] is True
+        assert "under its length band" in gates["F9_cta_fact"]["cut_reason"]
+        # within the band → waived as usual
+        _, ok, _, _ = service._cut_truth_items(PIECE, [shape, _f9_fail()], [], channel="linkedin",
+                                               cta="Ask us about the dates.", spec=_spec(lo=10))
+        assert next(g for g in ok if g["gate"] == "F9_cta_fact")["waived"] is True
+
+    def test_counting_strips_tags_on_both_sides(self):
+        """Review N2 — a tagged piece: the cut sentence is counted as cut, the kept ones are not."""
+        tagged = PIECE.replace("Zhabdrung.", "Zhabdrung. [R:a1]").replace("each night.", "each night. [F:f2]")
+        text, ledger, _, entry = service._cut_truth_items(tagged, [_f9_fail()], [], channel="linkedin",
+                                                          cta="Ask us about the dates.")
+        assert entry["sentences_cut"] == 1 and entry["sentences_left"] == []
+        assert ledger[0]["waived"] is True and "[R:a1]" in text
 
     def test_cta_failure_on_linkedin_still_holds(self):
         ledger = [_f9_fail(["audit flagged: CTA_NOT_REFLECTED"])]
@@ -275,3 +352,36 @@ async def test_service_linkedin_f9_is_never_held(channel, expect):
     else:
         assert kw["held_reason"].startswith("F9_cta_fact")
         assert "private chef" in kw["content_text"]
+
+
+@pytest.mark.asyncio
+async def test_service_non_repairable_first_failure_does_not_cut():
+    """PR #709 review P2 — the cut runs on the last attempt only: an attempt-1 stop on a non-repairable gate
+    (here the F16 contract) holds as before, with the F9 sentence untouched and no cut entry."""
+    def gates(**kw):
+        f16 = {"gate": "F16_faq", "passed": False, "blocking": True, "repairable": False, "violations": ["no FAQ"]}
+        f9 = _f9_fail()
+        return {"passed": False, "gate_ledger": [f16, f9], "first_failure": f16, "flags": []}
+    with patch.object(service, "write_content", return_value=(PIECE, 0.01, {}, None)), \
+         patch.object(service, "run_quality_gates", side_effect=gates), \
+         patch.object(service, "observe_t10", new=AsyncMock()), \
+         patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda t, c: (t, [])), \
+         patch("services.acp_content_writing.service.text_integrity.final_pass",
+               side_effect=lambda text, hyg, **kw: (text, [], [])), \
+         patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
+        await service.run_write_background(uuid4(), uuid4(), _context("linkedin"), pool=MagicMock())
+    kw = fin.call_args.kwargs
+    assert kw["status"] == "held" and kw["attempt_number"] == 1
+    assert "private chef" in kw["content_text"]
+    assert not any(str(r.get("repair_mode", "")).startswith("f9_") for r in kw["repair_log"])
+
+
+@pytest.mark.asyncio
+async def test_after_cut_clears_summary_and_recomputes_embedding():
+    """Review N1 — the summary may state the cut claim (cleared); the embedding is redone on the cut text."""
+    with patch.object(service, "compute_embedding", return_value=[0.5]) as emb:
+        summary, embedding = await service._after_cut("Kept text. [R:a1]", "tenant", [0.1])
+    assert summary is None and embedding == [0.5]
+    assert emb.call_args[0][0] == "Kept text."
+    with patch.object(service, "compute_embedding", return_value=None):
+        assert await service._after_cut("x", "tenant", [0.1]) == (None, [0.1])  # a failed call keeps the old one
