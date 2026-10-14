@@ -78,6 +78,10 @@ export const API_RULES = {
 export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "content-quality/pieces/", roles: ["admin"] },
   { prefix: "content-quality/requests/", roles: ["admin"] },
+  // AA-797 — every write to a tenant account: POST tenants (create), PATCH tenants/{id}
+  // (plan/status), generate-key, brand-identity, config, offboard. Prefix "tenants" (no slash)
+  // so the bare create path is covered; reads (GET) stay open to every staff role.
+  { prefix: "tenants", roles: ["admin"] },
 ];
 
 /** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */
