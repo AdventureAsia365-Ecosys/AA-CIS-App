@@ -85,7 +85,7 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
               <Button size="sm" variant={d.drop ? "secondary" : "danger"} disabled={!isAdmin}
                       onClick={() => set(r, { drop: !d.drop })}>{d.drop ? "Keep" : "Drop"}</Button>
             </div>
-            <textarea value={d.text} disabled={d.drop || !isAdmin} rows={2} maxLength={600}
+            <textarea value={d.text} disabled={d.drop || !isAdmin} rows={Math.min(8, Math.max(3, Math.ceil(d.text.length / 60)))} maxLength={600}
                       onChange={(e) => set(r, { text: e.target.value })} aria-label={`Text of fact ${r.index + 1}`}
                       style={{ ...fieldStyle, resize: "vertical", textDecoration: d.drop ? "line-through" : "none" }} />
           </div>
@@ -101,7 +101,7 @@ function FactsForm({ card, onSaved }: { card: PlaceCardDetail; onSaved: (c: Plac
       {!isAdmin && <div style={{ fontSize: 12, color: A.muted }}>Only an admin can edit facts.</div>}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <Button variant="primary" size="sm" disabled={!canSave} onClick={() => { setError(null); save.mutate(); }}>
-          {save.isPending ? "Saving…" : `Save ${edits.length || ""} change(s)`}
+          {save.isPending ? "Saving…" : edits.length ? `Save ${edits.length} change${edits.length > 1 ? "s" : ""}` : "Save"}
         </Button>
         <Button size="sm" variant="ghost" disabled={!edits.length || save.isPending}
                 onClick={() => { setDrafts({}); setError(null); }}>Reset</Button>
