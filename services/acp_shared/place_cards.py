@@ -29,7 +29,10 @@ How a card is made (once per PLACE, in a job — never in an HTTP request, and n
    City Palace Jaipur ≠ Udaipur). A draft landing on an admin-REJECTED card's key replaces it when
    the identity differs, and is a cached miss when it repeats the rejected identity. Every atom
    of the group is linked in `atom_place_card`; the itinerary spelling and the draft's aliases go
-   to `place_card_alias` (never a generic form).
+   to `place_card_alias` (never a generic form). AA-809: before inserting, the checked draft is
+   resolved against the existing cards of its country (`find_card_for_draft`: same key, alias, core
+   name incl. legacy 3-part keys, a small feature-synonym fold — Waterfall = Falls, Tso = Lake); a
+   hit links the atoms to that card (names + cost added, its facts untouched) instead of a duplicate.
 Admins can mark a card verified or rejected, and merge duplicates (Content Quality page); a
 rejected card is never shown to a writer.
 
@@ -558,6 +561,102 @@ async def find_local_cards(conn, groups: dict[tuple[str, str], list[dict]]) -> d
     return found
 
 
+# AA-809 — feature words that name the same KIND of water feature, folded only when a drafted card
+# is compared with the existing cards of its country (never in place_key, so no key changes):
+#   waterfall / waterfalls -> falls  ("Kuang Si Waterfall" = "Kuang Si Falls", Laos, Dev 14/10/2026)
+# A trailing local word for "lake" is dropped while a distinctive word remains (core_key already
+# drops lake / nuur at the edges):
+#   tso  — Ladakhi / Tibetan "lake"   ("Pangong Tso" = "Pangong Lake")
+#   tsho — Bhutanese (Dzongkha) spelling of tso ("Membar Tsho" = "Membar Lake")
+#   co   — Tibetan pinyin "lake"      ("Nam Co" = "Lake Nam"); suffix only, so "Co Loa" is untouched
+_FEATURE_SYNONYMS = {"waterfall": "falls", "waterfalls": "falls"}
+_LAKE_SUFFIXES = frozenset({"tso", "tsho", "co"})
+
+
+def match_key(name: Optional[str]) -> str:
+    """core_key() with the feature-word synonyms above folded: 'Kuang Si Waterfall' ==
+    'Kuang Si Falls', 'Pangong Tso' == 'Pangong Lake'. Used only to compare a draft with existing
+    cards; a different place sharing a word ('Kuang Si Butterfly Park') keeps a different key."""
+    words = [_FEATURE_SYNONYMS.get(w, w) for w in core_key(name).split()]
+    if len(words) > 1 and words[-1] in _LAKE_SUFFIXES and _distinctive(words[:-1]):
+        words = words[:-1]
+    return " ".join(words)
+
+
+_DRAFT_CANDIDATES_SQL = """
+    SELECT card_id, place_key, display_name, locality, region, country FROM acp_shared.place_card
+    WHERE status <> 'rejected' AND (place_key LIKE $1 OR lower(btrim(country)) = $2)
+    -- AA-809: every non-rejected card of one country (2-part, legacy 3-part and generic keys)
+"""
+_ALIAS_LOOKUP_SQL = """
+    SELECT a.alias_norm, a.country_norm, a.card_id
+    FROM acp_shared.place_card_alias a
+    JOIN acp_shared.place_card pc ON pc.card_id = a.card_id
+    WHERE a.alias_norm = ANY($1::text[]) AND a.country_norm = ANY($2::text[]) AND pc.status <> 'rejected'
+"""
+
+
+def _card_locality(c) -> str:
+    return fold(c.get("locality")) or fold(c.get("region"))
+
+
+async def find_card_for_draft(conn, key: str, name: str, aliases: list[str], locality: Optional[str],
+                              region: Optional[str], country: str) -> Optional[tuple[str, str]]:
+    """AA-809 — the existing non-rejected card of the draft's country that a checked draft names, as
+    (card_id, method), or None (insert as before). No LLM call. The first method with a hit wins:
+    'place_key' (same key), 'alias' (alias table on the display name's forms), 'core_key' (same core
+    name, legacy 3-part keys included), 'feature_synonym' (match_key), 'draft_alias' (alias table or
+    core name on the draft's own aliases, minus any alias that is only part of the display name:
+    'Punakha' for 'Punakha Dzong'). A generic name ('City Palace') only matches a generic card of the
+    same core name AND locality (Jaipur != Udaipur). A method hitting two cards is ambiguous: None."""
+    country_norm = fold(country)
+    if not country_norm:
+        return None
+    cards = [dict(r) for r in await conn.fetch(_DRAFT_CANDIDATES_SQL, f"%|{country_norm}",
+                                               (country or "").strip().lower())]
+    cards = [c for c in cards if fold(c.get("country")) == country_norm]
+
+    def pick(method: str, ids) -> Optional[tuple[str, str]]:
+        ids = {str(i) for i in ids}
+        if len(ids) > 1:
+            logger.info("place_card_post_draft_ambiguous", card=name, method=method, cards=sorted(ids))
+        return (ids.pop(), method) if len(ids) == 1 else None
+
+    if is_generic_name(name):
+        loc = fold(locality) or fold(region)
+        hits = [c["card_id"] for c in cards if loc and is_generic_name(c["display_name"])
+                and core_key(c["display_name"]) == core_key(name) and _card_locality(c) == loc]
+        return pick("generic_locality", hits) if hits else None
+
+    exact = [c["card_id"] for c in cards if c["place_key"] == key]
+    if exact:
+        return pick("place_key", exact)
+    forms = itinerary_alias_forms(name)
+    alias_forms = {f for a in aliases or [] for f in itinerary_alias_forms(a)
+                   if not any(f == d or _contains_words(f, d) for d in forms)}
+
+    async def by_alias(wanted: set[str]) -> list:
+        if not wanted:
+            return []
+        rows = await conn.fetch(_ALIAS_LOOKUP_SQL, sorted(wanted), [country_norm])
+        return [r["card_id"] for r in rows if r["country_norm"] == country_norm]
+
+    def by_key(wanted: set[str], keyfn) -> list:
+        keys = {keyfn(f) for f in wanted}
+        return [c["card_id"] for c in cards
+                if any(keyfn(f) in keys for f in itinerary_alias_forms(c["display_name"]))]
+
+    hits = await by_alias(forms)
+    if hits:
+        return pick("alias", hits)
+    for method, keyfn in (("core_key", core_key), ("feature_synonym", match_key)):
+        hits = by_key(forms, keyfn)
+        if hits:
+            return pick(method, hits)
+    hits = await by_alias(alias_forms) or by_key(alias_forms, match_key)
+    return pick("draft_alias", hits) if hits else None
+
+
 # ── Build ──────────────────────────────────────────────────────────────────────────────────────
 
 def _representative(atoms: list[dict]) -> dict:
@@ -619,8 +718,9 @@ async def _store_card(conn, key: str, fields: tuple):
 
 async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], pool) -> tuple[Optional[str], str]:
     """Draft + check ONE card for every atom of one (place_norm, country) group and link them.
-    Returns (card_id, 'linked') or (None, miss reason); a miss is stored so the place is not
-    drafted again before its retry_after."""
+    Returns (card_id, 'linked'), (card_id, 'linked_after_draft') when the checked draft names an
+    existing card (AA-809: no insert, see find_card_for_draft) or (None, miss reason); a miss is
+    stored so the place is not drafted again before its retry_after."""
     rep = _representative(atoms)
     signal = {"atom_id": rep["atom_id"], "place": rep["place"], "group_atoms": len(atoms)}
     card, cost, resp = await asyncio.to_thread(draft_card, rep)
@@ -651,8 +751,21 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
     key = place_key(name, country, locality or region)
     fields = (name, locality, region, country, (card.get("naming_note") or "").strip() or None,
               json.dumps(kept), round(cost + cost2, 6))
+    outcome = "linked"
     async with pool.acquire() as conn, conn.transaction():
-        card_id = await _store_card(conn, key, fields)
+        # AA-809: the draft may name a card that exists under another key (S233 legacy 3-part key,
+        # an alias, 'Waterfall' vs 'Falls'): link it, add the names and the cost, keep its facts.
+        match = await find_card_for_draft(conn, key, name, card["aliases"], locality, region, country)
+        if match is not None:
+            card_id, method = match
+            outcome = "linked_after_draft"
+            logger.info("place_card_post_draft_match", atom_id=rep["atom_id"], place=rep["place"], card=name,
+                        card_id=card_id, method=method)
+            await conn.execute(
+                "UPDATE acp_shared.place_card SET cost_usd = cost_usd + $2, updated_at = now() WHERE card_id = $1",
+                card_id, fields[-1])
+        else:
+            card_id = await _store_card(conn, key, fields)
         if card_id is not None:
             card_id = str(card_id)
             await conn.executemany(_LINK_SQL, [(a["atom_id"], card_id) for a in atoms])
@@ -663,7 +776,7 @@ async def build_card_for_group(group_key: tuple[str, str], atoms: list[dict], po
         logger.info("place_card_same_as_rejected", atom_id=rep["atom_id"], place=rep["place"], card=name)
         await _record_miss(pool, group_key, atoms, "identity_rejected", model)
         return None, "identity_rejected"
-    return card_id, "linked"
+    return card_id, outcome
 
 
 async def build_card_for_atom(atom: dict, pool) -> Optional[str]:
@@ -675,7 +788,7 @@ async def build_card_for_atom(atom: dict, pool) -> Optional[str]:
 def _empty_counters(atoms: int) -> dict:
     return {"atoms": atoms, "already_linked": 0, "skipped_by_rule": 0, "places": 0, "linked_existing": 0,
             "skipped_cached": 0, "over_cap": 0, "drafted": 0, "linked_new": 0, "missed": 0, "errors": 0,
-            "built": 0}
+            "built": 0, "linked_after_draft": 0}
 
 
 async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
@@ -687,7 +800,8 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
 
     Returns counters: atoms, already_linked, skipped_by_rule, places (groups to resolve),
     linked_existing, skipped_cached, over_cap (groups left for a later run by `max_places`),
-    drafted, linked_new, missed, errors, built (atoms newly linked by a draft)."""
+    drafted, linked_new, linked_after_draft (AA-809: a draft that named an existing card, linked to it
+    with no insert), missed, errors, built (atoms newly linked by a draft)."""
     ids = [a for a in dict.fromkeys(atom_ids) if a]
     counters = _empty_counters(len(ids))
     if not ids:
@@ -760,7 +874,7 @@ async def ensure_place_cards(atom_ids: list[str], pool, *, force: bool = False,
                     logger.warning("place_card_miss_write_failed", place=key[0], error=str(e2)[:200])
                 return
             if card_id:
-                counters["linked_new"] += 1
+                counters["linked_after_draft" if outcome == "linked_after_draft" else "linked_new"] += 1
                 counters["built"] += len(groups[key])
             else:
                 counters["missed"] += 1
@@ -999,4 +1113,5 @@ __all__ = ["ensure_place_cards", "build_card_for_atom", "build_card_for_group", 
            "CARD_FOR_ATOM_QUERY", "draft_card", "check_card", "fold", "place_norm", "core_key", "name_forms",
            "card_skip_reason", "find_existing_cards", "find_local_cards", "pick_local_card", "is_generic_name",
            "atom_group_key", "itinerary_alias_forms", "miss_is_active", "RULE_VERSION", "PROMPT_SHA",
-           "duplicate_clusters", "merged_facts", "merge_cards", "MergeError", "traveller_clause"]
+           "duplicate_clusters", "merged_facts", "merge_cards", "MergeError", "traveller_clause",
+           "find_card_for_draft", "match_key"]
