@@ -166,26 +166,27 @@ def test_a1_judge_gates_on_brand_fit_not_distinct():
     assert result["judge_cross_brand_distinct"] == 3.0          # still logged
 
 
-def test_a1_and_t2_gate_on_brand_fit_only(monkeypatch):
-    # AA-792: T2 joins the AA-698 A1 rule — distinct 3 and mission absent are logged, not gated.
+def test_a1_gates_on_brand_fit_and_t2_default_adds_the_tenant_mission(monkeypatch):
+    # AA-698: A1 gates on brand_fit only. AA-792 (Nghiệp, option B, 14/10): T2 defaults to
+    # brand_fit_mission — distinct 3 is logged only, the tenant's mission absent caps at 6.0.
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
     judge_json = json.dumps({"brand_fit_score": 8, "cross_brand_distinct": 3, "mission_present": False, "feedback": "x"})
-    for tenant in (False, True):
+    for tenant, expected, gate in ((False, 8.0, "brand_fit"), (True, 6.0, "brand_fit_mission")):
         state = _branded_state(quality_score=9.75, feedback="", is_tenant_rewrite=tenant)
         with patch("services.content_generation.brand_fit.LLMClient") as MockClient, \
                 patch("services.content_generation.judge_node.record_call_sync") as rec:
             MockClient.return_value.generate.return_value = _resp(judge_json)
             out = judge_node(state)
-        assert out["quality_score"] == 8.0 and out["judge_score"] == 8.0
+        assert out["quality_score"] == expected and out["judge_score"] == expected
         assert out["judge_cross_brand_distinct"] == 3.0 and out["judge_mission_present"] is False
         signal = rec.call_args.kwargs["quality_signal"]
         assert signal["cross_brand_distinct"] == 3.0 and signal["mission_present"] is False
-        assert signal["gate"] == "brand_fit"
+        assert signal["gate"] == gate
 
 
 @pytest.mark.parametrize("gate,expected", [("combined", 3.0), ("brand_fit_mission", 6.0), ("brand_fit", 8.0)])
 def test_t2_gate_is_switchable(monkeypatch, gate, expected):
-    # AA-792 Gate-1 default is brand_fit; the S234 rule (combined) and a mission cap stay one env var away.
+    # AA-792: brand_fit_mission is the default; brand_fit and the S234 rule (combined) stay one env var away.
     monkeypatch.setenv("T2_JUDGE_GATE", gate)
     judge_json = json.dumps({"brand_fit_score": 8, "cross_brand_distinct": 3, "mission_present": False, "feedback": "x"})
     state = _branded_state(quality_score=9.75, feedback="", is_tenant_rewrite=True)

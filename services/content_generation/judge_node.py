@@ -31,33 +31,46 @@ logger = structlog.get_logger()
 # Mirror graph.MIN_QUALITY (7.0). Defined locally to avoid a circular import (graph imports this node).
 _MIN_QUALITY = 7.0
 # A missing mission-hook caps the judge score just below the retry threshold so it forces at least
-# one Bedrock retry instead of failing outright. AA-792: since T2 gates on brand fit only, the cap is
-# applied only under the non-default T2_JUDGE_GATE modes below (A1 never used it, AA-698).
+# one Bedrock retry instead of failing outright. A1 never uses it (AA-698); T2 uses it under the
+# mission gates below, and only when the tenant has a mission (core idea) to look for.
 _MISSION_ABSENT_CAP = 6.0
 
-# AA-792 — what the T2 (tenant rewrite) judge gates on. Gate-1 default, pending Nghiệp's answer:
-#   "brand_fit"          (default) brand_fit_score alone, the same rule as A1 (AA-698);
-#                        cross_brand_distinct and mission_present are still scored and logged.
-#   "brand_fit_mission"  brand_fit, capped at _MISSION_ABSENT_CAP when the mission is absent;
+# AA-792 — what the T2 (tenant rewrite) judge gates on. Nghiệp chose option B (Gate 1, 14/10/2026):
+# keep the mission as a gate, but the mission is the TENANT's own — its brand-pack core_idea
+# (tenant_brand_rules.core_idea), named verbatim in the judge prompt — never Adventure Asia's.
+#   "brand_fit_mission"  (default) brand_fit, capped at _MISSION_ABSENT_CAP when the tenant's
+#                        mission is absent from the itineraries;
+#   "brand_fit"          brand_fit_score alone, the A1 rule (AA-698);
 #   "combined"           pre-AA-792 rule: min(brand_fit, cross_brand_distinct), mission-capped.
-# S234: mission was judged absent on 72/104 T2 calls (0 of those passed) — the profile has no
-# mission field, the judge reads core_idea as one. Flip with the env var (worker task def), no code change.
+# A tenant with no core_idea has no mission: the cap never applies (any gate) and quality_signal
+# logs mission_source="none". S234: mission was judged absent on 72/104 T2 calls (0 of those passed)
+# when the judge had to guess what "mission-hook" meant. Flip with the env var (worker task def).
 T2_JUDGE_GATE_ENV = "T2_JUDGE_GATE"
-T2_JUDGE_GATES = ("brand_fit", "brand_fit_mission", "combined")
+T2_JUDGE_GATES = ("brand_fit_mission", "brand_fit", "combined")
+T2_JUDGE_GATE_DEFAULT = "brand_fit_mission"
 
 
 def t2_judge_gate() -> str:
     mode = os.environ.get(T2_JUDGE_GATE_ENV, "").strip().lower()
-    return mode if mode in T2_JUDGE_GATES else "brand_fit"
+    return mode if mode in T2_JUDGE_GATES else T2_JUDGE_GATE_DEFAULT
 
 
-def t2_judge_score(result, gate: str | None = None) -> float:
-    """AA-792: the score a T2 tenant rewrite is gated on (see T2_JUDGE_GATE)."""
+def t2_mission(state: dict) -> str:
+    """AA-792: the T2 tenant's own mission = its brand-pack core_idea ('' when it has none)."""
+    from services.content_generation.batch_prompt import brand_pack_from_state
+    return (brand_pack_from_state(state).get("core_idea") or "").strip()
+
+
+def t2_judge_score(result, gate: str | None = None, *, has_mission: bool = True) -> float:
+    """AA-792: the score a T2 tenant rewrite is gated on (see T2_JUDGE_GATE). `has_mission=False`
+    (tenant without a core_idea) disables the mission cap under every gate."""
     gate = gate or t2_judge_gate()
     if gate == "combined":
-        return result.judge_score       # min(brand_fit, distinct), mission-capped in brand_fit.py
+        if has_mission:
+            return result.judge_score   # min(brand_fit, distinct), mission-capped in brand_fit.py
+        return min(result.brand_fit_score, result.cross_brand_distinct)
     score = result.brand_fit_score
-    if gate == "brand_fit_mission" and not result.mission_present:
+    if gate == "brand_fit_mission" and has_mission and not result.mission_present:
         score = min(score, _MISSION_ABSENT_CAP)
     return score
 
@@ -158,11 +171,23 @@ def judge_node(state: dict) -> dict:
         return state
 
     try:
-        result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
-                                 stage=stage_for(state, "s1_judge"))  # AA-763
         is_t2 = bool(state.get("is_tenant_rewrite"))
-        gate = t2_judge_gate() if is_t2 else "brand_fit"
-        judge_score = t2_judge_score(result, gate) if is_t2 else a1_judge_score(result)
+        if is_t2:
+            mission = t2_mission(state)          # AA-792: the tenant's own core_idea, never AA's
+            result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
+                                     stage=stage_for(state, "s1_judge"), mission=mission or None)
+            gate = t2_judge_gate()
+            judge_score = t2_judge_score(result, gate, has_mission=bool(mission))
+            mission_source = "tenant_core_idea" if mission else "none"
+            if not mission and gate != "brand_fit":
+                logger.info("judge_mission_not_gated", reason="tenant_has_no_core_idea", gate=gate,
+                            tenant_id=state.get("tenant_id"))
+        else:
+            result = score_brand_fit(state, generated, mission_absent_cap=_MISSION_ABSENT_CAP,
+                                     stage=stage_for(state, "s1_judge"))  # AA-763
+            gate = "brand_fit"
+            judge_score = a1_judge_score(result)
+            mission_source = None
         tiebreak = None
         if in_tie_band(judge_score, validate_score):
             judge_score, tiebreak = _tie_break(state, generated, judge_score)   # AA-692 A1-4, AA-699 T2-1
@@ -192,7 +217,12 @@ def judge_node(state: dict) -> dict:
                 "cross_brand_distinct": result.cross_brand_distinct,
                 "mission_present": result.mission_present,
                 "passed": new_score >= _MIN_QUALITY,
-                "gate": gate,  # AA-792: what judge_score was gated on (mission/distinct logged only)
+                "gate": gate,  # AA-792: what judge_score was gated on
+                # AA-792: T2 only — "tenant_core_idea" (mission named in the prompt, may cap) or
+                # "none" (tenant has no core_idea: mission never caps). Absent for A1 (unchanged).
+                **({"mission_source": mission_source,
+                    "mission_gated": mission_source == "tenant_core_idea" and gate != "brand_fit"}
+                   if is_t2 else {}),
             },
             stop_reason=result.stop_reason,
             account=result.account,

@@ -195,6 +195,34 @@ FIX_SYSTEM = """You are Adventure Asia's editorial fixer.
 Fix ONLY the specified fields. Keep all other fields exactly as-is.
 Preserve all product facts. Return strict JSON only."""
 
+# AA-792: a T2 tenant rewrite is written AS the client brand, so its repairs are framed with that
+# brand (name + the AA-771 brand block), never "Adventure Asia's editorial fixer". A1 keeps FIX_SYSTEM.
+_T2_FIX_SYSTEM_HEAD = """You are the editorial fixer for {brand}, \
+repairing a tour page written in that brand's own voice.
+Fix ONLY the specified fields. Keep all other fields exactly as-is.
+Keep the brand voice the current draft already has. Preserve all product facts. Return strict JSON only."""
+
+
+def _t2_brand_label(state: dict) -> str:
+    return (state.get("brand_name") or "").strip() or "this client brand"
+
+
+def fix_system_prompt(state: dict) -> str:
+    """The flag-fix SYSTEM prompt: FIX_SYSTEM for A1 (unchanged), the tenant brand framing for T2."""
+    if not state.get("is_tenant_rewrite"):
+        return FIX_SYSTEM
+    from services.acp_shared.brand_pack import render_brand_block
+    from .batch_prompt import brand_pack_from_state
+    head = _T2_FIX_SYSTEM_HEAD.replace("{brand}", _t2_brand_label(state))
+    return head + "\n\n" + render_brand_block(brand_pack_from_state(state), heading="CLIENT BRAND")
+
+
+def fix_user_prompt_head(state: dict) -> str:
+    if not state.get("is_tenant_rewrite"):
+        return "Fix these fields for Adventure Asia brand standards."
+    return (f"Fix these fields for {_t2_brand_label(state)}'s brand standards (the CLIENT BRAND "
+            "above), keeping the draft in that brand's voice.")
+
 
 # AA-608 (H3 finding): SEO meta length was the single biggest reason ~94% of failed
 # tours landed in the review queue — the meta simply would not fall inside the 140-155
@@ -207,7 +235,7 @@ _META_REREPAIR_MAX_ATTEMPTS = 3
 
 
 def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None,
-                   stage: str = "s1_flag_fix") -> str:
+                   stage: str = "s1_flag_fix", system_prompt: str = FIX_SYSTEM) -> str:
     """AA-205 / AA-608: bounded RETRY loop that rewrites seo_meta until it lands in
     [SEO_META_MIN, SEO_META_MAX] as a complete sentence, or the attempt budget is spent.
 
@@ -244,7 +272,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 + "- Return JSON: {\"seo_meta\": \"...\"}"
             )
             resp = LLMClient().generate(LLMRequest(
-                system_prompt=FIX_SYSTEM, user_prompt=prompt, model_tier=model_tier, stage=stage,
+                system_prompt=system_prompt, user_prompt=prompt, model_tier=model_tier, stage=stage,
             ))
             raw = resp.content.strip()
             fence = chr(96) * 3
@@ -508,7 +536,7 @@ not ending on a preposition/conjunction, contains a clear verb).
 sentence ending in a period — do NOT truncate mid-phrase.
 Current SEO_META ({len(_cur_meta)} chars): {json.dumps(_cur_meta)}"""
 
-        user_prompt = f"""Fix these fields for Adventure Asia brand standards.
+        user_prompt = f"""{fix_user_prompt_head(state)}
 
 FIELDS TO FIX:
 {fields_display}
@@ -528,7 +556,7 @@ Keep all other fields unchanged."""
 
         llm_client = LLMClient()
         request = LLMRequest(
-            system_prompt=FIX_SYSTEM,
+            system_prompt=fix_system_prompt(state),   # AA-792: tenant brand framing on T2
             user_prompt=user_prompt,
             # AA-518: was state.get("model_tier","haiku") — the "haiku" literal masked the
             # "s1_flag_fix" stage config the same way graph.py's generate_node did (see that
@@ -605,6 +633,7 @@ Keep all other fields unchanged."""
                     _post_meta, tour, new_generated, state.get("model_tier"),
                     intent_clue=_clue, forbidden=_meta_forbidden,
                     stage=stage_for(state, "s1_flag_fix"),  # AA-763
+                    system_prompt=fix_system_prompt(state),  # AA-792: tenant brand on T2
                 )
             # AA-608 (H3 finding): if STILL out of band after the bounded re-repair loop,
             # keep the best candidate but DO NOT escalate to manual_check. A meta length

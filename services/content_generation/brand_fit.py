@@ -118,11 +118,28 @@ def itinerary_digest(itineraries, per_day: int = 350, total: int = 6000) -> str:
     return out if len(out) <= total else out[:total].rstrip() + " … [later days omitted for length]"
 
 
-def _build_judge_prompt(brand_profile: dict, generated: dict) -> str:
+_MISSION_AXIS = """- mission_present (true/false): does this brand's mission-hook actually surface in the ITINERARIES
+  (each day's framing), not only in the summary?"""
+
+
+def _tenant_mission_axis(mission: str) -> str:
+    """AA-792 (Nghiệp, Gate 1 option B, 14/10/2026): the T2 mission is the TENANT's own mission —
+    its core idea from the brand pack — never Adventure Asia's. Named verbatim so the judge does not
+    have to guess what "mission-hook" means (S234: absent on 72/104 T2 calls)."""
+    return f"""- mission_present (true/false): does THIS brand's own mission — its core idea: "{mission}" —
+  actually surface in the ITINERARIES (each day's framing), not only in the summary? Judge only
+  against this brand's mission above, never Adventure Asia's or a generic travel mission."""
+
+
+def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[str] = None) -> str:
     """Assemble the judge user-prompt: this brand's profile + the content to score. Verbatim
     port of judge_node.py's own `_build_judge_prompt()` (same field names, same prompt text) —
     unchanged so an existing T2 rewrite call and a new Debate call score identically for the
-    same inputs, which is the whole point of sharing this module."""
+    same inputs, which is the whole point of sharing this module.
+
+    AA-792: `mission` (T2 only, the tenant's core idea) names the mission the mission_present axis
+    asks about. None (A1, every other caller) leaves the prompt byte-identical."""
+    mission_axis = _tenant_mission_axis(mission) if mission else _MISSION_AXIS
     voice_ex = [v for v in (brand_profile.get("brand_voice_examples") or []) if v]
 
     highlights = generated.get("highlights") or []
@@ -155,8 +172,7 @@ SCORE on these axes:
   mindset above — not a generic register that fits any travel brand?
 - cross_brand_distinct (1-10): if the SAME tour were rewritten for a DIFFERENT brand, how clearly
   would this version differ? A synonym swap of a generic description scores low.
-- mission_present (true/false): does this brand's mission-hook actually surface in the ITINERARIES
-  (each day's framing), not only in the summary?
+{mission_axis}
 - feedback (string): specific, concrete changes needed to make the content read more distinctly as
   THIS brand. If everything is on-brand, return an empty string.
 
@@ -215,6 +231,7 @@ def score_candidate_fit(brand_profile: dict, candidate: dict, *, stage: str = "s
 
 def score_brand_fit(
     brand_profile: dict, generated: dict, *, mission_absent_cap: float = 6.0, stage: str = "s1_judge",
+    mission: Optional[str] = None,
 ) -> BrandFitResult:
     """The GPT-4.1 brand-fit call itself — extracted verbatim from judge_node.py's try block
     (same system prompt, same model_tier pin, same temperature/seed, same score-combining
@@ -230,9 +247,12 @@ def score_brand_fit(
 
     AA-714 layer 2: when a reasoning judge's first score lands near MIN_QUALITY, re-score and keep
     the median so one noisy call does not flip retry/HITL. See `_REPEAT_BAND`.
+
+    AA-792: `mission` — the T2 tenant's own core idea, named in the mission_present axis (see
+    `_build_judge_prompt`). Prompt text only; scoring, cap and median are unchanged.
     """
     system_prompt = JUDGE_SYSTEM
-    user_prompt = _build_judge_prompt(brand_profile, generated)
+    user_prompt = _build_judge_prompt(brand_profile, generated, mission)
     first = _judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage)
 
     lo, hi = _REPEAT_BAND

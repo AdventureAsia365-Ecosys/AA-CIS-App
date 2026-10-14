@@ -271,3 +271,139 @@ def test_a1_audit_fallback_still_uses_adventure_asia_standards():
     assert req.system_prompt.startswith(ba.AA_BRAND_IDENTITY_PROMPT)
     assert "Review this tour against Adventure Asia brand standards." in req.user_prompt
     assert "2. Brand fit: calm, assured, selective, precise, private, no hype?" in req.user_prompt
+
+
+# ── judge: T2 gates on brand fit + the TENANT's own mission (Nghiệp option B, 14/10/2026) ──────
+
+from services.content_generation import brand_fit, judge_node as jn  # noqa: E402
+
+_GEN = {"name": "N", "subtitle": "S", "summary": "Sum", "highlights": ["a", "b"],
+        "itineraries": [{"day": 1, "title": "T", "body": "B"}], "seo_title": "st", "seo_meta": "sm"}
+
+
+def _judge_resp(fit=8, distinct=3, mission=False):
+    return LLMResponse(content=json.dumps({"brand_fit_score": fit, "cross_brand_distinct": distinct,
+                                           "mission_present": mission, "feedback": "x"}),
+                       model_used="gpt-4.1", cost_usd=0.001, provider="openai")
+
+
+def _run_judge(state, resp):
+    with patch.object(brand_fit, "LLMClient") as client, patch.object(jn, "record_call_sync") as rec:
+        client.return_value.generate.return_value = resp
+        out = jn.judge_node(dict(state, generated=_GEN, quality_score=9.75, feedback=""))
+    return out, client.return_value.generate.call_args.args[0], rec.call_args.kwargs["quality_signal"]
+
+
+def test_t2_default_gate_is_brand_fit_mission():
+    assert jn.t2_judge_gate() == "brand_fit_mission"
+
+
+def test_t2_judge_names_the_tenant_core_idea_as_the_mission():
+    _, request, _ = _run_judge(_T2, _judge_resp(mission=True))
+    assert 'its core idea: "Movement, energy, freedom, and social discovery."' in request.user_prompt
+    assert "never Adventure Asia's" in request.user_prompt
+
+
+def test_t2_mission_present_is_not_capped():
+    out, _, signal = _run_judge(_T2, _judge_resp(fit=8, mission=True))
+    assert out["judge_score"] == 8.0 and out["quality_score"] == 8.0
+    assert signal["gate"] == "brand_fit_mission" and signal["mission_source"] == "tenant_core_idea"
+    assert signal["mission_gated"] is True
+
+
+def test_t2_mission_absent_caps_below_the_retry_line():
+    out, _, signal = _run_judge(_T2, _judge_resp(fit=8, mission=False))
+    assert out["judge_score"] == 6.0 and out["quality_score"] == 6.0
+    assert signal["mission_present"] is False and signal["mission_source"] == "tenant_core_idea"
+
+
+@pytest.mark.parametrize("gate,expected", [("brand_fit_mission", 8.0), ("combined", 3.0), ("brand_fit", 8.0)])
+def test_t2_tenant_without_core_idea_is_never_mission_capped(monkeypatch, gate, expected):
+    monkeypatch.setenv("T2_JUDGE_GATE", gate)
+    state = dict(_T2, brand_core_idea="")             # voice words still make the judge run
+    with patch.object(jn.logger, "info") as log:
+        out, request, signal = _run_judge(state, _judge_resp(fit=8, distinct=3, mission=False))
+    assert out["judge_score"] == expected               # combined = min(8, 3), no 6.0 mission cap
+    assert signal["mission_source"] == "none" and signal["mission_gated"] is False
+    assert "its core idea:" not in request.user_prompt
+    if gate != "brand_fit":
+        assert any(c.args[0] == "judge_mission_not_gated" for c in log.call_args_list)
+
+
+_A1_JUDGE_PROFILE = {"brand_core_idea": "Slow travel for families", "brand_customer_segment": "Families",
+                     "brand_customer_mindset": "calm", "brand_voice_examples": ["warm", "plain"],
+                     "brand_good_examples": "We wander."}
+
+
+def test_judge_prompt_without_a_mission_is_byte_identical_to_pre_aa792():
+    # SHAs captured from brand_fit._build_judge_prompt on this branch before the mission kwarg.
+    import hashlib
+    sha = lambda s: hashlib.sha256(s.encode()).hexdigest()  # noqa: E731
+    assert sha(brand_fit._build_judge_prompt(_A1_JUDGE_PROFILE, _GEN)) == \
+        "8ea22c220b19de1ac626e8813e4611e376130ea487e186b9c6c7a2a10262c1b1"
+    assert sha(brand_fit._build_judge_prompt({}, {})) == \
+        "732475795e6ea7ff0f4d4e169e2a8adbd1c2a4f95ccbead7fc0f630910875f74"
+
+
+def test_a1_judge_call_and_signal_unchanged():
+    state = dict(_A1_JUDGE_PROFILE, is_tenant_rewrite=False)
+    with patch.object(jn, "score_brand_fit") as score, patch.object(jn, "record_call_sync") as rec:
+        score.return_value = MagicMock(brand_fit_score=8.0, cross_brand_distinct=3.0, mission_present=False,
+                                       judge_score=3.0, feedback="", model_used="m", input_tokens=1,
+                                       output_tokens=1, cost_usd=0.0)
+        out = jn.judge_node(dict(state, generated=_GEN, quality_score=9.75, feedback=""))
+    assert "mission" not in score.call_args.kwargs     # A1 never passes a mission
+    assert out["judge_score"] == 8.0
+    assert set(rec.call_args.kwargs["quality_signal"]) == {
+        "judge_score", "brand_fit_score", "cross_brand_distinct", "mission_present", "passed", "gate"}
+
+
+# ── flag_fix: T2 repairs are framed with the tenant brand, A1 keeps Adventure Asia ─────────────
+
+from services.content_generation import flag_fix_node as ff  # noqa: E402
+
+
+def _fix_state(**kw):
+    return dict(kw, brand_audit_status="flagged", brand_audit_codes=["SUMMARY_OFF_BRAND"],
+                brand_audit_fields=["summary"], brand_audit_issues=["Summary reads generic."],
+                failure_codes=[], generated={"name": "N", "summary": "Old summary."}, tour=_TOUR)
+
+
+def _run_fix(state):
+    resp = MagicMock(content=json.dumps({"summary": "New summary."}), cost_usd=0.0)
+    with patch.object(ff, "LLMClient") as client, patch.object(ff, "record_call_sync"), \
+            patch.object(ff, "_write_lessons_safe"):
+        client.return_value.generate.return_value = resp
+        out = ff.flag_fix_node(state)
+    return out, client.return_value.generate.call_args.args[0]
+
+
+def test_t2_flag_fix_prompt_is_framed_with_the_tenant_brand():
+    out, request = _run_fix(_fix_state(**_T2))
+    assert out["fix_pass_applied"] is True
+    assert "Adventure Asia" not in request.system_prompt and "Adventure Asia" not in request.user_prompt
+    assert request.system_prompt.startswith("You are the editorial fixer for Trail Pulse")
+    assert "CLIENT BRAND (you write as this brand" in request.system_prompt
+    assert "Core idea: Movement, energy, freedom, and social discovery." in request.system_prompt
+    assert request.user_prompt.startswith("Fix these fields for Trail Pulse's brand standards")
+
+
+def test_t2_flag_fix_without_a_brand_name_stays_tenant_neutral():
+    state = dict(_T2, brand_name="")
+    assert ff.fix_system_prompt(state).startswith("You are the editorial fixer for this client brand")
+    assert "Adventure Asia" not in ff.fix_system_prompt(state) + ff.fix_user_prompt_head(state)
+
+
+def test_a1_flag_fix_prompt_unchanged():
+    _, request = _run_fix(_fix_state(is_tenant_rewrite=False))
+    assert request.system_prompt == ff.FIX_SYSTEM
+    assert ff.FIX_SYSTEM.startswith("You are Adventure Asia's editorial fixer.")
+    assert request.user_prompt.startswith("Fix these fields for Adventure Asia brand standards.\n\nFIELDS TO FIX:")
+
+
+def test_t2_meta_rerepair_uses_the_tenant_fix_system():
+    resp = MagicMock(content=json.dumps({"seo_meta": "x"}), cost_usd=0.0)
+    with patch.object(ff, "LLMClient") as client, patch.object(ff, "record_call_sync"):
+        client.return_value.generate.return_value = resp
+        ff._rerepair_meta("short.", _TOUR, {"name": "N"}, None, system_prompt=ff.fix_system_prompt(_T2))
+    assert "Trail Pulse" in client.return_value.generate.call_args.args[0].system_prompt

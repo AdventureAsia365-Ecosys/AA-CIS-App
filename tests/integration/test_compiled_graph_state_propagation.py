@@ -237,7 +237,8 @@ async def test_full_graph_run_retry_path_preserves_state(patch_llm_client):
 
 
 # AA-792: a T2 tenant rewrite through the compiled graph — the brand pack fields must survive the
-# ContentState boundary and reach generate_node's system prompt, and the judge gates on brand fit.
+# ContentState boundary and reach generate_node's system prompt, and the judge gates on brand fit +
+# the tenant's own mission (its core_idea, named in the judge prompt — Nghiệp option B, 14/10/2026).
 T2_BRAND_RULES = {**BRAND_RULES, "system_prompt": "", "brand_name": "WorldLux",
                   "brand_type": "Luxury private travel brand", "default_cta": ""}
 
@@ -246,7 +247,7 @@ async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm
     monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
     client = patch_llm_client(
         [_generate_response(GOOD_GENERATED)],
-        judge_response=_judge_response(brand_fit=9, cross_brand_distinct=3, mission_present=False),
+        judge_response=_judge_response(brand_fit=9, cross_brand_distinct=3, mission_present=True),
     )
 
     result = await _rewrite_tour(
@@ -259,8 +260,10 @@ async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm
     assert "CLIENT BRAND (you write as this brand" in writer.system_prompt
     assert "Name: WorldLux" in writer.system_prompt and "Voice: quiet, precise, unhurried" in writer.system_prompt
     assert "master content catalog" not in writer.system_prompt + writer.user_prompt
-    # brand_fit 9 gates; distinct 3 and mission absent are logged only
+    judge = [r for r in client.calls if r.stage == "t2_judge"][0]
+    assert f'its core idea: "{T2_BRAND_RULES["core_idea"]}"' in judge.user_prompt
+    # brand_fit 9 gates with the tenant mission present; distinct 3 is logged only
     assert result["judge_score"] == pytest.approx(9.0)
     assert result["judge_cross_brand_distinct"] == pytest.approx(3.0)
-    assert result["judge_mission_present"] is False
+    assert result["judge_mission_present"] is True
     assert result["quality_score"] == pytest.approx(9.0)
