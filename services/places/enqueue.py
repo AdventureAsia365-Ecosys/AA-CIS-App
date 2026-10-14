@@ -12,6 +12,7 @@ publish, an atomize or an admin action.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -20,6 +21,17 @@ import structlog
 from shared.jobs.registry import enqueue
 
 logger = structlog.get_logger()
+
+# S236 (Nghiệp, paid-run rule): automatic triggers (end of A3 atomize, place-card relink) only enqueue
+# place_extract when this env var is on. Default off until the 3-tour trial and the first country
+# pass; the admin backfill endpoint is not gated (it is the controlled way to run batches).
+AUTO_ENV = "PLACE_PIPELINE_AUTO"
+_ON_VALUES = {"1", "true", "on", "yes"}
+
+
+def auto_enabled() -> bool:
+    return os.environ.get(AUTO_ENV, "").strip().lower() in _ON_VALUES
+
 
 EXTRACT_KIND = "place_extract"
 GEOCODE_KIND = "place_geocode"
@@ -71,6 +83,9 @@ async def after_atomize(db, *, tour_id: str, version_id: str, atomize_job_id: Op
     """End of A3 atomize (publish, re-upload, admin re-atomize). Keyed on the content version and
     the atomize job, so a retried atomize job does not queue twice, while an admin re-atomize of
     the same version (new atomize job) does rebuild — its atoms may have changed."""
+    if not auto_enabled():
+        logger.info("place_extract_auto_off", tour_id=str(tour_id), version_id=str(version_id))
+        return {"place_extract_job": None, "place_extract_skipped": f"{AUTO_ENV} off"}
     key = f"{EXTRACT_KIND}:{version_id}" + (f":{atomize_job_id}" if atomize_job_id else "")
     job_id, created = await enqueue_place_extract(
         db, tour_id=tour_id, version_id=version_id, reason="a3_atomize", created_by="a3_atomize",

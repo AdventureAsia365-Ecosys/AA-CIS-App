@@ -101,6 +101,7 @@ def test_components_hash_sees_a_card_that_arrives_after_atomize(field, value):
 async def test_place_cards_build_enqueues_place_extract_when_cards_were_linked(monkeypatch):
     from services.jobs import place_cards_job as job
     from services.places import enqueue as enq
+    monkeypatch.setenv(enq.AUTO_ENV, "on")
     ctx = SimpleNamespace(payload={"tour_id": "t1"}, pool=_Pool(SimpleNamespace(fetch=AsyncMock(return_value=[]))))
     extract = AsyncMock(return_value=("pe1", True))
     monkeypatch.setattr(enq, "enqueue_place_extract", extract)
@@ -330,9 +331,10 @@ async def test_debounced_enqueue_reuses_a_queued_job():
 
 
 @pytest.mark.asyncio
-async def test_after_atomize_keys_on_version_and_atomize_job():
+async def test_after_atomize_keys_on_version_and_atomize_job(monkeypatch):
     from services.places import enqueue as eq
     import services.jobs  # noqa: F401
+    monkeypatch.setenv(eq.AUTO_ENV, "on")
     db = _Db()
     out = await eq.after_atomize(db, tour_id="t", version_id="v", atomize_job_id="a1")
     assert out["place_extract_job_reused"] is False
@@ -341,6 +343,28 @@ async def test_after_atomize_keys_on_version_and_atomize_job():
     assert (await eq.after_liveness_change(db2, tour_id="t", new_status="active",
                                            created_by="x"))["place_extract_job"] == "q1"
 
+
+
+@pytest.mark.asyncio
+async def test_after_atomize_enqueues_nothing_while_auto_is_off(monkeypatch):
+    # S236: automatic place runs wait for PLACE_PIPELINE_AUTO (default off; admin backfill not gated).
+    from services.places import enqueue as eq
+    monkeypatch.delenv(eq.AUTO_ENV, raising=False)
+    db = _Db()
+    out = await eq.after_atomize(db, tour_id="t", version_id="v", atomize_job_id="a1")
+    assert out["place_extract_job"] is None and "off" in out["place_extract_skipped"]
+    assert db.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_place_cards_relink_skipped_while_auto_is_off(monkeypatch):
+    from services.jobs import place_cards_job as job
+    from services.places import enqueue as eq
+    monkeypatch.delenv(eq.AUTO_ENV, raising=False)
+    called = AsyncMock()
+    monkeypatch.setattr(eq, "enqueue_place_extract", called)
+    assert await job._relink_places(object(), "t1") is None
+    called.assert_not_called()
 
 # ── cost guard: kind-scoped day spend ──────────────────────────────────────────────────────────
 

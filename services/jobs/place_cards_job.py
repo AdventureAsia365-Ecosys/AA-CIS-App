@@ -51,7 +51,9 @@ async def _relink_places(pool, tour_id: str):
     the tour's places are re-extracted — free when nothing else changed (days reused, no model
     call). Reuses a queued place_extract of the tour. Best-effort: never fails the card build."""
     try:
-        from services.places.enqueue import enqueue_place_extract
+        from services.places.enqueue import auto_enabled, enqueue_place_extract
+        if not auto_enabled():   # S236: automatic place runs wait for PLACE_PIPELINE_AUTO
+            return None
         job_id, _ = await enqueue_place_extract(pool, tour_id=str(tour_id), version_id=None,
                                                 reason="place_cards_build", created_by=KIND)
         return job_id
