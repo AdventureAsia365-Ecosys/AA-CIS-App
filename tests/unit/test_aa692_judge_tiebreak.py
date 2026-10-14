@@ -71,7 +71,8 @@ def test_node_not_asked_outside_band_or_for_tenants():
          patch("shared.llm_client.decide.decide_sync") as m:
         out = jn.judge_node(dict(STATE))
     assert m.call_count == 0 and out["judge_tiebreak"] is None
-    with patch.object(jn, "score_brand_fit", return_value=_Result()), \
+    # AA-792: a tenant rewrite gates on brand_fit too, so "outside the band" is brand_fit 8.5 here
+    with patch.object(jn, "score_brand_fit", return_value=Far()), \
          patch.object(jn, "has_brand_signals", return_value=True), \
          patch.object(jn, "record_call_sync"), \
          patch("shared.llm_client.decide.decide_sync") as m:

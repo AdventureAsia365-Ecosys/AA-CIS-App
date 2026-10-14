@@ -105,7 +105,7 @@ def test_judge_node_returns_judge_score():
         "mission_present": True, "feedback": "",
     })
     state = {
-        "is_tenant_rewrite": True,   # AA-698: T2 rule (min of brand fit and distinct)
+        "is_tenant_rewrite": True,   # AA-792: T2 gates on brand fit alone (as A1, AA-698)
         "brand_core_idea": "Discreet executive adventure",
         "brand_customer_mindset": "Wants privacy and effortless logistics",
         "brand_voice_examples": ["understated", "assured"],
@@ -121,6 +121,6 @@ def test_judge_node_returns_judge_score():
         )
         result = judge_node(state)
 
-    # judge_score = min(brand_fit 8, distinct 7) = 7; persisted score_overall = min(validate 9, 7)
-    assert result["judge_score"] == 7.0
-    assert result["quality_score"] == 7.0
+    # judge_score = brand_fit 8 (distinct 7 logged only); persisted score_overall = min(validate 9, 8)
+    assert result["judge_score"] == 8.0
+    assert result["quality_score"] == 8.0
