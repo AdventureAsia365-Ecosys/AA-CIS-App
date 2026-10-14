@@ -25,7 +25,7 @@ from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
-    clamp_distance, nudge_itinerary_day, generated_day_word_counts,
+    clamp_distance, nudge_itinerary_day, nudge_voice_hint, generated_day_word_counts,
 )
 
 logger = structlog.get_logger()
@@ -40,7 +40,8 @@ MIN_QUALITY = 7.0
 
 
 def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
-                         nudge_budget: int = MAX_NUDGES_PER_TOUR, *, stage: str = "s1_itinerary_nudge") -> dict:
+                         nudge_budget: int = MAX_NUDGES_PER_TOUR, *, stage: str = "s1_itinerary_nudge",
+                         voice_hint: str | None = None) -> dict:
     """AA-353: validate the model's structured ``itineraries`` array against its own PER-DAY
     SOURCE LENGTH target, auto-nudge (once, non-repeating) any day outside the hard clamp, then
     serialize the array back to the pre-existing canonical "Day N — Title\\nBody" string format —
@@ -135,7 +136,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
         new_title, new_body, resp = nudge_itinerary_day(
             client, m["source_text"] or itineraries_raw,
             str(day_item.get("title") or ""), str(day_item.get("body") or ""), source_words,
-            stage=stage,
+            stage=stage, voice_hint=voice_hint,  # AA-792: T2 keeps the tenant voice; None for A1
         )
         extra_cost += resp.cost_usd
         extra_read += resp.cache_read_tokens
@@ -223,6 +224,10 @@ class ContentState(TypedDict):
     brand_customer_mindset: str
     brand_voice_examples:   list
     brand_good_examples:    str
+    # AA-792: T2 brand pack fields (services/acp_shared/brand_pack, AA-771) for the CLIENT BRAND block.
+    brand_name:             str
+    brand_type:             str
+    brand_default_cta:      str
     model_tier:             str
     fallback_used:          bool   # AA-213: True khi Sonnet T1 fell back to Haiku T2
     satellite_account:      Optional[str]  # AA-296/397: "acc1"/"acc3" nếu qua satellite, None nếu không
@@ -398,6 +403,12 @@ def generate_node(state: ContentState) -> ContentState:
     prompt_version = prompt_version_of(system)
 
     is_branded = bool(brand_sp)
+    if state.get("is_tenant_rewrite") and not is_branded:
+        # AA-792: a T2 brand is the T0 pack (system_prompt is empty for form/.docx tenants), so
+        # "branded" means the CLIENT BRAND block carries T0 data — not only a written system_prompt.
+        from services.acp_shared.brand_pack import has_brand
+        from .batch_prompt import brand_pack_from_state
+        is_branded = has_brand(brand_pack_from_state(state))
     prompt_len = len(system)
     # AA-318: log the FULL prompt text sent to the LLM this call, not just its length — the
     # original gap (verifying AA-314's Highlights-leak fix) needed to read the actual user
@@ -474,7 +485,8 @@ def generate_node(state: ContentState) -> ContentState:
         # AA-353: clamp/nudge the structured itineraries array against its own per-day source
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client,
-                                            stage=stage_for(state, "s1_itinerary_nudge"))  # AA-763
+                                            stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
+                                            voice_hint=nudge_voice_hint(state))  # AA-792
         # AA-738: strip forbidden words deterministically before validate scores them — after the
         # itinerary nudge, so its output is covered too.
         _apply_forbidden_strip(generated, state)
@@ -654,7 +666,8 @@ def seed_generated_node(state: ContentState) -> ContentState:
     # Reuse the exact itinerary clamp/nudge + serialize the sync path runs. LLMClient() is only used
     # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
     _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient(),
-                                        stage=stage_for(state, "s1_itinerary_nudge"))  # AA-763
+                                        stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
+                                        voice_hint=nudge_voice_hint(state))  # AA-792
     _apply_forbidden_strip(generated, state)  # AA-738: same deterministic strip as the live path
     logger.info("s1_batch_seeded", tour_id=state.get("tour_id"),
                 model=state.get("model_used", "batch-haiku"))

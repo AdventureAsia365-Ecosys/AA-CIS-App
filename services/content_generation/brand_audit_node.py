@@ -249,6 +249,36 @@ def _audit_from_judge(state: dict, generated: dict) -> dict:
     }
 
 
+def _tenant_rubric(state: dict) -> str | None:
+    """AA-792: the T2 audit identity — the tenant's own system_prompt when one was written, else the
+    rubric compiled from its T0 fields (AA-771 brand_pack.compile_rubric) plus its style guide.
+    None when the tenant has no brand to audit against."""
+    from services.acp_shared.brand_pack import compile_rubric
+    from .batch_prompt import brand_pack_from_state
+    pack = brand_pack_from_state(state)
+    rubric = pack.get("system_prompt") or compile_rubric(pack)
+    if rubric and pack.get("style_guide"):
+        rubric += "\nStyle guide:\n" + pack["style_guide"]
+    return rubric
+
+
+def _audit_deterministic_only(state: dict, generated: dict) -> dict:
+    """AA-792: T2 with no tenant brand set up — no LLM audit (there is nothing to judge the voice
+    against); the deterministic pre-audit codes still drive flag_fix, as in _audit_from_judge."""
+    pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
+                                 is_tenant_rewrite=True)
+    status = derive_status(pre_codes, None)
+    logger.info("brand_audit_tenant_no_brand", status=status, codes=pre_codes)
+    return {
+        **state,
+        "brand_audit_status": status,
+        "brand_audit_codes":  pre_codes,
+        "brand_audit_issues": [],
+        "brand_audit_fields": [],
+        "lessons_extracted":  [],
+    }
+
+
 def brand_audit_node(state: dict) -> dict:
     """AA-133: LLM-as-Judge brand audit. Runs after validate when score >= 7.0.
 
@@ -271,11 +301,27 @@ def brand_audit_node(state: dict) -> dict:
     if "judge_brand_fit" in state:
         return _audit_from_judge(state, generated)
 
+    # AA-792: a T2 tenant rewrite is never graded against Adventure Asia's own voice (calm, private,
+    # no hype…) — that marked e.g. Trail Pulse's energetic copy off-brand. It is audited against the
+    # tenant's own rubric (brand_pack.compile_rubric / its system_prompt), or, with no brand set up,
+    # gets the deterministic pre-audit codes only.
+    standard = "Adventure Asia brand standards"
+    brand_fit_question = "calm, assured, selective, precise, private, no hype?"
+    if state.get("is_tenant_rewrite"):
+        rubric = _tenant_rubric(state)
+        if rubric is None:
+            return _audit_deterministic_only(state, generated)
+        identity = rubric
+        standard = "THIS client brand's standards"
+        brand_fit_question = "does it read in the brand voice described above?"
+    else:
+        identity = AA_BRAND_IDENTITY_PROMPT
+
     try:
         pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
                                  is_tenant_rewrite=bool(state.get("is_tenant_rewrite")))
 
-        system_prompt = AA_BRAND_IDENTITY_PROMPT + "\n\n" + AA_COWORK_STRUCTURE_PROMPT
+        system_prompt = identity + "\n\n" + AA_COWORK_STRUCTURE_PROMPT
 
         tour = state.get("tour", {})
         dfs = state.get("seo", {})
@@ -285,7 +331,7 @@ def brand_audit_node(state: dict) -> dict:
         highlights_text = "\n".join(f"- {h}" for h in highlights)
         dfs_brief = str(dfs.get("top_keywords", []))[:200]
 
-        user_prompt = f"""Review this tour against Adventure Asia brand standards.
+        user_prompt = f"""Review this tour against {standard}.
 Pre-audit deterministic checks found these codes (include in assessment): {pre_codes}
 
 CONTENT TO REVIEW:
@@ -304,7 +350,7 @@ DFS CONTEXT: {dfs_brief}
 
 REVIEW ORDER:
 1. Product truth: all fields align to same actual product?
-2. Brand fit: calm, assured, selective, precise, private, no hype?
+2. Brand fit: {brand_fit_question}
 3. Trip type accuracy: subtitle/summary/SEO match actual activity?
 4. Highlights quality: specific moments, 4+ items, no "Optional"?
 5. Human readability: no editorial language leak?

@@ -70,56 +70,33 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     # mode: job "succeeded" with no voice and no forbidden words). It raises so the job retries;
     # after the last attempt on_terminal marks the version failed.
     brand_rules = {"rewrite_language": rewrite_language, "_brand_loaded": False}
+    # AA-792: one brand loader for every tenant writer — the AA-771 brand pack (T8/T9/T10 already
+    # use it). Before, this was its own SELECT (newest active version, not 'default'-first) that never
+    # read brand_name / brand_type / default_cta, so the T2 writer could not name the brand it writes
+    # as. The pack also parses the jsonb lists (asyncpg has no jsonb codec here: AA-425/AA-612a —
+    # forbidden_words used to be split into characters). A DB error still raises (AA-741).
+    from services.acp_shared.brand_pack import fetch_brand_pack_conn
     async with pool.acquire() as _conn2:
-        # AA-612a: T2 (tenant rewrite) shares build_graph with admin S1, whose judge
-        # brand-fit gate (judge_node.has_brand_signals) keys off core_idea /
-        # customer_mindset / voice_examples. This SELECT used to omit those brand-diff
-        # columns, so brand_rules never carried them → the graph state's brand_* fields were
-        # always empty → judge_skipped(no_brand_profile) even for a tenant WITH a real brand
-        # (the exact case that SHOULD be judged on brand-fit). Fetch the same brand-diff
-        # columns admin_pipeline._BRAND_RULE_COLS does so a real tenant brand is judged.
-        _br = await _conn2.fetchrow("""
-            SELECT system_prompt, style_guide, forbidden_words,
-                   core_idea, customer_segment, customer_mindset, voice_examples, good_examples
-            FROM shared.tenant_brand_rules
-            WHERE tenant_id = $1::uuid AND is_active = true
-            ORDER BY version DESC LIMIT 1
-        """, tenant_id)
-    if _br:
-        # AA-425 fix (found via hash-diff forensic comparison against a direct-call harness
-        # using the exact same tenant/tour): asyncpg has no jsonb codec registered on this
-        # app's connections (same gap AA-314 already found/fixed elsewhere, api/routers/
-        # v1_tours.py's own src_highlights handling) -- forbidden_words arrives as a raw
-        # JSON-encoded STRING, not a parsed list. `list(_br["forbidden_words"] or [])` was
-        # calling list() on that STRING, splitting it into individual characters
-        # (['[', '"', 'l', 'u', 'x', ...]) instead of parsing it -- every tenant rewrite's
-        # system prompt carried a garbled "FORBIDDEN WORDS: [, ", l, u, x, ..." instruction
-        # instead of the tenant's real word list. Confirmed via SHA-256 hash comparison: the
-        # user_prompt and tour_dict hashes matched byte-for-byte between this endpoint and a
-        # direct _rewrite_tour() call using identical inputs, but brand_rules.forbidden_words
-        # diverged at exactly this line.
-        import json as _json2
-        _fw_raw = _br["forbidden_words"]
-        if isinstance(_fw_raw, str):
-            _fw_raw = _json2.loads(_fw_raw) if _fw_raw else []
-        # AA-612a: voice_examples has the same asyncpg no-jsonb-codec gotcha as
-        # forbidden_words above — it arrives as a JSON-encoded string, so parse it before
-        # list() (mirrors admin_pipeline._execute_run_tour's own handling).
-        _voice_raw = _br["voice_examples"]
-        if isinstance(_voice_raw, str):
-            _voice_raw = _json2.loads(_voice_raw) if _voice_raw else []
+        pack = await fetch_brand_pack_conn(_conn2, tenant_id)
+    if pack:
         brand_rules = {
-            "system_prompt":    _br["system_prompt"] or "",
-            "style_guide":      _br["style_guide"] or "",
-            "forbidden_words":  list(_fw_raw or []),
+            "system_prompt":    pack.get("system_prompt") or "",
+            "style_guide":      pack.get("style_guide") or "",
+            "forbidden_words":  list(pack.get("forbidden_words") or []),
             "rewrite_language": rewrite_language,
             # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
             # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
-            "core_idea":        _br["core_idea"] or "",
-            "customer_segment": _br["customer_segment"] or "",
-            "customer_mindset": _br["customer_mindset"] or "",
-            "voice_examples":   list(_voice_raw or []),
-            "good_examples":    _br["good_examples"] or "",
+            "core_idea":        pack.get("core_idea") or "",
+            "customer_segment": pack.get("customer_segment") or "",
+            "customer_mindset": pack.get("customer_mindset") or "",
+            "voice_examples":   list(pack.get("voice") or []),
+            "good_examples":    pack.get("good_examples") or "",
+            # AA-792: the brand's identity for the T2 CLIENT BRAND block. default_cta is carried
+            # (tenant rubric for the audit fallback) but not written into the tour: a tour has no
+            # CTA field.
+            "brand_name":       pack.get("brand_name") or "",
+            "brand_type":       pack.get("brand_type") or "",
+            "default_cta":      pack.get("default_cta") or "",
             "_brand_loaded":    True,
         }
     return tour_dict, brand_rules

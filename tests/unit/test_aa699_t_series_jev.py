@@ -63,10 +63,10 @@ def test_decide_error_fails_open():
 
 
 class _TenantResult:
-    brand_fit_score = 9.0
+    brand_fit_score = 6.8                            # AA-792: brand fit is what gates a tenant rewrite
     cross_brand_distinct = 6.0
     mission_present = True
-    judge_score = 6.8                                # combined score: what gates a tenant rewrite
+    judge_score = 6.0                                # combined score: logged only since AA-792
     feedback = "More restraint."
     model_used = "m"
     input_tokens = output_tokens = 1
