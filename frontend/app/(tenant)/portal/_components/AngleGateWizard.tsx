@@ -33,7 +33,8 @@
 //   3. Backend auto-applies fixed brand audience + formula, generates 3 angles, recommends one.
 //   4. Tenant picks one of the 3 (recommended or not) — the real gate. status -> approved.
 //   5. AUTOMATICALLY: the write-step effect below fires T9's write the instant an angle is
-//      approved, UNLESS the request's CTA is still NULL, in which case it asks for one first.
+//      approved. The server fills a NULL request CTA from the brand's default CTA (AA-771); only
+//      when the brand has none does write() return 422 and the inline CTA field appear (AA-668).
 //   6. ONE loading state while T9 writes + T10 checks (up to 2 attempts, inline) -> final result.
 //
 // API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, tenant_id always
@@ -53,6 +54,7 @@
 //                                                                     angle, or {piece: null}.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
@@ -89,8 +91,8 @@ interface AngleGateRequest {
   channel: string | null; // AA-522 — always set from creation now (fixed by the Subject); a
   // legacy pre-AA-522 row is the only way this is ever null.
   goal: string | null;
-  cta: string | null; // AA-450 migration 114 — realistically NULL for every real request today
-  // (see this file's own header comment) — the write-step effect below asks for one when NULL.
+  cta: string | null; // AA-450 migration 114 — realistically NULL for every real request today.
+  // AA-668: NULL is fine — the server falls back to the brand's default_cta (AA-771).
   // AA-497 — "reusable" is an approved request "Change angle" just reopened
   // (services/acp_angle_gate/service.py::reopen_request()): same "pick 1 of 3 already-generated
   // angles" UI as "pending_choice" below, choose() is unchanged either way.
@@ -413,9 +415,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     })
       .then(async r => {
         if (r.status === 422) {
-          // MissingCTAError — kept as a defense-in-depth fallback (the write-step effect below
-          // already checks req.cta BEFORE calling write, so this shouldn't normally trigger, but
-          // a stale req from a race is still possible) — same "ask, don't fabricate" behavior.
+          // MissingCTAError — the request has no CTA AND the brand has no default CTA (the
+          // server tries both first, AA-771). AA-668: this is now the ONLY path that asks the
+          // tenant for a CTA — "ask, don't fabricate", inline, not a separate step.
           setWriting(false);
           setNeedsCtaInput(true);
           return null;
@@ -459,11 +461,11 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
           if (latest.ready_state === "in_progress") { setWriting(true); pollPiece(latest.piece_id); }
           return;
         }
-        // No piece written yet under this angle. If a CTA is already known, write immediately
-        // (matches the old "no extra click" behavior) — otherwise ask for one up front instead
-        // of waiting for write() to come back 422.
-        if (req.cta) writeContent(req.request_id);
-        else setNeedsCtaInput(true);
+        // No piece written yet under this angle: write immediately. AA-668 — this used to ask
+        // for a CTA up front whenever req.cta was NULL (every real request), even though the
+        // server fills it from the brand's default CTA (AA-771). writeContent() handles the one
+        // real gap — a brand with no default CTA — through the server's 422.
+        writeContent(req.request_id);
       })
       .catch(() => {
         // Best-effort — worst case the tenant sees a blank Write card and can press "Retry"/
@@ -695,7 +697,11 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
-                reader do next?
+                reader do next?{" "}
+                <Link href="/portal/t0-brand" style={{ color: T.gold, fontWeight: 600 }}>
+                  Set a default call to action in Brand Identity
+                </Link>{" "}
+                so you aren&rsquo;t asked again.
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
