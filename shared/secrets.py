@@ -84,3 +84,22 @@ def get_typesafe_api_key() -> str:
         return raw
 
     return _get_cached("typesafe", fetch)
+
+
+def get_mapbox_token() -> str:
+    """AA-712 — Mapbox geocoding token (used only when GEOCODER_PROVIDER=mapbox_permanent). Env
+    `MAPBOX_TOKEN` for local runs; otherwise the Secrets Manager secret named by `SECRET_MAPBOX_ID`
+    (default `aa-cis/dev/mapbox`, read grant on the worker task role — AA-CIS-Infra). The secret may
+    hold the bare token or a JSON object with `token`. Raises if neither is available."""
+    token = os.environ.get("MAPBOX_TOKEN")
+    if token:
+        return token
+    secret_id = os.environ.get("SECRET_MAPBOX_ID", "aa-cis/dev/mapbox")
+
+    def fetch():
+        raw = _fetch_secret_sdk(secret_id).strip()
+        if raw.startswith("{"):
+            return json.loads(raw)["token"]
+        return raw
+
+    return _get_cached("mapbox", fetch)
