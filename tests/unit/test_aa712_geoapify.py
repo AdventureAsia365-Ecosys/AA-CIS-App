@@ -137,6 +137,20 @@ def test_normalise(raw, expected):
     assert gm.normalise(raw) == expected
 
 
+def test_mount_hill_island_rock_viewpoint_are_poi_queries():
+    for q in ("Mount Fuji", "Mt Kinabalu", "Chocolate Hills", "Phi Phi Islands", "Ayers Rock", "Doi Suthep Viewpoint"):
+        assert not gm.is_settlement(q), q
+    fuji_city = gm.Candidate(35.16, 138.68, "jp", "Fuji", "city", 1.0, "full_match", "p", "osm")
+    assert gm.accept("Mount Fuji", [fuji_city], 35.36, 138.73, "jp").reasons == ["0:type"]
+
+
+def test_x_to_y_drops_an_endpoint_with_no_proper_noun():
+    assert gm.normalise("Road to Mandalay") == ["Mandalay"]
+    assert gm.normalise("Hot Springs to Beppu") == ["Beppu"]
+    assert gm.normalise("Cho La Pass to Dzongla") == ["Cho La Pass", "Dzongla"]
+    assert gm.normalise("Bridge to Bridge") == []
+
+
 def test_hard_kinds_and_native_script():
     assert gm.is_hard("Zatrwa La Pass") and gm.is_hard("Tashilhunpo Monastery") and gm.is_hard("Hahoe Village")
     assert not gm.is_hard("Bikaner") and not gm.is_hard("Ho Chi Minh City")
@@ -160,7 +174,8 @@ def _geo(responses, **kw):
 
     async def sleep(s):
         sleeps.append(s)
-    g = gc.GeoapifyGeocoder(http=http, api_key=KEY, rate_per_s=0, sleep=sleep, **kw)
+    g = gc.GeoapifyGeocoder(http=http, api_key=KEY, sleep=sleep, **kw)
+    g._throttle.interval = 0.0      # tests only: the throttle itself is covered by test_rate_*
     return g, http, sleeps
 
 
@@ -214,6 +229,31 @@ async def test_taiwan_retries_with_the_native_name():
     assert g2.requests == 1
 
 
+@pytest.mark.parametrize("cand_name,rtype,km_off,ok", [
+    ("太平", "city", 0.10, False),          # bake-off row 58 homonym: a city for a mountain lodge
+    ("太平", "amenity", 0.10, True),        # same name, a POI result: half the query, accepted
+    ("太", "amenity", 0.05, False),         # 1 character never matches
+    ("太平山莊", "amenity", 0.20, True),    # ~22 km
+    ("太平山莊", "amenity", 0.40, False),   # ~45 km: beyond 25 km (not a long feature)
+])
+def test_native_acceptance_follows_the_bakeoff_rule(cand_name, rtype, km_off, ok):
+    lat, lng = 24.497, 121.534
+    c = gm.Candidate(lat + km_off, lng, "tw", cand_name, rtype, 0.0, None, "p", "osm")
+    v = gc._accept_native("太平山莊", [c], lat, lng, "tw", ref_name="Taipingshan Villa")
+    assert (v.accepted is not None) is ok, v.reasons
+
+
+def test_native_city_only_for_a_settlement_and_long_features_get_50_km():
+    lat, lng = 37.0, 127.0
+    city = gm.Candidate(lat + 0.05, lng, "kr", "하회마을", "city", 0.0, None, "p", "osm")
+    assert gc._accept_native("하회마을", [city], lat, lng, "kr", ref_name="Hahoe Village").accepted is not None
+    temple = gm.Candidate(lat + 0.05, lng, "kr", "불국사", "city", 0.0, None, "p", "osm")
+    assert gc._accept_native("불국사", [temple], lat, lng, "kr", ref_name="Bulguksa").accepted is None
+    lake = gm.Candidate(lat + 0.35, lng, "tw", "日月潭", "water", 0.0, None, "p", "osm")   # ~39 km
+    assert gc._accept_native("日月潭", [lake], lat, lng, "tw", ref_name="Sun Moon Lake").accepted is not None
+    assert gc._accept_native("日月潭", [lake], lat, lng, "tw", ref_name="Ita Thao").accepted is None
+
+
 @pytest.mark.asyncio
 async def test_unconfirmed_keeps_what_was_tried():
     r = _row("Rangaji Temple")
@@ -243,10 +283,60 @@ async def test_gives_up_after_max_retries_and_never_retries_4xx():
     with pytest.raises(gc.GeocoderError, match="HTTP 500 after 4 attempts"):
         await g.confirm("Paro", 27.43, 89.41, "Bhutan")
     assert g.requests == 4 and sleeps == [1.0, 2.0, 4.0]
-    g, http, sleeps = _geo([_resp(401)])
-    with pytest.raises(gc.GeocoderError, match="HTTP 401"):
+    g, http, sleeps = _geo([_resp(400)])
+    with pytest.raises(gc.GeocoderError, match="HTTP 400"):
         await g.confirm("Paro", 27.43, 89.41, "Bhutan")
     assert g.requests == 1 and sleeps == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_auth_failure_is_unavailable_not_a_per_name_error(status):
+    g, http, sleeps = _geo([_resp(status)])
+    with pytest.raises(gc.GeocoderUnavailable, match=f"HTTP {status}"):
+        await g.confirm("Paro", 27.43, 89.41, "Bhutan")
+    assert g.requests == 1 and sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_locate_defers_every_name_on_auth_failure_without_a_try():
+    calls = []
+
+    async def generate(system, user):
+        calls.append(user)
+        return '{"Paro": [27.43, 89.41, "Bhutan"], "Punakha": [27.58, 89.86, "Bhutan"]}'
+
+    g, http, _ = _geo([_resp(401)])
+    items = [locate.Item((n,), n, "Bhutan") for n in ("Paro", "Punakha")]
+    items += [locate.Item((f"n{i}",), f"Name {i}", "Bhutan") for i in range(locate.BATCH)]  # a 2nd batch
+    out = await locate.locate_many(items, generate, g)
+    deferred = [k for k, o in out.items() if o.deferred]
+    assert all(out[k].error is None and out[k].point is None and out[k].reason == locate.DEFER_UNAVAILABLE
+               for k in deferred)
+    # Paro hit the 401; Punakha and the whole 2nd batch are deferred. Names the model itself answered null
+    # for in the 1st batch keep that answer (it does not depend on the geocoder).
+    assert ("Paro",) in deferred and ("Punakha",) in deferred and ("n39",) in deferred
+    assert all(o.reason == "unknown_to_model" for k, o in out.items() if k not in deferred)
+    assert len(calls) == 1 and http.get.call_count == 1      # no 2nd paid model call, one request
+
+
+@pytest.mark.asyncio
+async def test_missing_key_defers_before_any_model_call(monkeypatch):
+    import shared.secrets as sec
+
+    def boom():
+        raise RuntimeError("ResourceNotFoundException: aa-cis/dev/geoapify")
+    monkeypatch.setattr(sec, "get_geoapify_key", boom)
+    g = gc.GeoapifyGeocoder(http=MagicMock())
+    generate = AsyncMock(return_value="{}")
+    with capture_logs() as logs:
+        out = await locate.locate_many([locate.Item(("paro",), "Paro", "Bhutan")], generate, g)
+    assert out[("paro",)].deferred and out[("paro",)].reason == locate.DEFER_UNAVAILABLE
+    assert not generate.called and g.requests == 0
+    assert "aa-cis/dev/geoapify" not in json.dumps(logs, default=str)   # type only, no secret name / detail
+    monkeypatch.setattr(sec, "get_geoapify_key", lambda: "  ")
+    with pytest.raises(gc.GeocoderUnavailable, match="empty"):
+        gc.GeoapifyGeocoder(http=MagicMock()).ensure_ready()
 
 
 def test_rate_is_capped_at_5_per_second(monkeypatch):
@@ -254,6 +344,15 @@ def test_rate_is_capped_at_5_per_second(monkeypatch):
     monkeypatch.setenv("GEOAPIFY_RATE_PER_S", "50")
     g = gc.get_geocoder("geoapify", api_key=KEY)
     assert g._throttle.interval == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "abc"])
+def test_rate_zero_or_negative_never_turns_the_throttle_off(monkeypatch, raw):
+    monkeypatch.setenv("GEOAPIFY_RATE_PER_S", raw)
+    assert gc.get_geocoder("geoapify", api_key=KEY)._throttle.interval == pytest.approx(0.2)
+    assert gc._Throttle(0).interval == pytest.approx(0.2) and gc._Throttle(-3).interval == pytest.approx(0.2)
+    monkeypatch.setenv("GEOAPIFY_RATE_PER_S", "2")
+    assert gc.get_geocoder("geoapify", api_key=KEY)._throttle.interval == pytest.approx(0.5)
 
 
 # ── daily credit guard ─────────────────────────────────────────────────────────────────────────
@@ -372,3 +471,88 @@ def test_parse_answer_keeps_native_names_only_for_taiwan_and_korea():
     out = locate.parse_answer(raw, ["Taipingshan", "Hahoe", "Paro", "Jiufen"])
     assert out["Taipingshan"].native_name == "太平山" and out["Hahoe"].native_name == "하회마을"
     assert out["Paro"].native_name is None and out["Jiufen"].native_name is None
+
+
+def test_sentry_breadcrumbs_drop_the_key():
+    from api.core.sentry import before_breadcrumb
+    crumb = {"category": "httplib", "message": f"GET {gc.GEOAPIFY_URL}?text=Paro&apiKey={KEY}",
+             "data": {"url": gc.GEOAPIFY_URL, "http.query": f"text=Paro&apiKey={KEY}&lang=en",
+                      "nested": [f"apikey={KEY}"]}}
+    out = before_breadcrumb(crumb, {})
+    assert KEY not in json.dumps(out) and "apiKey=***&lang=en" in out["data"]["http.query"]
+
+
+# ── pipeline: deferral accounting ──────────────────────────────────────────────────────────────
+
+class _Conn:
+    async def fetch(self, *a, **k):
+        return []
+
+    def transaction(self):
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def tx():
+            yield
+        return tx()
+
+
+class _Pool:
+    def acquire(self):
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def acq():
+            yield _Conn()
+        return acq()
+
+
+def _due(n):
+    return [{"name_norm": f"n{i}", "country_norm": "bhutan", "locality_norm": "", "display_name": f"Name {i}",
+             "country": "Bhutan", "tour_name": "", "locality": None, "place_card_id": None} for i in range(n)]
+
+
+def _patch_store(monkeypatch, due):
+    from services.places import pipeline, store
+    marked = []
+
+    async def mark_name(conn, key, **kw):
+        marked.append((key, kw))
+        return "pending"
+    monkeypatch.setattr(store, "due_names", AsyncMock(return_value=due))
+    monkeypatch.setattr(store, "known_destinations", AsyncMock(return_value={}))
+    monkeypatch.setattr(store, "mark_name", mark_name)
+    monkeypatch.setattr(store, "upsert_destination", AsyncMock(return_value=("d1", "inserted")))
+    monkeypatch.setattr(store, "relink", AsyncMock(return_value={}))
+    monkeypatch.setattr(pipeline, "apply_outlier_rule", AsyncMock(return_value=(0, [])))
+    return marked
+
+
+@pytest.mark.asyncio
+async def test_geocode_pending_stops_on_auth_failure_without_marking_names(monkeypatch):
+    from services.places import pipeline
+    marked = _patch_store(monkeypatch, _due(50))
+
+    async def answer_all(system, user):
+        names = [ln[2:].split(" | ")[0] for ln in user.splitlines() if ln.startswith("- ")]
+        return json.dumps({n: [27.43, 89.41, "Bhutan"] for n in names})
+    generate = AsyncMock(side_effect=answer_all)
+    g, _, _ = _geo([_resp(403)])
+    out = await pipeline.geocode_pending(_Pool(), generate, g, limit=50)
+    assert out["stopped_geocoder_unavailable"] and not out.get("stopped_credit_limit")
+    assert out["deferred"] == 50 and out["failed"] == 0 and out["unknown"] == 0
+    assert generate.call_count == 1 and marked == []
+
+
+@pytest.mark.asyncio
+async def test_geocode_pending_locates_only_what_todays_credits_can_check(monkeypatch):
+    from services.places import pipeline
+    _patch_store(monkeypatch, _due(10))
+    seen = []
+
+    async def generate(system, user):
+        seen.append(user.count("\n- "))
+        return "{}"          # the model knows none: no geocoder call needed
+    g, _, _ = _geo([], daily_credit_limit=3)
+    out = await pipeline.geocode_pending(_Pool(), generate, g, limit=10)
+    assert seen == [3] and out["deferred"] == 7 and out["stopped_credit_limit"] and out["unknown"] + out["failed"] == 3

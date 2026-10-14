@@ -1,5 +1,5 @@
 {
- "_source": "S236 AA-712 Geoapify bake-off (05-geocoder-bakeoff.md): recorded /v1/geocode/search responses (text=<name>, filter=countrycode:<iso2>, limit=3), trimmed to the fields the adapter reads; no API key. labels = hand labels per candidate rank (N named place, R related, F admin fallback, W wrong).",
+ "_source": "S236 AA-712 Geoapify bake-off (05-geocoder-bakeoff.md): recorded /v1/geocode/search responses (text=<name>, filter=countrycode:<iso2>, limit=3), trimmed to the fields the adapter reads; no API key. labels = labels per candidate rank (N named place, R related, F admin fallback, W wrong): the rank-0 labels are the bake-off hand labels (report section Method); the rank-1 / rank-2 labels (behind the 2 rows rescued from below a wrong first result) are the builder's own judgement, not part of the bake-off.",
  "rows": [
   {
    "i": 0,

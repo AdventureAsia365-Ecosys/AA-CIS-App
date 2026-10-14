@@ -14,7 +14,9 @@ with GEOCODER_PROVIDER = geoapify (default since S236), one to three Geoapify re
 plan: $0, so the guard that matters is the daily CREDIT guard (GEOAPIFY_DAILY_CREDIT_LIMIT, default
 2,500 of the 3,000/day quota, counted per UTC day from geo.geocode_call): when it trips, the remaining
 names stay pending without a try counted and the job ends `stopped_credit_limit` without re-enqueueing
-itself (the next place_extract / backfill picks them up). The $ rows (geocoder/global $25/day,
+itself (the next place_extract / backfill picks them up). A setup / auth failure (no key, secret
+unreadable, HTTP 401/403) ends the job the same way with `stopped_geocoder_unavailable` (names are never
+marked `unknown` for it). The $ rows (geocoder/global $25/day,
 geocoder/job:place_geocode $50/run) apply on a paid plan via GEOCODER_COST_PER_REQUEST_USD.
 """
 from __future__ import annotations
@@ -107,7 +109,12 @@ async def run(ctx: JobContext) -> Optional[dict]:
         async with ctx.pool.acquire() as conn:
             remaining = await store.pending_names_due(conn)
         result["pending_names_due"] = remaining
-        if result.get("stopped_credit_limit"):
+        if result.get("stopped_geocoder_unavailable"):
+            # no key / secret unreadable / HTTP 401-403: an operator must fix it; do not re-enqueue
+            result["status"] = "stopped_geocoder_unavailable"
+            logger.error("place_geocode_geocoder_unavailable", provider=inner.name,
+                         deferred=result.get("deferred"), pending=remaining)
+        elif result.get("stopped_credit_limit"):
             result["status"] = "stopped_credit_limit"
             logger.warning("place_geocode_credit_limit", provider=inner.name, deferred=result.get("deferred"),
                            pending=remaining)

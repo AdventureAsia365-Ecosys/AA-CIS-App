@@ -16,7 +16,8 @@ Madhya Pradesh. The model knows these places. So:
      another country than the model's is ignored.
 
 A failed model batch or a geocoder error leaves the names pending (retried later), never a guess.
-The geocoder's daily credit guard defers the rest of the run (no try consumed).
+The geocoder's daily credit guard, and a setup / auth failure (no key, secret unreadable, HTTP 401/403),
+defer the rest of the run: no try consumed, no further paid model call.
 """
 from __future__ import annotations
 
@@ -27,7 +28,8 @@ from typing import Awaitable, Callable, Optional
 import structlog
 
 from services.places import geomatch, guards
-from services.places.geocoder import CONFIRMED_BY, Confirmed, CreditLimitReached, Unconfirmed
+from services.places.geocoder import (CONFIRMED_BY, Confirmed, CreditLimitReached, GeocoderUnavailable,
+                                      Unconfirmed)
 
 logger = structlog.get_logger()
 
@@ -36,6 +38,8 @@ MAX_TOKENS = 4000
 CONFIDENCE = {"geoapify": 0.9, "mapbox": 0.9, "manual": 1.0, "llm": 0.6}
 NATIVE_NAME_COUNTRIES = ("Taiwan", "South Korea")
 REVIEW_UNCONFIRMED_HARD = "unconfirmed_hard_type"
+DEFER_CREDIT_LIMIT = "credit_limit"
+DEFER_UNAVAILABLE = "geocoder_unavailable"
 
 SYSTEM_PROMPT = (
     "You are a geographer for Adventure Asia. For each place named on a tour itinerary you give "
@@ -87,7 +91,7 @@ class Outcome:
     point: Optional[Located]      # None: the model does not know it / guard rejected
     error: Optional[str] = None   # set when the attempt failed (model or geocoder error) → retry later
     reason: Optional[str] = None  # why point is None without an error (unknown / guard)
-    deferred: bool = False        # the geocoder's daily credit guard stopped: stays pending, no try counted
+    deferred: bool = False        # credit guard / geocoder unavailable: stays pending, no try counted (reason)
 
 
 @dataclass(frozen=True)
@@ -158,11 +162,19 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
     from shared.cost_guard import BudgetExceeded
 
     out: dict[tuple, Outcome] = {}
-    stopped = False
+    stopped: Optional[str] = None     # DEFER_* once the geocoder cannot check any more names this run
+    external = geocoder is not None and getattr(geocoder, "calls_external", False)
+    ensure_ready = getattr(geocoder, "ensure_ready", None) if external else None
+    if ensure_ready is not None:
+        try:
+            ensure_ready()            # no paid model call when the key cannot even be read
+        except GeocoderUnavailable as e:
+            logger.error("place_geocoder_unavailable", provider=geocoder.name, error=str(e)[:200])
+            stopped = DEFER_UNAVAILABLE
     for batch in batches(items):
-        if stopped:   # credit guard hit: no more paid model calls for names the geocoder cannot check
+        if stopped:   # no more paid model calls for names the geocoder cannot check
             for i in batch:
-                out[i.key] = Outcome(None, reason="credit_limit", deferred=True)
+                out[i.key] = Outcome(None, reason=stopped, deferred=True)
             continue
         labels = [i.label for i in batch]
         try:
@@ -185,19 +197,22 @@ async def locate_many(items: list[Item], generate: GenerateFn, geocoder) -> dict
                 out[i.key] = Outcome(None, reason=bad)
                 continue
             res = None
-            if geocoder is not None and geocoder.calls_external and not stopped:
+            if external and not stopped:
                 try:
                     # the plain name: a generic name's locality is in the key, not in the query
                     res = await geocoder.confirm(i.name, lat, lng, country, native_name=point.native_name)
                 except CreditLimitReached as e:
                     logger.warning("place_geocoder_credit_limit", provider=geocoder.name, error=str(e)[:200])
-                    stopped = True
+                    stopped = DEFER_CREDIT_LIMIT
+                except GeocoderUnavailable as e:
+                    logger.error("place_geocoder_unavailable", provider=geocoder.name, error=str(e)[:200])
+                    stopped = DEFER_UNAVAILABLE
                 except Exception as e:  # noqa: BLE001 — retried later, never a guess
                     logger.warning("place_geocoder_failed", provider=geocoder.name, error=str(e)[:200])
                     out[i.key] = Outcome(None, error=f"{geocoder.name}: {str(e)[:200]}")
                     continue
             if stopped:
-                out[i.key] = Outcome(None, reason="credit_limit", deferred=True)
+                out[i.key] = Outcome(None, reason=stopped, deferred=True)
                 continue
             out[i.key] = Outcome(_located(i, lat, lng, country, res))
     return out

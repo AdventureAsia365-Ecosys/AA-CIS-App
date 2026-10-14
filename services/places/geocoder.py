@@ -67,6 +67,12 @@ class CreditLimitReached(GeocoderError):
     """The daily credit guard stopped the call: the name stays pending (no try is consumed)."""
 
 
+class GeocoderUnavailable(GeocoderError):
+    """Setup / auth failure (no key, secret unreadable, HTTP 401 / 403): no name can be checked until an
+    operator fixes it, so the run stops and every name stays pending without a try counted — the same
+    handling as CreditLimitReached. Never a per-name error (3 tries would mark good names `unknown`)."""
+
+
 @dataclass(frozen=True)
 class Confirmed:
     lat: float
@@ -105,7 +111,7 @@ class _Throttle:
     """At most `rate` calls per second from this process."""
 
     def __init__(self, rate: float):
-        self.interval = 1.0 / rate if rate > 0 else 0.0
+        self.interval = 1.0 / clamp_rate(rate)
         self._next = 0.0
         self._lock = asyncio.Lock()
 
@@ -117,6 +123,18 @@ class _Throttle:
             if self._next > now:
                 await asyncio.sleep(self._next - now)
             self._next = max(now, self._next) + self.interval
+
+
+def clamp_rate(rate: float) -> float:
+    """Requests per second in (0, DEFAULT_RATE_PER_S]: a 0 / negative / non-numeric value must never turn
+    the throttle off (the Free plan allows 5 req/s)."""
+    try:
+        r = float(rate)
+    except (TypeError, ValueError):
+        return DEFAULT_RATE_PER_S
+    if not r > 0:   # also NaN
+        return DEFAULT_RATE_PER_S
+    return min(r, DEFAULT_RATE_PER_S)
 
 
 _KEY_PARAM = re.compile(r"(apiKey=)[^&\s'\"]+", re.I)
@@ -200,8 +218,18 @@ class GeoapifyGeocoder:
     def _get_key(self) -> str:
         if not self._key:
             from shared.secrets import get_geoapify_key
-            self._key = get_geoapify_key()
+            try:
+                key = get_geoapify_key()
+            except Exception as e:  # noqa: BLE001 — the message may name the secret; keep the type only
+                raise GeocoderUnavailable(f"geoapify: API key unavailable ({type(e).__name__})") from None
+            if not (key or "").strip():
+                raise GeocoderUnavailable("geoapify: API key is empty")
+            self._key = key.strip()
         return self._key
+
+    def ensure_ready(self) -> None:
+        """Raise GeocoderUnavailable now (before any paid model call) when the key cannot be read."""
+        self._get_key()
 
     def credits_left(self) -> int:
         return self.daily_credit_limit - self.credits_used_today - self.requests
@@ -237,6 +265,8 @@ class GeoapifyGeocoder:
                         return resp.json()
                     except Exception as e:  # noqa: BLE001
                         raise GeocoderError(f"geoapify: invalid JSON ({type(e).__name__})") from None
+                if status in (401, 403):
+                    raise GeocoderUnavailable(f"geoapify: HTTP {status} (key rejected)")
                 if status != 429 and status < 500:
                     raise GeocoderError(f"geoapify: HTTP {status}")
                 last = f"HTTP {status}"
@@ -267,7 +297,7 @@ class GeoapifyGeocoder:
             payload = await self.search(q, iso)
             cands = geomatch.candidates(payload)
             native = geomatch.has_native_script(q)
-            v = (_accept_native(q, cands, lat, lng, iso) if native
+            v = (_accept_native(q, cands, lat, lng, iso, ref_name=name) if native
                  else geomatch.accept(q, cands, lat, lng, iso))
             tried.append({"query": q, "results": len(cands), "rejected": v.reasons,
                           "top": _brief(cands[0]) if cands else None})
@@ -292,21 +322,27 @@ def _brief(c: geomatch.Candidate) -> dict:
     return {"name": c.name, "result_type": c.result_type, "confidence": c.confidence}
 
 
-def _accept_native(query: str, cands: list, lat: float, lng: float, iso2: str) -> geomatch.Verdict:
-    """A native-script query (中文 / 한글) has no Latin tokens to compare: accept the first top-3 candidate
-    whose name contains the query (or vice versa) and that passes the type and distance rules."""
+def _accept_native(query: str, cands: list, lat: float, lng: float, iso2: str, *,
+                   ref_name: str = "") -> geomatch.Verdict:
+    """A native-script query (中文 / 한글) has no Latin tokens to compare. Same rule as geomatch.accept
+    otherwise: the radius and the settlement-only `city` rule come from the English name (`ref_name`) and
+    the native query's own feature suffix (山莊 / 寺 / 湖 / 사 / 호 …); the candidate's name must contain the
+    query or be contained in it, and then be ≥ 2 characters and ≥ half the query's length — "太平" (a city)
+    for "太平山莊" (a mountain lodge) is the Taipingshan homonym trap of bake-off row 58."""
     q = query.replace(" ", "")
+    radius = geomatch.radius_km(ref_name) if ref_name else geomatch.ACCEPT_KM
+    settlement = (geomatch.is_settlement(ref_name) if ref_name else True) and not geomatch.native_feature(q)
     reasons = []
     for i, c in enumerate(cands[:geomatch.TOP_N]):
         nm = (c.name or "").replace(" ", "")
         dist = guards.km(lat, lng, c.lat, c.lng)
         if iso2 and c.iso2 and c.iso2 != iso2:
             reasons.append(f"{i}:country")
-        elif not nm or not (q in nm or nm in q):
+        elif not nm or not (q in nm or nm in q) or (nm in q and (len(nm) < 2 or 2 * len(nm) < len(q))):
             reasons.append(f"{i}:name")
-        elif c.result_type in geomatch.REJECT_TYPES:
+        elif c.result_type in geomatch.REJECT_TYPES or (c.result_type == "city" and not settlement):
             reasons.append(f"{i}:type")
-        elif dist > geomatch.LONG_FEATURE_KM:
+        elif dist > radius:
             reasons.append(f"{i}:distance")
         else:
             return geomatch.Verdict(c, i, 1.0, round(dist, 2), reasons)
@@ -346,12 +382,12 @@ def provider_name(value: Optional[str] = None) -> str:
 def get_geocoder(value: Optional[str] = None, **kw) -> Geocoder:
     """The configured geocoder. Env (⚠️ underscore names — set by hand in the task definition):
     GEOCODER_PROVIDER (default geoapify), GEOCODER_COST_PER_REQUEST_USD (default 0: Free plan),
-    GEOAPIFY_DAILY_CREDIT_LIMIT (default 2500), GEOAPIFY_RATE_PER_S (default 5)."""
+    GEOAPIFY_DAILY_CREDIT_LIMIT (default 2500), GEOAPIFY_RATE_PER_S (default 5, clamped to (0, 5])."""
     name = provider_name(value)
     if name == "model_only":
         return ModelOnlyGeocoder()
     if name == "geoapify":
         kw.setdefault("cost_per_request", _env_float("GEOCODER_COST_PER_REQUEST_USD", 0.0))
         kw.setdefault("daily_credit_limit", int(_env_float("GEOAPIFY_DAILY_CREDIT_LIMIT", DEFAULT_DAILY_CREDITS)))
-        kw.setdefault("rate_per_s", min(DEFAULT_RATE_PER_S, _env_float("GEOAPIFY_RATE_PER_S", DEFAULT_RATE_PER_S)))
+        kw.setdefault("rate_per_s", clamp_rate(_env_float("GEOAPIFY_RATE_PER_S", DEFAULT_RATE_PER_S)))
     return PROVIDERS[name](**kw)

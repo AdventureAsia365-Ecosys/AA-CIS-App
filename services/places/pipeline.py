@@ -241,17 +241,24 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
         for start in range(0, len(todo), locate.BATCH):
             chunk = todo[start:start + locate.BATCH]
             credits_left = getattr(geocoder, "credits_left", None)
-            if credits_left is not None and credits_left() <= 0:   # no model call for names we cannot check
+            left = credits_left() if credits_left is not None else None
+            if left is not None and left <= 0:   # no model call for names we cannot check
                 out["deferred"] += len(todo) - start
                 out["stopped_credit_limit"] = True
                 break
+            if left is not None and left < len(chunk):
+                # ≥ 1 credit per name: locate only what today's credits can check, defer the rest unpaid
+                out["deferred"] += len(chunk) - left
+                out["stopped_credit_limit"] = True
+                chunk = chunk[:left]
             outcomes = await locate.locate_many(chunk, generate, geocoder)
             async with pool.acquire() as conn:
                 for it in chunk:
                     o = outcomes.get(it.key) or locate.Outcome(None, error="no outcome")
-                    if o.deferred:            # daily credit guard: stays pending, no try counted
+                    if o.deferred:            # credit guard / geocoder unavailable: pending, no try counted
                         out["deferred"] += 1
-                        out["stopped_credit_limit"] = True
+                        out["stopped_geocoder_unavailable" if o.reason == locate.DEFER_UNAVAILABLE
+                            else "stopped_credit_limit"] = True
                         continue
                     if o.point is None:
                         st = await store.mark_name(conn, it.key, error=o.error or o.reason)
@@ -268,8 +275,8 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                     touched.append(dest_id)
             if progress is not None:
                 await progress(step="locate", done=min(start + locate.BATCH, len(todo)), total=len(todo))
-            if out.get("stopped_credit_limit"):
-                out["deferred"] += len(todo) - start - len(chunk)
+            if out.get("stopped_credit_limit") or out.get("stopped_geocoder_unavailable"):
+                out["deferred"] += len(todo) - start - len(todo[start:start + locate.BATCH])
                 break
     except BudgetExceeded:
         out["stopped_budget"] = True
