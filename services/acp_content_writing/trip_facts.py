@@ -1303,6 +1303,66 @@ def fix_background_bases(text: str, ctx: "TripFactContext") -> tuple[str, list[s
     return text, log
 
 
+# ---------------------------------------------------------------- pace / rest promises (AA-775)
+
+# S234 r1-r4: the writer copied the tenant style guide's pace lines ('balanced with time to rest',
+# 'full without being relentless') into copy as facts about the trip. A sentence that matches PACE_RE
+# and whose pace word the moment's own source does not back is an F17 `pace_promise` finding.
+PACE_RE = re.compile(r"\b(pace[ds]?|pacing|relentless|exhaust\w*|rest(?:ful|ing)?|rush\w*|manageable|balanced?)\b",
+                     re.I)
+_REST_OF_RE = re.compile(r"\bthe\s+rest\s+of\b", re.I)
+PACE_WINDOW = 6           # words either side of the pace word
+PACE_SUPPORT_SHARE = 0.6  # share of the window's content words found in the source → seed-backed
+PACE_PROBLEM = ("states a pace or rest promise the source does not make ('{word}') — cut it, or say only "
+                "what the source says")
+_INVITE_START = r"(?:ask|speak|talk|chat|contact|reach\s+out|get\s+in\s+touch|enquire|inquire|write|email|call)"
+
+
+def _cta_paraphrase(sentence: str, cta: Optional[str], brand_name: Optional[str]) -> bool:
+    """A sentence (or a clause after ',', ';', ':' or a dash) that OPENS with an invitation verb
+    addressed to the brand or 'us' within four words ('Talk to an Atlas & Hearth travel designer about
+    … your pace', 'If this has your attention, talk to …', 'Ask Terra Family Expeditions to plan …').
+    The configured CTA is already excluded by `_body_spans`; this catches the writer's paraphrase of it.
+    The brand's own line ('Terra Family Expeditions builds journeys…') opens with no invitation verb."""
+    from services.acp_content_writing.hygiene import _cta_brand_word
+    names = [w for w in (_cta_brand_word(cta), (brand_name or "").split(" ")[0]) if w]
+    target = "|".join([re.escape(n) for n in names] + ["us"])
+    return bool(re.search(rf"(?:^|[,;:—–]\s*){_INVITE_START}\b(?:\s+[\w’'&-]+){{0,4}}?\s+(?:{target})\b",
+                          strip_tags(sentence or ""), re.I))
+
+
+def _pace_supported(sentence: str, m: re.Match, source_words: set) -> bool:
+    """The pace word itself is in the source (seed 'time to swim and rest before lunch'), or most of
+    the content words around it are."""
+    stem = content_words(m.group(1))
+    if stem and stem[0] in source_words:
+        return True
+    words = sentence.split()
+    at = len(sentence[:m.start()].split())
+    window = content_words(" ".join(words[max(0, at - PACE_WINDOW):at + PACE_WINDOW + 1]))
+    return bool(window) and sum(w in source_words for w in window) / len(window) >= PACE_SUPPORT_SHARE
+
+
+def pace_claims(text: str, source: str, cta: Optional[str] = None, brand_name: Optional[str] = None) -> list[str]:
+    """F17 `pace_promise` findings: body sentences (prose, bullet, FAQ answer) with a pace / rest /
+    balance word the source does not back. Not a finding: the CTA and its paraphrase
+    (`_cta_paraphrase`), 'the rest of …' (remainder), and a seed-backed pace word (`_pace_supported`).
+    `source` = the moment's own seed lines + Facts (TripFactContext.source)."""
+    source_words = set(content_words(source or ""))
+    out = []
+    for sp in _body_spans(text, cta):
+        sentence = sp["clean"]
+        if not PACE_RE.search(sentence) or _cta_paraphrase(sentence, cta, brand_name):
+            continue
+        rest_of = [r.span() for r in _REST_OF_RE.finditer(sentence)]
+        for m in PACE_RE.finditer(sentence):
+            if any(a <= m.start() < b for a, b in rest_of) or _pace_supported(sentence, m, source_words):
+                continue
+            out.append(_quoted(PACE_PROBLEM.format(word=m.group(1).lower()), sentence))
+            break
+    return out
+
+
 def fix_trip_facts(text: str, ctx: Optional["TripFactContext"]) -> tuple[str, list[str]]:
     """S234 round 4 — the deterministic trip-fact fixes, run in the job after the last LLM step and
     before the gates: thin-moment heading / coda, a hazard played down for a family brand, a
@@ -1327,6 +1387,10 @@ class TripFactContext:
     # S234 round 4 — places of the full trip (service._trip_places_outside): a background place that is
     # one of them is not 'a base the trip never uses' (Ulaanbaatar via the Mörön airport fact)
     trip_places: tuple = ()
+    # AA-775 — F17 pace_promise is checked on blogs only (a LinkedIn post never holds on it); the
+    # brand name lets a paraphrased CTA ('Talk to an Atlas & Hearth travel designer…') be skipped.
+    channel: Optional[str] = None
+    brand_name: Optional[str] = None
     moments: list = field(init=False)
 
     def __post_init__(self):
@@ -1355,15 +1419,17 @@ def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_titl
     trip += [_quoted(f"makes {hit['place']} the reader's gateway or base, but this trip does not go there (the "
                      "source names it only as background) — cut it", hit["span"]["clean"])
              for hit in background_bases(text, ctx)]
+    if ctx.channel == "blog":  # AA-775
+        trip += pace_claims(text, ctx.source, ctx.cta, ctx.brand_name)
     rarity = rarity_claims(text, ctx.source, ctx.cta, extra)
     return {"trip_fact": list(dict.fromkeys(trip)), "rarity": list(dict.fromkeys(rarity))}
 
 
 __all__ = [
-    "EndedRole", "Moment", "OptionalActivity", "RARITY_CLAIM_RE", "TripFactContext", "audience_has_children",
+    "EndedRole", "Moment", "OptionalActivity", "PACE_RE", "RARITY_CLAIM_RE", "TripFactContext", "audience_has_children",
     "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "mentions_activity", "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
-    "parse_moments", "rarity_claims", "timing_claims", "with_date_spans",
+    "pace_claims", "parse_moments", "rarity_claims", "timing_claims", "with_date_spans",
 ]

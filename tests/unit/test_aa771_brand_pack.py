@@ -45,6 +45,11 @@ class TestPack:
         assert "Do not make the tour sound like a school trip." in block
         assert "Never use these words or phrases: curriculum, lesson plan" in block
         assert "never invent how the brand works" in block
+        # AA-775 — the style guide is fenced as style, never a source
+        assert "This is style and never a source" in block
+        assert "never repeat one of its example sentences" in block
+        assert "unless the content seed says so" in block
+        assert "follow every rule in it, including each \"do not\"" in block
 
     def test_empty_pack_block_says_no_brand(self):
         assert "No brand identity is set up" in render_brand_block({})

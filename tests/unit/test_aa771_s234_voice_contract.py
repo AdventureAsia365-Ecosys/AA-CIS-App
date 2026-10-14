@@ -427,7 +427,9 @@ class TestT9Prompt:
         S234 edit. Any change to a blog writer prompt must be deliberate and update these.
         Updated S234 round 2 review (AA-768): the FAQ is required with 3-4 pairs (F16_faq contract).
         Updated S234 round 4 (AA-768): the route blog prompt gets one line for a "Thin moment".
-        Updated AA-773 (S235): SYSTEM_PROMPT gets the offered / included Status rule."""
+        Updated AA-773 (S235): SYSTEM_PROMPT gets the offered / included Status rule.
+        Updated AA-775 (S235): render_brand_block fences the style guide as "never a source" (the
+        fixture pack has a style_guide), so `single` and `route` change; SYSTEM_PROMPT does not."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -449,8 +451,8 @@ class TestT9Prompt:
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "3aa6eeba9f057aeef6043d70155753b6e69e88b8a30c5438ddab89f98abebb27"
-        assert sha(single) == "c282fdddb68017597157bfa4e92275a70c988d55dd30b2c4d9edf59b7b2db6fd"
-        assert sha(route) == "fc26b65199ddee7b9cdefdafd350aa5781cb34a752d6e4ad12bff76195e8efbe"
+        assert sha(single) == "0d36f9d0b06e70ea1b6b7a9cc5da5807d1fc1a2be6181d272f10a295ae12a155"
+        assert sha(route) == "561e87338afce1bcb3c34d10d0a61f679b04ff21b8f988c8bfdb465a19a03b7f"
 
 
 # ---------------------------------------------------------------- hygiene with the spec (finalize_social)

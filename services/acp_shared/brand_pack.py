@@ -105,8 +105,9 @@ def has_brand(pack: BrandPack) -> bool:
 
 
 def render_brand_block(pack: BrandPack, *, heading: str = "BRAND") -> str:
-    """The brand block for the T8 angle prompt and the T9 writer prompt. Empty fields are left
-    out. The self-reference rule stops invented "At <Brand>, we…" brand facts (S232)."""
+    """The brand block for the T8 angle prompt, the T9 writer prompt and the T2 tenant-voice prompt
+    (AA-792). Empty fields are left out. The self-reference rule stops invented "At <Brand>, we…"
+    brand facts (S232)."""
     lines = [f"{heading} (you write as this brand — it is the only brand; never name or invent "
              f"another brand, and never mention the platform this material came from):"]
     if pack.get("brand_name"):
@@ -122,7 +123,12 @@ def render_brand_block(pack: BrandPack, *, heading: str = "BRAND") -> str:
     if pack.get("voice"):
         lines.append("Voice: " + ", ".join(pack["voice"]))
     if pack.get("style_guide"):
-        lines.append("Style guide — follow every rule in it, including each \"do not\":\n"
+        # AA-775 — plan 09 §3.3 (chị Thư write.py:116-118): the style guide is style, never a source.
+        # T8, T9 and T2 (content_generation) all render this block.
+        lines.append("Style guide: follow every rule in it, including each \"do not\". How this brand writes, "
+                     "in its own words. This is style and never a source: never cite it, never repeat one of "
+                     "its example sentences, and never state its claims about pace, rest, balance or "
+                     "difficulty as facts about this trip unless the content seed says so.\n"
                      + pack["style_guide"])
     if pack.get("forbidden_words"):
         lines.append("Never use these words or phrases: " + ", ".join(pack["forbidden_words"]))
