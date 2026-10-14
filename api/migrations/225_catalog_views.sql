@@ -26,10 +26,11 @@
 --     USING (tenant_id = AA master tenant). catalog_owner can never see another tenant's rows, even
 --     if the views' own filter were wrong. (tenant_isolation TO public still ORs in: a reader that
 --     sets app.tenant_id = X lets catalog_owner see X's rows too, so the views keep their own
---     master-tenant WHERE + security_barrier. Consumers should leave app.tenant_id unset (NULL) or
---     set it to a real uuid: on a connection where it is '' — e.g. pooled, after any
---     set_config('app.tenant_id', ..., true) transaction — tenant_isolation's ''::uuid cast raises
---     "invalid input syntax for type uuid" as soon as the scan meets a non-master row.)
+--     master-tenant WHERE + security_barrier. Consumers need not set app.tenant_id.)
+--   * tenant_isolation on those two tables now reads NULLIF(current_setting('app.tenant_id', true),
+--     '')::uuid: a pooled connection holds '' after any set_config(..., true) transaction, and the
+--     old ''::uuid cast made every catalog read on it fail ("invalid input syntax for type uuid") as
+--     soon as the scan met a non-master row. '' now means no tenant (no rows), like NULL already did.
 --   * catalog views read acp_contract.tour_atoms with the rule of v_active_tour_atoms (203), not the
 --     view itself: v_active_tour_atoms is owned by aa_cis_admin and joins published_tours, so through
 --     it the RLS check would run as aa_cis_admin (no app.tenant_id -> no rows). The shared photo views
@@ -106,6 +107,34 @@ BEGIN
         END IF;
         EXECUTE format('COMMENT ON POLICY catalog_owner_aa_master_read ON %s IS %L', t,
                        'AA-679 — the catalog views (owner catalog_owner) read AA master-tenant rows only.');
+    END LOOP;
+END $$;
+
+-- ── tenant_isolation: '' means "no tenant", not an error ────────────────────────────────────────
+-- tenant_isolation (TO public, FOR ALL, USING only — migrations 004/008) is OR-ed with the policy above
+-- for catalog_owner. A pooled connection that ran set_config('app.tenant_id', ..., true) in an earlier
+-- transaction holds '' afterwards, and ''::uuid raised "invalid input syntax for type uuid" on every
+-- non-master row a catalog view scanned (TripPlanner catalog pages, AA-812). NULLIF makes '' behave
+-- like an unset value (no rows), as NULL already did. Same name, roles, command and permissive kind;
+-- a WITH CHECK, if one exists, gets the same expression. Re-run: no-op once the qual has the NULLIF.
+DO $$
+DECLARE
+    t   text;
+    pol record;
+    expr constant text := 'tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid';
+BEGIN
+    FOREACH t IN ARRAY ARRAY['gold_aa_internal.published_tours', 'silver_aa_internal.raw_tours'] LOOP
+        SELECT qual, with_check INTO pol FROM pg_policies
+         WHERE schemaname || '.' || tablename = t AND policyname = 'tenant_isolation';
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'migration 225: policy tenant_isolation missing on %', t;
+        END IF;
+        IF pol.qual NOT ILIKE '%nullif%' THEN
+            EXECUTE format('ALTER POLICY tenant_isolation ON %s USING (%s)', t, expr);
+        END IF;
+        IF pol.with_check IS NOT NULL AND pol.with_check NOT ILIKE '%nullif%' THEN
+            EXECUTE format('ALTER POLICY tenant_isolation ON %s WITH CHECK (%s)', t, expr);
+        END IF;
     END LOOP;
 END $$;
 

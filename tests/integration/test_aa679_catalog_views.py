@@ -58,6 +58,9 @@ def rds_like_225():
         DROP POLICY IF EXISTS catalog_owner_aa_master_read ON gold_aa_internal.published_tours;
         DROP POLICY IF EXISTS catalog_owner_aa_master_read ON silver_aa_internal.raw_tours;
         DELETE FROM shared.schema_versions WHERE version = '225';""")
+    for table in ("gold_aa_internal.published_tours", "silver_aa_internal.raw_tours"):   # pre-225 shape (008)
+        a.execute(f"ALTER POLICY tenant_isolation ON {table} "
+                  "USING (tenant_id = current_setting('app.tenant_id', true)::uuid)")
     a.execute("SELECT 1 FROM pg_roles WHERE rolname = 'catalog_owner'")
     if a.fetchone():
         a.execute("DROP OWNED BY catalog_owner")
@@ -459,3 +462,80 @@ def test_leaky_function_probe_reveals_no_hidden_row(cur):
         seen = _leaked(cur, "SELECT title FROM catalog.v_tour WHERE public.zz679_leak(title)")
     assert [h for h in hidden[:3] if h in seen], "control probe leaked nothing — the probe is not testing"
     assert hidden[3] not in seen
+
+
+def test_tenant_isolation_treats_empty_tenant_as_none(cur):
+    """225 rewrote tenant_isolation with NULLIF(..., ''); everything else about the policy is unchanged."""
+    cur.execute("""SELECT tablename, permissive, roles::text[], cmd, qual, with_check FROM pg_policies
+                    WHERE policyname = 'tenant_isolation'
+                      AND tablename IN ('published_tours', 'raw_tours') ORDER BY tablename""")
+    rows = cur.fetchall()
+    assert [r[:4] for r in rows] == [("published_tours", "PERMISSIVE", ["public"], "ALL"),
+                                     ("raw_tours", "PERMISSIVE", ["public"], "ALL")]
+    assert all("nullif" in r[4].lower() and r[5] is None for r in rows), rows
+
+
+def test_catalog_read_on_a_pooled_connection_with_empty_tenant(rds_like_225):
+    """A connection that set app.tenant_id LOCAL in an earlier transaction holds '' afterwards
+    (TripPlanner's pool). Reading catalog.* on it used to raise invalid input syntax for type uuid as
+    soon as the scan met a non-master row; now it returns the live master rows."""
+    conn = _connect()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT set_config('app.tenant_id', %s, true)", (MASTER_TENANT,))
+        conn.commit()                                                     # previous transaction ends
+        c.execute("SELECT current_setting('app.tenant_id', true)")
+        assert c.fetchone()[0] == ""
+        tag = uuid.uuid4().hex[:8]
+        live = _tour(c, name=f"Pooled {tag}", itinerary=CANONICAL)
+        _tour(c, name=f"Pooled other {tag}", itinerary=CANONICAL, tenant=OTHER_TENANT)   # forces the cast
+        for role in CONSUMERS:
+            with _as(c, role):
+                c.execute("SELECT tour_id::text FROM catalog.v_tour WHERE title LIKE %s", (f"%{tag}",))
+                assert {r[0] for r in c.fetchall()} == {live}, role
+                c.execute("SELECT count(*) FROM catalog.v_tour_place")    # whole views scan too
+                c.execute("SELECT count(*) FROM catalog.v_tour_day")
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def test_cis_roles_with_empty_tenant_see_no_rows(cur):
+    """'' is 'no tenant' for the CIS roles too: zero rows, no exception (was: invalid uuid error)."""
+    tag = uuid.uuid4().hex[:8]
+    _tour(cur, name=f"Empty {tag}", itinerary=CANONICAL)
+    _tour(cur, name=f"Empty other {tag}", itinerary=CANONICAL, tenant=OTHER_TENANT)
+    cur.execute("SELECT set_config('app.tenant_id', '', true)")
+    for role in ("app_user", RUNNER):                  # RUNNER = table owner under FORCE RLS, as aa_cis_admin
+        with _as(cur, role):
+            cur.execute("SELECT count(*) FROM gold_aa_internal.published_tours WHERE aa_name LIKE %s",
+                        (f"%{tag}",))
+            assert cur.fetchone()[0] == 0, role
+            cur.execute("SELECT count(*) FROM silver_aa_internal.raw_tours WHERE src_name LIKE %s",
+                        (f"%{tag}",))
+            assert cur.fetchone()[0] == 0, role
+
+
+def test_tenant_scoped_reads_unchanged(cur):
+    tag = uuid.uuid4().hex[:8]
+    master = _tour(cur, name=f"Scoped {tag}", itinerary=CANONICAL)
+    other = _tour(cur, name=f"Scoped other {tag}", itinerary=CANONICAL, tenant=OTHER_TENANT)
+    for role in ("app_user", RUNNER):
+        with _as(cur, role):
+            for tenant, expected in ((MASTER_TENANT, {master}), (OTHER_TENANT, {other})):
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+                cur.execute("SELECT tour_id::text FROM gold_aa_internal.published_tours WHERE aa_name LIKE %s",
+                            (f"%{tag}",))
+                assert {r[0] for r in cur.fetchall()} == expected, (role, tenant)
+                cur.execute("SELECT tour_id::text FROM silver_aa_internal.raw_tours WHERE src_name LIKE %s",
+                            (f"%{tag}",))
+                assert {r[0] for r in cur.fetchall()} == expected, (role, tenant)
+        # a write into another tenant is still refused (USING doubles as WITH CHECK)
+        cur.execute("SAVEPOINT w")
+        with pytest.raises(psycopg2.errors.InsufficientPrivilege):
+            with _as(cur, role):
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (MASTER_TENANT,))
+                cur.execute("UPDATE gold_aa_internal.published_tours SET tenant_id = %s WHERE tour_id = %s",
+                            (OTHER_TENANT, master))
+        cur.execute("ROLLBACK TO SAVEPOINT w")
+        cur.execute("RESET ROLE")
