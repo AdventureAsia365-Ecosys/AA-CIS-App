@@ -45,7 +45,10 @@
 -- is in the AA-798 app change, not here.
 --
 -- Applied on Dev via the AA-CIS-Infra "DB Migrate" workflow (identical copy in db/migrations/cis/).
--- Safe to apply before the app change: the view keeps its live column names and types.
+-- Apply only after the app change that removes llm_cost_usd from /v1/billing is deployed on Dev.
+-- The view keeps its live column names and types, so no reader breaks either way. But tenant
+-- GET /v1/billing (v1_tours.py, tenant JWT) still selects v.llm_cost_usd, so applying this first
+-- would show every tenant AA's real month-to-date LLM spend (Gate-1, 14/10: never tenant-visible).
 
 BEGIN;
 
