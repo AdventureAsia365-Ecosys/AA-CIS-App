@@ -125,10 +125,14 @@ _MISSION_AXIS = """- mission_present (true/false): does this brand's mission-hoo
 def _tenant_mission_axis(mission: str) -> str:
     """AA-792 (Nghiệp, Gate 1 option B, 14/10/2026): the T2 mission is the TENANT's own mission —
     its core idea from the brand pack — never Adventure Asia's. Named verbatim so the judge does not
-    have to guess what "mission-hook" means (S234: absent on 72/104 T2 calls)."""
+    have to guess what "mission-hook" means (S234: absent on 72/104 T2 calls). Pilot fix: the same
+    definition the T2 writer's CORE IDEA lens uses (batch_prompt._core_idea_lens_block) — the core
+    idea frames the overview and most days, not quoted, not every day (pilot: absent 27/27)."""
     return f"""- mission_present (true/false): does THIS brand's own mission — its core idea: "{mission}" —
-  actually surface in the ITINERARIES (each day's framing), not only in the summary? Judge only
-  against this brand's mission above, never Adventure Asia's or a generic travel mission."""
+  clearly shape how the trip is framed? true when the overview AND most itinerary days reflect it in
+  what they emphasise; it does not have to be quoted or named, and not every single day must carry
+  it. false when it appears only in the summary, or not at all. Judge only against this brand's
+  mission above, never Adventure Asia's or a generic travel mission."""
 
 
 def _build_judge_prompt(brand_profile: dict, generated: dict, mission: Optional[str] = None) -> str:
