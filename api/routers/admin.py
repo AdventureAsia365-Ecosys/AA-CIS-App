@@ -325,9 +325,10 @@ async def list_tenants(
                 COALESCE(u.tours_overage, 0)           AS tours_overage,
                 COALESCE(u.overage_usd, 0)             AS overage_usd,
                 COALESCE(u.llm_cost_usd, 0)            AS llm_cost_usd,
-                COALESCE(u.tours_quota_monthly, 0)     AS tours_quota_monthly,
-                COALESCE(u.api_calls_quota_monthly, 0) AS api_calls_quota_monthly,
-                COALESCE(u.price_usd_monthly, 0)       AS price_usd_monthly,
+                -- AA-798: no COALESCE on plan columns; NULL = no plan attached (shown as such)
+                u.tours_quota_monthly,
+                u.api_calls_quota_monthly,
+                u.price_usd_monthly,
                 COALESCE(src.active, 0)     AS source_active,
                 COALESCE(src.superseded, 0) AS source_superseded,
                 COALESCE(src.trashed, 0)    AS source_trashed,
@@ -371,10 +372,13 @@ async def list_tenants(
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
                 "created_at":     r["created_at"].isoformat(),
+                "plan_attached":  r["tours_quota_monthly"] is not None,  # AA-798
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],
-                    "price_usd_monthly":       float(r["price_usd_monthly"]),
+                    "price_usd_monthly": (
+                        float(r["price_usd_monthly"]) if r["price_usd_monthly"] is not None else None
+                    ),
                 },
                 "this_month": {
                     "tours_rewritten":  r["source_active"],
@@ -383,6 +387,7 @@ async def list_tenants(
                     "quota_calls_pct":  float(r["quota_calls_pct"]),
                     "tours_overage":    r["tours_overage"],
                     "overage_usd":      float(r["overage_usd"]),
+                    # AA-798: the view's real llm_call_log month-to-date spend (migration 223)
                     "llm_cost_usd":     float(r["llm_cost_usd"]),
                 },
                 "lifecycle": {

@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel as _BM
 from api.routers.auth import verify_tenant_jwt
 from api.routers.admin import PLAN_LIMITS
+from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
@@ -354,22 +355,11 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         for p in plan_rows
     ]
 
-    if not row:
-        return {
-            "plan_tier": "starter", "tours_quota_monthly": 50,
-            "api_calls_quota_monthly": 5000, "price_usd_monthly": 299.0,
-            "tours_rewritten": 0, "api_calls_used": 0,
-            "quota_tours_pct": 0.0, "quota_calls_pct": 0.0,
-            "tours_overage": 0, "overage_usd": 0.0,
-            "overage_rate_usd_per_tour": 4.0,
-            "rate_limit_rpm": rate_limit_rpm, "plans": plans, "daily": daily,
-            "activity": [],
-        }
-
+    # AA-798: no usage row -> no plan, nothing counted. It used to invent a Starter plan
+    # (fixed price / 50 tours / 5000 calls); the portal now shows "No plan attached" instead.
+    usage = usage_row_to_dict(project_billing(row)) if row else no_plan_usage()
     return {
-        **{k: (float(v) if hasattr(v, '__float__') and not isinstance(v, int) else v)
-           for k, v in project_billing(row).items() if k != "billing_month"},
-        "billing_month": str(row["billing_month"])[:7] if row["billing_month"] else None,
+        **usage,
         "rate_limit_rpm": rate_limit_rpm,
         "plans": plans,
         "daily": daily,

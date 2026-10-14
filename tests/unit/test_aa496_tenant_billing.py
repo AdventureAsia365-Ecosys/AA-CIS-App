@@ -9,8 +9,8 @@ Covers:
      view's ?tenant_id=, which is intentionally an admin-only "look at any tenant" knob)
   2. test_get_my_billing_shape_matches_admin_view — same field shape as GET /admin/billing,
      so BillingTab.tsx/DashboardTab.tsx need zero changes beyond the URL they call
-  3. test_get_my_billing_no_usage_row_yet_returns_defaults — a tenant with no
-     v_tenant_monthly_usage row yet reads as sane zeroed defaults, not an error
+  3. test_get_my_billing_no_usage_row_yet_returns_no_plan — a tenant with no
+     v_tenant_monthly_usage row reads as "no plan attached" (AA-798), not invented defaults
   4. test_get_my_billing_activity_shape — activity rows carry id/created_at/status/
      edit_source/tour_name/country, matching the admin view's own shape exactly
 """
@@ -81,14 +81,17 @@ class TestAA496TenantBilling:
         assert result["plan_tier"] == "growth"
         assert result["tours_rewritten"] == 12
 
-    async def test_get_my_billing_no_usage_row_yet_returns_defaults(self):
+    async def test_get_my_billing_no_usage_row_yet_returns_no_plan(self):
+        # AA-798: no usage row -> "no plan attached", not an invented $299 Starter plan.
         pool, conn = _make_pool(row=None, activity=[])
         request = MagicMock()
         request.app.state.pool = pool
 
         result = await v1_tours.get_my_billing(request, tenant={"sub": "brand-new-tenant"})
 
-        assert result["plan_tier"] == "starter"
+        assert result["plan_attached"] is False
+        assert result["plan_tier"] is None
+        assert result["price_usd_monthly"] is None and result["tours_quota_monthly"] is None
         assert result["tours_rewritten"] == 0
         assert result["activity"] == []
 

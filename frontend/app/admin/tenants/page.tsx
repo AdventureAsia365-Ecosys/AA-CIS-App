@@ -43,7 +43,8 @@ interface Tenant {
   status: TenantStatus;           // AA-797 — derived by GET /admin/tenants
   cancelled_at: string | null;
   created_at: string;
-  plan: { tours_quota_monthly: number; api_calls_quota_monthly: number; price_usd_monthly: number };
+  plan_attached?: boolean;        // AA-798 — false: no plan, plan fields are null
+  plan: { tours_quota_monthly: number | null; api_calls_quota_monthly: number | null; price_usd_monthly: number | null };
   this_month: {
     tours_rewritten: number; api_calls_used: number;
     quota_tours_pct: number; quota_calls_pct: number;
@@ -788,7 +789,7 @@ function TenantDetail({ tenantId, planTier }: {
 
 // AA-666 — Usage & Billing: quota meters + overage + LLM cost, from GET /admin/billing?tenant_id=
 function BillingTabContent({ tenantId }: { tenantId: string }) {
-  const [b, setB] = useState<Record<string, number | string | null> | null>(null);
+  const [b, setB] = useState<Record<string, number | string | boolean | null> | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ok">("loading");
   useEffect(() => {
     fetch(`/api/admin/billing?tenant_id=${tenantId}`)
@@ -799,11 +800,13 @@ function BillingTabContent({ tenantId }: { tenantId: string }) {
   if (state === "loading") return <div style={{ fontSize: 12, color: A.muted }}>Loading billing…</div>;
   if (state === "error" || !b) return <div style={{ fontSize: 12, color: A.red }}>Failed to load billing</div>;
   const num = (v: unknown) => (v == null ? 0 : Number(v));
-  const meter = (label: string, pct: number, used: number, quota: number) => (
+  // AA-798 — no plan attached: show it, never an invented price/quota (and no "∞" for a null quota).
+  const noPlan = b.plan_attached === false;
+  const meter = (label: string, pct: number, used: number, quota: number | null) => (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
         <span style={{ color: A.ink, fontWeight: 600 }}>{label}</span>
-        <span style={{ color: A.muted }}>{used} / {quota || "∞"} ({pct}%)</span>
+        <span style={{ color: A.muted }}>{quota == null ? `${used} / —` : `${used} / ${quota >= 999999 ? "Unlimited" : quota} (${pct}%)`}</span>
       </div>
       <div style={{ height: 7, background: A.line2, borderRadius: 4, overflow: "hidden" }}>
         <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: pct >= 100 ? A.red : A.accent }} />
@@ -814,19 +817,20 @@ function BillingTabContent({ tenantId }: { tenantId: string }) {
     <div>
       <div style={{ display: "flex", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          ["Plan", String(b.plan_tier ?? "—")],
-          ["Price / mo", `$${num(b.price_usd_monthly).toFixed(2)}`],
-          ["LLM cost (mo)", `$${num(b.llm_cost_usd).toFixed(3)}`],
-          ["Overage", `$${num(b.overage_usd).toFixed(2)} (${num(b.tours_overage)} tours)`],
+          ["Plan", noPlan ? "No plan attached" : String(b.plan_tier ?? "—")],
+          ["Price / mo", b.price_usd_monthly == null ? "—" : `$${num(b.price_usd_monthly).toFixed(2)}`],
+          ["LLM cost (MTD, llm_call_log)", `$${num(b.llm_cost_usd).toFixed(2)}`],
+          ["Overage", b.overage_usd == null ? "—" : `$${num(b.overage_usd).toFixed(2)} (${num(b.tours_overage)} tours)`],
         ].map(([l, v]) => (
           <div key={l}><div style={{ fontSize: 10, color: A.muted2 }}>{l}</div>
             <div style={{ fontFamily: serif, fontSize: 16, color: A.body }}>{v}</div></div>
         ))}
       </div>
-      {meter("Tours quota", num(b.quota_tours_pct), num(b.tours_rewritten), num(b.tours_quota_monthly))}
-      {meter("API calls quota", num(b.quota_calls_pct), num(b.api_calls_used), num(b.api_calls_quota_monthly))}
+      {meter("Tours quota", num(b.quota_tours_pct), num(b.tours_rewritten), b.tours_quota_monthly == null ? null : num(b.tours_quota_monthly))}
+      {meter("API calls quota", num(b.quota_calls_pct), num(b.api_calls_used), b.api_calls_quota_monthly == null ? null : num(b.api_calls_quota_monthly))}
       <div style={{ fontSize: 11, color: A.muted2, marginTop: 6 }}>
-        Invoices and per-stage cost are deferred (no endpoint yet). Totals from the monthly usage view.
+        LLM cost = this calendar month&apos;s spend in llm_call_log for this tenant (Jev included, shadow runs excluded).
+        Invoices and per-stage cost are deferred (no endpoint yet).
       </div>
     </div>
   );
