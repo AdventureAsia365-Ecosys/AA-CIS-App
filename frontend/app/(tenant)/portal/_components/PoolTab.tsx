@@ -70,7 +70,7 @@ export default function PoolTab({ onRewriteDone, externalSearch = "" }: { onRewr
 
       const [poolRes, versionsRes] = await Promise.allSettled([
         fetch(`/api/tenant/v1/tours/pool?${params}`),
-        fetch("/api/tenant/v1/tours/my-versions?page_size=200"),
+        fetch("/api/tenant/v1/tours/my-versions?page_size=100"),
       ]);
 
       if (poolRes.status === "fulfilled" && poolRes.value.ok) {
