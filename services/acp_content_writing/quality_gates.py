@@ -254,10 +254,15 @@ def gate_grounding(content_text: str, atom_text: str) -> GateResultLite:
     find_novel_numeric_claims() directly — the SAME shared utility N7's own gate_grounding()
     and S1's check_grounding() already share (ADR-2026-033, "one implementation, not two that
     can drift") — sentence-by-sentence against the ONE chosen atom's text (no tag parsing
-    needed, there is exactly one source)."""
+    needed, there is exactly one source).
+
+    AA-785 (S235) — `year_forms=True`: "1637–38" and "the late 1630s" are read as years and pass
+    when the seed has the year (S234: all 22 F1 violations were these forms, none a real invented
+    number); T3/A1/source_facts keep the plain reading. The violation format is unchanged —
+    sentence_repair._F1_QUOTE_RE parses it."""
     violations: list[str] = []
     for sent in _SENT_SPLIT_RE.split(content_text or ""):
-        novel = find_novel_numeric_claims(sent, [atom_text])
+        novel = find_novel_numeric_claims(sent, [atom_text], year_forms=True)
         if novel:
             # AA-452: strip_citation_tags() here too, not just at the final output boundary —
             # for channel='blog' `sent` may carry a [R:atom_id] tag; deep_strip_citation_tags()
