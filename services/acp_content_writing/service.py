@@ -49,11 +49,11 @@ from services.acp_content_writing.quality_gates import (
     _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
-from services.acp_content_writing import hygiene, sentence_repair, text_integrity, trip_facts
+from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.jev_observe import observe_t10
-from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, FAQ_MAX_PAIRS,
+from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
                                                           FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_unanswerable_faq, faq_pair_count, faq_pairs,
@@ -448,6 +448,48 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     return content_text, ledger, list(flags) + ([new_f9] if all_cut else []), entry
 
 
+def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, status: str,
+                          held_reason: Optional[str], *, cta: Optional[str], channel: str,
+                          spec=None) -> tuple[str, list, list, str, Optional[str], Optional[dict]]:
+    """AA-819 (AUP 2026-11) — fail closed on F19_authenticity after the write/repair loop. The loop
+    already sent the flagged sentences to the sentence repair (t9_repair); when a review, customer
+    first-person line or independence claim is still in the body, it is CUT here (the hook too — the
+    rule wins over the piece's shape; never the CTA). A hold alone is not enough: a held piece still
+    reaches the tenant and can be published (AA-770).
+    - Nothing left → the F19 entry is stored `blocking: false, waived: true` with `sentences_cut`
+      and `cut_sentences` (admin-only evidence; the tenant projection drops the ledger) and is added
+      to the flags.
+    - A title / meta hit left (the SEO fit refused to keep one but could not replace it) → F19 stays
+      blocking with what is left; the piece is held for the admin.
+    The deterministic shape gates (F4 extreme length, F0 complete, F14 social shape / first line) are
+    re-run on the cut text and replace their entries; the status is re-derived from the new ledger.
+    Returns (content_text, gate_ledger, flags, status, held_reason, repair_log entry or None)."""
+    f19 = next((g for g in gate_ledger if g["gate"] == F19_GATE and not g["passed"]), None)
+    if f19 is None:
+        return content_text, gate_ledger, flags, status, held_reason, None
+    cut_text, cut = authenticity.cut_flagged(content_text, cta)
+    if not cut:
+        return content_text, gate_ledger, flags, status, held_reason, None
+    from services.acp_content_writing.quality_gates import (gate_complete, gate_extreme_length, gate_first_line,
+                                                            gate_social_shape)
+    fresh = {r["gate"]: r for r in (gate_extreme_length(_plain(cut_text), channel), gate_complete(cut_text),
+                                    gate_social_shape(cut_text, spec), gate_first_line(cut_text, spec))}
+    left = authenticity.find_issues(cut_text, cta) + [v for v in f19["violations"]
+                                                       if v.startswith(("title ", "meta "))]
+    marks = {"sentences_cut": len(cut), "cut_sentences": [c[:200] for c in cut]}
+    reason = f"{len(cut)} sentence(s) cut in code after the repair (AA-819 AUP guard)"
+    if left:
+        new_f19 = {**f19, **marks, "violations": left, "cut_reason": reason + "; still flagged — held for admin review"}
+    else:
+        new_f19 = {**f19, **marks, "blocking": False, "waived": True, "waived_reason": reason}
+    ledger = [fresh.get(g["gate"], new_f19 if g is f19 else g) for g in gate_ledger]
+    flags = list(flags) + ([] if left else [new_f19])
+    status, held_reason, flags = _hold_or_ship(ledger, flags)
+    entry = {"gate_targeted": F19_GATE, "repair_mode": "aup_cut", **marks, "violations": [reason],
+             "repairable": False}
+    return cut_text, ledger, flags, status, held_reason, entry
+
+
 async def _after_cut(content_text: str, tenant_id: Optional[str], embedding):
     """AA-786 review N1 — after the LinkedIn cut: the writer's summary may still state the cut claim, so
     it is cleared (a None summary is a normal soft-fail outcome, AA-498); the embedding is recomputed on
@@ -555,8 +597,9 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
 
     def title_ok(value) -> bool:
         # S234 round 4 (r3 #0 = #19) — never a title an earlier piece of this brand already uses
+        # AA-819 — nor a review / customer voice / independence claim ('Honest Review: …', 'Rated 4.9')
         return (_seo_title_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
-                and not title_taken(value, taken))
+                and not title_taken(value, taken) and not authenticity.field_hits(value))
 
     seed = context.get("atom_text") or ""
 
@@ -568,7 +611,8 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
         return (_meta_ok(value, keyword) and (lex is None or not hygiene.places_named(lex, value))
                 and not seo_grounding.meta_unsupported_products(value, seed, body)
                 and not trip_facts.date_authority_claims("", seed, extra_texts=(("meta", value),))
-                and not trip_facts.rarity_claims("", hygiene.split_seed(seed)[0], extra_texts=(("meta", value),)))
+                and not trip_facts.rarity_claims("", hygiene.split_seed(seed)[0], extra_texts=(("meta", value),))
+                and not authenticity.field_hits(value))  # AA-819
 
     if not seo_meta or (title_ok(seo_meta.get("seo_title")) and meta_ok(seo_meta.get("meta_description"))):
         return seo_meta, 0.0
@@ -577,6 +621,8 @@ async def _fit_seo_meta(seo_meta: dict, keyword: Optional[str], *, body: str, co
                         for p in (hygiene.places_named(lex, v) if lex is not None else [])})
     forbidden += [w for w in seo_grounding.meta_unsupported_products(seo_meta.get("meta_description"), seed, body)
                   if w not in forbidden]
+    forbidden += [m for v in (seo_meta.get("seo_title"), seo_meta.get("meta_description"))
+                  for _, m in authenticity.field_hits(v) if m not in forbidden]  # AA-819
     if trip_facts.date_authority_claims("", seed, extra_texts=(("meta", seo_meta.get("meta_description")),)):
         forbidden += [w for w in ("still", "remains", "today", "active center", "administrative center")
                       if w not in forbidden]
@@ -1570,6 +1616,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             summary, embedding = await _after_cut(content_text, tenant_id, embedding)
                 status, held_reason, flags = _hold_or_ship(gate_ledger, flags)
                 break
+
+        # AA-819 (AUP 2026-11) — a review / customer voice / independence claim the repair could not
+        # remove is cut here, never shipped (a held piece still reaches the tenant, AA-770).
+        content_text, gate_ledger, flags, status, held_reason, aup_entry = _enforce_authenticity(
+            content_text, gate_ledger, flags, status, held_reason, cta=cta, channel=channel, spec=spec)
+        if aup_entry:
+            repair_log.append({"attempt": attempt, **aup_entry})
+            summary, embedding = await _after_cut(content_text, tenant_id, embedding)
 
         # AA-452 — mandatory, tenant-facing-leak-prevention step: strip every [R:atom_id]/[F:id]
         # citation tag (channel='blog' only ever produces one, prompts.py's _BLOG_FORMAT_INSTRUCTIONS)
