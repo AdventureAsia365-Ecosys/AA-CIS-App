@@ -763,9 +763,11 @@ function TenantDetail({ tenantId, planTier }: {
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", borderBottom: `1px solid ${A.line}`, marginBottom: 14 }}>
+      {/* S235: the tab row scrolls horizontally on phones — it overflowed a hidden container at 390px. */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${A.line}`, marginBottom: 14, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
+            flexShrink: 0, whiteSpace: "nowrap",
             padding: "7px 14px", fontSize: 12, fontWeight: tab === t.key ? 700 : 400,
             color: tab === t.key ? A.accentDeep : A.muted,
             border: "none", borderBottom: `2px solid ${tab === t.key ? A.accent : "transparent"}`,
