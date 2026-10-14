@@ -131,6 +131,7 @@ def patch_llm_client(monkeypatch):
     """
     def _install(haiku_responses, judge_response=None):
         queue = list(haiku_responses)
+        calls = []
         judge_resp = judge_response or _judge_response()
         audit_resp = LLMResponse(
             content=json.dumps({"brand_audit": {
@@ -140,9 +141,10 @@ def patch_llm_client(monkeypatch):
         )
 
         def _generate(request):
-            if request.stage == "s1_judge":
+            calls.append(request)
+            if request.stage in ("s1_judge", "t2_judge"):        # AA-763: T2 has its own stage keys
                 return judge_resp
-            if request.stage == "s1_brand_audit":
+            if request.stage in ("s1_brand_audit", "t2_brand_audit"):
                 return audit_resp
             # Pop each queued response once (retry test), but keep returning the last one if
             # called more times than expected rather than raising IndexError mid-graph-run.
@@ -150,6 +152,7 @@ def patch_llm_client(monkeypatch):
 
         mock_client = MagicMock()
         mock_client.generate.side_effect = _generate
+        mock_client.calls = calls  # AA-792: every LLMRequest, in order, for prompt assertions
         mock_client_cls = MagicMock(return_value=mock_client)
         monkeypatch.setattr("services.content_generation.graph.LLMClient", mock_client_cls)
         monkeypatch.setattr("services.content_generation.brand_fit.LLMClient", mock_client_cls)
@@ -231,3 +234,33 @@ async def test_full_graph_run_retry_path_preserves_state(patch_llm_client):
     assert result["retry_count"] >= 1
     assert result["generated"]["name"] == GOOD_GENERATED["name"]
     assert result["generated"]["seo_meta"] == GOOD_GENERATED["seo_meta"]
+
+
+# AA-792: a T2 tenant rewrite through the compiled graph — the brand pack fields must survive the
+# ContentState boundary and reach generate_node's system prompt, and the judge gates on brand fit.
+T2_BRAND_RULES = {**BRAND_RULES, "system_prompt": "", "brand_name": "WorldLux",
+                  "brand_type": "Luxury private travel brand", "default_cta": ""}
+
+
+async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm_client, monkeypatch):
+    monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    client = patch_llm_client(
+        [_generate_response(GOOD_GENERATED)],
+        judge_response=_judge_response(brand_fit=9, cross_brand_distinct=3, mission_present=False),
+    )
+
+    result = await _rewrite_tour(
+        tour=SAMPLE_TOUR, idx=1, total=1, brand_rules=T2_BRAND_RULES, seo={}, model_tier="haiku",
+        is_tenant_rewrite=True, generate_stage="t2_generate",
+    )
+
+    assert result["status"] == "success", result.get("error")
+    writer = [r for r in client.calls if r.stage == "t2_generate"][0]
+    assert "CLIENT BRAND (you write as this brand" in writer.system_prompt
+    assert "Name: WorldLux" in writer.system_prompt and "Voice: quiet, precise, unhurried" in writer.system_prompt
+    assert "master content catalog" not in writer.system_prompt + writer.user_prompt
+    # brand_fit 9 gates; distinct 3 and mission absent are logged only
+    assert result["judge_score"] == pytest.approx(9.0)
+    assert result["judge_cross_brand_distinct"] == pytest.approx(3.0)
+    assert result["judge_mission_present"] is False
+    assert result["quality_score"] == pytest.approx(9.0)

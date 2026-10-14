@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 from typing import TypedDict
 
-from .prompts import SYSTEM_PROMPT, build_rewrite_prompt
+from .prompts import SYSTEM_PROMPT, T2_SYSTEM_PROMPT, build_rewrite_prompt
 
 
 class S1PromptInputs(TypedDict, total=False):
@@ -40,6 +40,10 @@ class S1PromptInputs(TypedDict, total=False):
     brand_customer_mindset: str
     brand_voice_examples: list
     brand_good_examples: str
+    is_tenant_rewrite: bool   # AA-792: True → the T2 tenant-voice builders below
+    brand_name: str           # AA-792: from the AA-771 brand pack (T2 only)
+    brand_type: str
+    brand_default_cta: str
 
 
 def build_brand_diff_block(state: dict) -> str:
@@ -66,21 +70,63 @@ def build_brand_diff_block(state: dict) -> str:
         diff_block += f"\n- Voice (tone words): {', '.join(voice_ex)}"
     if good_ex:
         diff_block += f"\n- Example of this brand's voice on a single moment: {good_ex}"
-    diff_block += (
+    return diff_block + _brand_contrast_rules()
+
+
+def _brand_contrast_rules() -> str:
+    """AA-202 contrast + generic-phrasing rules (the tail of build_brand_diff_block). AA-792: split
+    out so the T2 prompt can keep them after the CLIENT BRAND block without repeating the profile."""
+    return (
         "\n\nCONTRAST REQUIREMENT: The summary, highlights, itineraries (including each day-title), "
         "and the overall framing MUST be written from THIS brand's specific angle and mindset above. "
         "Do NOT produce generic copy that would fit any travel brand. If the same tour were rewritten "
         "for a different brand, the wording, emphasis, and framing must be clearly distinct — not a "
         "synonym swap. Lead with what makes THIS brand's take different."
-    )
-    diff_block += (
         "\n\nGENERIC PHRASING TO AVOID (these read identically for any brand — do NOT write like this): "
         "'connects the country's primary cultural regions', 'moves through layered geography', "
         "'a journey through diverse landscapes', 'experience the best of' — they describe a route, not "
         "THIS brand's mission. Instead, lead every field with THIS brand's specific mission angle and "
         "let it shape what you foreground; do not merely synonym-swap a generic description."
     )
-    return diff_block
+
+
+def brand_pack_from_state(state: dict) -> dict:
+    """AA-792: rebuild the AA-771 brand pack (services/acp_shared/brand_pack.BrandPack) from the
+    graph state's brand_* fields, which t2_rewrite_job loads with brand_pack.fetch_brand_pack_conn —
+    so the T2 writer renders the brand with the same render_brand_block as T8/T9."""
+    return {
+        "brand_name": state.get("brand_name") or None,
+        "brand_type": state.get("brand_type") or None,
+        "core_idea": state.get("brand_core_idea") or None,
+        "customer_segment": state.get("brand_customer_segment") or None,
+        "customer_mindset": state.get("brand_customer_mindset") or None,
+        "voice": [v for v in (state.get("brand_voice_examples") or []) if v],
+        "style_guide": state.get("brand_style_guide") or None,
+        "forbidden_words": [w for w in (state.get("brand_forbidden_words") or []) if w],
+        "good_examples": state.get("brand_good_examples") or None,
+        "default_cta": state.get("brand_default_cta") or None,
+        "system_prompt": state.get("brand_system_prompt") or None,
+    }
+
+
+def build_t2_system_prompt(state: dict) -> str:
+    """AA-792: the T2 tenant-rewrite writer SYSTEM prompt — written AS the client brand.
+
+    T2_SYSTEM_PROMPT (brand-voice base, same truth/structure rules as A1) + language + the CLIENT
+    BRAND block (render_brand_block of the AA-771 pack: name, type, core idea, audience, voice,
+    style guide, forbidden words, on-brand example) + the brand's own system_prompt as brief, when
+    one was written + the AA-202 contrast rules + the AA core + brand forbidden-words constraint.
+    No "append only" and no master-catalogue framing: the brand is the point of T2."""
+    from services.acp_shared.brand_pack import render_brand_block
+    from .brand_fit import has_brand_signals
+    brand_sp = state.get("brand_system_prompt", "") or ""
+    system = T2_SYSTEM_PROMPT + _language_line(state)
+    system += "\n\n" + render_brand_block(brand_pack_from_state(state), heading="CLIENT BRAND")
+    if brand_sp:
+        system += f"\n\nCLIENT BRAND BRIEF (the brand's own words — part of the brand above):\n{brand_sp}"
+    if has_brand_signals(state):
+        system += _brand_contrast_rules()
+    return system + _forbidden_words_block(state)
 
 
 def build_s1_system_prompt(state: dict) -> str:
@@ -89,21 +135,33 @@ def build_s1_system_prompt(state: dict) -> str:
     base SYSTEM_PROMPT + language convention + tenant brand append + AA-202 brand-diff block +
     forbidden words. Pure string assembly, no I/O — reused by both generate_node (sync) and the
     batch manifest builder so they never diverge.
-    """
-    brand_sp    = state.get("brand_system_prompt", "") or ""
-    language    = state.get("rewrite_language", "en-US") or "en-US"
 
-    system = SYSTEM_PROMPT
-    if language == "en-GB":
-        system += (
-            "\n\nLANGUAGE: Use British English spelling and conventions "
-            "(e.g. 'colour', 'travelling', 'organised')."
-        )
-    else:
-        system += "\n\nLANGUAGE: Use American English spelling and conventions."
+    AA-792: a T2 tenant rewrite (``state["is_tenant_rewrite"]``) gets its own prompt
+    (build_t2_system_prompt). The A1 branch below is byte-identical to before (golden test).
+    """
+    if state.get("is_tenant_rewrite"):
+        return build_t2_system_prompt(state)
+    brand_sp    = state.get("brand_system_prompt", "") or ""
+
+    system = SYSTEM_PROMPT + _language_line(state)
     if brand_sp:
         system += f"\n\nCLIENT BRAND CONTEXT (append only — do not override the base rules above):\n{brand_sp}"
     system += build_brand_diff_block(state)
+    return system + _forbidden_words_block(state)
+
+
+def _language_line(state: dict) -> str:
+    language = state.get("rewrite_language", "en-US") or "en-US"
+    if language == "en-GB":
+        return (
+            "\n\nLANGUAGE: Use British English spelling and conventions "
+            "(e.g. 'colour', 'travelling', 'organised')."
+        )
+    return "\n\nLANGUAGE: Use American English spelling and conventions."
+
+
+def _forbidden_words_block(state: dict) -> str:
+    system = ""
     # S207: the writer is told the SAME list validate_node checks (AA core + brand). It used to see
     # only the brand's words, so core words (curated, refined, tailored, deal…) were written and
     # then fired FORBIDDEN_WORD → a flag_fix repair call for something the prompt never forbade.
@@ -127,8 +185,12 @@ def build_s1_system_prompt(state: dict) -> str:
 
 def build_s1_user_prompt(state: dict) -> str:
     """The S1 writer USER prompt for attempt-1 (no retry feedback). style_guide is appended the
-    same way generate_node does (onto the user prompt, not the system prompt)."""
+    same way generate_node does (onto the user prompt, not the system prompt).
+
+    AA-792: a T2 tenant rewrite gets the tenant-voice variant (voice="tenant") and no appended
+    style guide — it is already in the system prompt's CLIENT BRAND block."""
     from .prompts import s1_per_day_targets_enabled
+    is_t2 = bool(state.get("is_tenant_rewrite"))
     prompt = build_rewrite_prompt(
         state["tour"],
         state.get("seo", {}),
@@ -139,9 +201,10 @@ def build_s1_user_prompt(state: dict) -> str:
         # AA-748: per-day source facts, threaded in behind S1_STRUCTURED_FACTS by generate_node.
         # None on the Bedrock Batch path (no live extraction) -> prompt as today, byte-identical.
         structured_facts=state.get("structured_facts"),
+        voice="tenant" if is_t2 else "neutral",
     )
     style_guide = state.get("brand_style_guide", "") or ""
-    if style_guide:
+    if style_guide and not is_t2:
         prompt += f"\n\nSTYLE GUIDE FOR THIS CLIENT:\n{style_guide}"
     return prompt
 

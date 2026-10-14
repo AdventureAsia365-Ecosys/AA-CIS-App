@@ -42,12 +42,7 @@ def clamp_distance(ratio: float) -> float:
         return ratio - ITINERARY_CLAMP_MAX
     return 0.0
 
-_ITINERARY_NUDGE_SYSTEM_PROMPT = """You are a travel content editor for Adventure Asia, fixing the
-LENGTH of ONE day of a tour itinerary that was written too short or too long relative to its
-source detail. Rewrite ONLY this one day, in the same brand voice (calm, factual, editorial — not
-salesy, not generic).
-
-Rules that still apply:
+_NUDGE_RULES = """Rules that still apply:
 - The day title MUST name the place and/or the primary activity — never generic
   ("Free Day", "Arrival Day", "Departure", "Transfer", "Exploration").
 - Preserve all factual details (named places, activities) from the source day below.
@@ -57,18 +52,48 @@ Rules that still apply:
 
 Return JSON ONLY, no markdown, no preamble: {"title": "...", "body": "..."}"""
 
+_ITINERARY_NUDGE_SYSTEM_PROMPT = """You are a travel content editor for Adventure Asia, fixing the
+LENGTH of ONE day of a tour itinerary that was written too short or too long relative to its
+source detail. Rewrite ONLY this one day, in the same brand voice (calm, factual, editorial — not
+salesy, not generic).
+
+""" + _NUDGE_RULES
+
+# AA-792: the T2 (tenant rewrite) nudge. The A1 prompt above re-voiced every nudged day into
+# Adventure Asia's calm editorial register — S234: 130 nudges over the 14 T2 jobs re-neutralised
+# days the tenant-voice writer had just written. The T2 nudge keeps the draft's own brand voice.
+_T2_ITINERARY_NUDGE_SYSTEM_PROMPT = """You are a travel content editor fixing the LENGTH of ONE day of
+a tour itinerary that was written too short or too long relative to its source detail. Rewrite ONLY
+this one day, keeping the CURRENT DRAFT's brand voice ({voice_hint}) — same tone, same register,
+same point of view. Change the length, not the voice.
+
+""" + _NUDGE_RULES
+
+
+def nudge_voice_hint(state: dict) -> str | None:
+    """AA-792: the voice hint for a T2 nudge — the tenant's voice words, or a generic "this
+    brand's voice" when none are set. None for A1 (the A1 nudge prompt is unchanged)."""
+    if not (state or {}).get("is_tenant_rewrite"):
+        return None
+    words = [str(v).strip() for v in (state.get("brand_voice_examples") or []) if str(v).strip()]
+    return ", ".join(words) if words else "this brand's voice"
+
 
 def in_clamp(ratio: float) -> bool:
     return ITINERARY_CLAMP_MIN <= ratio <= ITINERARY_CLAMP_MAX
 
 
 def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: str,
-                         current_body: str, target_word_count: int, *, stage: str = "s1_itinerary_nudge"):
+                         current_body: str, target_word_count: int, *, stage: str = "s1_itinerary_nudge",
+                         voice_hint: str | None = None):
     """AA-353: single targeted rewrite of one day that clamped outside [ITINERARY_CLAMP_MIN,
     ITINERARY_CLAMP_MAX] of its source word count. One attempt — callers do not loop this
     themselves (graph.py's generate_node never retries it; flag_fix_node.py's AA-329c repair
     calls it at most once per still-violating day and keeps the pre-fix day if the result is
     still out of clamp — see its own deterministic guard).
+
+    AA-792: ``voice_hint`` (T2 only, from nudge_voice_hint) keeps the draft's tenant brand voice
+    instead of the A1 calm/editorial register. None → the A1 prompt, byte-identical.
     """
     # AA-608: strip routine meal-logistics codes from the source day too, so a length nudge
     # cannot reintroduce a B/L/D token the main writer strip already removed.
@@ -86,7 +111,9 @@ TARGET LENGTH: approximately {target_word_count} words for the body.
 Rewrite this one day's title and body to hit the target length while staying factual and
 on-brand."""
     request = LLMRequest(
-        system_prompt=_ITINERARY_NUDGE_SYSTEM_PROMPT,
+        # str.replace, not .format(): the shared rules end with a literal JSON {"title": …} example.
+        system_prompt=(_T2_ITINERARY_NUDGE_SYSTEM_PROMPT.replace("{voice_hint}", voice_hint) if voice_hint
+                       else _ITINERARY_NUDGE_SYSTEM_PROMPT),
         user_prompt=user_prompt,
         # AA-518: was a hardcoded "haiku" literal — now admin-configurable via the
         # "s1_itinerary_nudge" stage (seeded to haiku, matching this exact prior value).

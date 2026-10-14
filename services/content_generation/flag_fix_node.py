@@ -21,7 +21,7 @@ from .forbidden_words import all_forbidden, forbidden_in
 from .prompts import parse_source_day_word_counts
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
-    clamp_distance, nudge_itinerary_day,
+    clamp_distance, nudge_itinerary_day, nudge_voice_hint,
     parse_canonical_itinerary_days, serialize_itinerary_days,
 )
 
@@ -359,6 +359,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
         new_title, new_body, resp = nudge_itinerary_day(
             client, source_text, days[day_num]["title"], days[day_num]["body"], target_words,
             stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
+            voice_hint=nudge_voice_hint(state),  # AA-792: T2 keeps the tenant voice; None for A1
         )
         extra_cost += resp.cost_usd
         nudges_used += 1

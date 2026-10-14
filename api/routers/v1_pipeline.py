@@ -134,6 +134,10 @@ async def _rewrite_tour(
             "brand_customer_mindset": _br.get("customer_mindset", ""),
             "brand_voice_examples":   _br.get("voice_examples", []),
             "brand_good_examples":    _br.get("good_examples", ""),
+            # AA-792: brand pack identity for the T2 CLIENT BRAND block (empty for A1).
+            "brand_name":             _br.get("brand_name", ""),
+            "brand_type":             _br.get("brand_type", ""),
+            "brand_default_cta":      _br.get("default_cta", ""),
             "subtitle_focus":       subtitle_focus,
             "seo_mode":             seo_mode,
             # brand audit defaults

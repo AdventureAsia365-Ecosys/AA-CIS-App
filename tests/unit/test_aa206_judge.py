@@ -8,6 +8,8 @@ failure; (3) graph wiring (llm_judge node + validate→llm_judge edge).
 import json
 from unittest.mock import patch
 
+import pytest
+
 from services.content_generation.graph import _build_brand_diff_block, build_graph
 from services.content_generation.judge_node import judge_node
 from shared.llm_client.models import LLMResponse
@@ -110,7 +112,7 @@ def test_judge_node_pass_keeps_high_score():
         MockClient.return_value.generate.return_value = _resp(judge_json)
         result = judge_node(state)
 
-    assert result["quality_score"] == 8.0  # min(9, min(9,8))
+    assert result["quality_score"] == 9.0  # AA-792: T2 gates on brand_fit → min(validate 9, brand_fit 9)
     assert result["feedback"] == ""
 
 
@@ -164,10 +166,41 @@ def test_a1_judge_gates_on_brand_fit_not_distinct():
     assert result["judge_cross_brand_distinct"] == 3.0          # still logged
 
 
-def test_a1_judge_ignores_mission_and_t2_keeps_both_gates():
+def test_a1_and_t2_gate_on_brand_fit_only(monkeypatch):
+    # AA-792: T2 joins the AA-698 A1 rule — distinct 3 and mission absent are logged, not gated.
+    monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
     judge_json = json.dumps({"brand_fit_score": 8, "cross_brand_distinct": 3, "mission_present": False, "feedback": "x"})
-    for tenant, expected in ((False, 8.0), (True, 3.0)):
+    for tenant in (False, True):
         state = _branded_state(quality_score=9.75, feedback="", is_tenant_rewrite=tenant)
-        with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
+        with patch("services.content_generation.brand_fit.LLMClient") as MockClient, \
+                patch("services.content_generation.judge_node.record_call_sync") as rec:
             MockClient.return_value.generate.return_value = _resp(judge_json)
-            assert judge_node(state)["quality_score"] == expected
+            out = judge_node(state)
+        assert out["quality_score"] == 8.0 and out["judge_score"] == 8.0
+        assert out["judge_cross_brand_distinct"] == 3.0 and out["judge_mission_present"] is False
+        signal = rec.call_args.kwargs["quality_signal"]
+        assert signal["cross_brand_distinct"] == 3.0 and signal["mission_present"] is False
+        assert signal["gate"] == "brand_fit"
+
+
+@pytest.mark.parametrize("gate,expected", [("combined", 3.0), ("brand_fit_mission", 6.0), ("brand_fit", 8.0)])
+def test_t2_gate_is_switchable(monkeypatch, gate, expected):
+    # AA-792 Gate-1 default is brand_fit; the S234 rule (combined) and a mission cap stay one env var away.
+    monkeypatch.setenv("T2_JUDGE_GATE", gate)
+    judge_json = json.dumps({"brand_fit_score": 8, "cross_brand_distinct": 3, "mission_present": False, "feedback": "x"})
+    state = _branded_state(quality_score=9.75, feedback="", is_tenant_rewrite=True)
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = _resp(judge_json)
+        assert judge_node(state)["judge_score"] == expected
+
+
+def test_t2_low_brand_fit_retries_with_judge_feedback(monkeypatch):
+    monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    judge_json = json.dumps({"brand_fit_score": 6, "cross_brand_distinct": 9, "mission_present": True,
+                             "feedback": "Use the brand's active verbs in every day."})
+    state = _branded_state(quality_score=9.75, feedback="META_TOO_SHORT", is_tenant_rewrite=True)
+    with patch("services.content_generation.brand_fit.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = _resp(judge_json)
+        out = judge_node(state)
+    assert out["quality_score"] == 6.0
+    assert out["feedback"] == "META_TOO_SHORT; Use the brand's active verbs in every day."

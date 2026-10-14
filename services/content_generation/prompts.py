@@ -109,7 +109,10 @@ def parse_source_day_word_counts(itineraries_raw: str, duration_hint: str = "") 
     return {"day_word_counts": day_word_counts, "day_text": day_text, "used_fallback": False}
 
 
-SYSTEM_PROMPT = """You are a professional travel content editor preparing tour content for a
+# AA-792: the writer rules shared by the A1 (SYSTEM_PROMPT) and the T2 tenant (T2_SYSTEM_PROMPT)
+# system prompts, as pieces so the two can never drift on the rules both must follow. SYSTEM_PROMPT is
+# assembled from them byte-for-byte as before (tests/unit/test_aa792_a1_prompt_golden.py pins it).
+_A1_HEAD = """You are a professional travel content editor preparing tour content for a
 master content catalog used by many different travel brands and audiences — family, adventure,
 luxury, and budget alike, not one specific brand or demographic.
 
@@ -132,15 +135,18 @@ neutral, third-person editorial catalogue prose. Specifically, strip and rephras
 - Hype intensifiers and sales mood generally.
 Keep every factual detail (places, distances, activities, days); change only the register.
 A promotional source is not a licence to write promotional output.
-
-STRICT RULES:
-1. NEVER use these words: curated, pristine, refined, tailored, bespoke,
+"""
+_RULE_1_CORE_FORBIDDEN = """1. NEVER use these words: curated, pristine, refined, tailored, bespoke,
    stunning, breathtaking, magical, paradise, luxury, cheap, deal, discount, book now
-2. Tour name (aa_name): Rewrite in a clear, specific editorial voice — evocative but specific.
-   Good: "South Korea: Temple, Trail & Peninsula — 12 Days"
+"""
+_A1_RULE_2_HEAD = """2. Tour name (aa_name): Rewrite in a clear, specific editorial voice — evocative but specific.
+"""
+_RULE_2_BODY = """   Good: "South Korea: Temple, Trail & Peninsula — 12 Days"
    Good: "Sri Lanka by Rail and Rickshaw — 10 Days"
    Forbidden in name: "Exploring", "Discover", "Amazing", "Epic", generic verbs.
    The rewritten name must still clearly identify the destination and format.
+"""
+_RULES_3_TO_6 = """\
 3. Subtitle: must include concrete specifics (route, duration, or defining characteristic) — NOT vague descriptors
 4. Highlights: each must name a specific place, altitude, or activity — never generic ("see beautiful views")
 5. Itineraries: rewrite each day in the client's brand voice using the style guide, as the
@@ -170,15 +176,53 @@ STRICT RULES:
    (guides, orientation, support team, upgrades), transport mode or travel time, clock-times,
    views or wildlife sightings, accommodation features, inclusions. If the source does not say it
    happens on this tour, do not say it does.
-7. seo_meta must NOT contain budget travel language: "hostel", "budget", "public transport",
+"""
+_A1_RULE_7 = """7. seo_meta must NOT contain budget travel language: "hostel", "budget", "public transport",
    "cheap", "backpacker", "dorm" — this base catalog reads as premium editorial regardless of
    price point; a specific tenant brand's own forbidden-word list (if any) applies on top.
-8. SEO META LENGTH: seo_meta MUST be 140–155 characters — count carefully, NEVER under 140.
+"""
+_RULE_8_AND_OUTPUT = """8. SEO META LENGTH: seo_meta MUST be 140–155 characters — count carefully, NEVER under 140.
    It must be one complete sentence ending in a period. If a draft is under 140, expand it
    with concrete, relevant detail (place, activity, audience) — do NOT pad with filler words.
 
 Output ONLY valid JSON. No preamble, no markdown, no explanation.
 """
+
+SYSTEM_PROMPT = (_A1_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _A1_RULE_2_HEAD + _RULE_2_BODY
+                 + _RULES_3_TO_6 + _A1_RULE_7 + _RULE_8_AND_OUTPUT)
+
+# AA-792: the T2 (tenant rewrite) writer. T2 is the tenant's own product, but it used to reuse the
+# A1 master prompt above ("master content catalog", "never adopt a persona", neutral register, and
+# the tenant brand only as an "append only" afterthought) — S234: mean brand_fit 4.0-7.0 per tenant
+# vs A1 8.0 on the same tours. This base keeps every rule that protects product truth or that
+# validate enforces (rule 1 core forbidden words, rules 2-6 structure + SOURCE FIDELITY, rule 7
+# budget words, rule 8 meta band) and replaces the neutral-voice blocks with "write as this brand".
+# The brand itself (voice, audience, style guide, examples, forbidden words) follows in the CLIENT
+# BRAND block built by batch_prompt.build_s1_system_prompt from the AA-771 brand pack.
+_T2_HEAD = """You are a travel content writer for ONE client travel brand, described under CLIENT BRAND
+below. You rewrite a tour from the source catalogue as THIS brand's own tour page: every field —
+name, subtitle, summary, highlights, every itinerary day, seo_title and seo_meta — is written in
+this brand's voice, for this brand's audience, following its style guide.
+
+BRAND VOICE:
+- Write as this brand: its voice words, its style guide (including every "do not"), its audience
+  and what that audience wants. Not a neutral catalogue register, and not generic travel copy that
+  would fit any brand.
+- The source is another brand's text (a neutral catalogue record or an operator's own sales copy).
+  Do not carry its voice across — re-voice it for THIS brand. Keep every fact (places, distances,
+  activities, days); change the voice, emphasis and framing.
+- The voice shapes HOW a fact is told, never WHAT the facts are: the rules below (forbidden words,
+  structure, source fidelity, meta length) apply to every brand and win over the style guide.
+"""
+_T2_RULE_2_HEAD = """2. Tour name (aa_name): Rewrite in this brand's voice — evocative but specific.
+"""
+_T2_RULE_7 = """7. seo_meta must NOT contain budget travel language: "hostel", "budget", "public transport",
+   "cheap", "backpacker", "dorm" — the platform rejects these for every brand; the brand's own
+   forbidden-word list applies on top.
+"""
+
+T2_SYSTEM_PROMPT = (_T2_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _T2_RULE_2_HEAD + _RULE_2_BODY
+                    + _RULES_3_TO_6 + _T2_RULE_7 + _RULE_8_AND_OUTPUT)
 
 
 _SUBTITLE_INSTRUCTIONS = {
@@ -279,9 +323,54 @@ def _render_source_facts_block(structured_facts: dict | None) -> str:
     )
 
 
+# AA-792: the places the user prompt sets the voice. "neutral" = A1 master catalogue (text
+# byte-identical to before AA-792); "tenant" = T2, written in the client brand's voice (the brand
+# block itself is in the T2 system prompt, so nothing here repeats the style guide).
+_USER_VOICE = {
+    "neutral": {
+        "opening": "Rewrite the following tour content for a master content catalog.",
+        "name": "Rewrite in a clear, specific editorial voice — evocative but specific. See STRICT RULES 2.",
+        "summary": "Factual editorial prose, specific to this tour. No generic openers. No sentence limit.",
+        "day_body": """This day's prose, length per PER-DAY SOURCE LENGTH above (rule 5). NEUTRAL
+        third-person editorial voice — the SAME register as the summary. Every day must read as a
+        factual catalogue record: route type, distance, terrain, transfers, key stops, included
+        activities, accommodation context. The source day may be promotional (second person,
+        mood/persona/hype) — do NOT echo it. Strip phrases like 'playlist-worthy', 'adventure
+        family', 'coastal magic', 'pure bliss', 'genuine immersion', 'the senses take over', or any
+        first-person ('our launchpad', 'fellow adventurers'). State what happens, where, and for how
+        long — not how it feels. See NEUTRALIZE PROMOTIONAL SOURCE COPY in the system prompt.""",
+        "day_rest": "do not add, merge, or drop days. The neutral register applies to EVERY day, not just the first.",
+        "seo_meta": """SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
+    sentence ending in a period, opening with a concrete editorial clause. GOOD example (145 chars):
+    'This Sri Lanka journey covers Sigiriya, Kandy and Yala with unhurried pacing, expert local
+    guides and comfortable transfers throughout the route.'""",
+    },
+    "tenant": {
+        "opening": ("Rewrite the following tour content as this client brand's own tour page, in its brand"
+                    " voice (CLIENT BRAND in the system prompt)."),
+        "name": "Rewrite in this brand's voice — evocative but specific. See STRICT RULES 2.",
+        "summary": ("In this brand's voice, for its audience, specific to this tour and its facts. No generic"
+                    " openers. No sentence limit."),
+        "day_body": """This day's prose, length per PER-DAY SOURCE LENGTH above (rule 5). In THIS
+        brand's voice — the SAME voice as the summary: its voice words, its style-guide rules, its
+        audience's angle. Same facts as the source day (route, distance, terrain, transfers, key
+        stops, included activities, accommodation context), told the way this brand tells them. Do
+        not fall back to a neutral catalogue register, and do not echo the source's own voice.""",
+        "day_rest": """do not add, merge, or drop days. The brand voice applies to EVERY day, not just the first —
+    same facts, no neutral register.""",
+        "seo_meta": """SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
+    sentence ending in a period, in this brand's voice and naming the tour's concrete places or
+    activities.""",
+    },
+}
+
+
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
                          subtitle_focus: str = "standard", per_day_targets: bool = False,
-                         structured_facts: dict = None) -> str:
+                         structured_facts: dict = None, voice: str = "neutral") -> str:
+    """The S1/T2 writer USER prompt. ``voice`` (AA-792): "neutral" for the A1 master catalogue
+    (byte-identical to before), "tenant" for a T2 tenant rewrite in the client brand's voice."""
+    v = _USER_VOICE["tenant" if voice == "tenant" else "neutral"]
     few_shot_text = ""
     if few_shots:
         examples = "\n\n".join([
@@ -334,7 +423,7 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     # facts only constrain, they do not replace it).
     _source_facts_block = _render_source_facts_block(structured_facts)
 
-    return f"""Rewrite the following tour content for a master content catalog.
+    return f"""{v["opening"]}
 {few_shot_text}
 TOUR DATA:
 - Name: {tour.get('name')}
@@ -361,9 +450,9 @@ sentence ending with a period. Under 140 is rejected. Count characters before fi
 
 OUTPUT JSON FORMAT:
 {{
-  "name": "Rewrite in a clear, specific editorial voice — evocative but specific. See STRICT RULES 2.",
+  "name": "{v["name"]}",
   "subtitle": "{_SUBTITLE_INSTRUCTIONS.get(subtitle_focus, _SUBTITLE_INSTRUCTIONS['standard'])}",
-  "summary": "Factual editorial prose, specific to this tour. No generic openers. No sentence limit.",
+  "summary": "{v["summary"]}",
   "highlights": [
     "Specific activity at Named Location (include altitude if trekking)",
     "Specific activity at Named Location",
@@ -371,21 +460,11 @@ OUTPUT JSON FORMAT:
   ],
   "itineraries": [
     {{"day": 1, "title": "Names the place/activity, never generic (see rule 5)",
-      "body": "This day's prose, length per PER-DAY SOURCE LENGTH above (rule 5). NEUTRAL
-        third-person editorial voice — the SAME register as the summary. Every day must read as a
-        factual catalogue record: route type, distance, terrain, transfers, key stops, included
-        activities, accommodation context. The source day may be promotional (second person,
-        mood/persona/hype) — do NOT echo it. Strip phrases like 'playlist-worthy', 'adventure
-        family', 'coastal magic', 'pure bliss', 'genuine immersion', 'the senses take over', or any
-        first-person ('our launchpad', 'fellow adventurers'). State what happens, where, and for how
-        long — not how it feels. See NEUTRALIZE PROMOTIONAL SOURCE COPY in the system prompt."}},
+      "body": "{v["day_body"]}"}},
     "... one object per source day, in day order, matching PER-DAY SOURCE LENGTH above exactly —
-    do not add, merge, or drop days. The neutral register applies to EVERY day, not just the first."
+    {v["day_rest"]}"
   ],
   "seo_title": "SEO title — MUST be under 60 chars",
-  "seo_meta": "SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
-    sentence ending in a period, opening with a concrete editorial clause. GOOD example (145 chars):
-    'This Sri Lanka journey covers Sigiriya, Kandy and Yala with unhurried pacing, expert local
-    guides and comfortable transfers throughout the route.'",
+  "seo_meta": "{v["seo_meta"]}",
   "trip_type": "cultural|adventure|wellness|culinary|wildlife|trekking|festival|river_journey"
 }}"""
