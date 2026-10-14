@@ -178,7 +178,12 @@ _JUDGE_SYSTEM_PROMPT = (
 _BRAND_VOICE_FIELDS = ["brand_fit", "cta_clear", "human_read"]
 _BRAND_VOICE_FAILURE_CODES = [
     "SUMMARY_OFF_BRAND", "CTA_NOT_REFLECTED", "GENERIC_AI_WORDING", "FACT_CHECK_MANUAL_CHECK",
+    # AA-786 (F9 v1.1) — product truth about the text itself: a garbled or broken sentence, a doubled
+    # CTA, visible markup, a sentence cut mid-thought. Always quoted (broken_sentences), so the
+    # sentence repair can fix or cut it instead of a full rewrite.
+    "TEXT_INTEGRITY",
 ]
+F9_PROMPT_VERSION = "f9_v1.1"
 
 # Same concrete good/bad calibration anchor as gates.py::GENERIC_AI_WORDING_ANCHOR (referenced,
 # not imported — this module has no dependency on services.acp_produce) — the mechanism (a
@@ -735,9 +740,47 @@ def _voice_block(voice: Optional[list[str]]) -> str:
             "opposite of them (e.g. calm and essayistic for an energetic, playful brand).\n")
 
 
+# AA-786 — a quoted string of at least 12 characters inside the judge's free-text notes.
+_NOTE_QUOTE_RE = re.compile(r"'([^']{12,})'|\"([^\"]{12,})\"|“([^”]{12,})”")
+_SEO_LABEL_RE = re.compile(r"^\s*(?:search\s+)?(?:seo\s+)?(?:title|meta(?:\s+description)?)\s*:\s*", re.IGNORECASE)
+F9_NO_REASON = "judge gave no checkable reason"
+
+
+def _locate_in(text: str, quote: Optional[str]) -> Optional[str]:
+    """AA-786 — the whole sentence of `text` the judge's quote points at (tag-stripped), or None when
+    the quote matches no sentence (or is under 4 words). Same matcher the sentence repair uses, so a
+    quote accepted here is always one plan() can repair."""
+    from services.acp_content_writing.sentence_repair import locate_sentence  # circular at import time
+    if not quote or not str(quote).strip():
+        return None
+    span = locate_sentence(text, str(quote))
+    if span is None:
+        return None
+    return " ".join(strip_citation_tags(text[span[0]:span[1]]).split())
+
+
+def _cmp_fold(text: Optional[str]) -> str:
+    text = _SEO_LABEL_RE.sub("", strip_citation_tags(text or ""))
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", _fold(text)).split())
+
+
+def _seo_field_of(sentence: str, seo_title: Optional[str], meta_description: Optional[str]) -> Optional[str]:
+    """'title' / 'meta' when a claim's sentence is the search title or the meta description (or a part
+    of it); None otherwise. Only asked after the sentence was NOT found in the body."""
+    s = _cmp_fold(sentence)
+    if len(s.split()) < 4:  # the same floor as sentence_repair.locate_sentence
+        return None
+    for prefix, field in (("title", seo_title), ("meta", meta_description)):
+        f = _cmp_fold(field)
+        if f and (s == f or s in f or f in s):
+            return prefix
+    return None
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
-    voice: Optional[list[str]] = None,
+    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+    meta_description: Optional[str] = None,
 ) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
@@ -745,8 +788,8 @@ def gate_brand_voice(
     hardcoded-phrase false-positive carve-out ports as-is for this reason).
 
     AA-613 — returns a LIST of two results from ONE judge call (Nghiệp's 3-tier severity split):
-    `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK) and `F9_brand_style` (non-blocking
-    warn: off-brand voice / generic AI wording). See the split logic below.
+    `F9_cta_fact` (blocking, product-truth: CTA/FACT_CHECK/TEXT_INTEGRITY) and `F9_brand_style`
+    (non-blocking warn: off-brand voice / generic AI wording). See the split logic below.
 
     AA-768 — `source_text` (the writer's own source: seed + Facts + audience/trip lines, the same
     text gate_grounding() checks against) is shown to the judge. Before this the judge saw only
@@ -754,16 +797,32 @@ def gate_brand_voice(
     check against, every fact-bearing piece came back FACT_CHECK_MANUAL_CHECK and no rewrite
     could fix it (S231 pilot: 5/5 held). The judge must now quote the claim it flags, so the
     repair round gets a sentence to fix instead of a bare code. `None` keeps the old prompt for
-    any caller without a source."""
+    any caller without a source.
+
+    AA-786 (F9 v1.1, S234 gate evaluation):
+    - the piece is judged WITHOUT citation tags (the judge flagged "visible citation markers" the
+      tenant never sees — r1#9, r3#4);
+    - TEXT_INTEGRITY quotes each broken sentence (`broken_sentences`) → "TEXT_INTEGRITY: '<sentence>'",
+      repairable by sentence_repair.plan instead of the full rewrite that fixed F9 0/6 times;
+    - a non-pass verdict with no code: a sentence quoted in the notes that exists in the piece
+      becomes TEXT_INTEGRITY; with no locatable quote the F9 result is a NON-blocking warn
+      (F9_NO_REASON) — a verdict without a reason is not a hold (Gate-1 policy, AA-770 precedent);
+    - `seo_title` / `meta_description` (blog) are shown to the judge; an unsupported claim in them is
+      a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule)."""
+    content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
+    has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
     contract = json.dumps({
         "status": "pass|flagged|manual_check",
         **{f: "1|0" for f in _BRAND_VOICE_FIELDS},
         "failure_codes": [f"subset of {_BRAND_VOICE_FAILURE_CODES}"],
         "flagged_phrases": ["exact quoted phrase for each SUMMARY_OFF_BRAND/GENERIC_AI_WORDING/"
                              "FACT_CHECK_MANUAL_CHECK code above — [] if none is used"],
+        # AA-786 — one entry per TEXT_INTEGRITY problem.
+        "broken_sentences": [{"sentence": "exact sentence from the piece", "problem": "what is broken"}],
         "notes": "str",
         # AA-768 round 4 — only used when a SOURCE is given (see below).
-        **({"unsupported_claims": [{"sentence": "exact sentence from the piece",
+        **({"unsupported_claims": [{"sentence": "exact sentence from the piece"
+                                                + (" (or the search title / meta description)" if has_seo else ""),
                                     "claim": "the specific checkable fact it asserts",
                                     "why_not_in_source": "what the SOURCE says instead, or that it is silent"}]}
            if source_text else {}),
@@ -797,8 +856,23 @@ def gate_brand_voice(
     else:
         source_block = ""
         fact_rule = "When uncertain about a factual claim: status=manual_check + FACT_CHECK_MANUAL_CHECK."
+    seo_block = ""
+    if has_seo:
+        seo_block = (
+            "SEARCH TITLE AND META DESCRIPTION (shown in search results; check their facts like the "
+            "body, and for a claim in them quote the title or meta itself as the sentence):\n"
+            f"Title: {seo_title or ''}\nMeta description: {meta_description or ''}\n\n")
+    integrity_rule = (
+        "TEXT_INTEGRITY: use it ONLY for a sentence that is broken as text — garbled or "
+        "ungrammatical so it cannot be read as meant, the call to action written twice, visible "
+        "markup, a sentence cut off mid-thought. List each one in broken_sentences with the exact "
+        "sentence from the piece and what is broken. Never use it for style, tone or facts. "
+        "Whenever status is not pass, every reason must be one of the failure codes with its "
+        "quoted sentence or phrase — notes alone never explain a fail."
+    )
     user_prompt = (
         f"PIECE:\n{content_text}\n\n"
+        f"{seo_block}"
         f"{source_block}"
         f"REQUIRED CALL TO ACTION FOR THIS PIECE: {cta}\n\n"
         f"BRAND RUBRIC:\n{brand_rubric_text}\n"
@@ -809,7 +883,7 @@ def gate_brand_voice(
         f"failure codes: {_BRAND_VOICE_FAILURE_CODES}. If you use SUMMARY_OFF_BRAND or "
         "GENERIC_AI_WORDING, you MUST quote the exact offending phrase in flagged_phrases. The "
         "required CTA text itself is never grounds for SUMMARY_OFF_BRAND or GENERIC_AI_WORDING "
-        f"on its own — do not flag it. {fact_rule}\n\n"
+        f"on its own — do not flag it. {fact_rule}\n{integrity_rule}\n\n"
         f"Output ONLY JSON matching this contract:\n{contract}"
     )
     try:
@@ -843,16 +917,38 @@ def gate_brand_voice(
             failure_codes = [c for c in failure_codes if c != "FACT_CHECK_MANUAL_CHECK"]
             if not failure_codes and status != "pass":
                 status = "pass"  # the only reason to fail was an unjustified fact flag
+    # AA-786 — a claim whose sentence is not in the body but is the search title / meta is owned by
+    # the SEO fields: it is reported separately and never blocks on its own.
+    body_claims, field_viol = [], []
+    for c in claims:
+        sentence = str(c.get("sentence") or c["claim"])
+        # PR #709 review B1 — a claim that is in the body at all (located, or a short / paraphrased quote whose
+        # words still appear in it) stays a blocking body claim even when the title or meta repeats it.
+        in_body = bool(_locate_in(content_text, sentence)) or (
+            bool(_cmp_fold(sentence)) and _cmp_fold(sentence) in _cmp_fold(content_text))
+        field = None if in_body else _seo_field_of(sentence, seo_title, meta_description)
+        if field is None:
+            body_claims.append(c)
+        else:
+            field_viol.append(f'{field} unsupported claim: "{sentence}" (claims: {c["claim"]}; '
+                              f'source: {c["why_not_in_source"]})')
+    # AA-786 — TEXT_INTEGRITY counts only for a broken sentence the piece really contains.
+    integrity: list[str] = []
+    if "TEXT_INTEGRITY" in failure_codes:
+        for b in data.get("broken_sentences") or []:
+            quote = b.get("sentence") if isinstance(b, dict) else b if isinstance(b, str) else None
+            located = _locate_in(content_text, quote)
+            if located and located not in integrity:
+                integrity.append(located)
 
     # AA-613 — split the single F9 judge call into TWO gate results by failure class, so the
     # T10 loop can treat them differently (Nghiệp's 3-tier severity model):
-    #   - F9_cta_fact  (BLOCKING / product-truth): CTA_NOT_REFLECTED, FACT_CHECK_MANUAL_CHECK.
-    #     A missing/unclear CTA or an unverified factual claim is a contract/truth failure — it
-    #     still triggers a retry and still gates publish.
+    #   - F9_cta_fact  (BLOCKING / product-truth): CTA_NOT_REFLECTED, FACT_CHECK_MANUAL_CHECK,
+    #     TEXT_INTEGRITY (AA-786). A missing/unclear CTA, an unverified factual claim or a broken
+    #     sentence is a contract/truth failure — it still triggers a retry and still gates publish.
     #   - F9_brand_style (NON-BLOCKING / warn): SUMMARY_OFF_BRAND, GENERIC_AI_WORDING. Off-brand
     #     voice or generic AI wording is a quality note, not a reason to withhold the piece from
     #     the tenant (ships flagged, per ADR 0023 flag-not-block).
-    # A judge failure/unavailability is treated as a BLOCKING fail (fail-closed), same as before.
     # One judge call, two results — the judge already returns per-code failure_codes.
     _PRODUCT_TRUTH_CODES = {"CTA_NOT_REFLECTED", "FACT_CHECK_MANUAL_CHECK"}
     _BRAND_STYLE_CODES = {"SUMMARY_OFF_BRAND", "GENERIC_AI_WORDING"}
@@ -860,30 +956,49 @@ def gate_brand_voice(
 
     def _viol(codes: set[str]) -> list[str]:
         hit = [c for c in failure_codes if c in codes]
+        if claims and not body_claims:  # AA-786 — every justified claim is in the title / meta
+            hit = [c for c in hit if c != "FACT_CHECK_MANUAL_CHECK"]
         if not hit:
             return []
         reason = ", ".join(hit)
-        if claims and "FACT_CHECK_MANUAL_CHECK" in hit:
+        if body_claims and "FACT_CHECK_MANUAL_CHECK" in hit:
             return [f"audit {status}: {reason} — unsupported claim(s): " + "; ".join(
                 f'"{c.get("sentence") or c["claim"]}" (claims: {c["claim"]}; source: {c["why_not_in_source"]})'
-                for c in claims)]
+                for c in body_claims)]
         # AA-768 — FACT_CHECK quotes its claim too, so the rewrite knows which sentence to fix.
         if phrases and set(hit) & (_BRAND_STYLE_CODES | {"FACT_CHECK_MANUAL_CHECK"}):
             reason += " — exact flagged phrase(s): " + "; ".join(f'"{p}"' for p in phrases)
         return [f"audit {status}: {reason}"]
 
-    cta_fact_viol = _viol(_PRODUCT_TRUTH_CODES)
+    cta_fact_viol = _viol(_PRODUCT_TRUTH_CODES) + [f"TEXT_INTEGRITY: '{s}'" for s in integrity] + field_viol
     brand_style_viol = _viol(_BRAND_STYLE_CODES)
-    # A non-pass status with NO recognized code, or a bare manual_check with notes only, is
-    # ambiguous about which class it belongs to — treat it as product-truth (fail-closed on the
-    # blocking side) rather than silently downgrading it to a warn.
+    # A non-pass status whose reasons all fell away (no recognised code, an unquoted TEXT_INTEGRITY,
+    # notes only). AA-786: a sentence of the piece quoted in the notes becomes TEXT_INTEGRITY (the
+    # repair gets a sentence); without one the verdict has no checkable reason → a NON-blocking warn,
+    # never a hold (S234: 4 notes-only holds no rewrite could fix).
+    reasonless = False
     if not judge_ok and not cta_fact_viol and not brand_style_viol:
-        cta_fact_viol = [f"audit {status}: {', '.join(failure_codes) or notes or '(no reason given)'}"]
+        quoted: list[str] = []
+        for m in _NOTE_QUOTE_RE.finditer(notes):
+            located = _locate_in(content_text, next(g for g in m.groups() if g))
+            if located and located not in quoted:
+                quoted.append(located)
+        if quoted:
+            cta_fact_viol = [f"TEXT_INTEGRITY: '{s}'" for s in quoted]
+        else:
+            reasonless = True
+            cta_fact_viol = [f"{F9_NO_REASON} (audit {status}: "
+                             f"{', '.join(failure_codes) or notes or '(no reason given)'}) — not held"]
+    cta_fact_blocking = not reasonless and (
+        not cta_fact_viol or any(not v.startswith(("title ", "meta ")) for v in cta_fact_viol))
 
     _log_t10_judge_call(raw, gate="F9_brand_voice", passed=judge_ok,
-                         extra={"status": status, "failure_codes": failure_codes})
+                         extra={"status": status, "failure_codes": failure_codes,
+                                "prompt_version": F9_PROMPT_VERSION,
+                                "piece_tag_free": not TAG_RE.search(content_text),
+                                "reasonless": reasonless})
     return [
-        _result("F9_cta_fact", cta_fact_viol, blocking=True),
+        _result("F9_cta_fact", cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless),
         _result("F9_brand_style", brand_style_viol, repairable=False, blocking=False),
     ]
 
@@ -1653,6 +1768,7 @@ def run_quality_gates(
     `_length_bounds_for_channel()`); every other gate below still sees the
     tagged text, since F1/F5/F3/F7 all need it (F1/F5 read the tags directly; F3/F7 just don't
     need it stripped, see their own docstrings).
+    AA-786: the F9 judge also gets the tag-stripped text (it flagged the tags as "citation markers").
 
     AA-514: `gate_promises_an_option()` runs for EVERY channel (origin's own `channels=None`,
     right after F2 — deliberately unaffected by the blog-only branch below) — `route_segments`
@@ -1719,8 +1835,11 @@ def run_quality_gates(
     # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
     # returns TWO results (blocking F9_cta_fact + non-blocking F9_brand_style), spread in here.
     gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
-    gate_ledger += gate_brand_voice(content_text, cta or "", brand_rubric_text, source_text=atom_text,
-                                    voice=(brand_pack or {}).get("voice"))
+    # AA-786 — F9 judges what the tenant reads: no citation tags (S234: "visible citation markers"
+    # notes on r1#9 / r3#4), plus the blog's search title and meta.
+    seo_kw = {"seo_title": seo_title, "meta_description": meta_description} if channel == "blog" else {}
+    gate_ledger += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
+                                    voice=(brand_pack or {}).get("voice"), **seo_kw)
     # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
     # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
     # failure left the piece is held at once; when another gate fails first, that gate's repair
@@ -1759,5 +1878,5 @@ __all__ = [
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
     "F13_REPEAT_GATE", "gate_repeat", "title_key", "title_taken",
-    "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES",
+    "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES", "F9_NO_REASON", "F9_PROMPT_VERSION",
 ]

@@ -50,6 +50,11 @@ OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
 _SEO_FIELD_PREFIXES = ("title ", "meta ")
 _SLUG_PREFIXES = ("no slug", "slug ")
 NEIGHBOUR_WINDOW = 4
+# AA-786 — F9 v1.1 broken-sentence violations: "TEXT_INTEGRITY: '<sentence>'".
+TEXT_INTEGRITY_PREFIX = "TEXT_INTEGRITY: "
+_INTEGRITY_PROBLEM = ("is broken or garbled as text (bad grammar, a doubled call to action, visible markup or a "
+                      "thought cut off) — rewrite it as one clean sentence with the same facts, "
+                      "or return \"\" to cut it")
 
 
 def _clean_quote(q: str) -> str:
@@ -103,7 +108,61 @@ def _seo_fields_only(g: dict) -> bool:
     if g["gate"] == "F4_seo_surface" or g["gate"] in OWNED_ELSEWHERE:
         return True
     vs = g.get("violations") or []
-    return g["gate"] in _QUOTED_GATES and bool(vs) and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
+    # AA-786 — an F9 unsupported claim in the title / meta is SEO-owned the same way.
+    return (g["gate"] in _QUOTED_GATES or g["gate"] == "F9_cta_fact") and bool(vs) \
+        and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
+
+
+def _f9_items(v: str, *, allow_cta: bool = False) -> Optional[list[tuple[str, str, str]]]:
+    """The (quote, problem, gate) items of one F9_cta_fact violation; [] for a title/meta one (the
+    SEO fields own it), None when the violation needs the full rewrite (a CTA failure, a fact flag
+    with no named claim). `allow_cta`: parse the claims of a combined CTA + claim violation anyway
+    (the LinkedIn cut, which never rewrites the CTA)."""
+    if v.startswith(_SEO_FIELD_PREFIXES):
+        return []
+    if v.startswith(TEXT_INTEGRITY_PREFIX):
+        m = _BRAND_QUOTE_RE.search(v)
+        return [(m.group(2), _INTEGRITY_PROBLEM, "F9_cta_fact")] if m else None
+    if ("CTA_NOT_REFLECTED" in v and not allow_cta) or "unsupported claim(s)" not in v:
+        return None
+    claims = _F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1])
+    if not claims:
+        return None
+    return [(s, f"claims {c.strip()} — {why.strip()}", "F9_cta_fact") for s, c, why in claims]
+
+
+def f9_truth_only(g: dict) -> bool:
+    """AA-786 — a failed F9_cta_fact whose every violation is product truth about the text (an
+    unsupported claim, TEXT_INTEGRITY, a title/meta claim) and none is a missing CTA."""
+    vs = g.get("violations") or []
+    return (g["gate"] == "F9_cta_fact" and not g["passed"] and bool(vs)
+            and not any("CTA_NOT_REFLECTED" in v for v in vs))
+
+
+def truth_quotes(g: dict) -> list[tuple[str, str]]:
+    """AA-786 — every (quote, problem) of one F9_cta_fact entry that is product truth about the body:
+    unsupported claims and TEXT_INTEGRITY sentences — never the CTA, the title or the meta."""
+    out: list[tuple[str, str]] = []
+    for v in g.get("violations") or []:
+        out += [(quote, problem) for quote, problem, _ in _f9_items(v, allow_cta=True) or []]
+    return out
+
+
+def truth_items(content_text: str, g: dict) -> tuple[list[dict], list[str]]:
+    """AA-786 — (items, unlocated): the located sentences of truth_quotes(g) in plan()'s item shape —
+    what the LinkedIn repair-not-hold cuts — and the quotes that match no sentence of the text."""
+    out: list[dict] = []
+    unlocated: list[str] = []
+    for quote, problem in truth_quotes(g):
+        span = locate_sentence(content_text, quote)
+        if span is None:
+            unlocated.append(_clean_quote(quote))
+            continue
+        if any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
+            continue
+        sentence = " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
+        out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem})
+    return out, unlocated
 
 
 def _slug_violation(g: dict) -> bool:
@@ -149,12 +208,12 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
                 nums = v.split(" not present", 1)[0].replace("sentence states", "").strip()
                 items.append((m.group(1), f"states {nums}, which the source does not contain", g["gate"]))
             else:
-                if "CTA_NOT_REFLECTED" in v or "unsupported claim(s)" not in v:
+                # AA-786 — F9: unsupported claims and (v1.1) TEXT_INTEGRITY sentences; a title/meta
+                # claim is skipped (SEO-owned); a CTA failure still takes the full rewrite.
+                f9 = _f9_items(v)
+                if f9 is None:
                     return None
-                claims = _F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1])
-                if not claims:
-                    return None
-                items += [(s, f"claims {c.strip()} — {why.strip()}", g["gate"]) for s, c, why in claims]
+                items += f9
     out: list[dict] = []
     for quote, problem, gate in items:
         span = locate_sentence(content_text, quote)

@@ -192,13 +192,15 @@ class TestGateBrandVoice:
         assert by_gate["F9_cta_fact"]["passed"] is False
         assert by_gate["F9_brand_style"]["passed"] is True
 
-    def test_non_pass_with_no_recognized_code_fails_closed_blocking(self):
+    def test_non_pass_with_no_recognized_code_is_a_warn(self):
+        """AA-786 (Gate-1 policy) — a verdict with no checkable reason is flagged, never held."""
         data = {"status": "manual_check", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                  "failure_codes": [], "flagged_phrases": [], "notes": "unsure about something"}
         with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
             results = qg.gate_brand_voice("piece", "Book now", "brand rubric text")
         by_gate = self._by_gate(results)
-        assert by_gate["F9_cta_fact"]["passed"] is False  # fail-closed on the blocking side
+        assert by_gate["F9_cta_fact"]["passed"] is False
+        assert by_gate["F9_cta_fact"]["blocking"] is False
 
     def test_judge_unavailable_fails_closed_blocking(self):
         with patch.object(qg, "invoke_judge", side_effect=RuntimeError("judge down")):
