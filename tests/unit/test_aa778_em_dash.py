@@ -264,6 +264,23 @@ def test_testimonial_attribution_dash_is_kept_for_f19():
         assert EM not in cut and "Sarah" not in cut and "Tom B." not in cut
 
 
+def test_f2_em_dash_guard_leaves_the_testimonial_dash_to_f19():
+    # S238 review: F2 also failing on the kept attribution dash held the piece on a stale F2 entry after
+    # _enforce_authenticity cut the testimonial (before AA-778 the same piece shipped 'approved')
+    text = ("Lake Khövsgöl is quiet in June.\n\n"
+            f"\"Quiet, green and endless, a place to slow down.\" {EM} Sarah, UK")
+    fixed = h.fix_dashes(text, None)[0]
+    f2 = qg.gate_banned_patterns(fixed, SEED)
+    f19 = qg.gate_authenticity(fixed)
+    assert f2["passed"], f2["violations"]
+    assert not f19["passed"]
+    # F19 alone decides the testimonial (on main, sentence_repair.plan() returns None for a quoted
+    # attribution line too, so _enforce_authenticity cuts it after the loop); F2 must not add a second,
+    # stale blocking entry that would keep the piece held after that cut
+    # an em-dash the writer adds anywhere else is still caught
+    assert not qg.gate_banned_patterns(f"The lake is quiet {EM} almost silent.", SEED)["passed"]
+
+
 PUNAKHA_SEED = """Punakha Dzong — visit courtyards and assembly hall
 Location: Punakha Dzong, Punakha, Punakha District, Bhutan
 Place background (checked facts about the place itself — you may use these):

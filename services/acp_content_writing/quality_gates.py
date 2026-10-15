@@ -288,10 +288,17 @@ def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
     own gate_banned_patterns() applies, adapted to T9's single-atom shape."""
     violations: list[str] = []
     atom_lower = (atom_text or "").lower()
+    # AA-778 — the dash of a testimonial attribution ('"…" <em-dash> Sarah, UK') is kept by fix_dashes on
+    # purpose so F19 can flag and cut the invented review; F2 must not also hold it, or the piece loses
+    # the F19 sentence repair and stays held on a stale F2 entry after the cut.
+    f19_spans = authenticity.attribution_spans(content_text or "")
     for pattern in _BANNED_PATTERNS_COMPILED:
         for m in pattern.finditer(content_text or ""):
             phrase = m.group(0).lower()
             if phrase in atom_lower:
+                continue
+            if pattern.pattern == EM_DASH_PATTERN and any(s <= m.start() < e or s < m.end() <= e
+                                                          for s, e in f19_spans):
                 continue
             if pattern.pattern == EM_DASH_PATTERN:  # AA-778 — readable, with its sentence, not the regex
                 violations.append(f"uses an em-dash ('{m.group(0)}'); use a comma, a colon or a full stop: "
