@@ -7,12 +7,15 @@ the case can feed the Terms (AA-820) and a talk with the business owner. F19's C
 ## Decisions
 - **One rule.** `authenticity.cta_review_claims(cta)` reuses F19's `_TESTIMONIAL` and `_SCORES`
   patterns (with the trek-grade guard) and adds a short CTA-only list: plural `reviews`,
-  `reviewed/reviewer(s)`, `rating(s)`, `rated`, `5-star / five stars` (not followed by hotel, resort,
-  lodge, luxury, stay...), `what our guests say/think`, `loved/recommended/praised/trusted by ...
-  travellers`. Overlapping hits collapse to the widest phrase. Only the testimonial family is used:
+  `reviewer(s)`, `reviewed by <guests/travellers>`, `rating(s)` (not in a trek-grade sentence),
+  `rated` only as a claim (`rated us/excellent/#1/by`, `guests rated`; not "Rated trips for
+  families" or "rated PG"), `NN% of our guests recommend`, `5-star / five stars` (not followed by
+  hotel, resort, lodge, luxury, stay...), `what our guests say/think`, `loved/recommended/praised/
+  trusted by ... travellers`, and TripAdvisor's `Travellers' Choice`. Overlapping hits collapse to the widest phrase. Only the testimonial family is used:
   first-person and independence claims were not part of the request.
 - **Live check uses the backend rule.** `POST /v1/content-writing/cta-check` (tenant JWT, no DB, no
-  notification) is called by the portal 450 ms after typing stops. This keeps a single source of
+  notification) is called by the portal 450 ms after typing stops, through react-query
+  (`useQuery` keyed on the text, 10 min `staleTime`, no retry), per the kit rule. This keeps a single source of
   truth instead of a second regex list in TypeScript (Python inline flags `(?i:...)` do not port).
 - **Entry points.** Only two tenant paths save a CTA: `POST /admin/brand-identity` (tenant JWT,
   T0 `default_cta`) and `POST /v1/content-writing/requests/{id}/write` (`cta` body, used only when
@@ -29,8 +32,13 @@ the case can feed the Terms (AA-820) and a talk with the business owner. F19's C
   `payload->>'cta_key'` for the tenant before inserting, under `pg_advisory_xact_lock` so two
   concurrent saves cannot both insert. The check has no time window and ignores `is_read`: one row
   per tenant + text, ever.
-- **aa_internal** (staff path of the same brand endpoint, AA's own brand) gets the warning but no
-  notification.
+- **Storm guard.** On top of that, at most `DAILY_CAP` (5) rows per tenant per rolling day: an API
+  client that templates a review CTA per piece makes a new text on every write. Past the cap the
+  case is logged (`cta_review_claim_notify_capped`) and the tenant still gets the warning. The
+  payload keeps at most 500 characters of the CTA (200 in the message).
+- **aa_internal** (AA's own brand) gets the warning but no notification, on both paths: the
+  skip lives in `check_saved_cta` itself (`AA_INTERNAL_TENANT_ID`), so the write route is covered
+  too, not only the brand endpoint's staff path.
 - **Fail open.** `check_saved_cta` runs after the save committed; a rule error or a notification
   error is logged (`cta_review_claim_check_failed` / `cta_review_claim_notify_failed`) and the
   route returns as before.
@@ -72,3 +80,20 @@ the case can feed the Terms (AA-820) and a talk with the business owner. F19's C
 - Tenant-facing copy: "Only mention reviews or ratings if they are real and you can show them
   publicly. AI-written copy never adds reviews for you." plus the matched phrases as chips. No
   mention of checks, gates, F19 or flags.
+
+## Adversarial review (S237)
+- Rule narrowed: bare `rated` and `reviewed` were false positives on ordinary CTAs ("Rated trips for
+  families", "Get your itinerary reviewed by a local expert"); now claim-shaped only. Added
+  `NN% of our guests recommend` and `Travellers' Choice` (false negatives).
+- Notification storm: daily cap per tenant + CTA length cap in the payload (see Decisions).
+- aa_internal skip moved into `check_saved_cta` so the T9 write route does not notify for AA's own
+  brand either.
+- Portal live check moved to react-query; phrase chips wrap (`overflowWrap: anywhere`,
+  `minWidth: 0`) so a long phrase does not overflow at 390 px.
+- Checked and unchanged: no other tenant path sets a CTA (`angle_gate_request.cta` is only copied
+  by the admin regenerate path; `TenantConfigService.update_brand_rules` never touches
+  `default_cta`; the slate pick inserts no CTA). Table/column names match
+  `docs/architecture/db-schema-reference.md` (`shared.notifications`, `shared.tenants`).
+  F19 `flagged()` is byte-identical to main.
+- Known soft false positive: "Check availability and ratings for each hotel" warns on `ratings`.
+  Accepted (non-blocking, recall preferred).
