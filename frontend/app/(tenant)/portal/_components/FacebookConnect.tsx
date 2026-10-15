@@ -13,13 +13,44 @@
 //
 // API: /api/tenant/v1/integrations/facebook (GET status, POST save, DELETE disconnect) +
 //      /api/tenant/v1/integrations/facebook/test (POST), through the /api/tenant/[...path] proxy.
+//
+// AA-831: the connect form's help text names all three permissions and the Live-mode rule, and
+// links to the step-by-step guide at /portal/help/facebook (portal/help/facebook/page.tsx).
 
+import Link from "next/link";
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { T, Card, CardHead, Btn } from "./ui";
+import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
+import { T, Card, CardHead, Btn, mono } from "./ui";
 import { fmtDateTime, inputStyle, labelStyle } from "./WordPressConnect";
 import { DisconnectConnection } from "./DisconnectConnection";
+
+/** AA-831 — the tenant guide for getting a Page ID + long-lived Page Access Token. */
+export const FACEBOOK_GUIDE_HREF = "/portal/help/facebook";
+
+/** AA-831 — every permission the Page token needs: list the Pages (pages_show_list), read the
+ * Page and its feed (pages_read_engagement — the connection test and the read-before-retry feed
+ * lookup), create and delete posts (pages_manage_posts — publish and unpublish). */
+export const FACEBOOK_PERMISSIONS = ["pages_show_list", "pages_read_engagement", "pages_manage_posts"] as const;
+
+const permStyle: React.CSSProperties = {
+  fontFamily: mono, fontSize: 11.5, color: T.ink3, background: T.bg,
+  border: `1px solid ${T.line}`, borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap",
+};
+
+/** The three permission names as "a, b and c", one inline chip each. */
+export function PermissionList() {
+  return (
+    <>
+      {FACEBOOK_PERMISSIONS.map((name, i) => (
+        <span key={name}>
+          {i > 0 && (i === FACEBOOK_PERMISSIONS.length - 1 ? " and " : ", ")}
+          <code style={permStyle}>{name}</code>
+        </span>
+      ))}
+    </>
+  );
+}
 
 export interface FacebookStatus {
   connected: boolean;
@@ -94,12 +125,35 @@ export function FacebookConnectForm({ onConnected }: { onConnected?: () => void 
   return (
     <Card>
       <CardHead title="Connect Facebook Page" />
-      <p style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.5 }}>
-        Publishing posts to your own Facebook Page. You&rsquo;ll need the Page ID and a
-        <strong> Page Access Token</strong> with the <code>pages_manage_posts</code> permission —
-        create one in Meta&rsquo;s Graph API Explorer or Business settings. A long-lived token
-        avoids reconnecting every few hours.
-      </p>
+      {/* AA-831 — all three permissions, the Live-mode requirement and where each value comes
+          from. The names render as separate inline chips with explicit {" "}/{", "} separators:
+          the old single <code> run read "pages_manage_postspermission" in the S237 UI check. */}
+      <div style={{ fontSize: 13, color: T.muted, marginTop: -8, marginBottom: 18, lineHeight: 1.6 }}>
+        <p style={{ margin: "0 0 8px" }}>
+          Publish posts to your own Facebook Page. You need two things from Meta:
+        </p>
+        <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+          <li style={{ marginBottom: 4 }}>
+            <strong style={{ color: T.ink3 }}>Page ID</strong>{" "}
+            — the number under your Page&rsquo;s About &rarr; Page transparency.
+          </li>
+          <li>
+            <strong style={{ color: T.ink3 }}>Page Access Token</strong>{" "}
+            — a long-lived Page token with the permissions{" "}
+            <PermissionList />.
+          </li>
+        </ul>
+        <p style={{ margin: "0 0 8px" }}>
+          Your Meta app must be in <strong style={{ color: T.ink3 }}>Live</strong> mode. While
+          it is in Development mode, only you can see the posts.
+        </p>
+        <Link href={FACEBOOK_GUIDE_HREF} style={{
+          display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600,
+          color: T.goldDeep, textDecoration: "none",
+        }}>
+          Step-by-step guide <ArrowRight size={13} />
+        </Link>
+      </div>
 
       <div style={{ marginBottom: 14 }}>
         <label style={labelStyle}>Page ID</label>
