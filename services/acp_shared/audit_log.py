@@ -49,6 +49,8 @@ class TenantAuditAction:
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
     # AA-802 — tenant downloaded a T2 tour version as DOCX (the admin "tenant has an older copy" check)
     TOUR_VERSION_EXPORTED = "tenant_tour_version.exported"
+    CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
+    INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
 
 
 class PlatformAuditAction:

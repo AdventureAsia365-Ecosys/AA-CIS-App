@@ -9,11 +9,16 @@
 //
 // API: GET /api/tenant/v1/publish-log/pending, POST /api/tenant/v1/publish-log/{piece_id}/publish
 // — same /api/tenant/[...path] proxy convention every other real tenant-portal fetch uses.
+//
+// AA-815: the Publish button is gated per channel (blog needs WordPress, facebook needs the
+// Facebook Page) instead of WordPress for every piece, and a publish refreshes the Published list.
 
 import { useState, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
 import { T, sans, Card, CardHead, Btn, Badge, EmptyState, StickyBar } from "./ui";
 import { AiContentNotice } from "./AiContentNotice";
+import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 
 interface PendingPiece {
   piece_id: string;
@@ -36,7 +41,13 @@ function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : "—";
 }
 
-export function PublishPendingList({ wordpressConnected }: { wordpressConnected: boolean }) {
+export function PublishPendingList({ connected, reloadSignal = 0 }: {
+  /** Connection per channel: { blog: WordPress connected, facebook: Facebook Page connected }. */
+  connected: Record<string, boolean>;
+  /** Bump to re-fetch (e.g. after an Unpublish puts a piece back in this list). */
+  reloadSignal?: number;
+}) {
+  const qc = useQueryClient();
   const [pieces, setPieces] = useState<PendingPiece[] | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, PublishResult>>({});
@@ -48,7 +59,7 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
       .catch(() => setPieces([]));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, reloadSignal]);
 
   async function handlePublish(pieceId: string) {
     setPublishingId(pieceId);
@@ -61,6 +72,7 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
         // Published pieces drop out of the pending list entirely — refresh from the server
         // rather than guessing the new shape client-side.
         load();
+        qc.invalidateQueries({ queryKey: PUBLISH_LOG_QUERY_KEY });
       } else {
         setResults(prev => ({
           ...prev,
@@ -103,6 +115,7 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
           {pieces.map(p => {
             const result = results[p.piece_id];
             const busy = publishingId === p.piece_id;
+            const channelConnected = !!connected[p.channel];
             return (
               <div key={p.piece_id} style={{
                 padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`,
@@ -130,11 +143,11 @@ export function PublishPendingList({ wordpressConnected }: { wordpressConnected:
                   <Btn
                     size="sm" variant="primary"
                     onClick={() => handlePublish(p.piece_id)}
-                    disabled={busy || !wordpressConnected}
-                    style={!wordpressConnected ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+                    disabled={busy || !channelConnected}
+                    style={!channelConnected ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                   >
                     {busy ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Publishing…</>
-                      : !wordpressConnected ? "Connect WordPress to publish"
+                      : !channelConnected ? `Connect ${channelName(p.channel)} to publish`
                       : "Publish"}
                   </Btn>
                 </div>
