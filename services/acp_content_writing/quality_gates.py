@@ -51,6 +51,7 @@ from typing import Optional, TypedDict
 
 import structlog
 
+from services.acp_content_writing import authenticity
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
 from services.acp_content_writing.hygiene import (HygieneContext, brief_phrases, content_words, contrast_excess,
                                                   copies, dangling_opener, find_issues, near_verbatim,
@@ -329,6 +330,24 @@ def gate_brand_name(content_text: str, atom_text: str, brand_name: Optional[str]
         for name in dict.fromkeys(foreign_brand_mentions(content_text, brand_name, atom_text))
     ]
     return _result("F11_brand_name", violations)
+
+
+# ---------------------------------------------------------------- F19 authenticity (AA-819, AUP 2026-11)
+
+F19_GATE = authenticity.GATE
+
+
+def gate_authenticity(content_text: str, cta: Optional[str] = None, seo_title: Optional[str] = None,
+                      meta_description: Optional[str] = None) -> GateResultLite:
+    """F19_authenticity — blocking, sentence-repairable: a review, rating or customer quote, the
+    customer / traveller speaking in the first person, or a claim of independence
+    (authenticity.find_issues). Anthropic's usage policy from 12/11/2026 forbids fake reviews and
+    personas and concealed sponsorship; the tenant publishes this piece under its own brand. Each
+    violation quotes its sentence; a title / meta hit ("title …" / "meta …") is the SEO fit's. What a
+    repair leaves is cut in code after the loop (service._enforce_authenticity) — a hold alone would
+    still reach the tenant (AA-770). Admin-only evidence: the ledger never reaches a tenant."""
+    return _result(F19_GATE, authenticity.find_issues(content_text, cta, seo_title=seo_title,
+                                                      meta_description=meta_description), repairable=True)
 
 
 # ---------------------------------------------------------------- F10 (cross-tenant cannibalization, AA-484)
@@ -1526,7 +1545,8 @@ STYLE_ONLY_GATES = frozenset({F15_GATE})
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage (Haiku) when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
-CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity"})
+# AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
+CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity"})
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
 OWNED_BY_FIX_STEP = frozenset({"F16_faq", "F14_first_line"})
@@ -1812,6 +1832,8 @@ def run_quality_gates(
         # AA-771 (S233) — the tenant's own forbidden words and brand name, deterministic.
         gate_brand_forbidden_words(content_text, atom_text, (brand_pack or {}).get("forbidden_words")),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
+        # AA-819 (AUP 2026-11) — no reviews / testimonials / customer first person / independence claim.
+        gate_authenticity(content_text, cta, seo_title, meta_description),
         # AA-484 — every channel, not blog-only (cannibalization risk isn't channel-specific);
         # placed right after F2 (another content-safety-class gate), before the DET/judge gates.
         gate_cannibalization(cannibalization_match),
@@ -1900,4 +1922,5 @@ __all__ = [
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
     "F13_REPEAT_GATE", "gate_repeat", "title_key", "title_taken",
     "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES", "F9_NO_REASON", "F9_PROMPT_VERSION",
+    "F19_GATE", "gate_authenticity",
 ]

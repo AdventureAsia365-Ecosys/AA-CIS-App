@@ -278,7 +278,10 @@ or number, the word the brand forbids, the wrong brand name (use the BRAND named
 or drop the self-reference), or the place outside the piece's scope. Use only what the SOURCE
 states, or widely known background about a place it names. Never add a new claim, number, place,
 scene detail, promise, or social proof (what travellers, guests or families feel, say or
-remember). The replacement must not restate any CONTEXT sentence around it; if the sentence only
+remember). Never write a review, rating, testimonial or customer quote, never speak as a customer or
+traveller in the first person, and never claim the piece is independent or unsponsored — when the
+PROBLEM names one of these, say what the sentence states in the brand's own voice, or return "".
+The replacement must not restate any CONTEXT sentence around it; if the sentence only
 restated one of them, return "". If nothing true is left to say, return "" to delete the
 sentence. When the PROBLEM asks you to keep the sentence and ADD one sentence the SOURCE states (a
 missing access caveat), return the sentence followed by that one added sentence in the SOURCE's own

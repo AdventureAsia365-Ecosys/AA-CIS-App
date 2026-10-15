@@ -47,6 +47,8 @@ class TenantAuditAction:
     CONTENT_PIECE_EDITED = "content_piece.edited"  # AA-569 — tenant hand-edit on My Content
     CONTENT_EXPORTED = "content_piece.exported"  # AA-613 — tenant downloaded/exported a piece
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
+    CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
+    INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
 
 
 class PlatformAuditAction:
@@ -78,6 +80,7 @@ class AdminTenantAuditAction:
     STATUS_CHANGED = "tenant.status_changed"  # suspend <-> active (PATCH is_active)
     PLAN_CHANGED = "tenant.plan_changed"  # plan_tier + plan_id + rate_limit_rpm
     RATE_LIMIT_CHANGED = "tenant.rate_limit_changed"  # AA-766: RPM override without a plan change
+    DAILY_PUBLISH_LIMIT_CHANGED = "tenant.daily_publish_limit_changed"  # AA-819: publish/day override (NULL = default)
     KEY_ROTATED = "tenant.key_rotated"
     BRAND_UPDATED = "tenant.brand_updated"
     CONFIG_UPDATED = "tenant.config_updated"  # markets / channels / posts_per_week
