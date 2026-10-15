@@ -30,7 +30,10 @@ const META = {
 };
 
 const text: React.CSSProperties = { fontSize: 13.5, color: T.body, lineHeight: 1.65, margin: "0 0 10px" };
+// Tailwind preflight sets `list-style: none` on ul/ol; the guide needs visible markers.
 const list: React.CSSProperties = { ...text, paddingLeft: 20 };
+const bullets: React.CSSProperties = { ...list, listStyleType: "disc" };
+const numbers: React.CSSProperties = { ...list, listStyleType: "decimal" };
 const codeStyle: React.CSSProperties = {
   fontFamily: mono, fontSize: 12, color: T.ink3, background: T.bg, border: `1px solid ${T.line}`,
   borderRadius: 4, padding: "0 5px", overflowWrap: "anywhere",
@@ -45,7 +48,7 @@ function Ext({ href, children }: { href: string; children: React.ReactNode }) {
     <a href={href} target="_blank" rel="noopener noreferrer" style={{
       color: T.goldDeep, fontWeight: 600, textDecoration: "none", overflowWrap: "anywhere",
     }}>
-      {children} <ExternalLink size={11} style={{ verticalAlign: "-1px" }} aria-hidden />
+      {children} <ExternalLink size={11} style={{ display: "inline", verticalAlign: "-1px" }} aria-hidden />
     </a>
   );
 }
@@ -136,7 +139,7 @@ export default function FacebookGuidePage() {
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <Card>
           <CardHead title="Before you start" />
-          <ul style={{ ...list, marginBottom: 6 }}>
+          <ul style={{ ...bullets, marginBottom: 6 }}>
             <li>A Facebook account that has full control of your Facebook Page (Page admin).</li>
             <li>A Meta developer account. It is free: sign in at <Ext href={META.apps}>developers.facebook.com</Ext> with
               that Facebook account and accept the terms.</li>
@@ -184,7 +187,7 @@ export default function FacebookGuidePage() {
 
         <Step n={3} title="Get a User token with the three permissions">
           <p style={text}>Open the <Ext href={META.explorer}>Graph API Explorer</Ext>. On the right:</p>
-          <ol style={list}>
+          <ol style={numbers}>
             <li>Under <strong>Meta App</strong>, select your app.</li>
             <li>Under <strong>User or Page</strong>, choose <strong>Get User Access Token</strong>.</li>
             <li>Under <strong>Permissions</strong>, add <PermissionList />.</li>
@@ -198,7 +201,7 @@ export default function FacebookGuidePage() {
         </Step>
 
         <Step n={4} title="Make the User token long-lived">
-          <ol style={list}>
+          <ol style={numbers}>
             <li>Copy the token and open the <Ext href={META.debugger}>Access Token Debugger</Ext>.</li>
             <li>Paste the token and click <strong>Debug</strong>.</li>
             <li>At the bottom, click <strong>Extend Access Token</strong> and copy the new token
@@ -210,7 +213,7 @@ export default function FacebookGuidePage() {
         </Step>
 
         <Step n={5} title="Get the Page Access Token">
-          <ol style={list}>
+          <ol style={numbers}>
             <li>Back in the <Ext href={META.explorer}>Graph API Explorer</Ext>, paste the
               long-lived User token into the <strong>Access Token</strong> field.</li>
             <li>In the query box, enter <C>me/accounts</C> and click <strong>Submit</strong>.</li>
