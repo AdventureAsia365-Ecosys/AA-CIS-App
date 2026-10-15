@@ -38,6 +38,8 @@ REVIEW_CTA = "Read the five-star reviews our travellers left"
     ("Join the travellers who rated us 5 stars", ["who rated us", "5 stars"]),
     ("Award-winning: 98% of our guests recommend us", ["98% of our guests recommend"]),
     ("Check our ratings", ["ratings"]),
+    ("Travellers' Choice winner - book with us", ["Travellers' Choice"]),
+    ("A Travelers\u2019 Choice operator", ["Travelers\u2019 Choice"]),
 ])
 def test_cta_review_claims_true_positives(cta, expected):
     assert authenticity.cta_review_claims(cta) == expected
@@ -223,12 +225,12 @@ def _started(cta):
     }
 
 
-async def _write(conn, typed_cta, used_cta):
+async def _write(conn, typed_cta, used_cta, tenant_id=TENANT):
     body = v1_content_writing.WriteBody(cta=typed_cta)
     with patch.object(v1_content_writing.service, "start_write", new=AsyncMock(return_value=_started(used_cta))), \
          patch("shared.jobs.registry.enqueue", new=AsyncMock(return_value=("job-1", True))), \
          patch.object(v1_content_writing, "write_audit_log", new=AsyncMock()):
-        return await v1_content_writing.write(REQUEST_ID, body, _request(_pool(conn)), tenant={"sub": TENANT})
+        return await v1_content_writing.write(REQUEST_ID, body, _request(_pool(conn)), tenant={"sub": tenant_id})
 
 
 @pytest.mark.asyncio
@@ -257,6 +259,15 @@ async def test_write_without_typed_cta_is_unchanged():
     out = await _write(FakeConn(store), None, REVIEW_CTA)  # brand default, checked when it was saved
     assert set(out) == {"piece_id", "angle_gate_request_id", "channel", "ready_state"}
     assert store == []
+
+
+@pytest.mark.asyncio
+async def test_write_as_aa_internal_gets_the_warning_but_no_notification():
+    store = []
+    out = await _write(FakeConn(store), REVIEW_CTA, REVIEW_CTA, tenant_id=cta_review_notice.AA_INTERNAL_TENANT_ID)
+    assert out["cta_warning"]["code"] == "cta_review_claim"
+    assert store == []
+    assert cta_review_notice.AA_INTERNAL_TENANT_ID == admin_pipeline._AA_INTERNAL_TENANT_ID
 
 
 @pytest.mark.asyncio

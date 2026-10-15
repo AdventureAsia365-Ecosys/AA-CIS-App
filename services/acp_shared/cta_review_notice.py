@@ -29,6 +29,8 @@ logger = structlog.get_logger()
 
 WARNING_CODE = "cta_review_claim"
 EVENT = EventType.TENANT_CTA_REVIEW_CLAIM
+# AA's own brand (the aa_internal pseudo-tenant, staff path) gets the warning but never a bell row.
+AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 # Where the tenant set the CTA — the admin message names it.
 WHERE_BRAND_DEFAULT = "brand_default_cta"
@@ -112,10 +114,10 @@ async def check_saved_cta(pool, tenant_id: str, cta: Optional[str], where: str,
     except Exception as exc:  # a regex bug must not fail a save either
         logger.warning("cta_review_claim_check_failed", tenant_id=str(tenant_id), error=str(exc))
         return None
-    if warning and notify:
+    if warning and notify and str(tenant_id) != AA_INTERNAL_TENANT_ID:
         await notify_admins(pool, tenant_id, cta or "", warning["phrases"], where)
     return warning
 
 
-__all__ = ["DAILY_CAP", "EVENT", "WARNING_CODE", "WHERE_BRAND_DEFAULT", "WHERE_WRITE_OVERRIDE", "check_saved_cta",
-           "cta_key", "cta_warning", "notify_admins"]
+__all__ = ["AA_INTERNAL_TENANT_ID", "DAILY_CAP", "EVENT", "WARNING_CODE", "WHERE_BRAND_DEFAULT",
+           "WHERE_WRITE_OVERRIDE", "check_saved_cta", "cta_key", "cta_warning", "notify_admins"]

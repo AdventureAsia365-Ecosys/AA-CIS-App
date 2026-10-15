@@ -192,6 +192,8 @@ _CTA_REVIEW_EXTRA = [
     re.compile(r"(?i)\bwhat\s+(?:our|other|past|real|happy|recent)\s+(?:guests|travell?ers|customers|clients)\s+"
                r"(?:say|said|think|thought|wrote|write)\b"),
     re.compile(rf"(?i)\b(?:loved|recommended|praised|trusted)\s+by\s+{_CTA_AUDIENCE}\b"),
+    # TripAdvisor's review-based award ('Travellers' Choice 2025 winner')
+    re.compile(r"(?i)\btravell?ers['\u2019]?\s+choice\b"),
 ]
 # 'rating(s)' is a claim unless the sentence frames it as a trek grade ('trek difficulty ratings')
 _CTA_RATING = re.compile(r"(?i)\bratings?\b")
