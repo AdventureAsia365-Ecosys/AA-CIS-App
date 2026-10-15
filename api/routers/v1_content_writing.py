@@ -206,7 +206,8 @@ async def export_piece(
 async def get_latest_piece(request_id: UUID, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
-    piece = await service.fetch_latest_piece_for_request(tenant_id, request_id, pool)
+    # AA-817: request= routes it through the tenant pool when its flag is on (fail closed, 503)
+    piece = await service.fetch_latest_piece_for_request(tenant_id, request_id, pool, request=request)
     return {"piece": piece}
 
 

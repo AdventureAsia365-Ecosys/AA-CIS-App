@@ -65,6 +65,7 @@ from services.acp_shared.content_embedding import compute_embedding, embedding_t
 from services.acp_shared.piece_similarity import find_similar_pieces
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
+from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 
 logger = structlog.get_logger()
 
@@ -1536,6 +1537,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger),
+                # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
+                "gate_ledger": ledger_snapshot(gate_ledger),
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
@@ -1905,9 +1908,14 @@ def _row_to_dict(row) -> dict:
     }
 
 
+# AA-817 — joined through angle_gate_request (RLS, tenant_id) rather than reading
+# angle_gate_option (no tenant_id, no RLS) by request_id alone: on the tenant pool another tenant's
+# option ids are then invisible too, and on the admin pool the WHERE keeps the same boundary.
 _CHOSEN_OPTION_QUERY = """
-    SELECT option_id FROM acp_shared.angle_gate_option
-    WHERE request_id = $1 AND chosen = true
+    SELECT o.option_id
+    FROM acp_shared.angle_gate_option o
+    JOIN acp_shared.angle_gate_request r ON r.request_id = o.request_id
+    WHERE o.request_id = $1 AND o.chosen = true AND r.tenant_id = $2
 """
 
 _LATEST_PIECE_FOR_OPTION_QUERY = """
@@ -1922,7 +1930,9 @@ _LATEST_PIECE_FOR_OPTION_QUERY = """
 """
 
 
-async def fetch_latest_piece_for_request(tenant_id: UUID, request_id: UUID, pool) -> Optional[dict]:
+async def fetch_latest_piece_for_request(
+    tenant_id: UUID, request_id: UUID, pool, request: Optional[Request] = None,
+) -> Optional[dict]:
     """AA-522 — resume support for the T8/T9 wizard's write step. The real bug this issue was
     filed for: a 422 (missing CTA) from start_write() only ever surfaced as CLIENT-side React
     state (AngleGateTab.tsx's old `needsCtaInput`) — a page reload at that exact moment wiped it,
@@ -1936,13 +1946,31 @@ async def fetch_latest_piece_for_request(tenant_id: UUID, request_id: UUID, pool
     re-chosen angle (AA-497) is never mistaken for the current one — reopen_request() doesn't
     delete the old content_piece row, it just stops being the option this request currently
     points to. Returns None (not an error) when nothing has been written yet for this option —
-    the normal case right after an angle is first chosen."""
-    async with pool.acquire() as conn:
-        option_row = await conn.fetchrow(_CHOSEN_OPTION_QUERY, request_id)
-        option_id = option_row["option_id"] if option_row else None
-        row = await conn.fetchrow(_LATEST_PIECE_FOR_OPTION_QUERY, request_id, tenant_id, option_id)
+    the normal case right after an angle is first chosen.
+
+    AA-817 — when `request` is passed (the router does) and the aa817:content_piece_reads_pool flag
+    is on, both reads run on the aa_app_user tenant pool inside one transaction with app.tenant_id
+    set LOCAL, so RLS (content_piece, angle_gate_request) holds the tenant boundary even if a WHERE
+    were wrong. Fail closed: flag on without a tenant pool or tenant id is a 503, never the admin
+    pool. Flag off, or a direct caller with only `pool`: the admin pool, as before."""
+    if request is not None:
+        from api.core.aa544_tenant_pool import CONTENT_PIECE_READS_FLAG, acquire_scoped_conn
+        async with acquire_scoped_conn(
+            request, str(tenant_id) if tenant_id else "", CONTENT_PIECE_READS_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            row = await _latest_piece_for_request(conn, tenant_id, request_id)
+        logger.info("aa817_latest_piece", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool)
+    else:
+        async with pool.acquire() as conn:
+            row = await _latest_piece_for_request(conn, tenant_id, request_id)
     # AA-613 — tenant-safe projection (this feeds the tenant wizard's resume/poll).
     return _tenant_safe_piece(row) if row else None
+
+
+async def _latest_piece_for_request(conn, tenant_id: UUID, request_id: UUID):
+    option_row = await conn.fetchrow(_CHOSEN_OPTION_QUERY, request_id, tenant_id)
+    option_id = option_row["option_id"] if option_row else None
+    return await conn.fetchrow(_LATEST_PIECE_FOR_OPTION_QUERY, request_id, tenant_id, option_id)
 
 
 _FETCH_PIECE_QUERY = """

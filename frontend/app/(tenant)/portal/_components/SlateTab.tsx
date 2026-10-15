@@ -14,7 +14,7 @@
 //
 // AA-564 Nhóm 4.2 (2026-09-08) — pick() used to navigate to the standalone T8 route
 // (`/portal/t8-angle-gate?resume_request_id=`). It now expands `AngleGateWizard` INLINE under
-// the same Subject row instead (accordion — `expanded` state below holds at most one
+// the same Subject row instead (accordion — an `expanded` state held at most one
 // {subjectId, requestId} at a time, shared by both `proposed.map()` and `DecidedList` via the
 // same `SubjectRow` so the wizard stays open across the row moving from one list to the other
 // when `onPicked()`'s refetch flips `state` proposed -> picked). The standalone route/page still
@@ -33,6 +33,13 @@
 // same-row Cut mid-race just 409s, same as an already-picked row would), so disabling Cut during
 // `picking || isExpanded` here is purely UX polish (avoid a pointless 409/flicker), not a data
 // safety fix.
+//
+// AA-668 (S237) — the inline accordion above is replaced by the Writer panel (WriterPanel.tsx, a
+// right-side kit Drawer; full-screen on a phone). "Pick to write" opens it on the new request;
+// a Subject picked earlier in this visit gets a "Continue" button that reopens it (the Slate API
+// does not return a picked Subject's request_id, so a reload loses that shortcut — the piece is in
+// My Content either way). Closing the panel while a piece is still being written hands it to
+// useWriteWatcher, which raises a toast when the background job finishes.
 //
 // API: GET /api/tenant/v1/slate, POST /api/tenant/v1/subjects/{id}/pick,
 // POST /api/tenant/v1/subjects/{id}/cut (api/routers/v1_planning.py's `slate_router`, AA-511/556).
@@ -54,10 +61,12 @@
 //  #6 the tab strip scrolls horizontally (hidden scrollbar) instead of wrapping onto extra lines
 //     on a narrow screen.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
-import AngleGateWizard from "./AngleGateWizard";
+import { ToastProvider } from "../../../_kit";
+import type { ContentPiece } from "./AngleGateWizard";
+import { WriterPanel, useWriteWatcher, type WriterTarget } from "./WriterPanel";
 
 interface ClearedBarReason {
   channel: string;
@@ -115,18 +124,56 @@ const CHANNEL_TABS: { key: string; label: string; group: "weekly" | "on_demand" 
   { key: "ads", label: "Ads", group: "on_demand" },
 ];
 
-// AA-564 4.2 — at most one Subject row's wizard open at a time, across the whole Slate (all 8
-// Channel tabs), not just within one Channel — picking a new Subject always closes whatever was
-// open before. Keyed by subject_id (not list position) so the SAME expanded state survives the
-// row moving from `proposed` to `decided` when onPicked()'s refetch flips `state`.
-interface ExpandedWizard { subjectId: string; requestId: string }
+// AA-668 — the Writer panel's state, shared by every row of every Channel tab: at most one panel
+// open (`panel`), plus the requests picked during this visit (`known`, keyed by subject_id) so a
+// picked row can reopen its panel after it moved from `proposed` to `decided`.
+interface WriterControls {
+  openSubjectId: string | null;
+  known: Record<string, WriterTarget>;
+  open: (t: WriterTarget) => void;
+}
 
+// The kit toast needs a provider; the Slate is the only toast user on this page.
 export default function SlateTab() {
+  return (
+    <ToastProvider>
+      <SlateTabInner />
+    </ToastProvider>
+  );
+}
+
+function SlateTabInner() {
   const [data, setData] = useState<SlateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState("blog");
-  const [expanded, setExpanded] = useState<ExpandedWizard | null>(null);
+  const [panel, setPanel] = useState<WriterTarget | null>(null);
+  const [known, setKnown] = useState<Record<string, WriterTarget>>({});
+  const { watch, unwatch } = useWriteWatcher();
+
+  const openWriter = useCallback((t: WriterTarget) => {
+    unwatch(t.requestId);
+    setKnown(prev => ({ ...prev, [t.subjectId]: t }));
+    setPanel(t);
+  }, [unwatch]);
+
+  const closeWriter = useCallback((lastPiece: ContentPiece | null) => {
+    if (panel && lastPiece?.ready_state === "in_progress") {
+      watch({ pieceId: lastPiece.piece_id, requestId: panel.requestId, title: panel.title });
+    }
+    setPanel(null);
+  }, [panel, watch]);
+
+  // A write whose 202 arrived after the panel closed (closed in the click → write-call window).
+  // Skipped when that request's panel is open again by then: the reopened wizard resumes it itself.
+  const panelRef = useRef<WriterTarget | null>(null);
+  useEffect(() => { panelRef.current = panel; }, [panel]);
+  const watchDetached = useCallback((p: ContentPiece, t: WriterTarget) => {
+    if (p.ready_state !== "in_progress" || panelRef.current?.requestId === t.requestId) return;
+    watch({ pieceId: p.piece_id, requestId: t.requestId, title: t.title });
+  }, [watch]);
+
+  const writer: WriterControls = { openSubjectId: panel?.subjectId ?? null, known, open: openWriter };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -283,11 +330,12 @@ export default function SlateTab() {
 
       {!loading && !error && active && (
         <ChannelPanel
-          channel={active} postsPerWeek={data!.posts_per_week} onPicked={load}
-          expanded={expanded} onExpand={setExpanded}
+          channel={active} postsPerWeek={data!.posts_per_week} onPicked={load} writer={writer}
         />
       )}
       </div>
+
+      <WriterPanel key={panel?.requestId ?? "closed"} target={panel} onClose={closeWriter} onBackgroundPiece={watchDetached} />
     </Card>
   );
 }
@@ -334,9 +382,8 @@ function SkeletonPanel() {
   );
 }
 
-function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
-  channel: ChannelSlate; postsPerWeek: number; onPicked: () => void;
-  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
+function ChannelPanel({ channel, postsPerWeek, onPicked, writer }: {
+  channel: ChannelSlate; postsPerWeek: number; onPicked: () => void; writer: WriterControls;
 }) {
   const proposed = channel.subjects.filter(s => s.state === "proposed");
   const decided = channel.subjects.filter(s => s.state !== "proposed");
@@ -362,23 +409,22 @@ function ChannelPanel({ channel, postsPerWeek, onPicked, expanded, onExpand }: {
         <>
           <EmptyState icon={<CheckCircle2 size={32} strokeWidth={1.5} color={T.gold} />} title="No new eligible Subjects right now"
             sub="Review the Subjects already decided below, or rewrite/atomize more tours for new proposals." />
-          <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
+          <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />
         </>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {proposed.map(s => (
-            <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
+            <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} writer={writer} />
           ))}
-          {decided.length > 0 && <DecidedList subjects={decided} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />}
+          {decided.length > 0 && <DecidedList subjects={decided} onPicked={onPicked} writer={writer} />}
         </div>
       )}
     </div>
   );
 }
 
-function DecidedList({ subjects, onPicked, expanded, onExpand }: {
-  subjects: SlateSubject[]; onPicked: () => void;
-  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
+function DecidedList({ subjects, onPicked, writer }: {
+  subjects: SlateSubject[]; onPicked: () => void; writer: WriterControls;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
@@ -386,7 +432,7 @@ function DecidedList({ subjects, onPicked, expanded, onExpand }: {
         Already decided
       </div>
       {subjects.map(s => (
-        <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} expanded={expanded} onExpand={onExpand} />
+        <SubjectRow key={s.subject_id} subject={s} onPicked={onPicked} writer={writer} />
       ))}
     </div>
   );
@@ -407,9 +453,8 @@ function barReasonText(reason: ClearedBarReason): string {
   return parts.length > 0 ? parts.join(" · ") : "No threshold applies";
 }
 
-function SubjectRow({ subject, onPicked, expanded, onExpand }: {
-  subject: SlateSubject; onPicked: () => void;
-  expanded: ExpandedWizard | null; onExpand: (w: ExpandedWizard | null) => void;
+function SubjectRow({ subject, onPicked, writer }: {
+  subject: SlateSubject; onPicked: () => void; writer: WriterControls;
 }) {
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -421,7 +466,10 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
     : [subject.place, subject.action].filter(Boolean).join(" — ") || "Untitled moment";
 
   const kindLabel = subject.route_id ? "Route" : "Segment";
-  const isExpanded = expanded?.subjectId === subject.subject_id;
+  // AA-668 — kept the AA-556 name: "this row's writer is open".
+  const isExpanded = writer.openSubjectId === subject.subject_id;
+  const knownTarget = writer.known[subject.subject_id] ?? null;
+  const { open: openWriter } = writer;
 
   const pick = useCallback(() => {
     setPicking(true);
@@ -435,12 +483,15 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
       .then(d => {
         // FE audit #2 — only a CONFIRMED 200 clears the error and refreshes the Slate. Reaching
         // here means the backend really did flip this Subject to 'picked', so both are safe.
-        // AA-564 4.2 — used to navigate to the standalone T8 route here; now expands
-        // AngleGateWizard inline under this same row instead (onExpand overwrites whatever was
-        // expanded before — accordion, one row at a time across the whole Slate).
+        // AA-668 — opens the Writer panel on the new request (was: AA-564 4.2's inline
+        // accordion; before that, navigation to the standalone T8 route).
         setPickError(null);
+        setPicking(false);
         onPicked();
-        onExpand({ subjectId: subject.subject_id, requestId: d.request_id });
+        openWriter({
+          subjectId: subject.subject_id, requestId: d.request_id, title,
+          channel: subject.channel, kind: kindLabel,
+        });
       })
       .catch(e => {
         // FE audit #2 (the important fix) — a failed request (4xx/5xx, or the browser giving up
@@ -452,7 +503,7 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
         setPickError(e?.detail ?? "Couldn't pick this Subject — try again.");
         setPicking(false);
       });
-  }, [subject.subject_id, onPicked, onExpand]);
+  }, [subject.subject_id, subject.channel, title, kindLabel, onPicked, openWriter]);
 
   // AA-556 — one-way action (no "un-cut"), so a confirm dialog gates every call. Disabled while
   // `picking` or `isExpanded` (see file header) — purely to avoid a same-row race that would just
@@ -552,17 +603,15 @@ function SubjectRow({ subject, onPicked, expanded, onExpand }: {
             </Btn>
           </div>
         )}
-      </div>
-      {/* AA-564 4.2 — AngleGateWizard embedded inline, accordion (only when this row's
-          subject_id matches the single shared `expanded` state). `onReset` collapses this row
-          instead of the wizard's standalone-mode navigation to /portal/t8-angle-gate. */}
-      {isExpanded && expanded && (
-        <div style={{ padding: "0 14px 16px", borderTop: `1px solid ${T.line2}`, marginTop: 2 }}>
-          <div style={{ paddingTop: 14 }}>
-            <AngleGateWizard requestId={expanded.requestId} embedded onReset={() => onExpand(null)} />
+        {/* AA-668 — a Subject picked earlier in this visit reopens its Writer panel. */}
+        {subject.state !== "proposed" && knownTarget && (
+          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <Btn variant="secondary" size="sm" disabled={isExpanded} onClick={() => openWriter(knownTarget)}>
+              <Sparkles size={12} /> Continue <ChevronRight size={12} />
+            </Btn>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

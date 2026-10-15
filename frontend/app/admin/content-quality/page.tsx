@@ -12,6 +12,8 @@
 //   Place cards   — AA-772 cards: verify / reject, build the missing cards for one tour (job),
 //                   S234: review duplicate candidates and merge them into one card.
 //                   AA-774 (S235): "Facts" opens a drawer to re-kind / edit / drop a card's facts.
+// AA-791: Pieces has a human-label column + filter (latest label per piece) once migration 231 is
+//   applied; the drawer's "Label" section saves one. Before 231 both are hidden.
 // UI kit + react-query; view state in the URL (tab, filters, page) like the Jobs page.
 // API: /admin/content-quality/* via the BFF.
 
@@ -25,11 +27,13 @@ import {
   type ColumnDef,
 } from "../../_kit";
 import PieceDrawer from "./PieceDrawer";
+import { LabelBadge } from "./PieceLabel";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import TourVersionDrawer from "./TourVersionDrawer";
 import {
-  DUPLICATE_REASON_LABELS, GATE_LABELS, fmtTime, gateLabel, usd,
-  type DuplicateCluster, type GateStat, type Paged, type PieceRow, type PlaceCard, type TenantStat, type VersionRow,
+  DUPLICATE_REASON_LABELS, GATE_LABELS, LABEL_NAMES, fmtTime, gateLabel, usd,
+  type DuplicateCluster, type GateStat, type Paged, type PieceLabelValue, type PieceRow, type PiecesPage, type PlaceCard, type TenantStat,
+  type VersionRow,
 } from "./shared";
 
 type TabKey = "pieces" | "versions" | "stats" | "cards";
@@ -42,10 +46,10 @@ const TABS: { key: TabKey; label: string }[] = [
 const PAGE_SIZE = 50;
 
 interface View {
-  tab: TabKey; tenant: string; channel: string; status: string; gate: string; q: string;
+  tab: TabKey; tenant: string; channel: string; status: string; gate: string; q: string; label: string;
   sort: string; dir: "asc" | "desc"; page: number; piece: string | null; version: string | null;
 }
-const EMPTY: View = { tab: "pieces", tenant: "", channel: "", status: "", gate: "", q: "", sort: "created_at",
+const EMPTY: View = { tab: "pieces", tenant: "", channel: "", status: "", gate: "", q: "", label: "", sort: "created_at",
                       dir: "desc", page: 0, piece: null, version: null };
 
 function readView(): View {
@@ -55,7 +59,7 @@ function readView(): View {
   return {
     tab: t === "versions" || t === "stats" || t === "cards" ? t : "pieces",
     tenant: p.get("tenant") ?? "", channel: p.get("channel") ?? "", status: p.get("status") ?? "",
-    gate: p.get("gate") ?? "", q: p.get("q") ?? "", sort: p.get("sort") ?? "created_at",
+    gate: p.get("gate") ?? "", q: p.get("q") ?? "", label: p.get("label") ?? "", sort: p.get("sort") ?? "created_at",
     dir: p.get("dir") === "asc" ? "asc" : "desc", page: Math.max(0, (Number(p.get("page")) || 1) - 1),
     piece: p.get("piece"), version: p.get("version"),
   };
@@ -66,7 +70,7 @@ const noopSubscribe = () => () => {};
 function writeView(v: View) {
   if (typeof window === "undefined") return;
   const p = new URLSearchParams();
-  (["tenant", "channel", "status", "gate", "q"] as const).forEach((k) => { if (v[k]) p.set(k, v[k]); });
+  (["tenant", "channel", "status", "gate", "q", "label"] as const).forEach((k) => { if (v[k]) p.set(k, v[k]); });
   if (v.tab !== "pieces") p.set("tab", v.tab);
   if (v.sort !== "created_at") p.set("sort", v.sort);
   if (v.dir !== "desc") p.set("dir", v.dir);
@@ -104,10 +108,12 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   if (view.status) qs.set("status", view.status);
   if (view.gate) qs.set("gate", view.gate);
   if (view.q) qs.set("q", view.q);
+  if (view.label) qs.set("label", view.label);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["cq-pieces", qs.toString()],
-    queryFn: () => apiGet<Paged<PieceRow>>(`/api/admin/content-quality/pieces?${qs}`, { admin: true }),
+    queryFn: () => apiGet<PiecesPage>(`/api/admin/content-quality/pieces?${qs}`, { admin: true }),
   });
+  const labelsEnabled = !!data?.labels_enabled;
   const columns = useMemo<ColumnDef<PieceRow, unknown>[]>(() => [
     { id: "created_at", accessorKey: "created_at", header: "Written",
       cell: (c) => <span style={{ whiteSpace: "nowrap", color: A.muted }}>{fmtTime(c.row.original.created_at)}</span> },
@@ -124,7 +130,19 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt_number}</span> },
     { id: "cost_usd", accessorKey: "cost_usd", header: "Cost",
       cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], []);
+    // AA-791 — the latest human label (and how many people labelled), once migration 231 is applied.
+    ...(labelsEnabled ? [{ id: "label", header: "Label", enableSorting: false,
+      cell: (c) => {
+        const r = c.row.original;
+        if (!r.label) return <span style={{ color: A.muted }}>—</span>;
+        return (
+          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+            <LabelBadge label={r.label} />
+            {(r.label_count ?? 0) > 1 && <span style={{ fontSize: 11, color: A.muted }}>×{r.label_count}</span>}
+          </span>
+        );
+      } } as ColumnDef<PieceRow, unknown>] : []),
+  ], [labelsEnabled]);
   const sorting: SortingState = [{ id: view.sort, desc: view.dir === "desc" }];
   return (
     <DataTable<PieceRow>
@@ -158,6 +176,14 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
             <option value="">Any gate</option>
             {Object.keys(GATE_LABELS).map((g) => <option key={g} value={g}>{GATE_LABELS[g]} ({g})</option>)}
           </select>
+          {labelsEnabled && (
+            <select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label="Label" style={inputStyle}>
+              <option value="">Any label</option>
+              <option value="labelled">Labelled</option>
+              <option value="unlabelled">Not labelled</option>
+              {(Object.keys(LABEL_NAMES) as PieceLabelValue[]).map((l) => <option key={l} value={l}>{LABEL_NAMES[l]}</option>)}
+            </select>
+          )}
         </div>
       }
     />

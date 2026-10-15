@@ -894,6 +894,9 @@ class TestFetchLatestPieceForRequest:
         # The second fetchrow (the piece lookup) must be scoped to the option just resolved.
         piece_query, *params = conn.fetchrow.call_args_list[1][0]
         assert params == [REQUEST_ID, TENANT_ID, OPTION_ID]
+        # AA-817: the chosen-option lookup is tenant-scoped too (through angle_gate_request).
+        option_query, *params = conn.fetchrow.call_args_list[0][0]
+        assert params == [REQUEST_ID, TENANT_ID] and "r.tenant_id = $2" in option_query
 
     async def test_returns_processing_placeholder_for_resume_polling(self):
         """A write that was already in flight (202 placeholder, not yet finished) must come back

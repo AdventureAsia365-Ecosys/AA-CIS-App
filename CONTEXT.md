@@ -666,6 +666,15 @@ One row of generated content for one (Subject, Goal, Angle) — carries `attempt
 attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone),
 `gate_ledger` (every Gate's result on the persisted attempt), `status`
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
+Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
+(`repair_log[].gate_ledger`: gate, passed, blocking, at most 5 violations; AA-791,
+`gate_eval.ledger_snapshot`), so gate precision and recall can be measured across attempts; pieces
+written before AA-791 have only the persisted attempt's ledger. A **Label** is an admin's human
+verdict on one Piece (`acp_shared.content_piece_label`, migration 231, one row per Piece and
+labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, reason, and the
+sha256 of the text labelled, so a later admin edit shows as changed). It is the ground truth gates
+are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
+column and no `aa_app_user` grant.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
 and can export and publish a held Piece like an approved one. **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
@@ -1020,7 +1029,7 @@ this is the table that resolves Open Question 1 below.
 | 6 | Route / Hub | **Admin (platform)** | Route: rebuilt whole per tour (old rows superseded). Hub: persists across rebuilds | **Yes — shared rows (AA-545).** `acp_contract.route` identity `(tour_id, first_day, last_day)` and `acp_contract.hub`, both without `tenant_id`. |
 | 7 | Slate (Subject) | **Tenant** | Per tenant | **No.** `acp_shared.subject.tenant_id UUID NOT NULL` (migration 133:19). The similarly-named but unrelated `acp_contract.route_pick` (the Route-pick snapshot, renamed from `acp_contract.subject` at migration 132 — "a different, unrelated concept," migration 133:8) is also `tenant_id UUID NOT NULL` (migration 131:74, pre-rename) — both fully isolated. |
 | 8 | Goal / Angle / Write / Gate / Review / Publish | **Tenant** | Per tenant, per request/Piece | **Mostly no, one deliberate exception.** `acp_shared.angle_gate_request.tenant_id` (migration 113:36), `content_piece.tenant_id` (migration 115:36), `publish_log.tenant_id` (migration 116:27) all `NOT NULL`. Exception: the T10 cannibalization Gate (F10) deliberately reads EVERY other tenant's approved Pieces — `find_similar_pieces(cross_tenant=True, ...)`, `_CROSS_TENANT_QUERY` has no `tenant_id` filter at all (`services/acp_shared/piece_similarity.py:46-56, 67-95`), consumed by `gate_cannibalization()` at the 0.92 cosine-similarity threshold. This is a cross-tenant **read/compare**, not a cache — the embedding itself is never shared: `compute_embedding()` (`services/acp_shared/content_embedding.py`) makes one fresh Bedrock call per Piece, every time, for every tenant, with no caching layer at all. |
-| 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS policy (migration 145:70) `USING (scope = 'platform' OR tenant_id::text = current_setting('app.tenant_id', true))` — platform rows bypass the tenant filter entirely and are readable by every tenant's T9 write; tenant rows stay fully isolated. |
+| 9 | Facts Entry | **Both** (one table, two scopes) | Platform scope: once, by admin. Tenant scope: per tenant | **Yes for `scope='platform'` rows, by design.** `acp_shared.facts` (migration 145:33-46), `scope` column (`'platform'`\|`'tenant'`), `tenant_id IS NULL iff scope='platform'` (CHECK, migration 145:44-46). RLS (migration 229, AA-817, for the tenant pool role `aa_app_user`; the owner/main pool is exempt): `facts_platform_read` FOR SELECT `USING (scope = 'platform')` — platform rows are readable by every tenant — and `tenant_isolation` FOR ALL `USING`/`WITH CHECK (scope = 'tenant' AND tenant_id = NULLIF(app.tenant_id, '')::uuid)` — a tenant reads and writes only its own rows and can never write, delete or re-scope a platform fact (145's FOR ALL policy allowed that). |
 
 ### Cross-tenant mechanisms — full inventory (AA-540's specific ask)
 
