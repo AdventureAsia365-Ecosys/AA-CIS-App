@@ -7,8 +7,9 @@
 // is one source of truth. Tenant-sees-content-only: the copy never names checks, gates or flags.
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
-import { K, sans } from "../../../_kit";
+import { K, sans, apiSend } from "../../../_kit";
 
 export const CTA_REVIEW_NOTICE =
   "Only mention reviews or ratings if they are real and you can show them publicly. AI-written copy never adds reviews for you.";
@@ -21,30 +22,29 @@ export function ctaWarningFrom(body: unknown): CtaWarning {
   return w && Array.isArray(w.phrases) && w.phrases.length > 0 ? w : null;
 }
 
-/** Live check while the tenant types: debounced call to the same rule the save uses. Any
- *  error (offline, session expired) just means no warning — the save response still carries it. */
+/** Live check while the tenant types: debounced react-query call to the same rule the save uses
+ *  (cached per text, so retyping a CTA already checked costs no request). Any error (offline,
+ *  session expired, a staff session in the portal) just means no live warning — the save response
+ *  still carries it. */
 export function useCtaReviewCheck(cta: string, delayMs = 450): CtaWarning {
   const text = cta.trim();
-  const [result, setResult] = useState<{ text: string; warning: CtaWarning }>({ text: "", warning: null });
-
+  const [settled, setSettled] = useState(text);
   useEffect(() => {
-    if (!text) return;
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => {
-      fetch("/api/tenant/v1/content-writing/cta-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cta: text }),
-        signal: ctrl.signal,
-      })
-        .then(r => (r.ok ? r.json() : null))
-        .then(d => setResult({ text, warning: ctaWarningFrom(d) }))
-        .catch(() => { /* aborted or offline — no live warning */ });
-    }, delayMs);
-    return () => { window.clearTimeout(timer); ctrl.abort(); };
+    const timer = window.setTimeout(() => setSettled(text), delayMs);
+    return () => window.clearTimeout(timer);
   }, [text, delayMs]);
 
-  return text && result.text === text ? result.warning : null;
+  const q = useQuery({
+    queryKey: ["tenant-cta-check", settled],
+    enabled: settled !== "" && settled === text,
+    queryFn: () => apiSend<{ cta_warning?: unknown }>("/api/tenant/v1/content-writing/cta-check", {
+      body: { cta: settled },
+    }),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+
+  return text !== "" && settled === text ? ctaWarningFrom(q.data) : null;
 }
 
 export function CtaReviewNotice({ warning, style }: { warning: CtaWarning; style?: React.CSSProperties }) {
@@ -69,14 +69,14 @@ export function CtaReviewNotice({ warning, style }: { warning: CtaWarning; style
       }}
     >
       <TriangleAlert size={14} aria-hidden style={{ flexShrink: 0, marginTop: 2, color: K.amber }} />
-      <div>
+      <div style={{ minWidth: 0 }}>
         <div>{CTA_REVIEW_NOTICE}</div>
         <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", color: K.muted }}>
           <span>Mentions:</span>
           {warning.phrases.map(p => (
             <span key={p} style={{
               padding: "1px 8px", borderRadius: 999, background: K.card, border: `1px solid ${K.line}`,
-              color: K.ink2, fontWeight: 600, fontSize: 11,
+              color: K.ink2, fontWeight: 600, fontSize: 11, overflowWrap: "anywhere",
             }}>{p}</span>
           ))}
         </div>
