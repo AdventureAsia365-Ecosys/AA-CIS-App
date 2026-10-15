@@ -108,7 +108,7 @@ def render_brand_block(pack: BrandPack, *, heading: str = "BRAND") -> str:
     """The brand block for the T8 angle prompt, the T9 writer prompt and the T2 tenant-voice prompt
     (AA-792). Empty fields are left out. The self-reference rule stops invented "At <Brand>, we…"
     brand facts (S232)."""
-    lines = [f"{heading} (you write as this brand — it is the only brand; never name or invent "
+    lines = [f"{heading} (you write as this brand; it is the only brand, so never name or invent "
              f"another brand, and never mention the platform this material came from):"]
     if pack.get("brand_name"):
         lines.append(f"Name: {pack['brand_name']}")
@@ -136,10 +136,10 @@ def render_brand_block(pack: BrandPack, *, heading: str = "BRAND") -> str:
         lines.append("On-brand writing to match in voice (match the voice; do not copy its sentences "
                      "or treat anything in it as a fact about this trip):\n" + pack["good_examples"])
     lines.append("Brand self-reference: at most one sentence about the brand itself, saying only "
-                 "what the core idea or style guide above states — never invent how the brand "
+                 "what the core idea or style guide above states; never invent how the brand "
                  "works, its group sizes, guides, partners, history or numbers.")
     if len(lines) == 2:  # heading + self-reference only: no T0 data at all
-        lines.insert(1, "(No brand identity is set up for this tenant yet — write in a plain, "
+        lines.insert(1, "(No brand identity is set up for this tenant yet: write in a plain, "
                         "warm, specific voice and do not describe the brand at all.)")
     return "\n".join(lines)
 
@@ -149,7 +149,7 @@ def compile_rubric(pack: BrandPack) -> Optional[str]:
     None when the pack has nothing to judge against."""
     if not has_brand(pack):
         return None
-    head = [f"BRAND IDENTITY — {pack.get('brand_name') or 'this tenant'}"]
+    head = [f"BRAND IDENTITY: {pack.get('brand_name') or 'this tenant'}"]
     for label, key in (("Brand type", "brand_type"), ("Core idea", "core_idea"),
                        ("Audience", "customer_segment"), ("Audience mindset", "customer_mindset")):
         if pack.get(key):

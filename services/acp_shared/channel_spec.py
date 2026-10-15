@@ -190,26 +190,26 @@ _TRAVELLER_FACING = ("traveller-facing: write to people who might take this trip
 
 _REGISTER_ROWS: dict[str, dict] = {
     CONSUMER_SOCIAL: {
-        "use_when": f"Social proof of a trip worth doing, in the brand's own energetic voice — {_TRAVELLER_FACING}",
+        "use_when": f"Social proof of a trip worth doing, in the brand's own energetic voice; {_TRAVELLER_FACING}",
         "structure": ("One-sentence hook → 2-4 short paragraphs built on concrete details from the source → what "
                       "it means for the people on the trip → light, direct CTA → hashtags"),
         "words": (120, 250),
     },
     EDITORIAL: {
-        "use_when": ("Considered, insight-led positioning for the brand's own audience (its Audience line) — "
+        "use_when": ("Considered, insight-led positioning for the brand's own audience (its Audience line): "
                      "one clear idea about the place"),
         "structure": ("One-sentence hook → short paragraphs → one clear insight from the source → at most one "
                       "sentence on how the brand approaches it (only what its brand identity states) → light CTA"),
         "words": (120, 300),
     },
     WARM_PRACTICAL: {
-        "use_when": f"A practical, reassuring look at one moment of the trip — {_TRAVELLER_FACING}",
+        "use_when": f"A practical, reassuring look at one moment of the trip; {_TRAVELLER_FACING}",
         "structure": ("One-sentence hook → short paragraphs on what the moment is and what it asks of the "
                       "people on it, from the source → one reassuring practical point → light CTA"),
         "words": (120, 250),
     },
     OBSERVATIONAL: {
-        "use_when": f"A place-led observation about one moment of the trip — {_TRAVELLER_FACING}",
+        "use_when": f"A place-led observation about one moment of the trip; {_TRAVELLER_FACING}",
         "structure": ("One-sentence hook → short paragraphs built on what the source says about the place → "
                       "why it matters to the brand's audience → light CTA"),
         "words": (120, 250),
@@ -380,7 +380,7 @@ def sanitize_best_final_style(text: Optional[str], pack: Optional[dict]) -> tupl
         stripped += [clauses[i].strip() for i in off]
         kept = [c for i, c in enumerate(clauses) if i not in off]
         if kept:
-            kept_sentences.append(_finish(_cap(" — ".join(c.strip() for c in kept))) if off else sentence.strip())
+            kept_sentences.append(_finish(_cap("; ".join(c.strip() for c in kept))) if off else sentence.strip())
     if not stripped:
         return text, []
     clean = " ".join(s for s in kept_sentences if s.strip(" .")) or _FALLBACK_BRIEF

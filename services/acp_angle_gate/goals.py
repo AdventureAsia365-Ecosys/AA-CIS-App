@@ -70,7 +70,7 @@ GOALS: list[Goal] = [
         "name": "Trust-building",
         "description": "Build trust in how the brand plans and runs its trips, as its brand identity describes it",
         "logic": (
-            "Problem-Insight-Proof-Action (the proof must be concrete and come from the source — "
+            "Problem-Insight-Proof-Action (the proof must be concrete and come from the source; "
             "never invent a claim)"
         ),
         "marketing_term": "FAB",
@@ -93,7 +93,7 @@ GOALS: list[Goal] = [
         "key": "product_service_explanation",
         "name": "Product or Service Explanation",
         "description": (
-            "Explain what the brand offers and how it works — only services its brand identity "
+            "Explain what the brand offers and how it works: only services its brand identity "
             "states"
         ),
         "logic": "Feature-Advantage-Benefit",

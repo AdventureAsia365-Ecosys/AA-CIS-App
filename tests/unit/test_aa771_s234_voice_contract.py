@@ -403,7 +403,7 @@ class TestT9Prompt:
     def test_linkedin_prompt_has_voice_and_numbers(self):
         p = _t9("linkedin")
         assert "CHANNEL STYLE" not in p
-        assert "VOICE (from the brand — the channel and the angle never override it): Energetic, Fresh" in p
+        assert "VOICE (from the brand; the channel and the angle never override it): Energetic, Fresh" in p
         assert "150–220 words (never more than 250)" in p
         assert "at most 140 characters" in p and "At most 3 hashtags" in p
         channel_lines = p.split("GOAL:")[0]
@@ -431,7 +431,10 @@ class TestT9Prompt:
         Updated AA-775 (S235): render_brand_block fences the style guide as "never a source" (the
         fixture pack has a style_guide), so `single` and `route` change; SYSTEM_PROMPT does not.
         Updated AA-819 (S237): SYSTEM_PROMPT gets the usage-policy rule (no reviews / testimonials, no
-        customer first person, no independence claim); `single` and `route` do not change."""
+        customer first person, no independence claim); `single` and `route` do not change.
+        Updated AA-778 (S238): every em-dash is gone from the prompt text (blog format, SEO envelope,
+        FACTS / GOAL / VOICE / CHANNEL AVOID lines, the brand block) and SYSTEM_PROMPT gets the plan
+        §3.1 "Never use an em-dash" rule, so all three change."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -452,9 +455,28 @@ class TestT9Prompt:
         def sha(s):
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
-        assert sha(SYSTEM_PROMPT) == "4e5979df101f3dc8a0cf1609e09dadd172d9d0aa15e6a0e02ab5adad6b259d8f"
-        assert sha(single) == "0d36f9d0b06e70ea1b6b7a9cc5da5807d1fc1a2be6181d272f10a295ae12a155"
-        assert sha(route) == "561e87338afce1bcb3c34d10d0a61f679b04ff21b8f988c8bfdb465a19a03b7f"
+        assert sha(SYSTEM_PROMPT) == "662d4aa598b44a7d63eeca5180655d94505dd1f198edd40b25d556ff60ec3baa"
+        assert sha(single) == "23675af23befd294f608be034f3486f165371ddc102f664bb9345bf137e7a173"
+        assert sha(route) == "3c9c7c7d64fedc870fae5ba3b04352205f77ef8ae1da24db7c1ad89ba9c3a9fd"
+
+    def test_prompts_carry_no_em_dash_but_the_rule(self):
+        """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash
+        left is the rule that names it; the seed's own (data, here 'Paro Taktsang \u2014 hike') is not ours."""
+        em = "\u2014"
+        assert SYSTEM_PROMPT.count(em) == 1 and f"Never use an em-dash ({em})" in SYSTEM_PROMPT
+        for channel in ("blog", "linkedin", "facebook"):
+            p = _t9(channel)
+            assert p.count(em) == 1 and f"Kuang Si {em} swim" in p, channel  # the seed's, not ours
+        route = build_user_prompt(
+            content_seed="x", goal=GOAL, channel_style=get_channel_style("blog"), brand_audience=TRAIL,
+            angle={"name": "A", "why_it_works": "B", "formula_fit": "C", "best_final_style": "D"}, cta="Ask us",
+            route_segments=[("a1", "Lake"), ("a2", "Ruins")], revision_feedback=["F1: fix"],
+            facts_text="[Fact id=f1] Visa needed.", keyword=None)
+        assert em not in route
+        angle_prompt = angle_prompts.build_user_prompt(
+            content_seed="x", goal=GOAL, brand_audience={**TRAIL, "style_guide": "S."}, destination="Laos",
+            trip_name="Laos Trip", channel_style=get_channel_style("linkedin"), revision_feedback=["fix"])
+        assert em not in angle_prompts.SYSTEM_PROMPT and em not in angle_prompt
 
 
 # ---------------------------------------------------------------- hygiene with the spec (finalize_social)
