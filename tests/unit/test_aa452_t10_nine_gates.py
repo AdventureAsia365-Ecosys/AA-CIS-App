@@ -165,6 +165,7 @@ class TestRunQualityGatesChannelDispatch:
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
+            "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
@@ -190,6 +191,7 @@ class TestRunQualityGatesChannelDispatch:
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
+            "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
