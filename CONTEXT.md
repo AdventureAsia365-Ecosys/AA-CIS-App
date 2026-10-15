@@ -161,6 +161,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   **alert-only** since 29/09/2026 (KAN-90: "control, not limit"), the per-run cap
   (`job:segment_research`, $5 DFS / $2 Bedrock) still stops a run. Edited via
   `PUT /admin/budgets/{provider}/{scope}` (no settings screen yet).
+  Alerts: `maybe_alert` writes a `spend_budget_alert` bell row (one unread per provider per 24 h)
+  and, since AA-828, queues one `ops_alert_email` job that the worker sends through SES
+  (`shared/ops_alerts.py`, `shared/aws_client/ses_mailer.py`; env `ALERT_EMAIL_TO`,
+  `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET` from AA-CIS-Infra). At most one e-mail per budget,
+  threshold and UTC day (job idempotency key); unset env = no e-mail, one log line.
 - **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
   (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
   losing it.
