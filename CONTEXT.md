@@ -168,10 +168,25 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712).
+    `place_geocode`, `tour_graph_build` — AA-712, and the five `retention_*` kinds — AA-825).
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
     starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`.
+  - **Retention (AA-825, migration 233, data standards DM-7 / C5.4)**: one background kind per log
+    table in `services/jobs/retention_job.py` — `retention_llm_call_log` (180 d, daily rollup
+    `shared.llm_call_daily`), `retention_tenant_api_usage` (90 d, monthly rollup
+    `shared.tenant_api_usage_monthly`), `retention_job` (succeeded 30 d; failed/cancelled/stopped_budget
+    90 d), `retention_decision_log` (180 d = Jev `CACHE_MAX_AGE_DAYS`; rows with a human `outcome`
+    kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day).
+    Policies in `services/retention/policy.py`. Rollups are written before raw rows are deleted;
+    batches of <= 5,000 rows by (ts, id) keyset, archived first to
+    `s3://aa-cis-bronze-005097885195/archive/<table>/yyyy/mm/` as gzipped JSONL (pyarrow is not a
+    dependency), never `VACUUM FULL`; rows referenced by a foreign key are never deleted. A manual run
+    (`POST /admin/job-runner/retention/run`) is a DRY RUN unless `dry_run=false` + `max_rows` (the
+    approved count). The ops-probe Lambda calls `POST /admin/job-runner/retention/schedule` once a
+    day (skipped while a rerun wave is open): a kind stays DRY RUN until a live run with the same
+    windows has succeeded, and a scheduled run whose candidates exceed 2x the last live run is HELD
+    (bell `platform.retention.held`). Status: `GET /admin/job-runner/retention`.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -228,6 +243,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
   `SUM(shared.llm_call_log.cost_usd)` for the tenant (shadow and NULL-tenant rows excluded). Admin
   billing and the admin tenant list read that column as-is (one definition, `api/routers/_billing.py`).
+  Migration 233 (AA-825) made the view's month filters sargable (range on the raw column, index
+  `tenant_api_usage (tenant_id, called_at)`), same columns and numbers. The admin tenant usage
+  history (`GET /admin/tenants/{id}/usage`) reads `shared.tenant_api_usage_monthly` for rolled-up
+  months and raw rows for the rest.
   No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
 - **Pipeline routes are admin-only (AA-799)**: every `/v1/pipeline/*` route requires the admin secret

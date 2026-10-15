@@ -7,6 +7,9 @@
   GET  /admin/job-runner/summary           counts per kind and status, registered kinds
   GET  /admin/job-runner/jobs/{id}/llm-calls  LLM calls the job made (AA-687)
   GET  /admin/job-runner/workers           worker liveness, running per worker, queue depth (AA-687)
+  GET  /admin/job-runner/retention         retention kinds: policy, table size, last runs (AA-825)
+  POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved)
+  POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
 
 Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, A1 run-tour).
 """
@@ -17,6 +20,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
 from shared.jobs import queue
@@ -176,3 +180,58 @@ async def retry_job(job_id: str, request: Request, x_admin_secret: str = Header(
         raise HTTPException(status_code=409, detail="only failed, stopped_budget or cancelled jobs can be retried")
     logger.info("admin_job_retry", job_id=job_id, admin_user=x_admin_user_id)
     return {"job_id": job_id, "status": "queued"}
+
+
+# ── AA-825 — retention kinds (services/jobs/retention_job.py) ─────────────────────────────────
+
+
+@router.get("/retention", summary="AA-825 — retention kinds: policy, table size, last runs")
+async def retention_status(request: Request):
+    from services.jobs import retention_job
+    return await retention_job.status(request.app.state.pool)
+
+
+class RetentionRunRequest(BaseModel):
+    kind: str
+    dry_run: bool = True
+    # Required when dry_run is false: the row count Nghiệp approved from the DRY RUN (DM-7.2).
+    max_rows: Optional[int] = Field(None, ge=1)
+    batch_size: Optional[int] = Field(None, ge=1, le=5000)
+
+
+@router.post("/retention/run", summary="AA-825 — enqueue one retention kind (DRY RUN by default)")
+async def retention_run(body: RetentionRunRequest, request: Request, x_admin_secret: str = Header(None),
+                        x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.jobs import retention_job
+    from shared.jobs.registry import enqueue
+    if body.kind not in retention_job.KINDS:
+        raise HTTPException(status_code=422, detail=f"kind must be one of {list(retention_job.KINDS)}")
+    if not body.dry_run:
+        if body.max_rows is None:
+            raise HTTPException(status_code=422, detail="a live run needs max_rows (the approved DRY RUN count)")
+        if body.max_rows > retention_job.RUN_MAX_ROWS:
+            raise HTTPException(status_code=422, detail=f"max_rows is capped at {retention_job.RUN_MAX_ROWS} per run")
+    payload = {"trigger": "manual", "dry_run": body.dry_run}
+    if body.max_rows is not None:
+        payload["max_rows"] = body.max_rows
+    if body.batch_size is not None:
+        payload["batch_size"] = body.batch_size
+    created_by = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    job_id, _ = await enqueue(request.app.state.pool, body.kind, payload, created_by=created_by)
+    logger.info("admin_retention_run", kind=body.kind, dry_run=body.dry_run, max_rows=body.max_rows,
+                job_id=job_id, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": body.kind, "dry_run": body.dry_run, "max_rows": body.max_rows}
+
+
+@router.post("/retention/schedule", summary="AA-825 — daily: enqueue every retention kind (scheduler)")
+async def retention_schedule(request: Request, x_admin_secret: str = Header(None)):
+    """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, one more
+    path in _PATHS). Each kind decides at run time whether it is a DRY RUN, live or held."""
+    verify_admin_secret(x_admin_secret)
+    from datetime import datetime, timezone
+    from services.jobs import retention_job
+    day = datetime.now(timezone.utc).date().isoformat()
+    out = await retention_job.schedule_all(request.app.state.pool, day=day)
+    logger.info("admin_retention_scheduled", day=day, enqueued=len(out["enqueued"]), skipped=out["skipped"])
+    return {"day": day, **out}
