@@ -103,6 +103,16 @@ export function canReadAdminPath(role: string | null | undefined, path: string):
   return !rule || (!!role && (rule.roles as string[]).includes(role));
 }
 
+// AA-577 follow-up — the backend's own docs routes (/openapi.json, /docs, /redoc, gated by the admin
+// secret on ECS). The staff branch of /api/tenant/[...path] forwards the secret to any backend path,
+// so it refuses these for every role but admin (same rule as /admin/api-docs and API_READ_RULES).
+export const API_DOCS_PATHS = ["openapi.json", "docs", "redoc"] as const;
+
+/** Is `path` (backend path without the leading slash) one of the AA-577 docs routes? */
+export function isApiDocsPath(path: string): boolean {
+  return API_DOCS_PATHS.some((p) => path === p || path.startsWith(p + "/"));
+}
+
 /** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */
 export function canWriteAdminPath(role: string | null | undefined, method: string, path: string): boolean {
   if (method === "GET" || method === "HEAD") return true;
