@@ -7,18 +7,19 @@
 // real standalone page for later edits, sharing one form component rather than building the
 // credentials UI twice.
 //
-// NOT /portal/settings — that page is a static mockup with zero real persistence (confirmed by
-// reading it during this task's own STEP0 read; see AA-457 implementation notes). This is real,
-// working UI from the start.
+// AA-815: FacebookConnect.tsx sits next to this one (same shape: status hook, connect form,
+// status card) and both cards carry a Disconnect action (DisconnectConnection.tsx).
 //
-// API: /api/tenant/v1/integrations/wordpress (GET status, POST save) +
+// API: /api/tenant/v1/integrations/wordpress (GET status, POST save, DELETE disconnect) +
 //      /api/tenant/v1/integrations/wordpress/test (POST) — proxied through the generic
 //      /api/tenant/[...path] route (Bearer cis_tenant_token attached server-side), same
 //      convention every other real tenant-portal fetch already uses.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { T, sans, Card, CardHead, Btn } from "./ui";
+import { DisconnectConnection } from "./DisconnectConnection";
 
 export interface WordPressStatus {
   connected: boolean;
@@ -29,33 +30,28 @@ export interface WordPressStatus {
 }
 
 export function useWordPressStatus() {
-  const [status, setStatus] = useState<WordPressStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(() => {
-    setLoading(true);
-    fetch("/api/tenant/v1/integrations/wordpress")
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => setStatus(d))
-      .catch(() => setStatus(null))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { refresh(); }, [refresh]);
-  return { status, loading, refresh };
+  // AA-815 — react-query instead of setState-in-effect; `refresh` refetches in place (the page
+  // stays up), `loading` is true only until the first answer.
+  const q = useQuery({
+    queryKey: ["integration", "wordpress"],
+    queryFn: () => fetch("/api/tenant/v1/integrations/wordpress").then(r => (r.ok ? r.json() : null)) as Promise<WordPressStatus | null>,
+  });
+  const { refetch } = q;
+  const refresh = useCallback(() => { void refetch(); }, [refetch]);
+  return { status: q.data ?? null, loading: q.isLoading, refresh };
 }
 
-function fmtDateTime(iso: string | null): string {
+export function fmtDateTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "—";
 }
 
-const inputStyle: React.CSSProperties = {
+export const inputStyle: React.CSSProperties = {
   width: "100%", padding: "9px 12px", background: T.bg, border: `1px solid ${T.line}`,
   borderRadius: 8, color: T.body, fontSize: 13, outline: "none", fontFamily: sans,
   boxSizing: "border-box",
 };
 
-const labelStyle: React.CSSProperties = {
+export const labelStyle: React.CSSProperties = {
   display: "block", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
   letterSpacing: "0.1em", color: T.muted, marginBottom: 6,
 };
@@ -170,8 +166,10 @@ export function WordPressConnectForm({ onConnected }: { onConnected?: () => void
 
 /** Read-only connection summary + re-test action, used on the manage-connection page and
  * (once connected) at the top of /portal/t11-publish. */
-export function WordPressStatusCard({ status, onRetest }: {
+export function WordPressStatusCard({ status, onRetest, onDisconnected }: {
   status: WordPressStatus; onRetest: () => void;
+  /** AA-815 — when given, the card shows a Disconnect action (confirm step) and calls this after. */
+  onDisconnected?: () => void;
 }) {
   const [testing, setTesting] = useState(false);
 
@@ -211,6 +209,11 @@ export function WordPressStatusCard({ status, onRetest }: {
         }}>
           <XCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{status.last_verify_error}</span>
+        </div>
+      )}
+      {onDisconnected && (
+        <div style={{ marginTop: 14 }}>
+          <DisconnectConnection integration="wordpress" label="WordPress" onDisconnected={onDisconnected} />
         </div>
       )}
     </Card>

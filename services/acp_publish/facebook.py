@@ -105,3 +105,36 @@ class FacebookAdapter(SocialAdapter):
                 return SocialPostResult(post_id=post["id"], post_url=f"https://www.facebook.com/{post['id']}",
                                         platform="facebook")
         return None
+
+    async def delete_post(self, post_id: str) -> str:
+        """AA-815 — remove a Page post: DELETE https://graph.facebook.com/{version}/{post_id}
+        (https://developers.facebook.com/docs/graph-api/reference/post/#deleting). Graph answers
+        {"success": true}. Returns "deleted"; raises on a Graph error body or anything else.
+
+        Unlike WordPress there is no unambiguous "already gone" answer: Graph's code 100 /
+        subcode 33 means "does not exist, OR cannot be loaded due to missing permissions", so it
+        raises too — the caller then keeps the row 'published' rather than telling the tenant a
+        post is gone when it may still be live (the tenant can delete it on Facebook and an
+        admin can force-unpublish the row)."""
+        params = {"access_token": self.access_token}
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.delete(f"{self.api_base}/{post_id}", params=params) as resp:
+                status_code = resp.status
+                content_type = resp.headers.get("content-type", "")
+                body_text = await resp.text()
+
+        parsed_body = None
+        if content_type.startswith("application/json"):
+            try:
+                parsed_body = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError):
+                parsed_body = None
+
+        if isinstance(parsed_body, dict) and "error" in parsed_body:
+            err = parsed_body["error"] if isinstance(parsed_body["error"], dict) else {}
+            raise RuntimeError(
+                f"Facebook Graph API error ({err.get('code', '?')}): {err.get('message', body_text[:200])}"
+            )
+        if status_code == 200 and isinstance(parsed_body, dict) and parsed_body.get("success") is True:
+            return "deleted"
+        raise RuntimeError(f"Facebook API delete {status_code}: {body_text[:300]}")
