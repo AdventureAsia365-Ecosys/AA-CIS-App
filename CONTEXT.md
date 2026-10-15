@@ -666,6 +666,15 @@ One row of generated content for one (Subject, Goal, Angle) — carries `attempt
 attempt 3 is a sentence-level repair only, on the same row — the AA-485 buffer retry row is gone),
 `gate_ledger` (every Gate's result on the persisted attempt), `status`
 (`approved`/`held`/`failed`), and (blog only) a `publish_log` row once T11 ships it.
+Each failed attempt's `repair_log` entry also keeps that attempt's own trimmed ledger
+(`repair_log[].gate_ledger`: gate, passed, blocking, at most 5 violations; AA-791,
+`gate_eval.ledger_snapshot`), so gate precision and recall can be measured across attempts; pieces
+written before AA-791 have only the persisted attempt's ledger. A **Label** is an admin's human
+verdict on one Piece (`acp_shared.content_piece_label`, migration 231, one row per Piece and
+labeller: `as_is`/`light`/`heavy`/`reject`, per-class defects, minutes to fix, reason, and the
+sha256 of the text labelled, so a later admin edit shows as changed). It is the ground truth gates
+are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
+column and no `aa_app_user` grant.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
 and can export and publish a held Piece like an approved one. **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,

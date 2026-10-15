@@ -90,7 +90,7 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
         <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 12, color: A.body }}>
           Minutes to fix
           <input type="number" min={0} max={600} value={d.minutes_to_fix ?? ""} aria-label="Minutes to fix"
-                 onChange={(e) => setD((x) => ({ ...x, minutes_to_fix: e.target.value === "" ? null : Math.max(0, Math.min(600, Number(e.target.value))) }))}
+                 onChange={(e) => setD((x) => ({ ...x, minutes_to_fix: e.target.value === "" ? null : Math.max(0, Math.min(600, Math.round(Number(e.target.value)))) }))}
                  style={{ ...fieldStyle, width: 72 }} />
         </label>
       </div>
