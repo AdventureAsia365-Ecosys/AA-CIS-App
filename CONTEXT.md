@@ -704,6 +704,16 @@ the single tenant rule:
 - Admin path: `/v1/tours/{id}/full` keeps the full before/after payload only for the X-Admin-Secret
   path.
 - Test: `tests/unit/test_aa796_tenant_projection.py` key-walks the tenant routes.
+- Silent correction (AA-802): an **admin** can cut / rewrite / edit one sentence of a T2 version
+  from the Content Quality tour-versions drawer (`/admin/content-quality/tour-versions/{id}/sentences/suggest|apply`).
+  This works only for finished AI text the tenant has not decided on (`ai_generated` / `needs_review`),
+  only on their latest version, and never on a `tenant_edit` version. The row is updated **in place**
+  (`rewritten_content` only, by `id AND tenant_id`; 0 rows → 409). There is no new version, no quota use
+  and no tenant-visible mark. The history is the `audit_log` row
+  (`tenant_tour_version.admin_sentence_*`, sentence and whole section before/after). Both drawers
+  (T9 piece, T2 version) warn the admin when the tenant took a copy away (published, or exported;
+  the T2 DOCX export writes `tenant_tour_version.exported`) before a later admin edit. Nothing
+  re-syncs that copy.
 
 **Channel**:
 One of 8 values: `blog`, `linkedin`, `facebook`, `instagram`, `tiktok`, `email`,
@@ -880,6 +890,12 @@ _Avoid_: block (alone), delete, filter.
     a missing key (default yes) are unchanged.
     The judge model itself is only changed through the `t2_judge` stage route; `score_brand_fit`'s
     `model_override` is refused on any stage but `adhoc_*` (measurement scripts).
+  - **Best draft wins (AA-793).** Env `T2_BEST_DRAFT` (default on): a tenant rewrite runs the graph
+    variant `build_graph(t2_drafts=True)`, which keeps the highest-scoring judged draft
+    (`t2_repair.track_best_node`) and saves it at the `hitl` exit instead of the last one. Env
+    `T2_TARGETED_REPAIR` (default on): a retry revises that best draft with its own feedback
+    ("YOUR PREVIOUS DRAFT (revise it…)") instead of a blind re-roll. Both off = the old graph. A1
+    never takes this variant. Judge rows log `quality_signal.attempt` / `revision`.
   - **Brand-audit fallback.** When the judge did not run, the audit uses the tenant's own rubric
     (`compile_rubric`), never Adventure Asia's identity.
   - **Stored status.** A version scoring < 7.0 (or escalated by T3) is stored `needs_review` — an
@@ -895,6 +911,18 @@ _Avoid_: block (alone), delete, filter.
     (`fit_seo_meta_final`) before a length code can trigger a rewrite. That fit tries a clause cut,
     then a word cut only before a phrase boundary, then a fact clause. The fact clause never adds an
     "in <country>" tail on a multi-country tour.
+  - **Best draft and targeted repair (AA-793).** Every checked draft is a candidate: a clean one
+    returns at once; when rounds run out the best candidate (clean, then score) is saved, not the
+    last, and each round repairs the best so far. With `T2_TARGETED_REPAIR` a grounding-only failure
+    gets one sentence repair (`grounding.repair`, stage `t2_flag_fix`, Haiku) instead of a rewrite;
+    a structural failure gets a revision of the draft with the T3 findings plus the judge feedback.
+    `job.result.t3` records the chosen attempt and every draft's score.
+  - **Background facts (AA-793).** Env `T3_BACKGROUND_FACTS` (default off): the numeric check
+    accepts place background (`acp_produce/t3_background.py`): past years, centuries and elevations
+    >= 1,000 m of a named place, never in a first-person, accommodation/service or climb/gain
+    sentence; durations, times, distances, prices and counts stay violations (writer source
+    fidelity rule A/B). A bare 4-digit year needs a year cue before it and never a comma, plural
+    noun or currency after it; a metre figure next to a walking / route word is a distance.
   - **Cost.** A typical long tour takes 1-2 writer calls, about $0.10-0.18 (previously 4 calls, about
     $0.31).
   - **Jev clearing (AA-699).** For Jev allow-listed tenants, each numeric hit is first checked with

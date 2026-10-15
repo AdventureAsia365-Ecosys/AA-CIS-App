@@ -128,6 +128,7 @@ async def _rewrite_tour(
     tenant_id: Optional[str] = None,  # AA-620: real tenant UUID -> logged in llm_call_log (T2)
     generate_stage: str = "s1_generate",  # AA-620: "t2_generate" for tenant T2, "s1_generate" for A1
     feedback: str = "",  # AA-639: seeds generate_node's PREVIOUS ATTEMPT FEEDBACK (T3 repair rounds)
+    previous_draft: Optional[dict] = None,  # AA-793: a T3 repair round revises this draft (T2 only)
 ) -> dict:
     """Rewrite single tour using LangGraph.
 
@@ -140,7 +141,15 @@ async def _rewrite_tour(
 
     try:
         from services.content_generation.graph import build_graph_from_generated
-        graph = build_graph_from_generated() if batch_text is not None else build_graph()
+        # AA-793: a tenant rewrite runs the draft-tracking variant (best draft wins, retries revise
+        # the best draft) unless both T2_BEST_DRAFT and T2_TARGETED_REPAIR are off. A1 is unchanged.
+        from services.content_generation.t2_repair import t2_drafts_graph_enabled
+        if batch_text is not None:
+            graph = build_graph_from_generated()
+        elif is_tenant_rewrite and t2_drafts_graph_enabled():
+            graph = build_graph(t2_drafts=True)
+        else:
+            graph = build_graph()
         # P3-S3: Merge brand_rules into initial_state
         _br = brand_rules or {}
         initial_state = {
@@ -183,6 +192,8 @@ async def _rewrite_tour(
             "fix_pass_applied":   False,
             "fix_pass_fields":    [],
         }
+        if previous_draft and is_tenant_rewrite:
+            initial_state["previous_draft"] = previous_draft   # AA-793
         # AA-606: seed Bedrock Batch attempt-1 output for build_graph_from_generated's seed node.
         if batch_text is not None:
             initial_state["batch_text"] = batch_text
@@ -264,6 +275,9 @@ async def _rewrite_tour(
             "grounding_repaired_fields": result.get("grounding_repaired_fields", []),
             "grounding_violations":      result.get("grounding_violations", []),
             "grounding_notes":           result.get("grounding_notes", []),
+            # AA-793: per-attempt judged scores + whether the hitl exit restored an earlier draft (T2).
+            "draft_scores":        result.get("draft_scores", []),
+            "best_draft_restored": result.get("best_draft_restored", False),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 

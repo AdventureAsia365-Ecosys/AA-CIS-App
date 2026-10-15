@@ -248,7 +248,8 @@ def test_flag_off_t2_path_unchanged():
     assert "repeat" not in score.call_args.kwargs
     assert set(rec["quality_signal"]) == {
         "judge_score", "brand_fit_score", "cross_brand_distinct", "mission_present", "passed", "gate",
-        "mission_source", "mission_gated"}
+        "mission_source", "mission_gated",
+        "attempt", "revision"}   # AA-793: per-attempt judge rows (graph attempt + revised-draft flag)
 
 
 def test_median3_t2_judges_three_times_and_logs_runs(monkeypatch):
