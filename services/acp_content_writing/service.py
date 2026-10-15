@@ -65,6 +65,7 @@ from services.acp_shared.content_embedding import compute_embedding, embedding_t
 from services.acp_shared.piece_similarity import find_similar_pieces
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
+from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
 
 logger = structlog.get_logger()
 
@@ -1536,6 +1537,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 "violations": first_failure["violations"], "repairable": first_failure["repairable"],
                 # AA-768 — what the rewrite is actually told: every blocking failure, not one gate.
                 "feedback": _repair_feedback(gate_ledger),
+                # AA-791 — this attempt's whole ledger (trimmed), so every attempt's gates are kept.
+                "gate_ledger": ledger_snapshot(gate_ledger),
             })
             logger.info(
                 "t9_attempt_failed_quality_check", request_id=str(request_id), attempt=attempt,
