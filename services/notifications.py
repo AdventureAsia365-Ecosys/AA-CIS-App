@@ -26,6 +26,9 @@ class EventType(str, Enum):
     MASTER_DEACTIVATED = "tour.master.deactivated"
     MASTER_TRASHED = "tour.master.trashed"
     MASTER_RESTORED = "tour.master.restored"
+    # AA-819 follow-up (S237) — a tenant saved a CTA that claims reviews or ratings. Admin-only:
+    # the tenant sees a warning in the portal, never this row.
+    TENANT_CTA_REVIEW_CLAIM = "tenant.cta.review_claim"
 
 
 _DEFAULT_ROLES: dict[EventType, list[str]] = {
@@ -43,6 +46,7 @@ _DEFAULT_ROLES: dict[EventType, list[str]] = {
     EventType.MASTER_DEACTIVATED:  ["admin"],
     EventType.MASTER_TRASHED:      ["admin", "content"],
     EventType.MASTER_RESTORED:     ["admin"],
+    EventType.TENANT_CTA_REVIEW_CLAIM: ["admin"],
 }
 
 

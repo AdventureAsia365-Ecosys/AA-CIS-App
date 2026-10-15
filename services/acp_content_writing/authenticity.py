@@ -166,6 +166,62 @@ def _matches(text: str) -> list[tuple[str, re.Match]]:
     return out
 
 
+# AA-819 follow-up (S237) — the tenant's own CTA line is exempt from F19 (flagged() above skips it:
+# it is the tenant's configured text, published word for word). The portal still warns the tenant
+# when the CTA itself claims reviews or ratings, and AA admins get a bell notification. The CTA rule
+# is the testimonial family + review scores above, plus the short review hooks a CTA uses that body
+# prose would not be flagged for ('Read our reviews', '5-star', 'loved by 2,000 travellers').
+_CTA_AUDIENCE = (r"(?:\d[\d,.]*\+?\s+|our\s+|thousands\s+of\s+|hundreds\s+of\s+|happy\s+|real\s+|past\s+)?"
+                 r"(?:guests|travell?ers|customers|clients)")
+_CTA_REVIEW_EXTRA = [
+    re.compile(r"(?i)\breviews\b"),
+    re.compile(r"(?i)\breviewers?\b"),
+    # 'reviewed by our guests' — not 'get your itinerary reviewed by a local expert' (a service)
+    re.compile(rf"(?i)\breviewed\s+by\s+{_CTA_AUDIENCE}\b"),
+    # 'rated' only as a claim ('rated us 5 stars', 'Rated excellent', 'Rated #1', 'guests rated'),
+    # not 'Rated trips for families' or 'rated PG'; bare 'rated 4.9' is in _SCORES
+    re.compile(r"(?i)\brated\s+(?:us|it|them|excellent|outstanding|exceptional|superb|amazing|perfect|best|top"
+               r"|highly|the\s+best|number\s+one|no\.?\s*1\b|#\s*1\b|by\b)"),
+    re.compile(r"(?i)\b(?:who|they|guests|travell?ers|customers|clients)\s+(?:have\s+|has\s+)?rated\b"),
+    # '98% of our guests recommend us'
+    re.compile(rf"(?i)\b\d{{1,3}}(?:\.\d)?\s*%\s+of\s+{_CTA_AUDIENCE}\s+(?:would\s+)?(?:recommend|rate|rated"
+               r"|love|loved|return|come\s+back|book\s+again)\b"),
+    # '5-star' / 'five stars' — not a hotel class ('a five-star hotel', '5-star luxury stay')
+    re.compile(r"(?i)\b(?:five|5)[- ]stars?\b(?!\s+(?:hotels?|resorts?|lodges?|luxury|accommodation|stays?|camps?"
+               r"|cruises?|boats?|villas?|service))"),
+    re.compile(r"(?i)\bwhat\s+(?:our|other|past|real|happy|recent)\s+(?:guests|travell?ers|customers|clients)\s+"
+               r"(?:say|said|think|thought|wrote|write)\b"),
+    re.compile(rf"(?i)\b(?:loved|recommended|praised|trusted)\s+by\s+{_CTA_AUDIENCE}\b"),
+    # TripAdvisor's review-based award ('Travellers' Choice 2025 winner')
+    re.compile(r"(?i)\btravell?ers['\u2019]?\s+choice\b"),
+]
+# 'rating(s)' is a claim unless the sentence frames it as a trek grade ('trek difficulty ratings')
+_CTA_RATING = re.compile(r"(?i)\bratings?\b")
+
+
+def cta_review_claims(cta: Optional[str]) -> list[str]:
+    """The phrases in a tenant CTA that claim reviews, ratings or testimonials ('five-star reviews',
+    'Rated 4.9', 'TripAdvisor', 'what our guests say'), in text order, overlaps collapsed to the
+    widest match. Empty for an ordinary CTA ('Talk to a travel designer', 'Book your trek').
+    Deterministic, no LLM — the portal warns on it, it never blocks or edits the CTA."""
+    text = " ".join((cta or "").split())
+    if not text:
+        return []
+    spans: list[tuple[int, int]] = []
+    for pattern in (*_TESTIMONIAL, *_CTA_REVIEW_EXTRA):
+        spans += [(m.start(), m.end()) for m in pattern.finditer(text) if m.group(0).strip()]
+    for pattern in (*_SCORES, _CTA_RATING):
+        spans += [(m.start(), m.end()) for m in pattern.finditer(text) if m.group(0).strip()
+                  and not _GRADE_CONTEXT.search(_sentence_around(text, m.start(), m.end()))]
+    kept: list[list[int]] = []
+    for start, end in sorted(spans, key=lambda s: (s[0], -s[1])):
+        if kept and start < kept[-1][1]:  # overlaps the previous phrase: widen it
+            kept[-1][1] = max(kept[-1][1], end)
+        else:
+            kept.append([start, end])
+    return list(dict.fromkeys(text[a:b].strip() for a, b in kept))
+
+
 def field_hits(value: Optional[str]) -> list[tuple[str, str]]:
     """(kind, matched text) in a one-line field (the SEO title or meta)."""
     return [(kind, m.group(0).strip()) for kind, m in _matches(value or "")]
@@ -251,4 +307,4 @@ def _with_faq_answers(content_text: str, ranges: list[tuple[int, int]]) -> list[
     return out
 
 
-__all__ = ["GATE", "cut_flagged", "field_hits", "find_issues", "flagged"]
+__all__ = ["GATE", "cta_review_claims", "cut_flagged", "field_hits", "find_issues", "flagged"]

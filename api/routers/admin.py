@@ -2174,6 +2174,7 @@ async def list_notifications(
         "tour.master.deactivated":  "Master tour deactivated",
         "tour.master.trashed":      "Master tour trashed",
         "tour.master.restored":     "Master tour restored",
+        "tenant.cta.review_claim":  "Tenant CTA mentions reviews or ratings",  # AA-819 follow-up
     }
 
     items = []

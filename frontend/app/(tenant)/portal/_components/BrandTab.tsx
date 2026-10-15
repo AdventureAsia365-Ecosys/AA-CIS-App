@@ -26,6 +26,7 @@ import {
   Card, CardHead, Btn, Field, LoadingScreen,
   fmtDate,
 } from "./ui";
+import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 
 interface BrandData {
   configured: boolean; system_prompt: string; style_guide: string;
@@ -114,6 +115,10 @@ export default function BrandTab() {
   const [toneOfVoice, setToneOfVoice] = useState("");
   const [goodExamples, setGoodExamples] = useState("");
   const [defaultCta, setDefaultCta] = useState("");
+  // AA-819 follow-up — a CTA that mentions reviews or ratings is saved as typed, with a warning:
+  // live while typing, and from the save response.
+  const liveCtaWarning = useCtaReviewCheck(defaultCta);
+  const [savedCtaWarning, setSavedCtaWarning] = useState<CtaWarning>(null);
 
   const load = async () => {
     setLoading(true);
@@ -169,6 +174,7 @@ export default function BrandTab() {
       if (r.ok) {
         setSaved(true); setDirty(false); setViewingV(null); setBriefNotes([]);
         setMarketNote(body.markets ?? null);
+        setSavedCtaWarning(ctaWarningFrom(body));
         await load();
       } else {
         // AA-741 (S229): was silently ignored — the tenant saw nothing when a save failed.
@@ -323,8 +329,9 @@ export default function BrandTab() {
             value={goodExamples} onChange={v => { setGoodExamples(v); markDirty(); }}
           />
           <TextField label="Default Call to Action" value={defaultCta}
-            onChange={v => { setDefaultCta(v); markDirty(); }}
+            onChange={v => { setDefaultCta(v); setSavedCtaWarning(null); markDirty(); }}
             placeholder="e.g. Ask us for the full itinerary and dates" />
+          <CtaReviewNotice warning={liveCtaWarning ?? savedCtaWarning} style={{ marginTop: -6, marginBottom: 16 }} />
           <Field
             label="Should Write (System Prompt)" rows={5}
             placeholder="e.g. We are a luxury private-travel operator for US/UK professionals aged 40–60. Emphasise depth of experience, exclusivity, and cultural immersion."

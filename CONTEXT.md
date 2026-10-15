@@ -879,6 +879,12 @@ _Avoid_: block (alone), delete, filter.
   T10 judge — compiled deterministically at read time; a hand-written `system_prompt` still heads
   the judge rubric, otherwise the rubric is compiled from the T0 fields (no Adventure Asia
   fallback for tenants).
+  - **CTA review claims (AA-819 follow-up).** The tenant's CTA is published word for word (F19
+    exempts it). When a tenant saves one that claims reviews or ratings (T0 default CTA, or the CTA
+    typed for one T9 write), the save still happens, the response carries `cta_warning`, the portal
+    shows a plain warning (live via `POST /v1/content-writing/cta-check`), and AA admins get one
+    bell row per tenant + CTA text (`tenant.cta.review_claim`). Rule:
+    `authenticity.cta_review_claims()`; writer: `services/acp_shared/cta_review_notice.py`.
 - **T1 — Tour Selection / Rewrite trigger**: tenant picks an A3 (Master Content) tour and fires
   the rewrite (`/portal/t1-rewrite`, `PoolTab.tsx`'s "Rewrite" button).
 - **T2 — Rewrite (execution)**: the LLM rewrite of the picked tour into the tenant's own brand
