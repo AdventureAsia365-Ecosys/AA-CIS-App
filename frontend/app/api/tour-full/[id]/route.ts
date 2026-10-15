@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
+import { proxyPath } from "@/lib/bffPath";
 
 const API_URL      = process.env.API_URL      ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET  ?? "";
@@ -17,8 +18,13 @@ export async function GET(
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  // AA-577 follow-up — an encoded "../../openapi.json?" id must not leave /v1/tours/ (lib/bffPath.ts).
+  const tourPath = proxyPath([id]);
+  if (tourPath === null) {
+    return NextResponse.json({ error: "Invalid tour id" }, { status: 400 });
+  }
 
-  const res = await fetch(`${API_URL}/v1/tours/${id}/full`, {
+  const res = await fetch(`${API_URL}/v1/tours/${tourPath}/full`, {
     headers: {
       "X-Admin-Secret": ADMIN_SECRET,
       ...(API_KEY ? { "X-API-Key": API_KEY } : {}),

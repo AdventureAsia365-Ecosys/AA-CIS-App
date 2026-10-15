@@ -35,6 +35,7 @@ from api.routers.v1_trip_page import admin_router as admin_trip_page_router  # A
 from api.routers.v1_rules import router as v1_rules_router
 from api.routers.v1_social import router as v1_social_router
 from api.routers.admin import router as admin_router
+from api.routers.admin_api_docs import router as admin_api_docs_router  # AA-577 — /admin/openapi.json
 from api.routers.admin import verify_admin_secret  # AA-577 — reused to gate Swagger/ReDoc/openapi.json
 from api.routers.admin_pipeline import router as admin_pipeline_router
 from api.routers.admin_settings import router as admin_settings_router
@@ -188,6 +189,11 @@ async def get_swagger_oauth2_redirect(_: None = Depends(require_admin_secret_for
 @app.get("/redoc", include_in_schema=False)
 async def get_redoc_docs(_: None = Depends(require_admin_secret_for_docs)):
     return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
+
+
+# AA-577 follow-up — GET /admin/openapi.json for the admin page /admin/api-docs (through the BFF,
+# admin role). Included before every other router so no later GET /admin/{x} route can shadow it.
+app.include_router(admin_api_docs_router)
 
 
 app.include_router(v1_tours_router)

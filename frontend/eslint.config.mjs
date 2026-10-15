@@ -43,6 +43,7 @@ const KIT_CLEAN_FILES = [
   "app/admin/_components/AdminLiveWriter.tsx",
   "app/(tenant)/portal/_components/ReviewList.tsx",
   "app/(tenant)/portal/_components/CatalogTab.tsx",
+  "app/admin/api-docs/page.tsx", // AA-577 follow-up — built on the kit from the start
 ];
 
 const eslintConfig = defineConfig([

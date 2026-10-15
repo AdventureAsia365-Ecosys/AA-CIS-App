@@ -43,11 +43,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     status, via react-query — see A3 note below), `atom-curation` (Social Content tabs
     01-05), `tenant-activity` (tabs 06-08), `platform-stats` (includes gate telemetry per tenant
     and channel, AA-615), `llm-usage` (the **External Spend** page, AA-622/623), `tenants`,
-    `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `settings` (pipeline gates, **Brand
+    `jobs`, `decisions` (**Jev Decisions**, AA-660), `photos` (**Photos**, AA-708 — Drive photo sync, unmatched queue), `api-docs` (**API Docs**,
+    admin-only read-only OpenAPI reader built on the kit: `GET /admin/openapi.json` through the BFF, since the
+    AA-577 `/docs`, `/redoc`, `/openapi.json` need the X-Admin-Secret header on ECS), `settings` (pipeline gates, **Brand
     Identity** editor, SEO config, LLM model per stage + read-only Jev questions per stage). `run-health` was removed with N7/N8 (AA-603).
   - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
     Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
-    **Operations** (External Spend, Jobs, Jev Decisions) · **Settings**. Admin-only items are hidden for other
+    **Operations** (External Spend, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
     roles (same list as `middleware.ts` PROTECTED_ROUTES). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
@@ -364,7 +366,9 @@ shows only when the role may open its page).
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
 | Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions | ✓ | — | — | — |
+| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
+| BFF `/api/admin/openapi.json` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks `x-admin-role`) | ✓ | — | — | — |
+| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
 | `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
@@ -372,7 +376,9 @@ shows only when the role may open its page).
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed); the backend sees only `x-admin-user-id`. Booking staff log in through this
+can open are narrowed); the backend sees only `x-admin-user-id`. Every secret-bearing proxy builds its backend path with
+`frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
+`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
 CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 

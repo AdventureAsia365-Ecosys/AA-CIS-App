@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
+import { proxyPath } from "@/lib/bffPath";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -20,9 +21,13 @@ async function handler(
   }
 
   const { path } = await params;
-  const pathStr = path.join("/");
+  // AA-577 follow-up — no segment may climb out of /v1/pipeline/ (lib/bffPath.ts).
+  const upstreamPath = proxyPath(path);
+  if (upstreamPath === null) {
+    return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
+  }
   const search = req.nextUrl.search;
-  const url = `${API_URL}/v1/pipeline/${pathStr}${search}`;
+  const url = `${API_URL}/v1/pipeline/${upstreamPath}${search}`;
 
   const contentType = req.headers.get("content-type") ?? "";
   const isMultipart = contentType.includes("multipart/form-data");
