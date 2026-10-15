@@ -368,6 +368,7 @@ shows only when the role may open its page).
 | Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
 | Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
 | BFF `/api/admin/openapi.json` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks `x-admin-role`) | ✓ | — | — | — |
+| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
 | `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
@@ -375,7 +376,9 @@ shows only when the role may open its page).
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed); the backend sees only `x-admin-user-id`. Booking staff log in through this
+can open are narrowed); the backend sees only `x-admin-user-id`. Every secret-bearing proxy builds its backend path with
+`frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
+`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
 CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 

@@ -25,6 +25,22 @@
 - Fetch: react-query `["admin","openapi"]`, `staleTime` 5 min, Reload button = `refetch()`.
 - `<main>` uses inline style + `useIsPhone()` for the phone padding instead of `className="aa-admin-main"`, so the
   file is clean of all kit lint patterns and is added to `KIT_CLEAN_FILES` (eslint `error` level).
+- Review pass (adversarial, same branch): every secret-bearing BFF proxy (`/api/admin`, `/api/pipeline`, `/api/tenant`,
+  `/api/tour-full`) now builds its backend path with `lib/bffPath.ts` `proxyPath()`. Next.js 16 splits the catch-all on
+  `/` and THEN decodes each segment (checked on a built Next 16.2.4 app: `/api/x/a%2F..%2F..%2Fopenapi.json` gives the
+  single segment `a/../../openapi.json`), and `fetch()` resolves the dots, so a reviewer could reach backend
+  `/openapi.json` (and any admin-only write path) with the admin secret attached after the rbac rules saw a harmless
+  path. `proxyPath()` returns null (BFF 400) for an empty, `.`, `..`, `/` or `\` segment and percent-encodes the rest;
+  the backend decodes once, so it routes exactly the string the rbac rules checked (no double encoding: `a b` →
+  `a%20b`, `x%2F` → `x%252F`).
+- Review pass: the staff branch of `/api/tenant/[...path]` attaches the admin secret to ANY backend path, so a reviewer
+  could already GET `/api/tenant/openapi.json` (AA-577 route) and read the schema this page keeps admin-only. It now
+  refuses `openapi.json`, `docs`, `docs/*`, `redoc` for every staff role but admin (`lib/rbac.ts` `isApiDocsPath`).
+  The tenant branch is unchanged (Bearer token only, no secret: ECS answers 403).
+- Review pass, page: while searching, a group header click used to do nothing visible (open was forced) and silently
+  flipped the non-search open state; now it closes/opens that group for the current search (reset on every keystroke,
+  so a new hit is never hidden). Search input is `type="text"` (no second, browser-drawn clear button) and Escape
+  clears it. A deprecated operation gets a "deprecated" badge next to the strike-through path.
 
 ## Changed
 - Nothing from the AA-577 decision: `/docs`, `/redoc`, `/openapi.json`, `/docs/oauth2-redirect` untouched (a test pins it).
@@ -48,5 +64,8 @@
   BFF reaches `/admin/openapi.json`, which does not exist yet → 404 → the page shows the kit ErrorState with Retry.
 - UI not yet verified in a browser (no API/AWS in this run): do the aa-ui-verify pass (desktop + 390 px, light +
   dark, admin vs reviewer login) on the Vercel preview after the backend deploys.
+- No frontend unit-test runner exists; `proxyPath()`, `isApiDocsPath()` and `canReadAdminPath()` were checked by
+  transpiling them and running the cases above in node, and the parser against the real `app.openapi()` (252 ops,
+  36 groups, the one untagged op `GET /health` lands in "untagged", 0 params labelled "any").
 - `npm run lint` exits 1 because of 54 pre-existing errors in legacy files (CI step is continue-on-error,
   AA-601); none in the files this branch touches.
