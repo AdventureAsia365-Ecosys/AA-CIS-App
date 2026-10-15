@@ -33,7 +33,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { requireAdmin, requireTenant } from "@/lib/auth-server";
-import { API_RULES } from "@/lib/rbac";
+import { API_RULES, isApiDocsPath } from "@/lib/rbac";
+import { proxyPath } from "@/lib/bffPath";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -48,10 +49,12 @@ async function handler(
   const isStaff     = Boolean(cookieStore.get("cis_admin_token")?.value);
 
   const headers: Record<string, string> = {};
+  let staffRole: string | null = null;
 
   if (isStaff) {
     const auth = await requireAdmin(req, API_RULES.tenantProxy);
     if (!auth.ok) return auth.response;
+    staffRole = auth.role;
 
     if (!ADMIN_SECRET) {
       return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
@@ -68,8 +71,18 @@ async function handler(
 
   const { path } = await params;
   const pathStr = path.join("/");
+  // AA-577 follow-up — no encoded slash, backslash or dot segment may rewrite the path after the checks
+  // below (lib/bffPath.ts), and the staff branch (which carries the admin secret to ANY backend path)
+  // must not hand the AA-577 docs (/openapi.json, /docs, /redoc) to a non-admin role.
+  const upstreamPath = proxyPath(path);
+  if (upstreamPath === null) {
+    return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
+  }
+  if (staffRole !== null && staffRole !== "admin" && isApiDocsPath(pathStr)) {
+    return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
+  }
   const search = req.nextUrl.search;
-  const url = `${API_URL}/${pathStr}${search}`;
+  const url = `${API_URL}/${upstreamPath}${search}`;
 
   // AA-441: was unconditionally forcing Content-Type: application/json + reading the body as
   // .text() — silently mangled any multipart/form-data request (e.g. BrandTab.tsx's brand-guide

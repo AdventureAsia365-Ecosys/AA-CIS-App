@@ -8,7 +8,7 @@
 
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet,
-  Puzzle, ListChecks, Scale, Search, Image as ImageIcon,
+  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -48,6 +48,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: "/admin/llm-usage", icon: <Wallet size={16} />,     label: "External Spend" },
     { href: "/admin/jobs",      icon: <ListChecks size={16} />, label: "Jobs" },
     { href: "/admin/decisions", icon: <Scale size={16} />,      label: "Jev Decisions" },
+    { href: "/admin/api-docs",  icon: <BookOpen size={16} />,   label: "API Docs" },  // AA-577 follow-up
   ] },
 ];
 
