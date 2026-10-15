@@ -736,7 +736,8 @@ _VERSION_DETAIL_SQL = """
            ttv.qa_repair_count, ttv.qa_checked_at, ttv.rewritten_content, ttv.edit_source, ttv.created_at,
            ttv.job_id,
            (SELECT max(v2.version_number) FROM gold_aa_internal.tenant_tour_versions v2
-            WHERE v2.tenant_id = ttv.tenant_id AND v2.published_tour_id = ttv.published_tour_id)
+            WHERE v2.tenant_id = ttv.tenant_id AND v2.published_tour_id = ttv.published_tour_id
+              AND v2.status <> 'failed')  -- a failed rewrite has no text: the older one stays the copy
                AS latest_version_number,
            (SELECT max(al.created_at) FROM acp_shared.audit_log al
             WHERE al.resource_type = 'tenant_tour_version' AND al.resource_id = ttv.id::text
@@ -1062,7 +1063,7 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
             await write_audit_log(
                 conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
                 action=_TOUR_ACTION_BY_MODE[body.mode], resource_type="tenant_tour_version",
-                resource_id=version_id,
+                resource_id=str(row["id"]),  # canonical form: the detail reads by ttv.id::text
                 details={"field": body.field, "index": body.index, "start": start, "end": end,
                          "before": old_text[start:end], "after": replacement, "mode": body.mode,
                          "gate": body.gate, "problem": body.problem, "suggestion": body.suggestion,
@@ -1070,6 +1071,9 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
                          "suggestion_cost_usd": body.suggestion_cost_usd,
                          "version_number": row["version_number"], "status": row["status"],
                          "section_before": old_text, "section_after": new_text,
+                         # the whole version before / after: the history holds both versions
+                         # (AA-802 Done-when), not only the section that changed
+                         "content_before": rc, "content_after": new_rc,
                          "exported": row["exported_at"] is not None, "warnings": warnings},
             )
         detail = await _load_version_detail(conn, version_id)

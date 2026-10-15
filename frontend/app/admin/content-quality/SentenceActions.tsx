@@ -237,8 +237,9 @@ export function AdminEdits({ edits }: { edits: AdminEdit[] }) {
 
 /** AA-802 — the tenant took a copy away (published / exported) BEFORE an admin edit: that copy still
  *  has the old text and nothing re-syncs it. Shown at the top of the T9 and T2 drawers. */
-export function TenantCopyNotice({ copy, what }: { copy: TenantCopy; what: "piece" | "version" }) {
-  if (!copy.older_copy) return null;
+export function TenantCopyNotice({ copy, what }: { copy?: TenantCopy | null; what: "piece" | "version" }) {
+  // optional: the admin UI can ship before the API that returns `tenant_copy` (Vercel vs ECS deploy)
+  if (!copy?.older_copy) return null;
   const how = copy.published_at && copy.delivered_at === copy.published_at
     ? "published it (WordPress / the channel is not re-synced)"
     : "downloaded it";

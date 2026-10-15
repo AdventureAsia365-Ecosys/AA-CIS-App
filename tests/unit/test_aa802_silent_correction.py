@@ -176,7 +176,26 @@ async def test_apply_cut_updates_the_tenants_row_in_place_and_audits():
     assert d["before"] == BAD and d["after"] == "" and d["field"] == "summary"
     assert d["section_before"] == SUMMARY and d["section_after"] == new_rc["summary"]  # version history
     assert d["version_number"] == 1 and d["status"] == "needs_review"
+    # Done-when "history has both versions": the whole version before and after the edit
+    assert d["content_before"] == RC and d["content_after"] == new_rc
     assert out["warnings"] == [] and out["editable"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_audits_the_canonical_version_id():
+    # the drawer reads edits by ttv.id::text, so an upper-case path id must not orphan the row
+    conn = _Conn(_version_row())
+    start = SUMMARY.index(BAD)
+    await cq.apply_tour_sentence(VERSION_ID.upper(), cq.TourSentenceApplyBody(
+        field="summary", start=start, end=start + len(BAD), text=BAD, mode="cut"), _request(conn),
+        x_admin_secret=SECRET, x_admin_user_id="u1", x_admin_role="admin")
+    [(_, audit)] = conn.audits()
+    assert audit[4] == VERSION_ID
+
+
+def test_latest_version_ignores_failed_rewrites():
+    # a failed newer rewrite has no text: the older version is still the tenant's copy
+    assert "v2.status <> 'failed'" in cq._VERSION_DETAIL_SQL
 
 
 @pytest.mark.asyncio
@@ -351,9 +370,9 @@ async def test_docx_export_writes_an_admin_only_audit_row():
     conn.fetchrow.return_value = _docx_row()
     req = _request(conn)
     with patch.object(v1_tours, "write_audit_log", new=AsyncMock()) as audit:
-        resp = await v1_tours.export_version_docx(VERSION_ID, req, {"sub": str(TENANT_ID)})
+        resp = await v1_tours.export_version_docx(VERSION_ID.upper(), req, {"sub": str(TENANT_ID)})
     assert resp.status_code == 200
-    kw = audit.await_args.kwargs
+    kw = audit.await_args.kwargs  # resource_id canonical (lower-case) even for an upper-case path id
     assert kw["action"] == TenantAuditAction.TOUR_VERSION_EXPORTED == "tenant_tour_version.exported"
     assert (kw["resource_type"], kw["resource_id"], kw["tenant_id"]) == ("tenant_tour_version", VERSION_ID,
                                                                          str(TENANT_ID))

@@ -72,13 +72,26 @@ function SectionText({ sec, canEdit, activeKey, onPick }: {
   return <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, lineHeight: 1.65, color: A.body }}>{runs}</div>;
 }
 
+/** The admin UI (Vercel) can go live before the API (ECS) that adds the AA-802 fields: an older
+ *  payload renders read-only instead of crashing the drawer. */
+function withDefaults(v: TourVersionDetail): TourVersionDetail {
+  return {
+    ...v,
+    reviews: v.reviews ?? [], cost_by_stage: v.cost_by_stage ?? [], sections: v.sections ?? [],
+    flagged_sentences: v.flagged_sentences ?? [], admin_edits: v.admin_edits ?? [],
+    editable: v.editable ?? false,
+    edit_block_reason: v.edit_block_reason ?? (v.editable === undefined ? "Sentence edits need the newer API — reload after the deploy." : null),
+    tenant_copy: v.tenant_copy ?? { published_at: null, exported_at: null, delivered_at: null, older_copy: false, edits_after_delivery: 0 },
+  };
+}
+
 export default function TourVersionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
   const { data: v, isError, error } = useQuery({
     queryKey: ["cq-version", id],
-    queryFn: () => apiGet<TourVersionDetail>(`/api/admin/content-quality/tour-versions/${id}`, { admin: true }),
+    queryFn: () => apiGet<TourVersionDetail>(`/api/admin/content-quality/tour-versions/${id}`, { admin: true }).then(withDefaults),
   });
   const [target, setTarget] = useState<Target | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
@@ -106,7 +119,7 @@ export default function TourVersionDrawer({ id, onClose }: { id: string; onClose
     mutationFn: (body: TourApplyBody) =>
       apiSend<TourVersionDetail & { warnings?: CheckFailure[] }>(`${base}/apply`, { body, admin: true }),
     onSuccess: ({ warnings, ...detail }, body) => {
-      qc.setQueryData(["cq-version", id], detail);
+      qc.setQueryData(["cq-version", id], withDefaults(detail));
       qc.invalidateQueries({ queryKey: ["cq-versions"] });
       setCutting(null);
       setEditor(null);
