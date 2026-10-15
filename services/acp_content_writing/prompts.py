@@ -200,6 +200,10 @@ Rules:
   invented comparison.
   FORBIDDEN: social proof — what travellers, guests, families or children usually feel, say,
   love or remember ("tends to stay with", "most families find", "popular with").
+  FORBIDDEN (usage policy): reviews, ratings and testimonials — no quote from a customer or guest,
+  no star rating or score, no "verified review"; never write as a customer or traveller in the
+  first person ("I booked", "my wife and I", "we travelled with them"); never claim the piece is
+  independent, unbiased or unsponsored. The brand publishes this piece itself, in its own voice.
   FORBIDDEN: places from the "Other trips" lines or the TRIP name that the SCOPE line does not
   list; and never mention the content seed, source notes or itinerary as such.
   LOCATION: name only the location the seed gives (its "Location" line); never place it in

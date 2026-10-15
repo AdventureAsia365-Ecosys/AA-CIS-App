@@ -39,10 +39,11 @@ _TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
                    "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
-                   "F13_repeat", "F17_trip_fact", "F18_rarity"}  # S234 round 3
+                   "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3
+                   "F19_authenticity"}  # AA-819 (AUP 2026-11)
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
 _QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
-                 "F13_repeat", "F17_trip_fact", "F18_rarity"}
+                 "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity"}
 # S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
 # rewrite); like F4_seo_surface they never send a piece to the full rewrite.
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
@@ -516,7 +517,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
     repair needs a guard after it). Returns [{gate, violations, blocking}] — empty means clean.
 
     Blocking (plan section 4, PR4 — the admin cannot save it): F1 (no number the source lacks), F2
-    banned patterns, the brand's forbidden words, F11 (no foreign brand / platform name), and a
+    banned patterns, the brand's forbidden words, F11 (no foreign brand / platform name), F19 (no
+    review, testimonial, customer first person or independence claim — AA-819), and a
     near-verbatim copy of one of its ±4 neighbours (hygiene.near_verbatim — the rule the pipeline
     auto-deletes on; `splice` would otherwise have turned it into a silent cut).
 
@@ -536,6 +538,8 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         qg.gate_banned_patterns(sentence, grounding),
         qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
+        # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
+        qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),
     ]
     out = [{"gate": r["gate"], "violations": list(r["violations"]), "blocking": True}
            for r in results if not r["passed"]]
