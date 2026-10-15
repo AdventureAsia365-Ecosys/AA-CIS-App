@@ -264,13 +264,18 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
   );
 }
 
-export default function AngleGateWizard({ requestId, embedded = false, onPieceChange }: {
+export default function AngleGateWizard({ requestId, embedded = false, onPieceChange, onDetachedPiece }: {
   requestId: string | null;
   embedded?: boolean;
   // AA-668 — the Writer panel's view of the current piece (null = none yet / cleared). The panel
   // renders the finished piece + its actions, and keeps watching an in-progress piece after the
   // tenant closes it. Must be a stable callback (a useState setter or useCallback).
   onPieceChange?: (piece: ContentPiece | null) => void;
+  // AA-668 — a write the tenant started (angle clicked) whose 202 placeholder (or in-progress
+  // latest piece) arrives AFTER this wizard unmounted, i.e. the Writer panel was closed in the
+  // ~1-2 s between the click and the write call answering. The job runs either way; this hands
+  // the piece to the Slate's background watcher so the "is ready" toast still fires.
+  onDetachedPiece?: (piece: ContentPiece) => void;
 }) {
   const router = useRouter();
 
@@ -298,6 +303,15 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   const [ctaInput, setCtaInput] = useState("");
   const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AA-668 — false once this wizard unmounted (Writer panel closed). A fetch still in flight at
+  // that moment must not start a poll interval nobody will ever clear (the unmount cleanup has
+  // already run); a just-started write goes to onDetachedPiece instead.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   // AA-569 — only true right after a write this session just finished (set inside pollPiece's
   // success branch below), never when resuming an already-finished piece via the latest-piece
@@ -332,6 +346,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     return true;
   }, []);
   const pollAngles = useCallback((requestId: string) => {
+    if (!aliveRef.current) return; // unmounted — the t8_angles job finishes server-side anyway
     stopAnglePoll();
     setGenerating(true);
     const startTime = Date.now();
@@ -385,6 +400,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
 
   // AA-466 — single-piece poll for the 202 placeholder.
   const pollPiece = useCallback((pieceId: string) => {
+    if (!aliveRef.current) return; // unmounted — see aliveRef; the t9_write job keeps running
     stopPolling();
     const startTime = Date.now();
     pollingRef.current = setInterval(async () => {
@@ -442,6 +458,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       })
       .then((placeholder: ContentPiece | null) => {
         if (!placeholder) return; // 422 branch above already handled its own state
+        if (!aliveRef.current) { onDetachedPiece?.(placeholder); return; }
         setPiece(placeholder);
         pollPiece(placeholder.piece_id);
       })
@@ -449,7 +466,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         setWriting(false);
         setWriteError(e instanceof Error ? e.message : "Couldn't write content — try again.");
       });
-  }, [pollPiece]);
+  }, [pollPiece, onDetachedPiece]);
 
   // AA-522 — the ONE place that decides what the write step should show, whether arrived at via
   // a fresh choose(), a reload/resume, or a "Change angle" re-choice: ask the server for the
@@ -469,6 +486,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       .then(r => (r.ok ? r.json() : { piece: null }))
       .then(({ piece: latest }: { piece: ContentPiece | null }) => {
         if (latest) {
+          if (!aliveRef.current) {
+            if (latest.ready_state === "in_progress") onDetachedPiece?.(latest);
+            return;
+          }
           setPiece(latest);
           if (latest.ready_state === "in_progress") { setWriting(true); pollPiece(latest.piece_id); }
           return;
@@ -484,7 +505,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // re-enter a CTA manually; not worth surfacing as a hard error for a resume-convenience
         // lookup.
       });
-  }, [req, writeContent, pollPiece]);
+  }, [req, writeContent, pollPiece, onDetachedPiece]);
 
   const choose = useCallback((idx: number) => {
     if (!req) return;

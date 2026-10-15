@@ -61,7 +61,7 @@
 //  #6 the tab strip scrolls horizontally (hidden scrollbar) instead of wrapping onto extra lines
 //     on a narrow screen.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList, CheckCircle2 } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
 import { ToastProvider } from "../../../_kit";
@@ -163,6 +163,15 @@ function SlateTabInner() {
     }
     setPanel(null);
   }, [panel, watch]);
+
+  // A write whose 202 arrived after the panel closed (closed in the click → write-call window).
+  // Skipped when that request's panel is open again by then: the reopened wizard resumes it itself.
+  const panelRef = useRef<WriterTarget | null>(null);
+  useEffect(() => { panelRef.current = panel; }, [panel]);
+  const watchDetached = useCallback((p: ContentPiece, t: WriterTarget) => {
+    if (p.ready_state !== "in_progress" || panelRef.current?.requestId === t.requestId) return;
+    watch({ pieceId: p.piece_id, requestId: t.requestId, title: t.title });
+  }, [watch]);
 
   const writer: WriterControls = { openSubjectId: panel?.subjectId ?? null, known, open: openWriter };
 
@@ -326,7 +335,7 @@ function SlateTabInner() {
       )}
       </div>
 
-      <WriterPanel key={panel?.requestId ?? "closed"} target={panel} onClose={closeWriter} />
+      <WriterPanel key={panel?.requestId ?? "closed"} target={panel} onClose={closeWriter} onBackgroundPiece={watchDetached} />
     </Card>
   );
 }

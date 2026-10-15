@@ -49,17 +49,25 @@ export function channelName(channel: string): string {
 // full-screen sheet on a phone.
 const PANEL_WIDTH = 720;
 
-export function WriterPanel({ target, onClose }: {
+export function WriterPanel({ target, onClose, onBackgroundPiece }: {
   target: WriterTarget | null;
   /** Called with the last piece the panel saw, so the Slate can keep watching a running write. */
   onClose: (lastPiece: ContentPiece | null) => void;
+  /** A write whose first answer arrived after the panel closed (see AngleGateWizard onDetachedPiece). */
+  onBackgroundPiece?: (piece: ContentPiece, target: WriterTarget) => void;
 }) {
   // The wizard reports its current piece through this (stable) setter. The Slate remounts the
   // panel per request (key), so a previous request's piece never shows here.
   const [piece, setPiece] = useState<ContentPiece | null>(null);
-  const close = useCallback(() => onClose(piece), [onClose, piece]);
-
+  // The publish confirm is lifted here so Escape (which both kit Drawer and Modal listen for on
+  // window) closes only the confirm, not the whole panel behind it.
+  const [confirmPublish, setConfirmPublish] = useState(false);
   const ready = piece?.ready_state === "ready" && piece.content_text != null;
+  const confirmOpen = confirmPublish && ready; // the confirm only renders with the result actions
+  const close = useCallback(() => { if (!confirmOpen) onClose(piece); }, [onClose, piece, confirmOpen]);
+  const detached = useCallback((p: ContentPiece) => {
+    if (target) onBackgroundPiece?.(p, target);
+  }, [target, onBackgroundPiece]);
 
   return (
     <Drawer
@@ -75,11 +83,14 @@ export function WriterPanel({ target, onClose }: {
           </div>
         </div>
       )}
-      footer={ready && target ? <ResultActions piece={piece} target={target} /> : undefined}
+      footer={ready && target
+        ? <ResultActions piece={piece} target={target} confirmPublish={confirmPublish} setConfirmPublish={setConfirmPublish} />
+        : undefined}
     >
       {target && (
         <div data-testid="writer-panel" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <AngleGateWizard key={target.requestId} requestId={target.requestId} embedded onPieceChange={setPiece} />
+          <AngleGateWizard key={target.requestId} requestId={target.requestId} embedded
+            onPieceChange={setPiece} onDetachedPiece={detached} />
           {ready && <FinishedPiece piece={piece} />}
         </div>
       )}
@@ -114,10 +125,12 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
   );
 }
 
-function ResultActions({ piece, target }: { piece: ContentPiece; target: WriterTarget }) {
+function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
+  piece: ContentPiece; target: WriterTarget;
+  confirmPublish: boolean; setConfirmPublish: (open: boolean) => void;
+}) {
   const toast = useToast();
   const router = useRouter();
-  const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const channel = piece.channel ?? target.channel;
   const exportable = { piece_id: piece.piece_id, channel, angle: { name: target.title } };
