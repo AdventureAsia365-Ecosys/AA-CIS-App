@@ -34,6 +34,21 @@ DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 
 _SCHEMA_APPLIED = False
 
+# AA-817: stand-in for gold_aa_internal.tenant_tour_versions (live table created by migration 001, which
+# this DB skips). Columns used by the RLS tests, with defaults; no version_number, so test_aa766's
+# _ttv_minimal() treats it as a stand-in too.
+TTV_STANDIN_DDL = """
+    CREATE TABLE IF NOT EXISTS gold_aa_internal.tenant_tour_versions (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id         UUID NOT NULL,
+        published_tour_id UUID,
+        rewritten_content JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status            TEXT NOT NULL DEFAULT 'draft',
+        edit_source       TEXT NOT NULL DEFAULT 'ai_generated',
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+"""
+
 
 def _get_conn():
     return psycopg2.connect(
@@ -147,6 +162,12 @@ def _apply_schema(conn):
                 CREATE UNIQUE INDEX IF NOT EXISTS destinations_lower_name_uidx
                     ON shared.destinations (lower(name));
             """ + sql
+        if mf.startswith("229_"):
+            # AA-817: 229 sets RLS + grants on gold_aa_internal.tenant_tour_versions, which only
+            # migration 001 creates (skipped here), and its guard refuses a missing table. Apply it
+            # against a stand-in, dropped again right after (below), so every other test sees the
+            # same DB as before 229; test_aa817_* recreate the stand-in in their own transaction.
+            cur.execute(TTV_STANDIN_DDL)
         if "005_tenant_config" in mf:
             print(f"PATCHING 005: {mf}")
             # Fix: tenant_id TEXT → UUID
@@ -226,6 +247,8 @@ def _apply_schema(conn):
             print(f"Warning {mf}: {e}")
             try: mconn.close()
             except: pass
+        if mf.startswith("229_"):
+            cur.execute("DROP TABLE IF EXISTS gold_aa_internal.tenant_tour_versions")
 
     # Drop FK constraints in test env — cross-table seeding is fragile
     cur.execute("""
