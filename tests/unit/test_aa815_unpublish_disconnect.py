@@ -75,9 +75,12 @@ def _request(pool):
     return req
 
 
-def _published_row(channel="blog", external_id="42"):
+def _published_row(channel="blog", external_id="42", external_url=None):
+    if external_url is None:
+        external_url = ("https://www.tenant-blog.com/post-42/" if channel == "blog"
+                        else f"https://www.facebook.com/{external_id}")
     return {"publish_id": str(PUBLISH_ID), "piece_id": PIECE_ID, "channel": channel,
-            "external_id": external_id}
+            "external_id": external_id, "external_url": external_url}
 
 
 def _updated_row(channel="blog"):
@@ -255,6 +258,31 @@ class TestTenantUnpublish:
             with pytest.raises(HTTPException) as exc_info:
                 await pub_mod.unpublish(PUBLISH_ID, _request(pool), tenant=TENANT)
         assert exc_info.value.status_code == 502
+
+    async def test_post_on_a_previously_connected_wordpress_site_is_refused(self):
+        # WordPress post IDs are per site: post 42 on the newly connected site is another post.
+        pool, conn = _sequential_pool(_published_row(external_url="https://old-blog.com/post-42/"),
+                                      {"secret_key": "acp/cms/x"})
+        delete = AsyncMock()
+        with patch.object(pub_mod, "_get_secret", return_value=WP_CREDS), \
+             patch.object(WordPressAdapter, "delete_post", delete):
+            with pytest.raises(HTTPException) as exc_info:
+                await pub_mod.unpublish(PUBLISH_ID, _request(pool), tenant=TENANT)
+        assert exc_info.value.status_code == 422
+        assert "old-blog.com" in exc_info.value.detail
+        delete.assert_not_awaited()
+        assert conn.fetchrow.await_count == 2  # no UPDATE
+
+    async def test_post_on_a_previously_connected_facebook_page_is_refused(self):
+        pool, _ = _sequential_pool(_published_row("facebook", "999_456"), {"secret_key": "acp/social/x"})
+        delete = AsyncMock()
+        with patch.object(pub_mod, "_get_secret", return_value=FB_CREDS), \
+             patch.object(FacebookAdapter, "delete_post", delete):
+            with pytest.raises(HTTPException) as exc_info:
+                await pub_mod.unpublish(PUBLISH_ID, _request(pool), tenant=TENANT)
+        assert exc_info.value.status_code == 422
+        assert "Page 999" in exc_info.value.detail
+        delete.assert_not_awaited()
 
     async def test_concurrent_flip_after_remote_delete_is_404(self):
         pool, _ = _sequential_pool(_published_row(), {"secret_key": "acp/cms/x"}, None)

@@ -159,7 +159,7 @@ async def test_tenant_unpublish_success_records_tenant_actor():
     from services.acp_s4_blog.cms.wordpress import WordPressAdapter
 
     published = {"publish_id": str(PUBLISH_ID), "piece_id": str(uuid.uuid4()), "channel": "blog",
-                 "external_id": "42"}
+                 "external_id": "42", "external_url": "https://b.com/p/42/"}
     updated = {"publish_id": str(PUBLISH_ID), "channel": "blog", "status": "unpublished",
                "unpublished_at": datetime(2026, 8, 24, tzinfo=timezone.utc)}
     pool, conn = _make_pool()

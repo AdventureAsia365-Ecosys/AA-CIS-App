@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 from typing import Optional
+from urllib.parse import urlparse
 from uuid import UUID
 
 import boto3
@@ -129,6 +130,24 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
     }
 
 
+def _site_host(url: Optional[str]) -> str:
+    host = (urlparse(url or "").hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _other_account(channel: str, creds: dict, external_id: str, external_url: Optional[str]) -> Optional[str]:
+    """AA-815 — the post was published to a different WordPress site / Facebook Page than the one
+    connected now (the tenant changed credentials since). WordPress post IDs are per-site
+    integers, so deleting `external_id` on the new site would trash an unrelated post. Returns
+    where the post lives, or None when it is the connected account (or that cannot be told)."""
+    if channel == "blog":
+        posted, connected = _site_host(external_url), _site_host(creds.get("wp_url"))
+        return posted if posted and connected and posted != connected else None
+    page_id = str(creds.get("page_id") or "")
+    posted_page = external_id.split("_", 1)[0] if "_" in external_id else ""
+    return f"Page {posted_page}" if posted_page and page_id and posted_page != page_id else None
+
+
 async def _delete_remote(channel: str, creds: dict, external_id: str) -> str:
     """AA-815 — remove the live post. Returns the adapter's outcome ("trashed" / "already_gone" /
     "deleted"); raises when the channel did not confirm the removal."""
@@ -147,13 +166,15 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     AA-815 — the post is removed from the channel FIRST (WordPress: moved to trash; Facebook:
     Graph DELETE), using publish_log.external_id. Only a confirmed removal flips the row; a
     missing connection (422), unreadable credentials or a channel error (502) leave it
-    'published', so the portal never tells a tenant a post is gone while it is still public."""
+    'published', so the portal never tells a tenant a post is gone while it is still public.
+    A post published to another WordPress site / Facebook Page than the one connected now is
+    refused (422) before any remote call — a WordPress post ID only means something on its site."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            SELECT publish_id::text, piece_id::text, channel, external_id
+            SELECT publish_id::text, piece_id::text, channel, external_id, external_url
             FROM acp_shared.publish_log
             WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
         """, publish_id, tenant_id)
@@ -180,6 +201,12 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     except ClientError as exc:
         logger.error("unpublish_secret_read_failed", tenant_id=tenant_id, channel=channel, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+
+    elsewhere = _other_account(channel, creds, row["external_id"], row["external_url"])
+    if elsewhere:
+        raise HTTPException(status_code=422,
+                            detail=f"This post was published to {elsewhere}, not the {name} account connected "
+                                   f"now — remove it there directly.")
 
     try:
         remote = await _delete_remote(channel, creds, row["external_id"])
