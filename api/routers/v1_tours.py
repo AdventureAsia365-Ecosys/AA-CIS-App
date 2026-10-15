@@ -822,6 +822,21 @@ async def export_version_docx(
     if not row:
         raise HTTPException(status_code=404, detail="Version not found")
 
+    # AA-802 — record the download so the admin Content Quality drawer can tell an admin that the
+    # tenant already holds a copy older than a later admin correction. Admin-only row (tenants never
+    # read audit_log). Best-effort, like the T9 export audit: a lost row must not fail the download.
+    try:
+        import uuid as _uuid
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.TOUR_VERSION_EXPORTED, resource_type="tenant_tour_version",
+            # canonical uuid text: the admin drawer matches it against ttv.id::text
+            resource_id=str(_uuid.UUID(str(version_id))),
+            details={"format": "docx", "version_number": row["version_number"]},
+        )
+    except Exception:
+        pass
+
     # Same rewritten_content-overrides-aa_* merge CatalogTab.tsx's own loadDetail() does —
     # a tenant's manual edit lives in rewritten_content, not the flat aa_* columns.
     rc = {}

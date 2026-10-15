@@ -704,6 +704,16 @@ the single tenant rule:
 - Admin path: `/v1/tours/{id}/full` keeps the full before/after payload only for the X-Admin-Secret
   path.
 - Test: `tests/unit/test_aa796_tenant_projection.py` key-walks the tenant routes.
+- Silent correction (AA-802): an **admin** can cut / rewrite / edit one sentence of a T2 version
+  from the Content Quality tour-versions drawer (`/admin/content-quality/tour-versions/{id}/sentences/suggest|apply`).
+  This works only for finished AI text the tenant has not decided on (`ai_generated` / `needs_review`),
+  only on their latest version, and never on a `tenant_edit` version. The row is updated **in place**
+  (`rewritten_content` only, by `id AND tenant_id`; 0 rows → 409). There is no new version, no quota use
+  and no tenant-visible mark. The history is the `audit_log` row
+  (`tenant_tour_version.admin_sentence_*`, sentence and whole section before/after). Both drawers
+  (T9 piece, T2 version) warn the admin when the tenant took a copy away (published, or exported;
+  the T2 DOCX export writes `tenant_tour_version.exported`) before a later admin edit. Nothing
+  re-syncs that copy.
 
 **Channel**:
 One of 8 values: `blog`, `linkedin`, `facebook`, `instagram`, `tiktok`, `email`,

@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { Badge, Drawer, StatusBadge, apiGet } from "../../_kit";
-import { AdminEdits, FlaggedSentences } from "./SentenceActions";
+import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
 import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -98,6 +98,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
       {isError && <div style={{ color: A.red, fontSize: 12.5 }}>Could not load the piece ({error instanceof Error ? error.message : String(error)})</div>}
       {!p ? <div style={{ fontSize: 12.5, color: A.muted }}>Loading…</div> : (
         <>
+          <TenantCopyNotice copy={p.tenant_copy} what="piece" />
           {p.held_reason && (
             <div style={{ fontSize: 12.5, background: A.redSoft, borderRadius: 8, padding: "8px 10px", color: A.ink }}>
               <b>Held (admin label only — the tenant received this piece):</b> {p.held_reason}
