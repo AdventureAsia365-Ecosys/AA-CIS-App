@@ -56,7 +56,7 @@ class TestPack:
 
     def test_compile_rubric_names_the_tenant(self):
         rubric = compile_rubric(pack_from_row(ROW))
-        assert rubric.startswith("BRAND IDENTITY — Terra Family Expeditions")
+        assert rubric.startswith("BRAND IDENTITY: Terra Family Expeditions")
         assert "Adventure Asia" not in rubric
         assert compile_rubric({}) is None
 

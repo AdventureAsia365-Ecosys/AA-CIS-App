@@ -267,7 +267,7 @@ def test_t2_audit_fallback_uses_the_tenant_rubric_not_adventure_asia():
         cls.return_value.generate.return_value = _audit_resp()
         out = ba.brand_audit_node(state)
     req = cls.return_value.generate.call_args.args[0]
-    assert "BRAND IDENTITY — Trail Pulse" in req.system_prompt and _STYLE in req.system_prompt
+    assert "BRAND IDENTITY: Trail Pulse" in req.system_prompt and _STYLE in req.system_prompt
     assert "ADVENTURE ASIA BRAND IDENTITY" not in req.system_prompt
     assert "Review this tour against THIS client brand's standards." in req.user_prompt
     assert "calm, assured, selective" not in req.user_prompt

@@ -147,6 +147,13 @@ _INDEPENDENCE = [
 _FAMILIES = (("testimonial", _TESTIMONIAL), ("first_person", _FIRST_PERSON), ("independence", _INDEPENDENCE))
 
 
+def attribution_spans(text: str) -> list[tuple[int, int]]:
+    """AA-778 — (start, end) of each dash attribution ('"…" <em-dash> Sarah, UK', or '<em-dash> Sarah, UK' on a
+    line of its own): the first two _TESTIMONIAL patterns need the dash. hygiene.fix_dashes runs before
+    the gates and keeps these dashes, so F19 still flags the sentence and cut_flagged removes it whole."""
+    return [m.span() for p in _TESTIMONIAL[:2] for m in p.finditer(text or "") if m.group(0).strip()]
+
+
 def _sentence_around(text: str, start: int, end: int) -> str:
     """The sentence (or line) a match sits in — enough context to tell a trek grade from a review score."""
     lo = max(text.rfind(c, 0, start) for c in (".", "!", "?", "\n")) + 1
@@ -307,4 +314,4 @@ def _with_faq_answers(content_text: str, ranges: list[tuple[int, int]]) -> list[
     return out
 
 
-__all__ = ["GATE", "cta_review_claims", "cut_flagged", "field_hits", "find_issues", "flagged"]
+__all__ = ["GATE", "attribution_spans", "cta_review_claims", "cut_flagged", "field_hits", "find_issues", "flagged"]

@@ -500,14 +500,16 @@ def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
     admin replacement (lesson: a deterministic fix runs after the LAST LLM step — the suggest
     call is now that step): drop [R:id]/[F:id] citation tags and the SOURCE's [Moment id=…] /
     [Fact id=…] labels the model may echo, strip markdown on plain-text channels, collapse
-    whitespace."""
+    whitespace, and replace em-dashes (hygiene.fix_dashes, AA-778: F2 blocks a residue em-dash, so an
+    admin's or the suggest call's dash is converted here rather than refused)."""
     from services.acp_content_writing.generate import strip_markdown
+    from services.acp_content_writing.hygiene import fix_dashes
     from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS
     from services.acp_content_writing.quality_gates import strip_citation_tags
     text = _SOURCE_LABEL_RE.sub("", strip_citation_tags(replacement or ""))
     if channel in PLAIN_TEXT_CHANNELS:
         text = strip_markdown(text)
-    return " ".join(text.split())
+    return fix_dashes(" ".join(text.split()))[0]
 
 
 def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dict], *,

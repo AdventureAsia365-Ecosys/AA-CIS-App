@@ -53,9 +53,9 @@ import structlog
 
 from services.acp_content_writing import authenticity
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
-from services.acp_content_writing.hygiene import (HygieneContext, brief_phrases, content_words, contrast_excess,
-                                                  copies, dangling_opener, find_issues, near_verbatim,
-                                                  sentence_spans, sibling_templates, template_lines)
+from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
+                                                  contrast_excess, copies, dangling_opener, find_issues,
+                                                  near_verbatim, sentence_spans, sibling_templates, template_lines)
 from services.acp_content_writing.trip_facts import (TripFactContext, find_trip_fact_issues, mentions_activity,
                                                      optional_activities, parse_moments)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
@@ -156,6 +156,12 @@ _BANNED_PATTERNS_SEED = [
     r"\bin today'?s fast[- ]paced world\b", r"\bgame[- ]changing\b", r"\brevolutionary\b",
     r"\bunlock your potential\b", r"\btake your .{2,30} to the next level\b",
     r"\bwhether you'?re a beginner or (an? )?expert\b",
+    # AA-778 — the em-dash residue guard (chị Thư bans it). hygiene.fix_dashes replaces every em-dash just
+    # before the gates, so this fires only on one it kept (the trip name, a quote copied from the source:
+    # exempt here too, the phrase is in the source) or one a later step added. The pattern is the dash
+    # with a word on each side because the seed's own labels hold em-dashes: a bare '\u2014' would always
+    # be exempt.
+    EM_DASH_PATTERN,
 ]
 _BANNED_PATTERNS_COMPILED = [re.compile(p, re.IGNORECASE) for p in _BANNED_PATTERNS_SEED]
 
@@ -282,10 +288,21 @@ def gate_banned_patterns(content_text: str, atom_text: str) -> GateResultLite:
     own gate_banned_patterns() applies, adapted to T9's single-atom shape."""
     violations: list[str] = []
     atom_lower = (atom_text or "").lower()
+    # AA-778 — the dash of a testimonial attribution ('"…" <em-dash> Sarah, UK') is kept by fix_dashes on
+    # purpose so F19 can flag and cut the invented review; F2 must not also hold it, or the piece loses
+    # the F19 sentence repair and stays held on a stale F2 entry after the cut.
+    f19_spans = authenticity.attribution_spans(content_text or "")
     for pattern in _BANNED_PATTERNS_COMPILED:
         for m in pattern.finditer(content_text or ""):
             phrase = m.group(0).lower()
             if phrase in atom_lower:
+                continue
+            if pattern.pattern == EM_DASH_PATTERN and any(s <= m.start() < e or s < m.end() <= e
+                                                          for s, e in f19_spans):
+                continue
+            if pattern.pattern == EM_DASH_PATTERN:  # AA-778 — readable, with its sentence, not the regex
+                violations.append(f"uses an em-dash ('{m.group(0)}'); use a comma, a colon or a full stop: "
+                                  f"'{_sentence_with(content_text, m.group(0))}'")
                 continue
             violations.append(f"banned pattern /{pattern.pattern}/ -> '{m.group(0)}'")
     return _result("F2_banned_patterns", violations)
@@ -1828,7 +1845,10 @@ def run_quality_gates(
     gate_ledger = [
         cta_result,
         gate_grounding(content_text, atom_text),
-        gate_banned_patterns(content_text, atom_text),
+        # AA-778 — the configured CTA (ensure_cta puts it in word for word, after autofix) and the full
+        # trip name (fix_dashes keeps it verbatim) are source text for F2 too
+        gate_banned_patterns(content_text, "\n".join(
+            t for t in (atom_text, cta, hygiene_ctx.trip_name if hygiene_ctx else None) if t)),
         # AA-771 (S233) — the tenant's own forbidden words and brand name, deterministic.
         gate_brand_forbidden_words(content_text, atom_text, (brand_pack or {}).get("forbidden_words")),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),

@@ -1949,14 +1949,216 @@ def _round2_fix(spans: list[dict], i: int, ctx: HygieneContext,
     return (text, "; ".join(logs)) if logs else None
 
 
+# ---------------------------------------------------------------- em-dashes (AA-778)
+
+# chị Thư bans the em-dash in tenant copy; S234 r1–r4 had 182–200 per 20 pieces (14.2 per 1,000 words)
+# and the panel scored AI tells 4.75/10. A dash here is an em-dash (spaced or not) or an en-dash with a
+# space on both sides. A bare en-dash ('3–5 days', '1637–1638') and a hyphen ('Uran Togoo-Tulga Uul')
+# are never dashes. Code uses the escapes (— em, – en) so a search for the character finds
+# only text.
+_EM, _EN = "—", "–"
+_DASH_RE = re.compile(r"[ \t]*—[ \t]*|[ \t]+–[ \t]+")
+_RANGE_END_RE = re.compile(r"[ \t]*[$€£¥]?\d")
+# The F2 residue guard (quality_gates._BANNED_PATTERNS_SEED): an em-dash with the word on each side. F2
+# exempts a match found verbatim in the source, and every seed has em-dashes in its own labels ('Uran
+# Togoo <em-dash> trek into …'), so a bare em-dash would always be exempt; the word-dash-word phrase is
+# exempt only when the source has that exact phrase.
+EM_DASH_PATTERN = r"(?:[^\s—]+[ \t]*)?—(?:[ \t]*[^\s—]+)?"
+_QUOTED_RE = re.compile(r"\"[^\"\n]{1,200}\"|“[^”\n]{1,200}”")
+# X in '… <dash> X' that continues the sentence: joined with a comma ('and it repays both', 'not as a
+# performance', 'which gives children …').
+_DASH_COMMA_OPENERS = frozenset("""and but or nor so yet not which who whom whose where when while whereas
+because before after until though although unless including especially particularly meaning making giving
+leaving allowing letting creating adding suggesting""".split())
+# X that opens on a subject pronoun is a clause of its own ('it is two', 'they're the shape …').
+_DASH_SUBJECTS = frozenset("it it's they they're we we're you you're he she i".split())
+_DASH_FINITE = frozenset("""is are was were has have had does do did can could will would may might must should
+shall isn't aren't wasn't weren't hasn't haven't hadn't doesn't don't didn't can't cannot won't wouldn't
+couldn't shouldn't it's that's there's they're""".split())
+# a finite verb only counts before these: 'figures that give …' is a noun phrase and 'what is given
+# time, what …' a list, not a clause
+_DASH_CLAUSE_STOPS = frozenset("that which who whom whose where when while what how as than".split())
+_DASH_WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ’']+|[,;:()]")
+_DASH_END_JUNK = " \t.!?…\"'”’)*"
+
+
+def _dash_words(x: str) -> list[str]:
+    return [w.lower().replace("’", "'") for w in _DASH_WORD_RE.findall(strip_tags(x))]
+
+
+def _dash_clause(x: str) -> bool:
+    """X can stand as a sentence: it opens on a subject pronoun, or has a finite verb in its first 5
+    words, before any comma, bracket or relative / comparative word and after at most one article
+    ('the herds are …'; 'the moment the route has …' is a noun with a reduced relative). Conservative
+    on purpose: a miss gives a colon (always grammatical), a false hit gives a fragment."""
+    words = _dash_words(x)
+    if len(words) > 2 and words[1] == ",":  # 'instead, the animals are used …'
+        words = words[2:]
+    if len(words) < 2:
+        return False
+    if words[0] in _DASH_SUBJECTS:
+        return True
+    articles = 0
+    for w in words[:5]:
+        if w in _DASH_CLAUSE_STOPS or w in ",;:()":
+            return False
+        articles += w in ("the", "a", "an")
+        if w in _DASH_FINITE:
+            return articles < 2
+    return False
+
+
+def _dash_trailing(head: str, x: str) -> str:
+    """The separator for a single dash before X (the rest of the sentence): ', ' when X continues the
+    sentence (a conjunction, 'not', 'rather than', a relative word, a linking -ing word such as
+    'making', or an -ly / -ed word with no finite verb after it); '. ' when X is a clause of its own and
+    the text before the dash has a finite verb or is a bare 'Yes' / 'No' (the caller capitalises X;
+    'The courtyards, the temples <dash> these are …' has none and would leave a fragment); otherwise
+    ': ' (', ' when the sentence already has a colon). A colon is the fallback because it is never
+    wrong: 'cameras stay at the checkpoint, knowing the rules …' would be a comma splice."""
+    words = _dash_words(x)
+    first = words[0] if words else ""
+    if first in _DASH_COMMA_OPENERS or words[:2] in (["rather", "than"], ["instead", "of"]):
+        return ", "
+    if (len(first) > 4 and first.endswith(("ly", "ed")) and words[1:2] != [","]
+            and not any(w in _DASH_FINITE for w in words)):
+        return ", "
+    head_words = _dash_words(head)
+    if _dash_clause(x) and (any(w in _DASH_FINITE for w in head_words) or head_words in (["yes"], ["no"])):
+        return ". "
+    return ", " if ":" in strip_tags(head) else ": "
+
+
+def _cap_first(s: str) -> str:
+    """`s` with its first letter upper-case (past opening quotes, brackets and markdown)."""
+    for k, ch in enumerate(s):
+        if ch.isalpha():
+            return s[:k] + ch.upper() + s[k + 1:]
+        if not (ch in "\"'“‘*_(" or ch.isspace()):
+            return s
+    return s
+
+
+def _protected_ranges(text: str, ctx: Optional[HygieneContext]) -> list[tuple[int, int]]:
+    """Where a dash is kept: the TRIP name written verbatim ('Ho Chi Minh Trail <em-dash> 14 Days'), and
+    a quoted span ("…" / “…”) that is word for word in the seed, the Facts block or the trip name. The
+    F2 residue guard exempts the same text (its source holds the seed, Facts, trip name and CTA).
+    Also, with or without `ctx`, the dash of a testimonial attribution ('"…" <em-dash> Sarah, UK'): F19
+    needs it to flag the invented quote, which is then cut whole (authenticity.attribution_spans)."""
+    from services.acp_content_writing.authenticity import attribution_spans  # authenticity imports hygiene
+    out: list[tuple[int, int]] = attribution_spans(text)
+    if ctx is None:
+        return out
+    trip = (ctx.trip_name or "").strip()
+    if trip and (_EM in trip or _EN in trip):
+        out += [m.span() for m in re.finditer(re.escape(trip), text, re.I)]
+    source = fold(f"{ctx.seed or ''}\n{ctx.facts or ''}\n{trip}")
+    for m in _QUOTED_RE.finditer(text):
+        inner = m.group(0)[1:-1].strip()
+        if (_EM in inner or _EN in inner) and fold(inner) in source:
+            out.append(m.span())
+    return out
+
+
+def _dash_separators(raw: str, kind: str, dashes: list[re.Match]) -> list[tuple[re.Match, str]]:
+    """(dash, replacement) for the unprotected dashes of one sentence, in order."""
+    if kind == "heading":
+        return [(m, ": " if k == 0 else ", ") for k, m in enumerate(dashes)]
+    seps: list[tuple[re.Match, str]] = []
+    k = 0
+    while k < len(dashes):
+        m = dashes[k]
+        head = raw[:m.start()]
+        if not strip_tags(head).strip(" \t*_#-"):  # a dash that opens the line or the answer
+            seps.append((m, "" if not head.strip() or head.endswith(("*", "_")) else " "))
+            k += 1
+            continue
+        if k + 1 < len(dashes):  # a pair: '<dash> X <dash>' is a parenthesis
+            n = dashes[k + 1]
+            inner = raw[m.end():n.start()]
+            # brackets when X has its own commas, or when 'and' / 'or' follows ('the Je Khenpo, the Chief
+            # Abbot, and the monks' would read as three people)
+            if (("," in strip_tags(inner) or re.match(r"(?:and|or)\b", raw[n.end():], re.I))
+                    and "(" not in inner and ")" not in inner):
+                seps += [(m, " ("), (n, ") ")]
+            else:
+                seps += [(m, ", "), (n, ", ")]
+            k += 2
+            continue
+        x = raw[m.end():]
+        seps.append((m, _dash_trailing(head, x) if strip_tags(x).strip(_DASH_END_JUNK) else ""))
+        k += 1
+    return seps
+
+
+def _fix_dash_span(raw: str, kind: str, keep: list[tuple[int, int]]) -> tuple[str, int]:
+    """One sentence (or heading / FAQ question line) with its dashes replaced. `keep` are protected
+    (start, end) ranges relative to `raw`. Returns (new text, dashes replaced)."""
+    found = [m for m in _DASH_RE.finditer(raw) if not any(s <= m.start() < e for s, e in keep)]
+    if not found:
+        return raw, 0
+    # A dash between two numbers is a range ('1637<em-dash>1638', '20,000 <en-dash> 24,000', '8:00 - 10:00',
+    # '$1,200 <em-dash> $1,500', '10% <em-dash> 20%'), never a clause break: a colon or comma there would change
+    # the fact. An em-dash becomes an unspaced en-dash; a spaced en-dash is left exactly as written.
+    ranges = [m for m in found if raw[:m.start()].rstrip()[-1:] in tuple("0123456789%")
+              and _RANGE_END_RE.match(raw, m.end())]
+    seps = [(m, _EN if _EM in m.group(0) else m.group(0)) for m in ranges]
+    seps += _dash_separators(raw, kind, [m for m in found if m not in ranges])
+    seps.sort(key=lambda p: p[0].start())
+    out, pos = [], 0
+    for m, sep in seps:
+        before = raw[pos:m.start()]
+        out.append(before.rstrip(",;") if sep.strip() in (",", ":", ".", "(") else before)
+        out.append(sep)
+        pos = m.end()
+        if sep == ". ":
+            raw = raw[:pos] + _cap_first(raw[pos:])
+    out.append(raw[pos:])
+    new = re.sub(r",[ \t]*,", ",", "".join(out))
+    new = re.sub(r"[,:][ \t]*(?=[.!?…](?:\s|$|[\"'”’)*]))", "", new)
+    return new, len(seps)
+
+
+def fix_dashes(text: str, ctx: Optional[HygieneContext] = None) -> tuple[str, list[str]]:
+    """AA-778 — replace every em-dash (and spaced en-dash) the writer used as a dash, sentence by
+    sentence, deterministically:
+    - a pair '… <dash> X <dash> …' is a parenthesis: ', X, ', or '(X)' when X has its own commas;
+    - a single '… <dash> X.' becomes ', X.' when X continues the sentence (a conjunction, 'not', a
+      relative word, an -ing or -ly word), '. X.' (capitalised) when X is a clause of its own ('it is
+      two'), otherwise ': X.' (', X.' when the sentence already has a colon);
+    - in a heading, ': ' (then ', ');
+    - between two digits, an en-dash (a number range).
+    Kept: the TRIP name written verbatim, a quoted span copied from the source and a testimonial
+    attribution dash, so F19 still sees it (_protected_ranges; only the attribution is kept without
+    `ctx`, e.g. an admin's sentence in sentence_repair.sanitize_replacement).
+    Bare en-dashes ('3–5 days') and hyphens are never touched. autofix runs it after every sentence
+    deletion, so the repeat and borrowed-sentence rules compare what the writer wrote; the gates
+    (contrast frames, F2) read the result. Returns (text, log)."""
+    text = text or ""
+    if _EM not in text and not re.search(r"[ \t]–[ \t]", text):
+        return text, []
+    keep = _protected_ranges(text, ctx)
+    total = 0
+    for s in reversed(sentence_spans(text)):
+        if s["kind"] == "hashtags" or (_EM not in s["text"] and _EN not in s["text"]):
+            continue
+        rel = [(max(a, s["start"]) - s["start"], min(b, s["end"]) - s["start"]) for a, b in keep
+               if a < s["end"] and s["start"] < b]
+        new, n = _fix_dash_span(s["text"], s["kind"], rel)
+        if n:
+            text = text[:s["start"]] + new + text[s["end"]:]
+            total += n
+    return text, ([f"replaced {total} em-dash(es) with a comma, colon, full stop or brackets"] if total else [])
+
+
 def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     """Fix in place what is safe to fix, in this order: the TRIP name when it names an
     out-of-scope place → 'this journey'; delete sentences borrowed from another trip that name an
     out-of-scope place or leak; trim a leaked frame ('The content seed notes that …'); delete
     social proof the seed does not support; delete the later of two near-verbatim sentences within
-    3 of each other; fix a hashtag one edit away from a seed place; hashtag cap / last line and
-    first-line split when the channel spec gives them. The CTA sentence, headings and FAQ questions
-    are never deleted. Returns (text, log of every edit)."""
+    3 of each other; replace the em-dashes (fix_dashes, AA-778); fix a hashtag one edit away from a
+    seed place; hashtag cap / last line and first-line split when the channel spec gives them. The
+    CTA sentence, headings and FAQ questions are never deleted. Returns (text, log of every edit)."""
     lex = ctx.lexicon
     # S234 round 4 (r3 #3) — blank lines before the first line hid a 283-character hook from the
     # first-line split below (it read an empty first line)
@@ -2047,6 +2249,9 @@ def autofix(content_text: str, ctx: HygieneContext) -> tuple[str, list[str]]:
     log += more
     from services.acp_content_writing.trip_facts import fix_misplaced
     text, more = fix_misplaced(text, ctx.moments, ctx.cta)
+    log += more
+    # AA-778 — after every deletion above (they compare the sentences as written), before the gates
+    text, more = fix_dashes(text, ctx)
     log += more
 
     for old, new in hashtag_fixes(text, lex, ctx.brand_name).items():
@@ -2144,7 +2349,7 @@ def find_issues(content_text: str, ctx: HygieneContext, *, seo_title: Optional[s
 
 __all__ = [
     "COMMON_CAPS", "HygieneContext", "brand_words", "LEAK_RE", "SIBLING_HEADER", "SOCIAL_PROOF_RE", "ScopeLexicon",
-    "autofix",
+    "autofix", "EM_DASH_PATTERN", "fix_dashes",
     "build_scope_lexicon", "content_words", "copies", "copy_words", "expand_to_sentence", "find_issues",
     "find_scope_violations",
     "is_sentence_end", "sentence_tail_end",

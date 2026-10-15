@@ -46,28 +46,28 @@ from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_
 
 _BLOG_FORMAT_INSTRUCTIONS = """
 
-BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a style suggestion):
+BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only; required markup, not a style suggestion):
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
-- Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
+- Put the call to action in the last body paragraph, BEFORE any FAQ, never after the FAQ.
 - End the piece with a FAQ section, LAST (after the call-to-action paragraph), headed by a line
-  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else —
-  each answer must add something the body did not say:
+  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else.
+  Each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
 - FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
   states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
-  bulleted list, and give the richest moment (or section) clearly more depth — at least half as
+  bulleted list, and give the richest moment (or section) clearly more depth: at least half as
   long again as any other section.
 - Immediately after every sentence that uses a specific fact, number, or detail drawn from the
   content seed, append the tag [R:{atom_id}] (this literal id, no spaces inside the brackets). A
   sentence with no such detail needs no tag. This tag is internal provenance markup that will be
-  removed before the reader ever sees this piece — write the surrounding sentence exactly as if
+  removed before the reader ever sees this piece. Write the surrounding sentence exactly as if
   the tag weren't there; it must never change your wording or read as part of the sentence.
 - If a sentence instead uses a detail from the FACTS section below (not the itinerary content
-  above) — price, season, visa, transfer time, or similar — tag it [F:<fact id>] using the id
+  above), such as price, season, visa, transfer time, or similar, tag it [F:<fact id>] using the id
   shown for that fact there, the exact same way, instead of [R:{atom_id}]."""
 
 # AA-513 — route-aware variant, used INSTEAD of _BLOG_FORMAT_INSTRUCTIONS only when
@@ -77,20 +77,20 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 # always be the route-aware version (a single literal id needs no "which moment" disambiguation).
 _BLOG_FORMAT_INSTRUCTIONS_ROUTE = """
 
-BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a style suggestion):
+BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only; required markup, not a style suggestion):
 - Structure the body with real markdown H2 headers: a line starting with exactly "## " for every
   major section (e.g. "## Why Southern Laos"). Do not skip this.
-- Put the call to action in the last body paragraph, BEFORE any FAQ — never after the FAQ.
+- Put the call to action in the last body paragraph, BEFORE any FAQ, never after the FAQ.
 - End the piece with a FAQ section, LAST (after the call-to-action paragraph), headed by a line
-  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else —
-  each answer must add something the body did not say:
+  that is exactly "## FAQ", followed by 3-4 Q/A pairs in this exact format and nothing else.
+  Each answer must add something the body did not say:
   **Q: <question>**
   A: <answer>
 - FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
   states it.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
-  bulleted list, and give the richest moment (or section) clearly more depth — at least half as
+  bulleted list, and give the richest moment (or section) clearly more depth: at least half as
   long again as any other section.
 - A moment the CONTENT SEED marks "Thin moment" gets ONE plain sentence inside a neighbouring section:
   never its own "## " heading, never the climax or a closing reflection; if it is the last stop, state
@@ -98,12 +98,12 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 - The CONTENT SEED below is organized into several moments along the route, each preceded by its
   own citation id (shown as "[Moment id=<id>]"). Immediately after every sentence that uses a
   specific fact, number, or detail drawn from one of these moments, append the tag [R:<id>] using
-  THAT MOMENT'S OWN id exactly as shown — never a different moment's id, and never invent an id.
+  THAT MOMENT'S OWN id exactly as shown, never a different moment's id, and never invent an id.
   A sentence with no such detail needs no tag. This tag is internal provenance markup that will
-  be removed before the reader ever sees this piece — write the surrounding sentence exactly as
+  be removed before the reader ever sees this piece. Write the surrounding sentence exactly as
   if the tag weren't there; it must never change your wording or read as part of the sentence.
-- If a sentence instead uses a detail from the FACTS section below (not one of the moments above)
-  — price, season, visa, transfer time, or similar — tag it [F:<fact id>] using the id shown for
+- If a sentence instead uses a detail from the FACTS section below (not one of the moments above),
+  such as price, season, visa, transfer time, or similar, tag it [F:<fact id>] using the id shown for
   that fact there, the exact same way, instead of a moment's [R:<id>]."""
 
 # AA-514 — blog channel's writer-output contract becomes a JSON envelope (full port of the
@@ -117,7 +117,7 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only — required markup, not a 
 # _SUMMARY_INSTRUCTIONS for why this needs no second LLM call.
 _SEO_ENVELOPE_INSTRUCTIONS = """
 
-OUTPUT FORMAT FOR THIS CHANNEL ONLY — return ONLY valid JSON, no markdown fence, no commentary,
+OUTPUT FORMAT FOR THIS CHANNEL ONLY: return ONLY valid JSON, no markdown fence, no commentary,
 in exactly this shape:
 {{
   "seo_title": "<the SEO search-result headline, 45-60 characters, one natural headline containing
@@ -125,10 +125,10 @@ the target keyword and the place the piece is about>",
   "meta_description": "<the search-result snippet, 130-145 characters (never over 155), ONE complete sentence ending
 in '.', '!' or '?', containing the target keyword>",
   "slug": "<lowercase-kebab-case URL slug, <=60 characters, e.g. 'wat-sisaket-vientiane'>",
-  "body": "<the full piece itself, exactly as specified above — every H2/FAQ/citation-tag
+  "body": "<the full piece itself, exactly as specified above; every H2/FAQ/citation-tag
 requirement above applies to THIS field, not to seo_title/meta_description/slug>",
   "summary": "<1-2 plain-English sentences summarizing what this piece covers and the angle it
-takes — internal use only, never shown to the reader, see SYSTEM_PROMPT for how this is used>"
+takes, for internal use only, never shown to the reader, see SYSTEM_PROMPT for how this is used>"
 }}
 {keyword_line}"""
 
@@ -146,19 +146,19 @@ _SUMMARY_INSTRUCTIONS = """
 ALSO: after the content itself, on its own new line, write exactly ===SUMMARY=== followed by
 1-2 plain-English sentences summarizing what this piece covers and the angle it takes. This is
 for internal reference only (helping a future rewrite of the same subject pick a genuinely
-different angle) — it is never shown to the reader, so it does not need to read well as prose,
+different angle). It is never shown to the reader, so it does not need to read well as prose,
 just be accurate. Skip this entirely for the one channel below whose output format is a JSON
-envelope — put the summary in that envelope's own "summary" field instead, not as a trailing
+envelope: put the summary in that envelope's own "summary" field instead, not as a trailing
 line outside the JSON."""
 
 
 def _keyword_line(keyword: str | None) -> str:
     if not keyword:
         return (
-            "No target keyword was supplied for this piece — write seo_title/meta_description "
+            "No target keyword was supplied for this piece: write seo_title/meta_description "
             "naturally, without forcing one in."
         )
-    return (f"TARGET SEO KEYWORD (a raw search query — use every content word of it in both seo_title and "
+    return (f"TARGET SEO KEYWORD (a raw search query; use every content word of it in both seo_title and "
             f"meta_description, reordered into natural English; never paste it ungrammatically): {keyword}")
 
 
@@ -167,15 +167,15 @@ def _keyword_line(keyword: str | None) -> str:
 PLAIN_TEXT_CHANNELS = {"linkedin", "facebook", "instagram", "tiktok", "ads"}
 _PLAIN_TEXT_INSTRUCTIONS = """
 
-FORMAT FOR THIS CHANNEL: plain text only — no markdown (no **bold**, no # headings, no
+FORMAT FOR THIS CHANNEL: plain text only, no markdown (no **bold**, no # headings, no
 [links](...)). Short paragraphs separated by a blank line. Hashtags, if the channel uses them,
 go on the last line."""
 
 
 SYSTEM_PROMPT = """You are a strategy-led English content writer for the travel brand described in the BRAND
-block below — write in its voice, for its audience, by its style guide.
+block below. Write in its voice, for its audience, by its style guide.
 
-Write ONE finished piece of content for the exact channel, goal, and angle given below — not a
+Write ONE finished piece of content for the exact channel, goal, and angle given below: not a
 draft with placeholders, not an outline, the actual final copy a person could post as-is.
 
 Rules:
@@ -185,22 +185,22 @@ Rules:
 - Use concrete, verifiable details from the content seed given. Never invent a fact, number,
   measurement, or claim that is not in the content seed.
 - SOURCE FIDELITY (same policy as the tour writer):
-  ALLOWED: short, widely known background about a place the content seed names — what it is,
+  ALLOWED: short, widely known background about a place the content seed names: what it is,
   its history and era, who founded it, its religious or cultural role, whether it is still in
-  use — written in words, without numbers unless the seed has them.
+  use, written in words, without numbers unless the seed has them.
   FORBIDDEN: anything that promises the reader something about THIS trip that the content seed
-  does not state — activities, food, services, guides, transport or travel times, clock-times,
+  does not state: activities, food, services, guides, transport or travel times, clock-times,
   views or wildlife sightings, accommodation features, inclusions.
-  FORBIDDEN: invented scene detail — what the place looks, sounds or smells like, the state of
-  its paths, steps or roads, how it is reached, how crowded it is, what "most visitors" do —
+  FORBIDDEN: invented scene detail: what the place looks, sounds or smells like, the state of
+  its paths, steps or roads, how it is reached, how crowded it is, what "most visitors" do,
   unless the content seed says it. Make the piece vivid with the seed's own details and the
   place's real background instead.
-  FORBIDDEN: contrast claims whose other half the seed does not state — "not by X but by Y",
-  "unlike most …", "older than …", "few visitors …" — say what the seed says, without the
+  FORBIDDEN: contrast claims whose other half the seed does not state ("not by X but by Y",
+  "unlike most …", "older than …", "few visitors …"); say what the seed says, without the
   invented comparison.
-  FORBIDDEN: social proof — what travellers, guests, families or children usually feel, say,
+  FORBIDDEN: social proof: what travellers, guests, families or children usually feel, say,
   love or remember ("tends to stay with", "most families find", "popular with").
-  FORBIDDEN (usage policy): reviews, ratings and testimonials — no quote from a customer or guest,
+  FORBIDDEN (usage policy): reviews, ratings and testimonials: no quote from a customer or guest,
   no star rating or score, no "verified review"; never write as a customer or traveller in the
   first person ("I booked", "my wife and I", "we travelled with them"); never claim the piece is
   independent, unbiased or unsponsored. The brand publishes this piece itself, in its own voice.
@@ -216,18 +216,20 @@ Rules:
   number ("high on a cliff face", not "900 metres up"; "for decades", not "since the 1970s").
 - Every sentence must still be true of the content seed when read by an editor who has only the
   content seed in front of them.
-- Include the given call to action, worked naturally into the piece — not pasted on as a bare
+- Include the given call to action, worked naturally into the piece, not pasted on as a bare
   final sentence unless the channel's own style calls for that.
 - A moment whose Status line says OFFERED, NOT INCLUDED is kept in the piece and described as a
   choice ("there is time to…", "you can choose to…"), never as something the reader will do. A moment whose Status line
   says included is never called optional, extra or "if you wish".
+- Never use an em-dash (—). Not in the body, not in a heading, not in the title, meta or FAQ. A comma, a full
+  stop or a colon says the same thing.
 - Avoid generic AI-style writing: no vague benefit stacks, no fake urgency, no unsupported
   superlatives, no manipulative language, no rhetorical-question padding, no clichés ("hidden
   gem", "bucket list", "must-visit", "breathtaking", "unforgettable", "nestled", "tapestry",
   "embark on", "immerse yourself", "look no further", "in today's fast-paced world",
   "game-changing", "revolutionary", "unlock your potential").
-- Sound human, specific, and lightly persuasive — not corporate, not hype-driven.
-- Return ONLY the final content itself — no explanation, no preamble, no markdown code fence,
+- Sound human, specific, and lightly persuasive, not corporate, not hype-driven.
+- Return ONLY the final content itself: no explanation, no preamble, no markdown code fence,
   no restating the brief back.""" + _SUMMARY_INSTRUCTIONS
 
 
@@ -293,12 +295,12 @@ def build_user_prompt(
     # True.
     if facts_text:
         seed_text = (
-            f"{seed_text}\n\nFACTS — additional citable facts NOT in the itinerary above "
+            f"{seed_text}\n\nFACTS: additional citable facts NOT in the itinerary above "
             "(reference prices, travel seasons, visa/entry requirements, estimated transfer "
             "times between places, and similar claims a tour's own itinerary text wouldn't "
             "state). Use these freely as real, verifiable source material; for the blog channel, "
             "tag a sentence built from one of these with [F:<fact id>] using the id shown, the "
-            "same way an atom/moment above is tagged [R:<id>] — never invent a fact id.\n"
+            "same way an atom/moment above is tagged [R:<id>]. Never invent a fact id.\n"
             f"{facts_text}"
         )
 
@@ -312,7 +314,7 @@ def build_user_prompt(
                                                                         brand_audience)[0]}
     if spec is not None:
         voice = ", ".join(brand_audience.get("voice") or []) or "the voice of the BRAND block below"
-        style_line = f"VOICE (from the brand — the channel and the angle never override it): {voice}"
+        style_line = f"VOICE (from the brand; the channel and the angle never override it): {voice}"
     else:
         style_line = f"CHANNEL STYLE: {channel_style['style']}"
     lines = [
@@ -320,9 +322,9 @@ def build_user_prompt(
         f"CHANNEL USE CASE: {channel_style['use_when']}",
         f"CHANNEL STRUCTURE: {channel_style['structure']}",
         style_line,
-        f"CHANNEL — AVOID: {channel_style['avoid']}",
+        f"CHANNEL AVOID: {channel_style['avoid']}",
         "",
-        f"GOAL: {goal['name']} — {goal['description']}",
+        f"GOAL: {goal['name']}. {goal['description']}",
         f"WRITING METHOD FOR THIS GOAL: {goal['logic']}",
         "",
         render_brand_block(brand_audience),
@@ -334,7 +336,7 @@ def build_user_prompt(
         f"CALL TO ACTION TO INCLUDE: {cta}",
         "",
         f"CONTENT SEED (the only source of facts, together with its own FACTS section if one is "
-        f"present below — do not add facts beyond either):\n{seed_text}",
+        f"present below; do not add facts beyond either):\n{seed_text}",
     ]
     if destination:
         lines.insert(-2, f"DESTINATION: {destination}")
@@ -354,7 +356,7 @@ def build_user_prompt(
                          "construction):\n" + "\n".join(f"- {o}" for o in sibling_openers))
     if revision_feedback:
         lines.append(
-            "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW — fix EXACTLY these issues, preserve "
+            "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW. Fix EXACTLY these issues, preserve "
             "everything else that was already working:\n- " + "\n- ".join(revision_feedback)
             # AA-768 — the pilot's rewrites swapped one unsupported number for another; say how
             # a grounding/fact-check failure is fixed, not just that it failed.
