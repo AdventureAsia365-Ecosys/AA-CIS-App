@@ -261,16 +261,37 @@ def test_satellite_streams_only_when_given_a_callback(monkeypatch):
     assert rt.invoke_model.called
 
 
-def test_llm_client_reports_call_and_streams_writer_stage(monkeypatch):
+def _client_streaming(monkeypatch, texts, path):
+    """An LLMClient whose provider streams `texts`. AA-843: the legacy chain starts at the satellite
+    by default; `path="acc2_native"` turns LLM_LEGACY_ACC2_NATIVE on and streams from acc2 instead."""
     from unittest.mock import MagicMock
+    from shared.llm_client import bedrock_satellite as bs
     from shared.llm_client import client as cl
-    from shared.llm_client.models import LLMRequest
 
     c = cl.LLMClient.__new__(cl.LLMClient)
     c._bedrock = MagicMock()
-    c._bedrock.invoke_model_with_response_stream.return_value = {"body": _stream_events(["Draft ", "text"])}
+    rt = MagicMock()
+    if path == "acc2_native":
+        monkeypatch.setenv("LLM_LEGACY_ACC2_NATIVE", "on")
+        c._bedrock.invoke_model_with_response_stream.return_value = {"body": _stream_events(texts)}
+    else:
+        monkeypatch.delenv("LLM_LEGACY_ACC2_NATIVE", raising=False)
+        c._bedrock.invoke_model_with_response_stream.side_effect = AssertionError("acc2-native must not be called")
+        rt.invoke_model_with_response_stream.return_value = {"body": _stream_events(texts)}
+        rt.invoke_model.return_value = {"body": MagicMock(read=lambda: json.dumps(
+            {"content": [{"text": "".join(texts)}], "usage": {}, "stop_reason": "end_turn"}).encode())}
+    session = MagicMock()
+    session.client.return_value = rt
+    monkeypatch.setattr(bs, "_get_satellite_session", lambda account="acc1": session)
     monkeypatch.setattr(cl, "get_stage_config_sync", lambda stage: None)
+    return c
 
+
+@pytest.mark.parametrize("path", ["satellite", "acc2_native"])
+def test_llm_client_reports_call_and_streams_writer_stage(monkeypatch, path):
+    from shared.llm_client.models import LLMRequest
+
+    c = _client_streaming(monkeypatch, ["Draft ", "text"], path)
     t = _tracker()
     with stream_sink.bind(t):
         resp = c.generate(LLMRequest(system_prompt="s", user_prompt="u", stage="t9_write", model_tier="haiku"))
@@ -280,15 +301,11 @@ def test_llm_client_reports_call_and_streams_writer_stage(monkeypatch):
     assert {s["key"]: s["state"] for s in snap["steps"]}["write"] == "active"
 
 
-def test_llm_client_without_sink_is_unchanged(monkeypatch):
-    from unittest.mock import MagicMock
-    from shared.llm_client import client as cl
+@pytest.mark.parametrize("path", ["satellite", "acc2_native"])
+def test_llm_client_without_sink_is_unchanged(monkeypatch, path):
     from shared.llm_client.models import LLMRequest
 
-    c = cl.LLMClient.__new__(cl.LLMClient)
-    c._bedrock = MagicMock()
-    c._bedrock.invoke_model_with_response_stream.return_value = {"body": _stream_events(["ok"])}
-    monkeypatch.setattr(cl, "get_stage_config_sync", lambda stage: None)
+    c = _client_streaming(monkeypatch, ["ok"], path)
     req = LLMRequest(system_prompt="s", user_prompt="u", stage="t9_write", model_tier="haiku")
     assert c.generate(req).content == "ok"
 

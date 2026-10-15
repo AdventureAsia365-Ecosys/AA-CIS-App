@@ -40,6 +40,7 @@ from shared.llm_client.catalog import (
     list_models,
     set_catalog_price,
 )
+from shared.llm_client.client import legacy_acc2_native_enabled
 from shared.llm_client.role_config import (
     list_stage_configs,
     set_stage_config,
@@ -84,8 +85,13 @@ _ACCOUNT_ROUTE_OPTIONS = [
 # Palmyra X5: hard 1 req/min channel-program throttle, AA-334/AA-392 permanently rejected.
 
 # Used only when the catalog is unreachable; catalog rows win (_via_map).
-_LEGACY_VIA = {"gpt-4.1": "OpenAI API", "haiku": "Bedrock acc2 → acc3 → acc1",
-               "sonnet": "Bedrock acc2 → acc3 → acc1"}
+_LEGACY_VIA = {"gpt-4.1": "OpenAI API"}
+
+
+def _legacy_claude_via() -> str:
+    """Legacy haiku/sonnet chain (LLMClient._legacy_chain): the satellites, acc3 first by default;
+    AA-843 — acc2-native leads only when LLM_LEGACY_ACC2_NATIVE is on."""
+    return "Bedrock acc2 → acc3 → acc1" if legacy_acc2_native_enabled() else "Bedrock acc3 → acc1"
 
 
 def model_via(m) -> str:
@@ -95,8 +101,7 @@ def model_via(m) -> str:
     if m.provider == "openai":
         return "OpenAI API"
     if m.model_key in ("haiku", "sonnet"):
-        # Legacy chain (LLMClient._legacy_chain): acc2 native first, then the satellites.
-        return "Bedrock acc2 → acc3 → acc1"
+        return _legacy_claude_via()
     accts = [a for a in ("acc3", "acc1", "acc2") if a in (m.bedrock_profile_ids or {})]
     if m.api_style == "embed" and not accts:
         return "Bedrock acc2"
@@ -104,7 +109,7 @@ def model_via(m) -> str:
 
 
 def _via_map(models: Optional[list]) -> dict[str, str]:
-    out = dict(_LEGACY_VIA)
+    out = {**_LEGACY_VIA, "haiku": _legacy_claude_via(), "sonnet": _legacy_claude_via()}
     for m in models or []:
         out[m.model_key] = model_via(m)
     return out

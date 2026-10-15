@@ -28,8 +28,12 @@ def test_bedrock_accounts_listed_in_try_order():
     assert model_via(sonnet5) == "Bedrock acc3 → acc1"
 
 
-def test_legacy_claude_keys_show_the_legacy_chain_order():
-    # haiku/sonnet go through LLMClient._legacy_chain: acc2 native, then acc3, then acc1.
+def test_legacy_claude_keys_show_the_legacy_chain_order(monkeypatch):
+    # haiku/sonnet go through LLMClient._legacy_chain: acc3, then acc1 (AA-843: no acc2-native
+    # attempt unless LLM_LEGACY_ACC2_NATIVE is on).
+    monkeypatch.delenv("LLM_LEGACY_ACC2_NATIVE", raising=False)
+    assert model_via(HAIKU) == "Bedrock acc3 → acc1"
+    monkeypatch.setenv("LLM_LEGACY_ACC2_NATIVE", "on")
     assert model_via(HAIKU) == "Bedrock acc2 → acc3 → acc1"
 
 
