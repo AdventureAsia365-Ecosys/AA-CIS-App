@@ -47,6 +47,8 @@ class TenantAuditAction:
     CONTENT_PIECE_EDITED = "content_piece.edited"  # AA-569 — tenant hand-edit on My Content
     CONTENT_EXPORTED = "content_piece.exported"  # AA-613 — tenant downloaded/exported a piece
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
+    CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
+    INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
 
 
 class PlatformAuditAction:

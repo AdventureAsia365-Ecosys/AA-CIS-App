@@ -34,7 +34,9 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from api.core.aa544_tenant_pool import INTEGRATION_DISCONNECT_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
+from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/integrations", tags=["integrations"])
@@ -471,6 +473,78 @@ async def test_facebook(request: Request, tenant=Depends(get_tenant)):
     result = _fb_row_to_status(updated)
     result["success"] = success
     return result
+
+
+# ── AA-815 — disconnect (WordPress + Facebook) ──────────────────────────────────────────────
+# Deletes the shared.tenant_integrations row and overwrites the secret with a tombstone via
+# PutSecretValue. Not DeleteSecret: the ECS task role is granted only CreateSecret/PutSecretValue
+# on acp/cms/* and acp/social/* (AA-CIS-Infra modules/ecs/main.tf), and a reconnect reuses the
+# same secret name through _put_secret() anyway. The tombstone goes first: if it fails the row
+# stays and the tenant is still connected (502), never a deleted row pointing at live credentials.
+
+_DISCONNECTED_STATUS = {
+    "wordpress": {"connected": False, "site_url": None, "connected_at": None,
+                  "last_verified_at": None, "last_verify_error": None},
+    "facebook": {"connected": False, "page_id": None, "connected_at": None,
+                 "last_verified_at": None, "last_verify_error": None},
+}
+
+
+def _tombstone_secret(secret_key: str) -> None:
+    try:
+        _sm_client().put_secret_value(SecretId=secret_key, SecretString=json.dumps({"disconnected": True}))
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+            raise
+
+
+async def _disconnect(request: Request, tenant_id: str, integration_type: str) -> dict:
+    pool = request.app.state.pool
+    # acquire_scoped_conn (own default-off flag): the same admin pool today, the RLS-scoped tenant
+    # pool once the flag is on. Two short blocks — no transaction is held across the Secrets
+    # Manager call.
+    async with acquire_scoped_conn(request, tenant_id, INTEGRATION_DISCONNECT_FLAG) as (conn, _):
+        row = await conn.fetchrow(
+            "SELECT secret_key FROM shared.tenant_integrations "
+            "WHERE tenant_id = $1::uuid AND integration_type = $2",
+            tenant_id, integration_type,
+        )
+    if not row:  # idempotent: already disconnected
+        return {**_DISCONNECTED_STATUS[integration_type], "disconnected": False}
+
+    if row["secret_key"]:
+        try:
+            _tombstone_secret(row["secret_key"])
+        except ClientError as exc:
+            logger.error("integration_secret_tombstone_failed", tenant_id=tenant_id,
+                         integration_type=integration_type, error=str(exc))
+            raise HTTPException(status_code=502, detail="Could not remove saved credentials — try again")
+
+    async with acquire_scoped_conn(request, tenant_id, INTEGRATION_DISCONNECT_FLAG) as (conn, _):
+        await conn.execute(
+            "DELETE FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = $2",
+            tenant_id, integration_type,
+        )
+    logger.info("integration_disconnected", tenant_id=tenant_id, integration_type=integration_type)
+    try:  # best-effort: the disconnect already happened, a lost audit row must not undo the answer
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.INTEGRATION_DISCONNECTED, resource_type="tenant_integration",
+            resource_id=integration_type, details={"integration_type": integration_type},
+        )
+    except Exception as exc:
+        logger.warning("integration_disconnect_audit_failed", tenant_id=tenant_id, error=str(exc))
+    return {**_DISCONNECTED_STATUS[integration_type], "disconnected": True}
+
+
+@router.delete("/wordpress")
+async def disconnect_wordpress(request: Request, tenant=Depends(get_tenant)):
+    return await _disconnect(request, tenant["sub"], "wordpress")
+
+
+@router.delete("/facebook")
+async def disconnect_facebook(request: Request, tenant=Depends(get_tenant)):
+    return await _disconnect(request, tenant["sub"], "facebook")
 
 
 __all__ = ["router"]
