@@ -8,11 +8,20 @@
 // page. Two behavior differences from the original, both gated on `embedded`:
 //   - `requestId` is a prop instead of read from useSearchParams() directly (the standalone page
 //     wrapper still reads the query param — see AngleGateTab.tsx — and passes it down).
-//   - `reset()` ("Start over") calls `onReset?.()` to collapse the row instead of
-//     `router.push("/portal/t8-angle-gate")` when embedded — SlateTab is not a route the tenant
-//     should be navigated away from just to abandon an in-progress write.
+//   - `reset()` ("Start over") called `onReset?.()` to collapse the row instead of
+//     `router.push("/portal/t8-angle-gate")` when embedded (AA-668 removed both: the Writer panel
+//     has no "Start over", closing the panel is the way out).
 // Everything else (the full state machine, every fetch call, every card) is unchanged from the
 // pre-4.2 AngleGateTab.tsx — this is a mechanical extraction, not a rewrite.
+//
+// AA-668 (S237) — `embedded` now means "inside the Writer panel" (WriterPanel.tsx, a kit Drawer
+// opened from the Slate) instead of the inline accordion under a Subject row. In that mode the
+// panel owns the context header (so SubjectHeader is hidden), the close action (so there is no
+// "Start over" button — closing the panel leaves the request and any running write alone) and
+// the finished-piece view + actions (so the "Content ready" line and WriteDonePopup are not
+// rendered; the panel reads the piece through `onPieceChange`). In both modes: Goal is a grid of
+// cards, and each Angle card carries its own "Write with this angle" button — one click chooses
+// the angle and the write starts at once (it replaces the AA-469 pick-then-confirm pair).
 //
 // Per ADR-2026-038 §0.2/§10.3 (tenant self-service — AA does not gate tenant content; the T8
 // "gate" is the TENANT choosing, never AA): "Goal" is always the 8-value list (Bang 1), "Angle"
@@ -32,8 +41,10 @@
 //   2. Tenant picks a Goal from the 8-value list.
 //   3. Backend auto-applies fixed brand audience + formula, generates 3 angles, recommends one.
 //   4. Tenant picks one of the 3 (recommended or not) — the real gate. status -> approved.
+//      AA-668: one button per angle card ("Write with this angle") — no separate confirm.
 //   5. AUTOMATICALLY: the write-step effect below fires T9's write the instant an angle is
-//      approved, UNLESS the request's CTA is still NULL, in which case it asks for one first.
+//      approved. The server fills a NULL request CTA from the brand's default CTA (AA-771); only
+//      when the brand has none does write() return 422 and the inline CTA field appear (AA-668).
 //   6. ONE loading state while T9 writes + T10 checks (up to 2 attempts, inline) -> final result.
 //
 // API (via /api/tenant proxy -> Authorization: Bearer <cis_tenant_token>, tenant_id always
@@ -53,6 +64,7 @@
 //                                                                     angle, or {piece: null}.
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
@@ -89,8 +101,8 @@ interface AngleGateRequest {
   channel: string | null; // AA-522 — always set from creation now (fixed by the Subject); a
   // legacy pre-AA-522 row is the only way this is ever null.
   goal: string | null;
-  cta: string | null; // AA-450 migration 114 — realistically NULL for every real request today
-  // (see this file's own header comment) — the write-step effect below asks for one when NULL.
+  cta: string | null; // AA-450 migration 114 — realistically NULL for every real request today.
+  // AA-668: NULL is fine — the server falls back to the brand's default_cta (AA-771).
   // AA-497 — "reusable" is an approved request "Change angle" just reopened
   // (services/acp_angle_gate/service.py::reopen_request()): same "pick 1 of 3 already-generated
   // angles" UI as "pending_choice" below, choose() is unchanged either way.
@@ -123,7 +135,7 @@ interface AngleGateRequest {
 //     to the tenant here (My Content shows it exactly like approved, AA-613 #7); only its PUBLISH
 //     is gated server-side (v1_publish 422, #8). The tenant never sees WHY it was held.
 //   - "not_ready": a hard failure produced no content (retry).
-interface ContentPiece {
+export interface ContentPiece {
   piece_id: string;
   angle_gate_request_id: string;
   channel?: string | null;
@@ -252,10 +264,18 @@ function WriteDonePopup({ onClose, onOpenInMyContent }: {
   );
 }
 
-export default function AngleGateWizard({ requestId, embedded = false, onReset }: {
+export default function AngleGateWizard({ requestId, embedded = false, onPieceChange, onDetachedPiece }: {
   requestId: string | null;
   embedded?: boolean;
-  onReset?: () => void;
+  // AA-668 — the Writer panel's view of the current piece (null = none yet / cleared). The panel
+  // renders the finished piece + its actions, and keeps watching an in-progress piece after the
+  // tenant closes it. Must be a stable callback (a useState setter or useCallback).
+  onPieceChange?: (piece: ContentPiece | null) => void;
+  // AA-668 — a write the tenant started (angle clicked) whose 202 placeholder (or in-progress
+  // latest piece) arrives AFTER this wizard unmounted, i.e. the Writer panel was closed in the
+  // ~1-2 s between the click and the write call answering. The job runs either way; this hands
+  // the piece to the Slate's background watcher so the "is ready" toast still fires.
+  onDetachedPiece?: (piece: ContentPiece) => void;
 }) {
   const router = useRouter();
 
@@ -271,10 +291,6 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
   const [choosing, setChoosing] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // AA-469 Việc 4 — pick-then-confirm for the angle step: clicking a card only highlights it via
-  // this local state; choose() itself isn't called until "Confirm this angle" is pressed.
-  const [pendingAngleIdx, setPendingAngleIdx] = useState<number | null>(null);
-
   // AA-497 — "Change angle" (step 3 -> back to step 2), see changeAngle() below.
   const [reopening, setReopening] = useState(false);
   const [reopenError, setReopenError] = useState<string | null>(null);
@@ -287,6 +303,15 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
   const [ctaInput, setCtaInput] = useState("");
   const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AA-668 — false once this wizard unmounted (Writer panel closed). A fetch still in flight at
+  // that moment must not start a poll interval nobody will ever clear (the unmount cleanup has
+  // already run); a just-started write goes to onDetachedPiece instead.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   // AA-569 — only true right after a write this session just finished (set inside pollPiece's
   // success branch below), never when resuming an already-finished piece via the latest-piece
@@ -314,13 +339,14 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     if (anglePollRef.current) { clearInterval(anglePollRef.current); anglePollRef.current = null; }
   }, []);
   const settleAngles = useCallback((d: AngleGateRequest) => {
-    setReq(d); setPendingAngleIdx(null);
+    setReq(d);
     if (d.generating) return false;
     setGenerating(false);
     if (d.generation_failed) setError("Couldn't generate angles — please choose a goal and try again.");
     return true;
   }, []);
   const pollAngles = useCallback((requestId: string) => {
+    if (!aliveRef.current) return; // unmounted — the t8_angles job finishes server-side anyway
     stopAnglePoll();
     setGenerating(true);
     const startTime = Date.now();
@@ -348,7 +374,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     fetch(`/api/tenant/v1/angle-gate/requests/${requestId}`)
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then((d: AngleGateRequest) => {
-        setReq(d); setPendingAngleIdx(null);
+        setReq(d);
         // AA-764 — resumed while the angle job is still running: keep showing progress.
         if (d.generating) { if (d.goal) setSelectedGoal(d.goal); pollAngles(d.request_id); }
       })
@@ -374,6 +400,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
 
   // AA-466 — single-piece poll for the 202 placeholder.
   const pollPiece = useCallback((pieceId: string) => {
+    if (!aliveRef.current) return; // unmounted — see aliveRef; the t9_write job keeps running
     stopPolling();
     const startTime = Date.now();
     pollingRef.current = setInterval(async () => {
@@ -395,13 +422,16 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
           // reached a terminal outcome. "ready" (approved OR held — both have real content to
           // review) shows the done popup; "not_ready" (a hard failure) keeps its own inline retry
           // state below instead — nothing to "review in My Content" for that case.
-          if (fresh.ready_state === "ready") setShowDonePopup(true);
+          if (fresh.ready_state === "ready" && !embedded) setShowDonePopup(true);
         }
       } catch { /* transient network error — keep polling, don't surface as a failure */ }
     }, POLL_INTERVAL_MS);
-  }, [stopPolling]);
+  }, [stopPolling, embedded]);
 
   useEffect(() => stopPolling, [stopPolling]); // cleanup on unmount
+
+  // AA-668 — keep the Writer panel's copy of the piece in step (finished view, background watch).
+  useEffect(() => { onPieceChange?.(piece); }, [piece, onPieceChange]);
 
   // AA-450 — `cta` only ever overrides a NULL angle_gate_request.cta. AA-466: POST returns 202 +
   // a 'processing' placeholder immediately — the real result comes from polling.
@@ -413,9 +443,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     })
       .then(async r => {
         if (r.status === 422) {
-          // MissingCTAError — kept as a defense-in-depth fallback (the write-step effect below
-          // already checks req.cta BEFORE calling write, so this shouldn't normally trigger, but
-          // a stale req from a race is still possible) — same "ask, don't fabricate" behavior.
+          // MissingCTAError — the request has no CTA AND the brand has no default CTA (the
+          // server tries both first, AA-771). AA-668: this is now the ONLY path that asks the
+          // tenant for a CTA — "ask, don't fabricate", inline, not a separate step.
           setWriting(false);
           setNeedsCtaInput(true);
           return null;
@@ -428,6 +458,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       })
       .then((placeholder: ContentPiece | null) => {
         if (!placeholder) return; // 422 branch above already handled its own state
+        if (!aliveRef.current) { onDetachedPiece?.(placeholder); return; }
         setPiece(placeholder);
         pollPiece(placeholder.piece_id);
       })
@@ -435,7 +466,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
         setWriting(false);
         setWriteError(e instanceof Error ? e.message : "Couldn't write content — try again.");
       });
-  }, [pollPiece]);
+  }, [pollPiece, onDetachedPiece]);
 
   // AA-522 — the ONE place that decides what the write step should show, whether arrived at via
   // a fresh choose(), a reload/resume, or a "Change angle" re-choice: ask the server for the
@@ -455,22 +486,26 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       .then(r => (r.ok ? r.json() : { piece: null }))
       .then(({ piece: latest }: { piece: ContentPiece | null }) => {
         if (latest) {
+          if (!aliveRef.current) {
+            if (latest.ready_state === "in_progress") onDetachedPiece?.(latest);
+            return;
+          }
           setPiece(latest);
           if (latest.ready_state === "in_progress") { setWriting(true); pollPiece(latest.piece_id); }
           return;
         }
-        // No piece written yet under this angle. If a CTA is already known, write immediately
-        // (matches the old "no extra click" behavior) — otherwise ask for one up front instead
-        // of waiting for write() to come back 422.
-        if (req.cta) writeContent(req.request_id);
-        else setNeedsCtaInput(true);
+        // No piece written yet under this angle: write immediately. AA-668 — this used to ask
+        // for a CTA up front whenever req.cta was NULL (every real request), even though the
+        // server fills it from the brand's default CTA (AA-771). writeContent() handles the one
+        // real gap — a brand with no default CTA — through the server's 422.
+        writeContent(req.request_id);
       })
       .catch(() => {
         // Best-effort — worst case the tenant sees a blank Write card and can press "Retry"/
         // re-enter a CTA manually; not worth surfacing as a hard error for a resume-convenience
         // lookup.
       });
-  }, [req, writeContent, pollPiece]);
+  }, [req, writeContent, pollPiece, onDetachedPiece]);
 
   const choose = useCallback((idx: number) => {
     if (!req) return;
@@ -496,32 +531,36 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
         setReq(d);
         stopPolling();
         setPiece(null); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
-        setPendingAngleIdx(null); setShowDonePopup(false);
+        setShowDonePopup(false);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
       .catch(e => setReopenError(e.detail ?? "Couldn't reopen — try again."))
       .finally(() => setReopening(false));
   }, [req, stopPolling]);
 
-  // "Start over" — discards this request entirely. Standalone: returns to the empty state (the
-  // tenant picks a new Subject from the Slate to start again). Embedded (AA-564 4.2): collapses
-  // this row back closed via onReset() instead of navigating away from the Slate. Confirms before
-  // wiping real progress (a goal already submitted means at least one real LLM call happened).
+  // "Start over" (standalone page only) — returns to the empty state (the tenant picks a new
+  // Subject from the Slate to start again). The Writer panel (embedded, AA-668) has no such
+  // button: closing the panel is the way out. Confirms before wiping real progress (a goal
+  // already submitted means at least one real LLM call happened).
   const reset = useCallback(() => {
     if (req && !window.confirm("Start over? This clears your current goal, angle, and write progress.")) return;
     stopPolling();
     setReq(null); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-    setPollTimedOut(false); setReopenError(null); setPendingAngleIdx(null); setShowDonePopup(false);
+    setPollTimedOut(false); setReopenError(null); setShowDonePopup(false);
     resolvedWriteStepFor.current = null;
-    if (embedded) onReset?.();
-    else router.push("/portal/t8-angle-gate");
-  }, [req, stopPolling, router, embedded, onReset]);
+    router.push("/portal/t8-angle-gate");
+  }, [req, stopPolling, router]);
 
   if (initialLoading) return <LoadingScreen message="Loading…" />;
 
   const step = currentStep(req);
   const chosenAngle = req?.angles.find(a => a.chosen) ?? null;
+  // AA-668 — inside the Writer panel the drawer is the frame, so the step cards drop their own
+  // border/padding instead of nesting a card in a card.
+  const cardStyle: React.CSSProperties | undefined = embedded
+    ? { padding: 0, border: "none", background: "transparent" }
+    : undefined;
 
   return (
     // AA-524 — was maxWidth:720, a real outlier vs t7/t10's full-width convention (measured live:
@@ -530,18 +569,19 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
     // single-column reading layout, not a grid; going edge-to-edge would stretch those lines
     // well past a comfortable reading width. 880 meaningfully closes the gap (~77% used) while
     // keeping line length reasonable.
-    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 880 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: embedded ? 16 : 20, maxWidth: embedded ? undefined : 880 }}>
       <p style={{ fontSize: 12, color: T.muted, margin: 0, lineHeight: 1.5 }}>
         Choose a content goal, then pick 1 of the 3 angles the system generates. You always
         choose — Adventure Asia never approves or blocks this for you.
       </p>
 
-      {req?.subject_id && <SubjectHeader req={req} />}
+      {/* AA-668 — the Writer panel's own header already names the Subject and Channel. */}
+      {req?.subject_id && !embedded && <SubjectHeader req={req} />}
 
       {req && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderBottom: `1px solid ${T.line2}` }}>
           <Stepper step={step} canChangeAngle={req.status === "approved"} onChangeAngle={changeAngle} />
-          <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>
+          {!embedded && <Btn variant="ghost" size="sm" onClick={reset}><RotateCcw size={12} /> Start over</Btn>}
         </div>
       )}
 
@@ -562,55 +602,65 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
       )}
 
       {req && req.status === "pending_goal" && (
-        <Card>
+        <Card style={cardStyle}>
           <CardHead title="1 · Choose a Goal" />
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {goals.map(g => (
-              <button key={g.key} onClick={() => setSelectedGoal(g.key)} style={{
-                textAlign: "left", padding: "10px 14px", borderRadius: 8, cursor: "pointer",
-                border: `1px solid ${selectedGoal === g.key ? T.gold : T.line}`,
-                background: selectedGoal === g.key ? T.goldTint : "#fff",
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, fontFamily: sans }}>{g.name}</div>
-                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>{g.description}</div>
-              </button>
-            ))}
-            <div style={{ marginTop: 6 }}>
-              <Btn variant="primary" disabled={!selectedGoal || generating} onClick={submitGoal}>
-                {generating ? <>Generating 3 angles…</> : <><Sparkles size={13} /> Generate 3 angles</>}
-              </Btn>
-            </div>
+          {/* AA-668 — goal cards in a grid (2 columns in the panel / on desktop, 1 on a phone) so
+              all 8 fit without scrolling. Picking a goal only selects it; angles cost an LLM call,
+              so they start from the button below. */}
+          <div role="radiogroup" aria-label="Content goal" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 230px), 1fr))", gap: 8 }}>
+            {goals.map(g => {
+              const on = selectedGoal === g.key;
+              return (
+                <button key={g.key} role="radio" aria-checked={on} disabled={generating}
+                  data-testid={`goal-${g.key}`}
+                  onClick={() => setSelectedGoal(g.key)} style={{
+                    textAlign: "left", padding: "10px 14px", borderRadius: 8,
+                    cursor: generating ? "default" : "pointer", minWidth: 0,
+                    border: `1px solid ${on ? T.gold : T.line}`, borderWidth: on ? 2 : 1,
+                    background: on ? T.goldTint : "#fff", fontFamily: sans,
+                  }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{g.name}</div>
+                  <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2, lineHeight: 1.45 }}>{g.description}</div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn variant="primary" disabled={!selectedGoal || generating} onClick={submitGoal}>
+              {generating ? <>Generating 3 angles…</> : <><Sparkles size={13} /> Generate 3 angles</>}
+            </Btn>
+            {generating && (
+              <span role="status" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: T.muted }}>
+                <Spinner size={14} /> Usually under a minute{embedded ? " — you can close this panel, the angles keep generating." : "."}
+              </span>
+            )}
           </div>
         </Card>
       )}
 
       {req && (req.status === "pending_choice" || req.status === "reusable") && (
         // This card ONLY shows while actively choosing (not once approved — see the Write card's
-        // meta row below for the post-choice summary). Pick-then-confirm: clicking a card only
-        // sets pendingAngleIdx (highlight); "Confirm this angle" calls choose().
-        <Card>
+        // meta row below for the post-choice summary). AA-668: each card has its own "Write with
+        // this angle" button — one click chooses it and the write starts (no confirm step).
+        <Card style={cardStyle}>
           <CardHead title={`2 · ${req.status === "reusable" ? "Choose a Different Angle" : "Choose an Angle"}`} />
           <p style={{ fontSize: 12.5, color: T.muted, margin: "0 0 14px", lineHeight: 1.5 }}>
             {req.status === "reusable"
-              ? "Pick a different one of the 3 angles below, then confirm — no new content is generated until you do."
-              : "Pick one of the 3 angles below, then confirm."}
+              ? "Pick a different one of the 3 angles below — writing starts as soon as you pick."
+              : "Pick one of the 3 angles below — writing starts as soon as you pick."}
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {req.angles.map(a => {
-              const picked = pendingAngleIdx === a.idx;
-              const clickable = !a.chosen;
+              const busy = choosing === a.idx;
               return (
-                <button key={a.idx} disabled={!clickable}
-                  onClick={() => clickable && setPendingAngleIdx(a.idx)}
+                <div key={a.idx} data-testid={`angle-${a.idx}`}
                   style={{
-                    textAlign: "left", width: "100%", cursor: clickable ? "pointer" : "default",
+                    textAlign: "left", width: "100%", boxSizing: "border-box",
                     padding: "14px 16px", borderRadius: 10, position: "relative", fontFamily: sans,
-                    border: `1px solid ${a.chosen ? T.green : picked ? T.gold : a.recommended ? T.goldSoft : T.line}`,
-                    borderWidth: picked ? 2 : 1,
-                    background: a.chosen ? T.greenSoft : picked ? T.goldTint : a.recommended ? T.goldTint : "#fff",
+                    border: `1px solid ${a.chosen ? T.green : a.recommended ? T.goldSoft : T.line}`,
+                    background: a.chosen ? T.greenSoft : a.recommended ? T.goldTint : "#fff",
                   }}>
-                  {picked && !a.chosen && <CheckCircle2 size={16} color={T.gold} style={{ position: "absolute", top: 12, right: 12 }} />}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 600, color: T.ink }}>{a.name}</span>
                     {a.recommended && <Badge variant="default">Recommended</Badge>}
                     {a.chosen && <Badge variant="default">Currently chosen</Badge>}
@@ -625,21 +675,23 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
                     <strong>Best final style:</strong> {a.best_final_style}
                   </div>
                   <AngleRankingBadges angle={a} paaTotal={req.dfs_paa_snapshot?.people_also_ask.length ?? 0} />
-                </button>
+                  {!a.chosen && (
+                    <div style={{ marginTop: 10 }}>
+                      <Btn variant={a.recommended ? "primary" : "secondary"} size="sm"
+                        disabled={choosing !== null} onClick={() => choose(a.idx)}>
+                        {busy ? "Starting…" : <><Sparkles size={12} /> Write with this angle</>}
+                      </Btn>
+                    </div>
+                  )}
+                </div>
               );
             })}
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <Btn variant="primary" disabled={pendingAngleIdx === null || choosing !== null}
-              onClick={() => pendingAngleIdx !== null && choose(pendingAngleIdx)}>
-              {choosing !== null ? "Saving…" : "Confirm this angle"}
-            </Btn>
           </div>
         </Card>
       )}
 
       {req && req.status === "approved" && (
-        <Card>
+        <Card style={cardStyle}>
           <CardHead title="3 · Write" />
 
           {chosenAngle && (
@@ -669,7 +721,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
               placeholder piece id is known. */}
           {writing && (piece?.piece_id ? (
             <div style={{ marginBottom: 12 }}>
-              <LiveWriter kind="piece" jobId={piece.piece_id} title="Writing your post" />
+              <LiveWriter kind="piece" jobId={piece.piece_id} title="Writing your post" compact={embedded} />
             </div>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", color: T.muted, fontSize: 13 }}>
@@ -695,7 +747,11 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.5 }}>
                 This piece needs a call to action before it can be written — what should the
-                reader do next?
+                reader do next?{" "}
+                <Link href="/portal/t0-brand" style={{ color: T.gold, fontWeight: 600 }}>
+                  Set a default call to action in Brand Identity
+                </Link>{" "}
+                so you aren&rsquo;t asked again.
               </div>
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
@@ -734,7 +790,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onReset }
               now. WriteDonePopup (rendered at the bottom of this component) covers the "just
               finished this session" moment; this line stays visible afterward (popup dismissed,
               or a resumed already-finished request) so the card never looks empty/broken. */}
-          {piece && !writing && piece.ready_state === "ready" && (
+          {/* AA-668 — the Writer panel shows the finished piece and its actions itself. */}
+          {piece && !writing && piece.ready_state === "ready" && !embedded && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: T.greenSoft, border: `1px solid ${T.green}`, borderRadius: 8, fontSize: 12.5, color: T.body }}>
               <CheckCircle2 size={14} color={T.green} />
               Content ready.{" "}
