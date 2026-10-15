@@ -27,6 +27,8 @@ RUNNER = "zz728_rds_runner"   # stands in for aa_cis_admin on RDS
 HERE = os.path.dirname(__file__)
 MIGRATION_225 = os.path.join(HERE, "..", "..", "api", "migrations", "225_catalog_views.sql")
 MIGRATION_228 = os.path.join(HERE, "..", "..", "api", "migrations", "228_catalog_place_graph_views.sql")
+# 235 replaces v_tour_place (day texts through a LATERAL per tour); every v_tour_place test below runs on it
+MIGRATION_235 = os.path.join(HERE, "..", "..", "api", "migrations", "235_catalog_v_tour_place_lateral_day_text.sql")
 NEW_VIEWS = ("v_tour_component", "v_tour_day_route", "v_tour_stop", "v_tour_leg", "v_graph_node",
              "v_graph_edge", "v_tour_junction")
 VIEWS_225 = ("v_tour", "v_tour_day", "v_tour_place", "v_tour_photo", "v_destination", "v_destination_photo")
@@ -66,7 +68,7 @@ def rds_like_228():
         DROP SCHEMA IF EXISTS catalog CASCADE;
         DROP POLICY IF EXISTS catalog_owner_aa_master_read ON gold_aa_internal.published_tours;
         DROP POLICY IF EXISTS catalog_owner_aa_master_read ON silver_aa_internal.raw_tours;
-        DELETE FROM shared.schema_versions WHERE version IN ('225', '228');""")
+        DELETE FROM shared.schema_versions WHERE version IN ('225', '228', '235');""")
     a.execute("SELECT 1 FROM pg_roles WHERE rolname = 'catalog_owner'")
     if a.fetchone():
         a.execute("DROP OWNED BY catalog_owner")
@@ -97,6 +99,9 @@ def rds_like_228():
         c.execute(sql)            # raises on any error, incl. 228's own checks
         c.execute(sql)            # idempotent re-run
         notices = list(runner.notices)
+        sql_235 = open(MIGRATION_235, encoding="utf-8").read()
+        c.execute(sql_235)        # raises on any error, incl. 235's own checks
+        c.execute(sql_235)        # idempotent re-run
     finally:
         runner.close()
     try:
@@ -435,6 +440,48 @@ def test_v_tour_place_resolves_by_pipeline_link_then_card_then_name(cur):
                 (3, f"Haa {tag}", None, None, None, None),                                       # suspect
             ], role
     assert paro_name and suspect
+
+
+def test_migration_235_keeps_owner_grants_and_reads_day_text_per_tour(cur):
+    cur.execute("SELECT 1 FROM shared.schema_versions WHERE version = '235'")
+    assert cur.fetchone(), "235 did not register"
+    cur.execute("SELECT pg_get_userbyid(relowner), reloptions FROM pg_class "
+                "WHERE oid = 'catalog.v_tour_place'::regclass")
+    owner, opts = cur.fetchone()
+    assert owner == "catalog_owner" and "security_barrier=true" in opts
+    cur.execute("SELECT pg_get_viewdef('catalog.v_tour_place'::regclass)")
+    viewdef = cur.fetchone()[0]
+    assert "jsonb_object_agg" in viewdef and "LATERAL" in viewdef
+    for role in ("aa_app_user",) + CONSUMERS:
+        cur.execute("SELECT has_table_privilege(%s, 'catalog.v_tour_place', 'SELECT')", (role,))
+        assert cur.fetchone()[0], role
+    cur.execute("SELECT pg_has_role(%s, 'catalog_owner', 'USAGE')", (RUNNER,))
+    assert cur.fetchone()[0] is False
+
+
+def test_v_tour_place_orders_and_spells_by_day_text_through_an_any_filter(cur):
+    # ITINERARY day 2 is "Paro to Thimphu": Paro comes first, the verbatim spelling "Thimphu" wins over the
+    # more frequent "thimphu", a place the text does not name comes last, a day without text keeps its row
+    t, _ = _tour(cur, name=f"Order {uuid.uuid4().hex[:8]}")
+    other, _ = _tour(cur, name=f"Other {uuid.uuid4().hex[:8]}")
+    _atom(cur, t, day=2, place="Zhemgang")
+    _atom(cur, t, day=2, place="thimphu")
+    _atom(cur, t, day=2, place="thimphu")
+    _atom(cur, t, day=2, place="Thimphu")
+    _atom(cur, t, day=2, place="Paro")
+    _atom(cur, t, day=7, place="Bumthang")         # no "Day 7" block in the text
+    _atom(cur, other, day=1, place="Paro")
+    with _as(cur, "tripplanner"):
+        cur.execute("""SELECT tour_id::text, day_number, position, place_name, atom_count
+                         FROM catalog.v_tour_place WHERE tour_id = ANY(%s::uuid[])
+                        ORDER BY tour_id = %s DESC, day_number, position""", ([t, other], t))
+        assert cur.fetchall() == [
+            (t, 2, 1, "Paro", 1),
+            (t, 2, 2, "Thimphu", 3),
+            (t, 2, 3, "Zhemgang", 1),
+            (t, 7, 1, "Bumthang", 1),
+            (other, 1, 1, "Paro", 1),
+        ]
 
 
 def test_v_tour_place_name_match_follows_a_duplicate_to_its_keeper(cur):
