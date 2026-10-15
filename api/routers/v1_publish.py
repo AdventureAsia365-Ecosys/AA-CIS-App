@@ -250,6 +250,39 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     }
 
 
+# AA-802 (S238 scope) — the latest-piece rule My Content already applies (AA-497,
+# services/acp_content_writing/service.py::_TENANT_REVIEWS_QUERY): a request can hold several
+# content_piece rows (reopen / re-write / earlier attempts), and only the LATEST one by created_at
+# is the tenant's content. `latest` picks it over EVERY status first; the status, channel and
+# publish_log filters run after, so a superseded approved piece never resurfaces when the newest
+# piece is still processing / failed, or is already published or in flight.
+_PENDING_SQL = """
+    SELECT cp.piece_id::text, cp.content_text, cp.created_at,
+           COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
+           cp.route_hub_name, cp.route_segment_count
+    FROM (
+        SELECT DISTINCT ON (angle_gate_request_id) piece_id
+        FROM acp_shared.content_piece
+        WHERE tenant_id = $1::uuid
+        ORDER BY angle_gate_request_id, created_at DESC
+    ) latest
+    JOIN acp_shared.content_piece cp ON cp.piece_id = latest.piece_id
+    JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+    LEFT JOIN acp_shared.angle_gate_option ago
+        ON ago.option_id = cp.angle_gate_option_id
+        OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
+            AND ago.chosen = true)
+    WHERE cp.tenant_id = $1::uuid
+      AND cp.status IN ('approved', 'held')  -- AA-770: the tenant always receives the content
+      AND COALESCE(cp.channel, agr.channel) = ANY($2::text[])
+      AND NOT EXISTS (
+          SELECT 1 FROM acp_shared.publish_log pl
+          WHERE pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
+      )
+    ORDER BY cp.created_at DESC
+"""
+
+
 @router.get("/pending")
 async def list_pending(request: Request, tenant=Depends(get_tenant)):
     """AA-458 — the list endpoint AA-456's own STEP0 §5 flagged as missing: a tenant's approved
@@ -278,33 +311,18 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
     was actually written with, not whatever the request's channel later becomes for its next
     write. Falls back to agr.channel only for pre-this-session rows where cp.channel is NULL
     (0 such rows existed live at the time of this change, confirmed — this fallback is pure
-    defense, not a real backfill gap)."""
+    defense, not a real backfill gap).
+
+    AA-802 (S238) — one card per request at most: only the request's latest piece (see
+    _PENDING_SQL). Before this, every older approved/held piece of the same request was its own
+    card (atlas-hearth: 46 cards for 3 titles). A request whose latest piece is published or
+    'requested' shows nothing."""
     tenant_id = tenant["sub"]
 
     async with acquire_scoped_conn(
         request, tenant_id, STAGE1_PUBLISH_PENDING_FLAG
     ) as (conn, used_tenant_pool):
-        rows = await conn.fetch(
-            """
-            SELECT cp.piece_id::text, cp.content_text, cp.created_at,
-                   COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
-                   cp.route_hub_name, cp.route_segment_count
-            FROM acp_shared.content_piece cp
-            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
-            LEFT JOIN acp_shared.angle_gate_option ago
-                ON ago.option_id = cp.angle_gate_option_id
-                OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
-                    AND ago.chosen = true)
-            LEFT JOIN acp_shared.publish_log pl
-                ON pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
-            WHERE cp.tenant_id = $1::uuid
-              AND cp.status IN ('approved', 'held')  -- AA-770: the tenant always receives the content
-              AND COALESCE(cp.channel, agr.channel) = ANY($2::text[])
-              AND pl.publish_id IS NULL
-            ORDER BY cp.created_at DESC
-            """,
-            tenant_id, list(_SUPPORTED_CHANNELS),
-        )
+        rows = await conn.fetch(_PENDING_SQL, tenant_id, list(_SUPPORTED_CHANNELS))
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
 
     return {
@@ -411,7 +429,11 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         piece = await conn.fetchrow(
             """
             SELECT cp.piece_id, cp.content_text, cp.status, cp.slug, cp.seo_title, cp.meta_description,
-                   COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name
+                   COALESCE(cp.channel, agr.channel) AS channel, ago.name AS angle_name,
+                   EXISTS (SELECT 1 FROM acp_shared.content_piece newer
+                           WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
+                             AND newer.tenant_id = cp.tenant_id
+                             AND newer.created_at > cp.created_at) AS superseded
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
             LEFT JOIN acp_shared.angle_gate_option ago
@@ -439,6 +461,14 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         raise HTTPException(
             status_code=422,
             detail="This piece isn't written yet — try again once it shows as Ready.",
+        )
+    # AA-802 (S238) — only a request's latest piece is publishable (the /pending rule above). An
+    # older version (earlier attempt, a re-write after a reopen) is refused even when the caller
+    # still holds its piece_id from a stale page. 409: the tenant owns it, a newer version exists.
+    if piece.get("superseded"):
+        raise HTTPException(
+            status_code=409,
+            detail="A newer version of this content exists — reload and publish that one.",
         )
     channel = piece["channel"]
     if channel not in _SUPPORTED_CHANNELS:

@@ -75,7 +75,8 @@ async def test_list_pending_returns_rows_scoped_to_tenant():
     # AA-462 — list_pending() now covers every supported channel (blog + facebook), not just blog
     assert set(channels_param) == {"blog", "facebook"}
     assert "cp.status IN ('approved', 'held')" in sql  # AA-770 — the tenant always receives it
-    assert "pl.publish_id IS NULL" in sql
+    # AA-802 — NOT EXISTS (not a LEFT JOIN): two published/requested rows can never duplicate a card
+    assert "NOT EXISTS" in sql and "pl.status IN ('published', 'requested')" in sql
     # AA-497 — angle_name joins via the denormalized FK first (mutable chosen=true is only a
     # fallback for pre-AA-497 rows), so a reopen()+re-choice on this request doesn't retroactively
     # change what an already-written piece's angle_name displays here.
