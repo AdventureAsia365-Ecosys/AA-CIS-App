@@ -18,7 +18,9 @@
 // request got here.
 //
 // AA-577 follow-up: lib/rbac.ts API_READ_RULES paths (openapi.json) need the admin role for
-// every method, reads included.
+// every method, reads included. The backend path is built by lib/bffPath.ts proxyPath(), which
+// refuses segments that could climb out of /admin/ (e.g. an encoded "a%2F..%2F..%2Fopenapi.json")
+// so the rbac rules below always see the path the backend will route.
 //
 // AA-769 (S234): non-GET requests on lib/rbac.ts API_WRITE_RULES paths (Content
 // Quality sentence cut / rewrite) need the admin role, and the verified role
@@ -26,6 +28,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
+import { proxyPath } from "@/lib/bffPath";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -43,6 +46,10 @@ async function handler(
 
   const { path } = await params;
   const pathStr = path.join("/");
+  const upstreamPath = proxyPath(path);
+  if (upstreamPath === null) {
+    return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
+  }
   // AA-577 follow-up — a few paths (the OpenAPI schema) are admin-only even for reads.
   if (!canReadAdminPath(auth.role, pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
@@ -52,7 +59,7 @@ async function handler(
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
   }
   const search = req.nextUrl.search;
-  const url = `${API_URL}/admin/${pathStr}${search}`;
+  const url = `${API_URL}/admin/${upstreamPath}${search}`;
 
   const contentType = req.headers.get("content-type") ?? "";
   const isMultipart = contentType.includes("multipart/form-data");
