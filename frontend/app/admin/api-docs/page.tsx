@@ -280,6 +280,8 @@ function OpRow({
         >
           {op.path}
         </span>
+        {/* The strike-through alone is not announced and not self-explaining; say it in words too. */}
+        {op.deprecated && <Badge tone="neutral" dot={false}>deprecated</Badge>}
         {op.summary && (
           <span style={{ fontSize: 12, color: K.muted, minWidth: 0, flex: "1 1 200px", overflowWrap: "anywhere" }}>
             {op.summary}
@@ -362,9 +364,16 @@ export default function ApiDocsPage() {
     staleTime: 5 * 60_000,
   });
 
-  const [query, setQuery] = useState("");
+  const [query, setQueryRaw] = useState("");
   const [openTags, setOpenTags] = useState<Set<string>>(() => new Set());
   const [openOps, setOpenOps] = useState<Set<string>>(() => new Set());
+  // While searching every matching group starts open; this holds the ones the user then closed, and
+  // is reset whenever the search text changes (so a new hit is never hidden).
+  const [closedWhileSearching, setClosedWhileSearching] = useState<Set<string>>(() => new Set());
+  const setQuery = (q: string) => {
+    setQueryRaw(q);
+    setClosedWhileSearching(new Set());
+  };
 
   const ops = useMemo(() => (spec ? buildOps(spec) : []), [spec]);
   const searching = query.trim().length > 0;
@@ -442,9 +451,13 @@ export default function ApiDocsPage() {
             >
               <Search size={14} style={{ color: K.muted2, flexShrink: 0 }} />
               <input
-                type="search"
+                // type="text", not "search": the browser's own clear button would sit next to ours.
+                type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setQuery("");
+                }}
                 placeholder="Search path, summary, tag…"
                 aria-label="Search endpoints"
                 style={{
@@ -511,9 +524,12 @@ export default function ApiDocsPage() {
                   key={g.tag}
                   group={g}
                   spec={spec as OpenApiSpec}
-                  // While searching every matching group is open, so a hit is never hidden.
-                  open={searching || openTags.has(g.tag)}
-                  onToggle={() => setOpenTags((s) => toggleIn(s, g.tag))}
+                  open={searching ? !closedWhileSearching.has(g.tag) : openTags.has(g.tag)}
+                  onToggle={() =>
+                    searching
+                      ? setClosedWhileSearching((s) => toggleIn(s, g.tag))
+                      : setOpenTags((s) => toggleIn(s, g.tag))
+                  }
                   openOps={openOps}
                   onToggleOp={(key) => setOpenOps((s) => toggleIn(s, key))}
                 />
