@@ -106,6 +106,37 @@ def test_schedule_live_is_capped_per_run():
     assert (mode, limit) == ("live", retention_job.RUN_MAX_ROWS)
 
 
+def test_a_retry_counts_earlier_deletions_once():
+    # manual: the approved max_rows is the job total, earlier deletions count against it
+    assert retention_job.rows_left("manual", 10, 4) == 6
+    assert retention_job.rows_left("manual", 10, 12) == 0
+    # schedule: this attempt's limit is its own candidate count (already net of earlier deletions)
+    assert retention_job.rows_left("schedule", 6, 4) == 6
+    # ... but the whole job stays under RUN_MAX_ROWS
+    cap = retention_job.RUN_MAX_ROWS
+    assert retention_job.rows_left("schedule", cap, cap - 100) == 100
+    assert retention_job.rows_left("schedule", 50, cap) == 0
+
+
+class _FkConn:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def fetch(self, sql, *args):
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_fk_refs_only_accepts_single_column_fks_onto_id():
+    ok = [{"ref_table": "shared.job", "ref_col": "parent_job_id", "ncols": 1, "target_col": "id",
+           "conname": "job_parent_job_id_fkey"}]
+    assert await runner.fk_refs(_FkConn(ok), "shared.job") == [("shared.job", "parent_job_id")]
+    for bad in ({"ncols": 2, "target_col": "id"}, {"ncols": 1, "target_col": "idempotency_key"}):
+        rows = [{**ok[0], **bad}]
+        with pytest.raises(runner.UnsupportedForeignKey):
+            await runner.fk_refs(_FkConn(rows), "shared.job")
+
+
 # ── SQL shape (C5.4c) ───────────────────────────────────────────────────────────────────────────
 
 def test_batches_use_the_ts_id_keyset_lock_rows_and_respect_fk_refs():

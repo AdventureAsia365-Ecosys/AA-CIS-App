@@ -57,19 +57,34 @@ async def cutoff(conn, window_days: int) -> datetime:
 
 
 _FK_REFS_SQL = """
-    SELECT format('%I.%I', n.nspname, cl.relname) AS ref_table, a.attname AS ref_col
+    SELECT format('%I.%I', n.nspname, cl.relname) AS ref_table, a.attname AS ref_col,
+           array_length(c.conkey, 1) AS ncols, ta.attname AS target_col, c.conname
       FROM pg_constraint c
       JOIN pg_class cl ON cl.oid = c.conrelid
       JOIN pg_namespace n ON n.oid = cl.relnamespace
       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
-     WHERE c.contype = 'f' AND c.confrelid = $1::regclass AND array_length(c.conkey, 1) = 1
+      JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+     WHERE c.contype = 'f' AND c.confrelid = $1::regclass
      ORDER BY 1, 2
 """
 
 
+class UnsupportedForeignKey(Exception):
+    """A foreign key points at the table in a shape the NOT EXISTS guard cannot express."""
+
+
 async def fk_refs(conn, table: str) -> list[tuple[str, str]]:
-    """Single-column foreign keys pointing at `table` (rows they reference are never deleted)."""
-    return [(r["ref_table"], r["ref_col"]) for r in await conn.fetch(_FK_REFS_SQL, table)]
+    """Foreign keys pointing at `table` (rows they reference are never deleted). The guard is
+    `NOT EXISTS (... ref_col = t.id)`, so only single-column FKs onto `id` are supported; any other
+    shape stops the run instead of letting a DELETE cascade or fail half-way."""
+    out = []
+    for r in await conn.fetch(_FK_REFS_SQL, table):
+        if r["ncols"] != 1 or r["target_col"] != "id":
+            raise UnsupportedForeignKey(
+                f"{r['conname']} on {r['ref_table']} references {table} by {r['ncols']} column(s) "
+                f"onto {r['target_col']!r}; the retention guard only handles single-column FKs onto id")
+        out.append((r["ref_table"], r["ref_col"]))
+    return out
 
 
 def _quote_ident(name: str) -> str:

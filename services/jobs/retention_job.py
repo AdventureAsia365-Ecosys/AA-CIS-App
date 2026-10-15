@@ -82,6 +82,17 @@ def decide_mode(payload: dict, windows: dict, candidates: int,
     return "live", min(candidates, RUN_MAX_ROWS), "scheduled live run within the growth limit"
 
 
+def rows_left(trigger: str, limit_rows: int, already: int) -> int:
+    """Rows this attempt may still delete, given `already` deleted by an earlier attempt of the
+    same job. A manual limit is the approved total for the job, so earlier deletions count against
+    it. A scheduled limit is the candidates counted by THIS attempt, which already excludes the
+    rows an earlier attempt deleted; subtracting them again would stop the retry short. Both stay
+    under RUN_MAX_ROWS for the whole job."""
+    if trigger == "schedule":
+        return max(min(limit_rows, RUN_MAX_ROWS - already), 0)
+    return max(limit_rows - already, 0)
+
+
 async def _notify_held(conn, spec: TableSpec, result: dict) -> bool:
     """One bell per held run. Best-effort: the job result is the record; the bell is a bonus."""
     try:
@@ -151,7 +162,7 @@ async def run_spec(ctx: JobContext, spec: TableSpec, *, archiver=None) -> dict:
         if archiver is None and any(p.archive for p in spec.parts):
             archiver = S3Archiver(boto3.client("s3"), ctx.job_id)
         already = int(progress.get("deleted_total") or 0)   # an earlier attempt of this same job
-        remaining = max(limit_rows - already, 0)
+        remaining = rows_left(payload.get("trigger", "manual"), limit_rows, already)
         cursors = dict(progress.get("cursors") or {})
         for part, res in zip(spec.parts, parts):
             if remaining <= 0:
