@@ -685,8 +685,10 @@ _PAST_RE = re.compile(r"\b(?:until|was|were|served|had|former(?:ly)?|once|used t
                       r"|would|established|founded|built|chosen|placed|intended|designed|meant"
                       r"|to (?:function|serve|act|be)|for centuries|for over|for nearly|for almost"
                       r"|for more than)\b", re.I)
-_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:;|—|–|\s-\s|,\s*(?:and|but|while|yet)\s+|\bbut\b|,\s+(?=founded|built|still))\s*",
-                              re.I)
+# AA-778 — ': ' too: hygiene.fix_dashes turns most single dashes into a colon before the gates, so
+# '... until 1955: today it remains ...' must still split there. The trailing space keeps '10:30' whole.
+_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:;|:\s|—|–|\s-\s|,\s*(?:and|but|while|yet)\s+|\bbut\b"
+                              r"|,\s+(?=founded|built|still))\s*", re.I)
 _SPAN_RE = re.compile(
     r"\b(nearly|almost|just under|close to|over|more than|just over|about|around|roughly|some)?\s*"
     r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(centuries|hundred years)\b", re.I)

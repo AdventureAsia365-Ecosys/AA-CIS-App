@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
+from services.acp_content_writing import authenticity
 from services.acp_content_writing import hygiene as h
 from services.acp_content_writing import quality_gates as qg
 from services.acp_content_writing import sentence_repair as sr
+from services.acp_content_writing import trip_facts as tf
 
 EM, EN = "—", "–"
 SEED = (f"Uran Togoo {EM} trek into the caldera of a dormant volcano\n"
@@ -233,3 +235,42 @@ def test_sanitize_replacement_converts_dashes():
     assert sr.sanitize_replacement(f"Mörön is not the destination {EM} it is the frame. [R:a1]", "blog") == \
         "Mörön is not the destination. It is the frame."
     assert EM not in sr.sanitize_replacement(f"A lake {EM} the largest {EM} in Mongolia.", None)
+
+
+# ---------------------------------------------------------------- gates that read the autofix output
+
+def test_testimonial_attribution_dash_is_kept_for_f19():
+    # F19's attribution patterns need the dash; fix_dashes runs before the gates (review finding, S238)
+    for text in (f"\"Quiet, green and endless, a place to slow down.\" {EM} Sarah, UK",
+                 f"The valley is quiet.\n\n\"Quiet, green and endless, a place to slow down.\"\n{EM} Sarah, UK",
+                 f"\"Quiet, green and endless.\" {EM} Tom B. (Sydney)"):
+        assert authenticity.flagged(text)
+        fixed, _ = h.autofix(text, _ctx())
+        assert authenticity.flagged(fixed), fixed
+        assert authenticity.flagged(h.fix_dashes(text, None)[0])
+        cut, _ = authenticity.cut_flagged(fixed)
+        assert EM not in cut and "Sarah" not in cut and "Tom B." not in cut
+
+
+PUNAKHA_SEED = """Punakha Dzong — visit courtyards and assembly hall
+Location: Punakha Dzong, Punakha, Punakha District, Bhutan
+Place background (checked facts about the place itself — you may use these):
+- It was built in 1637–1638 by Zhabdrung Ngawang Namgyal, who founded it to serve as the administrative centre.
+- Punakha Dzong served as the capital and seat of government of Bhutan until 1955, when the capital moved to Thimphu."""
+
+
+@pytest.mark.parametrize("sentence", [
+    f"Built in 1637, the dzong served as the seat of government until 1955 {EM} today it remains Bhutan's "
+    "administrative centre.",
+    f"Zhabdrung founded it in 1637 {EM} it remains the seat of Bhutan's government today.",
+    f"Founded in 1637 as a fortress {EM} it still serves as Bhutan's administrative centre.",
+])
+def test_date_authority_still_fires_after_the_dash_becomes_a_colon(sentence):
+    assert tf.date_authority_claims(sentence, PUNAKHA_SEED)
+    fixed = fix(sentence)
+    assert EM not in fixed
+    assert tf.date_authority_claims(fixed, PUNAKHA_SEED), fixed
+
+
+def test_clause_split_leaves_clock_times_whole():
+    assert tf._CLAUSE_SPLIT_RE.split("Doors open at 10:30 every day.") == ["Doors open at 10:30 every day."]

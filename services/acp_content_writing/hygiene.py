@@ -2041,8 +2041,11 @@ def _cap_first(s: str) -> str:
 def _protected_ranges(text: str, ctx: Optional[HygieneContext]) -> list[tuple[int, int]]:
     """Where a dash is kept: the TRIP name written verbatim ('Ho Chi Minh Trail <em-dash> 14 Days'), and
     a quoted span ("…" / “…”) that is word for word in the seed, the Facts block or the trip name. The
-    F2 residue guard exempts the same text (its source holds the seed, Facts, trip name and CTA)."""
-    out: list[tuple[int, int]] = []
+    F2 residue guard exempts the same text (its source holds the seed, Facts, trip name and CTA).
+    Also, with or without `ctx`, the dash of a testimonial attribution ('"…" <em-dash> Sarah, UK'): F19
+    needs it to flag the invented quote, which is then cut whole (authenticity.attribution_spans)."""
+    from services.acp_content_writing.authenticity import attribution_spans  # authenticity imports hygiene
+    out: list[tuple[int, int]] = attribution_spans(text)
     if ctx is None:
         return out
     trip = (ctx.trip_name or "").strip()
@@ -2122,8 +2125,9 @@ def fix_dashes(text: str, ctx: Optional[HygieneContext] = None) -> tuple[str, li
       two'), otherwise ': X.' (', X.' when the sentence already has a colon);
     - in a heading, ': ' (then ', ');
     - between two digits, an en-dash (a number range).
-    Kept: the TRIP name written verbatim and a quoted span copied from the source (_protected_ranges;
-    nothing is kept without `ctx`, e.g. an admin's sentence in sentence_repair.sanitize_replacement).
+    Kept: the TRIP name written verbatim, a quoted span copied from the source and a testimonial
+    attribution dash, so F19 still sees it (_protected_ranges; only the attribution is kept without
+    `ctx`, e.g. an admin's sentence in sentence_repair.sanitize_replacement).
     Bare en-dashes ('3–5 days') and hyphens are never touched. autofix runs it after every sentence
     deletion, so the repeat and borrowed-sentence rules compare what the writer wrote; the gates
     (contrast frames, F2) read the result. Returns (text, log)."""
