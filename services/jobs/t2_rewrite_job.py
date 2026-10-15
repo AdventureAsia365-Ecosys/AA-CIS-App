@@ -189,6 +189,15 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 tenant_id=tenant_id,  # AA-620 — repair-round logs t2_generate + this tenant
             )
             result = qa["result"]  # possibly a later repair round's output
+            # AA-793: which draft was kept and every draft's score, in job.result — the rerun's
+            # evidence that no saved draft scores below an earlier one.
+            diag["t3"] = {
+                "chosen_attempt": qa.get("chosen_attempt"), "chosen_via": qa.get("chosen_via"),
+                "drafts": qa.get("drafts") or [], "sentence_repairs": qa.get("sentence_repairs", 0),
+                "background_cleared": qa.get("background_cleared", 0),
+                "graph_draft_scores": result.get("draft_scores") or [],
+                "best_draft_restored": bool(result.get("best_draft_restored")),
+            }
 
             import json as _j3
             gen = result["generated"]

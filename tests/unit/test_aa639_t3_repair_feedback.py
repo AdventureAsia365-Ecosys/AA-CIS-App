@@ -28,7 +28,10 @@ def test_feedback_is_capped():
 
 
 @pytest.mark.asyncio
-async def test_repair_round_passes_feedback_to_the_writer():
+async def test_repair_round_passes_feedback_to_the_writer(monkeypatch):
+    # The pre-AA-793 round (a whole-tour rewrite for a grounding-only failure); with AA-793's
+    # T2_TARGETED_REPAIR on, this case gets a sentence repair (test_aa793_t2_best_draft.py).
+    monkeypatch.setenv("T2_TARGETED_REPAIR", "off")
     bad = {"generated": {"summary": "A 30-minute flight."}}
     good = {"generated": {"summary": "A short flight."}}
     rewrite = AsyncMock(return_value=good)

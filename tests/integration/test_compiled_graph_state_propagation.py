@@ -140,9 +140,13 @@ def patch_llm_client(monkeypatch):
             model_used="gpt-4.1", provider="openai", cost_usd=0.0,
         )
 
+        judge_queue = list(judge_resp) if isinstance(judge_resp, list) else None  # AA-793: per attempt
+
         def _generate(request):
             calls.append(request)
             if request.stage in ("s1_judge", "t2_judge"):        # AA-763: T2 has its own stage keys
+                if judge_queue is not None:
+                    return judge_queue.pop(0) if len(judge_queue) > 1 else judge_queue[0]
                 return judge_resp
             if request.stage in ("s1_brand_audit", "t2_brand_audit"):
                 return audit_resp
@@ -267,3 +271,60 @@ async def test_t2_graph_run_writes_as_the_brand_and_gates_on_brand_fit(patch_llm
     assert result["judge_cross_brand_distinct"] == pytest.approx(3.0)
     assert result["judge_mission_present"] is True
     assert result["quality_score"] == pytest.approx(9.0)
+
+
+# AA-793: a T2 run whose retries all score lower than the first draft. The hitl exit must save the
+# best (first) draft, and each retry must revise that draft — through the compiled graph, so the new
+# ContentState keys (best_draft, draft_scores, previous_draft, best_draft_restored) survive astream().
+def _t2_drafts():
+    return [{**GOOD_GENERATED, "name": f"Ha Long Bay Private Cruise Draft {n}"} for n in ("One", "Two", "Three")]
+
+
+async def test_t2_graph_run_saves_the_best_draft_and_revises_it(patch_llm_client, monkeypatch):
+    for env in ("T2_JUDGE_GATE", "T2_BEST_DRAFT", "T2_TARGETED_REPAIR"):
+        monkeypatch.delenv(env, raising=False)
+    drafts = _t2_drafts()
+    client = patch_llm_client(
+        [_generate_response(d) for d in drafts],
+        judge_response=[_judge_response(brand_fit=5, feedback="Warmer, more brand voice."),
+                        _judge_response(brand_fit=4, feedback="Still flat."),
+                        _judge_response(brand_fit=3, feedback="Worse.")],
+    )
+
+    result = await _rewrite_tour(
+        tour=SAMPLE_TOUR, idx=1, total=1, brand_rules=T2_BRAND_RULES, seo={}, model_tier="haiku",
+        is_tenant_rewrite=True, generate_stage="t2_generate",
+    )
+
+    assert result["status"] == "success", result.get("error")
+    assert result["generated"]["name"] == drafts[0]["name"]
+    assert result["quality_score"] == pytest.approx(5.0)
+    assert result["best_draft_restored"] is True
+    assert [d["score"] for d in result["draft_scores"]] == [5.0, 4.0, 3.0]
+    writers = [r for r in client.calls if r.stage == "t2_generate"]
+    assert len(writers) == 3
+    assert "YOUR PREVIOUS DRAFT" not in writers[0].user_prompt
+    for w in writers[1:]:   # both retries revise draft One (the best so far) with its feedback
+        assert "YOUR PREVIOUS DRAFT" in w.user_prompt and drafts[0]["name"] in w.user_prompt
+        assert "Warmer, more brand voice." in w.user_prompt
+
+
+async def test_t2_graph_run_keeps_the_last_draft_with_both_switches_off(patch_llm_client, monkeypatch):
+    monkeypatch.delenv("T2_JUDGE_GATE", raising=False)
+    monkeypatch.setenv("T2_BEST_DRAFT", "off")
+    monkeypatch.setenv("T2_TARGETED_REPAIR", "off")
+    drafts = _t2_drafts()
+    client = patch_llm_client(
+        [_generate_response(d) for d in drafts],
+        judge_response=[_judge_response(brand_fit=5), _judge_response(brand_fit=4),
+                        _judge_response(brand_fit=3)],
+    )
+
+    result = await _rewrite_tour(
+        tour=SAMPLE_TOUR, idx=1, total=1, brand_rules=T2_BRAND_RULES, seo={}, model_tier="haiku",
+        is_tenant_rewrite=True, generate_stage="t2_generate",
+    )
+
+    assert result["generated"]["name"] == drafts[2]["name"]       # pre-AA-793: the last draft
+    assert result["best_draft_restored"] is False and result["draft_scores"] == []
+    assert all("YOUR PREVIOUS DRAFT" not in r.user_prompt for r in client.calls if r.stage == "t2_generate")
