@@ -272,3 +272,48 @@ def test_marketplace_reuses_the_shared_state_function():
 def test_forbidden_keys_walks_nested_values():
     obj = {"a": [{"ok": 1, "qa_status": "x"}], "b": {"judge": {"brand_fit": 1}}, "jev_cost_usd": 0}
     assert sorted(tp.forbidden_keys(obj)) == ["a[0].qa_status", "b.judge", "jev_cost_usd"]
+
+
+# ── AA-802: a version corrected by an admin (silent correction) stays clean ────────────────────
+
+_HELD_RC = {"name": "Ha Long Bay", "summary": "Cruise the bay. The boat carries 400 guests. Kayak at dusk.",
+            "highlights": ["Sunrise on deck", "Cave walk"], "status": "done"}
+
+
+def _corrected_rc():
+    """What POST /admin/content-quality/tour-versions/{id}/sentences/apply writes: the same section
+    splice (cut of the ungrounded sentence) into the tenant's rewritten_content, in place."""
+    import json
+    from api.routers import admin_content_quality as cq
+    from services.acp_content_writing import sentence_repair
+    text = _HELD_RC["summary"]
+    bad = "The boat carries 400 guests."
+    start = text.index(bad)
+    new_text = sentence_repair.apply_edit(text, start, start + len(bad), "")
+    return json.dumps(cq._t2_with_field(_HELD_RC, "summary", None, new_text))
+
+
+async def _version_corrected():
+    history = [{"id": VERSION_ID, "version_number": 1, "status": "needs_review", "edit_source": "ai_generated",
+                "created_at": NOW}]
+    conn = _Conn([("SELECT ttv.*", _version_row(rewritten_content=_corrected_rc())),
+                  ("ORDER BY version_number ASC", history)])
+    return await v1_tours.get_version(str(VERSION_ID), _request(conn), TENANT), conn
+
+
+async def _my_versions_corrected():
+    conn = _Conn([("SELECT COUNT(*)", 1), ("ttv.rewritten_content", [_version_row(rewritten_content=_corrected_rc())])])
+    return await v1_tours.list_my_versions(_request(conn), TENANT, page=1, page_size=20, status=None,
+                                           country=None), conn
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call", [_version_corrected, _my_versions_corrected])
+async def test_admin_corrected_version_reaches_the_tenant_clean(call):
+    resp, conn = await call()
+    assert_tenant_clean(resp)
+    flat = str(resp)
+    assert "Kayak at dusk." in flat and "400 guests" not in flat  # the repaired text, nothing else
+    # the correction history (audit_log) and its gate names are admin-only: never read here
+    assert not any("audit_log" in sql for sql, _ in conn.calls)
+    assert "admin" not in flat and "T3_grounding" not in flat

@@ -6,7 +6,8 @@
 //   Pieces        — every T9 piece: final status (held = admin label), failed blocking gates and
 //                   warn flags read from gate_ledger (never held_reason, which names only the first
 //                   gate), attempts, LLM cost; drawer = highlighted text + writer inputs.
-//   Tour versions — every T2 tenant tour version with its score / QA state / escalations.
+//   Tour versions — every T2 tenant tour version with its score / QA state / escalations;
+//                   AA-802: the drawer corrects a sentence in the tenant's unpublished copy.
 //   Gate stats    — per gate and channel: runs, fails, blocking fails; per tenant outcomes.
 //   Place cards   — AA-772 cards: verify / reject, build the missing cards for one tour (job),
 //                   S234: review duplicate candidates and merge them into one card.
@@ -20,11 +21,12 @@ import type { SortingState } from "@tanstack/react-table";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
 import {
-  Badge, ConfirmModal, DataTable, Drawer, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
+  Badge, ConfirmModal, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, apiSend, useToast,
   type ColumnDef,
 } from "../../_kit";
 import PieceDrawer from "./PieceDrawer";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
+import TourVersionDrawer from "./TourVersionDrawer";
 import {
   DUPLICATE_REASON_LABELS, GATE_LABELS, fmtTime, gateLabel, usd,
   type DuplicateCluster, type GateStat, type Paged, type PieceRow, type PlaceCard, type TenantStat, type VersionRow,
@@ -162,34 +164,7 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   );
 }
 
-// ── T2 tour versions ────────────────────────────────────────────────────────────────────────────
-interface VersionDetail extends VersionRow {
-  rewritten_content: unknown;
-  reviews: { failure_summary: string | null; escalate_detail: unknown; review_status: string; created_at: string }[];
-  cost_by_stage: { stage: string; role: string; calls: number; cost_usd: number }[];
-}
-
-function VersionDrawer({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data: v } = useQuery({
-    queryKey: ["cq-version", id],
-    queryFn: () => apiGet<VersionDetail>(`/api/admin/content-quality/tour-versions/${id}`, { admin: true }),
-  });
-  const pre: React.CSSProperties = { whiteSpace: "pre-wrap", fontSize: 12, background: A.bg, border: `1px solid ${A.line}`, borderRadius: 8, padding: 10, maxHeight: 360, overflow: "auto" };
-  return (
-    <Drawer open onClose={onClose} width={820} title={v ? `${v.tour_name} — ${v.tenant_name} v${v.version_number}` : "Loading…"}>
-      {!v ? <div style={{ color: A.muted, fontSize: 12.5 }}>Loading…</div> : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12.5 }}>
-          <div>Status <b>{v.status}</b> · score <b>{v.quality_score ?? "—"}</b> · QA <b>{v.qa_status ?? "—"}</b>
-            {v.qa_auto_passed ? " (auto-passed)" : ""} · repairs {v.qa_repair_count ?? 0} · {usd(v.cost_usd)}</div>
-          <div><b>Escalations ({v.reviews.length})</b><pre style={pre}>{JSON.stringify(v.reviews, null, 2)}</pre></div>
-          <div><b>Rewritten content</b><pre style={pre}>{typeof v.rewritten_content === "string" ? v.rewritten_content : JSON.stringify(v.rewritten_content, null, 2)}</pre></div>
-          <div><b>Cost by stage</b><pre style={pre}>{JSON.stringify(v.cost_by_stage, null, 2)}</pre></div>
-        </div>
-      )}
-    </Drawer>
-  );
-}
-
+// ── T2 tour versions ── (drawer: TourVersionDrawer.tsx, AA-802 silent correction)
 function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partial<View>) => void; tenants: TenantStat[] }) {
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE) });
   if (view.tenant) qs.set("tenant_id", view.tenant);
@@ -457,7 +432,7 @@ function Page() {
         </div>
       </div>
       {view.piece && <PieceDrawer pieceId={view.piece} onClose={() => update({ piece: null })} />}
-      {view.version && <VersionDrawer id={view.version} onClose={() => update({ version: null })} />}
+      {view.version && <TourVersionDrawer id={view.version} onClose={() => update({ version: null })} />}
     </div>
   );
 }

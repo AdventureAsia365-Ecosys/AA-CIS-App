@@ -361,7 +361,7 @@ async def test_piece_detail_cost_includes_content_piece_id_calls_and_admin_edits
     from datetime import datetime, timezone
     row = {"piece_id": uuid.UUID(PIECE_ID), "tenant_id": TENANT_ID, "job_id": uuid.uuid4(),
            "request_id": uuid.uuid4(), "content_text": TEXT, "gate_ledger": "[]", "flags": json.dumps([F9_PHRASE]),
-           "published": True}
+           "published": True, "published_at": datetime(2026, 10, 12, tzinfo=timezone.utc), "exported_at": None}
     conn = AsyncMock()
     conn.fetchrow.return_value = row
     edit = {"action": AdminAuditAction.SENTENCE_CUT, "actor": "admin:u1",
@@ -373,10 +373,13 @@ async def test_piece_detail_cost_includes_content_piece_id_calls_and_admin_edits
     assert "content_piece_id = $2" in cost_sql and pid == PIECE_ID and job_id == row["job_id"]
     edits_sql, *params = conn.fetch.await_args_list[2].args
     assert "acp_shared.audit_log" in edits_sql and params == [str(TENANT_ID), PIECE_ID,
-                                                              "content_piece.admin_sentence_%"]
+                                                              "content_piece.admin_sentence_%", "content_piece"]
     assert out["admin_edits"][0]["details"] == {"before": "x", "after": ""}
     assert out["published"] is True and out["flagged_sentences"][0]["gates"] == ["F9_brand_style"]
     assert out["cost_by_stage"][0]["stage"] == "t9_repair"
+    # AA-802 — published 12/10, admin edit 13/10: the tenant's published post holds the older text
+    assert out["exported"] is False
+    assert out["tenant_copy"]["older_copy"] is True and out["tenant_copy"]["edits_after_delivery"] == 1
 
 
 # ── S234 review: sentence boundaries (decimals, abbreviations) ────────────────────────────────
