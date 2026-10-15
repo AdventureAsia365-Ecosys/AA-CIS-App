@@ -151,15 +151,27 @@ async def test_force_unpublish_404_when_already_unpublished():
 
 @pytest.mark.asyncio
 async def test_tenant_unpublish_success_records_tenant_actor():
-    from api.routers.v1_publish import unpublish
+    """AA-815 — the route now reads the row, removes the post remotely, then flips it (full
+    remote-delete coverage in test_aa815_unpublish_disconnect.py)."""
+    from unittest.mock import patch
 
-    row = {"publish_id": str(PUBLISH_ID), "channel": "blog", "status": "unpublished",
-           "unpublished_at": datetime(2026, 8, 24, tzinfo=timezone.utc)}
-    pool, conn = _make_pool(fetchrow=row)
+    from api.routers import v1_publish as mod
+    from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+
+    published = {"publish_id": str(PUBLISH_ID), "piece_id": str(uuid.uuid4()), "channel": "blog",
+                 "external_id": "42"}
+    updated = {"publish_id": str(PUBLISH_ID), "channel": "blog", "status": "unpublished",
+               "unpublished_at": datetime(2026, 8, 24, tzinfo=timezone.utc)}
+    pool, conn = _make_pool()
+    conn.fetchrow = AsyncMock(side_effect=[published, {"secret_key": "acp/cms/x"}, updated])
+    pool.execute = AsyncMock(return_value="INSERT 0 1")
     req = _make_request(pool)
     tenant = {"sub": TENANT_ID, "role": "tenant"}
 
-    result = await unpublish(PUBLISH_ID, req, tenant=tenant)
+    with patch.object(mod, "_get_secret", return_value={"wp_url": "https://b.com", "username": "u",
+                                                        "app_password": "p"}), \
+         patch.object(WordPressAdapter, "delete_post", AsyncMock(return_value="trashed")):
+        result = await mod.unpublish(PUBLISH_ID, req, tenant=tenant)
 
     assert result["status"] == "unpublished"
     assert result["unpublished_by"] == f"tenant:{TENANT_ID}"

@@ -40,6 +40,10 @@ logger = structlog.get_logger()
 # (don't invent ad hoc string literals at call sites) whenever a new route joins the rollout.
 STAGE1_PUBLISH_PENDING_FLAG = "aa544:stage1:publish_pending_pool"
 STAGE5_GET_PIECE_FLAG = "aa544:stage5:get_piece_pool"
+# AA-815 — GET /v1/publish-log (tenant's published/unpublished rows). Default off (admin pool).
+PUBLISH_LOG_LIST_FLAG = "aa544:publish_log_list_pool"
+# AA-815 — DELETE /v1/integrations/{wordpress|facebook} (tenant disconnect). Default off (admin pool).
+INTEGRATION_DISCONNECT_FLAG = "aa544:integration_disconnect_pool"
 
 _SECRET_ID = "aa-cis/dev/rds-app-user"
 

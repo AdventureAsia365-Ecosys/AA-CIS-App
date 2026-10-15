@@ -32,6 +32,12 @@ own adapter, same AA-460-lesson validation inside FacebookAdapter.create_post())
 channels (tiktok/instagram/linkedin/email/ads) remain unbuilt — 404 with a clear "not yet
 supported" message rather than a generic "not found", so a future caller hitting one doesn't
 read it as a content/ownership problem.
+
+AA-815 — unpublish now takes the post off the channel (WordPress trash / Graph DELETE) before the
+row flips; a remote failure leaves the row 'published' and returns the reason. GET "" lists the
+tenant's published/unpublished rows for the portal's Unpublish action. The integration lookup maps
+channel -> integration_type ('blog' -> 'wordpress'): v1_integrations.py stores WordPress under
+'wordpress', so the AA-462 `integration_type = channel` lookup never found a blog connection.
 """
 from __future__ import annotations
 
@@ -42,9 +48,11 @@ from uuid import UUID
 import boto3
 import structlog
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from api.core.aa544_tenant_pool import STAGE1_PUBLISH_PENDING_FLAG, acquire_scoped_conn
+from api.core.aa544_tenant_pool import (
+    PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, acquire_scoped_conn,
+)
 from api.routers.v1_tours import get_tenant
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -61,6 +69,9 @@ _SM_REGION = "us-west-1"
 # T11 scope: blog (AA-456/458) + facebook (AA-462). 5 channels remain unbuilt — see this
 # file's own header for why facebook was picked first (real STEP0 data, not a guess).
 _SUPPORTED_CHANNELS = ("blog", "facebook")
+# AA-815 — shared.tenant_integrations.integration_type per channel (v1_integrations.py writes
+# 'wordpress' / 'facebook'; the blog channel's connection is the WordPress one).
+_INTEGRATION_TYPE = {"blog": "wordpress", "facebook": "facebook"}
 
 
 def _get_secret(secret_key: str) -> dict:
@@ -73,34 +84,141 @@ def _get_secret(secret_key: str) -> dict:
     return json.loads(client.get_secret_value(SecretId=secret_key)["SecretString"])
 
 
+@router.get("")
+async def list_publish_log(request: Request, tenant=Depends(get_tenant),
+                           limit: int = Query(50, ge=1, le=200)):
+    """AA-815 — the tenant's own published and unpublished rows, newest first, for the portal's
+    "Published" list (the Unpublish action needs a publish_id). Tenant-safe projection: no
+    last_error, idempotency key or actor — a removal shows as 'unpublished' whoever did it.
+    Runs through acquire_scoped_conn behind its own default-off flag (AA-544 rollout)."""
+    tenant_id = tenant["sub"]
+    async with acquire_scoped_conn(request, tenant_id, PUBLISH_LOG_LIST_FLAG) as (conn, used_tenant_pool):
+        rows = await conn.fetch(
+            """
+            SELECT pl.publish_id::text, pl.piece_id::text, pl.channel, pl.status, pl.external_url,
+                   pl.published_at, pl.unpublished_at, ago.name AS angle_name
+            FROM acp_shared.publish_log pl
+            JOIN acp_shared.content_piece cp ON cp.piece_id = pl.piece_id
+            JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
+            LEFT JOIN acp_shared.angle_gate_option ago
+                ON ago.option_id = cp.angle_gate_option_id
+                OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id
+                    AND ago.chosen = true)
+            WHERE pl.tenant_id = $1::uuid AND pl.status IN ('published', 'unpublished')
+            ORDER BY COALESCE(pl.unpublished_at, pl.published_at, pl.created_at) DESC
+            LIMIT $2
+            """,
+            tenant_id, limit,
+        )
+    logger.info("publish_log_listed", tenant_id=tenant_id, count=len(rows), used_tenant_pool=used_tenant_pool)
+    return {
+        "data": [
+            {
+                "publish_id": r["publish_id"],
+                "piece_id": r["piece_id"],
+                "title": r["angle_name"] or "Untitled",
+                "channel": r["channel"],
+                "status": r["status"],
+                "external_url": r["external_url"],
+                "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+                "unpublished_at": r["unpublished_at"].isoformat() if r["unpublished_at"] else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+async def _delete_remote(channel: str, creds: dict, external_id: str) -> str:
+    """AA-815 — remove the live post. Returns the adapter's outcome ("trashed" / "already_gone" /
+    "deleted"); raises when the channel did not confirm the removal."""
+    if channel == "blog":
+        return await _wordpress(creds).delete_post(external_id)
+    return await _facebook(creds).delete_post(external_id)
+
+
 @router.delete("/{publish_id}")
 async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenant)):
-    """Tenant self-unpublish. Only flips a `status='published'` row the caller's own tenant_id
-    owns to 'unpublished' — a row belonging to another tenant, or already
-    unpublished/failed, 404s identically (no cross-tenant existence leak, AA-445-02 lesson).
-    `unpublished_by` records "tenant:<tenant_id>", distinguishing this from A4's
-    "admin:<id>" force-unpublish on the same table."""
+    """Tenant self-unpublish. Only a `status='published'` row the caller's own tenant_id owns —
+    another tenant's row, or one already unpublished/failed, 404s identically (no cross-tenant
+    existence leak, AA-445-02 lesson). `unpublished_by` records "tenant:<tenant_id>",
+    distinguishing this from A4's "admin:<id>" force-unpublish on the same table.
+
+    AA-815 — the post is removed from the channel FIRST (WordPress: moved to trash; Facebook:
+    Graph DELETE), using publish_log.external_id. Only a confirmed removal flips the row; a
+    missing connection (422), unreadable credentials or a channel error (502) leave it
+    'published', so the portal never tells a tenant a post is gone while it is still public."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
+            SELECT publish_id::text, piece_id::text, channel, external_id
+            FROM acp_shared.publish_log
+            WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
+        """, publish_id, tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="publish_log row not found or already unpublished")
+
+    channel = row["channel"]
+    name = _connect_action_verb(channel)
+    if channel not in _SUPPORTED_CHANNELS or not row["external_id"]:
+        raise HTTPException(status_code=422,
+                            detail=f"This post has no {name} post ID on record — remove it on {name} directly.")
+
+    async with pool.acquire() as conn:
+        integ = await conn.fetchrow(
+            "SELECT secret_key FROM shared.tenant_integrations "
+            "WHERE tenant_id = $1::uuid AND integration_type = $2",
+            tenant_id, _INTEGRATION_TYPE[channel],
+        )
+    if not integ or not integ["secret_key"]:
+        raise HTTPException(status_code=422,
+                            detail=f"Connect {name} to unpublish — the post is still live on {name}.")
+    try:
+        creds = _get_secret(integ["secret_key"])
+    except ClientError as exc:
+        logger.error("unpublish_secret_read_failed", tenant_id=tenant_id, channel=channel, error=str(exc))
+        raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+
+    try:
+        remote = await _delete_remote(channel, creds, row["external_id"])
+    except Exception as exc:  # noqa: BLE001 — the adapter raises only when removal is unconfirmed
+        logger.warning("tenant_unpublish_remote_failed", tenant_id=tenant_id, publish_id=str(publish_id),
+                       channel=channel, error=str(exc))
+        raise HTTPException(status_code=502,
+                            detail=f"Could not remove the post from {name}: {str(exc)[:300]}")
+
+    async with pool.acquire() as conn:
+        updated = await conn.fetchrow("""
             UPDATE acp_shared.publish_log
             SET status = 'unpublished', unpublished_at = now(), unpublished_by = $3
             WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
             RETURNING publish_id::text, channel, status, unpublished_at
         """, publish_id, tenant_id, f"tenant:{tenant_id}")
-
-    if not row:
+    if not updated:  # a concurrent unpublish flipped it between the read and here
         raise HTTPException(status_code=404, detail="publish_log row not found or already unpublished")
 
-    logger.info("tenant_self_unpublish", publish_id=str(publish_id), tenant_id=tenant_id)
+    logger.info("tenant_self_unpublish", publish_id=str(publish_id), tenant_id=tenant_id,
+                channel=channel, remote=remote)
+    try:  # best-effort, same as publish(): a lost audit row must not turn a removal into an error
+        await write_audit_log(
+            pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+            action=TenantAuditAction.CONTENT_UNPUBLISHED, resource_type="content_piece",
+            resource_id=row["piece_id"],
+            details={"channel": channel, "publish_id": updated["publish_id"],
+                     "external_id": row["external_id"], "remote": remote},
+        )
+    except Exception as exc:
+        logger.warning("unpublish_audit_log_failed", tenant_id=tenant_id, publish_id=str(publish_id), error=str(exc))
+
     return {
-        "publish_id": row["publish_id"],
-        "channel": row["channel"],
-        "status": row["status"],
-        "unpublished_at": row["unpublished_at"].isoformat() if row["unpublished_at"] else None,
+        "publish_id": updated["publish_id"],
+        "channel": updated["channel"],
+        "status": updated["status"],
+        "unpublished_at": updated["unpublished_at"].isoformat() if updated["unpublished_at"] else None,
         "unpublished_by": f"tenant:{tenant_id}",
+        "remote": remote,
     }
 
 
@@ -297,7 +415,7 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         integ = await conn.fetchrow(
             "SELECT secret_key FROM shared.tenant_integrations "
             "WHERE tenant_id = $1::uuid AND integration_type = $2",
-            tenant_id, channel,
+            tenant_id, _INTEGRATION_TYPE[channel],
         )
 
     if not integ or not integ["secret_key"]:
