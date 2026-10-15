@@ -34,13 +34,15 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
-from services.acp_content_writing import sentence_repair, text_integrity
+from services.acp_content_writing import hygiene, sentence_repair, text_integrity
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
 from services.acp_shared import place_cards
 from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
+from services.acp_shared.brand_pack import fetch_brand_pack_conn
+from services.acp_shared.grounding import find_novel_numeric_claims
 
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"])
 
@@ -255,6 +257,16 @@ def flagged_sentences(content_text: str, hls: list[dict]) -> list[dict]:
     return [items[k] for k in sorted(items)]
 
 
+# AA-802 — when the tenant last took a copy of the piece away: published to a channel
+# (publish_log; WordPress/Facebook are never re-synced) or exported (the AA-613 audit row).
+_DELIVERED_SQL = """
+    (SELECT max(COALESCE(pl.published_at, pl.created_at)) FROM acp_shared.publish_log pl
+     WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published_at,
+    (SELECT max(al.created_at) FROM acp_shared.audit_log al
+     WHERE al.resource_type = 'content_piece' AND al.resource_id = cp.piece_id::text
+       AND al.action = 'content_piece.exported') AS exported_at
+"""
+
 _PIECE_DETAIL_SQL = f"""
     SELECT cp.piece_id, cp.tenant_id, t.name AS tenant_name, COALESCE(cp.channel, agr.channel) AS channel,
            cp.status, cp.held_reason, cp.attempt_number, cp.created_at, cp.job_id,
@@ -264,6 +276,7 @@ _PIECE_DETAIL_SQL = f"""
            ago.name AS angle_name, ago.why_it_works AS angle_why, ago.best_final_style AS angle_style,
            EXISTS (SELECT 1 FROM acp_shared.publish_log pl
                    WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published,
+           {_DELIVERED_SQL},
            {_COST_SQL}
     {_PIECE_FROM}
     WHERE cp.piece_id = $1::uuid
@@ -279,7 +292,7 @@ _PIECE_COST_BY_STAGE_SQL = """
 
 _ADMIN_EDITS_SQL = """
     SELECT action, actor, details, created_at FROM acp_shared.audit_log
-    WHERE tenant_id = $1 AND resource_type = 'content_piece' AND resource_id = $2 AND action LIKE $3
+    WHERE tenant_id = $1 AND resource_type = $4 AND resource_id = $2 AND action LIKE $3
     ORDER BY created_at DESC LIMIT 50
 """
 
@@ -296,14 +309,31 @@ async def _load_piece_detail(conn, piece_id: str) -> dict:
         WHERE angle_gate_request_id = $1 AND piece_id <> $2::uuid ORDER BY created_at
         """, row["request_id"], piece_id)
     edits = await conn.fetch(_ADMIN_EDITS_SQL, str(row["tenant_id"]), str(row["piece_id"]),
-                             AdminAuditAction.ADMIN_SENTENCE_PREFIX + "%")
+                             AdminAuditAction.ADMIN_SENTENCE_PREFIX + "%", "content_piece")
     piece = _row(row)
     piece["highlights"] = highlights(piece["content_text"], piece["gate_ledger"], piece["flags"])
     piece["flagged_sentences"] = flagged_sentences(piece["content_text"] or "", piece["highlights"])
     piece["cost_by_stage"] = [_row(r) for r in cost_rows]
     piece["other_pieces_for_request"] = [_row(r) for r in siblings]
     piece["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    piece["exported"] = row["exported_at"] is not None
+    piece["tenant_copy"] = tenant_copy_state(row["published_at"], row["exported_at"],
+                                             [r["created_at"] for r in edits])
     return piece
+
+
+def tenant_copy_state(published_at, exported_at, edit_times) -> dict:
+    """AA-802 — does the tenant hold a copy older than the text we now have? `delivered_at` is the
+    latest publish or export; `older_copy` is true when an admin edit came after it (the published
+    post / the downloaded file still has the old sentence — nothing is re-synced). One function for
+    the T9 piece and the T2 tour version."""
+    marks = [t for t in (published_at, exported_at) if t is not None]
+    delivered_at = max(marks) if marks else None
+    later = [t for t in edit_times if t is not None and delivered_at is not None and t > delivered_at]
+    return {"published_at": published_at.isoformat() if published_at else None,
+            "exported_at": exported_at.isoformat() if exported_at else None,
+            "delivered_at": delivered_at.isoformat() if delivered_at else None,
+            "older_copy": bool(later), "edits_after_delivery": len(later)}
 
 
 @router.get("/pieces/{piece_id}")
@@ -426,7 +456,8 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
     length, UPDATE content_text and write the audit row with before/after. What the edit newly
     breaks (`text_integrity.edit_findings`: a second / reworded CTA, a fragment, a repeat) is an
     F13_repeat warning — the final integrity pass does not run here. Returns the refreshed
-    piece detail. A published piece is edited here only — WordPress is not re-synced."""
+    piece detail. A published piece is edited here only — WordPress is not re-synced; the detail's
+    `tenant_copy.older_copy` (AA-802) then tells the admin the tenant holds the older text."""
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
     if body.mode not in _ACTION_BY_MODE:
@@ -445,7 +476,10 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                        COALESCE(cp.channel, (SELECT agr.channel FROM acp_shared.angle_gate_request agr
                                              WHERE agr.request_id = cp.angle_gate_request_id)) AS channel,
                        EXISTS (SELECT 1 FROM acp_shared.publish_log pl
-                               WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published
+                               WHERE pl.piece_id = cp.piece_id AND pl.status = 'published') AS published,
+                       EXISTS (SELECT 1 FROM acp_shared.audit_log al
+                               WHERE al.resource_type = 'content_piece' AND al.resource_id = cp.piece_id::text
+                                 AND al.action = 'content_piece.exported') AS exported
                 FROM acp_shared.content_piece cp
                 WHERE cp.piece_id = $1::uuid
                 FOR UPDATE OF cp
@@ -502,7 +536,8 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
                          "suggestion": body.suggestion, "suggestion_model": body.suggestion_model,
                          "suggestion_cost_usd": body.suggestion_cost_usd,
                          "length_before": len(old_text), "length_after": len(new_text),
-                         "published": bool(row["published"]), "warnings": warnings},
+                         "published": bool(row["published"]), "exported": bool(row.get("exported")),
+                         "warnings": warnings},
             )
         piece = await _load_piece_detail(conn, piece_id)
     # S234 review: F12_scope / F13 hygiene hits on the admin's text are warnings, not refusals.
@@ -679,38 +714,370 @@ async def list_tour_versions(
     return {"data": [_row(r) for r in rows], "total": total, "limit": limit, "offset": offset}
 
 
+# ── AA-802: silent correction of a T2 tour version (admin only) ────────────────────────────────
+#
+# AA-770: the tenant always receives the T2 rewrite; a low score (needs_review) or a T3 escalation
+# is admin-only. An admin fixes a sentence of a version the tenant has not decided on yet, and the
+# tenant's copy changes silently: the row is updated IN PLACE (same id, version_number, status,
+# edit_source, edited_at), so the tenant sees no new version, no "edited" mark and no flag. The
+# version history is the audit row (sentence before/after plus the whole section before/after).
+# A new tenant_tour_versions row was rejected: it counts as a rewrite in the tenant's monthly quota
+# (v_tenant_monthly_usage counts distinct ttv.id), shows up in the tenant's version list, and moves
+# the version id the portal has open.
+
+_T2_EDITABLE_STATUSES = ("ai_generated", "needs_review")  # finished AI text, no tenant decision yet
+_T2_TEXT_FIELDS = ("subtitle", "summary", "highlights", "itineraries")  # T3's gated prose fields
+_T2_SOURCE_COLUMNS = ("aa_name", "aa_subtitle", "aa_summary", "aa_description", "aa_highlights",
+                      "aa_itineraries", "seo_title", "seo_meta", "country", "duration")
+
+_VERSION_DETAIL_SQL = """
+    SELECT ttv.id, ttv.tenant_id, ttv.published_tour_id, t.name AS tenant_name, pt.aa_name AS tour_name,
+           ttv.version_number, ttv.status, ttv.quality_score, ttv.qa_status, ttv.qa_auto_passed,
+           ttv.qa_repair_count, ttv.qa_checked_at, ttv.rewritten_content, ttv.edit_source, ttv.created_at,
+           ttv.job_id,
+           (SELECT max(v2.version_number) FROM gold_aa_internal.tenant_tour_versions v2
+            WHERE v2.tenant_id = ttv.tenant_id AND v2.published_tour_id = ttv.published_tour_id
+              AND v2.status <> 'failed')  -- a failed rewrite has no text: the older one stays the copy
+               AS latest_version_number,
+           (SELECT max(al.created_at) FROM acp_shared.audit_log al
+            WHERE al.resource_type = 'tenant_tour_version' AND al.resource_id = ttv.id::text
+              AND al.action = 'tenant_tour_version.exported') AS exported_at,
+           pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
+           pt.seo_title, pt.seo_meta, rt.country, rt.duration
+    FROM gold_aa_internal.tenant_tour_versions ttv
+    JOIN shared.tenants t ON t.tenant_id = ttv.tenant_id
+    JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    WHERE ttv.id = $1::uuid
+"""
+
+# The write targets the tenant's row by id AND tenant_id AND a still-editable status. An UPDATE
+# that touches 0 rows (the tenant approved meanwhile, or a future FORCE RLS hides the row from the
+# admin role, D2) is a 409, never a silent success.
+_VERSION_UPDATE_SQL = """
+    UPDATE gold_aa_internal.tenant_tour_versions SET rewritten_content = $3::jsonb
+    WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = ANY($4::text[])
+"""
+
+
+def t2_edit_block(status: Optional[str], version_number: Optional[int],
+                  latest_version_number: Optional[int], edit_source: Optional[str] = None) -> Optional[str]:
+    """Why an admin may NOT correct this version in place (None = editable). Only finished AI text
+    the tenant has not approved / rejected, and only the tenant's latest version of the tour (an
+    older one is no longer the copy the tenant works from). A tenant's own inline edit is a new
+    `pending` version with edit_source 'tenant_edit' (v1_tours.update_version): their words, never
+    corrected by an admin."""
+    if edit_source == "tenant_edit":
+        return "The tenant wrote this version themselves (inline edit), so an admin edit is not applied."
+    if status not in _T2_EDITABLE_STATUSES:
+        if status in ("approved", "rejected"):
+            return f"The tenant {status} this version, so it is theirs now; an admin edit is not applied."
+        return f"A {status} version has no finished text to correct."
+    if latest_version_number and version_number is not None and version_number < latest_version_number:
+        return (f"The tenant has a newer version (v{latest_version_number}) of this tour; "
+                "correct that one instead.")
+    return None
+
+
+def _rewritten(row) -> dict:
+    rc = _j(row["rewritten_content"])
+    return rc if isinstance(rc, dict) else {}
+
+
+def t2_sections(rc: dict) -> list[dict]:
+    """The prose a tenant reads in a version, one entry per text an admin can edit: subtitle,
+    summary, itineraries (strings) and each highlight (`index` into the list). Each carries its
+    sentences with code-point offsets into that text. Other shapes (an itinerary stored as a list
+    of day objects) are left out: not editable here."""
+    out: list[dict] = []
+    for field in _T2_TEXT_FIELDS:
+        value = rc.get(field)
+        if field == "highlights" and isinstance(value, list):
+            texts = [(i, v) for i, v in enumerate(value) if isinstance(v, str) and v.strip()]
+        elif isinstance(value, str) and value.strip():
+            texts = [(None, value)]
+        else:
+            texts = []
+        for index, text in texts:
+            sentences = []
+            for sp in hygiene.sentence_spans(text):
+                if sp["kind"] in ("heading", "hashtags") or not sp["clean"]:
+                    continue
+                sentences.append({"start": sp["start"], "end": sp["end"], "text": sp["text"],
+                                  "sentence": sp["clean"], "key": _sentence_key(f"{field}:{index}:{sp['clean']}"),
+                                  "problems": []})
+            out.append({"field": field, "index": index, "text": text, "sentences": sentences})
+    return out
+
+
+def t2_flag(sections: list[dict], tour: dict, forbidden_words) -> list[dict]:
+    """Mark each sentence with what T3 would flag on it NOW (deterministic, no LLM): a number the
+    source tour lacks (`find_novel_numeric_claims`, T3's own reading) and a forbidden word (the
+    validate list + the tenant's words). Candidates only: T3's Jev step may have cleared a number.
+    Returns the flagged sentences (the drawer's Cut / Rewrite / Edit list)."""
+    from services.content_generation.forbidden_words import all_forbidden, has_word
+    source_texts = [str(v) for v in tour.values() if v]
+    words = all_forbidden(forbidden_words)
+    flagged = []
+    for sec in sections:
+        for s in sec["sentences"]:
+            novel = find_novel_numeric_claims(s["sentence"], source_texts)
+            if novel:
+                s["problems"].append({"gate": "T3_grounding", "blocking": True,
+                                      "problem": f"number(s) {novel} not in the source tour"})
+            hits = [w for w in words if has_word(s["sentence"], w)]
+            if hits:
+                s["problems"].append({"gate": "FORBIDDEN_WORD", "blocking": True,
+                                      "problem": f"forbidden word(s): {', '.join(hits)}"})
+            if s["problems"]:
+                flagged.append({**s, "field": sec["field"], "index": sec["index"],
+                                "gates": list(dict.fromkeys(p["gate"] for p in s["problems"])),
+                                "blocking": True})
+    return flagged
+
+
+def t2_check_replacement(replacement: str, tour: dict, pack: dict, field_text: str,
+                         span: tuple[int, int]) -> list[dict]:
+    """The deterministic checks on an admin's (or the model's) sentence for a T2 version, same shape
+    as `sentence_repair.check_replacement` (which runs first, against the source tour): F1 / F2 /
+    brand-forbidden / F11 / a near-verbatim neighbour block. On top, T2's own rules block: a number
+    T3's plain reading finds outside the source, and a word on the validate forbidden list."""
+    from services.content_generation.forbidden_words import VALIDATE_FORBIDDEN, has_word
+    source_texts = [str(v) for v in tour.values() if v]
+    checks = sentence_repair.check_replacement(replacement, "\n".join(source_texts), pack,
+                                               text=field_text, span=span)
+    sentence = " ".join((replacement or "").split())
+    if not sentence:
+        return checks
+    novel = find_novel_numeric_claims(sentence, source_texts)
+    if novel and not any(c["gate"] == "F1_grounding" for c in checks):
+        checks.append({"gate": "T3_grounding", "blocking": True,
+                       "violations": [f"number(s) {novel} not in the source tour"]})
+    hits = [w for w in VALIDATE_FORBIDDEN if has_word(sentence, w)]
+    if hits:
+        checks.append({"gate": "FORBIDDEN_WORD", "blocking": True,
+                       "violations": [f"forbidden word(s): {', '.join(hits)}"]})
+    return checks
+
+
+def _t2_field_text(rc: dict, field: str, index: Optional[int]) -> str:
+    if field not in _T2_TEXT_FIELDS:
+        raise HTTPException(status_code=422, detail=f"field must be one of {', '.join(_T2_TEXT_FIELDS)}")
+    value = rc.get(field)
+    if field == "highlights" and isinstance(value, list):
+        if index is None or index >= len(value) or not isinstance(value[index], str):
+            raise HTTPException(status_code=409,
+                                detail="The version changed since it was loaded — reload and try again")
+        return value[index]
+    if index is not None or not isinstance(value, str):
+        raise HTTPException(status_code=422, detail=f"The {field} of this version cannot be edited here")
+    return value
+
+
+def _t2_with_field(rc: dict, field: str, index: Optional[int], new_text: str) -> dict:
+    out = dict(rc)
+    if field == "highlights" and isinstance(rc.get(field), list):
+        items = list(rc[field])
+        if new_text.strip():
+            items[index] = new_text
+        else:
+            del items[index]  # a cut that empties a highlight drops the item
+        out[field] = items
+    else:
+        out[field] = new_text
+    return out
+
+
+async def _load_version_detail(conn, version_id: str) -> dict:
+    """GET /tour-versions/{id} and the apply response share this one read."""
+    from services.jobs.t2_rewrite_job import source_tour_dict
+    row = await conn.fetchrow(_VERSION_DETAIL_SQL, version_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    reviews = await conn.fetch(
+        """
+        SELECT failure_summary, escalate_detail, review_status, created_at
+        FROM silver_aa_internal.review_queue WHERE tenant_tour_version_id = $1::uuid ORDER BY created_at
+        """, version_id)
+    cost_rows = await conn.fetch(
+        """
+        SELECT stage, role, count(*) AS calls, sum(cost_usd) AS cost_usd
+        FROM shared.llm_call_log WHERE job_id = $1 GROUP BY stage, role ORDER BY sum(cost_usd) DESC NULLS LAST
+        """, row["job_id"]) if row["job_id"] else []
+    edits = await conn.fetch(_ADMIN_EDITS_SQL, str(row["tenant_id"]), str(row["id"]),
+                             AdminAuditAction.TOUR_SENTENCE_PREFIX + "%", "tenant_tour_version")
+    pack = await fetch_brand_pack_conn(conn, row["tenant_id"])
+    rc = _rewritten(row)
+    sections = t2_sections(rc)
+    out = {k: v for k, v in _row(row).items() if k not in _T2_SOURCE_COLUMNS}
+    out["rewritten_content"] = rc or _j(row["rewritten_content"])
+    out["reviews"] = [_row(r) for r in reviews]
+    out["cost_by_stage"] = [_row(r) for r in cost_rows]
+    out["flagged_sentences"] = t2_flag(sections, source_tour_dict(row), pack.get("forbidden_words"))
+    out["sections"] = sections
+    out["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
+    block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
+                          row["edit_source"])
+    out["editable"], out["edit_block_reason"] = block is None, block
+    out["tenant_copy"] = tenant_copy_state(None, row["exported_at"], [r["created_at"] for r in edits])
+    return out
+
+
 @router.get("/tour-versions/{version_id}")
 async def get_tour_version(version_id: str, request: Request, x_admin_secret: str = Header(None)):
+    """One T2 version for the admin: scores / QA / escalations / cost (never shown to the tenant),
+    plus (AA-802) its editable sections, the sentences T3 would flag now, the admin edit history,
+    whether it can be corrected in place and whether the tenant already downloaded a copy."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT ttv.id, t.name AS tenant_name, pt.aa_name AS tour_name, ttv.version_number, ttv.status,
-                   ttv.quality_score, ttv.qa_status, ttv.qa_auto_passed, ttv.qa_repair_count, ttv.qa_checked_at,
-                   ttv.rewritten_content, ttv.edit_source, ttv.created_at, ttv.job_id
-            FROM gold_aa_internal.tenant_tour_versions ttv
-            JOIN shared.tenants t ON t.tenant_id = ttv.tenant_id
-            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-            WHERE ttv.id = $1::uuid
-            """, version_id)
+        return await _load_version_detail(conn, version_id)
+
+
+class TourSentenceSuggestBody(SentenceSuggestBody):
+    field: str = Field(max_length=40)
+    index: Optional[int] = Field(None, ge=0)  # the highlight's position; None for a text field
+
+
+class TourSentenceApplyBody(SentenceApplyBody):
+    field: str = Field(max_length=40)
+    index: Optional[int] = Field(None, ge=0)
+
+
+_TOUR_ACTION_BY_MODE = {"cut": AdminAuditAction.TOUR_SENTENCE_CUT,
+                        "rewrite": AdminAuditAction.TOUR_SENTENCE_REWRITTEN,
+                        "manual": AdminAuditAction.TOUR_SENTENCE_EDITED}
+
+
+@router.post("/tour-versions/{version_id}/sentences/suggest")
+async def suggest_tour_sentence(version_id: str, body: TourSentenceSuggestBody, request: Request,
+                                x_admin_secret: str = Header(None), x_admin_role: Optional[str] = Header(None)):
+    """AA-802 — a proposed rewrite of one sentence of a T2 version: ONE call on the cheap
+    `t9_repair` stage (mode `admin_suggest_tour`, logged to llm_call_log with the tenant), with the
+    source tour as SOURCE. Nothing is saved; the suggestion goes through the checks /apply runs."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    from services.content_generation.grounding import source_text
+    from services.jobs.t2_rewrite_job import source_tour_dict
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_VERSION_DETAIL_SQL, version_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Version not found")
-        reviews = await conn.fetch(
-            """
-            SELECT failure_summary, escalate_detail, review_status, created_at
-            FROM silver_aa_internal.review_queue WHERE tenant_tour_version_id = $1::uuid ORDER BY created_at
-            """, version_id)
-        cost_rows = await conn.fetch(
-            """
-            SELECT stage, role, count(*) AS calls, sum(cost_usd) AS cost_usd
-            FROM shared.llm_call_log WHERE job_id = $1 GROUP BY stage, role ORDER BY sum(cost_usd) DESC NULLS LAST
-            """, row["job_id"]) if row["job_id"] else []
-    out = _row(row)
-    out["rewritten_content"] = _j(out.get("rewritten_content"))
-    out["reviews"] = [_row(r) for r in reviews]
-    out["cost_by_stage"] = [_row(r) for r in cost_rows]
-    return out
+        pack = await fetch_brand_pack_conn(conn, row["tenant_id"])
+    field_text = _t2_field_text(_rewritten(row), body.field, body.index)
+    start, end = _resolve(field_text, body.start, body.end, body.text)
+    sentence = _plain(field_text[start:end])
+    problem = body.problem.strip() or "The editor wants this sentence rewritten."
+    if body.note and body.note.strip():
+        problem += f" Editor note: {body.note.strip()}"
+    tour = source_tour_dict(row)
+    seed = source_text(tour)
+    if pack.get("brand_name"):
+        seed = f"BRAND: {pack['brand_name']}\n\n{seed}"
+    try:
+        reps, cost, model = await asyncio.to_thread(
+            repair_sentences_detailed,
+            sentences=[{"sentence": sentence, "problem": problem,
+                        "context": sentence_repair.neighbours(field_text, {"start": start, "end": end})}],
+            content_seed=seed, facts_text=None, channel="tour", tenant_id=str(row["tenant_id"]),
+            angle_gate_request_id=None, stage=_SUGGEST_STAGE, mode="admin_suggest_tour", attempt=None,
+            content_piece_id=None, max_tokens=_SUGGEST_MAX_TOKENS,
+        )
+    except SentenceRepairError as e:
+        raise HTTPException(status_code=502, detail=f"The model reply could not be read: {str(e)[:200]}")
+    replacement = sentence_repair.sanitize_replacement(reps[0], None)
+    return {"field": body.field, "index": body.index, "start": start, "end": end, "sentence": sentence,
+            "replacement": replacement,
+            "checks": t2_check_replacement(replacement, tour, pack, field_text, (start, end)),
+            "model": model, "cost_usd": cost}
+
+
+@router.post("/tour-versions/{version_id}/sentences/apply")
+async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, request: Request,
+                              x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None),
+                              x_admin_role: Optional[str] = Header(None)):
+    """AA-802 — cut one sentence of a T2 version, or put a replacement in its place, in the
+    tenant's copy (silent correction). Deterministic, no LLM. In one transaction: lock the row,
+    refuse unless `t2_edit_block` allows it, resolve the span in the section (409 when it moved
+    ambiguously), run `t2_check_replacement` (422 on a blocking hit; F12/F13 hits are warnings),
+    splice + tidy, refuse an emptied text section and anything that adds a T3 hard code
+    (validate_node: forbidden word, missing field…), UPDATE the row by id + tenant_id + editable
+    status (0 rows → 409) and write the audit row. Returns the refreshed detail + `warnings`."""
+    verify_admin_secret(x_admin_secret)
+    _require_admin_role(x_admin_role)
+    from services.acp_produce.tenant_pipeline import _t3_structural_issues
+    from services.jobs.t2_rewrite_job import source_tour_dict
+    if body.mode not in _TOUR_ACTION_BY_MODE:
+        raise HTTPException(status_code=422, detail="mode must be cut, rewrite or manual")
+    replacement = body.replacement.strip()
+    if body.mode == "cut":
+        replacement = ""
+    elif not replacement:
+        raise HTTPException(status_code=422, detail="An empty replacement is a cut — use mode 'cut'")
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(_VERSION_DETAIL_SQL + "    FOR UPDATE OF ttv\n", version_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Version not found")
+            block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
+                          row["edit_source"])
+            if block:
+                raise HTTPException(status_code=409, detail=block)
+            rc = _rewritten(row)
+            old_text = _t2_field_text(rc, body.field, body.index)
+            start, end = _resolve(old_text, body.start, body.end, body.text)
+            replacement = sentence_repair.sanitize_replacement(replacement, None)
+            if body.mode != "cut" and not replacement:
+                raise HTTPException(status_code=422, detail="The replacement is empty once cleaned — use mode 'cut'")
+            pack = await fetch_brand_pack_conn(conn, row["tenant_id"])
+            tour = source_tour_dict(row)
+            warnings: list[dict] = []
+            if replacement:
+                checks = t2_check_replacement(replacement, tour, pack, old_text, (start, end))
+                failed = [c for c in checks if c["blocking"]]
+                warnings = [c for c in checks if not c["blocking"]]
+                if failed:
+                    detail = "; ".join(f"{f['gate']}: {' | '.join(f['violations'])}" for f in failed)
+                    raise HTTPException(status_code=422, detail=f"The new sentence fails a check — {detail}")
+            new_text = sentence_repair.apply_edit(old_text, start, end, replacement)
+            if body.field != "highlights" and not new_text.strip():
+                raise HTTPException(status_code=422, detail=f"This would leave the {body.field} empty")
+            new_rc = _t2_with_field(rc, body.field, body.index, new_text)
+            if body.field == "highlights" and not new_rc.get("highlights"):
+                raise HTTPException(status_code=422, detail="This would leave the tour with no highlights")
+            broken = text_integrity.edit_findings(old_text, new_text, None, pack.get("brand_name"))
+            if broken:
+                warnings.append({"gate": "F13_repeat", "violations": broken, "blocking": False})
+            rules = {"forbidden_words": pack.get("forbidden_words") or []}
+            added = sorted(set(_t3_structural_issues(new_rc, tour, rules))
+                           - set(_t3_structural_issues(rc, tour, rules)))
+            if added:
+                raise HTTPException(status_code=422, detail=f"This edit adds a T3 problem — {', '.join(added)}")
+            res = await conn.execute(_VERSION_UPDATE_SQL, version_id, str(row["tenant_id"]),
+                                     json.dumps(new_rc), list(_T2_EDITABLE_STATUSES))
+            if not str(res).endswith(" 1"):
+                raise HTTPException(status_code=409, detail="The version was not updated (it changed or is no "
+                                                            "longer editable) — reload and try again")
+            await write_audit_log(
+                conn, tenant_id=str(row["tenant_id"]), actor=f"admin:{x_admin_user_id or 'unknown'}",
+                action=_TOUR_ACTION_BY_MODE[body.mode], resource_type="tenant_tour_version",
+                resource_id=str(row["id"]),  # canonical form: the detail reads by ttv.id::text
+                details={"field": body.field, "index": body.index, "start": start, "end": end,
+                         "before": old_text[start:end], "after": replacement, "mode": body.mode,
+                         "gate": body.gate, "problem": body.problem, "suggestion": body.suggestion,
+                         "suggestion_model": body.suggestion_model,
+                         "suggestion_cost_usd": body.suggestion_cost_usd,
+                         "version_number": row["version_number"], "status": row["status"],
+                         "section_before": old_text, "section_after": new_text,
+                         # the whole version before / after: the history holds both versions
+                         # (AA-802 Done-when), not only the section that changed
+                         "content_before": rc, "content_after": new_rc,
+                         "exported": row["exported_at"] is not None, "warnings": warnings},
+            )
+        detail = await _load_version_detail(conn, version_id)
+    return {**detail, "warnings": warnings}
 
 
 # ── Place cards (AA-772) ───────────────────────────────────────────────────────────────────────

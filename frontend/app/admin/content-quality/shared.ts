@@ -43,7 +43,20 @@ export interface FlaggedSentence {
 
 export interface AdminEdit {
   action: string; actor: string; created_at: string;
-  details: { before?: string; after?: string; mode?: string; gate?: string | null; published?: boolean };
+  details: {
+    before?: string; after?: string; mode?: string; gate?: string | null; published?: boolean; exported?: boolean;
+    field?: string; index?: number | null; // AA-802 — T2 version edits name the section
+  };
+}
+
+/** AA-802 — whether the tenant holds a copy (published post / downloaded file) older than our text.
+ *  Nothing is re-synced: an admin edit after `delivered_at` leaves that copy with the old sentence. */
+export interface TenantCopy {
+  published_at: string | null;
+  exported_at: string | null;
+  delivered_at: string | null;
+  older_copy: boolean;
+  edits_after_delivery: number;
 }
 
 // blocking: Apply refuses it (F1/F2/brand-forbidden/F11/near-verbatim repeat); otherwise a warning (F12/F13).
@@ -88,6 +101,8 @@ export interface PieceDetail extends Omit<PieceRow, "failed_gates" | "flag_gates
   highlights: Highlight[];
   flagged_sentences: FlaggedSentence[];
   published: boolean;
+  exported: boolean;
+  tenant_copy: TenantCopy;
   admin_edits: AdminEdit[];
   cost_by_stage: CostRow[];
   other_pieces_for_request: { piece_id: string; status: string; attempt_number: number; created_at: string }[];
@@ -108,6 +123,38 @@ export interface VersionRow {
   cost_usd: number;
   escalations: number;
 }
+
+// AA-802 — T2 silent correction (GET /tour-versions/{id}, POST …/sentences/suggest|apply).
+export interface TourProblem { gate: string; problem: string; blocking: boolean }
+export interface TourSentence {
+  key: string; start: number; end: number; text: string; sentence: string; problems: TourProblem[];
+}
+export interface TourSection { field: string; index: number | null; text: string; sentences: TourSentence[] }
+export interface TourFlaggedSentence extends TourSentence {
+  field: string; index: number | null; gates: string[]; blocking: boolean;
+}
+export interface TourVersionDetail extends Omit<VersionRow, "cost_usd" | "escalations"> {
+  tenant_id: string;
+  published_tour_id: string;
+  latest_version_number: number | null;
+  rewritten_content: unknown;
+  reviews: { failure_summary: string | null; escalate_detail: unknown; review_status: string; created_at: string }[];
+  cost_by_stage: CostRow[];
+  sections: TourSection[];
+  flagged_sentences: TourFlaggedSentence[];
+  admin_edits: AdminEdit[];
+  editable: boolean;
+  edit_block_reason: string | null;
+  tenant_copy: TenantCopy;
+}
+export interface TourSuggestResponse extends SuggestResponse { field: string; index: number | null }
+export interface TourApplyBody extends ApplyBody { field: string; index: number | null }
+
+export const TOUR_FIELD_LABELS: Record<string, string> = {
+  subtitle: "Subtitle", summary: "Summary", highlights: "Highlight", itineraries: "Itinerary",
+};
+export const tourSectionLabel = (field: string, index: number | null) =>
+  `${TOUR_FIELD_LABELS[field] ?? field}${index != null ? ` ${index + 1}` : ""}`;
 
 export interface GateStat { gate: string; channel: string; runs: number; failed: number; blocking_failed: number }
 export interface TenantStat { tenant_name: string; tenant_id: string; pieces: number; approved: number; held: number; failed: number; cost_usd: number }
@@ -203,6 +250,9 @@ export const GATE_LABELS: Record<string, string> = {
   F15_voice: "Stock phrase",
   F15_voice_warn: "Trade register / audience leak / opener",
   within_tenant_reuse: "Repeats this tenant",
+  // AA-802 — T2 tour versions (T3 checks re-run on the current text)
+  T3_grounding: "Number not in the source tour",
+  FORBIDDEN_WORD: "Forbidden word",
 };
 
 export const gateLabel = (g: string) => GATE_LABELS[g] ?? g;

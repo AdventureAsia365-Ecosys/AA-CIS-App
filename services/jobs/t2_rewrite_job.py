@@ -37,10 +37,11 @@ _PT_SQL = """
 """
 
 
-async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dict, dict]:
-    """tour_dict + brand_rules, unchanged from the pre-AA-652 router code."""
-    # Build tour dict from published tour
-    tour_dict = {
+def source_tour_dict(pt) -> dict:
+    """The T2 writer's source (a `_PT_SQL` row) as the dict `_rewrite_tour` and the T3 gate read.
+    AA-802 — also the source the admin sentence edit on a tenant version checks against
+    (admin_content_quality), so the two never drift."""
+    return {
         "name":        pt["aa_name"],
         "subtitle":    pt.get("aa_subtitle") or "",
         "summary":     pt.get("aa_summary") or "",
@@ -52,6 +53,11 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
         "country":     pt.get("country") or "",       # now from raw_tours JOIN
         "duration":    pt.get("duration") or "",      # now from raw_tours JOIN
     }
+
+
+async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dict, dict]:
+    """tour_dict + brand_rules, unchanged from the pre-AA-652 router code."""
+    tour_dict = source_tour_dict(pt)
 
     # Fetch brand rules for this tenant
     # AA-425 fix: `br_row = await pool.acquire().__aenter__()` used to sit right before the
