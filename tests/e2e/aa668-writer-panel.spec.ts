@@ -75,7 +75,7 @@ function request(s: State) {
   };
 }
 
-async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number } = {}) {
+async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number; noBrandCta?: boolean; slowWriteMs?: number } = {}) {
   const slowPiece = opts.slowPiece ?? 2;
   await page.route('**/api/tenant/**', async (route: Route) => {
     const req = route.request();
@@ -124,7 +124,11 @@ async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number } 
     }
     if (p === `/v1/content-writing/requests/${REQ}/latest-piece`) return json({ piece: null });
     if (p === `/v1/content-writing/requests/${REQ}/write`) {
-      s.writeBodies.push(JSON.parse(req.postData() || '{}'));
+      const body = JSON.parse(req.postData() || '{}');
+      s.writeBodies.push(body);
+      // The server's MissingCTAError: no request CTA, no override and no brand default_cta.
+      if (opts.noBrandCta && !body.cta) return json({ detail: 'no CTA' }, 422);
+      if (opts.slowWriteMs) await new Promise(r => setTimeout(r, opts.slowWriteMs));
       return json({ piece_id: PIECE, angle_gate_request_id: REQ, channel: 'facebook', ready_state: 'in_progress' }, 202);
     }
     if (p === `/v1/content-writing/pieces/${PIECE}`) {
@@ -223,6 +227,11 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
 
     await page.getByRole('button', { name: /^Publish$/ }).click();
     await page.screenshot({ path: `${SHOTS}/06-panel-publish-confirm-desktop.png` });
+    // Escape closes only the confirm; the panel behind it stays open.
+    await expect(page.getByText(/Publish to Facebook\?/)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByText(/Publish to Facebook\?/)).toHaveCount(0);
+    await expect(page.getByTestId('writer-panel')).toBeVisible();
 
     // Ignored: dev-only noise unrelated to the panel — the root layout's pre-paint script sets
     // <html data-sidebar>, which `next dev` reports as a hydration mismatch on every page.
@@ -247,6 +256,42 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
     await page.screenshot({ path: `${SHOTS}/07-toast-after-close-desktop.png` });
     await page.getByRole('button', { name: /Continue/ }).click();
     await expect(page.getByTestId('writer-panel')).toBeVisible();
+  });
+
+  test('closing before the write call answers still toasts when the piece is ready', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const s: State = { picked: false, status: 'pending_goal', goal: null, chosen: null, anglePolls: 0, piecePolls: 0, writeBodies: [] };
+    await mockTenantApi(page, s, { slowWriteMs: 2500 });
+    await login(page, baseURL!);
+    await openFacebookSlate(page);
+    await page.getByText('Mekong River — slow boat at dawn').locator('xpath=ancestor::div[3]').getByRole('button', { name: /Pick to write/ }).click();
+    await page.getByTestId('goal-awareness').click();
+    await page.getByRole('button', { name: /Generate 3 angles/ }).click();
+    await page.getByTestId('angle-2').getByRole('button', { name: /Write with this angle/ }).click();
+    await expect.poll(() => s.writeBodies.length, { timeout: 15_000 }).toBe(1); // write sent, not answered yet
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('writer-panel')).toHaveCount(0);
+    await expect(page.getByText(/is ready — find it in My Content/)).toBeVisible({ timeout: 30_000 });
+  });
+
+  test('brand without a default CTA: the 422 shows the inline CTA field, then the write goes through', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const s: State = { picked: false, status: 'pending_goal', goal: null, chosen: null, anglePolls: 0, piecePolls: 0, writeBodies: [] };
+    await mockTenantApi(page, s, { noBrandCta: true });
+    await login(page, baseURL!);
+    await openFacebookSlate(page);
+    await page.getByText('Mekong River — slow boat at dawn').locator('xpath=ancestor::div[3]').getByRole('button', { name: /Pick to write/ }).click();
+    await page.getByTestId('goal-conversion').click();
+    await page.getByRole('button', { name: /Generate 3 angles/ }).click();
+    await page.getByTestId('angle-0').getByRole('button', { name: /Write with this angle/ }).click();
+    await expect(page.getByText(/needs a call to action/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('link', { name: /Set a default call to action in Brand Identity/ })).toHaveAttribute('href', '/portal/t0-brand');
+    await page.getByPlaceholder(/Book a consultation/).fill('Ask us about the village cycling trip');
+    await page.getByRole('button', { name: /Write content/ }).click();
+    await expect(page.getByTestId('writer-panel-result')).toBeVisible({ timeout: 30_000 });
+    expect(s.writeBodies).toEqual([{}, { cta: 'Ask us about the village cycling trip' }]);
   });
 
   test('phone 390x844: the panel is a full-screen sheet', async ({ page, baseURL }) => {
