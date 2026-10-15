@@ -259,6 +259,10 @@ def judge_node(state: dict) -> dict:
                 **({"mission_source": mission_source,
                     "mission_gated": mission_source == "tenant_core_idea" and gate != "brand_fit"}
                    if is_t2 else {}),
+                # AA-793: which graph attempt this verdict scored and whether that draft revised an
+                # earlier one — per-attempt judge rows prove "no saved draft below an earlier pass".
+                **({"attempt": state.get("retry_count", 0),
+                    "revision": bool(state.get("previous_draft"))} if is_t2 else {}),
                 # AA-801: the raw calls behind a median3 verdict (absent in the default mode).
                 **({"judge_runs": runs_signal(result, repeat_mode)}
                    if repeat_mode and repeat_mode != T2_JUDGE_REPEAT_DEFAULT else {}),

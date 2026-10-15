@@ -343,13 +343,19 @@ def _repair_prompt(violations: list[dict], source: str, forbidden) -> str:
 
 
 def apply_replacements(generated: dict, violations: list[dict], replacements: dict, source_parts: list[str],
-                       forbidden) -> tuple[dict, list[str]]:
+                       forbidden, *, still_unsupported=None) -> tuple[dict, list[str]]:
     """Put each accepted replacement in place of its exact sentence. A replacement is refused (the
     original kept) when it still carries a novel number or adds a forbidden word. An empty
     replacement deletes the sentence; a highlight is only deleted while 3+ remain. Returns
-    (new_generated, fields_changed)."""
+    (new_generated, fields_changed).
+
+    AA-793: `still_unsupported(sentence) -> bool` replaces the default novel-number test (against
+    `source_parts`) — T3 passes its own check so a kept background year is not a refusal."""
     from .forbidden_words import forbidden_in
 
+    if still_unsupported is None:
+        def still_unsupported(sentence: str) -> bool:
+            return bool(find_novel_numeric_claims(sentence, source_parts))
     out = dict(generated)
     changed: set[str] = set()
     for i, v in enumerate(violations, start=1):
@@ -359,7 +365,7 @@ def apply_replacements(generated: dict, violations: list[dict], replacements: di
         new = str(new).strip()
         old, field = v["sentence"], v["field"]
         adds_forbidden = forbidden_in(new, forbidden) - forbidden_in(old, forbidden)
-        if new and (find_novel_numeric_claims(new, source_parts) or adds_forbidden):
+        if new and (still_unsupported(new) or adds_forbidden):
             continue
         value = out.get(field)
         if field == "highlights" and isinstance(value, list):
@@ -379,9 +385,15 @@ def apply_replacements(generated: dict, violations: list[dict], replacements: di
     return out, sorted(changed)
 
 
-def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=None, forbidden=()) -> dict:
+def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=None, forbidden=(),
+           stage: str = "s1_flag_fix", tenant_id: Optional[str] = None, system_prompt: str = REPAIR_SYSTEM,
+           still_unsupported=None) -> dict:
     """One writer call that rewrites only the violating sentences (stage s1_flag_fix). Never raises:
-    returns {generated, fields, cost_usd, error}."""
+    returns {generated, fields, cost_usd, error}.
+
+    AA-793: T3 reuses it for a tenant rewrite with stage ``t2_flag_fix``, the tenant's id (cost is
+    logged to the tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test.
+    The defaults keep A1's call byte-identical."""
     from json_repair import repair_json
     from shared.llm_client.call_log import record_call_sync
     from shared.llm_client.client import LLMClient
@@ -391,8 +403,8 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     parts = source_number_parts(tour)
     try:
         resp = LLMClient().generate(LLMRequest(
-            system_prompt=REPAIR_SYSTEM, user_prompt=_repair_prompt(violations, source, forbidden),
-            model_tier=model_tier, stage="s1_flag_fix", max_tokens=4096,
+            system_prompt=system_prompt, user_prompt=_repair_prompt(violations, source, forbidden),
+            model_tier=model_tier, stage=stage, max_tokens=4096,
         ))
         raw = resp.content.strip()
         if raw.startswith("```"):
@@ -403,11 +415,12 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
         except json.JSONDecodeError:
             replacements = repair_json(raw, return_objects=True)
         replacements = replacements if isinstance(replacements, dict) else {}
-        new_generated, fields = apply_replacements(generated, violations, replacements, parts, forbidden)
+        new_generated, fields = apply_replacements(generated, violations, replacements, parts, forbidden,
+                                                   still_unsupported=still_unsupported)
         record_call_sync(
-            stage="s1_flag_fix", role="writer", model=resp.model_used,
+            stage=stage, role="writer", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
-            cost_usd=resp.cost_usd,
+            cost_usd=resp.cost_usd, **({"tenant_id": tenant_id} if tenant_id else {}),
             quality_signal={"source": "grounding_repair", "sentences": len(violations), "fields_changed": fields},
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
