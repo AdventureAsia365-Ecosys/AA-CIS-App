@@ -57,6 +57,7 @@ from api.core.aa544_tenant_pool import (
 from api.routers.v1_tours import get_tenant
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from services.acp_publish import daily_limit
 from services.acp_publish.base import SocialPost
 from services.acp_publish.facebook import FacebookAdapter
 from services.acp_publish.idempotency import blog_slug, claim, finish, publish_key
@@ -397,7 +398,12 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     revision + channel, services/acp_publish/idempotency.py). The same revision already published
     is replayed from publish_log (no second post); one in flight returns 409; a retry after a
     lost response looks the post up on the remote first (WordPress by revision slug, Facebook by
-    message) before posting."""
+    message) before posting.
+
+    AA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code
+    default 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only
+    when the column exists). A NEW publish over the limit gets 429 with a clear message and a
+    Retry-After to 00:00 UTC; replays and 409 in-flight retries never count and are never refused."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
@@ -457,8 +463,16 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
 
     key = publish_key(piece_id, channel, piece["content_text"])
     async with pool.acquire() as conn:
-        claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key)
+        # AA-819 — the override read runs before claim()'s transaction (a missing column must not abort it)
+        limit = await daily_limit.effective_limit(conn, tenant_id)
+        claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key,
+                              daily_limit=limit)
 
+    if claimed.state == "limited":
+        logger.info("publish_daily_limit_reached", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
+                    used=claimed.used, limit=claimed.limit)
+        raise HTTPException(status_code=429, detail=daily_limit.limit_message(claimed.used, claimed.limit),
+                            headers={"Retry-After": str(daily_limit.seconds_until_reset())})
     if claimed.state == "in_progress":
         raise HTTPException(status_code=409,
                             detail="This piece is already being published — refresh in a minute.")
