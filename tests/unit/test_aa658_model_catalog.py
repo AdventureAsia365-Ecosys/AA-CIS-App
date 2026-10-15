@@ -256,9 +256,11 @@ def test_converse_failure_raises_without_fallback():
 def test_legacy_tiers_never_touch_the_catalog_path():
     c = _client()
     with patch.object(c, "_call_catalog_model") as cat, \
-            patch.object(c, "_call_bedrock", return_value=MagicMock(fallback_used=False)):
+            patch.object(c, "_call_bedrock", return_value=MagicMock(fallback_used=False)), \
+            patch.object(c, "_call_bedrock_satellite", return_value=MagicMock(fallback_used=False)) as sat:
         c.generate(LLMRequest(system_prompt="s", user_prompt="u", model_tier="haiku"))
     cat.assert_not_called()
+    sat.assert_called_once()  # AA-843: the legacy chain starts at the satellite
 
 
 # ── admin dropdown / PATCH validation ─────────────────────────────────────────────────────────

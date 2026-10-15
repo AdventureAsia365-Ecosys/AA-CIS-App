@@ -34,6 +34,20 @@ DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 # importing this whole client — re-exported here unchanged so nothing importing them FROM this
 # module breaks.
 
+LEGACY_ACC2_NATIVE_ENV = "LLM_LEGACY_ACC2_NATIVE"
+
+
+def legacy_acc2_native_enabled() -> bool:
+    """AA-843 — whether the legacy haiku/sonnet chain still tries acc2-native Bedrock first.
+
+    acc2 is a channel-program account: Anthropic models there fail every time with
+    "ValidationException … not available for channel program accounts" (~2,400 wasted attempts a
+    week, ~0.1-0.2 s each). Off by default, so the chain starts at the satellite. Set the ECS env var
+    LLM_LEGACY_ACC2_NATIVE=on (1/true/yes) to restore the old acc2-first order if acc2 ever gains
+    model access. Read per call, not at import."""
+    return os.environ.get(LEGACY_ACC2_NATIVE_ENV, "").strip().lower() in ("1", "true", "on", "yes")
+
+
 class OpenAIPlatformBlocked(RuntimeError):
     """S235 — a call would go to an OpenAI platform API model whose catalog row is not enabled."""
 
@@ -93,14 +107,15 @@ def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
 
 class LLMClient:
     """
-    Fallback chain (AA-397/398 — acc3 satellite thêm vào làm satellite chính,
-    acc1 lùi xuống fallback; native T1/T2 trên acc2 KHÔNG đổi):
-    T1:    Claude Sonnet 4.5 (Bedrock, acc2 native) + prompt caching
-    T1.5a: Claude Sonnet     (Bedrock satellite, acc3 — AA-397)
-    T1.5b: Claude Sonnet     (Bedrock satellite, acc1 — AA-296, nay là fallback)
-    T2:    Claude Haiku 4.5  (Bedrock, acc2 native) + prompt caching
-    T2.5a: Claude Haiku      (Bedrock satellite, acc3 — AA-397)
-    T2.5b: Claude Haiku      (Bedrock satellite, acc1 — AA-296, nay là fallback)
+    Legacy haiku/sonnet chain (AA-397/398 — acc3 is the primary satellite, acc1 the fallback;
+    a stage's account_route can swap them):
+    T1:    Claude Sonnet 4.5 (Bedrock, acc2 native) + prompt caching — AA-843: only when
+                                 LLM_LEGACY_ACC2_NATIVE is on (default off; acc2 always refuses)
+    T1.5a: Claude Sonnet     (Bedrock satellite, primary account, acc3 by default)
+    T1.5b: Claude Sonnet     (Bedrock satellite, the other account)
+    T2:    Claude Haiku 4.5  (Bedrock, acc2 native) + prompt caching — AA-843: same flag as T1
+    T2.5a: Claude Haiku      (Bedrock satellite, primary account)
+    T2.5b: Claude Haiku      (Bedrock satellite, the other account)
     T3:    GPT-4.1           (OpenAI platform API) — S235: retired; runs only if the gpt-4.1
                                  catalog row is enabled again (openai_platform_allowed)
     """
@@ -136,7 +151,8 @@ class LLMClient:
         # any other real per-request override), same relationship model_tier already had with
         # the DEFAULT_MODEL_TIER env var before this task.
         stage_cfg = get_stage_config_sync(request.stage) if request.stage else None
-        # Which satellite account is tried FIRST when acc2-native fails — 'acc3' unless the
+        # Which satellite account is tried FIRST (AA-843: the first account the legacy chain tries
+        # unless LLM_LEGACY_ACC2_NATIVE puts acc2-native ahead of it) — 'acc3' unless the
         # stage's admin config explicitly says 'acc1' (e.g. a real acc3 outage). Unknown/no-stage
         # calls keep the pre-AA-518 hardcoded acc3-first order exactly.
         primary_acct = stage_cfg.account_route if (stage_cfg and stage_cfg.account_route) else "acc3"
@@ -244,24 +260,31 @@ class LLMClient:
                 logger.error("gpt41_direct_failed", error=str(e))
                 raise RuntimeError(f"GPT-4.1 failed: {e}") from e
 
+        # AA-843 — acc2-native (T1/T2) only behind LLM_LEGACY_ACC2_NATIVE; by default the chain
+        # starts at the primary satellite. Event names stay the same; only `reason` says why the
+        # satellite was the first stop.
+        acc2_native = legacy_acc2_native_enabled()
+
         if tier == "sonnet":
-            # T1: Claude Sonnet — premium quality
-            try:
-                resp = self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True)
-                return resp
-            except Exception as e:
-                if "AccessDeniedException" in str(e) or "not authorized" in str(e).lower():
-                    logger.warning("t1_sonnet_not_subscribed", model=BEDROCK_SONNET,
-                                   hint="Enable cross-region inference profile in AWS Marketplace (AA-50)")
-                else:
-                    logger.warning("t1_failed_trying_t2", model=BEDROCK_SONNET, error=str(e))
+            # T1: Claude Sonnet — premium quality (acc2-native, off by default)
+            if acc2_native:
+                try:
+                    resp = self._call_bedrock(request, model=BEDROCK_SONNET, use_cache=True)
+                    return resp
+                except Exception as e:
+                    if "AccessDeniedException" in str(e) or "not authorized" in str(e).lower():
+                        logger.warning("t1_sonnet_not_subscribed", model=BEDROCK_SONNET,
+                                       hint="Enable cross-region inference profile in AWS Marketplace (AA-50)")
+                    else:
+                        logger.warning("t1_failed_trying_t2", model=BEDROCK_SONNET, error=str(e))
 
             # T1.5a: Claude Sonnet qua satellite PRIMARY account (acc3 unless stage config says acc1)
             try:
                 resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=primary_acct)
                 resp.fallback_used = False    # KHÔNG phải fallback — vẫn đúng Sonnet, đúng ý định
                 resp.satellite_account = primary_acct
-                logger.info("t1_5a_satellite_used", model=BEDROCK_SONNET, account=primary_acct, reason="acc2 T1 failed")
+                logger.info("t1_5a_satellite_used", model=BEDROCK_SONNET, account=primary_acct,
+                            reason="acc2 T1 failed" if acc2_native else "acc2 native off (AA-843)")
                 return resp
             except Exception as e:
                 logger.warning("t1_5a_satellite_failed_trying_t1_5b", model=BEDROCK_SONNET,
@@ -272,20 +295,21 @@ class LLMClient:
                 resp = self._call_bedrock_satellite(request, model=BEDROCK_SONNET, account=fallback_acct)
                 resp.fallback_used = False
                 resp.satellite_account = fallback_acct
-                logger.info("t1_5b_satellite_used", model=BEDROCK_SONNET,
-                           account=fallback_acct, reason="acc2 T1 + T1.5a failed")
+                logger.info("t1_5b_satellite_used", model=BEDROCK_SONNET, account=fallback_acct,
+                            reason="acc2 T1 + T1.5a failed" if acc2_native else "T1.5a failed")
                 return resp
             except Exception as e:
                 logger.warning("t1_5b_satellite_failed_trying_t2", model=BEDROCK_SONNET,
                                account=fallback_acct, error=str(e))
 
-        # T2: Claude Haiku — fast / default tier, or Sonnet fallback
-        try:
-            resp = self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True)
-            resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
-            return resp
-        except Exception as e:
-            logger.warning("t2_failed_trying_t2_5a", model=BEDROCK_HAIKU, error=str(e))
+        # T2: Claude Haiku — fast / default tier, or Sonnet fallback (acc2-native, off by default)
+        if acc2_native:
+            try:
+                resp = self._call_bedrock(request, model=BEDROCK_HAIKU, use_cache=True)
+                resp.fallback_used = tier == "sonnet"  # only a fallback when Sonnet was intended
+                return resp
+            except Exception as e:
+                logger.warning("t2_failed_trying_t2_5a", model=BEDROCK_HAIKU, error=str(e))
 
         # T2.5a: Claude Haiku qua satellite PRIMARY account
         try:
@@ -293,7 +317,8 @@ class LLMClient:
             # giữ đúng logic gốc T2: chỉ coi là fallback nếu ý định ban đầu là sonnet
             resp.fallback_used = tier == "sonnet"
             resp.satellite_account = primary_acct
-            logger.info("t2_5a_satellite_used", model=BEDROCK_HAIKU, account=primary_acct, reason="acc2 T2 failed")
+            logger.info("t2_5a_satellite_used", model=BEDROCK_HAIKU, account=primary_acct,
+                        reason="acc2 T2 failed" if acc2_native else "acc2 native off (AA-843)")
             return resp
         except Exception as e:
             logger.warning("t2_5a_satellite_failed_trying_t2_5b", model=BEDROCK_HAIKU,
@@ -304,8 +329,8 @@ class LLMClient:
             resp = self._call_bedrock_satellite(request, model=BEDROCK_HAIKU, account=fallback_acct)
             resp.fallback_used = tier == "sonnet"
             resp.satellite_account = fallback_acct
-            logger.info("t2_5b_satellite_used", model=BEDROCK_HAIKU,
-                       account=fallback_acct, reason="acc2 T2 + T2.5a failed")
+            logger.info("t2_5b_satellite_used", model=BEDROCK_HAIKU, account=fallback_acct,
+                        reason="acc2 T2 + T2.5a failed" if acc2_native else "T2.5a failed")
             return resp
         except Exception as e:
             logger.warning("t2_5b_satellite_failed_trying_t3", model=BEDROCK_HAIKU, account=fallback_acct, error=str(e))

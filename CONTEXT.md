@@ -97,7 +97,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     (Bedrock acc3) → GPT-6 Luna (OpenAI API, last resort); shadow GPT-6 Luna at the admin-set rate.
   - `s1_brand_audit`, `t2_brand_audit`: GPT-5.6 Luna → GPT-6 Luna (no OpenAI last resort).
   - No acc1 fallback for the Luna models (OpenAI-on-Bedrock is enabled on acc3 only); the
-    acc2 → acc3 → acc1 account chain applies to the legacy Haiku/Sonnet keys.
+    acc3 → acc1 satellite chain (the stage's `account_route` picks which satellite goes first)
+    applies to the legacy Haiku/Sonnet keys. They no longer try acc2-native Bedrock first (AA-843:
+    acc2 is a channel-program account and always refuses Anthropic models); the env var
+    `LLM_LEGACY_ACC2_NATIVE=on` restores that first attempt if acc2 ever gains model access.
   - A call served by the OpenAI API logs `llm_openai_fallback_used` and is recorded in `llm_call_log`
     with `provider = 'openai'`, `fallback_used = true`.
   - **Brand audit fails closed** (AA-714): a model/schema error gives `manual_check` +
