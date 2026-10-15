@@ -263,7 +263,8 @@ async def _judge_all(units: list[dict], sources: dict[int, str],
     from shared.llm_client.decide import decide
     from shared.secrets import get_database_url
 
-    pool = await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=POOL_SIZE)
+    pool = await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=POOL_SIZE,
+                                     server_settings={"application_name": "cis-job"})  # AA-824
     sem = asyncio.Semaphore(CONCURRENCY)
 
     async def one(i: int, u: dict, src: str):

@@ -320,7 +320,8 @@ async def _main() -> None:
     # raising max_parallel is not silently capped by threads. Same reason the pool grows with it.
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=2 * max_parallel, thread_name_prefix="job"))
-    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, max_parallel + 2))
+    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, max_parallel + 2),
+                                     server_settings={"application_name": "cis-worker"})  # AA-824
     redis = None
     if os.environ.get("REDIS_HOST"):
         import redis.asyncio as aioredis

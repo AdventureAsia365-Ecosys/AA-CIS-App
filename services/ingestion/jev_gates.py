@@ -109,7 +109,8 @@ async def assess_rows_standalone(rows: list[dict], source: str) -> list[RowVerdi
 
     from shared.secrets import get_database_url
     try:
-        pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=4)
+        pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=4,
+                                         server_settings={"application_name": "cis-job"})  # AA-824
     except Exception:
         return [RowVerdict() for _ in rows]
     try:
