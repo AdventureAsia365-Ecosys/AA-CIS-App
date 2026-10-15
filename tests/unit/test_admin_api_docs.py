@@ -66,16 +66,10 @@ def test_aa577_docs_routes_unchanged():
     assert main.app.openapi_url is None
 
 
-def test_declared_before_any_get_route_that_matches_it():
-    """FastAPI matches in declaration order: no earlier GET route may capture /admin/openapi.json."""
-    first = None
-    for r in main.app.routes:
-        regex = getattr(r, "path_regex", None)
-        if regex is None or "GET" not in (getattr(r, "methods", None) or set()):
-            continue
-        if regex.match(PATH):
-            first = r
-            break
-    assert first is not None
-    assert first.path == PATH
-    assert first.endpoint.__module__ == "api.routers.admin_api_docs"
+def test_declared_before_any_get_route_that_matches_it(client):
+    """FastAPI matches in declaration order: no earlier GET route may capture /admin/openapi.json.
+    Checked by behaviour, not by walking app.routes: FastAPI >= 0.14x keeps included routers as opaque
+    _IncludedRouter entries, so a structural walk found nothing in CI (newest FastAPI) and passed locally."""
+    r = client.get(PATH, headers={"x-admin-secret": SECRET, "x-admin-role": "admin"})
+    assert r.status_code == 200
+    assert r.json() == main.app.openapi()
