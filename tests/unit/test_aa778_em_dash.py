@@ -152,6 +152,18 @@ def test_en_dash_ranges_and_hyphens_are_not_dashes():
     assert h.fix_dashes(text, None) == (text, [])
 
 
+@pytest.mark.parametrize("before, after", [
+    # S238 review: a dash between numbers is a range and must survive (a ':' or ',' would change the fact)
+    (f"Altitude ranges 20,000 {EN} 24,000 feet.", f"Altitude ranges 20,000 {EN} 24,000 feet."),
+    (f"Days 3 {EN} 5 are on horseback.", f"Days 3 {EN} 5 are on horseback."),
+    (f"The walk runs 8:00 {EN} 10:00 each morning.", f"The walk runs 8:00 {EN} 10:00 each morning."),
+    (f"Price: $1,200 {EM} $1,500 per person.", f"Price: $1,200{EN}$1,500 per person."),
+    (f"Expect 10% {EM} 20% of the route on gravel.", f"Expect 10%{EN}20% of the route on gravel."),
+])
+def test_numeric_ranges_keep_a_range_dash(before, after):
+    assert fix(before) == after
+
+
 def test_spaced_en_dash_is_a_dash_and_digit_em_dash_is_a_range():
     assert fix(f"The lake is huge {EN} it holds most of the water.") == "The lake is huge. It holds most of the water."
     assert fix(f"Built in 1637{EM}1638 and again in 20,000 {EM} 24,000 years.") == \

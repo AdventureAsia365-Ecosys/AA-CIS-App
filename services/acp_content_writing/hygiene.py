@@ -1958,6 +1958,7 @@ def _round2_fix(spans: list[dict], i: int, ctx: HygieneContext,
 # only text.
 _EM, _EN = "—", "–"
 _DASH_RE = re.compile(r"[ \t]*—[ \t]*|[ \t]+–[ \t]+")
+_RANGE_END_RE = re.compile(r"[ \t]*[$€£¥]?\d")
 # The F2 residue guard (quality_gates._BANNED_PATTERNS_SEED): an em-dash with the word on each side. F2
 # exempts a match found verbatim in the source, and every seed has em-dashes in its own labels ('Uran
 # Togoo <em-dash> trek into …'), so a bare em-dash would always be exempt; the word-dash-word phrase is
@@ -2096,10 +2097,12 @@ def _fix_dash_span(raw: str, kind: str, keep: list[tuple[int, int]]) -> tuple[st
     found = [m for m in _DASH_RE.finditer(raw) if not any(s <= m.start() < e for s, e in keep)]
     if not found:
         return raw, 0
-    # '1637<em-dash>1638' / '20,000 <em-dash> 24,000' is a number range: an en-dash, outside the rules
-    ranges = [m for m in found if _EM in m.group(0) and m.start() > 0 and raw[m.start() - 1].isdigit()
-              and m.end() < len(raw) and raw[m.end()].isdigit()]
-    seps = [(m, _EN) for m in ranges]
+    # A dash between two numbers is a range ('1637<em-dash>1638', '20,000 <en-dash> 24,000', '8:00 - 10:00',
+    # '$1,200 <em-dash> $1,500', '10% <em-dash> 20%'), never a clause break: a colon or comma there would change
+    # the fact. An em-dash becomes an unspaced en-dash; a spaced en-dash is left exactly as written.
+    ranges = [m for m in found if raw[:m.start()].rstrip()[-1:] in tuple("0123456789%")
+              and _RANGE_END_RE.match(raw, m.end())]
+    seps = [(m, _EN if _EM in m.group(0) else m.group(0)) for m in ranges]
     seps += _dash_separators(raw, kind, [m for m in found if m not in ranges])
     seps.sort(key=lambda p: p[0].start())
     out, pos = [], 0
