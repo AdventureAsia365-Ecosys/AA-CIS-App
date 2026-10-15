@@ -32,6 +32,12 @@ REVIEW_CTA = "Read the five-star reviews our travellers left"
     ("Loved by 2,000 travellers - ask us for dates", ["Loved by 2,000 travellers"]),
     ("★★★★★ - book your place", ["★★★★★"]),
     ("Rated 5/5 by our guests", ["Rated 5/5"]),
+    # review-claim fixes (adversarial review)
+    ("Rated excellent by our guests", ["Rated excellent"]),
+    ("Rated #1 tour operator in Laos", ["Rated #1"]),
+    ("Join the travellers who rated us 5 stars", ["who rated us", "5 stars"]),
+    ("Award-winning: 98% of our guests recommend us", ["98% of our guests recommend"]),
+    ("Check our ratings", ["ratings"]),
 ])
 def test_cta_review_claims_true_positives(cta, expected):
     assert authenticity.cta_review_claims(cta) == expected
@@ -46,6 +52,11 @@ def test_cta_review_claims_true_positives(cta, expected):
     "Sleep under the stars in the Gobi",
     "Stay in a five-star hotel in Hanoi",  # a hotel class, not a rating of the brand
     "Graded 3/5 for difficulty - book your place",
+    "Rated trips for families",           # 'rated' as an adjective, no claim
+    "Book now - rated PG for adventure",
+    "Get your itinerary reviewed by a local expert",  # a service, not a review claim
+    "Check our trek difficulty ratings",  # a trek grade
+    "See our rates and dates",
     "",
     None,
 ])

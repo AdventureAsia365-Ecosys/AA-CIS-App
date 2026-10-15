@@ -171,19 +171,30 @@ def _matches(text: str) -> list[tuple[str, re.Match]]:
 # when the CTA itself claims reviews or ratings, and AA admins get a bell notification. The CTA rule
 # is the testimonial family + review scores above, plus the short review hooks a CTA uses that body
 # prose would not be flagged for ('Read our reviews', '5-star', 'loved by 2,000 travellers').
+_CTA_AUDIENCE = (r"(?:\d[\d,.]*\+?\s+|our\s+|thousands\s+of\s+|hundreds\s+of\s+|happy\s+|real\s+|past\s+)?"
+                 r"(?:guests|travell?ers|customers|clients)")
 _CTA_REVIEW_EXTRA = [
     re.compile(r"(?i)\breviews\b"),
-    re.compile(r"(?i)\breview(?:ed|ers?)\b"),
-    re.compile(r"(?i)\bratings?\b"),
-    re.compile(r"(?i)\brated\b"),
+    re.compile(r"(?i)\breviewers?\b"),
+    # 'reviewed by our guests' — not 'get your itinerary reviewed by a local expert' (a service)
+    re.compile(rf"(?i)\breviewed\s+by\s+{_CTA_AUDIENCE}\b"),
+    # 'rated' only as a claim ('rated us 5 stars', 'Rated excellent', 'Rated #1', 'guests rated'),
+    # not 'Rated trips for families' or 'rated PG'; bare 'rated 4.9' is in _SCORES
+    re.compile(r"(?i)\brated\s+(?:us|it|them|excellent|outstanding|exceptional|superb|amazing|perfect|best|top"
+               r"|highly|the\s+best|number\s+one|no\.?\s*1\b|#\s*1\b|by\b)"),
+    re.compile(r"(?i)\b(?:who|they|guests|travell?ers|customers|clients)\s+(?:have\s+|has\s+)?rated\b"),
+    # '98% of our guests recommend us'
+    re.compile(rf"(?i)\b\d{{1,3}}(?:\.\d)?\s*%\s+of\s+{_CTA_AUDIENCE}\s+(?:would\s+)?(?:recommend|rate|rated"
+               r"|love|loved|return|come\s+back|book\s+again)\b"),
     # '5-star' / 'five stars' — not a hotel class ('a five-star hotel', '5-star luxury stay')
     re.compile(r"(?i)\b(?:five|5)[- ]stars?\b(?!\s+(?:hotels?|resorts?|lodges?|luxury|accommodation|stays?|camps?"
                r"|cruises?|boats?|villas?|service))"),
     re.compile(r"(?i)\bwhat\s+(?:our|other|past|real|happy|recent)\s+(?:guests|travell?ers|customers|clients)\s+"
                r"(?:say|said|think|thought|wrote|write)\b"),
-    re.compile(r"(?i)\b(?:loved|recommended|praised|trusted)\s+by\s+(?:\d[\d,.]*\+?\s+|our\s+|thousands\s+of\s+"
-               r"|hundreds\s+of\s+|happy\s+)?(?:guests|travell?ers|customers|clients)\b"),
+    re.compile(rf"(?i)\b(?:loved|recommended|praised|trusted)\s+by\s+{_CTA_AUDIENCE}\b"),
 ]
+# 'rating(s)' is a claim unless the sentence frames it as a trek grade ('trek difficulty ratings')
+_CTA_RATING = re.compile(r"(?i)\bratings?\b")
 
 
 def cta_review_claims(cta: Optional[str]) -> list[str]:
@@ -197,7 +208,7 @@ def cta_review_claims(cta: Optional[str]) -> list[str]:
     spans: list[tuple[int, int]] = []
     for pattern in (*_TESTIMONIAL, *_CTA_REVIEW_EXTRA):
         spans += [(m.start(), m.end()) for m in pattern.finditer(text) if m.group(0).strip()]
-    for pattern in _SCORES:
+    for pattern in (*_SCORES, _CTA_RATING):
         spans += [(m.start(), m.end()) for m in pattern.finditer(text) if m.group(0).strip()
                   and not _GRADE_CONTEXT.search(_sentence_around(text, m.start(), m.end()))]
     kept: list[list[int]] = []
