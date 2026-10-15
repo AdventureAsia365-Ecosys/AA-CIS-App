@@ -13,13 +13,14 @@ import { useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { ApiError, Badge, Button, ConfirmModal, Spinner, apiSend, useAdminIdentity, useToast } from "../../_kit";
 import {
-  fmtTime, gateLabel, usd,
+  fmtTime, gateLabel, tourSectionLabel, usd,
   type AdminEdit, type ApplyBody, type CheckFailure, type FlaggedSentence, type PieceDetail, type SuggestResponse,
+  type TenantCopy,
 } from "./shared";
 
 const EDITABLE = ["approved", "held"];
 
-interface Editor {
+export interface Editor {
   key: string;
   draft: string;
   note: string;
@@ -37,6 +38,8 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   const base = `/api/admin/content-quality/pieces/${piece.piece_id}/sentences`;
   const canEdit = isAdmin && EDITABLE.includes(piece.status);
   const hasSource = !!piece.writer_input;
+  // AA-802 — published to a channel or exported: the tenant holds a copy an edit does not reach
+  const delivered = piece.published || piece.exported;
 
   const onFail = (e: unknown) => {
     toast.error(e instanceof Error ? e.message : String(e), 8000);
@@ -92,9 +95,10 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
           {isAdmin ? `A ${piece.status} piece cannot be edited.` : "Only an admin can cut or rewrite sentences."}
         </div>
       )}
-      {canEdit && piece.published && (
+      {canEdit && delivered && (
         <div style={{ fontSize: 12, background: A.amberSoft, padding: "6px 8px", borderRadius: 6, color: A.ink }}>
-          This piece is already published. An edit changes our copy only — the published post is not updated.
+          The tenant already {piece.published ? "published" : "exported"} this piece. An edit changes our copy only —
+          the {piece.published ? "published post (WordPress is not re-synced)" : "downloaded file"} keeps the old text.
         </div>
       )}
       {piece.flagged_sentences.map((s) => {
@@ -151,7 +155,7 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
             <div style={{ background: A.redSoft, borderRadius: 6, padding: "6px 8px", color: A.ink }}>{cutting?.sentence}</div>
             <div style={{ color: A.body }}>The tenant&rsquo;s copy of this piece changes. The edit is audit-logged with the removed text.</div>
-            {piece.published && <div style={{ color: A.amber }}>This piece is already published; the published post is not updated.</div>}
+            {delivered && <div style={{ color: A.amber }}>The tenant already {piece.published ? "published" : "exported"} this piece; their copy is not updated.</div>}
           </div>
         }
       />
@@ -159,8 +163,8 @@ export function FlaggedSentences({ piece }: { piece: PieceDetail }) {
   );
 }
 
-function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onRegenerate, onDiscard }: {
-  s: FlaggedSentence; ed: Editor; busy: boolean; regenerating: boolean;
+export function RewritePanel({ s, ed, busy, regenerating, onChange, onApply, onRegenerate, onDiscard }: {
+  s: { sentence: string }; ed: Editor; busy: boolean; regenerating: boolean;
   onChange: (patch: Partial<Editor>) => void; onApply: () => void; onRegenerate?: () => void; onDiscard: () => void;
 }) {
   const sug = ed.suggestion;
@@ -221,11 +225,28 @@ export function AdminEdits({ edits }: { edits: AdminEdit[] }) {
         <div key={`${e.created_at}-${i}`} style={{ fontSize: 12, borderBottom: `1px solid ${A.line}`, paddingBottom: 6 }}>
           <div style={{ color: A.muted }}>
             {fmtTime(e.created_at)} · {e.actor} · {MODE_LABEL[e.details.mode ?? ""] ?? e.action}{e.details.gate ? ` · ${e.details.gate}` : ""}
+            {e.details.field ? ` · ${tourSectionLabel(e.details.field, e.details.index ?? null)}` : ""}
           </div>
           <div style={{ textDecoration: "line-through", color: A.body, wordBreak: "break-word" }}>{e.details.before}</div>
           {e.details.after ? <div style={{ color: A.ink, wordBreak: "break-word" }}>{e.details.after}</div> : <div style={{ color: A.muted }}>(removed)</div>}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** AA-802 — the tenant took a copy away (published / exported) BEFORE an admin edit: that copy still
+ *  has the old text and nothing re-syncs it. Shown at the top of the T9 and T2 drawers. */
+export function TenantCopyNotice({ copy, what }: { copy?: TenantCopy | null; what: "piece" | "version" }) {
+  // optional: the admin UI can ship before the API that returns `tenant_copy` (Vercel vs ECS deploy)
+  if (!copy?.older_copy) return null;
+  const how = copy.published_at && copy.delivered_at === copy.published_at
+    ? "published it (WordPress / the channel is not re-synced)"
+    : "downloaded it";
+  return (
+    <div data-testid="cq-older-copy" style={{ fontSize: 12.5, background: A.amberSoft, borderRadius: 8, padding: "8px 10px", color: A.ink, marginBottom: 10 }}>
+      <b>The tenant has an older copy.</b> They {how} on {fmtTime(copy.delivered_at)}, before {copy.edits_after_delivery} admin
+      edit{copy.edits_after_delivery === 1 ? "" : "s"} to this {what}. Their copy keeps the old text until they {copy.published_at ? "re-publish" : "export again"}.
     </div>
   );
 }

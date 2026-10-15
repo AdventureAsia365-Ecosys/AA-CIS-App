@@ -73,17 +73,42 @@ _T3_GATED_FIELDS = ("subtitle", "summary", "highlights", "itineraries")
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 
 
-def _t3_grounding_check(rewritten: dict, source_texts: list[str]) -> list[dict]:
+def _t3_novel_numbers(sentence: str, source_texts: list[str], *,
+                      background: bool) -> tuple[list[str], list[str]]:
+    """(unsupported, background) novel numbers of one sentence. Without the AA-793 allowance this is
+    exactly `find_novel_numeric_claims` (plain digit-run reading). With it, year ranges and decades
+    are read as years (AA-785 `year_forms`) and the numbers `t3_background` accepts as place
+    background (past years, centuries, elevations) move to the second list."""
+    if not background:
+        return find_novel_numeric_claims(sentence, source_texts), []
+    from services.acp_produce.t3_background import is_background_number
+
+    novel = find_novel_numeric_claims(sentence, source_texts, year_forms=True)
+    kept = [n for n in novel if not is_background_number(n, sentence)]
+    return kept, [n for n in novel if n not in kept]
+
+
+def _t3_grounding_check(rewritten: dict, source_texts: list[str], *, background: bool | None = None,
+                        cleared: list | None = None) -> list[dict]:
     """T3 grounding gate — does the tenant-rewritten content assert a number/
     measurement absent from source_texts (T2's INPUT: the pre-rewrite
-    published_tours fields)? Returns a list of {field, sentence, novel_numbers}."""
+    published_tours fields)? Returns a list of {field, sentence, novel_numbers}.
+
+    AA-793: `background` (default: env T3_BACKGROUND_FACTS, off) applies the background-fact
+    allowance; each sentence whose numbers were accepted that way is appended to `cleared`
+    ({field, sentence, background_numbers}) so the run can log what was let through."""
+    if background is None:
+        from services.content_generation.t2_repair import background_facts_enabled
+        background = background_facts_enabled()
     violations: list[dict] = []
     for field in _T3_GATED_FIELDS:
         val = rewritten.get(field)
         texts = val if isinstance(val, list) else [val] if val else []
         for t in texts:
             for sent in _SENT_SPLIT_RE.split(str(t)):
-                novel = find_novel_numeric_claims(sent, source_texts)
+                novel, allowed = _t3_novel_numbers(sent, source_texts, background=background)
+                if allowed and cleared is not None:
+                    cleared.append({"field": field, "sentence": sent.strip(), "background_numbers": allowed})
                 if novel:
                     violations.append({
                         "field": field, "sentence": sent.strip(), "novel_numbers": novel,
@@ -197,6 +222,87 @@ def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
     return "\n".join(parts)
 
 
+# AA-793 — the T2 fact editor for a grounding-only T3 failure (A1's sentence repair, tenant voice kept,
+# no Adventure Asia identity in a tenant's pipeline).
+T3_REPAIR_SYSTEM = """You are the fact editor for a travel brand's tour page. The page was written from a
+SOURCE tour, and some sentences state figures the source does not give. Rewrite each numbered sentence so
+it keeps its place in the text, its tone and the brand's voice, but states only what the SOURCE states.
+Drop the unsupported figure (a distance, duration, time, count, price, height, date or size); never
+replace it with another invented one. If nothing in the sentence is supported, return an empty string.
+Return strict JSON only."""
+
+_T3_PASS_LINE = 7.0  # graph.MIN_QUALITY — a draft below it gets the judge's feedback on a revision
+
+
+def _result_score(result: dict) -> float:
+    try:
+        return float(result.get("quality_score") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _draft_key(c: dict) -> tuple:
+    """AA-793 best draft: a clean draft (passes T3) first, then the higher score, then fewer issues,
+    then the later attempt (a repaired copy of an equally scored draft)."""
+    clean = not c["structural"] and not c["grounding"]
+    return (clean, c["score"], -(len(c["structural"]) + len(c["grounding"])), c["attempt"])
+
+
+def _draft_record(c: dict) -> dict:
+    return {"attempt": c["attempt"], "via": c["via"], "score": c["score"],
+            "structural": len(c["structural"]), "grounding": len(c["grounding"]),
+            "background": c["background"], "clean": not c["structural"] and not c["grounding"]}
+
+
+def _revision_feedback(base: dict) -> str:
+    """T3 findings plus, for a draft below the line, the judge's own feedback — so the revision fixes
+    what both checks asked for (before AA-793 a repair round only heard T3)."""
+    fb = t3_repair_feedback(base["structural"], base["grounding"])
+    judge_fb = str(base["result"].get("judge_feedback") or "").strip()
+    if judge_fb and base["score"] < _T3_PASS_LINE:
+        fb = f"{fb}\nBRAND VOICE FEEDBACK — {judge_fb[:1500]}" if fb else f"BRAND VOICE FEEDBACK — {judge_fb[:1500]}"
+    return fb
+
+
+def _t3_sentence_repair(base: dict, tour_dict: dict, source_texts: list[str], brand_rules: dict,
+                        tenant_id: str | None, background: bool) -> dict | None:
+    """AA-793 targeted repair: rewrite only the sentences T3 flagged (one t2_flag_fix call) instead of
+    the whole tour. Returns the repaired result (the draft's judge score carried: removing a figure
+    does not change its brand fit) or None when nothing could be replaced. Sync — run in a thread."""
+    from services.content_generation.forbidden_words import all_forbidden
+    from services.content_generation.grounding import repair
+
+    def still_unsupported(sentence: str) -> bool:
+        return bool(_t3_novel_numbers(sentence, source_texts, background=background)[0])
+
+    result = base["result"]
+    fixed = repair(result.get("generated") or {}, base["grounding"], tour_dict,
+                   forbidden=all_forbidden(brand_rules.get("forbidden_words")),
+                   stage="t2_flag_fix", tenant_id=tenant_id, system_prompt=T3_REPAIR_SYSTEM,
+                   still_unsupported=still_unsupported)
+    if not fixed["fields"]:
+        logger.info("t3_sentence_repair_no_change", attempt=base["attempt"], error=fixed.get("error"),
+                    tenant_id=tenant_id)
+        return None
+    return {**result, "generated": fixed["generated"],
+            "cost_usd": float(result.get("cost_usd") or 0.0) + float(fixed["cost_usd"] or 0.0),
+            "t3_sentence_repaired_fields": fixed["fields"]}
+
+
+def _t3_outcome(passed: bool, chosen: dict, attempts: int, candidates: list[dict], jev_cleared: int,
+                sentence_repairs: int) -> dict:
+    return {
+        "passed": passed, "result": chosen["result"], "attempts": attempts,
+        "structural_issues": [] if passed else chosen["structural"],
+        "grounding_issues": [] if passed else chosen["grounding"],
+        "jev_cleared": jev_cleared,
+        # AA-793: which draft was kept and the score of every draft T3 saw (job.result).
+        "chosen_attempt": chosen["attempt"], "chosen_via": chosen["via"],
+        "drafts": [_draft_record(c) for c in candidates],
+        "background_cleared": chosen["background"], "sentence_repairs": sentence_repairs,
+    }
+
+
 async def run_t3_qa_gate(
     tour_dict: dict,
     source_texts: list[str],
@@ -206,11 +312,9 @@ async def run_t3_qa_gate(
     seo_data: dict = None,
     tenant_id: str = None,  # AA-620: thread through so a T3 repair-round logs t2_generate + tenant
 ) -> dict:
-    """Self-repair loop, max `max_repairs` regenerate attempts (default 2). Attempt 0
+    """Self-repair loop, max `max_repairs` repair rounds (default 2). Attempt 0
     checks `initial_result` (T2's already-computed output — no extra LLM call for the
-    first check). Each failing attempt regenerates via _rewrite_tour() (imported
-    locally to avoid a v1_pipeline <-> tenant_pipeline import cycle at module load)
-    and re-checks both gates on the fresh output.
+    first check). Each failing attempt repairs and re-checks both gates on the new output.
 
     AA-445-02 — seo_data: the same dict the T2 entry point (v1_tours.py::trigger_rewrite())
     now builds and passes to its own _rewrite_tour() call (see that file for the
@@ -218,13 +322,31 @@ async def run_t3_qa_gate(
     regenerate doesn't silently drop back to seo={} after the entry-point fix — without
     this, only ATTEMPT 0's content would ever carry real SEO context.
 
-    Returns {"passed": bool, "result": <latest rewrite result dict>, "attempts": int,
-    "structural_issues": [...], "grounding_issues": [...]}."""
-    from api.routers.v1_pipeline import _rewrite_tour
+    AA-793 (switches in services/content_generation/t2_repair.py; all off = the pre-AA-793 loop):
+    - T2_BEST_DRAFT: every checked draft is a candidate. A clean draft returns at once; when the
+      rounds run out the best candidate is returned (`_draft_key`), not the last one, and each round
+      repairs the best candidate so far.
+    - T2_TARGETED_REPAIR: a candidate whose only failure is grounding gets one sentence repair
+      (`_t3_sentence_repair`) instead of a whole-tour rewrite; otherwise the rewrite revises the
+      candidate (`previous_draft`) with the T3 findings plus the judge's feedback.
+    - T3_BACKGROUND_FACTS: past years, centuries and elevations of named places are not violations.
 
+    Returns {"passed": bool, "result": <chosen rewrite result dict>, "attempts": int,
+    "structural_issues": [...], "grounding_issues": [...], "jev_cleared": int, "chosen_attempt",
+    "chosen_via", "drafts": [...], "background_cleared": int, "sentence_repairs": int}."""
+    from api.routers.v1_pipeline import _rewrite_tour
+    from services.content_generation.t2_repair import (
+        background_facts_enabled, best_draft_enabled, targeted_repair_enabled,
+    )
+
+    best_on, targeted_on = best_draft_enabled(), targeted_repair_enabled()
+    background_on = background_facts_enabled()
     result = initial_result
     attempt = 0
     jev_cleared = 0
+    sentence_repairs = 0
+    via = "initial"
+    candidates: list[dict] = []
     while True:
         generated = result.get("generated") or {}
         # AA-639: an over-long SEO title is fixed deterministically here — live, a single
@@ -242,30 +364,49 @@ async def run_t3_qa_gate(
                  "name": tour_dict.get("name")},
                 brand_rules.get("forbidden_words"))
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
-        grounding = _t3_grounding_check(generated, source_texts)
+        background: list[dict] = []
+        grounding = _t3_grounding_check(generated, source_texts, background=background_on,
+                                        cleared=background)
+        if background:
+            logger.info("t3_background_cleared", attempt=attempt, sentences=len(background),
+                        numbers=sorted({n for b in background for n in b["background_numbers"]})[:20],
+                        tenant_id=tenant_id)
         grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id)   # AA-699 T3-1
         if cleared:
             jev_cleared += len(cleared)
             logger.info("t3_jev_cleared", attempt=attempt, cleared=len(cleared), kept=len(grounding),
                         tenant_id=tenant_id)
+        current = {"result": result, "structural": structural, "grounding": grounding,
+                   "attempt": attempt, "via": via, "score": _result_score(result),
+                   "background": len(background), "repaired": via == "sentence_repair"}
+        candidates.append(current)
 
         if not structural and not grounding:
-            return {
-                "passed": True, "result": result, "attempts": attempt,
-                "structural_issues": [], "grounding_issues": [], "jev_cleared": jev_cleared,
-            }
+            return _t3_outcome(True, current, attempt, candidates, jev_cleared, sentence_repairs)
 
         if attempt >= max_repairs:
-            return {
-                "passed": False, "result": result, "attempts": attempt,
-                "structural_issues": structural, "grounding_issues": grounding, "jev_cleared": jev_cleared,
-            }
+            chosen = max(candidates, key=_draft_key) if best_on else current
+            if chosen is not current:
+                logger.info("t3_best_draft_chosen", chosen_attempt=chosen["attempt"],
+                            chosen_score=chosen["score"], last_score=current["score"], tenant_id=tenant_id)
+            return _t3_outcome(False, chosen, attempt, candidates, jev_cleared, sentence_repairs)
 
         attempt += 1
+        base = max(candidates, key=_draft_key) if best_on else current
         logger.info("t3_qa_repair_attempt", attempt=attempt,
-                    structural_count=len(structural), grounding_count=len(grounding),
-                    structural_codes=structural[:10],
-                    novel_numbers=sorted({n for g in grounding for n in g["novel_numbers"]})[:20])
+                    structural_count=len(base["structural"]), grounding_count=len(base["grounding"]),
+                    structural_codes=base["structural"][:10],
+                    novel_numbers=sorted({n for g in base["grounding"] for n in g["novel_numbers"]})[:20],
+                    base_attempt=base["attempt"], base_score=base["score"])
+        repaired = None
+        if targeted_on and not base["structural"] and base["grounding"] and not base["repaired"]:
+            base["repaired"] = True   # one sentence repair per draft; the next round rewrites
+            repaired = await asyncio.to_thread(_t3_sentence_repair, base, tour_dict, source_texts,
+                                               brand_rules, tenant_id, background_on)
+        if repaired is not None:
+            result, via = repaired, "sentence_repair"
+            sentence_repairs += 1
+            continue
         result = await _rewrite_tour(
             tour_dict, idx=0, total=1, brand_rules=brand_rules, is_tenant_rewrite=True,
             seo=seo_data,
@@ -274,8 +415,13 @@ async def run_t3_qa_gate(
             # AA-639: tell the writer WHAT failed. Before this, a repair round was a blind
             # re-roll (feedback="") hoping the next draft happened to pass — live, a tour took
             # 1 write + 3 full rewrites (~4 min) to clear T3.
-            feedback=t3_repair_feedback(structural, grounding),
+            # AA-793: with T2_TARGETED_REPAIR the writer revises the chosen draft and also hears
+            # the judge's feedback.
+            feedback=_revision_feedback(base) if targeted_on else t3_repair_feedback(
+                base["structural"], base["grounding"]),
+            **({"previous_draft": base["result"].get("generated") or None} if targeted_on else {}),
         )
+        via = "rewrite"
 
 
 async def escalate_t3_failure(

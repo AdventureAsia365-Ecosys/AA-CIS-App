@@ -47,6 +47,8 @@ class TenantAuditAction:
     CONTENT_PIECE_EDITED = "content_piece.edited"  # AA-569 — tenant hand-edit on My Content
     CONTENT_EXPORTED = "content_piece.exported"  # AA-613 — tenant downloaded/exported a piece
     CONTENT_PUBLISHED = "content_piece.published"  # AA-613 — tenant published a piece to a channel
+    # AA-802 — tenant downloaded a T2 tour version as DOCX (the admin "tenant has an older copy" check)
+    TOUR_VERSION_EXPORTED = "tenant_tour_version.exported"
     CONTENT_UNPUBLISHED = "content_piece.unpublished"  # AA-815 — tenant removed a published post
     INTEGRATION_DISCONNECTED = "integration.disconnected"  # AA-815 — tenant removed a channel connection
 
@@ -67,6 +69,13 @@ class AdminAuditAction:
     SENTENCE_CUT = "content_piece.admin_sentence_cut"
     SENTENCE_REWRITTEN = "content_piece.admin_sentence_rewritten"  # the model's suggestion, unchanged
     SENTENCE_EDITED = "content_piece.admin_sentence_edited"  # the admin's own (or edited) text
+    # AA-802 — the same sentence actions on a tenant's T2 tour version (silent correction: the
+    # tenant's unpublished copy is fixed in place; details keep field, before/after and the whole
+    # section before/after, which is the version history — the tenant never sees these rows).
+    TOUR_SENTENCE_PREFIX = "tenant_tour_version.admin_sentence_"
+    TOUR_SENTENCE_CUT = "tenant_tour_version.admin_sentence_cut"
+    TOUR_SENTENCE_REWRITTEN = "tenant_tour_version.admin_sentence_rewritten"
+    TOUR_SENTENCE_EDITED = "tenant_tour_version.admin_sentence_edited"
     # S234 — an admin re-ran T8 for a request (new 3 angles, choice reset); details keep the old ones.
     ANGLES_REGENERATED = "angle_gate_request.admin_angles_regenerated"
 

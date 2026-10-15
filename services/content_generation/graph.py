@@ -19,6 +19,9 @@ from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
 from .grounding import grounding_node, regrounding, repair_and_recheck
 from .judge_node import judge_node
+from .t2_repair import (
+    increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
+)
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta_final, fit_seo_title)
 from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word
@@ -293,6 +296,15 @@ class ContentState(TypedDict):
     grounding_repaired_fields:  list
     grounding_violations:       list   # still unsupported after repair (→ manual_check in revalidate)
     grounding_notes:            list   # low-probability shadow/grey Jev verdicts, for the reviewer
+    # AA-793: T2 best draft wins + targeted repair (t2_repair.py). Declared so LangGraph keeps them
+    # (AA-209 gotcha). best_draft = snapshot of the highest-scoring judged draft; draft_scores = one
+    # {attempt, score, judge_score, revision} per judged draft; previous_draft = the draft the next
+    # writer call revises (T2 retry, or a T3 repair round); best_draft_restored = the hitl exit put
+    # an earlier, better draft back.
+    best_draft:             Optional[dict]
+    draft_scores:           list
+    previous_draft:         Optional[dict]
+    best_draft_restored:    bool
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -391,6 +403,11 @@ def generate_node(state: ContentState) -> ContentState:
     prompt = build_s1_user_prompt(state)
 
     # Inject feedback nếu đang retry — batch attempt-1 never has feedback, so this stays sync-only.
+    # AA-793: a T2 retry / T3 repair round revises the previous (best) draft instead of starting over.
+    revising = bool(state.get("is_tenant_rewrite") and state.get("previous_draft")
+                    and targeted_repair_enabled())
+    if revising:
+        prompt += revise_block(state.get("previous_draft"))
     if state.get("feedback"):
         prompt += f"\n\nPREVIOUS ATTEMPT FEEDBACK:\n{state['feedback']}\nPlease fix these issues."
 
@@ -498,7 +515,8 @@ def generate_node(state: ContentState) -> ContentState:
             stage=gen_stage, role="writer", model=resp.model_used,  # AA-620
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, tenant_id=tenant_id,  # AA-620: real tenant for T2, None for A1
-            quality_signal={"json_parsed": True, "fallback_used": resp.fallback_used},
+            quality_signal={"json_parsed": True, "fallback_used": resp.fallback_used,
+                            **({"revision": True} if revising else {})},  # AA-793
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None),
@@ -1094,13 +1112,17 @@ def build_revalidation_graph() -> StateGraph:
     return graph.compile()
 
 
-def build_graph() -> StateGraph:
+def build_graph(t2_drafts: bool = False) -> StateGraph:
+    """The S1/T2 content graph. ``t2_drafts=True`` (AA-793, tenant rewrites only — chosen by
+    v1_pipeline._rewrite_tour) adds draft tracking after the judge: the ``hitl`` exit restores the
+    best-scoring draft instead of keeping the last one, and a retry revises that draft (see
+    t2_repair.py). The default graph (A1, and T2 with both AA-793 switches off) is unchanged."""
     graph = StateGraph(ContentState)
 
     graph.add_node("generate", generate_node)
     graph.add_node("validate", validate_node)
     graph.add_node("llm_judge", judge_node)
-    graph.add_node("increment_retry", increment_retry)
+    graph.add_node("increment_retry", increment_retry_t2 if t2_drafts else increment_retry)
     graph.add_node("brand_audit", brand_audit_node)
     graph.add_node("grounding", grounding_node)  # AA-691
     graph.add_node("flag_fix", flag_fix_node)
@@ -1111,11 +1133,22 @@ def build_graph() -> StateGraph:
     # AA-206: GPT-4.1 judge sits between validate and the retry decision so should_retry routes on
     # the judge-adjusted quality_score (Bedrock fixes against judge feedback via the retry loop).
     graph.add_edge("validate", "llm_judge")
-    graph.add_conditional_edges("llm_judge", should_retry, {
-        "done":  "brand_audit",
-        "retry": "increment_retry",
-        "hitl":  END,
-    })
+    if t2_drafts:
+        graph.add_node("track_best", track_best_node)
+        graph.add_node("restore_best", restore_best_node)
+        graph.add_edge("llm_judge", "track_best")
+        graph.add_conditional_edges("track_best", should_retry, {
+            "done":  "brand_audit",
+            "retry": "increment_retry",
+            "hitl":  "restore_best",
+        })
+        graph.add_edge("restore_best", END)
+    else:
+        graph.add_conditional_edges("llm_judge", should_retry, {
+            "done":  "brand_audit",
+            "retry": "increment_retry",
+            "hitl":  END,
+        })
     graph.add_edge("brand_audit", "grounding")
     graph.add_edge("grounding", "flag_fix")
     graph.add_edge("flag_fix", "revalidate")

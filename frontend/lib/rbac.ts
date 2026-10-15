@@ -78,6 +78,8 @@ export const API_RULES = {
 export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "content-quality/pieces/", roles: ["admin"] },
   { prefix: "content-quality/requests/", roles: ["admin"] },
+  // AA-802 — the T2 silent correction (sentence suggest / apply on a tenant's tour version)
+  { prefix: "content-quality/tour-versions/", roles: ["admin"] },
   // AA-774 (S235) — place-card writes (verdict, merge, build job, fact edits) change what every
   // tenant's T9 seed reads; the backend re-checks the role on the fact edit.
   { prefix: "content-quality/place-cards", roles: ["admin"] },
