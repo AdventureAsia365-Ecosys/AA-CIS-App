@@ -2,7 +2,9 @@
 
     claim()  ── published row for this key ─────────▶ "published"   (no remote call, replay it)
              ── fresh requested row for this key ───▶ "in_progress" (409, another call owns it)
-             ── stale requested / failed row ───────▶ "claimed", prior_attempt=True
+             ── stale requested row ────────────────▶ "claimed", prior_attempt=True
+             ── daily limit reached (AA-819) ───────▶ "limited"     (429; failed reuse / insert only)
+             ── failed row ─────────────────────────▶ "claimed", prior_attempt=True
              ── nothing ────────────────────────────▶ "claimed", prior_attempt=False
     remote   ── prior_attempt: look the post up first (it may exist although we never heard back)
     finish() ── requested → published | failed
@@ -11,6 +13,11 @@ The key is one piece revision on one channel: "<piece_id>:<channel>:<sha256(text
 Editing the text gives a new key, so a deliberate re-publish of new text still works.
 A partial unique index (migration 215) allows one requested/published row per key; that is what
 stops two concurrent clicks, the row lock below only orders them.
+
+AA-819 — `daily_limit` (services/acp_publish/daily_limit.py): checked only where claim() would make a
+NEW counted row (a failed row turned back into `requested`, or a fresh insert), never on a replay, an
+in-flight 409 or a stale reclaim of an already-counted row. The count runs under a per-tenant advisory
+lock taken after this piece's row lock (one lock order for every caller).
 """
 from __future__ import annotations
 
@@ -20,6 +27,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import asyncpg
+
+from services.acp_publish import daily_limit as _daily_limit
 
 # A requested row older than this is treated as an attempt that died mid-call (the adapters time
 # out after 30 s). Retrying it looks the post up remotely before posting again.
@@ -42,13 +51,16 @@ def blog_slug(base: str, key: str) -> str:
 
 @dataclass
 class Claim:
-    state: str                      # "claimed" | "published" | "in_progress"
+    state: str                      # "claimed" | "published" | "in_progress" | "limited"
     publish_id: Optional[str] = None
     prior_attempt: bool = False
     row: Optional[dict] = None      # the published row, for state == "published"
+    used: Optional[int] = None      # AA-819, state == "limited": publishes counted today
+    limit: Optional[int] = None     # AA-819, state == "limited": the tenant's daily limit
 
 
-async def claim(conn, *, piece_id, tenant_id, channel: str, key: str) -> Claim:
+async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
+                daily_limit: Optional[int] = None) -> Claim:
     try:
         async with conn.transaction():
             rows = await conn.fetch(
@@ -76,6 +88,13 @@ async def claim(conn, *, piece_id, tenant_id, channel: str, key: str) -> Claim:
                     requested["publish_id"],
                 )
                 return Claim("claimed", publish_id=requested["publish_id"], prior_attempt=True)
+
+            # AA-819 — from here on the claim makes a new counted row: enforce the daily limit.
+            if daily_limit is not None:
+                await _daily_limit.lock_tenant(conn, tenant_id)
+                used = await _daily_limit.count_today(conn, tenant_id)
+                if used >= daily_limit:
+                    return Claim("limited", used=used, limit=daily_limit)
 
             # Reuse a failed row instead of piling up failures (pre-AA-726 behaviour). A failed
             # row of this revision — or a pre-215 row with no key — may have posted before its

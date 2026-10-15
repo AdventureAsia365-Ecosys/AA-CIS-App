@@ -11,6 +11,7 @@ import asyncpg
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
 from services.notifications import NotificationService, EventType
 from shared.validators.prompt_sanitize import (
@@ -300,6 +301,15 @@ async def create_tenant(
         message="Store this API key securely — it will not be shown again. Tenant is active.",
     )
 
+async def _publish_limit_overrides(conn) -> dict:
+    """AA-819 — {tenant_id: daily_publish_limit} for tenants with an override; {} before migration 230."""
+    if not await daily_limit.override_column_exists(conn):
+        return {}
+    rows = await conn.fetch(
+        "SELECT tenant_id, daily_publish_limit FROM shared.tenants WHERE daily_publish_limit IS NOT NULL")
+    return {r["tenant_id"]: r["daily_publish_limit"] for r in rows}
+
+
 # ── GET /admin/tenants — List all tenants + usage ────────────────────────────
 
 
@@ -368,6 +378,7 @@ async def list_tenants(
             WHERE t.is_active = true OR $1::boolean
             ORDER BY t.created_at
         """, include_inactive)
+        publish_limits = await _publish_limit_overrides(conn)
     return {
         "tenants": [
             {
@@ -378,6 +389,10 @@ async def list_tenants(
                 "posts_per_week": r["posts_per_week"],
                 "country":        r["country"],
                 "rate_limit_rpm": r["rate_limit_rpm"],
+                # AA-819 — the publish/day override (null = the code default) and the limit in force
+                "daily_publish_limit": publish_limits.get(r["tenant_id"]),
+                "daily_publish_limit_effective": publish_limits.get(r["tenant_id"],
+                                                                    daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT),
                 "is_active":      r["is_active"],
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
@@ -465,6 +480,9 @@ async def get_tenant_usage(
             WHERE id = $1 OR ($1::uuid IS NULL AND plan_name = $2)
             LIMIT 1
         """, tenant["plan_id"], tenant["plan_tier"])
+        # AA-819 — the publish/day limit in force and today's count (UTC), as v1_publish counts it
+        publish_override = await daily_limit.tenant_override(conn, tenant_id)
+        publishes_today = await daily_limit.count_today(conn, tenant_id)
 
     return {
         "tenant_id":   str(tenant_id),
@@ -476,6 +494,10 @@ async def get_tenant_usage(
         "limits": {
             "rate_limit_rpm":    tenant["rate_limit_rpm"],
             "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
+            "daily_publish_limit": publish_override,  # AA-819: null = the code default
+            "daily_publish_limit_effective": (publish_override if publish_override is not None
+                                              else daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT),
+            "publishes_today": publishes_today,
         },
         "t2_versions": t2["versions"],
         "t2_tours":    t2["tours"],
@@ -502,9 +524,12 @@ class UpdateTenantRequest(BaseModel):
     # AA-766: an explicit per-tenant override of the plan's default RPM (PLAN_LIMITS). Sent alone
     # it changes only the limit; sent with plan_tier it wins over that plan's default.
     rate_limit_rpm: Optional[int] = Field(None, ge=1, le=RATE_LIMIT_RPM_MAX)
+    # AA-819 (AUP 2026-11): per-tenant override of the daily publish limit (code default 20 per UTC
+    # day). An explicit `null` clears the override (back to the default); leaving the key out keeps it.
+    daily_publish_limit: Optional[int] = Field(None, ge=1, le=daily_limit.DAILY_PUBLISH_LIMIT_MAX)
 
 
-@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit or status (suspend / resume)")
+@router.patch("/tenants/{tenant_id}", summary="Update tenant plan, rate limit, publish limit or status")
 async def update_tenant(
     tenant_id: UUID,
     body: UpdateTenantRequest,
@@ -514,21 +539,30 @@ async def update_tenant(
     x_admin_role: Optional[str] = Header(None),
 ):
     """Plan change (plan_tier + plan_id + rate_limit_rpm together), an RPM override
-    (rate_limit_rpm, AA-766) and/or suspend/resume (is_active). An offboarded tenant (cancelled_at
-    set) gets 409 here: it comes back only through POST /tenants/{id}/restore, which also issues a
-    new key.
-    Each change writes one audit row with before/after, in the same transaction."""
+    (rate_limit_rpm, AA-766), a daily publish limit override (daily_publish_limit, AA-819; `null`
+    clears it) and/or suspend/resume (is_active). An offboarded tenant (cancelled_at set) gets 409
+    here: it comes back only through POST /tenants/{id}/restore, which also issues a new key.
+    Each change writes one audit row with before/after, in the same transaction. Before migration 230
+    the publish limit override is refused with 409 (the code default applies to every tenant)."""
     verify_admin_secret(x_admin_secret)
     _require_tenant_admin(x_admin_role)
-    if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None:
-        raise HTTPException(status_code=422,
-                            detail="Nothing to update: send plan_tier, rate_limit_rpm and/or is_active")
+    set_publish_limit = "daily_publish_limit" in body.model_fields_set
+    if body.plan_tier is None and body.is_active is None and body.rate_limit_rpm is None and not set_publish_limit:
+        raise HTTPException(status_code=422, detail="Nothing to update: send plan_tier, rate_limit_rpm, "
+                                                    "daily_publish_limit and/or is_active")
     if body.plan_tier is not None and body.plan_tier not in PLAN_LIMITS:
         raise HTTPException(status_code=400, detail=f"Invalid plan_tier. Choose: {list(PLAN_LIMITS.keys())}")
 
     actor = _admin_actor(x_admin_user_id)
     changed: list[str] = []
     pool = request.app.state.pool
+    if set_publish_limit:
+        async with pool.acquire() as conn:
+            if not await daily_limit.override_column_exists(conn):
+                raise HTTPException(status_code=409, detail=(
+                    "The per-tenant publish limit needs migration 230 (shared.tenants.daily_publish_limit); "
+                    f"until it is applied every tenant has the default {daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT}/day."))
+    publish_limit_now: Optional[int] = None
     async with pool.acquire() as conn, conn.transaction():
         before = await conn.fetchrow("""
             SELECT plan_tier::text AS plan_tier, plan_id, rate_limit_rpm, is_active, cancelled_at
@@ -576,6 +610,25 @@ async def update_tenant(
             )
             changed.append("rate_limit")
 
+        if set_publish_limit:
+            # AA-819 — the override (NULL = the code default), read here: the column exists (checked above)
+            publish_limit_now = await conn.fetchval(
+                "SELECT daily_publish_limit FROM shared.tenants WHERE tenant_id = $1", tenant_id)
+            if body.daily_publish_limit != publish_limit_now:
+                await conn.execute("""
+                    UPDATE shared.tenants SET daily_publish_limit = $2, updated_at = NOW() WHERE tenant_id = $1
+                """, tenant_id, body.daily_publish_limit)
+                await write_audit_log(
+                    conn, tenant_id=str(tenant_id), actor=actor,
+                    action=AdminTenantAuditAction.DAILY_PUBLISH_LIMIT_CHANGED,
+                    resource_type="tenant", resource_id=str(tenant_id),
+                    details={"before": {"daily_publish_limit": publish_limit_now},
+                             "after": {"daily_publish_limit": body.daily_publish_limit},
+                             "default": daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT},
+                )
+                changed.append("daily_publish_limit")
+                publish_limit_now = body.daily_publish_limit
+
         if body.is_active is not None and body.is_active != before["is_active"]:
             await conn.execute("""
                 UPDATE shared.tenants
@@ -602,6 +655,11 @@ async def update_tenant(
         # plan change applied without re-reading the tenant.
         "plan_tier": body.plan_tier if body.plan_tier is not None else before["plan_tier"],
         "rate_limit_rpm": body.rate_limit_rpm if body.rate_limit_rpm is not None else rpm_now,
+        # AA-819 — only when the request set it (the override; null = the code default)
+        **({"daily_publish_limit": publish_limit_now,
+            "daily_publish_limit_effective": (publish_limit_now if publish_limit_now is not None
+                                              else daily_limit.DEFAULT_DAILY_PUBLISH_LIMIT)}
+           if set_publish_limit else {}),
     }
 
 def _parse_fw(value) -> list:

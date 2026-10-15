@@ -12,7 +12,7 @@ pass `status="publish"`.
 import base64
 import json
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import aiohttp
 
@@ -108,3 +108,54 @@ class WordPressAdapter(CMSAdapter):
                 return CMSPostResult(post_id=post["id"], post_url=post["link"],
                                      status=post.get("status", ""), cms_type="wordpress")
         return None
+
+    async def delete_post(self, post_id) -> str:
+        """AA-815 — take a published post off the site: DELETE /wp/v2/posts/{id} without `force`
+        moves it to the WordPress trash (no longer public, recoverable by the site owner for 30
+        days). Returns "trashed", or "already_gone" when WordPress itself says the post is already
+        in the trash (410 rest_already_trashed) or no longer exists (404 rest_post_invalid_id) —
+        either way it is not public, so the caller may mark the row unpublished.
+
+        Same AA-460 lesson as create_post(): a 2xx alone is not proof. A 200 must be a real post
+        object in the trash, and a 404/410 counts only with WordPress's own JSON error code — a
+        WAF or host 404 page raises instead, so the caller never reports a post removed while it
+        is still live."""
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.delete(f"{self.api_base}/posts/{post_id}", headers=self._headers()) as resp:
+                status_code = resp.status
+                content_type = resp.headers.get("content-type", "")
+                body_text = await resp.text()
+
+        parsed_body = _json_or_none(content_type, body_text)
+        if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body:
+            # WordPress answers a trash DELETE with the post object, status now "trash".
+            if parsed_body.get("status") == "trash":
+                return "trashed"
+        gone_code, message = _wp_error(parsed_body)
+        if (status_code, gone_code) in ((410, "rest_already_trashed"), (404, "rest_post_invalid_id")):
+            return "already_gone"
+        if gone_code == "rest_trash_not_supported":
+            # The site disabled its trash (EMPTY_TRASH_DAYS = 0). A permanent delete is not done on
+            # the tenant's behalf; they remove the post in WordPress (AA-815).
+            raise RuntimeError("This WordPress site has its trash turned off, so the post cannot be moved "
+                               "to the trash — delete it in WordPress directly")
+        if status_code == 401 or gone_code in ("rest_cannot_delete", "rest_forbidden"):
+            raise RuntimeError("WordPress refused the delete — the connected user cannot delete posts "
+                               f"(HTTP {status_code}{': ' + message if message else ''})")
+        raise RuntimeError(f"WP API delete {status_code} returned an unexpected response: {body_text[:300]}")
+
+
+def _json_or_none(content_type: str, body_text: str):
+    if not content_type.startswith("application/json"):
+        return None
+    try:
+        return json.loads(body_text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _wp_error(parsed_body) -> Tuple[Optional[str], Optional[str]]:
+    """(code, message) of a WordPress REST error body ({"code", "message", "data"}), else (None, None)."""
+    if isinstance(parsed_body, dict) and isinstance(parsed_body.get("code"), str):
+        return parsed_body["code"], parsed_body.get("message")
+    return None, None
