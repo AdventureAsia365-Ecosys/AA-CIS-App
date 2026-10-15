@@ -34,8 +34,16 @@ Bar section).
 
 **`choose()`'s "one place per Channel" de-dup + `most_per_hub` hub-cap — ported (AA-511 Gap B,
 post-Done follow-up, 2026-09-02).** Originally left unbuilt (the first AA-511 pass's own scope was
-Bar + Score only) — see `_choose()` below for the ported mechanism and every grain difference
+Bar + Score only) — see `_choose_slate()` below for the ported mechanism and every grain difference
 from the origin, disclosed there rather than here.
+
+**Tenant channels + per-channel place rule (AA-840, S238).** The Slate proposes only for the
+tenant's enabled Channels (`acp_shared.tenant_config.channels`; no row = every Channel, the
+behaviour before AA-840). A place may appear once per Channel and on at most
+`MAX_CHANNELS_PER_PLACE` Channels in one Slate, and Channels take turns (round-robin, strongest
+candidate first) so the first Channel in `CHANNEL_BARS` no longer takes every place. This replaces
+AA-632's single `seen_places` set shared across Channels, which let LinkedIn (first, same bar as
+Facebook/Instagram/TikTok) starve every later Channel.
 
 **Route/Blog pick now carries the whole Route (AA-511 Gap A, same follow-up)** —
 `pick_subject()` persists `angle_gate_request.route_segment_ids` (migration 134) as the Route's
@@ -98,6 +106,13 @@ CHANNEL_BARS: dict[str, dict] = {
 
 WEEKLY_RHYTHM_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if not s["on_demand"])
 ON_DEMAND_CHANNELS = tuple(c for c, s in CHANNEL_BARS.items() if s["on_demand"])
+
+# AA-840 — the most Channels one place (Segment `canonical_place`) may be proposed on in one
+# tenant's Slate. A place still appears at most once per Channel. 3 of the 7 Segment-grain
+# Channels keeps one strong place from filling the whole Slate while leaving enough seats for
+# every enabled Channel to get proposals (a tenant with N bar-clearing places has 3*N seats).
+# Routes (Blog) carry no place and are never counted.
+MAX_CHANNELS_PER_PLACE = 3
 
 
 @dataclass(frozen=True)
@@ -336,69 +351,121 @@ async def _fetch_segment_hub_map(tenant_id: UUID, pool) -> dict[str, str]:
     }
 
 
+async def _tenant_enabled_channels(tenant_id: UUID, conn) -> list[str]:
+    """AA-840 — the Channels this tenant's Slate proposes for, in `CHANNEL_BARS` order.
+
+    Source: `acp_shared.tenant_config.channels` (admin Tenant 360 > Planning config, migration
+    101). A tenant with no row has never been configured and keeps the pre-AA-840 behaviour: every
+    Channel. Values the Slate does not know are ignored rather than raised (the column is a free
+    `text[]`, guarded only by a CHECK)."""
+    configured = await conn.fetchval(
+        "SELECT channels FROM acp_shared.tenant_config WHERE tenant_id = $1::uuid", tenant_id,
+    )
+    if not configured:
+        return list(CHANNEL_BARS)
+    wanted = set(configured)
+    return [channel for channel in CHANNEL_BARS if channel in wanted]
+
+
+def _hub_key(candidate: Candidate, hub_of: dict[str, str]) -> str | None:
+    """The hub a candidate counts against for `most_per_hub` (Gap B): a Route's own hub (or the
+    Route itself when standalone — "a family of one is not a family"), a Segment's hub from
+    `_fetch_segment_hub_map()` (or the Segment itself when it sits in no Route)."""
+    if candidate.route_id:
+        return candidate.hub_id or candidate.route_id
+    if candidate.segment_id:
+        return hub_of.get(candidate.segment_id, candidate.segment_id)
+    return None
+
+
+def _choose_slate(
+    channels: list[str], segments: list[Candidate], routes: list[Candidate], hub_of: dict[str, str],
+    max_channels_per_place: int | None = MAX_CHANNELS_PER_PLACE,
+) -> dict[str, list[tuple[Candidate, dict]]]:
+    """Port of the origin's `choose()` (aa-social-media `stages/slate.py`, Gap B 2026-09-02),
+    run over every enabled Channel of one tenant's Slate at once (AA-840).
+
+    **Bar first**: a candidate that does not clear the Channel's Bar is never proposed there.
+
+    **Iterated strongest-first** per Channel: ascending `score` (rank-sum convention, AA-515 —
+    lowest `total_rank`/Route-score wins), ties broken by id. Recency plays no part.
+
+    **Channels take turns** (AA-840): each round, every Channel in `channels` order (the
+    `CHANNEL_BARS` order) takes its strongest candidate still allowed, until no Channel can take
+    another. Before AA-840 each Channel took everything it could before the next one started, so
+    with one shared place set LinkedIn (first, same Bar as Facebook/Instagram/TikTok) took every
+    place and the later Channels got nothing.
+
+    **Place rule** (Segment grain only — a Route has no single `place`):
+      - a place appears at most once per Channel (the origin's own rule; the strongest Segment at
+        that place wins the seat);
+      - a place appears on at most `max_channels_per_place` Channels of the Slate (`None` = no
+        cross-Channel cap), so one place cannot fill the whole Slate. Replaces AA-632's shared
+        `seen_places` (a place on ONE Channel only), which caused the starvation above.
+
+    **`most_per_hub`** (`CHANNEL_BARS`, 99 "effectively off" for weekly-rhythm Channels, `None` for
+    the on-demand ones) is counted per Channel, as before: it is a per-Channel Bar setting.
+
+    Deterministic: same inputs, same output. Returns `{channel: [(candidate, cleared_bar_reason)]}`
+    for every Channel in `channels` — exactly what should be `INSERT`ed as `proposed` rows.
+    """
+    queues: dict[str, list[tuple[Candidate, dict]]] = {}
+    for channel in channels:
+        pool = routes if CHANNEL_BARS[channel]["grain"] == "route" else segments
+        ordered = sorted(pool, key=lambda c: (c.score, c.segment_id or c.route_id or ""))
+        queue = []
+        for candidate in ordered:
+            cleared, reason = _clears_bar(channel, candidate)
+            if cleared:
+                queue.append((candidate, reason))
+        queues[channel] = queue
+
+    chosen: dict[str, list[tuple[Candidate, dict]]] = {channel: [] for channel in channels}
+    cursor = {channel: 0 for channel in channels}
+    places_in_channel: dict[str, set[str]] = {channel: set() for channel in channels}
+    hubs_in_channel: dict[str, dict[str, int]] = {channel: {} for channel in channels}
+    channels_per_place: dict[str, int] = {}
+
+    progressed = True
+    while progressed:
+        progressed = False
+        for channel in channels:
+            most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
+            queue, taken = queues[channel], hubs_in_channel[channel]
+            # Every skip below is final for this Channel (place/hub counts only ever grow), so the
+            # cursor never needs to look back.
+            while cursor[channel] < len(queue):
+                candidate, reason = queue[cursor[channel]]
+                cursor[channel] += 1
+                place = candidate.place
+                if place is not None:
+                    if place in places_in_channel[channel]:
+                        continue
+                    if (max_channels_per_place is not None
+                            and channels_per_place.get(place, 0) >= max_channels_per_place):
+                        continue
+                hub_key = _hub_key(candidate, hub_of)
+                if most_per_hub is not None and hub_key is not None:
+                    if taken.get(hub_key, 0) >= most_per_hub:
+                        continue
+                    taken[hub_key] = taken.get(hub_key, 0) + 1
+                if place is not None:
+                    places_in_channel[channel].add(place)
+                    channels_per_place[place] = channels_per_place.get(place, 0) + 1
+                chosen[channel].append((candidate, reason))
+                progressed = True
+                break
+    return chosen
+
+
 def _choose(
     channel: str, candidates: list[Candidate], hub_of: dict[str, str],
-    seen_places: set[str] | None = None,
 ) -> list[tuple[Candidate, dict]]:
-    """Port of the origin's `choose()` (aa-social-media `stages/slate.py`) — Gap B, 2026-09-02.
-
-    **Iterated strongest-first**: ascending `score` (rank-sum convention, AA-515 — lowest
-    `total_rank`/Route-score wins), the same order `fetch_slate()` already presents. A tie is
-    resolved first-come in that order — the origin has no "prefer newest" rule and neither does
-    this; recency plays no part anywhere in `choose()`.
-
-    **A place appears once per Channel** (Segment grain only — a Route has no single `place`,
-    it already spans several; the origin's own Blog subjects stay Segment-grain, so this rule
-    never had a Route-shaped case to handle there either). Once a `canonical_place` has been
-    taken by a stronger Segment, a weaker Segment at the same place is skipped for this Channel.
-
-    **`most_per_hub`** (real `reference/channels.toml` numbers, see `CHANNEL_BARS` — 99,
-    "effectively off", for every weekly-rhythm Channel; `None`/uncapped for the 3 on-demand ones,
-    this build's own honest choice where the origin has no number at all). Route candidates use
-    their own Route's hub (`hub_id`, falling back to the `route_id` itself when standalone — "a
-    family of one is not a family", the same rule `route_detection.py` already applies one layer
-    up); Segment candidates use `hub_of` (`_fetch_segment_hub_map()`, Gap B's own new join).
-
-    **`taken` (hub cap) stays fresh per Channel** — `most_per_hub` is a per-Channel Bar setting
-    (`CHANNEL_BARS[channel]["most_per_hub"]`), so capping hub count across Channels would apply
-    one Channel's number to every other Channel, which is not what the Bar means.
-
-    **`seen_places` can be shared across Channels** (AA-632, follow-up from AA-631's own
-    deferred standard #3 "not already on slate" across Channels) — pass in a `set` from the
-    caller's loop over `CHANNEL_BARS` to dedupe the same place across every Segment-grain
-    Channel for one tenant, not just within one Channel's own call. Passing `None` (the
-    default) keeps the original per-call behavior (a fresh, call-local set) for any caller that
-    still wants that — e.g. a unit test exercising one Channel in isolation.
-
-    Returns `(candidate, cleared_bar_reason)` pairs, already Bar-checked — only what `choose()`
-    would put on the Recommendation's own `subjects` list, i.e. exactly what should end up
-    `INSERT`ed as a `proposed` `acp_shared.subject` row this run.
-    """
-    most_per_hub = CHANNEL_BARS[channel]["most_per_hub"]
-    ordered = sorted(candidates, key=lambda c: (c.score, c.segment_id or c.route_id or ""))
-    taken: dict[str, int] = {}
-    if seen_places is None:
-        seen_places = set()
-    chosen: list[tuple[Candidate, dict]] = []
-    for candidate in ordered:
-        cleared, reason = _clears_bar(channel, candidate)
-        if not cleared:
-            continue
-        if candidate.place is not None and candidate.place in seen_places:
-            continue
-        hub_key = None
-        if candidate.route_id:
-            hub_key = candidate.hub_id or candidate.route_id
-        elif candidate.segment_id:
-            hub_key = hub_of.get(candidate.segment_id, candidate.segment_id)
-        if most_per_hub is not None and hub_key is not None:
-            if taken.get(hub_key, 0) >= most_per_hub:
-                continue
-            taken[hub_key] = taken.get(hub_key, 0) + 1
-        if candidate.place is not None:
-            seen_places.add(candidate.place)
-        chosen.append((candidate, reason))
-    return chosen
+    """One Channel on its own — `_choose_slate()` with a single Channel (no cross-Channel cap can
+    bind). Kept for callers and tests that look at one Channel in isolation."""
+    if CHANNEL_BARS[channel]["grain"] == "route":
+        return _choose_slate([channel], [], candidates, hub_of)[channel]
+    return _choose_slate([channel], candidates, [], hub_of)[channel]
 
 
 async def propose_slate(tenant_id: UUID, pool) -> dict:
@@ -409,21 +476,27 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
     deterministic and always runs... the evidence a Subject carries has to be able to grow"). A row already `picked`/
     `used`/`cut` is NEVER touched by this function — only rows still sitting at `proposed` are
     refreshed or removed. A candidate that no longer clears the Bar, or was cleared but lost its
-    `_choose()` seat this run (de-dup'd on place, or its hub is over `most_per_hub` — Gap B), has
-    its stale `proposed` row deleted; this is the one place this build's scope still ports the
+    `_choose_slate()` seat this run (place rule, or its hub is over `most_per_hub` — Gap B), or
+    sits on a Channel the tenant no longer has enabled (AA-840), has its stale `proposed` row
+    deleted; this is the one place this build's scope still ports the
     origin's `delete_missing()` behavior, since leaving a phantom `proposed` row around would make
     `GET /v1/slate`'s own eligible-count wrong.
     """
     async with pool.acquire() as _mkt_conn:
         markets, unmatched_markets = await _tenant_market_codes(tenant_id, _mkt_conn)
-    segments = await _fetch_segment_candidates(tenant_id, pool, markets)
-    routes = await _fetch_route_candidates(tenant_id, pool, markets)
-    hub_of = await _fetch_segment_hub_map(tenant_id, pool)
+        # AA-840 — only the tenant's enabled Channels get proposals. Read first so a grain no
+        # enabled Channel uses (Route = Blog only; Segment = the other 7) is neither fetched nor
+        # sent through Debate (Debate's brand-fit cut is a paid call on a cache miss).
+        enabled_channels = await _tenant_enabled_channels(tenant_id, _mkt_conn)
+    grains = {CHANNEL_BARS[channel]["grain"] for channel in enabled_channels}
+    segments = await _fetch_segment_candidates(tenant_id, pool, markets) if "segment" in grains else []
+    routes = await _fetch_route_candidates(tenant_id, pool, markets) if "route" in grains else []
+    hub_of = await _fetch_segment_hub_map(tenant_id, pool) if "segment" in grains else {}
 
-    # AA-631 (Debate stage) — applied AFTER rank-sum (fetch above) but BEFORE _choose()'s own
-    # Bar/place-dedup/hub-cap, the earliest point data is per-tenant (tenant_id, brand profile
+    # AA-631 (Debate stage) — applied AFTER rank-sum (fetch above) but BEFORE _choose_slate()'s
+    # own Bar/place rule/hub-cap, the earliest point data is per-tenant (tenant_id, brand profile
     # known) but not yet narrowed by Bar. Segments and Routes are cut independently (each is
-    # its own candidate pool at this point, same as _choose() below treats them per-Channel).
+    # its own candidate pool at this point, same as _choose_slate() below treats them).
     async with pool.acquire() as _debate_conn:
         from services.acp_shared.debate import apply_debate
         try:
@@ -436,22 +509,17 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
             logger.warning("debate_apply_failed", tenant_id=str(tenant_id), error=str(exc))
 
     async with pool.acquire() as conn:
+        # AA-840 — proposals only for `enabled_channels`; the DELETE loop below still runs over
+        # every Channel, so a Channel the tenant switched off loses its `proposed` rows
+        # (picked/used/cut rows stay).
+        # _choose_slate() applies the Bar AND `choose()`'s place rule/hub-cap (Gap B, AA-840) --
+        # only what survives both gets proposed.
+        chosen = _choose_slate(enabled_channels, segments, routes, hub_of)
         async with conn.transaction():
-            live_segment_ids: dict[str, set[str]] = {}
-            live_route_ids: dict[str, set[str]] = {}
-            # AA-632 — shared across every Channel in this loop (one propose_slate() call, one
-            # tenant), so "not already on slate" dedupes a place across Channels too, not just
-            # within one Channel's own _choose() call. Route candidates never set `place`
-            # (docstring above), so this only ever affects Segment-grain Channels in practice.
-            seen_places: set[str] = set()
-            for channel in CHANNEL_BARS:
-                spec = CHANNEL_BARS[channel]
-                candidates = routes if spec["grain"] == "route" else segments
-                live_segment_ids[channel] = set()
-                live_route_ids[channel] = set()
-                # _choose() already applies the Bar (returns only what cleared it) AND `choose()`'s
-                # own place-de-dup/hub-cap (Gap B) -- only what survives both gets proposed.
-                for candidate, reason in _choose(channel, candidates, hub_of, seen_places):
+            live_segment_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
+            live_route_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
+            for channel in enabled_channels:
+                for candidate, reason in chosen[channel]:
                     if candidate.segment_id:
                         live_segment_ids[channel].add(candidate.segment_id)
                         # The ON CONFLICT target must match idx_subject_unique_segment's own
@@ -497,9 +565,12 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
                 """, tenant_id, channel, list(live_route_ids[channel]))
 
     # AA-629 — non-empty only when the tenant declared real countries DFS_LOCATION_MAP doesn't know.
+    # AA-840 — `channels` / `proposed_per_channel` make the job result show what was planned for.
     return {
         "segments_seen": len(segments), "routes_seen": len(routes),
         "unmatched_markets": unmatched_markets,
+        "channels": enabled_channels,
+        "proposed_per_channel": {channel: len(chosen[channel]) for channel in enabled_channels},
     }
 
 
@@ -586,8 +657,14 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
     JOIN degrading to NULL for a Route-based Subject should no longer actually happen in
     practice; kept as a LEFT JOIN regardless, since it's still needed for the Segment-based half
     (`atom_segment` rows genuinely can be deleted) and costs nothing extra.
+
+    AA-840 — read-only like before (one extra SELECT). Each Channel carries `enabled` (the
+    tenant's channel config, see `_tenant_enabled_channels()`), and a still-`proposed` Subject on a
+    Channel the tenant has switched off is not returned (the next `propose_slate()` deletes it);
+    its picked/used rows still are.
     """
     async with pool.acquire() as conn:
+        enabled = set(await _tenant_enabled_channels(tenant_id, conn))
         rows = await conn.fetch("""
             SELECT s.subject_id, s.channel, s.state, s.score, s.cleared_bar_reason,
                    s.segment_id, s.route_id, s.created_at,
@@ -602,6 +679,8 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
 
     by_channel: dict[str, list[dict]] = {c: [] for c in CHANNEL_BARS}
     for r in rows:
+        if r["state"] == "proposed" and r["channel"] not in enabled:
+            continue
         reason = r["cleared_bar_reason"]
         if isinstance(reason, str):
             reason = json.loads(reason)
@@ -623,6 +702,7 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
         channel: {
             "channel": channel,
             "on_demand": CHANNEL_BARS[channel]["on_demand"],
+            "enabled": channel in enabled,
             "eligible_count": sum(1 for s in subjects if s["state"] == "proposed"),
             "subjects": subjects,
         }
@@ -807,7 +887,7 @@ async def _resolve_representative_atom(
 
 
 __all__ = [
-    "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS",
+    "CHANNEL_BARS", "WEEKLY_RHYTHM_CHANNELS", "ON_DEMAND_CHANNELS", "MAX_CHANNELS_PER_PLACE",
     "Candidate", "propose_slate", "fetch_slate", "pick_subject",
     "T7_SLATE_KIND", "latest_slate_job", "last_proposal", "request_slate_proposal",
     "SubjectNotFoundError", "SubjectNotEligibleError",
