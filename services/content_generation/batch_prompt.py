@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 from typing import TypedDict
 
-from .prompts import SYSTEM_PROMPT, T2_SYSTEM_PROMPT, build_rewrite_prompt
+from .prompts import SYSTEM_PROMPT, T2_SYSTEM_PROMPT, build_rewrite_prompt, t2_dashless
 
 
 class S1PromptInputs(TypedDict, total=False):
@@ -123,11 +123,13 @@ def build_t2_system_prompt(state: dict) -> str:
     system = T2_SYSTEM_PROMPT + _language_line(state)
     system += "\n\n" + render_brand_block(brand_pack_from_state(state), heading="CLIENT BRAND")
     if brand_sp:
-        system += f"\n\nCLIENT BRAND BRIEF (the brand's own words — part of the brand above):\n{brand_sp}"
+        system += f"\n\nCLIENT BRAND BRIEF (the brand's own words, part of the brand above):\n{brand_sp}"
     system += _core_idea_lens_block(brand_pack_from_state(state).get("core_idea"))
     if has_brand_signals(state):
         system += _brand_contrast_rules()
-    return system + _forbidden_words_block(state)
+    # AA-778: the contrast rules and the forbidden-words block are shared with A1 (pinned); T2 reads them
+    # without the em-dash.
+    return t2_dashless(system + _forbidden_words_block(state))
 
 
 def _core_idea_lens_block(core_idea) -> str:
@@ -142,7 +144,7 @@ def _core_idea_lens_block(core_idea) -> str:
     return (
         "\n\nCORE IDEA AS THE LENS FOR THE WHOLE TRIP: this brand's core idea"
         f" (\"{core_idea}\") is the lens for the whole trip. The overview and each itinerary day's"
-        " framing — what the day emphasises and why it matters to this brand's travellers — should"
+        " framing (what the day emphasises and why it matters to this brand's travellers) should"
         " reflect it naturally, in the brand's voice, using only facts from the source. This is not"
         " brand self-reference: no slogans, no naming the brand in every day, no quoting the core"
         " idea word for word, and no invented claims or activities to make a day fit it."

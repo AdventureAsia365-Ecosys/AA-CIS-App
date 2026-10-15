@@ -200,8 +200,8 @@ SYSTEM_PROMPT = (_A1_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _A1_R
 # The brand itself (voice, audience, style guide, examples, forbidden words) follows in the CLIENT
 # BRAND block built by batch_prompt.build_s1_system_prompt from the AA-771 brand pack.
 _T2_HEAD = """You are a travel content writer for ONE client travel brand, described under CLIENT BRAND
-below. You rewrite a tour from the source catalogue as THIS brand's own tour page: every field —
-name, subtitle, summary, highlights, every itinerary day, seo_title and seo_meta — is written in
+below. You rewrite a tour from the source catalogue as THIS brand's own tour page. Every field
+(name, subtitle, summary, highlights, every itinerary day, seo_title and seo_meta) is written in
 this brand's voice, for this brand's audience, following its style guide.
 
 BRAND VOICE:
@@ -209,20 +209,75 @@ BRAND VOICE:
   and what that audience wants. Not a neutral catalogue register, and not generic travel copy that
   would fit any brand.
 - The source is another brand's text (a neutral catalogue record or an operator's own sales copy).
-  Do not carry its voice across — re-voice it for THIS brand. Keep every fact (places, distances,
+  Do not carry its voice across; re-voice it for THIS brand. Keep every fact (places, distances,
   activities, days); change the voice, emphasis and framing.
 - The voice shapes HOW a fact is told, never WHAT the facts are: the rules below (forbidden words,
   structure, source fidelity, meta length) apply to every brand and win over the style guide.
+
+PUNCTUATION (AA-778):
+- Never use an em-dash (—) in any field: not in the name, the subtitle, the summary, a highlight, an
+  itinerary day title or body, seo_title or seo_meta. A comma, a colon, a full stop or brackets say the
+  same thing.
 """
-_T2_RULE_2_HEAD = """2. Tour name (aa_name): Rewrite in this brand's voice — evocative but specific.
+_T2_RULE_2_HEAD = """2. Tour name (aa_name): Rewrite in this brand's voice: evocative but specific.
 """
 _T2_RULE_7 = """7. seo_meta must NOT contain budget travel language: "hostel", "budget", "public transport",
-   "cheap", "backpacker", "dorm" — the platform rejects these for every brand; the brand's own
+   "cheap", "backpacker", "dorm". The platform rejects these for every brand; the brand's own
    forbidden-word list applies on top.
 """
 
-T2_SYSTEM_PROMPT = (_T2_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _T2_RULE_2_HEAD + _RULE_2_BODY
-                    + _RULES_3_TO_6 + _T2_RULE_7 + _RULE_8_AND_OUTPUT)
+# AA-778 (S238): the T2 writer reads no em-dash in our own instructions (chị Thư bans it in tenant copy;
+# the S238 T2 versions carried 43-45 per tour, and a prompt full of dashes teaches the dash). The rule
+# pieces above are shared with A1, whose bytes are pinned (test_aa792_a1_prompt_golden.py), so the T2
+# prompts are built from the same pieces with these exact fragments swapped (`t2_dashless`). Every
+# key must still occur in an A1 prompt: a shared-text edit that drops one fails
+# test_aa778_t2_em_dash.py instead of letting a dash back into T2 unnoticed.
+T2_DASHLESS = (
+    # system prompt: rules 2-6 and 8
+    ('Good: "South Korea: Temple, Trail & Peninsula — 12 Days"',
+     'Good: "South Korea: Temple, Trail & Peninsula in 12 Days"'),
+    ('Good: "Sri Lanka by Rail and Rickshaw — 10 Days"', 'Good: "Sri Lanka by Rail and Rickshaw in 10 Days"'),
+    ("or defining characteristic) — NOT vague descriptors", "or defining characteristic), NOT vague descriptors"),
+    ("place, altitude, or activity — never generic", "place, altitude, or activity, never generic"),
+    ("OUTPUT JSON FORMAT below — one object per source", "OUTPUT JSON FORMAT below: one object per source"),
+    ('as the whole title — these name no place', 'as the whole title. These name no place'),
+    ("   itinerary — fabricating them is", "   itinerary; fabricating them is"),
+    ("own source length — a day with a lot", "own source length: a day with a lot"),
+    ("6. SOURCE FIDELITY — what you may", "6. SOURCE FIDELITY: what you may"),
+    ("   not state — activities or experiences", "   not state: activities or experiences"),
+    ("140–155 characters — count carefully", "140–155 characters; count carefully"),
+    ("(place, activity, audience) — do NOT pad", "(place, activity, audience); do NOT pad"),
+    # system prompt: AA-202 contrast rules + the forbidden-words constraint (batch_prompt)
+    ("clearly distinct — not a synonym swap", "clearly distinct, not a synonym swap"),
+    ("identically for any brand — do NOT write like this", "identically for any brand; do NOT write like this"),
+    ("'experience the best of' — they describe a route", "'experience the best of'. They describe a route"),
+    ("HARD CONSTRAINT — FORBIDDEN WORDS.", "HARD CONSTRAINT: FORBIDDEN WORDS."),
+    (" appears in ANY field — name, subtitle, summary, description, every highlight, every itinerary day,"
+     " seo_title, seo_meta:\n",
+     " appears in ANY field (name, subtitle, summary, description, every highlight, every itinerary day,"
+     " seo_title, seo_meta):\n"),
+    # user prompt (build_rewrite_prompt)
+    ("one per day — use as the basis", "one per day; use as the basis"),
+    ("CRITICAL LENGTH REQUIREMENT — seo_meta:", "CRITICAL LENGTH REQUIREMENT for seo_meta:"),
+    ("as the source supports — minimum 3", "as the source supports: minimum 3"),
+    ("PER-DAY SOURCE LENGTH above exactly —\n", "PER-DAY SOURCE LENGTH above exactly:\n"),
+    ('"SEO title — MUST be under 60 chars"', '"SEO title: MUST be under 60 chars"'),
+    # itinerary nudge rules (itinerary_utils._NUDGE_RULES)
+    ("primary activity — never generic", "primary activity, never generic"),
+)
+
+
+def t2_dashless(text: str) -> str:
+    """AA-778: `text` (a T2 prompt) with the shared A1 instruction fragments of T2_DASHLESS swapped for
+    their em-dash-free wording. Only these exact fragments change: the tour data, the brand's own
+    words and the PUNCTUATION rule (which names the character) are left as they are."""
+    for old, new in T2_DASHLESS:
+        text = text.replace(old, new)
+    return text
+
+
+T2_SYSTEM_PROMPT = t2_dashless(_T2_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _T2_RULE_2_HEAD
+                               + _RULE_2_BODY + _RULES_3_TO_6 + _T2_RULE_7 + _RULE_8_AND_OUTPUT)
 
 
 _SUBTITLE_INSTRUCTIONS = {
@@ -348,17 +403,17 @@ _USER_VOICE = {
     "tenant": {
         "opening": ("Rewrite the following tour content as this client brand's own tour page, in its brand"
                     " voice (CLIENT BRAND in the system prompt)."),
-        "name": "Rewrite in this brand's voice — evocative but specific. See STRICT RULES 2.",
+        "name": "Rewrite in this brand's voice: evocative but specific. See STRICT RULES 2.",
         "summary": ("In this brand's voice, for its audience, specific to this tour and its facts. No generic"
                     " openers. No sentence limit."),
         "day_body": """This day's prose, length per PER-DAY SOURCE LENGTH above (rule 5). In THIS
-        brand's voice — the SAME voice as the summary: its voice words, its style-guide rules, its
-        audience's angle. Same facts as the source day (route, distance, terrain, transfers, key
+        brand's voice, the SAME voice as the summary (its voice words, its style-guide rules, its
+        audience's angle). Same facts as the source day (route, distance, terrain, transfers, key
         stops, included activities, accommodation context), told the way this brand tells them. Do
         not fall back to a neutral catalogue register, and do not echo the source's own voice.""",
-        "day_rest": """do not add, merge, or drop days. The brand voice applies to EVERY day, not just the first —
+        "day_rest": """do not add, merge, or drop days. The brand voice applies to EVERY day, not just the first:
     same facts, no neutral register.""",
-        "seo_meta": """SEO meta description — MUST be 140-155 characters (NEVER under 140), a complete
+        "seo_meta": """SEO meta description: MUST be 140-155 characters (NEVER under 140), a complete
     sentence ending in a period, in this brand's voice and naming the tour's concrete places or
     activities.""",
     },
@@ -423,7 +478,7 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     # facts only constrain, they do not replace it).
     _source_facts_block = _render_source_facts_block(structured_facts)
 
-    return f"""{v["opening"]}
+    prompt = f"""{v["opening"]}
 {few_shot_text}
 TOUR DATA:
 - Name: {tour.get('name')}
@@ -468,3 +523,5 @@ OUTPUT JSON FORMAT:
   "seo_meta": "{v["seo_meta"]}",
   "trip_type": "cultural|adventure|wellness|culinary|wildlife|trekking|festival|river_journey"
 }}"""
+    # AA-778: the T2 prompt carries no em-dash in our own instructions (T2_DASHLESS); A1 is byte-identical.
+    return t2_dashless(prompt) if voice == "tenant" else prompt

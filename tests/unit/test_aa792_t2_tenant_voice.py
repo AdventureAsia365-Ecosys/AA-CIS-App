@@ -54,7 +54,7 @@ def test_t2_system_prompt_is_written_as_the_brand():
     assert _STYLE in sp and _GOOD in sp
     assert "Never use these words or phrases: conquer, push your limits" in sp
     # the truth/structure rules every brand keeps
-    assert "SOURCE FIDELITY" in sp and "HARD CONSTRAINT — FORBIDDEN WORDS" in sp
+    assert "SOURCE FIDELITY" in sp and "HARD CONSTRAINT: FORBIDDEN WORDS" in sp  # AA-778: no em-dash in T2
     assert "SEO META LENGTH" in sp and "CONTRAST REQUIREMENT" in sp
     # the A1 neutral-catalogue framing is gone
     for a1_only in ("never adopt a persona", "append only", "master content catalog",
@@ -66,13 +66,13 @@ def test_t2_core_forbidden_words_still_bind_the_tenant_voice():
     # Gate-1 default: the AA core list stays banned for tenants (validate enforces it too).
     sp = batch_prompt.build_s1_system_prompt(dict(_T2))
     assert "NEVER use these words: curated, pristine, refined" in sp
-    hard = sp.split("HARD CONSTRAINT — FORBIDDEN WORDS")[1]
+    hard = sp.split("HARD CONSTRAINT: FORBIDDEN WORDS")[1]
     assert "curated" in hard and "conquer" in hard
 
 
 def test_t2_brand_system_prompt_is_a_brief_not_an_append():
     sp = batch_prompt.build_s1_system_prompt({**_T2, "brand_system_prompt": "Write for Trail Pulse riders."})
-    assert "CLIENT BRAND BRIEF (the brand's own words — part of the brand above):\nWrite for Trail Pulse riders." in sp
+    assert "CLIENT BRAND BRIEF (the brand's own words, part of the brand above):\nWrite for Trail Pulse riders." in sp
     assert "append only" not in sp
 
 

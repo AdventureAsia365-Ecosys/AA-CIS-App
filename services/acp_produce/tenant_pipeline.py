@@ -206,7 +206,7 @@ def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
     parts: list[str] = []
     if grounding:
         parts.append(
-            "FACT CHECK FAILED — these sentences state numbers that do NOT appear anywhere in the "
+            "FACT CHECK FAILED: these sentences state numbers that do NOT appear anywhere in the "
             "source tour. Use only figures (distances, altitudes, durations, counts, prices, years) "
             "that the source itself gives; otherwise remove the number or rephrase without one. "
             "Do not add conversions (e.g. feet) or outside facts."
@@ -218,7 +218,7 @@ def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
             extra = len(grounding) - _T3_FEEDBACK_MAX_SENTENCES
             parts.append(f"- …and {extra} more sentence(s) with the same problem.")
     if structural:
-        parts.append("STRUCTURE CHECK FAILED — fix these issues: " + ", ".join(structural[:15]))
+        parts.append("STRUCTURE CHECK FAILED. Fix these issues: " + ", ".join(structural[:15]))
     return "\n".join(parts)
 
 
@@ -260,7 +260,7 @@ def _revision_feedback(base: dict) -> str:
     fb = t3_repair_feedback(base["structural"], base["grounding"])
     judge_fb = str(base["result"].get("judge_feedback") or "").strip()
     if judge_fb and base["score"] < _T3_PASS_LINE:
-        fb = f"{fb}\nBRAND VOICE FEEDBACK — {judge_fb[:1500]}" if fb else f"BRAND VOICE FEEDBACK — {judge_fb[:1500]}"
+        fb = f"{fb}\nBRAND VOICE FEEDBACK: {judge_fb[:1500]}" if fb else f"BRAND VOICE FEEDBACK: {judge_fb[:1500]}"
     return fb
 
 
