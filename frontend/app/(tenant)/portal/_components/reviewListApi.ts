@@ -60,13 +60,30 @@ export async function savePieceText(pieceId: string, contentText: string): Promi
   return r.json();
 }
 
-/** Publish one piece (blog + connected channel). Backend validates eligibility. */
-export async function publishPiece(pieceId: string): Promise<void> {
+export interface PublishResult {
+  success: boolean;
+  status: string;
+  external_url: string | null;
+  replayed?: boolean;
+}
+
+/** Channels the publish endpoint supports (api/routers/v1_publish.py _SUPPORTED_CHANNELS). */
+export const PUBLISHABLE_CHANNELS: ReadonlySet<string> = new Set(["blog", "facebook"]);
+
+/**
+ * Publish one piece (blog/facebook + connected channel). Backend validates eligibility.
+ * AA-668 — the endpoint answers 200 with `success: false` when the remote post failed (the row is
+ * kept as 'failed' for a retry); that is a failure too, not a publish.
+ */
+export async function publishPiece(pieceId: string): Promise<PublishResult> {
   const r = await fetch(`/api/tenant/v1/publish-log/${pieceId}/publish`, { method: "POST" });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
     throw new Error(e.detail || `Publish failed (${r.status})`);
   }
+  const d: PublishResult = await r.json();
+  if (d.success === false) throw new Error("The post didn't go through — try again in a moment.");
+  return d;
 }
 
 /**
@@ -75,7 +92,8 @@ export async function publishPiece(pieceId: string): Promise<void> {
  * The backend audit-logs each export per tenant/channel (AA-613/AA-614).
  */
 export async function exportPiece(
-  item: ReviewItem,
+  // AA-668 — only these fields are read, so the Writer panel can export a just-written piece too.
+  item: Pick<ReviewItem, "piece_id" | "channel"> & { angle?: { name: string } | null },
   format: "text" | "html",
   mode: "document" | "fragment" = "document",
 ): Promise<void> {

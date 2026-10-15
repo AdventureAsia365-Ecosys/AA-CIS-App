@@ -87,7 +87,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           position: "fixed",
           bottom: 20,
           right: 20,
-          zIndex: 9999,
+          // AA-668 — above Drawer/Modal (10000): a toast fired from inside an open drawer (export,
+          // publish, copy-lock hint) was painted under the drawer's backdrop.
+          zIndex: 10001,
           display: "flex",
           flexDirection: "column",
           gap: 10,
