@@ -4,11 +4,14 @@
 // ledger, what the writer was given (seed, place background, facts, brand pack, angle), the attempt
 // history and the LLM cost by stage. None of this reaches the tenant (AA-770).
 // S234: each flagged sentence can be cut or rewritten by an admin (SentenceActions.tsx).
+// AA-791: a "Label" section (PieceLabel.tsx) and, per failed attempt, the gates that failed in it
+// (repair_log[].gate_ledger, kept for pieces written after AA-791).
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { Badge, Drawer, StatusBadge, apiGet } from "../../_kit";
+import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences } from "./SentenceActions";
 import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
 
@@ -51,6 +54,31 @@ function HighlightedText({ text, highlights }: { text: string; highlights: Highl
   return (
     <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.65, color: A.body, background: A.card, border: `1px solid ${A.line}`, borderRadius: 10, padding: "12px 14px", maxHeight: 460, overflow: "auto" }}>
       {runs}
+    </div>
+  );
+}
+
+/** AA-791 — one line per failed attempt: the blocking / warning gates that failed in that attempt,
+ *  from the trimmed ledger the T9 loop keeps in each repair_log entry (absent on older pieces). */
+function AttemptLedgers({ log }: { log: Record<string, unknown>[] }) {
+  const rows = log.filter((e) => Array.isArray(e.gate_ledger));
+  if (!rows.length) return null;
+  return (
+    <div data-testid="cq-attempt-ledgers" style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+      {rows.map((e, i) => {
+        const failed = (e.gate_ledger as Gate[]).filter((g) => !g.passed);
+        return (
+          <div key={i} style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+            <span style={{ fontWeight: 600, color: A.ink, minWidth: 74 }}>Attempt {String(e.attempt ?? i + 1)}</span>
+            {failed.length === 0 ? <span style={{ color: A.muted }}>no gate failed</span> : failed.map((g) => (
+              <span key={g.gate} title={(g.violations || []).join(" | ")}>
+                <Badge tone={g.blocking === false ? "warning" : "danger"} dot={false}>{gateLabel(g.gate)}</Badge>
+              </span>
+            ))}
+            <span style={{ color: A.muted }}>· {(e.gate_ledger as Gate[]).length} gates ran</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -125,6 +153,8 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
             <Section title={`Admin edits · ${p.admin_edits.length}`}><AdminEdits edits={p.admin_edits} /></Section>
           )}
 
+          <Section title="Label"><PieceLabelSection piece={p} /></Section>
+
           <Section title="Gates (final attempt) — as the writer produced it"><GateTable gates={p.gate_ledger || []} /></Section>
           {(p.flags || []).some((f) => !p.gate_ledger.find((g) => g.gate === f.gate)) && (
             <Section title="Other flags">
@@ -150,7 +180,10 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
 
           <Section title="Attempts">
             {(p.repair_log || []).length === 0 ? <div style={{ fontSize: 12, color: A.muted }}>Passed on the first attempt.</div> : (
-              <Pre text={JSON.stringify(p.repair_log, null, 2)} />
+              <>
+                <AttemptLedgers log={p.repair_log} />
+                <Pre text={JSON.stringify(p.repair_log, null, 2)} />
+              </>
             )}
             {(p.discarded_attempts || []).length > 0 && (
               <div style={{ marginTop: 8 }}>

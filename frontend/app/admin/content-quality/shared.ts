@@ -19,6 +19,9 @@ export interface PieceRow {
   failed_gates: string[];
   flag_gates: string[];
   cost_usd: number;
+  // AA-791 — only once migration 231 is applied (`labels_enabled` on the list response).
+  label?: PieceLabelValue | null;
+  label_count?: number;
 }
 
 export interface Gate {
@@ -163,6 +166,44 @@ export const DUPLICATE_REASON_LABELS: Record<string, string> = {
 };
 
 export interface Paged<T> { data: T[]; total: number; limit: number; offset: number }
+
+// AA-791 — human labels per piece (acp_shared.content_piece_label, migration 231; AA-783 criteria).
+export type PieceLabelValue = "as_is" | "light" | "heavy" | "reject";
+export type DefectLevel = "none" | "light" | "heavy";
+export const LABEL_NAMES: Record<PieceLabelValue, string> = {
+  as_is: "As-is", light: "Light edit", heavy: "Heavy edit", reject: "Reject",
+};
+export const LABEL_HINTS: Record<PieceLabelValue, string> = {
+  as_is: "Publishable without a change",
+  light: "≤10 min, ≤3 sentences, no research",
+  heavy: "More than a light edit",
+  reject: "Not worth fixing",
+};
+export const DEFECT_NAMES: Record<string, string> = {
+  fact: "Fact", voice: "Voice", format: "Format", ai_phrasing: "AI phrasing",
+};
+export interface PieceLabel {
+  labelled_by: string;
+  label: PieceLabelValue;
+  defects: Record<string, DefectLevel>;
+  minutes_to_fix: number | null;
+  reason: string | null;
+  labelled_at: string;
+  text_changed_since_label: boolean;
+}
+export interface PieceLabels {
+  piece_id: string;
+  labels: PieceLabel[];
+  mine: PieceLabel | null;
+  choices?: { label: PieceLabelValue[]; defect_classes: string[]; defect_levels: DefectLevel[] };
+}
+export interface PieceLabelBody {
+  label: PieceLabelValue;
+  defects: Record<string, DefectLevel>;
+  minutes_to_fix: number | null;
+  reason: string | null;
+}
+export type PiecesPage = Paged<PieceRow> & { labels_enabled?: boolean };
 
 export const usd = (n: number | null | undefined) =>
   n == null ? "—" : n < 0.01 && n > 0 ? `$${n.toFixed(4)}` : `$${n.toFixed(3)}`;

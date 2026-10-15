@@ -13,7 +13,10 @@ actions on one piece:
   POST /requests/{id}/regenerate-angles — clone the request (same goal, atom, subject, route) and
                                          enqueue t8_angles for the clone; the old request and its
                                          pieces' angles stay as they were. Audit-logged.
-All three require the `admin` staff role (x-admin-role, forwarded by the BFF from the verified JWT).
+  GET/POST /pieces/{id}/label         — AA-791: a human label per piece and labeller
+                                         (acp_shared.content_piece_label, migration 231; 503 until
+                                         it is applied). Admin data only, never shown to a tenant.
+All of them require the `admin` staff role (x-admin-role, forwarded by the BFF from the verified JWT).
 Gate results (`gate_ledger`, `flags`) are left as the writer produced them: they measure the
 writer, not the admin's edit.
 
@@ -120,23 +123,63 @@ def _piece_filters(tenant_id, channel, status, gate, q) -> tuple[str, list]:
     return " AND ".join(where), params
 
 
+# ── AA-791: human labels (acp_shared.content_piece_label, migration 231) ──────────────────────
+
+_LABEL_TABLE = "acp_shared.content_piece_label"
+LABELS = ("as_is", "light", "heavy", "reject")
+_LABEL_FILTERS = LABELS + ("labelled", "unlabelled")
+DEFECT_CLASSES = ("fact", "voice", "format", "ai_phrasing")  # AA-783 criteria pack columns
+DEFECT_LEVELS = ("none", "light", "heavy")
+LABELS_UNAVAILABLE = ("Labels are not available yet: migration 231 (acp_shared.content_piece_label) has not "
+                      "been applied on this database.")
+_CONTENT_SHA_SQL = "encode(sha256(convert_to(COALESCE(cp.content_text, ''), 'UTF8')), 'hex')"
+_LATEST_LABEL_SQL = (f"(SELECT l.label FROM {_LABEL_TABLE} l WHERE l.piece_id = cp.piece_id "
+                     f"ORDER BY l.labelled_at DESC LIMIT 1)")
+_LABEL_COLS_SQL = (f",\n                   {_LATEST_LABEL_SQL} AS label,"
+                   f"\n                   (SELECT count(*) FROM {_LABEL_TABLE} l WHERE l.piece_id = cp.piece_id)"
+                   f" AS label_count")
+
+
+async def _labels_enabled(conn) -> bool:
+    """Migration 231 applied? Checked per request (one catalog lookup), so the label feature turns on
+    the moment DB Migrate applies it — no redeploy (D8: code merges may precede the apply)."""
+    return bool(await conn.fetchval(f"SELECT to_regclass('{_LABEL_TABLE}') IS NOT NULL"))
+
+
+def _label_filter(where: str, params: list, label: str) -> tuple[str, list]:
+    if label == "labelled":
+        return f"{where} AND EXISTS (SELECT 1 FROM {_LABEL_TABLE} l WHERE l.piece_id = cp.piece_id)", params
+    if label == "unlabelled":
+        return f"{where} AND NOT EXISTS (SELECT 1 FROM {_LABEL_TABLE} l WHERE l.piece_id = cp.piece_id)", params
+    params = [*params, label]
+    return f"{where} AND {_LATEST_LABEL_SQL} = ${len(params)}", params
+
+
 @router.get("/pieces")
 async def list_pieces(
     request: Request,
     limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     tenant_id: Optional[str] = None, channel: Optional[str] = None, status: Optional[str] = None,
-    gate: Optional[str] = None, q: Optional[str] = None,
+    gate: Optional[str] = None, q: Optional[str] = None, label: Optional[str] = None,
     sort: str = "created_at", sort_dir: str = "desc",
     x_admin_secret: str = Header(None),
 ):
     """Every tenant's T9 pieces: final status, the blocking gates that failed (from gate_ledger),
-    the warn flags, attempts and the LLM cost of the write job."""
+    the warn flags, attempts and the LLM cost of the write job. AA-791: the latest human label and
+    the label count, filterable by `label` — only once migration 231 is applied (`labels_enabled`);
+    before that the label filter is ignored and the rows carry no label."""
     verify_admin_secret(x_admin_secret)
+    if label and label not in _LABEL_FILTERS:
+        raise HTTPException(status_code=422, detail=f"label must be one of {', '.join(_LABEL_FILTERS)}")
     where, params = _piece_filters(tenant_id, channel, status, gate, q)
     order = _PIECE_SORTS.get(sort, "cp.created_at")
     direction = "ASC" if sort_dir == "asc" else "DESC"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
+        labels_enabled = await _labels_enabled(conn)
+        label_cols = _LABEL_COLS_SQL if labels_enabled else ""
+        if labels_enabled and label:
+            where, params = _label_filter(where, params, label)
         total = await conn.fetchval(f"SELECT count(*) {_PIECE_FROM} WHERE {where}", *params)
         rows = await conn.fetch(
             f"""
@@ -146,13 +189,14 @@ async def list_pieces(
                    COALESCE(cp.seo_title, ago.name) AS title, ago.name AS angle_name, agr.goal,
                    length(cp.content_text) AS content_chars,
                    (cp.writer_input IS NOT NULL) AS has_writer_input,
-                   {_FAILED_GATES_SQL}, {_COST_SQL}
+                   {_FAILED_GATES_SQL}, {_COST_SQL}{label_cols}
             {_PIECE_FROM}
             WHERE {where}
             ORDER BY {order} {direction} NULLS LAST, cp.piece_id
             LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
             """, *params, limit, offset)
-    return {"data": [_row(r) for r in rows], "total": total, "limit": limit, "offset": offset}
+    return {"data": [_row(r) for r in rows], "total": total, "limit": limit, "offset": offset,
+            "labels_enabled": labels_enabled}
 
 
 # Highlights: where in the final text each flagged sentence / phrase sits.
@@ -588,6 +632,101 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
             )
     return {"request_id": new_id, "regenerated_from": request_id, "job_id": job_id, "status": "pending_goal",
             "goal": req["goal"]}
+
+
+# ── AA-791: label one piece (admin only) ──────────────────────────────────────────────────────
+
+class PieceLabelBody(BaseModel):
+    label: str
+    defects: dict[str, str] = Field(default_factory=dict)
+    minutes_to_fix: Optional[int] = Field(None, ge=0, le=600)
+    reason: Optional[str] = Field(None, max_length=4000)
+
+
+def _require_label_admin(x_admin_role: Optional[str]) -> None:
+    if x_admin_role != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can see or set piece labels")
+
+
+def _label_row(r) -> dict:
+    out = _row(r)
+    out["defects"] = _j(out.get("defects")) or {}
+    return out
+
+
+_PIECE_LABELS_SQL = f"""
+    SELECT l.labelled_by, l.label, l.defects, l.minutes_to_fix, l.reason, l.labelled_at,
+           (l.content_sha256 IS DISTINCT FROM {_CONTENT_SHA_SQL}) AS text_changed_since_label
+    FROM {_LABEL_TABLE} l JOIN acp_shared.content_piece cp ON cp.piece_id = l.piece_id
+    WHERE l.piece_id = $1::uuid
+    ORDER BY l.labelled_at DESC
+"""
+
+
+@router.get("/pieces/{piece_id}/label")
+async def get_piece_label(piece_id: str, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None), x_admin_role: Optional[str] = Header(None)):
+    """Every human label on this piece (newest first) and the caller's own (`mine`). 503 until
+    migration 231 is applied."""
+    verify_admin_secret(x_admin_secret)
+    _require_label_admin(x_admin_role)
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        if not await _labels_enabled(conn):
+            raise HTTPException(status_code=503, detail=LABELS_UNAVAILABLE)
+        if not await conn.fetchval("SELECT 1 FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id):
+            raise HTTPException(status_code=404, detail="Piece not found")
+        rows = await conn.fetch(_PIECE_LABELS_SQL, piece_id)
+    labels = [_label_row(r) for r in rows]
+    me = f"admin:{x_admin_user_id}" if x_admin_user_id else None
+    return {"piece_id": piece_id, "labels": labels,
+            "mine": next((x for x in labels if me and x["labelled_by"] == me), None),
+            "choices": {"label": list(LABELS), "defect_classes": list(DEFECT_CLASSES),
+                        "defect_levels": list(DEFECT_LEVELS)}}
+
+
+@router.post("/pieces/{piece_id}/label")
+async def set_piece_label(piece_id: str, body: PieceLabelBody, request: Request, x_admin_secret: str = Header(None),
+                          x_admin_user_id: Optional[str] = Header(None), x_admin_role: Optional[str] = Header(None)):
+    """Save the caller's label on one approved/held piece (AA-783 criteria: as_is / light / heavy /
+    reject, per-class defects none/light/heavy, minutes to fix, reason). One row per piece and
+    labeller: a second save overwrites the caller's own row. The sha256 of the text being labelled is
+    stored, so a later admin edit shows as `text_changed_since_label`. 503 until migration 231."""
+    verify_admin_secret(x_admin_secret)
+    _require_label_admin(x_admin_role)
+    if not x_admin_user_id:
+        raise HTTPException(status_code=400, detail="No admin identity on the request — sign in again")
+    if body.label not in LABELS:
+        raise HTTPException(status_code=422, detail=f"label must be one of {', '.join(LABELS)}")
+    bad = {k: v for k, v in body.defects.items() if k not in DEFECT_CLASSES or v not in DEFECT_LEVELS}
+    if bad:
+        raise HTTPException(status_code=422, detail=f"defects take {', '.join(DEFECT_CLASSES)} with a value in "
+                                                    f"{', '.join(DEFECT_LEVELS)} (got {bad})")
+    reason = (body.reason or "").strip() or None
+    pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        if not await _labels_enabled(conn):
+            raise HTTPException(status_code=503, detail=LABELS_UNAVAILABLE)
+        status = await conn.fetchval("SELECT status FROM acp_shared.content_piece WHERE piece_id = $1::uuid", piece_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Piece not found")
+        if status not in _EDITABLE_STATUSES:
+            raise HTTPException(status_code=409, detail=f"A {status} piece has no final text to label")
+        await conn.execute(
+            f"""
+            INSERT INTO {_LABEL_TABLE} AS l (piece_id, labelled_by, label, defects, minutes_to_fix, reason,
+                                             content_sha256, labelled_at)
+            SELECT cp.piece_id, $2, $3, $4::jsonb, $5, $6, {_CONTENT_SHA_SQL}, now()
+            FROM acp_shared.content_piece cp WHERE cp.piece_id = $1::uuid
+            ON CONFLICT (piece_id, labelled_by) DO UPDATE SET
+                label = EXCLUDED.label, defects = EXCLUDED.defects, minutes_to_fix = EXCLUDED.minutes_to_fix,
+                reason = EXCLUDED.reason, content_sha256 = EXCLUDED.content_sha256, labelled_at = now()
+            """, piece_id, f"admin:{x_admin_user_id}", body.label, json.dumps(body.defects), body.minutes_to_fix,
+            reason)
+        rows = await conn.fetch(_PIECE_LABELS_SQL, piece_id)
+    labels = [_label_row(r) for r in rows]
+    me = f"admin:{x_admin_user_id}"
+    return {"piece_id": piece_id, "labels": labels, "mine": next((x for x in labels if x["labelled_by"] == me), None)}
 
 
 @router.get("/stats")
