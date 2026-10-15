@@ -36,7 +36,11 @@ def _connect(user=DB_USER):
 
 
 def _undo_226(a):
+    # Migration 228's catalog views read geo.* and the 226 destinations columns (v_destination.geo_status
+    # ...), so the columns below cannot be dropped while they exist. The catalog modules re-create the
+    # schema the RDS way in their own fixtures (test_aa679 = 225, test_aa712_migration_228 = 225 + 228).
     a.execute("""
+        DROP SCHEMA IF EXISTS catalog CASCADE;
         DROP SCHEMA IF EXISTS geo CASCADE;
         ALTER TABLE shared.destinations DROP COLUMN IF EXISTS duplicate_of, DROP COLUMN IF EXISTS geo_status,
             DROP COLUMN IF EXISTS confidence, DROP COLUMN IF EXISTS geocoder_place_id,
