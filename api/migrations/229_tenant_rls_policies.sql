@@ -81,6 +81,8 @@ BEGIN;
 
 -- ALTER TABLE ... ENABLE ROW LEVEL SECURITY and DROP/CREATE POLICY take ACCESS EXCLUSIVE locks on
 -- tables the API reads all the time: give up instead of queueing every request behind a long query.
+-- Guard 1 takes those locks up front (one table at a time, in the order below) and they are held
+-- to COMMIT, so the counts it records cannot drift before guard 2 compares against them.
 SET LOCAL lock_timeout = '10s';
 
 -- ── Guard 1: the runner owns every table in scope, none is FORCEd; counts before ───────────────────
@@ -109,6 +111,10 @@ BEGIN
             RAISE EXCEPTION 'migration 229: % has FORCE ROW LEVEL SECURITY: with policies TO aa_app_user '
                             'only, the owner (main pool) would read 0 rows (decision D2: no FORCE)', t;
         END IF;
+        -- Take the lock ENABLE / CREATE POLICY need anyway before counting: no row can be added
+        -- between this count and guard 2, which compares against it (a concurrent write would
+        -- otherwise abort the apply on a false "runner is filtered").
+        EXECUTE format('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', t);
         EXECUTE format('SELECT set_config(%L, (SELECT count(*) FROM %s)::text, true)',
                        'aa229.n_' || replace(t, '.', '__'), t);
     END LOOP;
