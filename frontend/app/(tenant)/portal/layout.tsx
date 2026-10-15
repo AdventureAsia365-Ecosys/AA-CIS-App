@@ -36,6 +36,7 @@ const BREADCRUMBS: Record<string, string> = {
   // before; now matches the page's own <h1> and the Sidebar label)
   "/portal/t11-publish": "Publish", // AA-457 — connect-flow only this PR, no Sidebar entry yet
   "/portal/t11-publish/connection": "Publish", // manage-connection sub-route, same breadcrumb label
+  "/portal/help/facebook": "Connect your Facebook Page", // AA-831 — guide linked from the connect card
   "/portal/marketplace": "Marketplace", // AA-444
   "/portal/api":        "API Access",
   "/portal/activity":   "Activity Log",
