@@ -15,3 +15,4 @@ from . import place_cards_job  # noqa: F401  AA-772
 from . import place_extract_job  # noqa: F401  AA-712
 from . import place_geocode_job  # noqa: F401  AA-712
 from . import tour_graph_job  # noqa: F401  AA-712
+from . import retention_job  # noqa: F401  AA-825

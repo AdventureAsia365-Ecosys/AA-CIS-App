@@ -431,6 +431,40 @@ async def list_tenants(
 
 # ── GET /admin/tenants/{id}/usage — Billing metrics ──────────────────────────
 
+# AA-825 (DM-7.4): raw shared.tenant_api_usage is kept 90 days; a month the retention job has rolled
+# up (shared.tenant_api_usage_monthly, written from the complete raw month before any of it is
+# deleted) is read from the rollup, every other month from the raw rows. Same numbers either way.
+TENANT_USAGE_MONTHLY_SQL = """
+    WITH rolled AS (
+        SELECT (m.month::timestamp AT TIME ZONE 'UTC') AS month,
+               sum(m.calls)::bigint              AS total_calls,
+               sum(m.ok_calls)::bigint           AS successful_calls,
+               sum(m.rate_limited_calls)::bigint AS rate_limited_calls,
+               sum(m.response_ms_sum)::numeric / NULLIF(sum(m.response_ms_count), 0) AS avg_response_ms
+        FROM shared.tenant_api_usage_monthly m
+        WHERE m.tenant_id = $1
+          AND m.month >= (DATE_TRUNC('month', NOW()) - make_interval(months => $2::int - 1))::date
+        GROUP BY m.month
+    ),
+    raw AS (
+        SELECT
+            DATE_TRUNC('month', called_at) AS month,
+            COUNT(*) AS total_calls,
+            COUNT(*) FILTER (WHERE status_code < 400) AS successful_calls,
+            COUNT(*) FILTER (WHERE status_code = 429) AS rate_limited_calls,
+            AVG(response_ms) AS avg_response_ms
+        FROM shared.tenant_api_usage
+        WHERE tenant_id = $1
+          AND called_at >= DATE_TRUNC('month', NOW()) - make_interval(months => $2::int - 1)
+        GROUP BY 1
+    )
+    SELECT * FROM rolled
+    UNION ALL
+    SELECT * FROM raw WHERE raw.month NOT IN (SELECT month FROM rolled)
+    ORDER BY 1 DESC
+"""
+
+
 
 @router.get("/tenants/{tenant_id}/usage", summary="Tenant billing metrics")
 async def get_tenant_usage(
@@ -456,19 +490,7 @@ async def get_tenant_usage(
         if not tenant:
             raise HTTPException(status_code=404, detail="Tenant not found")
 
-        usage = await conn.fetch("""
-            SELECT
-                DATE_TRUNC('month', called_at) AS month,
-                COUNT(*) AS total_calls,
-                COUNT(*) FILTER (WHERE status_code < 400) AS successful_calls,
-                COUNT(*) FILTER (WHERE status_code = 429) AS rate_limited_calls,
-                AVG(response_ms) AS avg_response_ms
-            FROM shared.tenant_api_usage
-            WHERE tenant_id = $1
-              AND called_at >= DATE_TRUNC('month', NOW()) - make_interval(months => $2::int - 1)
-            GROUP BY 1
-            ORDER BY 1 DESC
-        """, tenant_id, months)
+        usage = await conn.fetch(TENANT_USAGE_MONTHLY_SQL, tenant_id, months)
 
         t2 = await conn.fetchrow("""
             SELECT COUNT(*) AS versions, COUNT(DISTINCT published_tour_id) AS tours
