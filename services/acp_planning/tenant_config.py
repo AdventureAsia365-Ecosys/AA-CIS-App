@@ -9,17 +9,25 @@ Deliberately joins two tables rather than inventing one:
     (AA-384) — NOT duplicated here, see migration 101's header comment.
 
 A tenant with no acp_shared.tenant_config row (never configured via the new
-Tenants > Planning tab) falls back to (["US"], ["blog"]) — the exact same
-values the pre-AA-323 hardcoded demo constants used, so existing behavior is
-unchanged until someone explicitly sets config.
+Tenants > Planning tab) falls back to markets ["US"] — the exact value the
+pre-AA-323 hardcoded demo constants used.
+
+AA-840: the channels fallback is every Slate Channel (was ["blog"]). The channel
+list is read by the T7 Slate (services/acp_shared/slate.py::_tenant_enabled_channels),
+which proposes for every Channel when a tenant has no row; the admin Planning
+config form shows this value, so a ["blog"] fallback there showed a config the
+Slate did not follow, and saving the form unchanged would have narrowed the
+tenant's Slate to blog only.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from uuid import UUID
 
+from services.acp_shared.slate import CHANNEL_BARS
+
 _DEFAULT_MARKETS = ["US"]
-_DEFAULT_CHANNELS = ["blog"]
+_DEFAULT_CHANNELS = list(CHANNEL_BARS)
 
 
 @dataclass

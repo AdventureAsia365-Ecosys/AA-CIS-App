@@ -12,7 +12,7 @@ this module already follows (`propose_slate()`/`fetch_slate()`/`pick_subject()` 
 tests here either).
 """
 from services.acp_shared.slate import CHANNEL_BARS, ON_DEMAND_CHANNELS, WEEKLY_RHYTHM_CHANNELS
-from services.acp_shared.slate import Candidate, _choose, _clears_bar
+from services.acp_shared.slate import Candidate, _choose, _choose_slate, _clears_bar
 
 
 def _segment_candidate(demand=None, questions=0, said=0):
@@ -160,11 +160,9 @@ class TestChoosePlaceDedupAndHubCap:
         chosen = _choose("facebook", [a, b], hub_of={})
         assert {c.segment_id for c, _ in chosen} == {"seg_a", "seg_b"}
 
-    def test_seen_places_not_shared_by_default(self):
-        # AA-632 default (seen_places=None) — each _choose() call still gets its own fresh set,
-        # matching the pre-AA-632 behavior every existing test above already relies on. Two
-        # separate calls for the SAME place both succeed because neither call sees the other's
-        # `seen_places`.
+    def test_single_channel_calls_do_not_share_places(self):
+        # Two separate one-Channel calls for the SAME place both succeed: each call is its own
+        # Slate, so no cross-Channel rule can bind.
         a = self._seg("seg_a", "Itsukushima Shrine", score=1)
         b = self._seg("seg_b", "Itsukushima Shrine", score=1)
         chosen_facebook = _choose("facebook", [a], hub_of={})
@@ -172,30 +170,22 @@ class TestChoosePlaceDedupAndHubCap:
         assert [c.segment_id for c, _ in chosen_facebook] == ["seg_a"]
         assert [c.segment_id for c, _ in chosen_instagram] == ["seg_b"]
 
-    def test_seen_places_shared_across_channels_when_passed_in(self):
-        # AA-632 — propose_slate() passes ONE seen_places set across its whole loop over
-        # CHANNEL_BARS, so "not already on slate" dedupes a place across Channels, not just
-        # within one Channel's own call. Simulates that loop directly: same place proposed to
-        # facebook first (wins), then instagram (loses, even though instagram's own candidate
-        # pool never saw facebook's winner).
-        seen_places: set[str] = set()
-        strong_on_facebook = self._seg("seg_fb", "Itsukushima Shrine", score=1)
-        weaker_on_instagram = self._seg("seg_ig", "Itsukushima Shrine", score=1)
-        chosen_facebook = _choose("facebook", [strong_on_facebook], hub_of={}, seen_places=seen_places)
-        chosen_instagram = _choose("instagram", [weaker_on_instagram], hub_of={}, seen_places=seen_places)
-        assert [c.segment_id for c, _ in chosen_facebook] == ["seg_fb"]
-        assert chosen_instagram == []
-
-    def test_seen_places_shared_does_not_affect_route_grain(self):
-        # Route candidates never set `place` (test_route_grain_has_no_place_dedup above) — a
-        # shared seen_places set must not accidentally cap route-grain Channels like blog just
-        # because a segment-grain Channel ran first in the same loop.
-        seen_places: set[str] = set()
+    def test_same_place_allowed_on_another_channel(self):
+        # AA-840 (replaces AA-632's shared seen_places): a place proposed on facebook can still be
+        # proposed on instagram in the same Slate — once per Channel, not once per Slate.
         seg = self._seg("seg_a", "Itsukushima Shrine", score=1)
-        _choose("facebook", [seg], hub_of={}, seen_places=seen_places)
+        chosen = _choose_slate(["facebook", "instagram"], [seg], [], hub_of={})
+        assert [c.segment_id for c, _ in chosen["facebook"]] == ["seg_a"]
+        assert [c.segment_id for c, _ in chosen["instagram"]] == ["seg_a"]
+
+    def test_place_cap_does_not_affect_route_grain(self):
+        # Route candidates never set `place` — the cross-Channel place cap must not cap
+        # route-grain Channels like blog because Segment-grain Channels used every seat.
+        seg = self._seg("seg_a", "Itsukushima Shrine", score=1)
         route = self._route("r1", score=1, hub_id="hub_a")
-        chosen_blog = _choose("blog", [route], hub_of={}, seen_places=seen_places)
-        assert [c.route_id for c, _ in chosen_blog] == ["r1"]
+        chosen = _choose_slate(["blog", "linkedin", "facebook", "instagram", "tiktok"], [seg], [route],
+                               hub_of={}, max_channels_per_place=1)
+        assert [c.route_id for c, _ in chosen["blog"]] == ["r1"]
 
     def test_bar_still_applies_before_dedup(self):
         fails_bar = self._seg("seg_fail", "Nijo Castle", score=1, said=10)  # under needs_said=150

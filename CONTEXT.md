@@ -590,8 +590,12 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
      `(tenant, candidate, brand_version)` in `acp_shared.debate_brand_fit_cache`.
    - Safety rules: never cuts more than 50% of a list; an error on a candidate lets it pass; if
      Debate fails entirely the Slate behaves as before.
-3. Bar check per Channel, with one shared `seen_places` set so the same place is not proposed
-   on two Channels in one Slate (AA-632).
+3. Bar check per Channel, only for the tenant's enabled Channels (`acp_shared.tenant_config.channels`,
+   set in admin Tenant 360 > Planning config; no row = every Channel), then the place rule
+   (AA-840, replaced AA-632's one-place-per-Slate set): Channels take turns, strongest candidate
+   first; a place appears at most once per Channel and on at most `MAX_CHANNELS_PER_PLACE` (3)
+   Channels of one Slate. A Channel the tenant switches off loses its `proposed` rows on the next
+   proposal and they are hidden from `GET /v1/slate` at once (picked/used rows stay).
 _Avoid_: Weekly Slots (the pre-AA-511 name — fully replaced, never use again).
 
 **Goal**:

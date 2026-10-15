@@ -419,10 +419,9 @@ async def patch_atom(
     owner_scope: Optional[str] = Depends(_resolve_atom_owner_scope),
 ):
     """Soft-delete / light text edit. `deleted=true` is the existing
-    tour_atoms.deleted column (soft delete) — already excluded from the N6
-    allocator's eligible pool (services/acp_planning/allocator.py's
-    _eligible_atoms(): `if a.deleted ... continue`) and the segment_matching
-    filter (`WHERE NOT ta.deleted`).
+    tour_atoms.deleted column (soft delete) — excluded by the segment_matching
+    filter (`WHERE NOT ta.deleted`). (The N6 allocator that also read it was
+    deleted in AA-840.)
 
     AA-609: the `starred` curation flag was removed — it had no live effect
     (its only reader sat behind compute_slot_grid(), which has no production

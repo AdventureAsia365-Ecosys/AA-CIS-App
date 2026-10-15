@@ -15,8 +15,8 @@ Fixes applied during the port (see docs/implementation-notes/AA-301.md):
        redistributes the freed share proportionally to non-thin trips.
 
 Gate B (Ms. Thu must approve the quarter plan, REQUIRED, NEVER auto) is
-QuarterPlan.approved — compute_slot_grid() (N6, allocator.py) refuses to run against an
-unapproved plan (QuarterPlanNotApprovedError). No acp_shared.acp_hitl_requests
+QuarterPlan.approved — the N6 allocator (compute_slot_grid(), deleted in AA-840) refused to run
+against an unapproved plan (QuarterPlanNotApprovedError). No acp_shared.acp_hitl_requests
 row is created for this — that table is FK'd to acp_shared.acp_runs(run_id),
 an ACP-B2B "pipeline run" concept N4-N6 don't have (they're periodic
 per-tenant computations, not runs); reusing it would mean inventing a fake
@@ -460,8 +460,8 @@ async def fetch_approved_quarter_plan(
 ) -> Optional[QuarterPlan]:
     """AA-320 Gate B persist — reads the tenant/year/quarter's current
     (approved) version's payload back into a QuarterPlan, with .approved
-    forced True so it satisfies compute_slot_grid()'s existing Gate B check
-    (allocator.py) unchanged. Returns None (never raises) when no plan or no
+    forced True (it satisfied the Gate B check of the N6 allocator, deleted in
+    AA-840). Returns None (never raises) when no plan or no
     approved version exists yet — the caller decides the error response."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(

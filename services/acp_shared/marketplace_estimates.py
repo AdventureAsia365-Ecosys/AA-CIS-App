@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-WEEKS_PER_MONTH = 4  # same convention as services.acp_planning.allocator's weeks=[1,2,3,4]
+WEEKS_PER_MONTH = 4  # same convention as the N6 allocator's weeks=[1,2,3,4] (allocator deleted in AA-840)
 
 def runway_months(atom_count: int, posts_per_week: float) -> Optional[int]:
     """AA-330 Phần B, commercial-decision D1 (Nghiep, confirmed before build) — floor(atom_count
