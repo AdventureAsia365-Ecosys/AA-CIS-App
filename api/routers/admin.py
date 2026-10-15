@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+from services.acp_shared.e2e_tenant_key_sync import sync_note, sync_test_tenant_key
 from services.notifications import NotificationService, EventType
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
@@ -193,6 +194,9 @@ class GenerateKeyResponse(BaseModel):
     tenant_name: str
     api_key: str
     message: str
+    # S237: "synced" when the E2E test copy aa-cis/dev/e2e-tenant/<slug> was updated, "not_test_tenant",
+    # "skipped" (not on ECS) or "failed" (services/acp_shared/e2e_tenant_key_sync.py).
+    test_secret_sync: Optional[str] = None
 
 # ── POST /admin/tenants — Create tenant ───────────────────────────────────────
 
@@ -1278,7 +1282,7 @@ async def generate_api_key(
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
-            "SELECT tenant_id, name, cancelled_at FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE",
+            "SELECT tenant_id, name, slug, cancelled_at FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE",
             tenant_id,
         )
         if not row:
@@ -1303,11 +1307,14 @@ async def generate_api_key(
             details={"name": row["name"]},
         )
 
+    # S237: after the commit, so a rolled-back rotation never overwrites the test copy.
+    sync = await sync_test_tenant_key(row.get("slug"), plaintext)
     return GenerateKeyResponse(
         tenant_id=str(row["tenant_id"]),
         tenant_name=row["name"],
         api_key=plaintext,
-        message="Store this key securely — it will not be shown again.",
+        message="Store this key securely — it will not be shown again." + sync_note(sync, row.get("slug")),
+        test_secret_sync=sync,
     )
 
 
@@ -1442,6 +1449,7 @@ class RestoreTenantResponse(BaseModel):
     jev_allowlist_restored: bool
     cancelled_jobs: list[dict]
     message: str
+    test_secret_sync: Optional[str] = None  # S237, see GenerateKeyResponse
 
 
 @router.post("/tenants/{tenant_id}/restore", response_model=RestoreTenantResponse,
@@ -1465,7 +1473,7 @@ async def restore_tenant(
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow("""
-            SELECT tenant_id, name, is_active, cancelled_at, cancellation_reason
+            SELECT tenant_id, name, slug, is_active, cancelled_at, cancellation_reason
             FROM shared.tenants WHERE tenant_id = $1 FOR UPDATE
         """, tenant_id)
         if not row:
@@ -1525,6 +1533,7 @@ async def restore_tenant(
         )
 
     await _forget_tenant_meta(request, tenant_id)
+    sync = await sync_test_tenant_key(row.get("slug"), plaintext)  # S237, after the commit
     return RestoreTenantResponse(
         tenant_id=tid,
         tenant_name=row["name"],
@@ -1535,7 +1544,9 @@ async def restore_tenant(
         jev_allowlist_restored=allow_restored,
         cancelled_jobs=cancelled_jobs,
         message=("Store this key securely — it will not be shown again. "
-                 f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run."),
+                 f"{len(cancelled_jobs)} job(s) cancelled by the offboard were not re-run."
+                 + sync_note(sync, row.get("slug"))),
+        test_secret_sync=sync,
     )
 
 
