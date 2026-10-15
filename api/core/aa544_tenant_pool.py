@@ -8,6 +8,8 @@ through AA-544's own stage-by-stage report-then-confirm ritual first -- picking 
 next is a decision, not something to copy-paste in ad hoc. Live routes so far:
   - Stage 1 (10/09/2026): GET /v1/publish-log/pending (v1_publish.py::list_pending)
   - Stage 5 (10/09/2026): GET /v1/content-writing/pieces/{piece_id} (service.py::fetch_piece)
+  - AA-817 (S237): GET /v1/content-writing/requests/{id}/latest-piece
+    (service.py::fetch_latest_piece_for_request), fail_closed
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool
 (aa_cis_admin, BYPASSRLS) unchanged, always. This module adds a SECOND pool, aa_app_user
@@ -32,7 +34,7 @@ from typing import Optional
 
 import asyncpg
 import structlog
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 logger = structlog.get_logger()
 
@@ -47,6 +49,12 @@ PUBLISH_LOG_LIST_FLAG = "aa544:publish_log_list_pool"
 # privileges) and the table has no RLS policy, so the DELETE would fail after the secret was
 # already tombstoned. Needs a GRANT DELETE + RLS migration first (AA-817 follow-up).
 INTEGRATION_DISCONNECT_FLAG = "aa544:integration_disconnect_pool"
+# AA-817 — tenant content-piece reads: GET /v1/content-writing/requests/{id}/latest-piece
+# (service.fetch_latest_piece_for_request). Default off (admin pool). Fail closed when on: no tenant
+# pool or no tenant id is a 503, never a fallback to the admin pool (fail_closed=True below). Works
+# with and without migration 229 (content_piece and angle_gate_request have had RLS and grants for
+# aa_app_user since 113/115/147; 229 only rewrites the policies to the NULLIF/WITH CHECK template).
+CONTENT_PIECE_READS_FLAG = "aa817:content_piece_reads_pool"
 
 _SECRET_ID = "aa-cis/dev/rds-app-user"
 
@@ -85,7 +93,7 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
 
 
 @asynccontextmanager
-async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str):
+async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *, fail_closed: bool = False):
     """Yields (conn, used_tenant_pool: bool).
 
     `flag_key` is one of this module's own STAGE*_FLAG constants -- each route on this rollout
@@ -99,14 +107,33 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str):
 
     Otherwise (flag off, or tenant pool never came up): acquires from
     request.app.state.pool (aa_cis_admin, current behavior, completely unchanged) with no
-    transaction wrapper -- this is the fail-closed default path, not an error case."""
+    transaction wrapper -- this is the fail-closed default path, not an error case.
+
+    AA-817 `fail_closed=True` (routes added from AA-817 on): once the route's flag is on, the
+    route is meant to be isolated by RLS, so it never silently falls back to the admin pool, which
+    RLS does not filter (owner exempt). A missing tenant pool, an empty tenant id, or a GUC that did
+    not take the tenant id raises 503 instead. Flag off is unchanged (admin pool)."""
     tenant_pool = getattr(request.app.state, "tenant_pool", None)
-    use_tenant_pool = tenant_pool is not None and await _flag_enabled(request, flag_key)
+    if fail_closed:
+        use_tenant_pool = await _flag_enabled(request, flag_key)
+        if use_tenant_pool and (tenant_pool is None or not tenant_id):
+            logger.error("aa817_tenant_context_unavailable", flag_key=flag_key,
+                         tenant_pool=tenant_pool is not None, tenant_id_present=bool(tenant_id))
+            raise HTTPException(status_code=503, detail="Tenant data path unavailable, try again shortly")
+    else:
+        use_tenant_pool = tenant_pool is not None and await _flag_enabled(request, flag_key)
 
     if use_tenant_pool:
         async with tenant_pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+                if fail_closed:
+                    applied = await conn.fetchval("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+                    if applied != tenant_id:
+                        logger.error("aa817_tenant_guc_not_applied", flag_key=flag_key)
+                        raise HTTPException(status_code=503,
+                                            detail="Tenant data path unavailable, try again shortly")
+                else:
+                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
                 yield conn, True
     else:
         async with request.app.state.pool.acquire() as conn:
