@@ -39,7 +39,8 @@ count is 0.
 3. subtitle. B: `North to south through Mongolia — reindeer herders, volcanic craters, ancient monasteries, and the Gobi's singing dunes over 15 active days`
    A: `North to south through Mongolia: reindeer herders, volcanic craters, ancient monasteries, and the Gobi's singing dunes over 15 active days`
 4. day title. B: `Day 4 — Northward to Lake Khövsgöl: Taiga Shore and Steppe Boundary`
-   A: `Day 4: Northward to Lake Khövsgöl: Taiga Shore and Steppe Boundary`
+   A: `Day 4 · Northward to Lake Khövsgöl: Taiga Shore and Steppe Boundary` (and `Day 1 · Arrival in Ulaanbaatar`:
+   one separator for the whole tour, see "Day marker" below)
 5. summary. B: `Along the way, it passes through landscapes shaped by eruption, empire, and centuries of nomadic life — dormant volcanic craters, the ruins of once-vast monastic complexes, …`
    A: `Along the way, it passes through landscapes shaped by eruption, empire, and centuries of nomadic life: dormant volcanic craters, the ruins of once-vast monastic complexes, …`
 6. summary. B: `This is Mongolia as a physical journey — wide, fast-changing, and worth every kilometer.`
@@ -84,9 +85,28 @@ Acceptable but not ideal (left as is):
 
 - Sentence 7: the bracket rule fires because `2,760` has a comma; `(2,760 … taiga) where you visit` reads fine
   but a comma before `where` would be smoother. The original had none either.
-- Double colon on a day line whose title has its own colon (sentence 4; 17 of the 30 day lines here). The rule 5
-  title example (`Mae Taeng Valley Cycling: Waterfalls, Farmland & Temple`) invites a colon in the title. A
-  different marker (`Day 4 · Title`, a line break) is a one-line change in `t2_dashes._CANONICAL_MARKER_RE`
-  if chị Thư prefers it.
-- Colon density: besides the 15 marker colons each, Atlas & Hearth gains 11 colons and Trail Pulse 19. The T2 prompt now forbids
+- Colon density: the day markers are now ` · ` (see "Day marker" below); outside them Atlas & Hearth gains 11 colons and Trail Pulse 19. The T2 prompt now forbids
   the em-dash at the source, so the live versions should need far fewer conversions.
+
+## Day marker (review fix, re-run 15/10/2026)
+
+The first cut turned every `Day N —` marker into `Day N: `, which gave a double colon on every day line whose
+title has its own colon: 10 of 15 Atlas & Hearth lines and 7 of 15 Trail Pulse lines (17 of 30; the rule 5
+title example `Mae Taeng Valley Cycling: Waterfalls, Farmland & Temple` invites the colon). The portal drawer,
+the `/trip` page and the .docx export print the stored text as is.
+
+Now `t2_dashes.unify_day_markers` picks the separator once per tour after `fix_dashes`: any title with a colon
+→ every marker in that itinerary is `Day N · Title`; none → `Day N: Title`. Both S238 versions have colon
+titles, so both come out all ` · `. Re-run on `.tmp-session/s238/t2_samples.json`:
+
+| | Atlas & Hearth v3 | Trail Pulse v2 |
+|---|---|---|
+| em-dashes before → after | 43 → 0 | 45 → 0 |
+| day lines | 15 | 15 |
+| day titles with their own colon | 10 | 7 |
+| day separators used | ` · ` only | ` · ` only |
+| day lines with two colons (was) | 0 (10) | 0 (7) |
+| lines with `::` in any field | 0 | 0 |
+
+`Day N. Title` was rejected: `hygiene.sentence_spans` (AA-802 admin T2 editor) and grounding's sentence split cut
+`Day 4.` off as a sentence of its own; ` · ` keeps the line one span, as the em-dash form did.

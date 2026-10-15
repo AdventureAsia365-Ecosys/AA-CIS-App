@@ -4,13 +4,14 @@ The sentences are real: the S238 T2 versions of the Mongolia 15-day tour (Trail 
 Hearth v3, 15/10/2026), which carried 45 and 43 em-dashes. Mock-only: no AWS, no DB, no LLM.
 """
 import json
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.acp_content_writing.hygiene import fix_dashes
+from services.acp_content_writing.hygiene import fix_dashes, sentence_spans
 from services.content_generation import batch_prompt, itinerary_utils, prompts
-from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
+from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes, unify_day_markers
 
 EM = "—"
 MASTER_NAME = f"Mongolia: Khövsgöl Lake and Gobi Desert {EM} 15 Days"
@@ -26,10 +27,51 @@ def _fix(field, value, source=SOURCE):
 
 def test_canonical_day_marker_becomes_a_colon():
     text = (f"Day 1 {EM} Arrival in Ulaanbaatar\nLand at Chinggis Khaan International Airport.\n\n"
-            f"Day 2 {EM} Amarbayasgalant Monastery: Woodcraft, History, and a Ger Camp Arrival\nBody.")
+            f"Day 2 {EM} Amarbayasgalant Monastery and a Ger Camp Arrival\nBody.")
     assert _fix("itineraries", text) == (
         "Day 1: Arrival in Ulaanbaatar\nLand at Chinggis Khaan International Airport.\n\n"
-        "Day 2: Amarbayasgalant Monastery: Woodcraft, History, and a Ger Camp Arrival\nBody.")
+        "Day 2: Amarbayasgalant Monastery and a Ger Camp Arrival\nBody.")
+
+
+def _day_lines(text):
+    return [line for line in text.splitlines() if re.match(r"Day \d+\b", line)]
+
+
+def test_a_title_with_its_own_colon_switches_the_whole_tour_to_one_separator():
+    # S238: 8 of 15 Atlas & Hearth and 7 of 15 Trail Pulse day titles carry their own colon; a colon
+    # marker would give "Day 4: Northward to Lake Khövsgöl: Taiga Shore …" (two colons on one line)
+    text = (f"Day 1 {EM} Arrival in Ulaanbaatar\nLand and rest.\n\n"
+            f"Day 2 {EM} Amarbayasgalant Monastery: Woodcraft, History, and a Ger Camp Arrival\nBody.\n\n"
+            f"Day 3 {EM} Karakorum {EM} the old capital\nBody.\n\n"
+            f"Day 4 {EM} Northward to Lake Khövsgöl: Taiga Shore and Steppe Boundary\nBody: a long drive.\n\n"
+            f"Day 5 {EM} Rest Day by the Lake\nBody.")
+    out = _fix("itineraries", text)
+    assert out == (
+        "Day 1 · Arrival in Ulaanbaatar\nLand and rest.\n\n"
+        "Day 2 · Amarbayasgalant Monastery: Woodcraft, History, and a Ger Camp Arrival\nBody.\n\n"
+        "Day 3 · Karakorum, the old capital\nBody.\n\n"
+        "Day 4 · Northward to Lake Khövsgöl: Taiga Shore and Steppe Boundary\nBody: a long drive.\n\n"
+        "Day 5 · Rest Day by the Lake\nBody.")
+    days = _day_lines(out)
+    assert len(days) == 5
+    assert {re.match(r"Day \d+(\W+)", d).group(1) for d in days} == {" · "}   # one separator per tour
+    assert all(d.count(":") <= 1 for d in days)                               # never two colons on a day line
+    assert em_dash_count(out) == 0
+
+
+def test_the_marker_never_becomes_a_sentence_end():
+    # "Day 4. Title" would be cut into its own sentence by the admin T2 sentence editor; " · " keeps one span
+    out = _fix("itineraries", f"Day 4 {EM} Lake Khövsgöl: Taiga Shore\nBody.")
+    assert out == "Day 4 · Lake Khövsgöl: Taiga Shore\nBody."
+    assert [sp["text"] for sp in sentence_spans(out.splitlines()[0])] == ["Day 4 · Lake Khövsgöl: Taiga Shore"]
+    assert len(sentence_spans("Day 4. Lake Khövsgöl Taiga Shore")) == 2   # why not "Day 4. Title"
+
+
+def test_unify_day_markers_leaves_a_colon_free_tour_alone():
+    text = "Day 1: Arrival\nBody.\n\nDay 2: Gobi Desert\nBody: dunes."
+    assert unify_day_markers(text) == text
+    assert unify_day_markers("Day 1: Arrival\nBody.\n\nDay 2: Gobi: Dunes\nBody.") == \
+        "Day 1 · Arrival\nBody.\n\nDay 2 · Gobi: Dunes\nBody."
 
 
 def test_a_dash_inside_a_day_title_does_not_pair_with_the_marker():

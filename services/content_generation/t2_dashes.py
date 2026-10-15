@@ -19,7 +19,13 @@ A name the tenant's writer made up is tenant copy and is converted like the rest
 
 The canonical itinerary marker "Day N — Title" (graph._process_itineraries) becomes "Day N: Title"
 first, so a dash inside the title then reads as the second one on the line (", ") instead of
-pairing with the marker. Nothing reads a stored T2 itinerary back with
+pairing with the marker. The separator is then picked once per tour, after fix_dashes: if any day
+title still holds a colon of its own ("Day 4: Northward to Lake Khövsgöl: Taiga Shore", common since
+the rule 5 title example has one), every day marker in that itinerary becomes "Day N · Title", so no
+day line carries two colons and the tour reads one way throughout; otherwise "Day N: Title" stays.
+Not "Day N. Title": hygiene.sentence_spans (the admin T2 sentence editor) and grounding's sentence
+split would cut "Day N." off as a sentence of its own, while " · " keeps the line one span, as the
+em-dash form did. Nothing reads a stored T2 itinerary back with
 itinerary_utils.parse_canonical_itinerary_days: A3 atomize reads published_tours, the portal and the
 .docx export print the text, and the admin T2 sentence editor (admin_content_quality) splits
 sentences with hygiene.sentence_spans.
@@ -39,6 +45,10 @@ _EM = "—"
 # label ('cultural') but is converted the same way in case a model writes prose there
 TEXT_FIELDS = ("name", "subtitle", "summary", "highlights", "itineraries", "seo_title", "seo_meta", "trip_type")
 _CANONICAL_MARKER_RE = re.compile(rf"^(Day[ \t]+\d+)[ \t]+{_EM}[ \t]*", re.MULTILINE)
+# a day line after the marker became a colon: group 1 the "Day N" marker, group 2 the title
+_COLON_DAY_LINE_RE = re.compile(r"^(Day[ \t]+\d+): (.*)$", re.MULTILINE)
+# the marker used for the whole tour when a day title has its own colon (see the module docstring)
+DAY_MARKER_ALT = " · "
 
 
 def em_dash_count(value: Any) -> int:
@@ -74,6 +84,15 @@ def _fix_text(text: str, ctx: HygieneContext, *, itinerary: bool = False) -> str
     return fix_dashes(text, ctx)[0]
 
 
+def unify_day_markers(itinerary: str) -> str:
+    """One day separator per tour: "Day N: Title" unless some title has its own colon, then every
+    "Day N: " marker becomes "Day N · " (no day line with two colons, no mixed forms)."""
+    lines = _COLON_DAY_LINE_RE.findall(itinerary)
+    if not any(":" in title for _, title in lines):
+        return itinerary
+    return _COLON_DAY_LINE_RE.sub(lambda m: f"{m.group(1)}{DAY_MARKER_ALT}{m.group(2)}", itinerary)
+
+
 def _fix_value(value: Any, ctx: HygieneContext, *, itinerary: bool = False) -> Any:
     if isinstance(value, str):
         return _fix_text(value, ctx, itinerary=itinerary) if _EM in value or " – " in value else value
@@ -99,4 +118,9 @@ def fix_t2_dashes(rewritten: dict, source: dict) -> tuple[dict, list[str]]:
         after = em_dash_count(out[field])
         if before != after:
             log.append(f"{field}: {before} -> {after} em-dash(es)")
+        if field == "itineraries" and isinstance(out[field], str):
+            unified = unify_day_markers(out[field])
+            if unified != out[field]:
+                out[field] = unified
+                log.append(f"itineraries: day marker 'Day N{DAY_MARKER_ALT}' (a day title has its own colon)")
     return out, log
