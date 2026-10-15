@@ -69,6 +69,7 @@ import { useRouter } from "next/navigation";
 import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, ExternalLink, Compass } from "lucide-react";
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 import LiveWriter from "./LiveWriter";
+import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_CEILING_MS = 180_000;
@@ -301,6 +302,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   const [writeError, setWriteError] = useState<string | null>(null);
   const [needsCtaInput, setNeedsCtaInput] = useState(false);
   const [ctaInput, setCtaInput] = useState("");
+  // AA-819 follow-up — a typed CTA that mentions reviews or ratings is still written, with a
+  // warning: live while typing, then from the write response.
+  const liveCtaWarning = useCtaReviewCheck(needsCtaInput ? ctaInput : "");
+  const [writeCtaWarning, setWriteCtaWarning] = useState<CtaWarning>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false); // 180s poll ceiling hit, NOT a failure
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -437,6 +442,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   // a 'processing' placeholder immediately — the real result comes from polling.
   const writeContent = useCallback((requestId: string, cta?: string) => {
     setWriting(true); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
+    setWriteCtaWarning(null);
     fetch(`/api/tenant/v1/content-writing/requests/${requestId}/write`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cta ? { cta } : {}),
@@ -458,6 +464,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       })
       .then((placeholder: ContentPiece | null) => {
         if (!placeholder) return; // 422 branch above already handled its own state
+        setWriteCtaWarning(ctaWarningFrom(placeholder));
         if (!aliveRef.current) { onDetachedPiece?.(placeholder); return; }
         setPiece(placeholder);
         pollPiece(placeholder.piece_id);
@@ -531,7 +538,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         setReq(d);
         stopPolling();
         setPiece(null); setWriteError(null); setNeedsCtaInput(false); setPollTimedOut(false);
-        setShowDonePopup(false);
+        setShowDonePopup(false); setWriteCtaWarning(null);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
       .catch(e => setReopenError(e.detail ?? "Couldn't reopen — try again."))
@@ -547,7 +554,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     stopPolling();
     setReq(null); setSelectedGoal(""); setError(null);
     setPiece(null); setWriteError(null); setNeedsCtaInput(false); setCtaInput("");
-    setPollTimedOut(false); setReopenError(null); setShowDonePopup(false);
+    setPollTimedOut(false); setReopenError(null); setShowDonePopup(false); setWriteCtaWarning(null);
     resolvedWriteStepFor.current = null;
     router.push("/portal/t8-angle-gate");
   }, [req, stopPolling, router]);
@@ -711,6 +718,8 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             </div>
           )}
 
+          {!needsCtaInput && <CtaReviewNotice warning={writeCtaWarning} style={{ marginBottom: 10 }} />}
+
           {reopenError && (
             <div style={{ padding: "9px 12px", background: T.redSoft, border: `1px solid ${T.redBorder}`, borderRadius: 8, fontSize: 12, color: T.red, marginBottom: 10 }}>
               {reopenError}
@@ -756,6 +765,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <input value={ctaInput} onChange={e => setCtaInput(e.target.value)}
                 placeholder="e.g. Book a consultation, Read the full guide…"
                 style={{ padding: "9px 12px", background: "#fff", border: `1px solid ${T.line}`, borderRadius: 8, color: T.body, fontSize: 13, fontFamily: sans }} />
+              <CtaReviewNotice warning={liveCtaWarning} />
               <div>
                 <Btn variant="primary" disabled={!ctaInput.trim()}
                   onClick={() => writeContent(req.request_id, ctaInput.trim())}>

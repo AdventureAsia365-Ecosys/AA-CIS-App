@@ -4852,8 +4852,17 @@ async def update_brand_identity(
                 ON CONFLICT (tenant_id) DO UPDATE
                     SET target_market = EXCLUDED.target_market, updated_at = now()
             """, tenant_id, _json.dumps(market_json))
-    return {"status": "updated", "version": current + 1,
-            "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
+    out = {"status": "updated", "version": current + 1,
+           "markets": {k: market_json[k] for k in ("countries", "unsupported", "unknown")}}
+    # AA-819 follow-up (S237): a default CTA that claims reviews or ratings is saved as typed (F19
+    # exempts the tenant's CTA line); the portal shows a warning and AA admins get one bell row.
+    # aa_internal is AA's own brand (staff path), so it only gets the warning.
+    from services.acp_shared.cta_review_notice import WHERE_BRAND_DEFAULT, check_saved_cta
+    warning = await check_saved_cta(pool, tenant_id, default_cta, WHERE_BRAND_DEFAULT,
+                                    notify=tenant_id != _AA_INTERNAL_TENANT_ID)
+    if warning:
+        out["cta_warning"] = warning
+    return out
 
 
 _BRIEF_PARSE_MAX_BYTES = 5 * 1024 * 1024   # base64 adds ~33%; API Gateway caps a request at 10 MB

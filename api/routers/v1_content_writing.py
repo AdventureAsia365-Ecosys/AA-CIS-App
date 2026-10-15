@@ -15,6 +15,8 @@ Endpoint shape:
   POST /v1/content-writing/requests/{angle_gate_request_id}/write — 202 Accepted immediately,
        body = the content_piece placeholder (status='processing'). Poll GET .../pieces/{piece_id}
        for the final result (status becomes approved/held/failed).
+  POST /v1/content-writing/cta-check — AA-819 follow-up: live review/rating-claim check of a CTA
+       the tenant is typing (no save, no notification).
   GET  /v1/content-writing/pieces/{piece_id} — read a piece back, at any state. AA-613: returns
        the tenant-safe shape (ready_state + content_text, no raw status/held_reason/gate_ledger).
 """
@@ -33,6 +35,7 @@ from services.acp_content_writing.export import (
     render_content_text_to_fragment,
 )
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from services.acp_shared.cta_review_notice import WHERE_WRITE_OVERRIDE, check_saved_cta, cta_warning
 
 router = APIRouter(prefix="/v1/content-writing", tags=["tenant-content-writing"])
 
@@ -95,12 +98,31 @@ async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depe
             piece["piece_id"], job_id)
     # AA-613 — tenant-safe 202 body: just enough for the FE to start polling GET .../pieces/{id}
     # (which is itself tenant-safe now). No raw status/gate fields on the placeholder either.
-    return {
+    out = {
         "piece_id": piece["piece_id"],
         "angle_gate_request_id": piece["angle_gate_request_id"],
         "channel": piece.get("channel"),
         "ready_state": "in_progress",
     }
+    # AA-819 follow-up (S237): the CTA the tenant typed for this piece, when it is the one used
+    # (the request has none), and it claims reviews or ratings: written as typed, warned, one admin
+    # bell row per tenant + text. A brand default CTA was already checked when it was saved.
+    if body.cta and body.cta.strip() and context.get("cta") == body.cta:
+        warning = await check_saved_cta(pool, str(tenant_id), body.cta, WHERE_WRITE_OVERRIDE)
+        if warning:
+            out["cta_warning"] = warning
+    return out
+
+
+class CtaCheckBody(BaseModel):
+    cta: str = ""
+
+
+@router.post("/cta-check", summary="Check a call to action for review or rating claims (no save)")
+async def cta_check(body: CtaCheckBody, tenant=Depends(get_tenant)):
+    """AA-819 follow-up — the portal's live check while the tenant types a CTA: the same
+    deterministic rule the save endpoints apply, no DB, no notification, nothing stored."""
+    return {"cta_warning": cta_warning(body.cta[:2000])}
 
 
 @router.get("/pieces/{piece_id}", summary="Read a previously written content piece")
