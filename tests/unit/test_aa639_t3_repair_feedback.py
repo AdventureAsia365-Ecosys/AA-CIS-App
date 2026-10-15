@@ -13,7 +13,7 @@ def test_feedback_lists_novel_numbers_with_their_sentences():
     )
     assert "FACT CHECK FAILED" in fb
     assert '- [summary] numbers 30: "A 30-minute flight to Lukla."' in fb
-    assert "STRUCTURE CHECK FAILED — fix these issues: FORBIDDEN_WORD" in fb
+    assert "STRUCTURE CHECK FAILED. Fix these issues: FORBIDDEN_WORD" in fb
 
 
 def test_feedback_is_empty_when_nothing_failed():

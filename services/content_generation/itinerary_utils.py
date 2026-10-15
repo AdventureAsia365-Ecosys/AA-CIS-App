@@ -64,7 +64,7 @@ salesy, not generic).
 # days the tenant-voice writer had just written. The T2 nudge keeps the draft's own brand voice.
 _T2_ITINERARY_NUDGE_SYSTEM_PROMPT = """You are a travel content editor fixing the LENGTH of ONE day of
 a tour itinerary that was written too short or too long relative to its source detail. Rewrite ONLY
-this one day, keeping the CURRENT DRAFT's brand voice ({voice_hint}) — same tone, same register,
+this one day, keeping the CURRENT DRAFT's brand voice ({voice_hint}): same tone, same register,
 same point of view. Change the length, not the voice.
 
 """ + _NUDGE_RULES
@@ -97,7 +97,7 @@ def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: 
     """
     # AA-608: strip routine meal-logistics codes from the source day too, so a length nudge
     # cannot reintroduce a B/L/D token the main writer strip already removed.
-    from .prompts import strip_itinerary_meal_metadata
+    from .prompts import strip_itinerary_meal_metadata, t2_dashless
     source_day_text = strip_itinerary_meal_metadata(source_day_text)
     user_prompt = f"""SOURCE (this day only, from the original tour itinerary):
 {source_day_text}
@@ -112,8 +112,9 @@ Rewrite this one day's title and body to hit the target length while staying fac
 on-brand."""
     request = LLMRequest(
         # str.replace, not .format(): the shared rules end with a literal JSON {"title": …} example.
-        system_prompt=(_T2_ITINERARY_NUDGE_SYSTEM_PROMPT.replace("{voice_hint}", voice_hint) if voice_hint
-                       else _ITINERARY_NUDGE_SYSTEM_PROMPT),
+        # AA-778: the T2 prompt reads the shared rules without the em-dash (t2_dashless); A1 is unchanged.
+        system_prompt=(t2_dashless(_T2_ITINERARY_NUDGE_SYSTEM_PROMPT.replace("{voice_hint}", voice_hint))
+                       if voice_hint else _ITINERARY_NUDGE_SYSTEM_PROMPT),
         user_prompt=user_prompt,
         # AA-518: was a hardcoded "haiku" literal — now admin-configurable via the
         # "s1_itinerary_nudge" stage (seeded to haiku, matching this exact prior value).

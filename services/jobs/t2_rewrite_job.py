@@ -212,6 +212,13 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 "trip_type":   gen.get("trip_type", ""),
                 "status":      "done",
             }
+            # AA-778 (S238): no em-dash in tenant copy. The last text step: after the writer, judge,
+            # flag-fix and T3 (which all read the draft as written), right before the save. T2 only:
+            # this job is the one writer of AI-generated tenant_tour_versions; A1 never runs here.
+            from services.content_generation.t2_dashes import em_dash_count, fix_t2_dashes
+            dashes_before = em_dash_count(rewritten)
+            rewritten, dash_log = fix_t2_dashes(rewritten, tour_dict)
+            diag["em_dashes"] = {"before": dashes_before, "after": em_dash_count(rewritten), "fields": dash_log}
             rewrite_score = float(result.get("quality_score") or 0)
             # AA-436: status is now purely score-based, same formula for a real T3 pass
             # and an auto-pass — T3 no longer forces needs_review on its own (see

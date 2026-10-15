@@ -2080,7 +2080,16 @@ def _dash_separators(raw: str, kind: str, dashes: list[re.Match]) -> list[tuple[
             # Abbot, and the monks' would read as three people)
             if (("," in strip_tags(inner) or re.match(r"(?:and|or)\b", raw[n.end():], re.I))
                     and "(" not in inner and ")" not in inner):
-                seps += [(m, " ("), (n, ") ")]
+                # S238 (T2): an opening phrase with no finite verb, then the main clause after the pair,
+                # keeps the comma the dash stood for ('Built in 1727 (no metal beams, no nails), it
+                # stands …'); only when the clause opens on its subject ('Its walls (thick, white) are …'
+                # has none)
+                close = ") "
+                tail = _dash_words(raw[n.end():])
+                if (tail and tail[0] in _DASH_SUBJECTS | {"this", "there"}
+                        and not any(w in _DASH_FINITE for w in _dash_words(head))):
+                    close = "), "
+                seps += [(m, " ("), (n, close)]
             else:
                 seps += [(m, ", "), (n, ", ")]
             k += 2

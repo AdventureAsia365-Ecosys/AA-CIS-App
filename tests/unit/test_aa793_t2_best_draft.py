@@ -358,7 +358,7 @@ async def test_t3_falls_back_to_a_revision_when_the_sentence_repair_changes_noth
     assert out["passed"] is True and out["attempts"] == 1 and out["chosen_via"] == "rewrite"
     kw = rewrite.await_args.kwargs
     assert kw["previous_draft"] == GROUNDING_BAD
-    assert "30" in kw["feedback"] and "BRAND VOICE FEEDBACK — Sound more like the brand." in kw["feedback"]
+    assert "30" in kw["feedback"] and "BRAND VOICE FEEDBACK: Sound more like the brand." in kw["feedback"]
 
 
 @pytest.mark.asyncio
