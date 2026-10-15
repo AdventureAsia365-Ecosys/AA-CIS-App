@@ -44,6 +44,14 @@ _SEEN_SQL = """
      LIMIT 1
 """
 _TENANT_SQL = "SELECT name, slug FROM shared.tenants WHERE tenant_id = $1::uuid"
+# Storm guard: an API client that templates a review CTA per piece ('Rated 4.9 - book <tour>')
+# makes a new text on every write. Past this many rows for one tenant in a day the bell has made
+# its point; later texts are logged, not notified (the tenant still gets the warning).
+DAILY_CAP = 5
+_RECENT_SQL = """
+    SELECT count(*) FROM shared.notifications
+     WHERE event_type = $1 AND tenant_id = $2::uuid AND created_at > now() - interval '1 day'
+"""
 
 
 def _normalise(cta: str) -> str:
@@ -72,6 +80,10 @@ async def notify_admins(pool, tenant_id: str, cta: str, phrases: list[str], wher
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"{EVENT.value}:{tenant_id}:{key}")
             if await conn.fetchval(_SEEN_SQL, EVENT.value, str(tenant_id), key):
                 return False
+            if (await conn.fetchval(_RECENT_SQL, EVENT.value, str(tenant_id)) or 0) >= DAILY_CAP:
+                logger.info("cta_review_claim_notify_capped", tenant_id=str(tenant_id), where=where,
+                            phrases=phrases)
+                return False
             tenant = await conn.fetchrow(_TENANT_SQL, str(tenant_id))
             name = (tenant["name"] if tenant else None) or "Unknown tenant"
             slug = (tenant["slug"] if tenant else None) or str(tenant_id)
@@ -81,7 +93,7 @@ async def notify_admins(pool, tenant_id: str, cta: str, phrases: list[str], wher
             await NotificationService(conn).emit(
                 EVENT, entity_type="tenant_cta", entity_id=slug, tenant_id=str(tenant_id),
                 payload={"message": message, "tenant_name": name, "tenant_slug": slug, "where": where,
-                         "cta": text, "phrases": phrases, "cta_key": key},
+                         "cta": text[:500], "phrases": phrases, "cta_key": key},
                 actor_type="tenant",
             )
         logger.info("cta_review_claim_notified", tenant_id=str(tenant_id), where=where, phrases=phrases)
@@ -105,5 +117,5 @@ async def check_saved_cta(pool, tenant_id: str, cta: Optional[str], where: str,
     return warning
 
 
-__all__ = ["EVENT", "WARNING_CODE", "WHERE_BRAND_DEFAULT", "WHERE_WRITE_OVERRIDE", "check_saved_cta",
+__all__ = ["DAILY_CAP", "EVENT", "WARNING_CODE", "WHERE_BRAND_DEFAULT", "WHERE_WRITE_OVERRIDE", "check_saved_cta",
            "cta_key", "cta_warning", "notify_admins"]

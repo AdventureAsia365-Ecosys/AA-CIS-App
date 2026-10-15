@@ -114,6 +114,9 @@ class FakeConn:
         return "OK"
 
     async def fetchval(self, sql, *args):
+        if "count(*) FROM shared.notifications" in sql:  # the daily cap (no clock here: all rows are recent)
+            event, tenant_id = args
+            return sum(1 for n in self.notifications if n["event_type"] == event and n["tenant_id"] == tenant_id)
         if "FROM shared.notifications" in sql:
             event, tenant_id, key = args
             return 1 if any(n["event_type"] == event and n["tenant_id"] == tenant_id
@@ -267,6 +270,30 @@ async def test_write_survives_a_notification_failure():
 async def test_check_saved_cta_survives_a_broken_rule():
     with patch.object(cta_review_notice, "cta_review_claims", side_effect=RuntimeError("bad regex")):
         assert await cta_review_notice.check_saved_cta(MagicMock(), TENANT, REVIEW_CTA, "write_cta") is None
+
+
+@pytest.mark.asyncio
+async def test_templated_review_ctas_are_capped_per_tenant_per_day():
+    """An API client that puts the tour name in a review CTA makes a new text on every write: the
+    bell stops at DAILY_CAP rows for that tenant, the warning still comes back every time."""
+    store = []
+    pool = _pool(FakeConn(store))
+    for i in range(cta_review_notice.DAILY_CAP + 3):
+        warning = await cta_review_notice.check_saved_cta(pool, TENANT, f"Rated 4.9 - book tour {i}", "write_cta")
+        assert warning and warning["code"] == "cta_review_claim"
+    assert len(store) == cta_review_notice.DAILY_CAP
+    # another tenant is not affected by the first one's cap
+    other = str(uuid.uuid4())
+    await cta_review_notice.check_saved_cta(pool, other, "Rated 4.9 - book tour 0", "write_cta")
+    assert len(store) == cta_review_notice.DAILY_CAP + 1
+
+
+@pytest.mark.asyncio
+async def test_notification_payload_caps_a_very_long_cta():
+    store = []
+    long_cta = "Read our reviews " + "x" * 5000
+    await cta_review_notice.check_saved_cta(_pool(FakeConn(store)), TENANT, long_cta, "write_cta")
+    assert len(store[0]["payload"]["cta"]) == 500
 
 
 # ---------------------------------------------------------------- POST /v1/content-writing/cta-check
