@@ -1,9 +1,10 @@
 """
-services.acp_planning.models — schemas for N4 (RunwayMap), N5 (QuarterPlan),
-N6 (SlotGrid). Ported from aamc/models.py (aa-marketing-v2 research build).
+services.acp_planning.models — schemas for N4 (RunwayMap) and N5 (QuarterPlan).
+Ported from aamc/models.py (aa-marketing-v2 research build). The N6 Slot/SlotGrid
+schemas were deleted with the N6 allocator (AA-840, no production caller).
 
 tenant_id is a required field on every per-computation artifact (RunwayMap,
-QuarterPlan, SlotGrid) — N4/N5/N6 run per-tenant, never cross-tenant
+QuarterPlan) — N4/N5 run per-tenant, never cross-tenant
 (AA-301 decision). Atoms stay platform-scoped (D3, owner_scope='platform') —
 no tenant_id here; tenancy is inherited via tour_id -> raw_tours.tenant_id.
 """
@@ -19,7 +20,7 @@ from pydantic import BaseModel, Field
 FunnelStage = Literal["TOFU", "MOFU", "BOFU", "OFF"]
 # AA-449 — extended from 4 to 7 values (STEP0, docs/claude_audit/
 # AA-449-00-step0-t8-angle-gate-investigation.md §5): T8's Bang-2 channel-style reference table
-# has 7 channels; Slot.channel only supported 4 of them, and since acp_shared.tenant_config.
+# has 7 channels; Slot.channel (N6, deleted in AA-840) only supported 4 of them, and since acp_shared.tenant_config.
 # channels is unconstrained free text at the DB layer, a tenant configuring e.g. "linkedin"
 # would previously make compute_slot_grid() raise a real Pydantic ValidationError the moment it
 # tried to construct a Slot — not theoretical, confirmed by reading the code. Names match
@@ -141,30 +142,6 @@ class QuarterPlan(BaseModel):
     # this automatically the instant they finalize (approved_by="tenant:<id>"), no human step.
     approved: bool = False
     approved_by: Optional[str] = None
-
-
-# ---------------------------------------------------------------- N6
-class Slot(BaseModel):
-    slot_id: str
-    week: int
-    channel: Channel
-    kind: Literal["evergreen", "campaign", "reactive_hold"]
-    trip_id: Optional[UUID] = None
-    atom_ids: list[str] = Field(default_factory=list)
-    funnel_stage: FunnelStage = "TOFU"
-    framework: Optional[str] = None
-    cta_target: Optional[str] = None
-    topic_hint: Optional[str] = None
-    keyword_seed: Optional[str] = None  # B6 fix — per-slot, never trip-wide-shared
-
-
-class SlotGrid(BaseModel):
-    tenant_id: UUID
-    year: int
-    month: int
-    slots: list[Slot] = Field(default_factory=list)
-    capacity_note: Optional[str] = None
-    trips_hash: Optional[str] = None
 
 
 # ---------------------------------------------------------------- recompute trigger (shared N4/N5/N6)

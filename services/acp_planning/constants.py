@@ -1,5 +1,6 @@
 """
-Runway/quarter/allocator thresholds — N4/N5/N6 (AA-301).
+Runway/quarter thresholds — N4/N5 (AA-301). The N6 allocator's FRAMEWORK_TABLE and SLOT_MIX
+were deleted with it (AA-840).
 
 Values ported verbatim from aamc/config.py (aa-marketing-v2 research build,
 docs/AI-gent-for automation works/aa-marketing-v2), same porting convention
@@ -17,27 +18,6 @@ RUNWAY_OFFSETS_MONTHS = {
 }
 LONG_HAUL_MARKETS = {"US", "USA", "UK", "GB", "DE", "FR", "NL", "AU", "CA", "ES", "IT", "SE", "CH", "EU"}
 
-FRAMEWORK_TABLE = {
-    ("TOFU", "blog"): {"framework": "hub", "faq": True, "faq_n": (4, 8)},
-    ("MOFU", "blog"): {"framework": "PAS", "faq": True, "faq_n": (4, 6)},
-    ("BOFU", "blog"): {"framework": "AIDA", "faq": False, "faq_n": (0, 0)},
-    ("ANY", "facebook"): {"framework": "hook_story_cta", "faq": False, "words": (80, 150)},
-    ("ANY", "tiktok"): {"framework": "hook_beats_payoff", "faq": False},
-    ("ANY", "email"): {"framework": "reader_as_hero", "faq": False},
-    # AA-449 — 4 entries added for T8's channel extension (STEP0 §5). Self-chosen from Bang 2's
-    # own "Structure" column (docs/claude_tasks/AA-449-00-step0-t8-angle-gate-investigation.md),
-    # same class of caveat as this file's other self-chosen constants (THIN_TRIP_MAX_SHARE,
-    # ENGAGEMENT_RATE_BASELINE) — not from any prior formal spec, easy to rename later. Without
-    # these 4 entries the code would NOT crash (compute_slot_grid()'s `.get(fw_key, {"framework":
-    # "hub"})` falls back safely) but every one of these 4 channels' slots would silently get the
-    # generic "hub" label instead of a channel-appropriate one.
-    ("ANY", "linkedin"): {"framework": "insight_led", "faq": False},
-    ("ANY", "instagram"): {"framework": "hook_sensory_cta", "faq": False},
-    ("ANY", "landing_page"): {"framework": "AIDA", "faq": False},
-    ("ANY", "ads"): {"framework": "hook_benefit_cta", "faq": False},
-}
-
-SLOT_MIX = {"evergreen": 0.65, "campaign": 0.25, "reactive_held_empty": 0.10}
 ATOM_COOLDOWN_WEEKS = 6
 
 # B5 fix (N5) — a thin trip's content share is capped at this fraction, freed

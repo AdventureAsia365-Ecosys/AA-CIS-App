@@ -11,8 +11,8 @@ multi-word channels: "landing_page"). "email" here maps to Bang 2's "Email / New
 
 "blog" has NO row in Bang 2 at all (STEP0 §5 flagged this gap explicitly) — kept as a Channel
 value for backward compatibility (T7 already had it), but its entry below is a NEW, self-authored
-fallback (not from Bang 2 or any other source document), consistent with the existing
-FRAMEWORK_TABLE's own "hub"/long-form treatment of blog elsewhere in services/acp_planning. If
+fallback (not from Bang 2 or any other source document), consistent with the former
+FRAMEWORK_TABLE's own "hub"/long-form treatment of blog in services/acp_planning (gone, AA-840). If
 Ms. Thu supplies a real blog row for this table later, replace this entry, don't extend it.
 """
 from __future__ import annotations
