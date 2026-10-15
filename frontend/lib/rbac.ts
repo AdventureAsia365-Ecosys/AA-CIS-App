@@ -41,6 +41,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/tenant-activity", roles: ["admin"] },   // AA-551
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
   { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
+  { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   // Content work — every staff role.
   { prefix: "/admin/upload", roles: ALL_STAFF },
   { prefix: "/admin/pipeline", roles: ALL_STAFF },
@@ -88,6 +89,19 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // so the bare create path is covered; reads (GET) stay open to every staff role.
   { prefix: "tenants", roles: ["admin"] },
 ];
+
+// AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
+// included), narrower than API_RULES.admin. The OpenAPI schema is admin-only: the backend
+// /admin/openapi.json re-checks the forwarded x-admin-role.
+export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
+  { prefix: "openapi.json", roles: ["admin"] },
+];
+
+/** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
+export function canReadAdminPath(role: string | null | undefined, path: string): boolean {
+  const rule = API_READ_RULES.find((r) => path === r.prefix || path.startsWith(r.prefix + "/"));
+  return !rule || (!!role && (rule.roles as string[]).includes(role));
+}
 
 /** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */
 export function canWriteAdminPath(role: string | null | undefined, method: string, path: string): boolean {

@@ -17,12 +17,15 @@
 // ever attached to the outbound request — no assumption about how the
 // request got here.
 //
+// AA-577 follow-up: lib/rbac.ts API_READ_RULES paths (openapi.json) need the admin role for
+// every method, reads included.
+//
 // AA-769 (S234): non-GET requests on lib/rbac.ts API_WRITE_RULES paths (Content
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth-server";
-import { API_RULES, canWriteAdminPath } from "@/lib/rbac";
+import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -40,6 +43,10 @@ async function handler(
 
   const { path } = await params;
   const pathStr = path.join("/");
+  // AA-577 follow-up — a few paths (the OpenAPI schema) are admin-only even for reads.
+  if (!canReadAdminPath(auth.role, pathStr)) {
+    return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
+  }
   // AA-769 — every staff role may read /admin/*, but edits to tenant content are admin-only.
   if (!canWriteAdminPath(auth.role, req.method, pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
