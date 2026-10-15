@@ -74,7 +74,8 @@ async def create_tenant_pool() -> Optional[asyncpg.Pool]:
             "secretsmanager", region_name=os.environ.get("AWS_REGION", "us-west-1")
         )
         dsn = client.get_secret_value(SecretId=_SECRET_ID)["SecretString"]
-        return await asyncpg.create_pool(dsn, min_size=1, max_size=5)
+        return await asyncpg.create_pool(dsn, min_size=1, max_size=5,
+                                         server_settings={"application_name": "cis-tenant"})
     except Exception as e:
         logger.error("aa544_tenant_pool_create_failed", error=repr(e))
         return None

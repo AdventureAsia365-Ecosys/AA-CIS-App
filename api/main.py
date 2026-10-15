@@ -76,6 +76,9 @@ async def lifespan(app: FastAPI):
     app.state.redis = redis
     pool = await asyncpg.create_pool(
         os.environ["DATABASE_URL"], min_size=2, max_size=10,
+        # AA-824: one application_name per pool, so pg_stat_activity / pg_stat_statements show who
+        # holds the connections on the shared RDS (data standards C2.2).
+        server_settings={"application_name": "cis-api"},
     )
     app.state.pool = pool
 
