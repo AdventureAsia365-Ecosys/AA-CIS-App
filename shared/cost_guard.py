@@ -265,7 +265,8 @@ async def load_run_budget(pool, provider: str, job_kind: str, *, day_scope: str 
 
 async def maybe_alert(pool, budget: RunBudget, reason: Optional[str] = None) -> bool:
     """Admin notification when today's spend reached alert_pct of the daily cap, or when a run was
-    stopped by the budget. At most one unread alert per provider per 24h. Best-effort."""
+    stopped by the budget. At most one unread alert per provider per 24h. Best-effort.
+    AA-828: each new bell row also queues one operator e-mail (shared/ops_alerts.py)."""
     pct = budget.day_used_pct()
     if reason is None and (pct is None or pct < budget.alert_pct):
         return False
@@ -277,7 +278,22 @@ async def maybe_alert(pool, budget: RunBudget, reason: Optional[str] = None) -> 
                                  f"{pct:.0f}% of the ${budget.per_day_usd:.2f} daily budget.")
             await conn.execute(_INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, BUDGET_ALERT_EVENT,
                                budget.provider, json.dumps({"message": message, **budget.summary()}))
+            await _queue_alert_email(conn, budget, message, pct, stopped=reason is not None)
         return True
     except Exception as exc:
         logger.warning("spend_budget_alert_failed", provider=budget.provider, error=str(exc))
         return False
+
+
+async def _queue_alert_email(conn, budget: RunBudget, message: str, pct: Optional[float], *,
+                             stopped: bool) -> None:
+    """AA-828: queue the operator e-mail for the bell row just written (job ops_alert_email, sent by
+    the worker; never SES from here). Best-effort: a failure only logs, the bell row stays."""
+    try:
+        from shared import ops_alerts  # lazy: keeps this module import-light for the LLM client
+
+        await ops_alerts.enqueue_spend_budget_email(conn, summary=budget.summary(), alert_pct=budget.alert_pct,
+                                                    stopped=stopped, message=message, used_pct=pct)
+    except Exception as exc:
+        logger.warning("spend_budget_alert_email_enqueue_failed", provider=budget.provider,
+                       scope=budget.scope, error=str(exc)[:300])
