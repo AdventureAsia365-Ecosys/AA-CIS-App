@@ -279,7 +279,10 @@ or number, the word the brand forbids, the wrong brand name (use the BRAND named
 or drop the self-reference), or the place outside the piece's scope. Use only what the SOURCE
 states, or widely known background about a place it names. Never add a new claim, number, place,
 scene detail, promise, or social proof (what travellers, guests or families feel, say or
-remember). Never write a review, rating, testimonial or customer quote, never speak as a customer or
+remember). Never add a time of day, a part of the day ("the afternoon"), an ordinal day or night, or
+a pace or rest word the SOURCE does not give; when the sentence already has one and the PROBLEM is
+about what the sentence claims, drop it. A replacement that adds one is thrown away.
+Never write a review, rating, testimonial or customer quote, never speak as a customer or
 traveller in the first person, and never claim the piece is independent or unsponsored — when the
 PROBLEM names one of these, say what the sentence states in the brand's own voice, or return "".
 The replacement must not restate any CONTEXT sentence around it; if the sentence only

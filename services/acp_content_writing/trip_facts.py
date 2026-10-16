@@ -409,6 +409,25 @@ def timing_claims(text: str, moments: list[Moment], cta: Optional[str] = None) -
     return out
 
 
+def unsupported_time_keys(text: str, moments: list[Moment], cta: Optional[str] = None) -> set[str]:
+    """AA-777 (r6 fix 1) — every time / ordinal / position phrase of `text` the seed does not give, as a
+    comparable key: the time word ('the afternoon', 'in the afternoon' → 'afternoon'), else the folded
+    phrase ('first day', 'southern tip'). Unlike `timing_claims` it lists every phrase of a sentence, not
+    the first, so a repair's new phrase is seen even when the sentence already had another one."""
+    if not moments:
+        return set()
+    out: set[str] = set()
+    for s in _body_spans(text, cta):
+        for m in _TIME_RE.finditer(s["clean"]):
+            if not _supported_time(m.group(0), s["clean"], moments):
+                key = _TIME_KEY_RE.search(m.group(0))
+                out.add(key.group(0).lower() if key else _norm(re.sub(r"^the\s+", "", m.group(0), flags=re.I)))
+        for m in _POSITION_RE.finditer(s["clean"]):
+            if not _supported_position(m.group(0), s["clean"], moments):
+                out.add(_norm(m.group(0)))
+    return out
+
+
 # ---------------------------------------------------------------- (d) family access caveat
 
 # children, not families: 'private families, family offices' (Atlas & Hearth) is not a family brand
@@ -1087,16 +1106,47 @@ def thin_coda(text: str, moments: list[Moment], cta: Optional[str] = None) -> li
     if hit is None:
         return []
     sp, m = hit
-    if len(_thin_extra(sp["clean"], m)) <= THIN_EXTRA_MAX:
+    extra = _thin_extra(sp["clean"], m)
+    if len(extra) <= THIN_EXTRA_MAX:
         return []
+    # AA-777 (r6 fix 4) — the message names the words the source does not give, so a repair of a coda whose
+    # extras sit in a leading frame ('Before leaving this part of northern Mongolia, …') knows which part to cut
+    words = ", ".join(dict.fromkeys(extra))
     return [_quoted("closes on a thin moment (one source fact) with an interpretation the source does not give "
-                    "— say it in one plain sentence, or cut the added clause", sp["clean"])]
+                    f"(words the source does not give — {words}) — say it in one plain sentence, or cut the added "
+                    "clause", sp["clean"])]
+
+
+# AA-777 (r6 fix 4) — a leading adverbial frame that sets the thin moment in the route: 'Before leaving this part
+# of northern Mongolia, the route passes the ruins…' (r6 a2133050: all 4 extra words were in the frame)
+_LEADING_FRAME_RE = re.compile(r"^(?:before|after|as|while|when|once|on\s+leaving|on\s+the\s+way)\b[^,;:—–]{3,90},\s+",
+                               re.I)
 
 
 def _trim_thin(sentence: str, m: Moment, moments: list[Moment]) -> Optional[str]:
     """The sentence cut before its appended interpretation, when the head still names the moment, has
     ≥ 6 words and ≤ THIN_EXTRA_MAX words the seed does not give ('… purges of 1937 — a single, quiet
-    encounter with…' → '… purges of 1937.'). The longest such head; None when there is none."""
+    encounter with…' → '… purges of 1937.'). The longest such head; None when there is none.
+
+    AA-777 (r6 fix 4) — when no head of the sentence qualifies, the same is tried after dropping a
+    leading frame ('Before leaving this part of northern Mongolia, ') — the rest whole first, then its
+    heads; the first word of what is left is capitalised."""
+    best = _thin_head(sentence, m, moments)
+    if best is None:
+        frame = _LEADING_FRAME_RE.match(sentence)
+        rest = sentence[frame.end():] if frame else ""
+        if rest:
+            rest = rest[0].upper() + rest[1:]
+            whole = rest.rstrip().rstrip(".!?…").rstrip()
+            if (len(whole.split()) >= 6 and names_thin(whole, m, moments)
+                    and len(_thin_extra(whole, m)) <= THIN_EXTRA_MAX):
+                best = whole
+            else:
+                best = _thin_head(rest, m, moments)
+    return (best + ".") if best else None
+
+
+def _thin_head(sentence: str, m: Moment, moments: list[Moment]) -> Optional[str]:
     best = None
     for cut in _APPOSITIVE_RE.finditer(sentence):
         head = sentence[:cut.start()].rstrip(" ,;:—–")
@@ -1104,7 +1154,7 @@ def _trim_thin(sentence: str, m: Moment, moments: list[Moment]) -> Optional[str]
             continue
         if len(_thin_extra(head, m)) <= THIN_EXTRA_MAX:
             best = head
-    return (best + ".") if best else None
+    return best
 
 
 def fix_thin_moments(text: str, moments: list[Moment], cta: Optional[str] = None) -> tuple[str, list[str]]:
@@ -1350,6 +1400,13 @@ def pace_claims(text: str, source: str, cta: Optional[str] = None, brand_name: O
     balance word the source does not back. Not a finding: the CTA and its paraphrase
     (`_cta_paraphrase`), 'the rest of …' (remainder), and a seed-backed pace word (`_pace_supported`).
     `source` = the moment's own seed lines + Facts (TripFactContext.source)."""
+    return [_quoted(PACE_PROBLEM.format(word=words[0]), sentence)
+            for sentence, words in _pace_hits(text, source, cta, brand_name)]
+
+
+def _pace_hits(text: str, source: str, cta: Optional[str] = None,
+               brand_name: Optional[str] = None) -> list[tuple[str, list[str]]]:
+    """(sentence, its unbacked pace words in order) for every body sentence with at least one."""
     source_words = set(content_words(source or ""))
     out = []
     for sp in _body_spans(text, cta):
@@ -1357,11 +1414,36 @@ def pace_claims(text: str, source: str, cta: Optional[str] = None, brand_name: O
         if not PACE_RE.search(sentence) or _cta_paraphrase(sentence, cta, brand_name):
             continue
         rest_of = [r.span() for r in _REST_OF_RE.finditer(sentence)]
-        for m in PACE_RE.finditer(sentence):
-            if any(a <= m.start() < b for a, b in rest_of) or _pace_supported(sentence, m, source_words):
-                continue
-            out.append(_quoted(PACE_PROBLEM.format(word=m.group(1).lower()), sentence))
-            break
+        words = [m.group(1).lower() for m in PACE_RE.finditer(sentence)
+                 if not any(a <= m.start() < b for a, b in rest_of) and not _pace_supported(sentence, m, source_words)]
+        if words:
+            out.append((sentence, words))
+    return out
+
+
+def unsupported_pace_words(text: str, source: str, cta: Optional[str] = None,
+                           brand_name: Optional[str] = None) -> dict[str, str]:
+    """AA-777 (r6 fix 1) — the pace / rest words of `text` the source does not back, keyed by stem (so
+    'rest' / 'resting' are one word): {stem: the word as written}."""
+    return {_stem(w): w for _, words in _pace_hits(text, source, cta, brand_name) for w in words}
+
+
+def new_specific_claims(original: str, replacement: str, ctx: Optional["TripFactContext"]) -> list[str]:
+    """AA-777 (r6 fix 1) — the F17 time / position / pace claims a sentence repair ADDED: phrases of
+    `replacement` the seed does not give and `original` did not already carry (r6 R1: 'you arrive at the
+    afternoon with energy' → 'the afternoon starts with space…'; R2: 'Time to swim and rest is built into
+    the plan before lunch.' → 'The afternoon has room for swimming…'; AA-768 H2: '…a slower pace…').
+    Pace is checked on blogs only, like the F17 gate."""
+    if ctx is None or not (replacement or "").strip():
+        return []
+    out = [f"adds a time the source does not give ('{k}')"
+           for k in sorted(unsupported_time_keys(replacement, ctx.moments, ctx.cta)
+                           - unsupported_time_keys(original, ctx.moments, ctx.cta))]
+    if ctx.channel == "blog":
+        new = unsupported_pace_words(replacement, ctx.source, ctx.cta, ctx.brand_name)
+        old = unsupported_pace_words(original, ctx.source, ctx.cta, ctx.brand_name)
+        out += [f"adds a pace or rest promise the source does not make ('{new[k]}')"
+                for k in sorted(set(new) - set(old))]
     return out
 
 

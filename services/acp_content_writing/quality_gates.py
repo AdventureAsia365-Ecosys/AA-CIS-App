@@ -839,19 +839,31 @@ _F9_PASS_KINDS = ("prose", "bullet", "faq_a")
 _F9_PASS_MIN_WORDS = 4
 
 
+# AA-777 (r6 fix 3) — a sentence that opens on a word that needs the sentence before it ('It was founded in
+# 1692.', 'These are not performances…', 'Here, monks…'): only its key carries the previous sentence.
+_REFERENT_OPEN_RE = re.compile(
+    r"^\W*(?:it|its|it's|they|their|theirs|them|this|that|these|those|he|she|his|her|here|such|both|"
+    r"the\s+latter|the\s+former|which)\b", re.I)
+
+
 def _f9_key(prev_clean: Optional[str], clean: str) -> str:
-    """AA-777 — the sticky-pass key of one body sentence: the sentence AND the one before it (any
-    kind, '' at the top), case- and accent-folded but keeping symbols and punctuation. A neighbour that
-    changed (a repaired referent: 'We visit X. It was founded in 1692.') or a new symbol ('12+' for
-    '12') makes a new key, so the sentence is judged again (PR review on cc265e22)."""
+    """AA-777 — the sticky-pass key of one body sentence, case- and accent-folded but keeping symbols
+    and punctuation: a new symbol ('12+' for '12') makes a new key, so the sentence is judged again (PR
+    review on cc265e22). A sentence that opens on a referent word (`_REFERENT_OPEN_RE`) also carries the
+    sentence before it (any kind, '' at the top): a repaired referent ('We visit X. It was founded in
+    1692.') makes it new. r6 fix 3 — any other sentence is keyed on itself alone: r6 17125e0c 'After a
+    short trek through forested hills, Day 2 brings you…' was passed at attempt 1, left unchanged, and
+    flagged again at attempt 2 only because the hook before it had been repaired."""
     def f(t: Optional[str]) -> str:
         return " ".join(_fold(strip_citation_tags(t or "")).split())
-    return f"{f(prev_clean)}\n{f(clean)}"
+    body = f(clean)
+    return f"{f(prev_clean) if _REFERENT_OPEN_RE.match(body) else ''}\n{body}"
 
 
-def _f9_located_key(content_text: str, quote: Optional[str]) -> Optional[str]:
-    """AA-777 — the sticky-pass key of the body sentence a judge quote points at; None when it
-    locates nowhere (or spans more than one sentence: never a passed key)."""
+def _f9_quote_keys(content_text: str, quote: Optional[str]) -> Optional[list[str]]:
+    """AA-777 — the sticky-pass keys of the body sentence(s) a judge quote points at, one per sentence
+    (r6 fix 3: a quote spanning two sentences — r6 AA-768 89d60686 / 35ee6a3d — gives two keys instead of
+    one two-sentence key that can never be in the passed set); None when it locates nowhere."""
     from services.acp_content_writing.sentence_repair import locate_sentence  # circular at import time
     if not quote or not str(quote).strip():
         return None
@@ -859,11 +871,17 @@ def _f9_located_key(content_text: str, quote: Optional[str]) -> Optional[str]:
     if span is None:
         return None
     spans = sentence_spans(content_text)
-    k = next((i for i, sp in enumerate(spans) if sp["start"] <= span[0] < sp["end"]), None)
-    if k is None:
+    ks = [i for i, sp in enumerate(spans) if sp["start"] < span[1] and span[0] < sp["end"]]
+    if not ks:
         return None
-    located = " ".join(strip_citation_tags(content_text[span[0]:span[1]]).split())
-    return _f9_key(spans[k - 1]["clean"] if k else None, located)
+    return [_f9_key(spans[k - 1]["clean"] if k else None, spans[k]["clean"]) for k in ks]
+
+
+def _f9_located_key(content_text: str, quote: Optional[str]) -> Optional[str]:
+    """AA-777 — the sticky-pass key of the one body sentence a judge quote points at; None when it
+    locates nowhere or spans more than one sentence (see `_f9_quote_keys`)."""
+    keys = _f9_quote_keys(content_text, quote)
+    return keys[0] if keys and len(keys) == 1 else None
 
 
 def _f9_verdict_quotes(content_text: str, data: dict, phrases: list[str], seo_title: Optional[str],
@@ -937,8 +955,8 @@ def _drop_sticky_claims(content_text: str, claims: list[dict],
     kept, sticky = [], []
     for c in claims:
         quote = str(c.get("sentence") or c["claim"])
-        key = _f9_located_key(content_text, quote)
-        if key is not None and key in passed:
+        keys = _f9_quote_keys(content_text, quote)
+        if keys and all(k in passed for k in keys):  # r6 fix 3 — a multi-sentence quote: every sentence
             located = _locate_in(content_text, quote)
             if located not in sticky:
                 sticky.append(located)

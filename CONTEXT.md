@@ -725,6 +725,12 @@ items still failing are cut in code (`sentence_repair.delete_flagged` + `tidy_af
 second repair call; other items still go to the repair, and the gates re-judge the cut text. A cut that
 would take the blog under `_BLOG_MIN_CHARS` (or break its FAQ / ending) is refused: the old repair path
 runs and the piece stays held if it fails. The S234 attempt-3 fallback cut obeys the same floor on blogs.
+S239 r6 follow-up — a sentence-repair replacement that ADDS a number, time / ordinal / position or (blog)
+pace word the sentence and the source lack is not spliced (`sentence_repair.new_specifics`, the F1/F17
+functions themselves); `plan()` merges two findings on one sentence (truth gate first) instead of dropping
+the second; the sticky key carries the previous sentence only for a referent-led sentence ('It…', 'These…')
+and a multi-sentence judge quote is sticky when each sentence is; the blog attempt-3 cut also takes F17
+'cut it' items once F17 was repaired before.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
