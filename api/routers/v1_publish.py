@@ -41,6 +41,7 @@ channel -> integration_type ('blog' -> 'wordpress'): v1_integrations.py stores W
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Optional
 from urllib.parse import urlparse
@@ -52,7 +53,7 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.core.aa544_tenant_pool import (
-    PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, acquire_scoped_conn,
+    PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, UNPUBLISH_FLAG, acquire_scoped_conn,
 )
 from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
 from api.routers.v1_tours import get_tenant
@@ -82,8 +83,12 @@ def _get_secret(secret_key: str) -> dict:
     no caching. Not imported from there to avoid a cross-router import for one small function;
     matches this codebase's own precedent of small, duplicated-on-purpose secret-fetch helpers
     (v1_integrations.py itself duplicated services/acp_s4_blog/cms/publisher.py::_get_cms_creds()
-    for the same reason)."""
-    client = boto3.client("secretsmanager", region_name=_SM_REGION)
+    for the same reason).
+
+    AA-859: a fresh Session per call, as in v1_integrations._sm_client: publish and unpublish both run
+    this in an asyncio.to_thread worker (the Session build is ~50 ms and must stay off the event loop),
+    and boto3.client() on the shared default Session is not thread-safe."""
+    client = boto3.session.Session().client("secretsmanager", region_name=_SM_REGION)
     return json.loads(client.get_secret_value(SecretId=secret_key)["SecretString"])
 
 
@@ -161,6 +166,27 @@ async def _delete_remote(channel: str, creds: dict, external_id: str) -> str:
     return await _facebook(creds).delete_post(external_id)
 
 
+# AA-859 W4 — unpublish's three statements, module-level so tests can mutate them (forgotten-WHERE checks).
+# Each runs in its own short block; nothing holds a connection across Secrets Manager or the remote delete.
+_UNPUBLISH_SELECT_SQL = """
+    SELECT publish_id::text, piece_id::text, channel, external_id, external_url
+    FROM acp_shared.publish_log
+    WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
+"""
+_UNPUBLISH_INTEGRATION_SQL = (
+    "SELECT secret_key FROM shared.tenant_integrations "
+    "WHERE tenant_id = $1::uuid AND integration_type = $2"
+)
+# `AND status = 'published'`: a concurrent unpublish (double click) that flipped the row while this request
+# was on the remote delete makes this 0 rows -> 404, never a second flip.
+_UNPUBLISH_UPDATE_SQL = """
+    UPDATE acp_shared.publish_log
+    SET status = 'unpublished', unpublished_at = now(), unpublished_by = $3
+    WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
+    RETURNING publish_id::text, channel, status, unpublished_at
+"""
+
+
 @router.delete("/{publish_id}")
 async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenant)):
     """Tenant self-unpublish. Only a `status='published'` row the caller's own tenant_id owns —
@@ -173,16 +199,22 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     missing connection (422), unreadable credentials or a channel error (502) leave it
     'published', so the portal never tells a tenant a post is gone while it is still public.
     A post published to another WordPress site / Facebook Page than the one connected now is
-    refused (422) before any remote call — a WordPress post ID only means something on its site."""
+    refused (422) before any remote call — a WordPress post ID only means something on its site.
+
+    AA-859 W4 — behind UNPUBLISH_FLAG (fail closed): three short acquire_scoped_conn blocks (publish_log
+    SELECT, tenant_integrations SELECT, the status-guarded UPDATE), so with the flag on each runs as
+    aa_app_user under RLS (229 publish_log, 237 tenant_integrations). The Secrets Manager read
+    (asyncio.to_thread) and the remote delete run with no connection held. Flag off: the same three
+    statements on the admin pool, as before. One `aa859_unpublish` line per request carries
+    used_tenant_pool (of the first block)."""
     pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT publish_id::text, piece_id::text, channel, external_id, external_url
-            FROM acp_shared.publish_log
-            WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
-        """, publish_id, tenant_id)
+    # 1. the caller's published row
+    async with acquire_scoped_conn(request, tenant_id, UNPUBLISH_FLAG, fail_closed=True) as (conn, used_tenant_pool):
+        logger.info("aa859_unpublish", publish_id=str(publish_id), tenant_id=tenant_id,
+                    used_tenant_pool=used_tenant_pool)
+        row = await conn.fetchrow(_UNPUBLISH_SELECT_SQL, publish_id, tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail="publish_log row not found or already unpublished")
 
@@ -192,17 +224,14 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
         raise HTTPException(status_code=422,
                             detail=f"This post has no {name} post ID on record — remove it on {name} directly.")
 
-    async with pool.acquire() as conn:
-        integ = await conn.fetchrow(
-            "SELECT secret_key FROM shared.tenant_integrations "
-            "WHERE tenant_id = $1::uuid AND integration_type = $2",
-            tenant_id, _INTEGRATION_TYPE[channel],
-        )
+    # 2. the channel's connection
+    async with acquire_scoped_conn(request, tenant_id, UNPUBLISH_FLAG, fail_closed=True) as (conn, _):
+        integ = await conn.fetchrow(_UNPUBLISH_INTEGRATION_SQL, tenant_id, _INTEGRATION_TYPE[channel])
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422,
                             detail=f"Connect {name} to unpublish — the post is still live on {name}.")
-    try:
-        creds = _get_secret(integ["secret_key"])
+    try:  # no connection held: sync boto3 off the event loop
+        creds = await asyncio.to_thread(_get_secret, integ["secret_key"])
     except ClientError as exc:
         logger.error("unpublish_secret_read_failed", tenant_id=tenant_id, channel=channel, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
@@ -215,7 +244,7 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
                             detail=f"This post was published to {elsewhere}, not the {name} account connected "
                                    f"now — remove it there directly.")
 
-    try:
+    try:  # no connection held across the channel's HTTP call
         remote = await _delete_remote(channel, creds, row["external_id"])
     except Exception as exc:  # noqa: BLE001 — the adapter raises only when removal is unconfirmed
         logger.warning("tenant_unpublish_remote_failed", tenant_id=tenant_id, publish_id=str(publish_id),
@@ -223,18 +252,16 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
         raise HTTPException(status_code=502,
                             detail=f"Could not remove the post from {name}: {str(exc)[:300]}")
 
-    async with pool.acquire() as conn:
-        updated = await conn.fetchrow("""
-            UPDATE acp_shared.publish_log
-            SET status = 'unpublished', unpublished_at = now(), unpublished_by = $3
-            WHERE publish_id = $1 AND tenant_id = $2::uuid AND status = 'published'
-            RETURNING publish_id::text, channel, status, unpublished_at
-        """, publish_id, tenant_id, f"tenant:{tenant_id}")
+    # 3. flip the row, only if it is still 'published'
+    async with acquire_scoped_conn(request, tenant_id, UNPUBLISH_FLAG, fail_closed=True) as (conn, used_for_update):
+        updated = await conn.fetchrow(_UNPUBLISH_UPDATE_SQL, publish_id, tenant_id, f"tenant:{tenant_id}")
     if not updated:  # a concurrent unpublish flipped it between the read and here
         raise HTTPException(status_code=404, detail="publish_log row not found or already unpublished")
 
     logger.info("tenant_self_unpublish", publish_id=str(publish_id), tenant_id=tenant_id,
-                channel=channel, remote=remote)
+                channel=channel, remote=remote, used_tenant_pool=used_for_update)
+    # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written on the admin pool after
+    # the tenant transaction committed.
     try:  # best-effort, same as publish(): a lost audit row must not turn a removal into an error
         await write_audit_log(
             pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
@@ -491,8 +518,8 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {_connect_action_verb(channel)} to publish")
 
-    try:
-        creds = _get_secret(integ["secret_key"])
+    try:  # no connection held: sync boto3 off the event loop (a fresh Session per call costs ~50 ms)
+        creds = await asyncio.to_thread(_get_secret, integ["secret_key"])
     except ClientError as exc:
         logger.error("publish_secret_read_failed", tenant_id=tenant_id, channel=channel,
                      secret_key=integ["secret_key"], error=str(exc))
