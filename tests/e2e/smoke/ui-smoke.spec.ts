@@ -199,6 +199,11 @@ test.describe('UI smoke — portal', () => {
       const crumb = page.getByTestId('topbar-breadcrumb');
       const title = page.getByTestId('topbar-breadcrumb-title');
       await expect(title).toHaveText('Connect your Facebook Page', { timeout: 15000 });
+      // The title is already in the SSR HTML, but the portal shell only switches to its mobile
+      // layout (hamburger, 16px padding, no search box) after hydration, when its matchMedia
+      // effect sets narrow=true. Wait for the hamburger so we measure the 390px layout, not the
+      // desktop one squeezed into 390px.
+      await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible({ timeout: 15000 });
 
       const m = await page.evaluate(() => {
         const t = document.querySelector<HTMLElement>('[data-testid="topbar-breadcrumb-title"]')!;
@@ -230,6 +235,9 @@ test.describe('UI smoke — portal', () => {
       expect(m.textOverflow, 'breadcrumb title must use text-overflow: ellipsis').toBe('ellipsis');
       expect(m.whiteSpace).toBe('nowrap');
       expect(m.overflowX).toBe('hidden');
+      // A crumb squeezed to almost nothing would satisfy every bound below; the title must keep
+      // usable width (at 390px the mobile bar leaves roughly 180px for it).
+      expect(m.titleClient, `breadcrumb title has no usable width (clientWidth ${m.titleClient})`).toBeGreaterThan(40);
       expect(m.crumbRight, 'breadcrumb must stay inside the top bar').toBeLessThanOrEqual(m.headerRight);
       if (m.nextControlLeft !== null) {
         expect(m.crumbRight, 'breadcrumb must not run under the next top-bar control').toBeLessThanOrEqual(m.nextControlLeft);
