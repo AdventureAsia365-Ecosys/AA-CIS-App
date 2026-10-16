@@ -22,6 +22,13 @@ const POLL_MS = 800;
 const lastSnapshots = new Map<string, Snapshot>();
 const snapKey = (kind: string, jobId: string) => `${kind}:${jobId}`;
 
+/** AA-668 — drop the remembered snapshot of a job that starts a new run under the same id (a T2
+ *  Retry keeps the version id). Without it, a view of the retried job could open on the previous
+ *  run's text and steps as if they were live. Call it when the retry is sent. */
+export function forgetLiveSnapshot(kind: "tour" | "piece", jobId: string): void {
+  lastSnapshots.delete(snapKey(kind, jobId));
+}
+
 /** The remembered snapshot a new mount may start from. A "failed" one is left out while the owner
  *  says the job runs again (`untilInactive` + `active`): that is the previous run's (see the prop). */
 function seedSnapshot(kind: string, jobId: string, active: boolean, untilInactive: boolean): Snapshot | null {
