@@ -31,7 +31,7 @@ import re
 from typing import Optional
 from uuid import UUID
 
-from services.acp_shared.writing_progress import progress_step
+from services.acp_shared.writing_progress import progress_show, progress_step
 
 import structlog
 from fastapi import Request
@@ -738,6 +738,19 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
             for g in gate_ledger]
 
 
+def _show_live_text(content_text: str, seo_meta: dict, channel: str) -> None:
+    """AA-668 — put the text the write keeps into the live view (no-op without a bound tracker):
+    the blog view reads a JSON envelope, every other channel plain text. Called after a sentence
+    repair is spliced (the repair reply itself never streams) and right before the save, so the
+    final snapshot is the saved piece, not the last streamed draft."""
+    if channel == "blog":
+        progress_show({"seo_title": (seo_meta or {}).get("seo_title"),
+                       "meta_description": (seo_meta or {}).get("meta_description"),
+                       "body": content_text})
+    else:
+        progress_show(content_text)
+
+
 def _style_only_repair(gate_ledger: list[dict]) -> bool:
     """Every blocking failure a sentence repair will fix is one the cheap t9_repair stage handles
     (S234 round 2: F15_voice — stock phrase, contrast frame, sibling template; round 3: F13_repeat,
@@ -1337,6 +1350,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         item["context"] = sentence_repair.neighbours(content_text, item)
                     # S234 round 2 — a style-only repair (F15_voice) runs on the cheap t9_repair stage.
                     stage_kw = {"stage": SEO_FIT_STAGE} if _style_only_repair(gate_ledger) else {}
+                    progress_step("revise")  # AA-668: the repair call no longer reports to the live view
                     try:
                         replacements, cost = await asyncio.to_thread(
                             repair_sentences, sentences=repair_items,
@@ -1356,6 +1370,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     # pronoun with no referent (panel §5 fix 7: #19, #10) to its pre-repair sentence.
                     content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
                                                                   ignore=brand_ignore, cta=cta, moments=hyg.moments)
+                    _show_live_text(content_text, seo_meta, channel)  # AA-668: the spliced text, not the patch
                     repair_log[-1]["repair_mode"] = "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
                     # S234 — replacements turned into deletes because they restated a neighbour.
@@ -1682,6 +1697,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 })
 
         gate_ledger = _waive_style_only(gate_ledger, status)  # S234 round 2 — panel §3, piece #7
+        _show_live_text(content_text, seo_meta, channel)  # AA-668: the final snapshot is the saved text
         progress_step("save")  # AA-637 live view
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,

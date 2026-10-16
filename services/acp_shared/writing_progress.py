@@ -11,6 +11,11 @@ tenant-facing snapshot to Redis every ~0.4s:
 their partial text into labelled fields, internal citation tags are stripped (a half-written
 trailing tag is held back until it completes), and a `===SUMMARY===` tail is hidden.
 
+AA-668 — only piece text ever reaches `sections`. A writer-stage call whose reply is not piece
+text (the T9 sentence repair's JSON patch) runs under `stream_sink.suppressed()`, and the job
+publishes the text it keeps with `progress_show()` (after a repair splice, and right before the
+save), so the final snapshot holds the saved text, not the last streamed draft.
+
 Best-effort by design: every Redis error is logged and swallowed. Nothing here touches the rows
 the job persists.
 """
@@ -59,8 +64,14 @@ def _strip_leading_fence(text: str) -> str:
 
 
 def plain_text_view(raw: str) -> str:
-    """Non-blog T9 channels: plain text + a trailing `===SUMMARY===` block that is internal."""
+    """Non-blog T9 channels: plain text + a trailing `===SUMMARY===` block that is internal.
+
+    AA-668: a reply that is a JSON object is never a plain-text post — it is a structured answer
+    (e.g. a sentence-repair `{"replacements": [...]}` patch) that must never reach the tenant, so
+    it shows nothing. The job publishes the text it keeps through `progress_show`."""
     text = _strip_leading_fence(raw)
+    if text.lstrip().startswith("{"):
+        return ""
     cut = text.find(_SUMMARY_MARKER)
     if cut != -1:
         text = text[:cut]
@@ -291,6 +302,16 @@ class WritingProgress:
     def on_call_end(self, stage: Optional[str], ok: bool) -> None:
         return None
 
+    # ── text the job kept ──
+    def show(self, raw: str) -> None:
+        """AA-668 — replace the displayed text with `raw`, in this tracker's display format: the
+        text the job actually keeps after code changed it (a spliced sentence repair, the T3 draft
+        it chose, the em-dash fix). Not a writer call: the revision number does not change, so the
+        portal swaps the text in place. A later writer call replaces it as usual."""
+        with self._lock:
+            self._raw = raw or ""
+            self._dirty = True
+
     # ── explicit steps ──
     @property
     def failed(self) -> bool:
@@ -408,6 +429,25 @@ def progress_step(key: str) -> None:
             t.step(key)
         except Exception as e:
             logger.warning("writing_progress_step_failed", step=key, error=str(e))
+
+
+def progress_show(content: Any) -> None:
+    """AA-668 — publish the job's current tenant-facing text on its bound tracker, if any: a
+    string for the `text` display (a T9 post), a dict for the JSON displays (the T2 tour fields,
+    or {"seo_title", "meta_description", "body"} for a blog). None-valued keys are left out (a
+    `null` would otherwise show as the word "null"). Never raises."""
+    t = _bound()
+    if t is None:
+        return
+    try:
+        if isinstance(content, dict):
+            raw = json.dumps({k: v for k, v in content.items() if v is not None},
+                             ensure_ascii=False, default=str)
+        else:
+            raw = str(content or "")
+        t.show(raw)
+    except Exception as e:
+        logger.warning("writing_progress_show_failed", error=str(e))
 
 
 def progress_fail() -> None:
