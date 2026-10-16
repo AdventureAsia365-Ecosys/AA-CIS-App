@@ -6,8 +6,8 @@
   retention_decision_log            180 d (= Jev cache max age), rows with a human outcome kept, archive
   retention_cost_explorer_snapshot  rows superseded by a newer fetch of the same (account, service, day)
 
-Payload: {"trigger": "schedule" | "manual", "dry_run": bool, "max_rows": int, "batch_size": int,
-          "pause_ms": int}
+Payload: {"trigger": "schedule" | "manual" | "manual_override", "dry_run": bool, "max_rows": int,
+          "batch_size": int, "pause_ms": int, "older_than": "YYYY-MM-DD" (manual_override only)}
 
 Mode (DM-7.2):
   - manual, dry_run absent or true -> DRY RUN: counts only, no write anywhere (the default).
@@ -17,12 +17,24 @@ Mode (DM-7.2):
                                       has succeeded; then live, unless the candidates exceed
                                       2x the last live run's deletions (floor GROWTH_FLOOR_ROWS):
                                       then HELD — nothing written, a bell for the admins.
+  - manual_override                -> an admin-only proof run with an explicit cutoff `older_than`
+                                      (a UTC date) instead of the window, so the rollup + archive
+                                      path can be exercised before data ages (AA-825, S239). Only
+                                      for OVERRIDE_KINDS (rolled up first), only where ENVIRONMENT
+                                      is in OVERRIDE_ENVIRONMENTS, cutoff at least
+                                      OVERRIDE_MIN_AGE_DAYS old, DRY RUN unless dry_run=false, and a
+                                      live run needs 1 <= max_rows <= OVERRIDE_MAX_ROWS (refused, not
+                                      capped). It never counts as "the last live run": scheduled
+                                      runs stay DRY RUN and the 2x rule ignores it.
 Every run is capped at RUN_MAX_ROWS deletions; the rest waits for the next run.
+Before any raw row of a rolled-up kind is deleted, every day / month older than the cutoff must be
+in the rollup (rollups.pending == 0 after the write), or the run stops with nothing deleted.
 """
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import os
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
@@ -42,9 +54,25 @@ DEFAULT_PAUSE_MS = 200
 HELD_EVENT = "platform.retention.held"
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
+# ── manual override (AA-825 S239: prove rollup + archive on Dev without waiting for data to age) ──
+OVERRIDE_TRIGGER = "manual_override"
+# Only kinds whose rows are rolled up before they go, so every total stays answerable. Not
+# retention_job (idempotency keys), retention_decision_log (Jev verdict cache, 180 d floor) or
+# retention_cost_explorer_snapshot (already has real candidates under its own policy).
+OVERRIDE_KINDS = ("retention_llm_call_log", "retention_tenant_api_usage")
+# The cutoff is at least this old: outside every default 7 / 30-day window and the current-month
+# figures of the raw llm_call_log readers, and (31 > any month) always in a closed month, which the
+# monthly rollup needs.
+OVERRIDE_MIN_AGE_DAYS = 31
+OVERRIDE_MAX_ROWS = 1_000
+# ENVIRONMENT is "dev" on the one ECS deployment (Terraform var.environment) and "test" in CI;
+# unset means dev (api/core/sentry.py convention). Any other value (a future prod) refuses.
+OVERRIDE_ENVIRONMENTS = ("dev", "test")
+
 _LAST_LIVE_SQL = """
     SELECT result FROM shared.job
      WHERE kind = $1 AND status = 'succeeded' AND result ->> 'mode' = 'live'
+       AND coalesce(result ->> 'trigger', 'manual') <> 'manual_override'
      ORDER BY finished_at DESC NULLS LAST
      LIMIT 1
 """
@@ -59,10 +87,45 @@ async def last_live(conn, kind: str) -> Optional[dict]:
     return _json(row["result"]) if row and row["result"] is not None else None
 
 
+def override_cutoff(kind: str, payload: dict, today: date,
+                    environment: Optional[str] = None) -> Optional[datetime]:
+    """The explicit cutoff of a manual_override run (UTC midnight of `older_than`), None for any
+    other trigger. Raises NonRetryable for every refused shape. Pure, unit-tested."""
+    trigger = payload.get("trigger", "manual")
+    older_than = payload.get("older_than")
+    if trigger != OVERRIDE_TRIGGER:
+        if older_than is not None:
+            raise NonRetryable(f"older_than is only accepted with trigger {OVERRIDE_TRIGGER!r}, not {trigger!r}")
+        return None
+    env = (environment if environment is not None else os.getenv("ENVIRONMENT", "dev")).strip().lower()
+    if env not in OVERRIDE_ENVIRONMENTS:
+        raise NonRetryable(f"a manual override run is refused in environment {env!r}")
+    if kind not in OVERRIDE_KINDS:
+        raise NonRetryable(f"{kind} does not accept a manual override; only {list(OVERRIDE_KINDS)}")
+    if not isinstance(older_than, str) or len(older_than) != 10:
+        raise NonRetryable("a manual override needs older_than as a UTC date YYYY-MM-DD")
+    try:
+        day = date.fromisoformat(older_than)
+    except ValueError:
+        raise NonRetryable(f"older_than {older_than!r} is not a date YYYY-MM-DD")
+    latest = today - timedelta(days=OVERRIDE_MIN_AGE_DAYS)
+    if day > latest:
+        raise NonRetryable(f"older_than {older_than} is too recent: at most {latest.isoformat()} "
+                           f"({OVERRIDE_MIN_AGE_DAYS} days before today, UTC)")
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
 def decide_mode(payload: dict, windows: dict, candidates: int,
                 prev_live: Optional[dict]) -> tuple[str, int, str]:
     """-> (mode, limit_rows, reason); mode is 'dry_run', 'live' or 'held'. Pure, unit-tested."""
     trigger = payload.get("trigger", "manual")
+    if trigger == OVERRIDE_TRIGGER:
+        if payload.get("dry_run", True) is not False:
+            return "dry_run", 0, "manual override dry run (explicit cutoff)"
+        max_rows = payload.get("max_rows")
+        if not isinstance(max_rows, int) or isinstance(max_rows, bool) or not 1 <= max_rows <= OVERRIDE_MAX_ROWS:
+            raise NonRetryable(f"a live manual override needs 1 <= max_rows <= {OVERRIDE_MAX_ROWS}")
+        return "live", max_rows, "manual override live run (explicit cutoff), approved max_rows"
     if trigger != "schedule":
         if payload.get("dry_run", True) is not False:
             return "dry_run", 0, "manual dry run"
@@ -118,16 +181,23 @@ def _resume_point(progress: dict, part: str, id_type: str) -> Optional[tuple]:
     return (datetime.fromisoformat(cur["ts"]), int(cur["id"]) if id_type == "bigint" else cur["id"])
 
 
+class RollupIncomplete(NonRetryable):
+    """A day / month older than the cutoff is still missing from the rollup after the write."""
+
+
 async def run_spec(ctx: JobContext, spec: TableSpec, *, archiver=None) -> dict:
     payload = ctx.payload or {}
     windows = spec.windows()
     progress = ctx.job.progress or {}
     pause_s = max(0, int(payload.get("pause_ms", DEFAULT_PAUSE_MS))) / 1000.0
     async with ctx.pool.acquire() as conn:
+        today = await conn.fetchval("SELECT (now() AT TIME ZONE 'UTC')::date")
+        forced = override_cutoff(spec.kind, payload, today)
         refs = await runner.fk_refs(conn, spec.table)
-        cuts, parts = {}, []
+        cuts, policy_cuts, parts = {}, {}, []
         for part in spec.parts:
-            cuts[part.name] = await runner.cutoff(conn, part.window_days)
+            policy_cuts[part.name] = await runner.cutoff(conn, part.window_days)
+            cuts[part.name] = forced or policy_cuts[part.name]
             parts.append(await runner.count_part(conn, spec, part, refs, cuts[part.name]))
         candidates = sum(p.candidates for p in parts)
         prev = await last_live(conn, spec.kind)
@@ -141,6 +211,12 @@ async def run_spec(ctx: JobContext, spec: TableSpec, *, archiver=None) -> dict:
             "rollup": spec.rollup, "rollup_rows": 0, "deleted_total": 0, "archived_total": 0,
             "parts": [p.as_dict() for p in parts],
         }
+        if forced is not None:
+            result["override"] = {
+                "older_than": forced.date().isoformat(), "cutoff": forced.isoformat(),
+                "policy_cutoffs": {k: v.isoformat() for k, v in policy_cuts.items()},
+                "min_age_days": OVERRIDE_MIN_AGE_DAYS, "max_rows_cap": OVERRIDE_MAX_ROWS,
+            }
         if spec.rollup:
             # rollup cutoff = the (only) part's cutoff; whole days / months older than it
             roll_cut = cuts[spec.parts[0].name]
@@ -158,7 +234,14 @@ async def run_spec(ctx: JobContext, spec: TableSpec, *, archiver=None) -> dict:
         # live: rollups first (DM-7.4), then each part's batches, archived where the policy says so
         if spec.rollup:
             await ctx.progress(phase="rollup", mode=mode)
-            result["rollup_rows"] = await rollups.write(conn, spec.rollup, cuts[spec.parts[0].name])
+            roll_cut = cuts[spec.parts[0].name]
+            result["rollup_rows"] = await rollups.write(conn, spec.rollup, roll_cut)
+            # DM-7.4 guard: no raw row goes unless its whole day / month is in the rollup. A month
+            # that is not closed yet, or a write that missed a day, stops the run here.
+            left = await rollups.pending(conn, spec.rollup, roll_cut)
+            if left:
+                raise RollupIncomplete(f"{left} day(s)/month(s) of {spec.table} older than {roll_cut.isoformat()} "
+                                       f"are not in shared.{spec.rollup} after the rollup write; nothing deleted")
         if archiver is None and any(p.archive for p in spec.parts):
             archiver = S3Archiver(boto3.client("s3"), ctx.job_id)
         already = int(progress.get("deleted_total") or 0)   # an earlier attempt of this same job
@@ -229,6 +312,8 @@ async def schedule_all(pool, *, day: str, created_by: str = "scheduler:aa-825") 
 _STATUS_JOBS_SQL = """
     SELECT DISTINCT ON (kind, bucket) kind, bucket, id, status, created_at, finished_at, result
       FROM (SELECT j.*, CASE WHEN j.status IN ('queued', 'running') THEN 'active'
+                             WHEN j.status = 'succeeded' AND j.result ->> 'trigger' = 'manual_override'
+                                  THEN 'override'
                              WHEN j.status = 'succeeded' THEN coalesce(j.result ->> 'mode', 'unknown')
                              ELSE 'failed' END AS bucket
               FROM shared.job j
@@ -237,7 +322,7 @@ _STATUS_JOBS_SQL = """
 """
 
 _RESULT_KEYS = ("mode", "reason", "trigger", "candidates_total", "deleted_total", "archived_total",
-                "rollup_rows", "rollup_pending", "limit_rows")
+                "rollup_rows", "rollup_pending", "limit_rows", "override")
 
 
 def _job_summary(r) -> dict:
@@ -250,7 +335,8 @@ def _job_summary(r) -> dict:
 
 async def status(pool) -> dict:
     """Per kind: policy, approximate table size, and the latest active / live / dry_run / held /
-    failed job. `scheduled_mode` says what tomorrow's scheduled run will do (before counting)."""
+    override / failed job. `scheduled_mode` says what tomorrow's scheduled run will do (before
+    counting); a manual_override run never makes it live."""
     rows = await pool.fetch(_STATUS_JOBS_SQL, list(KINDS))
     by_kind: dict[str, dict] = {k: {} for k in KINDS}
     for r in rows:
@@ -274,7 +360,10 @@ async def status(pool) -> dict:
             "rollup_rows_estimate": est.get(f"shared.{spec.rollup}") if spec.rollup else None,
             "parts": [{"part": p.name, "window_days": p.window_days, "archive": p.archive} for p in spec.parts],
             "scheduled_mode": "live" if live and live_windows == spec.windows() else "dry_run",
+            "override_allowed": kind in OVERRIDE_KINDS,
             "last": jobs,
         })
     return {"kinds": out, "run_max_rows": RUN_MAX_ROWS, "growth_factor": GROWTH_FACTOR,
-            "growth_floor_rows": GROWTH_FLOOR_ROWS, "archive": f"s3://{ARCHIVE_BUCKET}/archive/<table>/yyyy/mm/"}
+            "growth_floor_rows": GROWTH_FLOOR_ROWS, "archive": f"s3://{ARCHIVE_BUCKET}/archive/<table>/yyyy/mm/",
+            "override": {"trigger": OVERRIDE_TRIGGER, "kinds": list(OVERRIDE_KINDS),
+                         "min_age_days": OVERRIDE_MIN_AGE_DAYS, "max_rows": OVERRIDE_MAX_ROWS}}
