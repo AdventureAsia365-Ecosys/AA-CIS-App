@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
+from uuid import UUID
 
 import asyncpg
 import structlog
@@ -139,6 +141,20 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
     return val == "true"
 
 
+def _is_uuid(value) -> bool:
+    """AA-859: the policies cast app.tenant_id to uuid, so a malformed JWT `sub` would surface as a
+    22P02 inside a policy (a 500). acquire_scoped_conn refuses it up front instead (503)."""
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return True
+
+
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 1)
+
+
 @asynccontextmanager
 async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *, fail_closed: bool = False):
     """Yields (conn, used_tenant_pool: bool).
@@ -158,44 +174,63 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *
 
     AA-817 `fail_closed=True` (every caller since AA-817 PR-A): once the route's flag is on, the
     route is meant to be isolated by RLS, so it never silently falls back to the admin pool, which
-    RLS does not filter (owner exempt). A missing tenant pool, an empty tenant id, no tenant connection
-    within TENANT_POOL_ACQUIRE_TIMEOUT_S (CONNECTION LIMIT reached, RDS unreachable), or a GUC that did
-    not take the tenant id raises 503 instead. Flag off is unchanged (admin pool)."""
+    RLS does not filter (owner exempt). A missing tenant pool, an empty or malformed (not a uuid, AA-859)
+    tenant id, no tenant connection within TENANT_POOL_ACQUIRE_TIMEOUT_S (CONNECTION LIMIT reached, RDS
+    unreachable), or a GUC that did not take the tenant id raises 503 instead. Flag off is unchanged
+    (admin pool).
+
+    AA-859 pool timing: when the tenant pool was used, one INFO line `aa859_tenant_pool_timing` with
+    `wait_ms` (acquire) and `hold_ms` (acquire -> release), so Logs Insights can take percentiles. Never
+    hold this block across a Secrets Manager or HTTP call: with max_size 1-2 per task, a held connection
+    is every other tenant request's wait."""
     tenant_pool = getattr(request.app.state, "tenant_pool", None)
     if fail_closed:
         use_tenant_pool = await _flag_enabled(request, flag_key)
-        if use_tenant_pool and (tenant_pool is None or not tenant_id):
+        if use_tenant_pool and (tenant_pool is None or not tenant_id or not _is_uuid(tenant_id)):
             logger.error("aa817_tenant_context_unavailable", flag_key=flag_key,
-                         tenant_pool=tenant_pool is not None, tenant_id_present=bool(tenant_id))
+                         tenant_pool=tenant_pool is not None, tenant_id_present=bool(tenant_id),
+                         tenant_id_valid=bool(tenant_id) and _is_uuid(tenant_id))
             raise HTTPException(status_code=503, detail="Tenant data path unavailable, try again shortly")
     else:
         use_tenant_pool = tenant_pool is not None and await _flag_enabled(request, flag_key)
 
     if use_tenant_pool:
-        async with AsyncExitStack() as stack:
-            try:
-                conn = await stack.enter_async_context(tenant_pool.acquire(timeout=TENANT_POOL_ACQUIRE_TIMEOUT_S))
-            except _POOL_UNAVAILABLE_ERRORS as e:
-                # One event for every "no tenant connection" case. The api logs are structlog console
-                # lines, so a CloudWatch metric filter on the plain term "aa817_tenant_pool_unavailable"
-                # counts them (alarm on any count > 0); `reason=` says which case.
-                logger.error("aa817_tenant_pool_unavailable", flag_key=flag_key, stage="acquire",
-                             reason=_unavailable_reason(e), error=repr(e), fail_closed=fail_closed)
-                if fail_closed:
-                    raise HTTPException(status_code=503,
-                                        detail="Tenant data path unavailable, try again shortly") from e
-                conn = None
-            if conn is not None:
-                async with conn.transaction():
+        started = time.monotonic()
+        acquired = None
+        try:
+            async with AsyncExitStack() as stack:
+                try:
+                    conn = await stack.enter_async_context(
+                        tenant_pool.acquire(timeout=TENANT_POOL_ACQUIRE_TIMEOUT_S))
+                except _POOL_UNAVAILABLE_ERRORS as e:
+                    # One event for every "no tenant connection" case. The api logs are structlog console
+                    # lines, so a CloudWatch metric filter on the plain term "aa817_tenant_pool_unavailable"
+                    # counts them (alarm on any count > 0); `reason=` says which case.
+                    logger.error("aa817_tenant_pool_unavailable", flag_key=flag_key, stage="acquire",
+                                 reason=_unavailable_reason(e), error=repr(e), fail_closed=fail_closed,
+                                 wait_ms=_ms(time.monotonic() - started))
                     if fail_closed:
-                        applied = await conn.fetchval("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
-                        if applied != tenant_id:
-                            logger.error("aa817_tenant_guc_not_applied", flag_key=flag_key)
-                            raise HTTPException(status_code=503,
-                                                detail="Tenant data path unavailable, try again shortly")
-                    else:
-                        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
-                    yield conn, True
-                return
+                        raise HTTPException(status_code=503,
+                                            detail="Tenant data path unavailable, try again shortly") from e
+                    conn = None
+                if conn is not None:
+                    acquired = time.monotonic()
+                    async with conn.transaction():
+                        if fail_closed:
+                            applied = await conn.fetchval("SELECT set_config('app.tenant_id', $1, true)",
+                                                          tenant_id)
+                            if applied != tenant_id:
+                                logger.error("aa817_tenant_guc_not_applied", flag_key=flag_key)
+                                raise HTTPException(status_code=503,
+                                                    detail="Tenant data path unavailable, try again shortly")
+                        else:
+                            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+                        yield conn, True
+        finally:
+            if acquired is not None:  # logged after the release, whether the block succeeded or raised
+                logger.info("aa859_tenant_pool_timing", flag_key=flag_key, wait_ms=_ms(acquired - started),
+                            hold_ms=_ms(time.monotonic() - acquired))
+        if acquired is not None:
+            return
     async with request.app.state.pool.acquire() as conn:
         yield conn, False

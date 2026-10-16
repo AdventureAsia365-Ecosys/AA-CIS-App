@@ -6,8 +6,8 @@ integration lookup fix, and DELETE /v1/integrations/{wordpress|facebook}.
 - v1_publish.unpublish: remote delete first; a remote failure / missing connection leaves the row
   'published' (no UPDATE issued).
 - v1_publish.publish: the blog channel looks up integration_type 'wordpress' (was 'blog').
-- v1_integrations disconnect: one transaction that deletes the row and then tombstones the secret
-  (PutSecretValue, never DeleteSecret); a tombstone failure rolls the DELETE back (AA-817 C3).
+- v1_integrations disconnect: tombstones the secret (PutSecretValue, never DeleteSecret) between two short
+  transactions, then deletes the row read first (AA-859); a tombstone failure deletes nothing.
 """
 import json
 import uuid
@@ -29,6 +29,7 @@ TENANT = {"sub": TENANT_ID, "role": "tenant"}
 PUBLISH_ID = uuid.uuid4()
 PIECE_ID = str(uuid.uuid4())
 NOW = datetime(2026, 10, 14, tzinfo=timezone.utc)
+UPDATED_AT = datetime(2026, 10, 14, 9, 0, 0, 654321, tzinfo=timezone.utc)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ def _sequential_pool(*fetchrow_returns):
     conn.fetchrow = AsyncMock(side_effect=list(fetchrow_returns))
     conn.fetch = AsyncMock(return_value=[])
     conn.execute = AsyncMock(return_value="DELETE 1")
-    tx = MagicMock()  # conn.transaction() (AA-817: _disconnect runs in one transaction)
+    tx = MagicMock()  # conn.transaction() (AA-859: _disconnect runs two short transactions)
     tx.__aenter__ = AsyncMock(return_value=None)
     tx.__aexit__ = AsyncMock(return_value=False)
     conn.transaction = MagicMock(return_value=tx)
@@ -347,10 +348,15 @@ async def test_list_publish_log_is_tenant_scoped_and_tenant_safe():
 
 # ── v1_integrations disconnect ─────────────────────────────────────────────────
 
+def _integ(secret_key):
+    return {"secret_key": secret_key, "updated_at": UPDATED_AT}
+
+
 @pytest.mark.asyncio
 class TestDisconnect:
     async def test_wordpress_tombstones_secret_then_deletes_row(self):
-        pool, conn = _sequential_pool({"secret_key": f"acp/cms/{TENANT_ID}"})
+        row = _integ(f"acp/cms/{TENANT_ID}")
+        pool, conn = _sequential_pool(row, row)  # step-1 SELECT, step-3 DELETE ... RETURNING
         sm = MagicMock()
         with patch.object(integ_mod, "_sm_client", return_value=sm):
             result = await integ_mod.disconnect_wordpress(_request(pool), tenant=TENANT)
@@ -360,27 +366,27 @@ class TestDisconnect:
         assert kwargs["SecretId"] == f"acp/cms/{TENANT_ID}"
         assert json.loads(kwargs["SecretString"]) == {"disconnected": True}
         assert not sm.delete_secret.called
-        delete_sql, *params = conn.execute.call_args[0]
+        delete_sql, *params = conn.fetchrow.call_args_list[1][0]
         assert delete_sql.startswith("DELETE FROM shared.tenant_integrations")
-        assert params == [TENANT_ID, "wordpress"]
+        assert params == [TENANT_ID, "wordpress", UPDATED_AT]
         assert result["connected"] is False and result["disconnected"] is True
         assert pool.execute.call_args[0][3] == "integration.disconnected"
 
     async def test_facebook_disconnect_targets_facebook_row(self):
-        pool, conn = _sequential_pool({"secret_key": f"acp/social/{TENANT_ID}"})
+        row = _integ(f"acp/social/{TENANT_ID}")
+        pool, conn = _sequential_pool(row, row)
         sm = MagicMock()
         with patch.object(integ_mod, "_sm_client", return_value=sm):
             result = await integ_mod.disconnect_facebook(_request(pool), tenant=TENANT)
         assert sm.put_secret_value.call_args.kwargs["SecretId"] == f"acp/social/{TENANT_ID}"
-        assert conn.execute.call_args[0][2] == "facebook"
+        assert conn.fetchrow.call_args_list[1][0][2] == "facebook"
         assert result == {"connected": False, "page_id": None, "connected_at": None,
                           "last_verified_at": None, "last_verify_error": None, "disconnected": True}
 
     async def test_tombstone_failure_keeps_the_row(self):
-        """AA-817 C3: the DELETE runs first, inside the transaction; a tombstone failure raises
-        through that transaction, which rolls the DELETE back (real-Postgres proof:
-        tests/integration/test_aa817_tenant_pool_routes.py)."""
-        pool, conn = _sequential_pool({"secret_key": f"acp/cms/{TENANT_ID}"})
+        """AA-859: the tombstone runs between the two transactions, so a failure (502) happens before
+        any DELETE is issued (real-Postgres proof: tests/integration/test_aa817_tenant_pool_routes.py)."""
+        pool, conn = _sequential_pool(_integ(f"acp/cms/{TENANT_ID}"))
         sm = MagicMock()
         sm.put_secret_value.side_effect = ClientError(
             {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "PutSecretValue")
@@ -388,20 +394,20 @@ class TestDisconnect:
             with pytest.raises(HTTPException) as exc_info:
                 await integ_mod.disconnect_wordpress(_request(pool), tenant=TENANT)
         assert exc_info.value.status_code == 502
-        conn.transaction.assert_called_once()
-        exc_type = conn.tx.__aexit__.call_args[0][0]
-        assert exc_type is HTTPException, "the transaction must exit with the error (rollback)"
+        assert conn.fetchrow.await_count == 1, "only the step-1 SELECT: no DELETE"
+        conn.execute.assert_not_awaited()
         assert not pool.execute.called, "no audit row for a disconnect that did not happen"
 
     async def test_missing_secret_still_disconnects(self):
-        pool, conn = _sequential_pool({"secret_key": f"acp/cms/{TENANT_ID}"})
+        row = _integ(f"acp/cms/{TENANT_ID}")
+        pool, conn = _sequential_pool(row, row)
         sm = MagicMock()
         sm.put_secret_value.side_effect = ClientError(
             {"Error": {"Code": "ResourceNotFoundException", "Message": "gone"}}, "PutSecretValue")
         with patch.object(integ_mod, "_sm_client", return_value=sm):
             result = await integ_mod.disconnect_wordpress(_request(pool), tenant=TENANT)
         assert result["disconnected"] is True
-        conn.execute.assert_awaited_once()
+        assert conn.fetchrow.await_count == 2 and conn.fetchrow.call_args[0][0].startswith("DELETE")
 
     async def test_not_connected_is_idempotent(self):
         pool, conn = _sequential_pool(None)
@@ -410,4 +416,5 @@ class TestDisconnect:
             result = await integ_mod.disconnect_facebook(_request(pool), tenant=TENANT)
         assert result["connected"] is False and result["disconnected"] is False
         assert not sm.put_secret_value.called
+        assert conn.fetchrow.await_count == 1
         conn.execute.assert_not_awaited()

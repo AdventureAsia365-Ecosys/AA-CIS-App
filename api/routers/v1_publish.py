@@ -54,6 +54,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from api.core.aa544_tenant_pool import (
     PUBLISH_LOG_LIST_FLAG, STAGE1_PUBLISH_PENDING_FLAG, acquire_scoped_conn,
 )
+from api.routers.v1_integrations import is_tombstoned_secret, reconnect_detail
 from api.routers.v1_tours import get_tenant
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -205,6 +206,8 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     except ClientError as exc:
         logger.error("unpublish_secret_read_failed", tenant_id=tenant_id, channel=channel, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+    if is_tombstoned_secret(creds):  # AA-859: a disconnect tombstoned them; the post is still live
+        raise HTTPException(status_code=422, detail=reconnect_detail(name))
 
     elsewhere = _other_account(channel, creds, row["external_id"], row["external_url"])
     if elsewhere:
@@ -494,6 +497,8 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
         logger.error("publish_secret_read_failed", tenant_id=tenant_id, channel=channel,
                      secret_key=integ["secret_key"], error=str(exc))
         raise HTTPException(status_code=502, detail="Could not read saved credentials — try reconnecting")
+    if is_tombstoned_secret(creds):  # AA-859: refused before claim(), so no publish_log row is written
+        raise HTTPException(status_code=422, detail=reconnect_detail(_connect_action_verb(channel)))
 
     key = publish_key(piece_id, channel, piece["content_text"])
     async with pool.acquire() as conn:
