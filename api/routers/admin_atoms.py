@@ -6,7 +6,9 @@ admin.py/admin_pipeline.py (STEP 0/PHẦN A decision, AA-300). Reuses
 verify_admin_secret from admin.py rather than redefining it. Reached only
 through the existing frontend/app/api/admin/[...path]/route.ts BFF proxy —
 no new proxy route needed (it already forwards any /api/admin/* path to
-/admin/* on this backend).
+/admin/* on this backend). AA-431 had added a tenant-JWT branch to list/summary/patch;
+AA-859 (S240) removed it — a Bearer token without the admin secret gets 403
+(_require_atoms_staff).
 
 Does NOT touch api/routers/v1_atoms.py (decompose) at all — this is a
 separate, purely additive resource: list/filter + star/delete/edit on
@@ -49,44 +51,52 @@ router = APIRouter(prefix="/admin", tags=["admin-atoms"])
 _recompute_logger = structlog.get_logger()
 
 
-# ── AA-431 — tenant-JWT auth + owner_scope filter for list/summary/patch ────────
+# ── AA-859 — staff only (X-Admin-Secret); the AA-431 tenant-JWT branch is removed ──────────────
 #
-# Before this, every endpoint here was x-admin-secret only (module header comment,
-# AA-300 STEP 0 decision) — fine while the only UI was /admin/curation (staff-only,
-# platform-owned atoms). AA-425's atomize (now services/acp_contract/a3_atomize.py)
-# started writing atoms with owner_scope = <tenant_id> (a TENANT's own atoms, from
-# their own rewritten content) alongside the pre-existing owner_scope = 'platform'
-# rows — but nothing here ever filtered by owner_scope, and there was no tenant-JWT
-# auth path at all. Building a tenant-facing curation UI (AA-431, /portal/t6-atoms)
-# straight on top of these endpoints as they were would have let tenant A see/edit
-# tenant B's atoms (or platform's) — same class of gap AA-424 already closed for
-# brand-identity. Mirrors that fix's exact shape (_resolve_brand_tenant_id,
-# admin_pipeline.py): try a tenant Bearer JWT first, fall back to X-Admin-Secret.
+# AA-431 let a tenant Bearer JWT reach list/summary/patch, scoped to owner_scope = <tenant_id>.
+# Its only caller, the portal page /portal/t6-atoms, was removed at AA-526; atoms are platform-wide
+# (owner_scope = 'platform') and curated by staff on /admin/atom-curation (admin BFF, X-Admin-Secret
+# only). 30 days of WAF logs (S240, docs/audits/2026-10-16-S240-aa859/admin_atoms_waf_results.json)
+# showed 1,041 calls to /admin/atoms*, every one with X-Admin-Secret and none with a Bearer token.
+# Nghiệp decided (S240) to delete the branch outright, with no flag: it was the only tenant write
+# on acp_contract.tour_atoms, and keeping it would need tenant-pool grants for no caller.
 #
-# owner_scope is NEVER accepted as a client-supplied query param for a tenant
-# caller — it's derived only from the verified JWT's `sub` claim, so a tenant can't
-# request a different owner_scope than its own. An admin/staff caller (X-Admin-
-# Secret) gets owner_scope=None (no filter) — unchanged from before, staff still
-# need to see platform + every tenant's atoms for curation/support.
+# A request with a valid X-Admin-Secret is staff (same check as every other admin route). Anything
+# else carrying a Bearer token — a tenant JWT through the tenant BFF, which forwards any path, or a
+# direct call — is refused with 403 and logged as aa859_admin_atoms_tenant_refused, so a caller we
+# did not know about shows up in Logs Insights instead of failing silently.
 _atoms_bearer = HTTPBearer(auto_error=False)
+_auth_logger = structlog.get_logger()
 
 
-def _resolve_atom_owner_scope(
+def _bearer_tenant_id(token: str) -> Optional[str]:
+    """The tenant id of a valid tenant JWT, for the refusal log only (never for access). None for
+    an invalid, expired or staff token."""
+    try:
+        return verify_tenant_jwt(token).get("sub")
+    except Exception:
+        return None
+
+
+def _require_atoms_staff(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_atoms_bearer),
     x_admin_secret: str = Header(None),
-) -> Optional[str]:
-    """Returns the owner_scope to filter tour_atoms by (a tenant_id string), or
-    None for a staff/admin caller (no filter — sees platform + every tenant)."""
-    if credentials is not None:
-        try:
-            payload = verify_tenant_jwt(credentials.credentials)
-        except HTTPException:
+) -> None:
+    """Staff only: X-Admin-Secret (verify_admin_secret, 403 / 503 as on every admin route). A
+    Bearer token without a valid admin secret gets 403 and one aa859_admin_atoms_tenant_refused
+    log line."""
+    try:
+        verify_admin_secret(x_admin_secret)
+    except HTTPException:
+        if credentials is None:
             raise
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        return payload["sub"]
-    verify_admin_secret(x_admin_secret)
-    return None
+        tenant_id = _bearer_tenant_id(credentials.credentials)
+        _auth_logger.warning(
+            "aa859_admin_atoms_tenant_refused", method=request.method, path=request.url.path,
+            tenant_id=tenant_id, tenant_token_valid=tenant_id is not None,
+        )
+        raise HTTPException(status_code=403, detail="Staff only: /admin/atoms does not accept a tenant token")
 
 
 def _safe(row) -> dict:
@@ -200,7 +210,7 @@ _LIST_SELECT_COLS = """
 """
 
 
-@router.get("/atoms")
+@router.get("/atoms", dependencies=[Depends(_require_atoms_staff)])
 async def list_atoms(
     request: Request,
     tour_id: Optional[str] = Query(None),
@@ -213,8 +223,7 @@ async def list_atoms(
         None, pattern="^(platform|legacy)$",
         description="AA-527 (bổ sung) — admin-only coarse filter: 'platform' (owner_scope='platform', "
                     "post-AA-526 shared pool) vs 'legacy' (any other owner_scope — a real tenant_id, "
-                    "pre-AA-526 row not yet cleaned up). Ignored for a tenant-JWT caller (owner_scope "
-                    "already pinned to that tenant by _resolve_atom_owner_scope, nothing to choose).",
+                    "pre-AA-526 row not yet cleaned up).",
     ),
     lifecycle_stage: Optional[str] = Query(
         None, pattern="^(active|phasing_out|retired)$",
@@ -224,7 +233,6 @@ async def list_atoms(
     ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    owner_scope: Optional[str] = Depends(_resolve_atom_owner_scope),
 ):
     """List/filter atoms for curation. Defaults to a 50-atom batch (issue
     AA-300: "50 atom trên 1 màn hình", not one atom at a time). Returns a
@@ -243,9 +251,8 @@ async def list_atoms(
     notes. "thin" reuses the tour_atom_count already computed in the JOIN
     (< THIN_TRIP_ATOM_MIN, the same constant N5's B5 fix imports).
 
-    AA-431: owner_scope resolved server-side from the caller's identity (tenant JWT
-    -> that tenant's own atoms only; admin secret -> no filter) — never a query
-    param, so a tenant can't ask to see another owner_scope's atoms."""
+    AA-859: staff only, so no owner_scope pin — staff see platform + every legacy owner_scope,
+    narrowed only by owner_scope_class."""
     pool = request.app.state.pool
 
     clauses = []
@@ -255,9 +262,7 @@ async def list_atoms(
         params.append(value)
         clauses.append(clause.format(n=len(params)))
 
-    if owner_scope is not None:
-        _add("ta.owner_scope = ${n}", owner_scope)
-    elif owner_scope_class == "platform":
+    if owner_scope_class == "platform":
         clauses.append("ta.owner_scope = 'platform'")
     elif owner_scope_class == "legacy":
         clauses.append("ta.owner_scope != 'platform'")
@@ -317,11 +322,42 @@ async def list_atoms(
 
 # ── GET /admin/atoms/summary — dashboard counts + by-tour accordion data ───
 
-@router.get("/atoms/summary")
-async def atoms_summary(
-    request: Request,
-    owner_scope: Optional[str] = Depends(_resolve_atom_owner_scope),
-):
+_SUMMARY_TOTALS_SQL = """
+    SELECT count(*) AS total,
+           count(*) FILTER (WHERE updated_at != created_at) AS reviewed
+    FROM acp_contract.tour_atoms
+    WHERE NOT deleted AND NOT is_empty_marker
+"""
+
+_SUMMARY_BY_TOUR_SQL = """
+    SELECT ta.tour_id, rt.src_name AS tour_name,
+           rt.lifecycle_stage::text AS lifecycle_stage,
+           count(*) AS atom_count,
+           count(*) FILTER (WHERE ta.updated_at = ta.created_at) AS unreviewed_count,
+           count(*) FILTER (WHERE uc.atom_id IS NOT NULL) AS used_atom_count,
+           MAX(ta.created_at) AS atomized_at,
+           array_agg(DISTINCT ta.owner_scope) AS owner_scopes
+    FROM acp_contract.tour_atoms ta
+    JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    -- AA-527 (bổ sung, kiểm tra điểm 3) — per-tour "how many distinct atoms of this tour
+    -- have ever been used to write content" (same angle_gate_request.atom_id source as
+    -- the per-atom usage_count added to GET /atoms above). The subquery is DISTINCT
+    -- (atom_id, trip_id) up front, so it can join at most 1 row per ta row — required so
+    -- this LEFT JOIN can't fan out ta rows and inflate the plain count(*) used for
+    -- atom_count/unreviewed_count just above (a JOIN straight onto angle_gate_request,
+    -- which can have several requests per atom, would double-count both).
+    LEFT JOIN (
+        SELECT DISTINCT atom_id, trip_id
+        FROM acp_shared.angle_gate_request
+    ) uc ON uc.atom_id = ta.atom_id AND uc.trip_id = ta.tour_id
+    WHERE NOT ta.deleted AND NOT ta.is_empty_marker
+    GROUP BY ta.tour_id, rt.src_name, rt.lifecycle_stage
+    ORDER BY rt.src_name
+"""
+
+
+@router.get("/atoms/summary", dependencies=[Depends(_require_atoms_staff)])
+async def atoms_summary(request: Request):
     """Whole-dataset counts, deliberately independent of whatever filter is
     currently applied on the paginated /atoms list — a separate endpoint
     rather than extra fields bolted onto GET /atoms, because the dashboard
@@ -331,45 +367,11 @@ async def atoms_summary(
     queries on every single filter/pagination round-trip for no reason —
     fewer total queries over a real editing session with this split.
 
-    AA-431: same owner_scope resolution as GET /atoms — a tenant caller only
-    ever sees counts for its own atoms."""
+    AA-859: staff only — counts cover every owner_scope (platform + legacy)."""
     pool = request.app.state.pool
-    scope_clause = "AND owner_scope = $1" if owner_scope is not None else ""
-    scope_params = [owner_scope] if owner_scope is not None else []
-    scope_clause_ta = "AND ta.owner_scope = $1" if owner_scope is not None else ""
-
     async with pool.acquire() as conn:
-        totals = await conn.fetchrow(f"""
-            SELECT count(*) AS total,
-                   count(*) FILTER (WHERE updated_at != created_at) AS reviewed
-            FROM acp_contract.tour_atoms
-            WHERE NOT deleted AND NOT is_empty_marker {scope_clause}
-        """, *scope_params)
-        by_tour_rows = await conn.fetch(f"""
-            SELECT ta.tour_id, rt.src_name AS tour_name,
-                   rt.lifecycle_stage::text AS lifecycle_stage,
-                   count(*) AS atom_count,
-                   count(*) FILTER (WHERE ta.updated_at = ta.created_at) AS unreviewed_count,
-                   count(*) FILTER (WHERE uc.atom_id IS NOT NULL) AS used_atom_count,
-                   MAX(ta.created_at) AS atomized_at,
-                   array_agg(DISTINCT ta.owner_scope) AS owner_scopes
-            FROM acp_contract.tour_atoms ta
-            JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
-            -- AA-527 (bổ sung, kiểm tra điểm 3) — per-tour "how many distinct atoms of this tour
-            -- have ever been used to write content" (same angle_gate_request.atom_id source as
-            -- the per-atom usage_count added to GET /atoms above). The subquery is DISTINCT
-            -- (atom_id, trip_id) up front, so it can join at most 1 row per ta row — required so
-            -- this LEFT JOIN can't fan out ta rows and inflate the plain count(*) used for
-            -- atom_count/unreviewed_count just above (a JOIN straight onto angle_gate_request,
-            -- which can have several requests per atom, would double-count both).
-            LEFT JOIN (
-                SELECT DISTINCT atom_id, trip_id
-                FROM acp_shared.angle_gate_request
-            ) uc ON uc.atom_id = ta.atom_id AND uc.trip_id = ta.tour_id
-            WHERE NOT ta.deleted AND NOT ta.is_empty_marker {scope_clause_ta}
-            GROUP BY ta.tour_id, rt.src_name, rt.lifecycle_stage
-            ORDER BY rt.src_name
-        """, *scope_params)
+        totals = await conn.fetchrow(_SUMMARY_TOTALS_SQL)
+        by_tour_rows = await conn.fetch(_SUMMARY_BY_TOUR_SQL)
 
     # AA-754 — the distinctiveness breakdown was removed with the signal itself.
     by_tour = [
@@ -411,12 +413,11 @@ class AtomPatchRequest(BaseModel):
     text: Optional[str] = None
 
 
-@router.patch("/atoms/{atom_id}")
+@router.patch("/atoms/{atom_id}", dependencies=[Depends(_require_atoms_staff)])
 async def patch_atom(
     atom_id: str,
     body: AtomPatchRequest,
     request: Request,
-    owner_scope: Optional[str] = Depends(_resolve_atom_owner_scope),
 ):
     """Soft-delete / light text edit. `deleted=true` is the existing
     tour_atoms.deleted column (soft delete) — excluded by the segment_matching
@@ -427,9 +428,7 @@ async def patch_atom(
     (its only reader sat behind compute_slot_grid(), which has no production
     caller), so `deleted` is the only real curation lever left here.
 
-    AA-431: same owner_scope guard as the bulk endpoint — a tenant's UPDATE
-    is WHERE-scoped, so a guessed atom_id from outside their own scope 404s
-    (not found) instead of being editable."""
+    AA-859: staff only (the AA-431 tenant owner_scope WHERE guard went with the tenant branch)."""
     if body.text is not None and not body.text.strip():
         raise HTTPException(status_code=400, detail="text cannot be empty")
     if body.deleted is None and body.text is None:
@@ -450,14 +449,10 @@ async def patch_atom(
 
     params.append(atom_id)
     atom_id_idx = len(params)
-    scope_clause = ""
-    if owner_scope is not None:
-        params.append(owner_scope)
-        scope_clause = f" AND owner_scope = ${len(params)}"
     query = f"""
         UPDATE acp_contract.tour_atoms
         SET {", ".join(sets)}
-        WHERE atom_id = ${atom_id_idx}{scope_clause} AND NOT is_empty_marker
+        WHERE atom_id = ${atom_id_idx} AND NOT is_empty_marker
         RETURNING atom_id, tour_id, text, deleted,
                   visual_potential, media, created_at, updated_at
     """
