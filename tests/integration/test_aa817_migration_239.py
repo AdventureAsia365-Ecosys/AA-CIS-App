@@ -19,7 +19,12 @@ body in a transaction that is rolled back. Checked:
     A4) from the pre-239 state: guard 4 runs through the transaction-scoped membership, which is gone
     afterwards.
 The read/write isolation per table (WHERE-less queries under own / forged / '' / master GUC) is in
-test_aa817_rls_tenant_isolation.py (LEGACY_TABLES, NO_RLS_NO_WRITE_TABLES, OUTPUT_RULES).
+test_aa817_rls_tenant_isolation.py (LEGACY_TABLES, OUTPUT_RULES).
+
+Since 241 (AA-859) angle_gate_option has RLS, which 239's guard 1 refuses (it is one of 239's REVOKE
+tables). The fixture first takes it back to its pre-241 state (undo_241_for_239_reapply) and does NOT
+re-apply 241: every test here re-applies 239 again, so it works on the post-239 / pre-241 state that 239
+was written for. 241 on top of 239 is test_aa859_migration_241.py and the isolation fixture.
 """
 import os
 import sys
@@ -30,9 +35,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from _rls_fixture_helpers import undo_241_for_239_reapply  # noqa: E402
 from test_aa817_rls_tenant_isolation import (  # noqa: E402
-    DEV_LEGACY_GRANTS, LEGACY_TABLES, MASTER_TENANT, NO_RLS_NO_WRITE_TABLES, OUTPUT_RULES_STANDIN_DDL,
-    _seed_legacy,
+    LEGACY_TABLES, MASTER_TENANT, OUTPUT_RULES_STANDIN_DDL, _seed_legacy,
 )
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
@@ -40,6 +45,9 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migratio
 TENANT_ROLE = "aa_app_user"
 RUNNER = "zz239_rds_runner"   # stands in for aa_cis_admin on RDS
 MASTER_READ = sorted(t for t, master in LEGACY_TABLES.items() if master)
+# the tables without RLS on which 239 revokes the tenant role's writes (since 241, angle_gate_option has RLS
+# and only SELECT + UPDATE (chosen); 241 revokes everything on the other two)
+REVOKE_239_TABLES = ("acp_shared.angle_gate_option", "acp_shared.tenant_atom_state", "acp_shared.year_plan")
 NULLIF_QUAL = "(tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid)"
 OLD_QUAL = "tenant_id = current_setting('app.tenant_id', true)::uuid"
 
@@ -56,13 +64,13 @@ def _connect():
 
 @pytest.fixture
 def cur():
-    """A rolled-back transaction with Dev's legacy grants mirrored and 239 (re-)applied."""
+    """A rolled-back transaction with Dev's legacy grants mirrored, angle_gate_option back to its pre-241
+    state and 239 (re-)applied."""
     conn = _connect()
     conn.autocommit = False
     c = conn.cursor()
     try:
-        for grant in DEV_LEGACY_GRANTS:
-            c.execute(grant)
+        undo_241_for_239_reapply(c)            # also grants DEV_LEGACY_GRANTS
         c.execute(_body())
         yield c
     finally:
@@ -118,7 +126,7 @@ def _to_pre_239(c):
         c.execute(f"DROP POLICY aa_app_user_aa_master_read ON {table}")
     for table in sorted(set(LEGACY_TABLES) - {"gold_aa_internal.published_tours", "silver_aa_internal.raw_tours"}):
         c.execute(f"ALTER POLICY tenant_isolation ON {table} USING ({OLD_QUAL})")
-    c.execute(f"GRANT INSERT, UPDATE ON {', '.join(NO_RLS_NO_WRITE_TABLES)} TO {TENANT_ROLE}")
+    c.execute(f"GRANT INSERT, UPDATE ON {', '.join(REVOKE_239_TABLES)} TO {TENANT_ROLE}")
 
 
 def _as_rds_like_runner(c, bypass=True):
@@ -135,7 +143,7 @@ def _as_rds_like_runner(c, bypass=True):
         c.execute(f"GRANT {TENANT_ROLE} TO {RUNNER} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE")
     for schema in ("gold_aa_internal", "silver_aa_internal", "shared", "acp_shared"):
         c.execute(f"ALTER SCHEMA {schema} OWNER TO {RUNNER}")
-    for table in sorted(LEGACY_TABLES) + list(NO_RLS_NO_WRITE_TABLES) + ["shared.schema_versions"]:
+    for table in sorted(LEGACY_TABLES) + list(REVOKE_239_TABLES) + ["shared.schema_versions"]:
         c.execute(f"ALTER TABLE {table} OWNER TO {RUNNER}")
     c.execute(f"SET LOCAL SESSION AUTHORIZATION {RUNNER}")
 
@@ -184,7 +192,7 @@ def test_grants(cur):
     for table in sorted(LEGACY_TABLES):
         cur.execute("SELECT has_table_privilege(%s, %s, 'DELETE, TRUNCATE')", (TENANT_ROLE, table))
         assert not cur.fetchone()[0], table
-    for table in NO_RLS_NO_WRITE_TABLES:
+    for table in REVOKE_239_TABLES:
         cur.execute("SELECT has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE, TRUNCATE')", (TENANT_ROLE, table))
         assert not cur.fetchone()[0], table
 
@@ -267,6 +275,6 @@ def test_applies_as_rds_like_runner(cur, seeded):
     assert cur.fetchone()
     for table in sorted(LEGACY_TABLES):
         assert _count_ours(cur, table, (a, b)) == 3, table
-    for table in NO_RLS_NO_WRITE_TABLES:
+    for table in REVOKE_239_TABLES:
         cur.execute("SELECT has_table_privilege(%s, %s, 'INSERT, UPDATE')", (TENANT_ROLE, table))
         assert not cur.fetchone()[0], table

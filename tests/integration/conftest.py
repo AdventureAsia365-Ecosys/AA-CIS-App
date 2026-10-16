@@ -75,6 +75,15 @@ def _apply_schema(conn):
         DROP TYPE IF EXISTS review_status_enum CASCADE;
         DROP TYPE IF EXISTS webhook_status_enum CASCADE;
     """)
+    # AA-859: the other schemas the migrations create, so a reused local DB starts like CI's fresh one.
+    # A persisted acp_shared kept angle_gate_option under 241's RLS, which 239's guard refuses on the next
+    # session (and 241's then fails on 147's re-grant): both errors are swallowed below. One statement
+    # per schema, tolerant: a non-superuser local runner may not own every object in them.
+    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo"):
+        try:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        except psycopg2.Error as e:
+            print(f"Warning: could not drop schema {schema}: {e}")
 
     # Apply real migrations in order
     migrations_dir = os.path.join(
