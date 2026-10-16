@@ -8,6 +8,7 @@ draft. These tests pin the fix: the repair reply never streams, the job publishe
 import asyncio
 import json
 from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -247,3 +248,101 @@ async def test_t2_final_snapshot_is_the_saved_version():
     assert by_key["highlights"] == "• h1\n• h2"
     assert by_key["itineraries"] == "Day 1 — Sapa\n\nWalk."
     assert "trip_type" not in by_key and "status" not in by_key
+
+
+# ── T9 end to end: the job path itself (review S239) ───────────────────────────
+
+_T9_PIECE = ("The trail to Tiger's Nest starts manageable — a dirt track through pine forest. [R:a1]\n\n"
+             "Tiger's Nest is among the most sacred sites in Vajrayana Buddhism. "
+             "The hike is steep and worth it. Book with us.")
+_T9_F9 = {"gate": "F9_cta_fact", "passed": False, "blocking": True, "repairable": True, "violations": [
+    'audit manual_check: FACT_CHECK_MANUAL_CHECK — unsupported claim(s): "The trail to Tiger\'s Nest starts '
+    'manageable — a dirt track through pine forest." (claims: the start is a pine forest track; source: no '
+    'pine forest); "Tiger\'s Nest is among the most sacred sites in Vajrayana Buddhism." (claims: most sacred; '
+    'source: not stated)']}
+
+
+class _HistoryRedis(FakeRedis):
+    def __init__(self):
+        super().__init__()
+        self.history = []
+
+    async def set(self, k, v, ex=None):
+        self.history.append(json.loads(v))
+        await super().set(k, v, ex)
+
+
+def _t9_outcome(ledger):
+    first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
+    return {"passed": first is None, "gate_ledger": ledger, "first_failure": first, "flags": []}
+
+
+@pytest.mark.asyncio
+async def test_t9_job_live_view_ends_on_the_saved_post_after_a_repair(monkeypatch):
+    """Drives the real job path (t9_write_job._run_write_with_progress → run_write_background) with
+    a bound tracker: attempt 1 streams the post, the gates ask for a sentence repair, the real
+    repair_sentences call streams a JSON patch on t9_write, the job splices it, code edits the
+    text again after the splice, and the piece is saved. The live view must never carry the
+    patch, the repair must not count as a new draft, the spliced text must show before the
+    re-check, and the final snapshot must be exactly the saved content_text."""
+    from services.jobs import t9_write_job as t9
+
+    llm = _StreamingLLM()
+    llm.reply = '{"replacements": ["Fixed one.", "Fixed two."]}'
+    monkeypatch.setattr(generate, "LLMClient", lambda: llm)
+    monkeypatch.setattr(generate, "record_call_sync", lambda **k: None)
+
+    redis = _HistoryRedis()
+    tracker = wp.WritingProgress(redis, tenant_id="t1", kind="piece", job_id="p1", steps=t9.T9_STEPS,
+                                 stream_stages={"t9_write"}, display="text")
+    seen = []  # the view at points the flusher could write it
+
+    def fake_write_content(**_k):
+        stream_sink.emit_call_start("t9_write")
+        stream_sink.delta_callback("t9_write")(_T9_PIECE)
+        stream_sink.emit_call_end("t9_write", True)
+        return _T9_PIECE, 0.01, {}, None
+
+    edits = iter(range(1, 10))
+
+    def fake_autofix(text, _ctx):
+        # code edits after the last LLM step of each attempt: the saved text differs from the splice
+        return f"{text} Edit number {next(edits)} here.", []
+
+    def fake_gates(**kw):
+        seen.append(tracker.snapshot())
+        return _t9_outcome([_T9_F9]) if len(seen) == 1 else _t9_outcome([])
+
+    finalize = AsyncMock(side_effect=lambda *a, **k: seen.append(tracker.snapshot()))
+    conn = AsyncMock()
+    conn.fetchval.return_value = "approved"
+    acq = AsyncMock()
+    acq.__aenter__ = AsyncMock(return_value=conn)
+    acq.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=acq)
+    ctx = {"atom_text": "seed", "goal": {"key": "promotion"}, "channel_style": {"channel": "linkedin"},
+           "brand_audience": {}, "chosen": {}, "cta": "Book", "destination": None, "trip_name": None,
+           "brand_rubric_text": "", "channel": "linkedin", "atom_id": "a1"}
+
+    with patch.object(service, "write_content", side_effect=fake_write_content), \
+         patch.object(service, "rewrite_with_feedback") as rw, \
+         patch.object(service.hygiene, "autofix", side_effect=fake_autofix), \
+         patch.object(service, "run_quality_gates", side_effect=fake_gates), \
+         patch.object(service, "_finalize_piece", new=finalize):
+        await t9._run_write_with_progress(uuid4(), uuid4(), ctx, pool, tracker)
+
+    rw.assert_not_called()
+    assert finalize.call_args.kwargs["repair_log"][0]["repair_mode"] == "sentences"  # a repair ran
+    saved = finalize.call_args.kwargs["content_text"]
+    final = json.loads(redis.store["wp:t1:piece:p1"])
+    for snap in seen + redis.history + [final]:
+        assert "replacements" not in json.dumps(snap)
+        assert snap["revision"] == 1  # the repair is not a new draft
+    after_splice = _all_text(seen[1])  # what the re-check saw in the live view
+    assert after_splice.startswith("Fixed one.") and "Fixed two." in after_splice
+    assert final["status"] == "done"
+    assert _all_text(final) == saved  # the final snapshot is the saved post
+    assert _all_text(seen[-1]) == saved  # ...already before the save step ran
+    states = {s["key"]: s["state"] for s in final["steps"]}
+    assert states["revise"] == "done" and states["save"] == "done"
