@@ -10,30 +10,51 @@ The rule here (pure, unit-tested; the DB reads live in `load_segment_members()`)
   1. Only members on the tenant's own tours (the Slate scored the Segment on those tours —
      `_fetch_segment_candidates()` — so a seed from another tenant's tour would be a place this
      tenant does not sell). `tenant_tour_ids=None` skips this filter.
-  2. Only members whose place IS the Subject's place (`canonical_place`): the same normalised
-     name form (`place_cards.name_forms`: accent fold, leading "the"/"a" dropped, a parenthetical
-     is its own form), the same core name for a non-generic name ("Lake Khövsgöl" = "Khövsgöl
-     Lake"), or the same place card (an alias of the Subject's place in that country, or the
-     member atom's own `atom_place_card` link). Never a substring: "Gyeongju National Museum" is
-     not "Gyeongju".
-  3. Those members must share one country. Several countries (a still-mixed Segment with a
-     generic name, "National Museum" in Bhutan and Laos) is ambiguous: no seed.
-  4. Best member: exact name form first, then one with `evidence` (a richer seed — lessons:
+  2. Only members whose place IS the Subject's place (`canonical_place`), graded by how sure the
+     match is (`match_grade`, lower is surer):
+       0 GRADE_EXACT   same normalised name (`place_cards.place_norm`: accent fold, leading
+                       "the"/"a" dropped);
+       1 GRADE_FORM    the same whole or base name form (a name without its parenthetical, or the
+                       Subject's own parenthetical: "Bayanzag (Flaming Cliffs)" ~ "Flaming Cliffs");
+       2 GRADE_CORE    the same core name for a non-generic name ("Lake Khövsgöl" = "Khövsgöl
+                       Lake"), or the same place card (an alias of the Subject's place in that
+                       country, or the member atom's own `atom_place_card` link);
+       3 GRADE_PAREN   only through the MEMBER's parenthetical ("Taktsang Monastery (Paro)" for
+                       "Paro") — the parenthetical names where the place is, not the place;
+       4 GRADE_TOKENS  loose fallback, only when nothing above matched: the place word sets are a
+                       subset/superset of each other — the relation A3 itself groups a Segment by
+                       (`segment_matching._looks_like_one_moment`), and `_canonical()` names the
+                       Segment after its SHORTEST wording, so a tenant whose tour says "Bukchon
+                       Hanok Village" sits under "Bukchon". Never for a generic Subject or member
+                       name ("National Museum"), and only when every such member is in one KNOWN
+                       country. "Lok Virsa Museum" shares no word with "Gyeongju".
+  3. The matched members of the best tier (grades 0-3 together, else grade 4) must share one
+     country. Several countries (a still-mixed Segment with a generic name, "National Museum" in
+     Bhutan and Laos) is ambiguous: no seed.
+  4. Best member: lowest grade first, then one with `evidence` (a richer seed — lessons:
      "Pawangka — visit" alone made the writer invent), then the lowest atom_id only as the last,
-     deterministic tie-break.
+     deterministic tie-break. Grade before evidence, so a with-evidence "Taktsang Monastery (Paro)"
+     never beats an evidence-less "Paro Town" for the Subject "Paro".
 No match → `(None, reason)`; the caller does not offer / does not pick the Subject and logs why.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional
 
+from services.acp_contract.segment_matching import CONNECTORS
 from services.acp_shared.place_cards import core_key, fold, is_generic_name, name_forms, place_norm
 
 SKIP_NO_MEMBER = "no_live_member"
 SKIP_NO_TENANT_MEMBER = "no_member_on_tenant_tours"
 SKIP_NO_PLACE_MATCH = "no_member_matches_subject_place"
 SKIP_SEVERAL_COUNTRIES = "subject_place_in_several_countries"
+SKIP_LOOSE_COUNTRY_UNKNOWN = "loose_place_match_country_unknown"
+
+GRADE_EXACT, GRADE_FORM, GRADE_CORE, GRADE_PAREN, GRADE_TOKENS = 0, 1, 2, 3, 4
+_STRONG = GRADE_PAREN  # grades 0..3 are a name/card match; 4 is the loose word-set fallback
+_PARENTHETICAL = re.compile(r"\([^)]*\)")  # as place_cards.name_forms() splits a name
 
 
 @dataclass(frozen=True)
@@ -52,33 +73,74 @@ def _forms(name: Optional[str]) -> set[str]:
     return name_forms(name)
 
 
-def place_matches(subject_place: Optional[str], member: Member,
-                  alias_cards: Optional[Mapping[tuple[str, str], str]] = None) -> tuple[bool, bool]:
-    """(matches, exact) — whether `member` is about the Subject's place, and whether the match is the
-    same written name (exact) rather than a core-name / place-card match.
+def _base_forms(name: Optional[str]) -> set[str]:
+    """The whole name and the name without its parenthetical — not the parenthetical alone."""
+    return {f for f in (place_norm(name), place_norm(_PARENTHETICAL.sub(" ", name or ""))) if f}
 
-    `alias_cards`: {(alias_norm, country_norm): card_id} from `acp_shared.place_card_alias` for the
-    Subject's name forms (non-rejected cards only)."""
-    if not (subject_place or "").strip() or not (member.place or "").strip():
-        return False, False
-    subject_forms, member_forms = _forms(subject_place), _forms(member.place)
+
+def _place_words(name: Optional[str]) -> frozenset[str]:
+    """A place's word set as A3 compares it (`segment_matching._place_tokens`: connectors dropped
+    unless that leaves nothing), over the accent-folded text so "Khövsgöl" is one word."""
+    words = fold(name).split()
+    kept = [w for w in words if w not in CONNECTORS]
+    return frozenset(kept or words)
+
+
+def _strong_grade(subject_place: str, member: Member,
+                  alias_cards: Optional[Mapping[tuple[str, str], str]]) -> Optional[int]:
     if place_norm(subject_place) == place_norm(member.place):
-        return True, True
-    if subject_forms & member_forms:
-        return True, False
+        return GRADE_EXACT
+    subject_forms = _forms(subject_place)
+    if subject_forms & _base_forms(member.place):
+        return GRADE_FORM
     if (not is_generic_name(subject_place) and not is_generic_name(member.place)
             and core_key(subject_place) and core_key(subject_place) == core_key(member.place)):
-        return True, False
+        return GRADE_CORE
     if alias_cards:
         country = fold(member.country)
         subject_cards = {alias_cards[(f, country)] for f in subject_forms if (f, country) in alias_cards}
         if subject_cards:
             if member.card_id and str(member.card_id) in subject_cards:
-                return True, False
-            member_cards = {alias_cards[(f, country)] for f in member_forms if (f, country) in alias_cards}
+                return GRADE_CORE
+            member_cards = {alias_cards[(f, country)] for f in _forms(member.place)
+                            if (f, country) in alias_cards}
             if member_cards & subject_cards:
-                return True, False
-    return False, False
+                return GRADE_CORE
+    if subject_forms & _forms(member.place):  # only through the member's own parenthetical
+        return GRADE_PAREN
+    return None
+
+
+def _loose_match(subject_place: str, member: Member) -> bool:
+    """The A3 grouping relation: one place's word set contains the other's. Non-generic only."""
+    if is_generic_name(subject_place) or is_generic_name(member.place):
+        return False
+    one, two = _place_words(subject_place), _place_words(member.place)
+    return bool(one and two) and (one <= two or two <= one)
+
+
+def match_grade(subject_place: Optional[str], member: Member,
+                alias_cards: Optional[Mapping[tuple[str, str], str]] = None) -> Optional[int]:
+    """How surely `member` is about the Subject's place (GRADE_*; lower is surer), or None.
+
+    `alias_cards`: {(alias_norm, country_norm): card_id} from `acp_shared.place_card_alias` for the
+    Subject's and the members' name forms (non-rejected cards only)."""
+    if not (subject_place or "").strip() or not (member.place or "").strip():
+        return None
+    grade = _strong_grade(subject_place, member, alias_cards)
+    if grade is not None:
+        return grade
+    return GRADE_TOKENS if _loose_match(subject_place, member) else None
+
+
+def place_matches(subject_place: Optional[str], member: Member,
+                  alias_cards: Optional[Mapping[tuple[str, str], str]] = None) -> tuple[bool, bool]:
+    """(matches, exact) for a name / place-card match (grades 0-3). The loose word-set fallback
+    (GRADE_TOKENS) is not a match here: it only seeds a Subject when no member matches by name."""
+    grade = match_grade(subject_place, member, alias_cards)
+    if grade is None or grade > _STRONG:
+        return False, False
+    return True, grade == GRADE_EXACT
 
 
 def choose_representative(
@@ -94,17 +156,22 @@ def choose_representative(
         live = [m for m in live if str(m.tour_id) in tenant_tour_ids]
         if not live:
             return None, SKIP_NO_TENANT_MEMBER
-    matched: list[tuple[Member, bool]] = []
-    for m in live:
-        ok, exact = place_matches(subject_place, m, alias_cards)
-        if ok:
-            matched.append((m, exact))
-    if not matched:
-        return None, SKIP_NO_PLACE_MATCH
-    countries = {fold(m.country) for m, _ in matched if fold(m.country)}
-    if len(countries) > 1:
-        return None, SKIP_SEVERAL_COUNTRIES
-    best = min(matched, key=lambda me: (not me[1], not (me[0].evidence or "").strip(), me[0].atom_id))
+    graded = [(m, g) for m in live if (g := match_grade(subject_place, m, alias_cards)) is not None]
+    strong = [(m, g) for m, g in graded if g <= _STRONG]
+    if strong:
+        matched = strong
+        if len({fold(m.country) for m, _ in matched if fold(m.country)}) > 1:
+            return None, SKIP_SEVERAL_COUNTRIES
+    else:
+        matched = graded
+        if not matched:
+            return None, SKIP_NO_PLACE_MATCH
+        countries = {fold(m.country) for m, _ in matched}
+        if "" in countries:
+            return None, SKIP_LOOSE_COUNTRY_UNKNOWN
+        if len(countries) > 1:
+            return None, SKIP_SEVERAL_COUNTRIES
+    best = min(matched, key=lambda mg: (mg[1], not (mg[0].evidence or "").strip(), mg[0].atom_id))
     return best[0], None
 
 
@@ -158,6 +225,8 @@ async def load_alias_cards(conn, places: Iterable[Optional[str]]) -> dict[tuple[
 
 
 __all__ = [
-    "Member", "place_matches", "choose_representative", "load_segment_members", "load_alias_cards",
-    "SKIP_NO_MEMBER", "SKIP_NO_TENANT_MEMBER", "SKIP_NO_PLACE_MATCH", "SKIP_SEVERAL_COUNTRIES",
+    "Member", "match_grade", "place_matches", "choose_representative", "load_segment_members",
+    "load_alias_cards", "SKIP_NO_MEMBER", "SKIP_NO_TENANT_MEMBER", "SKIP_NO_PLACE_MATCH",
+    "SKIP_SEVERAL_COUNTRIES", "SKIP_LOOSE_COUNTRY_UNKNOWN", "GRADE_EXACT", "GRADE_FORM", "GRADE_CORE",
+    "GRADE_PAREN", "GRADE_TOKENS",
 ]

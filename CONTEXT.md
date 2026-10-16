@@ -617,8 +617,10 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
 
 A Segment Subject is offered and written only from its **seed atom** (AA-857,
 `services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the
-Subject's place (normalised, alias / place-card aware), in one country — never the first member by
-`atom_id`. A Segment with no such member is not offered (log `slate_subject_skipped`) and cannot
+Subject's place (normalised, alias / place-card aware; graded so an exact name beats a member
+that only names the place in its parenthetical; a word-set subset/superset — the relation A3 groups
+by, since `canonical_place` is the shortest wording — is the last-resort tier, non-generic names in
+one known country only), in one country — never the first member by `atom_id`. A Segment with no such member is not offered (log `slate_subject_skipped`) and cannot
 be picked.
 _Avoid_: Weekly Slots (the pre-AA-511 name — fully replaced, never use again).
 

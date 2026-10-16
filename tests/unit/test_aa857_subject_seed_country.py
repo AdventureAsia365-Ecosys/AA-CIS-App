@@ -14,8 +14,9 @@ from services.acp_contract.segment_matching import (
 )
 from services.acp_shared import slate
 from services.acp_shared.subject_seed import (
-    SKIP_NO_MEMBER, SKIP_NO_PLACE_MATCH, SKIP_NO_TENANT_MEMBER, SKIP_SEVERAL_COUNTRIES, Member,
-    choose_representative, place_matches,
+    GRADE_CORE, GRADE_FORM, GRADE_PAREN, GRADE_TOKENS, SKIP_LOOSE_COUNTRY_UNKNOWN, SKIP_NO_MEMBER,
+    SKIP_NO_PLACE_MATCH, SKIP_NO_TENANT_MEMBER, SKIP_SEVERAL_COUNTRIES, Member, choose_representative,
+    match_grade, place_matches,
 )
 
 T_KR, T_BT, T_PK, T_LA = "tour-kr", "tour-bt", "tour-pk", "tour-la"
@@ -61,9 +62,74 @@ def test_national_library_seed_is_a_library_atom_with_evidence_first():
     assert member.atom_id == "f916d98b8863050f"
 
 
-def test_substring_is_not_the_same_place():
+def test_substring_is_not_a_name_match_only_the_loose_tier():
+    # Not a name match; only the lowest (word-set) tier, which never outranks a name match.
     assert place_matches("Gyeongju", GYEONGJU[5]) == (False, False)          # Gyeongju National Museum
+    assert match_grade("Gyeongju", GYEONGJU[5]) == GRADE_TOKENS
     assert place_matches("National Library", NATIONAL_LIBRARY[2])[0] is False
+    kr = [_m("z1", "Gyeongju National Museum", "South Korea", T_KR, evidence="rich"),
+          _m("z9", "Gyeongju", "South Korea", T_KR)]
+    assert choose_representative("Gyeongju", kr)[0].atom_id == "z9"
+
+
+# ── 1b. A3 wording: canonical_place is the SHORTEST member wording (review finding, S239) ───────
+
+@pytest.mark.parametrize("subject,tenant_place", [
+    ("Bukchon", "Bukchon Hanok Village"),
+    ("Gyeongju", "Gyeongju Historic Area"),
+    ("Hoi An", "Hoi An Ancient Town"),
+    ("Angkor Wat", "Angkor Wat Temple"),
+    ("Halong Bay", "Halong Bay cruise"),
+])
+def test_tenant_longer_wording_still_seeds_the_subject(subject, tenant_place):
+    """A3 groups 'Bukchon' with 'Bukchon Hanok Village' (word-set subset) and names the Segment
+    after the shorter one; a tenant whose tour says the longer one must still get the Subject."""
+    members = [_m("a0", subject, "South Korea", "other-tenant-tour"),
+               _m("a1", tenant_place, "South Korea", T_KR)]
+    member, skip = choose_representative(subject, members, tenant_tour_ids={T_KR})
+    assert skip is None and member.atom_id == "a1"
+
+
+def test_tenant_shorter_wording_seeds_a_longer_subject_too():
+    members = [_m("a1", "Bukchon", "South Korea", T_KR)]
+    assert choose_representative("Bukchon Hanok Village", members)[0].atom_id == "a1"
+
+
+def test_loose_tier_still_rejects_the_s239_wrong_places():
+    assert match_grade("Gyeongju", GYEONGJU[0]) is None                       # Lok Virsa museum
+    assert match_grade("National Library", NATIONAL_LIBRARY[0]) is None       # craft school
+    member, skip = choose_representative("Gyeongju", GYEONGJU, tenant_tour_ids={T_PK, T_BT, T_LA})
+    assert member is None and skip == SKIP_NO_PLACE_MATCH
+
+
+def test_loose_tier_needs_one_known_country_and_a_non_generic_name():
+    two = [_m("a1", "Bukchon Hanok Village", "South Korea", "t1"),
+           _m("a2", "Bukchon Village", "Japan", "t2")]
+    assert choose_representative("Bukchon", two) == (None, SKIP_SEVERAL_COUNTRIES)
+    unknown = [_m("a1", "Bukchon Hanok Village", "South Korea", "t1"),
+               _m("a2", "Bukchon Village", None, "t2")]
+    assert choose_representative("Bukchon", unknown) == (None, SKIP_LOOSE_COUNTRY_UNKNOWN)
+    # a generic Subject name names a different place in every city: no loose seed
+    assert match_grade("National Museum", _m("a3", "National Museum Gyeongju", "South Korea", "t")) is None
+    assert match_grade("Gyeongju National Museum", _m("a4", "National Museum", "South Korea", "t")) is None
+
+
+# ── 1c. graded matches: a member's parenthetical ranks below a real name match ─────────────────
+
+def test_member_parenthetical_ranks_below_core_name_even_with_evidence():
+    monastery = _m("a1", "Taktsang Monastery (Paro)", "Bhutan", T_BT, evidence="Hike to Tiger's Nest.")
+    town = _m("a9", "Paro Town", "Bhutan", T_BT)
+    assert match_grade("Paro", monastery) == GRADE_PAREN
+    assert match_grade("Paro", town) == GRADE_CORE
+    member, skip = choose_representative("Paro", [monastery, town])
+    assert skip is None and member.atom_id == "a9"
+    # still a match when it is the only one (the place is named, as where the stop is)
+    assert choose_representative("Paro", [monastery])[0].atom_id == "a1"
+
+
+def test_subject_parenthetical_is_a_form_match():
+    member = _m("a1", "Flaming Cliffs", "Mongolia", "t")
+    assert match_grade("Bayanzag (Flaming Cliffs)", member) == GRADE_FORM
 
 
 def test_only_the_tenants_own_tours_seed_the_subject():
