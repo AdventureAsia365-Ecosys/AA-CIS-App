@@ -2169,7 +2169,10 @@ async def fetch_piece(tenant_id: UUID, piece_id: UUID, pool, request: Optional[R
     return _tenant_safe_piece(row)
 
 
-_UPDATE_CONTENT_TEXT_QUERY = """
+# AA-859 W2 — module level so the tests can mutate it (forgotten-WHERE check). Ownership + status in the
+# WHERE, as before; on the tenant pool RLS (content_piece tenant_isolation, USING + WITH CHECK) also holds
+# the tenant boundary.
+_PIECE_EDIT_SQL = """
     UPDATE acp_shared.content_piece
     SET content_text = $3
     WHERE piece_id = $1 AND tenant_id = $2 AND status IN ('approved', 'held')
@@ -2180,25 +2183,63 @@ _UPDATE_CONTENT_TEXT_QUERY = """
 """
 
 
+def _piece_edit_not_found(piece_id: UUID) -> ContentWritingError:
+    return ContentWritingError(f"piece_id={piece_id} not found for this tenant, or not in an editable state")
+
+
+async def _write_piece_edit_audit(conn_or_pool, tenant_id: UUID, piece_id: UUID, content_text: str) -> None:
+    await write_audit_log(
+        conn_or_pool, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
+        action=TenantAuditAction.CONTENT_PIECE_EDITED, resource_type="content_piece",
+        resource_id=str(piece_id), details={"content_length": len(content_text)},
+    )
+
+
 async def update_piece_content_text(
-    tenant_id: UUID, piece_id: UUID, content_text: str, pool,
+    tenant_id: UUID, piece_id: UUID, content_text: str, pool, request: Optional[Request] = None,
 ) -> dict:
     """AA-569 — tenant hand-edit on My Content (ReviewList.tsx). Ownership + status both enforced
     in the WHERE clause, not a separate check: a 'processing' piece has nothing real to edit yet
     (still being written) and a 'failed' piece has no content_text worth keeping (see
     run_write_background()'s exception-handler finalize call) — same 2-status boundary
-    fetch_review_list() already draws for "does this piece have real content_text to show"."""
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(_UPDATE_CONTENT_TEXT_QUERY, piece_id, tenant_id, content_text)
+    fetch_review_list() already draws for "does this piece have real content_text to show".
+
+    AA-859 W2 — when `request` is passed (the router does), the UPDATE goes through
+    acquire_scoped_conn(PIECE_EDIT_FLAG, fail_closed=True): flag on, it runs on the aa_app_user tenant
+    pool in one transaction with app.tenant_id set LOCAL (RLS holds the boundary even if the WHERE were
+    wrong), and the audit row is written on MAIN after that transaction committed, best-effort
+    (`aa859_piece_edit_audit_failed`, the edit still answers 200). Flag off, or a direct caller with only
+    `pool`: the pre-AA-859 behaviour exactly (admin pool, autocommit UPDATE, audit on the same
+    connection, an audit failure propagates). One `aa859_piece_edit` line per request with
+    used_tenant_pool."""
+    if request is None:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(_PIECE_EDIT_SQL, piece_id, tenant_id, content_text)
+            if row is None:
+                raise _piece_edit_not_found(piece_id)
+            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text)
+        # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
+        return _tenant_safe_piece(row)
+
+    from api.core.aa544_tenant_pool import PIECE_EDIT_FLAG, acquire_scoped_conn
+    async with acquire_scoped_conn(
+        request, str(tenant_id) if tenant_id else "", PIECE_EDIT_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        row = await conn.fetchrow(_PIECE_EDIT_SQL, piece_id, tenant_id, content_text)
+        logger.info("aa859_piece_edit", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                    updated=row is not None, used_tenant_pool=used_tenant_pool)
         if row is None:
-            raise ContentWritingError(
-                f"piece_id={piece_id} not found for this tenant, or not in an editable state"
-            )
-        await write_audit_log(
-            conn, tenant_id=str(tenant_id), actor=f"tenant:{tenant_id}",
-            action=TenantAuditAction.CONTENT_PIECE_EDITED, resource_type="content_piece",
-            resource_id=str(piece_id), details={"content_length": len(content_text)},
-        )
+            raise _piece_edit_not_found(piece_id)
+        if not used_tenant_pool:  # flag off: the old shape, audit next to the UPDATE on the admin conn
+            await _write_piece_edit_audit(conn, tenant_id, piece_id, content_text)
+    if used_tenant_pool:
+        # AA-859 MAIN exception: audit_log has no RLS and no aa_app_user grant; written after the tenant
+        # transaction committed. Best-effort: the edit is saved, a lost audit row must not turn it into a 500.
+        try:
+            await _write_piece_edit_audit(pool, tenant_id, piece_id, content_text)
+        except Exception as exc:
+            logger.warning("aa859_piece_edit_audit_failed", tenant_id=str(tenant_id), piece_id=str(piece_id),
+                           error=repr(exc))
     # AA-613 — tenant-safe projection (this is a tenant edit endpoint, PATCH /v1/.../pieces/{id}).
     return _tenant_safe_piece(row)
 
