@@ -93,27 +93,17 @@ class Worker:
         return {name: k.concurrency for name, k in kinds().items()}
 
     def background_reserve(self) -> int:
-        """AA-712: free slots kept away from background kinds — BACKGROUND_RESERVE, but never so many
-        that a small worker (max_parallel <= 2) could not run a background job at all."""
-        return min(BACKGROUND_RESERVE, max(self.max_parallel - 1, 0))
+        return background_reserve_for(self.max_parallel)
 
     def running_background(self) -> int:
-        background = {name for name, k in kinds().items() if k.background}
+        background = background_kinds()
         return sum(1 for kind in self._running_kinds.values() if kind in background)
 
     def claim_caps(self, free_slots: int, running_background: int = 0) -> dict[str, int]:
-        """The caps passed to claim(): every kind, minus the background kinds when only the reserved
-        slots are free OR when BACKGROUND_MAX_RUNNING background jobs already run on this worker.
-        claim() is FIFO across kinds, so without this a background batch queued before a wave could
-        fill the slots a3_atomize needs (S217: 59-minute atomize tail). The reserve alone is not
-        enough: background jobs claimed before a wave keep their slots, and each slot a wave job
-        frees goes to the next s1_rewrite (review finding 2) — so background work is also capped as
-        a group: 8 slots = s1_rewrite 6 + a3_atomize 1 + background 1."""
-        caps = self.caps()
-        if free_slots <= self.background_reserve() or running_background >= BACKGROUND_MAX_RUNNING:
-            background = {name for name, k in kinds().items() if k.background}
-            caps = {name: cap for name, cap in caps.items() if name not in background}
-        return caps
+        """The caps passed to claim() — see claim_caps_for (AA-751: the ops metrics sampler applies
+        the same rule to each live worker's registered caps)."""
+        return claim_caps_for(self.max_parallel, self.caps(), free_slots, running_background,
+                              background_kinds())
 
     # ── main loop ─────────────────────────────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -284,6 +274,33 @@ WORKER_MAX_PARALLEL_DEFAULT = 8
 # most BACKGROUND_MAX_RUNNING of them run at once on a worker (all background kinds together).
 BACKGROUND_RESERVE = 2
 BACKGROUND_MAX_RUNNING = 1
+
+
+def background_kinds() -> set[str]:
+    return {name for name, k in kinds().items() if k.background}
+
+
+def background_reserve_for(max_parallel: int) -> int:
+    """AA-712: free slots kept away from background kinds — BACKGROUND_RESERVE, but never so many
+    that a small worker (max_parallel <= 2) could not run a background job at all."""
+    return min(BACKGROUND_RESERVE, max(max_parallel - 1, 0))
+
+
+def claim_caps_for(max_parallel: int, caps: dict[str, int], free_slots: int, running_background: int,
+                   background: set[str] | frozenset[str]) -> dict[str, int]:
+    """The caps a worker passes to claim(): every kind in `caps`, minus the `background` kinds when
+    only the reserved slots are free OR when BACKGROUND_MAX_RUNNING background jobs already run on
+    this worker. claim() is FIFO across kinds, so without this a background batch queued before a
+    wave could fill the slots a3_atomize needs (S217: 59-minute atomize tail). The reserve alone is
+    not enough: background jobs claimed before a wave keep their slots, and each slot a wave job
+    frees goes to the next s1_rewrite (review finding 2) — so background work is also capped as a
+    group: 8 slots = s1_rewrite 6 + a3_atomize 1 + background 1.
+
+    Pure (AA-751): Worker.claim_caps and the ops metrics sampler (shared/jobs/backlog.py) both call
+    it, so the "would a live worker claim this row now" rule cannot drift from the worker's."""
+    if free_slots <= background_reserve_for(max_parallel) or running_background >= BACKGROUND_MAX_RUNNING:
+        return {name: cap for name, cap in caps.items() if name not in background}
+    return dict(caps)
 
 
 def worker_max_parallel() -> int:

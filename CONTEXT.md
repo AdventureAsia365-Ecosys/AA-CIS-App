@@ -193,10 +193,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, the five `retention_*` kinds — AA-825,
-    `ops_alert_email` — AA-828, `ops_rds_role_connections` — AA-832).
+    `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
+    `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
-    starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`.
+    starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`. The rule is the
+    pure `worker.claim_caps_for(max_parallel, caps, free_slots, running_background, background)`, also
+    used by the backlog sample (below), so the two cannot drift.
   - **Retention (AA-825, migration 233, data standards DM-7 / C5.4)**: one background kind per log
     table in `services/jobs/retention_job.py` — `retention_llm_call_log` (180 d, daily rollup
     `shared.llm_call_daily`), `retention_tenant_api_usage` (90 d, monthly rollup
@@ -219,14 +222,35 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
     cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
     the PUT) before its batch is deleted.
-  - **RDS connections per role (AA-832)**: `ops_rds_role_connections` counts the sessions of every
-    LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered each run)
-    and publishes `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) per `Role` to
-    CloudWatch namespace `AA/RDS` in one PutMetricData; AA-CIS-Infra alarms on the percentage per
-    role. The ops-probe Lambda calls `POST /admin/job-runner/rds-role-connections/schedule` every
-    5 minutes (nothing new while one is queued/running). Not background (a background kind waits
-    behind any other background job), and `deploy_gate_exempt`: the pre-deploy guard
-    (`GET /admin/job-runner/deploy-gate`) does not count its rows and lists it in `exempt_kinds`.
+  - **Ops metrics sampler (AA-832, AA-751)**: `api/core/ops_metrics_sampler.py`, a background task of
+    the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
+    before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
+    start) it makes one PutMetricData per namespace (boto3 in a thread, connect 3 s / read 5 s, one
+    attempt) and logs one `ops_metrics_sampled` line with the values (`rds_error` / `retired_error` /
+    `jobs_error` when a part fails; the other parts still run). Each part runs under
+    `asyncio.wait_for(PART_TIMEOUT_S = 60)` (the main pool has no `command_timeout`), so a hung query
+    is a `TimeoutError` in the line and the next tick retries. Before the backlog sample it cancels
+    queued/running rows of `shared.jobs.registry.RETIRED_KINDS` (kinds whose handler was removed;
+    `ops_rds_role_connections` today, error `kind removed (AA-751)`, `retired_cancelled` in the line),
+    so a rolling-deploy leftover neither pages as starved nor blocks the deploy gate:
+    - `AA/RDS`, dimension `Role`: `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) for
+      every LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered
+      each tick; the main pool's aa_cis_admin sees every role's sessions);
+    - `AA/Jobs/CIS`, no dimensions (`shared/jobs/backlog.py`): `OverdueRunningJobs` = running rows
+      whose current attempt (`progress.attempt_started_at`, else `started_at`) is older than 2 x the
+      kind's `expected_seconds` (600 if unknown); `OldestQueuedAgeSeconds` = capacity-aware age of the
+      longest-**starved** due queued row, 0 if none. A row is starved when no worker is live
+      (`shared.job_worker`, `WORKER_ALIVE_SECONDS` rule), when no live worker has its kind in `caps`
+      (unregistered), or when a live, non-yielding worker has a free slot, `claim_caps_for` keeps the
+      kind and the kind is under its global cap. The age runs from the latest of `run_after` and the
+      moment capacity last freed (latest finish / re-queue, the worker's start; for no live worker,
+      the last time one was seen), so a full wave or the few seconds before the next poll read 0.
+    AA-CIS-Infra alarms on both (`observability_ecosys.tf`, emails on ALARM only; `*-sampling-stopped`
+    fires when no sample arrives). This replaced the AA-832 chain (ops-probe Lambda every 5 min ->
+    `POST /admin/job-runner/rds-role-connections/schedule` -> job `ops_rds_role_connections` -> worker),
+    both now removed. `@job_kind(..., deploy_gate_exempt=True)` stays as a mechanism (the pre-deploy
+    guard `GET /admin/job-runner/deploy-gate` skips and lists such kinds in `exempt_kinds`); no kind
+    uses it today.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -557,7 +581,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
 - **Sizing:** tenant pool `max_size` 2 per api task, api autoscaling max 7 (AA-CIS-Infra #156), so 14 ≤
   `aa_app_user` CONNECTION LIMIT 15. `aa859_tenant_pool_timing` (wait/hold ms) and the 60 s
   `aa859_main_pool_gauge` line are the inputs for any later resize. Per-role connections are alarmed
-  (`AA/RDS RoleConnectionLimitPct`, AA-832).
+  (`AA/RDS RoleConnectionLimitPct`, AA-832, published by the api's ops metrics sampler, AA-751).
 
 ## Boundaries — what this repo does NOT do
 

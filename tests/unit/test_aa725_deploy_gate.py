@@ -68,9 +68,8 @@ async def test_deploy_gate_safe_when_idle():
 
     pool = _pool_with_counts([])
     result = await admin_job_runner.deploy_gate(_make_request(pool), x_admin_secret=_TEST_SECRET)
-    # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted
-    assert result == {"active": 0, "by_status": {}, "safe_to_deploy": True,
-                      "exempt_kinds": ["ops_rds_role_connections"]}
+    # AA-832: exempt kinds (deploy_gate_exempt) are listed, not counted; AA-751: none left
+    assert result == {"active": 0, "by_status": {}, "safe_to_deploy": True, "exempt_kinds": []}
 
 
 @pytest.mark.asyncio

@@ -31,8 +31,8 @@ jobs:
   # jobs). CI has no RDS access (private subnet), so it asks the LIVE api, which counts shared.job
   # with no time filter. The guard blocks the roll when a job is active, unless a workflow_dispatch
   # run supplied `override_running_jobs` with a reason (logged below). Kinds registered with
-  # `deploy_gate_exempt` (AA-832: the 5-minute ops_rds_role_connections sample) are not counted; the
-  # response lists them in `exempt_kinds`.
+  # `deploy_gate_exempt` (AA-832; no kind uses it since AA-751) are not counted; the response lists
+  # them in `exempt_kinds`.
   preflight:
     name: Pre-deploy job guard
     runs-on: ubuntu-latest

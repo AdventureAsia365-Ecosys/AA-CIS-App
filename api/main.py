@@ -88,6 +88,12 @@ async def lifespan(app: FastAPI):
     from api.core.aa859_main_pool_gauge import start_main_pool_gauge, stop_main_pool_gauge
     main_pool_gauge_task = start_main_pool_gauge(app)
 
+    # AA-751 / AA-832 — every 300 s publish AA/RDS per-role connections and AA/Jobs/CIS backlog metrics
+    # (one PutMetricData per namespace, line `ops_metrics_sampled`). Replaces the Lambda -> endpoint ->
+    # job chain. api only, off when ENVIRONMENT == "test", never raises; cancelled before the pool closes.
+    from api.core.ops_metrics_sampler import start_ops_metrics_sampler, stop_ops_metrics_sampler
+    ops_metrics_task = start_ops_metrics_sampler(app)
+
     # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
     # only when the secret or the pool object cannot be made. Used only by routes that opt in via
     # api/core/aa544_tenant_pool.py::acquire_scoped_conn(), each behind its own Redis flag; all of
@@ -117,6 +123,7 @@ async def lifespan(app: FastAPI):
         if job_worker_task is not None:
             await asyncio.gather(job_worker_task, return_exceptions=True)
 
+    await stop_ops_metrics_sampler(ops_metrics_task)
     await stop_main_pool_gauge(main_pool_gauge_task)
     await pool.close()
     if app.state.tenant_pool is not None:

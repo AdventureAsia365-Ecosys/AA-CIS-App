@@ -11,8 +11,6 @@
   POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved);
                                            with older_than: an admin-only manual override proof run
   POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
-  POST /admin/job-runner/rds-role-connections/schedule  every 5 min: one RDS per-role connection
-                                           sample to CloudWatch AA/RDS (AA-832)
 
 Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, A1 run-tour).
 """
@@ -120,9 +118,9 @@ async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
     interrupt; CI blocks the roll when `safe_to_deploy` is false. Gated by the admin secret so it
     is not a public queue-size probe.
 
-    AA-832: kinds registered with `deploy_gate_exempt` (today only the 5-minute
-    `ops_rds_role_connections` sample) are not counted, and are listed in `exempt_kinds` so the CI
-    log says why a queued row of theirs did not block."""
+    AA-832: kinds registered with `deploy_gate_exempt` are not counted, and are listed in
+    `exempt_kinds` so the CI log says why a queued row of theirs did not block. No kind uses the flag
+    since AA-751 moved the 5-minute RDS sample into the api process (api/core/ops_metrics_sampler.py)."""
     verify_admin_secret(x_admin_secret)
     from shared.jobs.worker import load_kinds
     load_kinds()  # the exemption is a registry flag: make sure every kind is registered here
@@ -276,20 +274,3 @@ async def retention_schedule(request: Request, x_admin_secret: str = Header(None
     out = await retention_job.schedule_all(request.app.state.pool, day=day)
     logger.info("admin_retention_scheduled", day=day, enqueued=len(out["enqueued"]), skipped=out["skipped"])
     return {"day": day, **out}
-
-
-# ── AA-832 — RDS connections per LOGIN role (services/jobs/ops_rds_role_connections_job.py) ─────
-
-
-@router.post("/rds-role-connections/schedule",
-             summary="AA-832 — every 5 min: enqueue one RDS per-role connection sample (scheduler)")
-async def rds_role_connections_schedule(request: Request, x_admin_secret: str = Header(None)):
-    """Driven every 5 minutes by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, its
-    own EventBridge schedule naming this path). Only enqueues: the worker runs the query and the
-    CloudWatch PutMetricData. While a job of the kind is still queued or running nothing new is
-    enqueued (`already_pending`), so a stopped worker leaves one waiting row, not a pile."""
-    verify_admin_secret(x_admin_secret)
-    from services.jobs import ops_rds_role_connections_job
-    out = await ops_rds_role_connections_job.schedule(request.app.state.pool)
-    logger.info("admin_rds_role_connections_scheduled", **out)
-    return out

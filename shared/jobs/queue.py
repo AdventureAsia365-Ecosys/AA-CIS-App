@@ -79,7 +79,11 @@ async def enqueue(pool, kind: str, payload: dict, *, idempotency_key: Optional[s
 
 
 async def claim(pool, worker_id: str, caps: dict[str, int], lease_seconds: int) -> Optional[Job]:
-    """Claims the next due job of a kind in `caps` whose running count is below its cap."""
+    """Claims the next due job of a kind in `caps` whose running count is below its cap.
+
+    `started_at` keeps the FIRST attempt's start; AA-751 (plan F18) also merges
+    `progress.attempt_started_at` = now() on every claim, so the overdue-running metric
+    (shared/jobs/backlog.py) measures the current attempt, not a re-claimed job's first one."""
     if not caps:
         return None
     async with pool.acquire() as conn:
@@ -89,7 +93,9 @@ async def claim(pool, worker_id: str, caps: dict[str, int], lease_seconds: int) 
                 """
                 UPDATE shared.job SET status = 'running', attempt = attempt + 1,
                        locked_by = $1, locked_until = now() + make_interval(secs => $3),
-                       started_at = coalesce(started_at, now()), updated_at = now()
+                       started_at = coalesce(started_at, now()), updated_at = now(),
+                       progress = coalesce(progress, '{}'::jsonb)
+                                  || jsonb_build_object('attempt_started_at', now())
                 WHERE id = (
                     SELECT j.id FROM shared.job j
                     WHERE j.status = 'queued' AND j.run_after <= now() AND NOT j.cancel_requested
@@ -264,6 +270,27 @@ async def request_cancel(pool, job_id: str) -> Optional[str]:
         job_id,
     )
     return row["status"] if row else None
+
+
+async def cancel_retired_kinds(pool, retired: dict[str, str]) -> int:
+    """Cancel every queued/running row of the retired kinds ({kind: issue}); returns the count.
+    The lock is cleared too, so a worker still finishing such a row cannot overwrite the status
+    (_finish matches on locked_by). Idempotent; a no-op when nothing matches."""
+    if not retired:
+        return 0
+    status = await pool.execute(
+        """
+        UPDATE shared.job SET status = 'cancelled',
+               error = 'kind removed (' || ($2::jsonb ->> kind) || ')',
+               locked_by = NULL, locked_until = NULL, finished_at = now(), updated_at = now()
+        WHERE kind = ANY($1::text[]) AND status IN ('queued', 'running')
+        """,
+        list(retired), json.dumps(retired),
+    )
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except ValueError:
+        return 0
 
 
 async def retry(pool, job_id: str) -> bool:
