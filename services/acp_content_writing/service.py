@@ -389,6 +389,12 @@ F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
 # rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).
 BLOG_TRUTH_CUT_ATTEMPT = MAX_ATTEMPTS
 TRUTH_CUT_GATES = frozenset({"F1_grounding", "F9_cta_fact"})
+# AA-777 (r6 fix 6) — an F17_trip_fact item the blog's attempt 3 cuts too, when F17 was already sent to a
+# sentence repair once: deterministic findings whose own instruction is to cut (a time / position / pace /
+# background base the source lacks, an optional activity sold as fixed, an interpreted thin-moment coda).
+# Never the family caveat ('add ONE', never a cut) or a played-down hazard ('keep the hazard').
+F17_CUT_GATE = "F17_trip_fact"
+_F17_CUT_RE = re.compile(r"\bcut it\b|cut the added clause")
 
 
 def _plain(text: Optional[str]) -> str:
@@ -423,21 +429,41 @@ def _blog_cut_refusal(before: str, after: Optional[str]) -> Optional[str]:
     return None
 
 
+def _cut_gates_repaired(repair_log: list[dict]) -> frozenset:
+    """AA-777 — the cut gates (F1_grounding, F9_cta_fact and, r6 fix 6, F17_trip_fact) an earlier attempt
+    already sent to a sentence repair: failing and blocking in the trimmed ledger (AA-791) of a repair_log
+    entry the sentence repair ran on (`repair_mode` 'sentences')."""
+    return frozenset(
+        g.get("gate") for e in repair_log if e.get("repair_mode") == "sentences"
+        for g in e.get("gate_ledger") or []
+        if g.get("gate") in TRUTH_CUT_GATES | {F17_CUT_GATE} and not g.get("passed") and g.get("blocking", True))
+
+
 def _truth_repaired_before(repair_log: list[dict]) -> bool:
     """AA-777 — did an earlier attempt already send a failing F1/F9 truth gate to a sentence repair?
-    True when a repair_log entry the sentence repair ran on (`repair_mode` 'sentences') had F1_grounding
-    or F9_cta_fact failing and blocking in its own trimmed ledger (AA-791). A truth gate first seen after
-    a full rewrite, or only after a style-only repair, still gets its one repair."""
-    return any(
-        e.get("repair_mode") == "sentences"
-        and any(g.get("gate") in TRUTH_CUT_GATES and not g.get("passed") and g.get("blocking", True)
-                for g in e.get("gate_ledger") or [])
-        for e in repair_log)
+    A truth gate first seen after a full rewrite, or only after a style-only repair, still gets its one
+    repair."""
+    return bool(_cut_gates_repaired(repair_log) & TRUTH_CUT_GATES)
+
+
+def _cuttable(item: dict, repaired: frozenset) -> bool:
+    """AA-777 — may the blog's attempt 3 cut this plan() item? A truth item (its `gate` is F1/F9) once
+    any truth gate was repaired before (the S239 #761 rule); r6 fix 6 — an item with an F17 'cut it'
+    finding once F17 was repaired before (r6 a2133050: the thin coda held at attempt 3 because the F9
+    item on the same sentence was dropped and F17 items were never cut). r7 review — never an item whose
+    sentence must stay (the family caveat 'add ONE', a played-down hazard 'keep the hazard'), checked first:
+    merged with a truth or 'cut it' finding, it would otherwise be cut and the hazard lost."""
+    if sentence_repair.keeps_sentence(item.get("problem")):
+        return False
+    if item.get("gate") in TRUTH_CUT_GATES and repaired & TRUTH_CUT_GATES:  # plan() puts a truth gate first
+        return True
+    return (F17_CUT_GATE in (item.get("gates") or [item.get("gate")]) and F17_CUT_GATE in repaired
+            and bool(_F17_CUT_RE.search(item.get("problem") or "")))
 
 
 def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: frozenset = frozenset(),
-                          cta: Optional[str] = None,
-                          moments: Optional[list] = None) -> tuple[str, list[dict], Optional[dict]]:
+                          cta: Optional[str] = None, moments: Optional[list] = None,
+                          repaired: frozenset = TRUTH_CUT_GATES) -> tuple[str, list[dict], Optional[dict]]:
     """AA-777 — blog, attempt 3: cut the F1_grounding / F9_cta_fact items of `items` (sentence_repair.plan
     on attempt 2's ledger, i.e. truth items still failing after attempt 2's sentence repair) with
     sentence_repair.delete_flagged (+ tidy_after_cut) instead of sending them to a second repair call.
@@ -446,8 +472,10 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
     - a refused cut (`_blog_cut_refusal`: under the blog minimum, a FAQ / ending broken, nothing safe to
       cut) or a left item that cannot be found again → (text, items, entry 'truth_cut_refused'): the
       old path (one more repair of every item) runs and the hold stays if it fails;
-    - otherwise → (cut text, the other items + any truth item delete_flagged refused, entry 'truth_cut')."""
-    truth = [it for it in items if it.get("gate") in TRUTH_CUT_GATES]
+    - otherwise → (cut text, the other items + any truth item delete_flagged refused, entry 'truth_cut').
+    r6 fix 6 — `repaired` (`_cut_gates_repaired`) also lets an F17 'cut it' item be cut (`_cuttable`); the
+    default keeps the #761 behaviour (F1/F9 items only)."""
+    truth = [it for it in items if _cuttable(it, repaired)]
     if not truth:
         return content_text, items, None
     cut = sentence_repair.delete_flagged(content_text, truth, ignore=ignore, cta=cta, moments=moments)
@@ -468,7 +496,8 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
         return content_text, items, {"repair_mode": "truth_cut_refused", "sentences_cut": 0,
                                      "truth_cut_refused": refusal}
     return cut, rest, {"repair_mode": "truth_cut", "sentences_cut": len(cut_items),
-                       "cut_sentences": [it["sentence"][:200] for it in cut_items]}
+                       "cut_sentences": [it["sentence"][:200] for it in cut_items],
+                       "cut_gates": sorted({g for it in cut_items for g in (it.get("gates") or [it.get("gate")])})}
 
 
 def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
@@ -1431,10 +1460,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # AA-777 — blog, attempt 3: an F1/F9 truth item still failing after one sentence repair
                 # is cut in code (never under the blog minimum) instead of a second repair call.
                 truth_cut, truth_cut_done = None, False
-                if (channel == "blog" and attempt >= BLOG_TRUTH_CUT_ATTEMPT and repair_items
-                        and _truth_repaired_before(repair_log)):
+                cut_repaired = _cut_gates_repaired(repair_log) if channel == "blog" else frozenset()
+                if (channel == "blog" and attempt >= BLOG_TRUTH_CUT_ATTEMPT and repair_items and cut_repaired):
                     cut_text, repair_items, truth_cut = _cut_blog_truth_items(
-                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)
+                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments,
+                        repaired=cut_repaired)
                     repair_log[-1].update(truth_cut or {})
                     if truth_cut and truth_cut["repair_mode"] == "truth_cut":
                         truth_cut_done = True
@@ -1475,8 +1505,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 elif replacements is not None:
                     # S234 round 2 — splice_checked reverts any repair that leaves a new repeat or a
                     # pronoun with no referent (panel §5 fix 7: #19, #10) to its pre-repair sentence.
+                    # AA-777 (r6 fix 1) — and a replacement that adds a number / time / pace word the sentence
+                    # and the source lack keeps its old sentence (`trip_ctx` + the F1 grounding text).
                     content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
-                                                                  ignore=brand_ignore, cta=cta, moments=hyg.moments)
+                                                                  ignore=brand_ignore, cta=cta, moments=hyg.moments,
+                                                                  trip_ctx=trip_ctx, source=grounding_text)
                     _show_live_text(content_text, seo_meta, channel)  # AA-668: the spliced text, not the patch
                     # AA-777 — a truth cut followed by a repair of the other items keeps both in the log
                     repair_log[-1]["repair_mode"] = "truth_cut+sentences" if truth_cut_done else "sentences"
@@ -1488,9 +1521,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     kept = sum(item.get("guard") == "repeat_kept" for item in repair_items)
                     if kept:
                         repair_log[-1]["repeat_guard_kept"] = kept
+                    hazard_kept = sum(item.get("guard") == "hazard_kept" for item in repair_items)
+                    if hazard_kept:  # AA-777 r7 review — a repair that cut a hazard sentence was not spliced
+                        repair_log[-1]["hazard_kept"] = hazard_kept
                     deduped = sum(item.get("guard") == "dedupe" for item in repair_items)
                     if deduped:
                         repair_log[-1]["dedupe_after_repair"] = True
+                    specifics = [item for item in repair_items if item.get("guard") == "specifics"]
+                    if specifics:
+                        repair_log[-1]["specifics_reverts"] = len(specifics)
+                        repair_log[-1]["specifics_problems"] = [p for it in specifics for p in it["specifics"]][:5]
                     reverted = [item for item in repair_items if item.get("guard") == "integrity"]
                     if reverted:
                         repair_log[-1]["integrity_reverts"] = len(reverted)
