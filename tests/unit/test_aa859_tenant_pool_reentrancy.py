@@ -2,9 +2,9 @@
 
 The tenant pool has 1-2 connections per api task (aa_app_user CONNECTION LIMIT 15 shared by every task). A
 handler that nests a second acquire_scoped_conn (or a helper that does) inside the first waits for a
-connection only it can release: with max_size 1 that is a self-deadlock until the 5 s acquire timeout, then
-a 503. The stub pool below raises on a nested acquire from the same task; sequential blocks (disconnect's
-two short transactions) are fine.
+connection only it can release: with max_size 1 that is a self-deadlock (with 2, two such requests at once)
+until the 5 s acquire timeout, then a 503. The stub pool below raises on a nested acquire from the same
+task; sequential blocks (disconnect's two short transactions) are fine.
 
 Every handler moved to the tenant pool gets an entry in HANDLERS (later AA-859 PRs add theirs).
 """

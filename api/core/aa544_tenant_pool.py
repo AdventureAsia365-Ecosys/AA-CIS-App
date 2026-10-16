@@ -14,6 +14,9 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
   - AA-815 + AA-817 (237): DELETE /v1/integrations/{wordpress,facebook} (v1_integrations.py::_disconnect)
   - AA-817 (S237): GET /v1/content-writing/requests/{id}/latest-piece
     (service.py::fetch_latest_piece_for_request)
+Planned (AA-859 wave 2, S240; flags declared below, each route joins in its own PR): content piece
+PATCH (W2), angle-gate choose + reopen (W3), unpublish (W4), T2 version reads (W5) and PATCH (W6),
+integration connect / test / status (W9).
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool
 (aa_cis_admin, BYPASSRLS) unchanged, always. This module adds a SECOND pool, aa_app_user
@@ -59,17 +62,28 @@ INTEGRATION_DISCONNECT_FLAG = "aa544:integration_disconnect_pool"
 # angle_gate_request have had RLS and grants for aa_app_user since 113/115/147; 229 only rewrites the
 # policies to the NULLIF/WITH CHECK template).
 CONTENT_PIECE_READS_FLAG = "aa817:content_piece_reads_pool"
+# AA-859 wave 2 (plan D7). Declared together, ahead of the route PRs, so those PRs do not conflict on
+# this file; each stays unused until its route PR wires it in. "Needs 241" = the route needs migration
+# 241's grants / RLS, so a 241 rollback must turn that flag off first.
+PIECE_EDIT_FLAG = "aa859:piece_edit_pool"                    # W2 content piece PATCH; no 241
+T2_VERSION_WRITE_FLAG = "aa859:t2_version_write_pool"        # W6 tenant tour version PATCH; no 241
+ANGLE_GATE_DECIDE_FLAG = "aa859:angle_gate_decide_pool"      # W3 angle-gate choose + reopen; needs 241
+UNPUBLISH_FLAG = "aa859:unpublish_pool"                      # W4 unpublish; no 241
+T2_VERSION_READS_FLAG = "aa859:t2_version_reads_pool"        # W5 T2 version reads (job status on MAIN); no 241
+INTEGRATION_CONNECT_FLAG = "aa859:integration_connect_pool"  # W9 integration GET / POST / test; needs 241
 
 _SECRET_ID = "aa-cis/dev/rds-app-user"
 
-# AA-817 (critique C4) — sizing against `ALTER ROLE aa_app_user CONNECTION LIMIT 15` (migration 234) and
-# api autoscaling max_capacity 10 (AA-CIS-Infra modules/ecs/main.tf). Data standards C2.2 row `cis-tenant`:
-# max_size 1 per api task while the routes are canaries, so 10 tasks hold at most 10 connections (5 left
-# for a rolling deploy). min_size 0 + a short idle lifetime: an idle task holds no connection at all, and a
-# task that cannot get one (limit reached, RDS down) answers 503 per request (aa817_tenant_pool_unavailable)
-# instead of losing the pool for its whole life, which is what min_size=1 at boot did.
+# AA-817 (critique C4) / AA-859 PR-S — sizing against `ALTER ROLE aa_app_user CONNECTION LIMIT 15`
+# (migration 234) and api autoscaling max_capacity 7 (AA-CIS-Infra modules/ecs/main.tf, lowered from 10 in
+# Infra #156). Data standards C2.2 row `cis-tenant`: max_size 2 per api task x 7 tasks = 14 <= 15. 2, not 1:
+# with 1, one slow statement (up to the 15 s statement_timeout) makes every queued tenant request on that
+# task 503 after the 5 s acquire timeout (head-of-line blocking). Change this and max_capacity together.
+# min_size 0 + a short idle lifetime: an idle task holds no connection at all, and a task that cannot get
+# one (limit reached, RDS down) answers 503 per request (aa817_tenant_pool_unavailable) instead of losing
+# the pool for its whole life, which is what min_size=1 at boot did.
 TENANT_POOL_MIN_SIZE = 0
-TENANT_POOL_MAX_SIZE = 1
+TENANT_POOL_MAX_SIZE = 2
 TENANT_POOL_ACQUIRE_TIMEOUT_S = 5.0      # C2.3g: fail fast on exhaustion, <= 5 s
 TENANT_POOL_IDLE_LIFETIME_S = 60.0       # asyncpg max_inactive_connection_lifetime
 TENANT_POOL_SERVER_SETTINGS = {
