@@ -320,8 +320,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   its last readers (`GET /admin/acp/stuck-runs`, `POST /admin/acp/runs/{run_id}/force-fail`,
   `services/acp_shared/cost_utils.py`, `services/acp_canary/`) are deleted. Stuck or long work is a
   `shared.job` row (reaper + admin Jobs page). `tests/unit/test_aa751_no_acp_runs_reader.py` fails
-  on any new SQL against `acp_runs`. `infrastructure/canary/` (acc1 EventBridge skeleton) is kept
-  until its live schedule is confirmed absent.
+  on any new SQL against `acp_runs`. `infrastructure/canary/` (acc1 EventBridge skeleton) is deleted
+  too: its schedule and Lambda no longer exist (checked 16/10/2026).
 
 - **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
