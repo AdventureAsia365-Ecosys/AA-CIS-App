@@ -37,6 +37,10 @@ class JobKind:
     # AA-712: a background kind never takes one of the worker's last BACKGROUND_RESERVE free
     # slots (worker.claim_caps), so it cannot starve the pipeline kinds of a wave (S217 lesson).
     background: bool = False
+    # AA-832: the pre-deploy guard (GET /admin/job-runner/deploy-gate) does not count this kind's
+    # queued/running rows. Only for short, read-only, frequently re-scheduled kinds whose loss to a
+    # deploy costs one sample at most (ops_rds_role_connections, every 5 min).
+    deploy_gate_exempt: bool = False
 
 
 _KINDS: dict[str, JobKind] = {}
@@ -44,9 +48,10 @@ _KINDS: dict[str, JobKind] = {}
 
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
-             expected_seconds: int = 600, background: bool = False):
+             expected_seconds: int = 600, background: bool = False, deploy_gate_exempt: bool = False):
     def deco(fn):
-        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background)
+        _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background,
+                               deploy_gate_exempt)
         return fn
     return deco
 

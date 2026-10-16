@@ -180,7 +180,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, and the five `retention_*` kinds — AA-825).
+    `place_geocode`, `tour_graph_build` — AA-712, the five `retention_*` kinds — AA-825,
+    `ops_alert_email` — AA-828, `ops_rds_role_connections` — AA-832).
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
     starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`.
@@ -206,6 +207,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
     cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
     the PUT) before its batch is deleted.
+  - **RDS connections per role (AA-832)**: `ops_rds_role_connections` counts the sessions of every
+    LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered each run)
+    and publishes `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) per `Role` to
+    CloudWatch namespace `AA/RDS` in one PutMetricData; AA-CIS-Infra alarms on the percentage per
+    role. The ops-probe Lambda calls `POST /admin/job-runner/rds-role-connections/schedule` every
+    5 minutes (nothing new while one is queued/running). Not background (a background kind waits
+    behind any other background job), and `deploy_gate_exempt`: the pre-deploy guard
+    (`GET /admin/job-runner/deploy-gate`) does not count its rows and lists it in `exempt_kinds`.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
