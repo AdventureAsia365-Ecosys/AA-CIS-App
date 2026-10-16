@@ -122,15 +122,9 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
     { id: "title", accessorKey: "title", header: "Title / angle", enableSorting: false,
       cell: (c) => <span style={{ display: "block", maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.row.original.title ?? ""}>{c.row.original.title ?? "—"}</span> },
     { id: "status", accessorKey: "status", header: "Status", cell: (c) => statusBadge(c.row.original.status) },
-    { id: "failed_gates", header: "Blocking fails", enableSorting: false,
-      cell: (c) => <GateChips gates={c.row.original.failed_gates} tone="danger" /> },
-    { id: "flag_gates", header: "Warnings", enableSorting: false,
-      cell: (c) => <GateChips gates={c.row.original.flag_gates} tone="warning" /> },
-    { id: "attempt", accessorKey: "attempt_number", header: "Att.",
-      cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt_number}</span> },
-    { id: "cost_usd", accessorKey: "cost_usd", header: "Cost",
-      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
     // AA-791 — the latest human label (and how many people labelled), once migration 231 is applied.
+    // Sits right after Status (S239) so it is on screen at 1440 px; the gate-chip columns after it
+    // can be wide and used to push it into the horizontal scroll.
     ...(labelsEnabled ? [{ id: "label", header: "Label", enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
@@ -142,6 +136,14 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
           </span>
         );
       } } as ColumnDef<PieceRow, unknown>] : []),
+    { id: "failed_gates", header: "Blocking fails", enableSorting: false,
+      cell: (c) => <GateChips gates={c.row.original.failed_gates} tone="danger" /> },
+    { id: "flag_gates", header: "Warnings", enableSorting: false,
+      cell: (c) => <GateChips gates={c.row.original.flag_gates} tone="warning" /> },
+    { id: "attempt", accessorKey: "attempt_number", header: "Att.",
+      cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt_number}</span> },
+    { id: "cost_usd", accessorKey: "cost_usd", header: "Cost",
+      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
   ], [labelsEnabled]);
   const sorting: SortingState = [{ id: view.sort, desc: view.dir === "desc" }];
   return (

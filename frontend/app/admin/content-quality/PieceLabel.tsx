@@ -33,24 +33,36 @@ const fieldStyle: React.CSSProperties = {
   fontSize: 12, padding: "6px 8px", border: `1px solid ${A.line}`, borderRadius: 6, background: A.card, color: A.ink,
 };
 
-function draftFrom(mine: Label | null): PieceLabelBody {
+// The form's working copy. `label` is null until the admin picks a verdict: an unlabelled piece
+// starts with no verdict selected, so it cannot be saved as "As-is" by a stray click (S239).
+type LabelDraft = Omit<PieceLabelBody, "label"> & { label: PieceLabelValue | null };
+
+function draftFrom(mine: Label | null): LabelDraft {
   return {
-    label: mine?.label ?? "as_is", defects: { ...(mine?.defects ?? {}) },
+    label: mine?.label ?? null, defects: { ...(mine?.defects ?? {}) },
     minutes_to_fix: mine?.minutes_to_fix ?? null, reason: mine?.reason ?? null,
   };
+}
+
+// The POST body, or null while no verdict is chosen (Save stays disabled).
+function labelBodyFrom(d: LabelDraft): PieceLabelBody | null {
+  if (!d.label) return null;
+  return { ...d, label: d.label, reason: (d.reason ?? "").trim() || null };
 }
 
 function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const [d, setD] = useState<PieceLabelBody>(() => draftFrom(mine));
+  const [d, setD] = useState<LabelDraft>(() => draftFrom(mine));
+  const body = labelBodyFrom(d);
   const save = useMutation({
     mutationFn: (body: PieceLabelBody) =>
       apiSend<PieceLabels>(`/api/admin/content-quality/pieces/${piece.piece_id}/label`, { body, admin: true }),
     onSuccess: (r) => {
       qc.setQueryData(["cq-piece-label", piece.piece_id], (old: PieceLabels | undefined) => ({ ...old, ...r }));
       qc.invalidateQueries({ queryKey: ["cq-pieces"] });
-      toast.success(`Labelled ${LABEL_NAMES[r.mine?.label ?? d.label]}`);
+      const saved = r.mine?.label ?? d.label;
+      toast.success(saved ? `Labelled ${LABEL_NAMES[saved]}` : "Label saved");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e), 8000),
   });
@@ -100,11 +112,12 @@ function LabelForm({ piece, mine }: { piece: PieceDetail; mine: Label | null }) 
                 style={{ ...fieldStyle, width: "100%", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <span data-testid="cq-label-save">
-          <Button size="sm" variant="primary" disabled={save.isPending}
-                  onClick={() => save.mutate({ ...d, reason: (d.reason ?? "").trim() || null })}>
+          <Button size="sm" variant="primary" disabled={save.isPending || !body}
+                  onClick={() => { if (body) save.mutate(body); }}>
             {save.isPending ? "Saving…" : mine ? "Update my label" : "Save label"}
           </Button>
         </span>
+        {!body && <span data-testid="cq-label-pick-hint" style={{ fontSize: 11.5, color: A.muted }}>Pick a verdict to save</span>}
         {mine && <span style={{ fontSize: 11.5, color: A.muted }}>Saved {fmtTime(mine.labelled_at)}</span>}
       </div>
     </div>
