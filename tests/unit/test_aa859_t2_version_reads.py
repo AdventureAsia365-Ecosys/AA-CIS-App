@@ -324,3 +324,19 @@ async def test_version_not_found_on_tenant_pool_is_404_without_history_or_main()
     tenant.fetch.assert_not_awaited()
     request.app.state.pool.acquire.assert_not_called()
     assert _lines(logs, "version")[0]["found"] is False
+
+
+# ── flag ownership: D5b must not ride on the D5a flag ─────────────────────────
+
+def test_t2_version_reads_flag_is_used_only_by_the_three_d5a_handlers():
+    """Review of PR-D5a: once this flag is verified and left on, any route added under it moves to the
+    tenant pool the moment its deploy rolls out, with no flip step or live check of its own, and reverting
+    it would also revert D5a. D5b (/{id}/full tenant branch, /{id}, /versions/{id}/export-docx) needs its
+    own flag constant in aa544_tenant_pool.py; this test fails if it reuses T2_VERSION_READS_FLAG."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(v1_tours))
+    users = {fn.name for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and any(isinstance(n, ast.Name) and n.id == "T2_VERSION_READS_FLAG" for n in ast.walk(fn))}
+    assert users == {"browse_pool", "list_my_versions", "get_version"}

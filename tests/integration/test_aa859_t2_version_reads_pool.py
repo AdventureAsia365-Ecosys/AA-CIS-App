@@ -104,10 +104,11 @@ async def _tenant(conn):
     return str(tid)
 
 
-async def _master_tour(conn, name):
+async def _master_tour(conn, name, raw_tenant=MASTER, country="Vietnam"):
     tour_id = uuid.uuid4()
     await conn.execute("INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, "
-                       "duration) VALUES ($1, $2, $3, $4, 'Vietnam', '3 days')", tour_id, MASTER, BATCH_ID, name)
+                       "duration) VALUES ($1, $2, $3, $4, $5, '3 days')", tour_id, raw_tenant, BATCH_ID, name,
+                       country)
     return await conn.fetchval(
         "INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, tenant_id, aa_name, "
         "aa_summary, aa_highlights, master_status) VALUES ($1, $2, $3, $4, 'S', '[]'::jsonb, 'active') "
@@ -244,6 +245,26 @@ async def test_pool_rewritten_flag_rls_holds_when_the_where_is_forgotten(ctx, mo
     assert on["data"][0]["already_rewritten"] is False, "tenant C saw A's / B's rewrites on the tenant pool"
     leaked = await _browse(ctx, ctx.c, flag_on=False)
     assert leaked["data"][0]["already_rewritten"] is True, "sanity: the admin pool is not filtered"
+
+
+@pytest.mark.asyncio
+async def test_pool_master_tour_on_a_non_master_raw_row_loses_raw_fields_on_tenant_pool(ctx):
+    """Known divergence, pinned (review of PR-D5a): 239 lets aa_app_user read raw_tours rows only where
+    tenant_id = AA master, while the admin pool joins any raw_tours row. A master published tour whose
+    raw_tours row has another tenant_id therefore loses country / duration / price_raw (and its country in
+    the dropdown) on the tenant pool. Dev must have 0 such rows before the flip (pre-flip probe in
+    docs/implementation-notes/AA-859-d5.md); if this test starts failing, the policy changed and the probe
+    can be dropped."""
+    name = f"AA859-D5-odd {uuid.uuid4().hex[:8]}"
+    await _master_tour(ctx.conn, name, raw_tenant=ctx.a, country="Laos")
+
+    async def browse(flag_on):
+        return await v1_tours.browse_pool(_request(ctx.conn, flag_on), {"sub": ctx.c}, page=1, page_size=20,
+                                          country=None, search=name, duration_min=None, duration_max=None,
+                                          sort="newest")
+    off, on = await browse(False), await browse(True)
+    assert [d["country"] for d in off["data"]] == ["Laos"] and "Laos" in off["countries"]
+    assert [d["country"] for d in on["data"]] == [None] and "Laos" not in on["countries"]
 
 
 # ── premise: shared.job is not readable on the tenant pool ────────────────────
