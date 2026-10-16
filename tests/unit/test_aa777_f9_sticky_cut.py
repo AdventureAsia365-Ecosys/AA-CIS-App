@@ -23,11 +23,16 @@ CHEF_FLAG = {"status": "manual_check", "failure_codes": ["FACT_CHECK_MANUAL_CHEC
              "unsupported_claims": [{"sentence": CHEF, "claim": "private chef", "why_not_in_source": "no meals"}]}
 
 
-def _f9(data: dict, text: str = PIECE, passed=None):
-    with patch.object(qg, "invoke_judge", return_value={"text": json.dumps({**PASS, **data})}), \
+def _f9(data: dict, text: str = PIECE, passed=None, raw_text=None, stop_reason=None):
+    raw = {"text": raw_text if raw_text is not None else json.dumps({**PASS, **data}), "stop_reason": stop_reason}
+    with patch.object(qg, "invoke_judge", return_value=raw), \
          patch.object(qg, "_log_t10_judge_call") as log, patch.object(qg, "logger") as lg:
         results = qg.gate_brand_voice(text, CTA, "rubric", source_text="seed", passed_sentences=passed)
     return {r["gate"]: r for r in results}["F9_cta_fact"], log, lg
+
+
+def _key(sentence: str, text: str = PIECE) -> str:
+    return qg._f9_located_key(text, sentence)
 
 
 # ---------------------------------------------------------------- scope 1: sticky pass
@@ -37,8 +42,8 @@ class TestStickyPass:
         passed: set[str] = set()
         f9, _, _ = _f9({}, passed=passed)
         assert f9["passed"]
-        assert qg._cmp_fold(CHEF) in passed
-        assert qg._cmp_fold("It was built in 1637 by the Zhabdrung.") in passed
+        assert _key(CHEF) in passed
+        assert _key("It was built in 1637 by the Zhabdrung.") in passed
 
     def test_reflag_of_an_unchanged_passed_sentence_is_dropped(self):
         passed: set[str] = set()
@@ -66,8 +71,8 @@ class TestStickyPass:
         passed: set[str] = set()
         f9, _, _ = _f9(CHEF_FLAG, passed=passed)
         assert f9["passed"] is False
-        assert qg._cmp_fold(CHEF) not in passed
-        assert qg._cmp_fold("It was built in 1637 by the Zhabdrung.") in passed
+        assert _key(CHEF) not in passed
+        assert _key("It was built in 1637 by the Zhabdrung.") in passed
         again, _, _ = _f9(CHEF_FLAG, passed=passed)  # flagged twice → still a real failure
         assert again["passed"] is False and again["blocking"] is True
 
@@ -76,7 +81,7 @@ class TestStickyPass:
         passed: set[str] = set()
         _f9({**CHEF_FLAG, "unsupported_claims": [{"sentence": CHEF, "claim": "chef", "why_not_in_source": ""}]},
             passed=passed)
-        assert qg._cmp_fold(CHEF) not in passed
+        assert _key(CHEF) not in passed
 
     def test_reasonless_verdict_and_outage_record_nothing(self):
         passed: set[str] = set()
@@ -98,6 +103,108 @@ class TestStickyPass:
                                       meta_description="m", passed_sentences=passed)
         f9 = res[0]
         assert "sticky_pass" not in f9 and f9["violations"][0].startswith("title unsupported claim")
+
+    # -- PR review on cc265e22 --------------------------------------------------------------------
+
+    def test_paraphrased_claim_quote_passes_nothing(self):
+        """A claim quote that locates in no body sentence flags a sentence nobody can name: the verdict
+        adds nothing, so the exact re-flag of that sentence next attempt still blocks."""
+        butter = "Monks serve butter tea to every visitor at noon."
+        text = PIECE.replace(CHEF, butter)
+        para = "Visitors get butter tea from the monks around midday"
+        passed: set[str] = set()
+        f9, _, lg = _f9({**CHEF_FLAG, "flagged_phrases": [para], "unsupported_claims": [
+            {"sentence": para, "claim": "butter tea", "why_not_in_source": "no tea"}]}, text=text, passed=passed)
+        assert f9["passed"] is False and passed == set()
+        lg.info.assert_any_call("F9_sticky_pass_skipped", truncated=False, unlocated_quote=True)
+        exact = {**CHEF_FLAG, "flagged_phrases": [butter],
+                 "unsupported_claims": [{"sentence": butter, "claim": "butter tea", "why_not_in_source": "no tea"}]}
+        again, _, _ = _f9(exact, text=text, passed=passed)
+        assert again["passed"] is False and again["blocking"] is True and "sticky_pass" not in again
+
+    def test_title_claim_does_not_block_the_passed_set(self):
+        """A claim quoting the search title is located (in the title), so the body still records."""
+        passed: set[str] = set()
+        title = "Private chefs every night in Punakha valley"
+        flag = {**CHEF_FLAG, "unsupported_claims": [{"sentence": title, "claim": "chefs", "why_not_in_source": "x"}]}
+        with patch.object(qg, "invoke_judge", return_value={"text": json.dumps({**PASS, **flag})}), \
+             patch.object(qg, "_log_t10_judge_call"):
+            qg.gate_brand_voice(PIECE, CTA, "rubric", source_text="seed", seo_title=title,
+                                meta_description="m", passed_sentences=passed)
+        assert _key("It was built in 1637 by the Zhabdrung.") in passed
+
+    def test_truncated_verdict_passes_nothing(self):
+        """json_repair salvages a reply cut before its second claim: that claim's sentence must not
+        read as passed."""
+        full = {**PASS, **CHEF_FLAG, "unsupported_claims": [
+            {"sentence": "It was built in 1637 by the Zhabdrung.", "claim": "1637", "why_not_in_source": "x"},
+            {"sentence": CHEF, "claim": "private chef", "why_not_in_source": "no meals"}]}
+        body = json.dumps(full)
+        cut = body[:body.index('{"sentence": "Every guest')]
+        passed: set[str] = set()
+        f9, _, _ = _f9({}, passed=passed, raw_text=cut)
+        assert f9["passed"] is False  # the salvaged flag still counts
+        assert passed == set()
+
+    @pytest.mark.parametrize("reason", ["length", "max_tokens"])
+    def test_verdict_cut_at_max_tokens_passes_nothing(self, reason):
+        passed: set[str] = set()
+        _f9({}, passed=passed, stop_reason=reason)
+        assert passed == set()
+
+    def test_a_json_list_reply_is_judge_unavailable(self):
+        passed: set[str] = set()
+        f9, _, _ = _f9({}, passed=passed, raw_text="[1, 2]")
+        assert f9["violations"][0].startswith("judge unavailable") and f9["blocking"] is False
+        assert passed == set()
+
+    def test_changed_neighbour_makes_the_sentence_new(self):
+        """'It was founded in 1692.' passed after 'We visit Taktsang Monastery.' is a different claim
+        after 'We visit Kyichu Lhakhang.': a justified re-flag is kept."""
+        founded = "It was founded in 1692 by the lama."
+        before = f"We visit Taktsang Monastery on day two. {founded} " + CTA
+        after = f"We visit Kyichu Lhakhang on day two. {founded} " + CTA
+        passed: set[str] = set()
+        _f9({}, text=before, passed=passed)
+        flag = {**CHEF_FLAG, "flagged_phrases": [founded],
+                "unsupported_claims": [{"sentence": founded, "claim": "1692", "why_not_in_source": "wrong temple"}]}
+        f9, _, _ = _f9(flag, text=after, passed=passed)
+        assert f9["passed"] is False and f9["blocking"] is True and "sticky_pass" not in f9
+        same, _, _ = _f9(flag, text=before, passed=passed)  # unchanged context → still sticky
+        assert same["passed"] is True and same["sticky_pass"] == [founded]
+
+    def test_a_new_symbol_makes_the_sentence_new(self):
+        small = "Groups of 12 travellers share two guides on the trek."
+        text = PIECE.replace(CHEF, small)
+        passed: set[str] = set()
+        _f9({}, text=text, passed=passed)
+        plus = small.replace("12", "12+")
+        flag = {**CHEF_FLAG, "flagged_phrases": [plus],
+                "unsupported_claims": [{"sentence": plus, "claim": "12+", "why_not_in_source": "max 12"}]}
+        f9, _, _ = _f9(flag, text=PIECE.replace(CHEF, plus), passed=passed)
+        assert f9["passed"] is False and "sticky_pass" not in f9
+
+    def test_sticky_sentence_quoted_in_notes_is_not_text_integrity(self):
+        passed: set[str] = set()
+        _f9({}, passed=passed)
+        flag = {**CHEF_FLAG, "failure_codes": ["FACT_CHECK_MANUAL_CHECK", "TEXT_INTEGRITY"],
+                "broken_sentences": [], "notes": f"'{CHEF}' is not supported by the source."}
+        f9, _, _ = _f9(flag, passed=passed)
+        assert f9["sticky_pass"] == [CHEF]
+        assert not any(v.startswith("TEXT_INTEGRITY") for v in f9["violations"])
+        assert f9["blocking"] is False  # no checkable reason left: a warn, never a hold
+
+    def test_a_loose_note_quote_keeps_the_sentences_it_copies_out(self):
+        """A note quote that locates nowhere (here: ambiguous between two sentences) still keeps out
+        every sentence it copies."""
+        lunch = "Every guest gets a private chef at lunch each day."
+        text = PIECE.replace(CHEF, f"{CHEF} {lunch}")
+        quote = "every guest gets a private chef each night"
+        assert qg._locate_in(text, quote) is None
+        passed: set[str] = set()
+        _f9({"status": "pass", "notes": f"Fine, though '{quote}' is bold."}, text=text, passed=passed)
+        assert _key(CHEF, text) not in passed and _key(lunch, text) not in passed
+        assert _key("It was built in 1637 by the Zhabdrung.", text) in passed
 
     def test_run_quality_gates_hands_the_set_to_f9(self):
         passed: set[str] = {"x"}

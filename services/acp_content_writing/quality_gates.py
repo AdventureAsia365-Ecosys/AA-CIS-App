@@ -61,7 +61,7 @@ from services.acp_content_writing.trip_facts import (TripFactContext, find_trip_
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
-from services.acp_produce.judge_client import invoke_judge, parse_judge_json
+from services.acp_produce.judge_client import invoke_judge, parse_judge_json, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import OFFERED_PHRASES, STATUS_PREFIX, has_status_lines, is_offered_seed
 from shared.llm_client.call_log import record_call_sync
@@ -839,52 +839,107 @@ _F9_PASS_KINDS = ("prose", "bullet", "faq_a")
 _F9_PASS_MIN_WORDS = 4
 
 
-def _f9_flagged_folds(content_text: str, data: dict, phrases: list[str]) -> set[str]:
-    """AA-777 — every sentence (folded) one F9 verdict flagged in any way: each unsupported claim's
-    sentence (justified or not), each broken sentence, and each flagged phrase (the phrase itself;
-    `_f9_passed_folds` excludes a sentence that contains it)."""
-    out: set[str] = set()
+def _f9_key(prev_clean: Optional[str], clean: str) -> str:
+    """AA-777 — the sticky-pass key of one body sentence: the sentence AND the one before it (any
+    kind, '' at the top), case- and accent-folded but keeping symbols and punctuation. A neighbour that
+    changed (a repaired referent: 'We visit X. It was founded in 1692.') or a new symbol ('12+' for
+    '12') makes a new key, so the sentence is judged again (PR review on cc265e22)."""
+    def f(t: Optional[str]) -> str:
+        return " ".join(_fold(strip_citation_tags(t or "")).split())
+    return f"{f(prev_clean)}\n{f(clean)}"
+
+
+def _f9_located_key(content_text: str, quote: Optional[str]) -> Optional[str]:
+    """AA-777 — the sticky-pass key of the body sentence a judge quote points at; None when it
+    locates nowhere (or spans more than one sentence: never a passed key)."""
+    from services.acp_content_writing.sentence_repair import locate_sentence  # circular at import time
+    if not quote or not str(quote).strip():
+        return None
+    span = locate_sentence(content_text, str(quote))
+    if span is None:
+        return None
+    spans = sentence_spans(content_text)
+    k = next((i for i, sp in enumerate(spans) if sp["start"] <= span[0] < sp["end"]), None)
+    if k is None:
+        return None
+    located = " ".join(strip_citation_tags(content_text[span[0]:span[1]]).split())
+    return _f9_key(spans[k - 1]["clean"] if k else None, located)
+
+
+def _f9_verdict_quotes(content_text: str, data: dict, phrases: list[str], seo_title: Optional[str],
+                       meta_description: Optional[str]) -> tuple[set[str], list[str], bool]:
+    """AA-777 — what one F9 verdict flagged: (flagged folds, loose note quotes, complete).
+    - flagged folds: each unsupported claim's sentence (justified or not), each broken sentence, each
+      flagged phrase, each note quote that is in the body — `_f9_passed_keys` skips a sentence
+      containing one;
+    - loose note quotes: a note quote found nowhere in the body (a paraphrase, or the SOURCE quoted
+      back) — `_f9_passed_keys` also skips every sentence it copies (hygiene.copies, either way);
+    - complete: False when a claim or broken-sentence quote locates in no body sentence (a paraphrase,
+      or ambiguous between two) and is not the search title / meta. The verdict then flagged a
+      sentence nobody can name, so it passes NOTHING (PR review on cc265e22: the paraphrased
+      sentence went into the passed set and its exact re-flag was dropped as sticky)."""
+    folds: set[str] = set()
+    loose: list[str] = []
+    complete = True
+    quotes: list[str] = []
     for c in data.get("unsupported_claims") or []:
-        if not isinstance(c, dict):
-            continue
-        quote = str(c.get("sentence") or c.get("claim") or "")
-        out.add(_cmp_fold(_locate_in(content_text, quote) or quote))
+        if isinstance(c, dict):
+            quotes.append(str(c.get("sentence") or c.get("claim") or ""))
     for b in data.get("broken_sentences") or []:
         quote = b.get("sentence") if isinstance(b, dict) else b if isinstance(b, str) else None
         if quote:
-            out.add(_cmp_fold(_locate_in(content_text, quote) or quote))
+            quotes.append(str(quote))
+    for quote in quotes:
+        located = _locate_in(content_text, quote)
+        if located:
+            folds.add(_cmp_fold(located))
+            continue
+        folds.add(_cmp_fold(quote))
+        if _seo_field_of(quote, seo_title, meta_description) is None:
+            complete = False
     for m in _NOTE_QUOTE_RE.finditer(str(data.get("notes") or "")):
-        out.add(_cmp_fold(next(g for g in m.groups() if g)))
-    out |= {_cmp_fold(p) for p in phrases}
-    return {f for f in out if f}
+        quote = next(g for g in m.groups() if g)
+        located = _locate_in(content_text, quote)
+        folds.add(_cmp_fold(located or quote))
+        if not located:
+            loose.append(quote)
+    folds |= {_cmp_fold(p) for p in phrases}
+    return {f for f in folds if f}, loose, complete
 
 
-def _f9_passed_folds(content_text: str, flagged: set[str]) -> set[str]:
-    """AA-777 — the body sentences (folded) of `content_text` an F9 verdict passed: every prose /
-    bullet / FAQ-answer sentence of at least 4 words that is not flagged and contains no flagged
-    phrase or quote."""
+def _f9_passed_keys(content_text: str, flagged: set[str], loose: list[str] = ()) -> set[str]:
+    """AA-777 — the sticky-pass keys (`_f9_key`) of the body sentences an F9 verdict passed: every
+    prose / bullet / FAQ-answer sentence of at least 4 words that is not flagged, contains no flagged
+    phrase or quote, and copies no loose note quote."""
     out: set[str] = set()
+    prev = None
     for sp in sentence_spans(content_text):
+        clean, prev_clean = sp["clean"], prev
+        prev = clean
         if sp["kind"] not in _F9_PASS_KINDS:
             continue
-        f = _cmp_fold(sp["clean"])
+        f = _cmp_fold(clean)
         if len(f.split()) < _F9_PASS_MIN_WORDS or any(q and (q in f or f in q) for q in flagged):
             continue
-        out.add(f)
+        if any(copies(q, clean) or copies(clean, q) for q in loose):
+            continue
+        out.add(_f9_key(prev_clean, clean))
     return out
 
 
 def _drop_sticky_claims(content_text: str, claims: list[dict],
                         passed: Optional[set[str]]) -> tuple[list[dict], list[str]]:
     """AA-777 — (claims kept, sentences dropped): a claim whose body sentence an earlier verdict of
-    this job passed, unchanged, is dropped. A claim in the search title / meta, or one whose quote
-    matches no body sentence, is always kept."""
+    this job passed, unchanged and with the same sentence before it, is dropped. A claim in the search
+    title / meta, or one whose quote matches no body sentence, is always kept."""
     if not passed or not claims:
         return claims, []
     kept, sticky = [], []
     for c in claims:
-        located = _locate_in(content_text, str(c.get("sentence") or c["claim"]))
-        if located and _cmp_fold(located) in passed:
+        quote = str(c.get("sentence") or c["claim"])
+        key = _f9_located_key(content_text, quote)
+        if key is not None and key in passed:
+            located = _locate_in(content_text, quote)
             if located not in sticky:
                 sticky.append(located)
         else:
@@ -925,13 +980,15 @@ def gate_brand_voice(
     - `seo_title` / `meta_description` (blog) are shown to the judge; an unsupported claim in them is
       a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule).
 
-    AA-777 (sticky pass) — `passed_sentences` is the job's set of body sentences (folded with
-    `_cmp_fold`) an earlier F9 verdict of the same piece judged without a flag. An unsupported claim
-    whose sentence is in that set is dropped (S234: in 10/15 reverted pieces the judge flagged a
-    sentence it had passed one attempt earlier, unchanged); dropped sentences are logged
-    (`F9_sticky_pass`) and listed as `sticky_pass` on the F9_cta_fact result. After the verdict the
+    AA-777 (sticky pass) — `passed_sentences` is the job's set of body sentences (keyed with
+    `_f9_key`: the sentence plus the one before it) an earlier F9 verdict of the same piece judged
+    without a flag. An unsupported claim whose sentence is in that set is dropped (S234: in 10/15
+    reverted pieces the judge flagged a sentence it had passed one attempt earlier, unchanged); dropped
+    sentences are logged (`F9_sticky_pass`) and listed as `sticky_pass` on the F9_cta_fact result. After the verdict the
     sentences it passed are ADDED to the set (the caller owns it, one per job). A verdict with no
-    checkable reason, or no verdict (judge unavailable), adds nothing."""
+    checkable reason, no verdict (judge unavailable), a truncated / json_repair-salvaged verdict, or
+    one with a claim or broken-sentence quote that locates in no body sentence adds nothing. A sticky
+    sentence quoted in the notes never becomes TEXT_INTEGRITY."""
     content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
     has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
     contract = json.dumps({
@@ -1011,7 +1068,9 @@ def gate_brand_voice(
     )
     try:
         raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, max_tokens=_F9_MAX_TOKENS, stage="t10_judge")
-        data = parse_judge_json(raw["text"])
+        data, repaired = parse_judge_json_checked(raw["text"])
+        if not isinstance(data, dict):  # a JSON list / scalar is no verdict
+            raise ValueError(f"judge reply is a JSON {type(data).__name__}, not an object")
     except Exception as e:
         logger.warning("t10_f9_judge_unavailable", error=str(e))
         # Fail-closed on the BLOCKING (product-truth) side; brand-style passes (no signal to
@@ -1042,7 +1101,8 @@ def gate_brand_voice(
                 status = "pass"  # the only reason to fail was an unjustified fact flag
     # AA-777 — what this verdict flagged (folded), read BEFORE the sticky filter: these sentences are
     # never added to the passed set below.
-    flagged_folds = _f9_flagged_folds(content_text, data, phrases)
+    flagged_folds, loose_quotes, quotes_complete = _f9_verdict_quotes(
+        content_text, data, phrases, seo_title, meta_description)
     claims, sticky = _drop_sticky_claims(content_text, claims, passed_sentences)
     if sticky:
         logger.info("F9_sticky_pass", dropped=len(sticky), sentences=[s[:160] for s in sticky[:5]])
@@ -1113,7 +1173,13 @@ def gate_brand_voice(
     if not judge_ok and not cta_fact_viol and not brand_style_viol:
         quoted: list[str] = []
         for m in _NOTE_QUOTE_RE.finditer(notes):
-            located = _locate_in(content_text, next(g for g in m.groups() if g))
+            quote = next(g for g in m.groups() if g)
+            located = _locate_in(content_text, quote)
+            # AA-777 — a sticky sentence (dropped above, or passed by an earlier verdict) quoted in the
+            # notes is not a broken sentence: never turn it back into a blocking TEXT_INTEGRITY item.
+            if located and (located in sticky or (passed_sentences and _f9_located_key(content_text, quote)
+                                                  in passed_sentences)):
+                continue
             if located and located not in quoted:
                 quoted.append(located)
         if quoted:
@@ -1130,8 +1196,15 @@ def gate_brand_voice(
                                 "prompt_version": F9_PROMPT_VERSION,
                                 "piece_tag_free": not TAG_RE.search(content_text),
                                 "reasonless": reasonless, "sticky_pass": len(sticky)})
-    if passed_sentences is not None and not reasonless:
-        passed_sentences |= _f9_passed_folds(content_text, flagged_folds | {_cmp_fold(q) for q in integrity})
+    # AA-777 — a verdict adds what it passed only when it is whole and every flag it raised points at a
+    # body sentence: not reasonless, not salvaged by json_repair or cut at max_tokens (the entries
+    # after the cut would read as passed), and no claim / broken-sentence quote that locates nowhere.
+    truncated = repaired or str(raw.get("stop_reason") or "").lower() in ("length", "max_tokens")
+    if passed_sentences is not None and not reasonless and not truncated and quotes_complete:
+        passed_sentences |= _f9_passed_keys(content_text, flagged_folds | {_cmp_fold(q) for q in integrity},
+                                            loose_quotes)
+    elif passed_sentences is not None and not reasonless:
+        logger.info("F9_sticky_pass_skipped", truncated=truncated, unlocated_quote=not quotes_complete)
     cta_fact = _result("F9_cta_fact", cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless)
     if sticky:
         cta_fact = {**cta_fact, "sticky_pass": sticky}
