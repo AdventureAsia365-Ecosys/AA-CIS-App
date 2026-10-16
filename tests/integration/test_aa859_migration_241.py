@@ -12,10 +12,12 @@ that is rolled back, mostly re-applying the file body. Checked:
   * the loop revokes table and column privileges on relations without RLS, keeps the catalog contract,
     and the file is idempotent, also with rows of several tenants (guard 3 on real rows) and on an empty
     table (guard 3 seeds and rolls back);
+  * the schema_versions row records what the loop revoked (DB Migrate drops NOTICEs);
   * the guards refuse: an unknown policy, FORCE, another grantee on angle_gate_option, a member of
-    aa_app_user, a PUBLIC write grant, an aa_app_user grant this file cannot revoke (another app's role or
-    schema, a catalog column grant), an aclitem from another grantor, an extra privilege on
-    tenant_integrations, and a policy that lets a foreign tenant read (guard 3 by behaviour);
+    aa_app_user, aa_app_user as a member of another role, a PUBLIC write grant, an aa_app_user grant this
+    file cannot revoke (another app's role or schema, a catalog column grant), an aclitem from another
+    grantor, an extra privilege on tenant_integrations, a policy that lets a foreign tenant read (guard 3
+    by behaviour) and a WITH CHECK that differs from USING (guard 2: guard 3 cannot reach WITH CHECK);
   * applied as an RDS-like runner (owner, NOSUPERUSER, NOBYPASSRLS, CREATEROLE, not a member of
     aa_app_user nor of catalog_owner, lesson S237: SET LOCAL SESSION AUTHORIZATION) from the pre-241
     state: the catalog_owner views it cannot act for are skipped without error, guard 3 runs through the
@@ -215,9 +217,9 @@ def test_policy_shape(cur):
     assert len(rows) == 1
     name, permissive, cmd, roles, qual, with_check = rows[0]
     assert (name, permissive, cmd, roles) == ("tenant_isolation", "PERMISSIVE", "ALL", [TENANT_ROLE])
-    for expr in (qual, with_check):
-        assert "angle_gate_request r" in expr and "r.request_id = angle_gate_option.request_id" in expr
-        assert "r.tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid" in expr
+    assert "angle_gate_request r" in qual and "r.request_id = angle_gate_option.request_id" in qual
+    assert "r.tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid" in qual
+    assert with_check == qual, "WITH CHECK must be the USING expression (guard 2 pins it)"
 
 
 def test_tenant_role_privileges(cur):
@@ -287,6 +289,31 @@ def test_first_apply_from_the_pre_241_state(cur, seeded):
     assert cur.fetchone()
 
 
+def test_schema_versions_row_records_what_was_revoked(cur):
+    """DB Migrate registers no asyncpg log listener, so the loop's NOTICEs never reach its log: the
+    revoked set (table and column privileges) and the PUBLIC SELECTs kept are in the description."""
+    col = _first_column(cur, "acp_shared.tenant_atom_state")
+    _to_pre_241(cur)
+    cur.execute(f"GRANT SELECT, INSERT ON acp_shared.year_plan TO {TENANT_ROLE}")
+    cur.execute(f"GRANT UPDATE ({col}) ON acp_shared.tenant_atom_state TO {TENANT_ROLE}")
+    cur.execute("GRANT SELECT ON shared.job TO PUBLIC")
+    cur.execute(_body())
+    cur.execute("SELECT description FROM shared.schema_versions WHERE version = '241'")
+    description = cur.fetchone()[0]
+    assert f"{OPTION} (SELECT)" in description
+    assert "acp_shared.year_plan (INSERT, SELECT)" in description
+    assert f"acp_shared.tenant_atom_state (UPDATE({col}))" in description
+    assert "PUBLIC SELECT kept on relations without RLS: " in description and "shared.job" in description
+
+
+def test_schema_versions_row_on_an_empty_scope(cur):
+    cur.execute("DELETE FROM shared.schema_versions WHERE version = '241'")
+    cur.execute(_body())                       # the conftest apply already revoked everything
+    cur.execute("SELECT description FROM shared.schema_versions WHERE version = '241'")
+    description = cur.fetchone()[0]
+    assert "Revoked from aa_app_user: nothing." in description, description
+
+
 # ── guards ────────────────────────────────────────────────────────────────────────────────────────
 
 def test_guard_refuses_unknown_policy(cur):
@@ -312,6 +339,13 @@ def test_guard_refuses_a_member_of_the_tenant_role(cur):
     cur.execute("CREATE ROLE zz241_member")
     cur.execute(f"GRANT {TENANT_ROLE} TO zz241_member")
     with pytest.raises(psycopg2.errors.RaiseException, match="members of aa_app_user"):
+        cur.execute(_body())
+
+
+def test_guard_refuses_the_tenant_role_as_a_member_of_another_role(cur):
+    """Grants inherited from another role are invisible to the scope and to guard 4 (own aclitems)."""
+    cur.execute(f"GRANT tripplanner TO {TENANT_ROLE}")
+    with pytest.raises(psycopg2.errors.RaiseException, match="aa_app_user is a member of tripplanner"):
         cur.execute(_body())
 
 
@@ -365,12 +399,23 @@ def test_guard_refuses_extra_privilege_on_tenant_integrations(cur):
 
 
 def test_guard_3_catches_a_policy_that_leaks(cur, seeded):
-    """Mutation: a policy `... OR true` still passes the shape check (ILIKE), so guard 3's counts under a
-    foreign tenant are what refuses it."""
+    """Mutation: a policy `... OR true` in USING and WITH CHECK alike still passes the shape check (ILIKE,
+    WITH CHECK = USING), so guard 3's counts under a foreign tenant are what refuses it."""
     body = _body()
-    leaky = body.replace("'')::uuid))\n    WITH CHECK", "'')::uuid) OR true)\n    WITH CHECK", 1)
-    assert leaky != body
+    leaky = (body.replace("'')::uuid))\n    WITH CHECK", "'')::uuid) OR true)\n    WITH CHECK", 1)
+                 .replace("'')::uuid));\nCOMMENT ON POLICY", "'')::uuid) OR true);\nCOMMENT ON POLICY", 1))
+    assert leaky.count("OR true") == 2
     with pytest.raises(psycopg2.errors.RaiseException, match="aa_app_user reads 3 rows"):
+        cur.execute(leaky)
+
+
+def test_guard_2_catches_a_with_check_that_leaks(cur, seeded):
+    """Mutation: `OR true` in WITH CHECK only. Guard 3 cannot see it (INSERT has no grant, its UPDATEs
+    touch 0 rows), so guard 2 pins WITH CHECK to the USING expression."""
+    body = _body()
+    leaky = body.replace("'')::uuid));\nCOMMENT ON POLICY", "'')::uuid) OR true);\nCOMMENT ON POLICY", 1)
+    assert leaky != body
+    with pytest.raises(psycopg2.errors.RaiseException, match="WITH CHECK identical to USING"):
         cur.execute(leaky)
 
 

@@ -348,8 +348,9 @@ def test_tenant_integrations_writes_stay_in_the_own_tenant(cur, two_tenants):
         _rls_violation(c, _CONNECT_UPSERT.replace("'wordpress'", "'facebook'"), (b, "{}", "x"))
     with _as_tenant(cur, "") as c:                                      # '' is no tenant
         _rls_violation(c, _CONNECT_UPSERT.replace("'wordpress'", "'facebook'"), (a, "{}", "x"))
-    with _as_tenant(cur, a) as c:                                       # b's existing row: not reachable
-        _rls_violation(c, _CONNECT_UPSERT, (b, "{}", "x"))
+    # No case for "b's existing row through ON CONFLICT": Postgres checks the INSERT WITH CHECK before
+    # conflict arbitration, so it is the first case again, and tenant_id is part of the conflict key and
+    # not updatable, so the DO UPDATE path only ever reaches the own tenant's row.
 
 
 def test_tenant_integrations_columns_outside_the_grant_are_refused(cur, two_tenants):

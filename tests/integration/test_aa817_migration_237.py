@@ -4,7 +4,9 @@ conftest applies 237 as the superuser with every other migration. Each test here
 body in a transaction that is rolled back. Checked:
   * shape: RLS on, no FORCE, exactly one policy tenant_isolation, FOR ALL TO aa_app_user, NULLIF on
     app.tenant_id in USING and WITH CHECK;
-  * grants: aa_app_user has SELECT and DELETE (the disconnect route), no INSERT/UPDATE/TRUNCATE;
+  * grants: 237 gives aa_app_user table-level SELECT and DELETE (the disconnect route) only, no
+    INSERT/UPDATE/TRUNCATE; since 241 (AA-859) it also holds column-level INSERT / UPDATE for the
+    connect / test-connection routes (exact set: test_aa859_migration_241.test_tenant_role_privileges);
   * the owner still reads every row under a foreign tenant (main pool unchanged);
   * re-run is idempotent;
   * the guards refuse a FORCEd table, a leftover extra policy, another grantee (it would read 0 rows
@@ -141,11 +143,17 @@ def test_policy_template(cur):
 
 
 def test_tenant_role_grants(cur):
+    """Table level: 237's SELECT + DELETE only (has_table_privilege ignores column grants). Column level:
+    INSERT / UPDATE on some columns since 241, so the connect UPSERT and the verify UPDATE run on the
+    tenant pool; TRUNCATE (not filtered by RLS) never."""
     privs = {}
     for priv in ("SELECT", "DELETE", "INSERT", "UPDATE", "TRUNCATE"):
         cur.execute("SELECT has_table_privilege(%s, %s, %s)", (TENANT_ROLE, TABLE, priv))
         privs[priv] = cur.fetchone()[0]
     assert privs == {"SELECT": True, "DELETE": True, "INSERT": False, "UPDATE": False, "TRUNCATE": False}
+    for priv in ("INSERT", "UPDATE"):
+        cur.execute("SELECT has_any_column_privilege(%s, %s, %s)", (TENANT_ROLE, TABLE, priv))
+        assert cur.fetchone()[0], f"{priv}: the 241 column grants are missing"
     cur.execute("SELECT has_schema_privilege(%s, 'shared', 'USAGE')", (TENANT_ROLE,))
     assert cur.fetchone()[0]
 

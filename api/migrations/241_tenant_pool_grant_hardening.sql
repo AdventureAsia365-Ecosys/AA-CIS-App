@@ -32,8 +32,8 @@
 --      revoke them anyway). Dev, S240 probe: 13 views, v_destination, v_destination_photo, v_graph_edge,
 --      v_graph_node, v_tour, v_tour_component, v_tour_day, v_tour_day_route, v_tour_junction,
 --      v_tour_leg, v_tour_photo, v_tour_place, v_tour_stop.
---      Revoked on Dev (S240 grants probe, information_schema based; PR-0 P0 #1 re-reads it from
---      aclexplode with owner and grantor before this file is applied): SELECT on
+--      Revoked on Dev (S240 grants probe, information_schema based, so table level only and blind to
+--      other grantors; PR-0 P0 #1 re-reads it from aclexplode with owner and grantor): SELECT on
 --        acp_contract.v_active_tour_atoms; acp_shared.angle_gate_option (re-granted in 2),
 --        tenant_atom_state, year_plan; INSERT/SELECT/UPDATE on acp_shared.marketplace_portfolios;
 --        SELECT on shared.cost_explorer_snapshot, decision_cache_hits_daily, decision_log,
@@ -42,7 +42,10 @@
 --        llm_shadow_log, place_photo, prompt_eval_runs, rerun_wave, spend_budget, tenant_brand_rules,
 --        tenant_brand_rules_deleted_aa404, tenant_export_config, tenant_rewrite_usage,
 --        tenant_seo_config, tenants, unmapped_market_requests, and the views v_destination_photos,
---        v_tour_photos. The NOTICEs of the apply list what was really revoked.
+--        v_tour_photos. What was really revoked (relation and privileges, column ones as PRIV(col)) and
+--        the PUBLIC SELECTs kept are written into this file's shared.schema_versions description: DB
+--        Migrate (db/run_migration.py) registers no asyncpg log listener, so the apply's NOTICEs never
+--        reach its log.
 --   2. angle_gate_option: ENABLE ROW LEVEL SECURITY (no FORCE: the owner, i.e. the main pool and the
 --      worker's T8 INSERT, stays exempt), POLICY tenant_isolation FOR ALL TO aa_app_user, USING and
 --      WITH CHECK "the parent angle_gate_request belongs to app.tenant_id" (NULLIF: '' = no tenant).
@@ -62,7 +65,9 @@
 -- Not destructive (no row is changed or removed), so no `migrate:` header directive.
 --
 -- Guards (lesson S236: check RLS by behaviour, not by role attributes):
---   0. before: aa_app_user is not superuser / BYPASSRLS and has no member but the runner;
+--   0. before: aa_app_user is not superuser / BYPASSRLS, has no member but the runner and is a member of
+--      no role (an inherited role's grants are out of the loop's reach: the scope and guard 4 look at
+--      aa_app_user's own aclitems only);
 --      angle_gate_option exists, the runner owns it (or bypasses RLS), it is not FORCEd, only the
 --      owner and aa_app_user hold privileges on it, its policies are a subset of {tenant_isolation},
 --      RLS is not active for the runner; every aa_app_user aclitem the loop will revoke was granted
@@ -73,7 +78,9 @@
 --      (PUBLIC SELECT: NOTICE only). Then lock angle_gate_option and count it under a foreign tenant;
 --   1. after, as the runner: RLS not active, same count under a foreign tenant;
 --   2. policy shape: exactly {tenant_isolation}, PERMISSIVE, FOR ALL, TO aa_app_user, USING and WITH
---      CHECK through angle_gate_request on the NULLIF'd GUC; RLS on, not FORCEd;
+--      CHECK through angle_gate_request on the NULLIF'd GUC, WITH CHECK identical to USING (guard 3
+--      tests USING by behaviour; it cannot reach WITH CHECK, since INSERT has no grant and its UPDATEs
+--      touch 0 rows); RLS on, not FORCEd;
 --   3. as aa_app_user (the runner is made a member for this transaction only when it may not SET ROLE
 --      aa_app_user already, then the membership is revoked, as in 225/229/237): under a foreign and
 --      an empty GUC it reads 0 options and a WHERE-less UPDATE SET chosen = chosen touches 0; under the
@@ -96,6 +103,11 @@
 -- lock_timeout 10s gives up instead of queueing. Apply through AA-CIS-Infra DB Migrate (byte copy in
 -- db/migrations/cis/), with shared.job idle (no queued or running job).
 --
+-- Before apply (hard precondition): AA-859 P0 #1 (docs/audits/2026-10-16-S240-aa859/p0_preflight.py)
+-- has run on Dev and its JSON is saved in that folder, with class (c) empty, no class (a) item from a
+-- grantor other than the owner, no PUBLIC write and aa_app_user a member of no role. Anything there
+-- makes guard 0 raise (safe, but the apply is blocked); the JSON is also the before-picture of the ACLs.
+--
 -- After apply: rerun the AA-859 probe v3 (expected: angle_gate_option row 0 FAIL;
 -- no_privilege_without_rls_violations == []; the catalog contract rows unchanged), smoke the five
 -- flagged tenant-pool routes for tenant A (publish-log list, pending, latest-piece, get-piece,
@@ -117,7 +129,8 @@
 --   DELETE FROM shared.schema_versions WHERE version = '241';
 --   COMMIT;
 --   The SELECTs the loop revoked are NOT restored: they were the leak. Restore one only if a route
---   proves to need it (one GRANT).
+--   proves to need it (one GRANT); the revoked set is in the 241 schema_versions description (read it
+--   before the DELETE above) and in the P0 #1 JSON.
 
 BEGIN;
 
@@ -134,6 +147,7 @@ DECLARE
     pols        text[];
     bad         text;
     scope       oid[];
+    revoked     text;
     foreign_guc constant text := '00000000-0000-0000-0000-00000000dead';
 BEGIN
     -- 0a. the tenant role is filtered by RLS and no other session is it
@@ -147,6 +161,13 @@ BEGIN
     IF bad IS NOT NULL THEN
         RAISE EXCEPTION 'migration 241: % are members of aa_app_user: the angle_gate_option policy would '
                         'apply to their sessions too', bad;
+    END IF;
+    SELECT string_agg(m.roleid::regrole::text, ', ') INTO bad
+      FROM pg_auth_members m
+     WHERE m.member = app;
+    IF bad IS NOT NULL THEN
+        RAISE EXCEPTION 'migration 241: aa_app_user is a member of %: privileges it inherits (or may SET ROLE '
+                        'to) are out of this file''s revoke and invariant, which read its own aclitems', bad;
     END IF;
 
     -- 0b. angle_gate_option: the 229/237 preconditions for ENABLE without FORCE
@@ -269,6 +290,21 @@ BEGIN
     IF bad IS NOT NULL THEN
         RAISE NOTICE 'migration 241: PUBLIC may SELECT (kept, listed by the AA-859 probe): %', bad;
     END IF;
+    PERFORM set_config('aa241.public_select', coalesce(bad, ''), true);
+
+    -- what the loop will revoke, per relation, for the schema_versions row (NOTICEs are not logged)
+    SELECT string_agg(format('%s (%s)', g.rel, g.privs), '; ' ORDER BY g.rel) INTO revoked
+      FROM (SELECT s.rel, string_agg(DISTINCT s.priv, ', ') AS privs
+              FROM (SELECT c.oid::regclass::text AS rel, a.privilege_type AS priv
+                      FROM pg_class c, aclexplode(c.relacl) a
+                     WHERE c.oid = ANY (scope) AND a.grantee = app
+                    UNION ALL
+                    SELECT c.oid::regclass::text, a.privilege_type || '(' || att.attname || ')'
+                      FROM pg_class c JOIN pg_attribute att ON att.attrelid = c.oid AND att.attacl IS NOT NULL,
+                           aclexplode(att.attacl) a
+                     WHERE c.oid = ANY (scope) AND a.grantee = app) s
+             GROUP BY s.rel) g;
+    PERFORM set_config('aa241.revoked', coalesce(revoked, ''), true);
 
     PERFORM set_config('aa241.scope', scope::text, true);
 
@@ -370,11 +406,10 @@ BEGIN
                       AND roles = ARRAY['aa_app_user']::name[]
                       AND qual ILIKE '%angle_gate_request r%r.request_id = angle_gate_option.request_id%'
                                      'r.tenant_id = (NULLIF(current_setting(''app.tenant_id''%'
-                      AND with_check ILIKE '%angle_gate_request r%r.request_id = angle_gate_option.request_id%'
-                                           'r.tenant_id = (NULLIF(current_setting(''app.tenant_id''%') THEN
+                      AND with_check = qual) THEN                -- WITH CHECK: guard 3 cannot reach it
         RAISE EXCEPTION 'migration 241: policy tenant_isolation on acp_shared.angle_gate_option is not PERMISSIVE '
-                        'FOR ALL TO aa_app_user with USING and WITH CHECK through angle_gate_request on the '
-                        'NULLIF''d app.tenant_id';
+                        'FOR ALL TO aa_app_user with USING through angle_gate_request on the NULLIF''d '
+                        'app.tenant_id and WITH CHECK identical to USING';
     END IF;
 
     -- 4. the invariant (NO_PRIVILEGE_WITHOUT_RLS_SQL, tests/integration/_rls_fixture_helpers.py)
@@ -535,7 +570,10 @@ INSERT INTO shared.schema_versions (version, applied_at, description)
 VALUES ('241', now(),
     'AA-859: aa_app_user loses every privilege on CIS relations without RLS (catalog_owner catalog.* '
     'SELECT contract kept); angle_gate_option RLS through the parent request (SELECT + UPDATE(chosen) '
-    'to aa_app_user); tenant_integrations column INSERT/UPDATE to aa_app_user for connect/test')
+    'to aa_app_user); tenant_integrations column INSERT/UPDATE to aa_app_user for connect/test. '
+    'Revoked from aa_app_user: ' || coalesce(nullif(current_setting('aa241.revoked'), ''), 'nothing')
+    || '. PUBLIC SELECT kept on relations without RLS: '
+    || coalesce(nullif(current_setting('aa241.public_select'), ''), 'none') || '.')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
