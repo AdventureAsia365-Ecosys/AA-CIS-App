@@ -21,6 +21,7 @@ import NotificationsBell from "./_components/NotificationsBell";
 import CommandPalette from "./_components/CommandPalette";
 import { PortalShellContext } from "./_components/PortalShellContext";
 import { T, sans, countUniqueTours } from "./_components/ui";
+import { Breadcrumb } from "../../_kit";
 
 const BREADCRUMBS: Record<string, string> = {
   "/portal/dashboard":  "Dashboard",
@@ -191,11 +192,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
                 <Menu size={16} />
               </button>
             )}
-            <div style={{ fontSize: 12, color: T.muted2, display: "flex", gap: 6, alignItems: "center", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <span>Workspace</span>
-              <span style={{ color: T.line }}>/</span>
-              <span style={{ color: T.body, fontWeight: 500 }}>{BREADCRUMBS[pathname] ?? ""}</span>
-            </div>
+            {/* AA-831 (S239 UI verify D) — kit Breadcrumb: a long page title ends in an ellipsis
+                at 390px instead of being hard-clipped next to the bell. */}
+            <Breadcrumb root="Workspace" title={BREADCRUMBS[pathname] ?? ""} fontSize={12} />
             <div style={{ flex: 1 }} />
 
             {/* Functional search */}
