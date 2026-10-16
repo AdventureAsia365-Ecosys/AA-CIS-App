@@ -200,7 +200,8 @@ class RetentionRunRequest(BaseModel):
     batch_size: Optional[int] = Field(None, ge=1, le=5000)
     # AA-825 S239 — manual override: an explicit UTC cutoff date (YYYY-MM-DD) instead of the policy
     # window, to prove the rollup + archive path on Dev before data ages. Only for the rolled-up
-    # kinds, at least 31 days old, live runs at most 1,000 rows (retention_job.override_cutoff).
+    # kinds, at least OVERRIDE_MIN_AGE_DAYS (21) days old, tenant usage in a closed month, live
+    # runs at most 1,000 rows (retention_job.override_cutoff).
     older_than: Optional[str] = None
 
 
