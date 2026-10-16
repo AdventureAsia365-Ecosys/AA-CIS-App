@@ -1,15 +1,19 @@
 """
 AA-544 -- aa_app_user tenant pool + per-request RLS GUC helper.
 
-Rollout scope: wired into routes ONE AT A TIME, each behind its OWN Redis flag (see
-STAGE_FLAGS below), per AA-544's original plan's Stage 5 principle ("mo rong dan tung route,
+Rollout scope: wired into routes ONE AT A TIME, each behind its OWN Redis flag (see the *_FLAG
+constants below), per AA-544's original plan's Stage 5 principle ("mo rong dan tung route,
 moi route revert rieng qua flag"). Do NOT import this into another router without going
 through AA-544's own stage-by-stage report-then-confirm ritual first -- picking which route is
-next is a decision, not something to copy-paste in ad hoc. Live routes so far:
+next is a decision, not something to copy-paste in ad hoc. Routes on this module (all fail_closed
+since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
   - Stage 1 (10/09/2026): GET /v1/publish-log/pending (v1_publish.py::list_pending)
-  - Stage 5 (10/09/2026): GET /v1/content-writing/pieces/{piece_id} (service.py::fetch_piece)
+  - Stage 5 (10/09/2026): GET /v1/content-writing/pieces/{piece_id} and .../export
+    (service.py::fetch_piece)
+  - AA-815: GET /v1/publish-log (v1_publish.py::list_publish_log)
+  - AA-815 + AA-817 (237): DELETE /v1/integrations/{wordpress,facebook} (v1_integrations.py::_disconnect)
   - AA-817 (S237): GET /v1/content-writing/requests/{id}/latest-piece
-    (service.py::fetch_latest_piece_for_request), fail_closed
+    (service.py::fetch_latest_piece_for_request)
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool
 (aa_cis_admin, BYPASSRLS) unchanged, always. This module adds a SECOND pool, aa_app_user
@@ -28,8 +32,9 @@ acquire_scoped_conn() opens -- see its docstring.
 """
 from __future__ import annotations
 
+import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
 
 import asyncpg
@@ -44,51 +49,92 @@ STAGE1_PUBLISH_PENDING_FLAG = "aa544:stage1:publish_pending_pool"
 STAGE5_GET_PIECE_FLAG = "aa544:stage5:get_piece_pool"
 # AA-815 — GET /v1/publish-log (tenant's published/unpublished rows). Default off (admin pool).
 PUBLISH_LOG_LIST_FLAG = "aa544:publish_log_list_pool"
-# AA-815 — DELETE /v1/integrations/{wordpress|facebook} (tenant disconnect). Default off (admin pool).
-# Do NOT turn on yet: aa_app_user has only SELECT on shared.tenant_integrations (007b default
-# privileges) and the table has no RLS policy, so the DELETE would fail after the secret was
-# already tombstoned. Needs a GRANT DELETE + RLS migration first (AA-817 follow-up).
+# AA-815 — DELETE /v1/integrations/{wordpress|facebook} (tenant disconnect). Needs migration 237
+# (RLS + GRANT SELECT, DELETE on shared.tenant_integrations for aa_app_user), applied 16/10/2026.
 INTEGRATION_DISCONNECT_FLAG = "aa544:integration_disconnect_pool"
 # AA-817 — tenant content-piece reads: GET /v1/content-writing/requests/{id}/latest-piece
-# (service.fetch_latest_piece_for_request). Default off (admin pool). Fail closed when on: no tenant
-# pool or no tenant id is a 503, never a fallback to the admin pool (fail_closed=True below). Works
-# with and without migration 229 (content_piece and angle_gate_request have had RLS and grants for
-# aa_app_user since 113/115/147; 229 only rewrites the policies to the NULLIF/WITH CHECK template).
+# (service.fetch_latest_piece_for_request). Works with and without migration 229 (content_piece and
+# angle_gate_request have had RLS and grants for aa_app_user since 113/115/147; 229 only rewrites the
+# policies to the NULLIF/WITH CHECK template).
 CONTENT_PIECE_READS_FLAG = "aa817:content_piece_reads_pool"
 
 _SECRET_ID = "aa-cis/dev/rds-app-user"
+
+# AA-817 (critique C4) — sizing against `ALTER ROLE aa_app_user CONNECTION LIMIT 15` (migration 234) and
+# api autoscaling max_capacity 10 (AA-CIS-Infra modules/ecs/main.tf). Data standards C2.2 row `cis-tenant`:
+# max_size 1 per api task while the routes are canaries, so 10 tasks hold at most 10 connections (5 left
+# for a rolling deploy). min_size 0 + a short idle lifetime: an idle task holds no connection at all, and a
+# task that cannot get one (limit reached, RDS down) answers 503 per request (aa817_tenant_pool_unavailable)
+# instead of losing the pool for its whole life, which is what min_size=1 at boot did.
+TENANT_POOL_MIN_SIZE = 0
+TENANT_POOL_MAX_SIZE = 1
+TENANT_POOL_ACQUIRE_TIMEOUT_S = 5.0      # C2.3g: fail fast on exhaustion, <= 5 s
+TENANT_POOL_IDLE_LIFETIME_S = 60.0       # asyncpg max_inactive_connection_lifetime
+TENANT_POOL_SERVER_SETTINGS = {
+    "application_name": "cis-tenant",
+    "statement_timeout": "15000",        # C2.3f: pool-level, below the 30 s API GW timeout
+    "lock_timeout": "5000",
+}
+
+# Errors that mean "no tenant connection to be had" (as opposed to a failing query): role CONNECTION
+# LIMIT (53300 TooManyConnectionsError) and other connect-time Postgres errors, a closed/invalid pool,
+# network errors, and the acquire timeout.
+_POOL_UNAVAILABLE_ERRORS = (asyncpg.PostgresError, asyncpg.InterfaceError, OSError, asyncio.TimeoutError)
 
 
 async def create_tenant_pool() -> Optional[asyncpg.Pool]:
     """Best-effort, called once at app startup (api/main.py's lifespan()). A missing/
     unreachable secret must never crash app boot -- same convention as the AA-223 startup
-    sweep already in lifespan(). Returns None on any failure; every caller below treats None
-    as "stay on the admin pool" (fail closed to pre-Stage-1 behavior, never fail open into an
-    unproven code path).
+    sweep already in lifespan(). Returns None when the secret or the pool object cannot be made;
+    a fail_closed route then answers 503 while its flag is on (see acquire_scoped_conn).
 
-    Small pool (max_size=5) on purpose -- this is a 1-route canary, not yet real traffic
-    volume; revisit sizing when Stage 2+ adds more routes."""
+    Lazy (min_size 0, see the sizing note above): creating the pool opens no connection, so a task
+    that boots while aa_app_user is at its CONNECTION LIMIT still gets a pool and recovers on its
+    own. One probe query at boot only logs whether the role can log in right now."""
     try:
         import boto3
         client = boto3.client(
             "secretsmanager", region_name=os.environ.get("AWS_REGION", "us-west-1")
         )
         dsn = client.get_secret_value(SecretId=_SECRET_ID)["SecretString"]
-        return await asyncpg.create_pool(dsn, min_size=1, max_size=5,
-                                         server_settings={"application_name": "cis-tenant"})
+        pool = await asyncpg.create_pool(
+            dsn, min_size=TENANT_POOL_MIN_SIZE, max_size=TENANT_POOL_MAX_SIZE,
+            max_inactive_connection_lifetime=TENANT_POOL_IDLE_LIFETIME_S,
+            server_settings=dict(TENANT_POOL_SERVER_SETTINGS),
+        )
     except Exception as e:
         logger.error("aa544_tenant_pool_create_failed", error=repr(e))
         return None
+    try:
+        # bounded: the first connect must not hold app boot for asyncpg's 60 s connect timeout
+        await asyncio.wait_for(pool.fetchval("SELECT 1"), timeout=TENANT_POOL_ACQUIRE_TIMEOUT_S)
+        logger.info("aa817_tenant_pool_ready", max_size=TENANT_POOL_MAX_SIZE)
+    except Exception as e:
+        logger.error("aa817_tenant_pool_unavailable", flag_key=None, stage="boot_probe",
+                     reason=_unavailable_reason(e), error=repr(e))
+    return pool
+
+
+def _unavailable_reason(exc: BaseException) -> str:
+    if isinstance(exc, asyncpg.TooManyConnectionsError):
+        return "too_many_connections"
+    if isinstance(exc, asyncio.TimeoutError):
+        return "acquire_timeout"
+    if isinstance(exc, asyncpg.InterfaceError):
+        return "pool_closed"
+    return "connect_error"
 
 
 async def _flag_enabled(request: Request, flag_key: str) -> bool:
-    """Fail CLOSED -- any Redis error or unset key means "off" (falls back to the admin pool,
-    the pre-rollout behavior for that route). Never fail open into a code path that hasn't been
-    proven yet."""
+    """Any Redis error or unset key means "off" (the admin pool, the pre-rollout behavior for that
+    route). Kept for every route, fail_closed or not: a Redis outage must not turn into a 503 on every
+    tenant read. AA-817 (critique C5): this is the one remaining path from a flag that is on to the admin
+    pool, so it logs at ERROR with its own event, and the evidence that a route runs on the tenant pool
+    is the per-request `used_tenant_pool=True` log line, never the flag value alone."""
     try:
         val = await request.app.state.redis.get(flag_key)
     except Exception as e:
-        logger.warning("aa544_flag_read_failed", flag_key=flag_key, error=repr(e))
+        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="admin_pool", error=repr(e))
         return False
     return val == "true"
 
@@ -97,7 +143,7 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
 async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *, fail_closed: bool = False):
     """Yields (conn, used_tenant_pool: bool).
 
-    `flag_key` is one of this module's own STAGE*_FLAG constants -- each route on this rollout
+    `flag_key` is one of this module's own *_FLAG constants -- each route on this rollout
     gets its own flag, so reverting one route never affects another already on the tenant pool.
 
     When that route's flag is on AND the tenant pool booted successfully: acquires from
@@ -110,9 +156,10 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *
     request.app.state.pool (aa_cis_admin, current behavior, completely unchanged) with no
     transaction wrapper -- this is the fail-closed default path, not an error case.
 
-    AA-817 `fail_closed=True` (routes added from AA-817 on): once the route's flag is on, the
+    AA-817 `fail_closed=True` (every caller since AA-817 PR-A): once the route's flag is on, the
     route is meant to be isolated by RLS, so it never silently falls back to the admin pool, which
-    RLS does not filter (owner exempt). A missing tenant pool, an empty tenant id, or a GUC that did
+    RLS does not filter (owner exempt). A missing tenant pool, an empty tenant id, no tenant connection
+    within TENANT_POOL_ACQUIRE_TIMEOUT_S (CONNECTION LIMIT reached, RDS unreachable), or a GUC that did
     not take the tenant id raises 503 instead. Flag off is unchanged (admin pool)."""
     tenant_pool = getattr(request.app.state, "tenant_pool", None)
     if fail_closed:
@@ -125,17 +172,30 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *
         use_tenant_pool = tenant_pool is not None and await _flag_enabled(request, flag_key)
 
     if use_tenant_pool:
-        async with tenant_pool.acquire() as conn:
-            async with conn.transaction():
+        async with AsyncExitStack() as stack:
+            try:
+                conn = await stack.enter_async_context(tenant_pool.acquire(timeout=TENANT_POOL_ACQUIRE_TIMEOUT_S))
+            except _POOL_UNAVAILABLE_ERRORS as e:
+                # One event for every "no tenant connection" case. The api logs are structlog console
+                # lines, so a CloudWatch metric filter on the plain term "aa817_tenant_pool_unavailable"
+                # counts them (alarm on any count > 0); `reason=` says which case.
+                logger.error("aa817_tenant_pool_unavailable", flag_key=flag_key, stage="acquire",
+                             reason=_unavailable_reason(e), error=repr(e), fail_closed=fail_closed)
                 if fail_closed:
-                    applied = await conn.fetchval("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
-                    if applied != tenant_id:
-                        logger.error("aa817_tenant_guc_not_applied", flag_key=flag_key)
-                        raise HTTPException(status_code=503,
-                                            detail="Tenant data path unavailable, try again shortly")
-                else:
-                    await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
-                yield conn, True
-    else:
-        async with request.app.state.pool.acquire() as conn:
-            yield conn, False
+                    raise HTTPException(status_code=503,
+                                        detail="Tenant data path unavailable, try again shortly") from e
+                conn = None
+            if conn is not None:
+                async with conn.transaction():
+                    if fail_closed:
+                        applied = await conn.fetchval("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+                        if applied != tenant_id:
+                            logger.error("aa817_tenant_guc_not_applied", flag_key=flag_key)
+                            raise HTTPException(status_code=503,
+                                                detail="Tenant data path unavailable, try again shortly")
+                    else:
+                        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+                    yield conn, True
+                return
+    async with request.app.state.pool.acquire() as conn:
+        yield conn, False

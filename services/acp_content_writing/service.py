@@ -2147,11 +2147,15 @@ async def fetch_piece(tenant_id: UUID, piece_id: UUID, pool, request: Optional[R
     tenant pool with app.tenant_id set LOCAL to the transaction. Flag off (today's default):
     identical to pre-AA-544 behavior. The WHERE tenant_id = $2 clause below already scoped this
     query correctly before RLS existed — RLS is defense-in-depth here, not the only thing
-    standing between tenants for this query."""
+    standing between tenants for this query.
+
+    AA-817 PR-A — fail closed (the flag has been on since S239): flag on without a tenant pool, a
+    tenant id or a tenant connection is a 503, never the admin pool. Serves GET /pieces/{id} and
+    GET /pieces/{id}/export."""
     if request is not None:
         from api.core.aa544_tenant_pool import STAGE5_GET_PIECE_FLAG, acquire_scoped_conn
         async with acquire_scoped_conn(
-            request, str(tenant_id), STAGE5_GET_PIECE_FLAG
+            request, str(tenant_id) if tenant_id else "", STAGE5_GET_PIECE_FLAG, fail_closed=True,
         ) as (conn, used_tenant_pool):
             row = await conn.fetchrow(_FETCH_PIECE_QUERY, piece_id, tenant_id)
         logger.info("aa544_stage5_fetch_piece", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool)

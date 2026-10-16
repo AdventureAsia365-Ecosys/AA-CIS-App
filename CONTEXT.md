@@ -199,6 +199,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     day (skipped while a rerun wave is open): a kind stays DRY RUN until a live run with the same
     windows has succeeded, and a scheduled run whose candidates exceed 2x the last live run is HELD
     (bell `platform.retention.held`). Status: `GET /admin/job-runner/retention`.
+    **Manual override** (S239, to prove rollup + archive before data ages): the same POST with
+    `older_than` (a UTC date) enqueues `trigger=manual_override` with that cutoff instead of the window,
+    only for the two rolled-up kinds, only where `ENVIRONMENT` is dev/test, cutoff >= 31 days old, DRY
+    RUN by default, live at most 1,000 rows; it never counts as the last live run (schedule stays DRY
+    RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
+    cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
+    the PUT) before its batch is deleted.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.

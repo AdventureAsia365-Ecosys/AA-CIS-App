@@ -92,9 +92,12 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
     """AA-815 — the tenant's own published and unpublished rows, newest first, for the portal's
     "Published" list (the Unpublish action needs a publish_id). Tenant-safe projection: no
     last_error, idempotency key or actor — a removal shows as 'unpublished' whoever did it.
-    Runs through acquire_scoped_conn behind its own default-off flag (AA-544 rollout)."""
+    Runs through acquire_scoped_conn behind its own default-off flag (AA-544 rollout), fail closed
+    (AA-817 PR-A): flag on without a tenant pool or tenant connection is a 503, never the admin pool."""
     tenant_id = tenant["sub"]
-    async with acquire_scoped_conn(request, tenant_id, PUBLISH_LOG_LIST_FLAG) as (conn, used_tenant_pool):
+    async with acquire_scoped_conn(
+        request, tenant_id, PUBLISH_LOG_LIST_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
         rows = await conn.fetch(
             """
             SELECT pl.publish_id::text, pl.piece_id::text, pl.channel, pl.status, pl.external_url,
@@ -297,7 +300,8 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
     aa_app_user with app.tenant_id set LOCAL to this request's transaction. Response shape is
     unchanged either way — the WHERE cp.tenant_id = $1 clause below already scoped this query
     correctly before RLS existed; RLS is defense-in-depth here, not the only thing standing
-    between tenants for this specific query.
+    between tenants for this specific query. AA-817 PR-A: fail closed — flag on without a tenant
+    pool or tenant connection is a 503, never the admin pool.
 
     AA-497 — angle_name now joins via cp.angle_gate_option_id (denormalized at write time,
     migration 124/AA-497) rather than ago.chosen=true, which is MUTABLE (AA-497's reopen action
@@ -320,7 +324,7 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
 
     async with acquire_scoped_conn(
-        request, tenant_id, STAGE1_PUBLISH_PENDING_FLAG
+        request, tenant_id, STAGE1_PUBLISH_PENDING_FLAG, fail_closed=True,
     ) as (conn, used_tenant_pool):
         rows = await conn.fetch(_PENDING_SQL, tenant_id, list(_SUPPORTED_CHANNELS))
     logger.info("aa544_stage1_list_pending", tenant_id=tenant_id, used_tenant_pool=used_tenant_pool)
