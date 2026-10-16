@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.pool = pool
 
+    # AA-859 PR-S — 60 s INFO line `aa859_main_pool_gauge` (size / idle / max of the main pool), the
+    # baseline for the wave-4 main-pool shrink decision. api only; cancelled before the pool closes.
+    from api.core.aa859_main_pool_gauge import start_main_pool_gauge, stop_main_pool_gauge
+    main_pool_gauge_task = start_main_pool_gauge(app)
+
     # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
     # only when the secret or the pool object cannot be made. Used only by routes that opt in via
     # api/core/aa544_tenant_pool.py::acquire_scoped_conn(), each behind its own Redis flag; all of
@@ -112,6 +117,7 @@ async def lifespan(app: FastAPI):
         if job_worker_task is not None:
             await asyncio.gather(job_worker_task, return_exceptions=True)
 
+    await stop_main_pool_gauge(main_pool_gauge_task)
     await pool.close()
     if app.state.tenant_pool is not None:
         await app.state.tenant_pool.close()

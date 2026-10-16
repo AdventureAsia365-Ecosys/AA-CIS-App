@@ -551,11 +551,16 @@ async def test_secret_write_runs_off_the_event_loop(call):
 
 # ── pool sizing (critique C4) ─────────────────────────────────────────────────
 
+# api autoscaling max_capacity in AA-CIS-Infra modules/ecs/main.tf (10 -> 7 in Infra #156, AA-859 PR-S).
+API_MAX_TASKS = 7
+AA_APP_USER_CONNECTION_LIMIT = 15  # migration 234
+
+
 def test_pool_fits_the_role_connection_limit():
-    """aa_app_user CONNECTION LIMIT 15 (migration 234) >= max_size x api max_capacity 10 (Infra
-    modules/ecs/main.tf). Change both together (data standards C2.3c)."""
+    """aa_app_user CONNECTION LIMIT 15 (migration 234) >= max_size x api max_capacity 7 (Infra
+    modules/ecs/main.tf). Change both together (data standards C2.2 / C2.3c)."""
     assert tp.TENANT_POOL_MIN_SIZE == 0
-    assert tp.TENANT_POOL_MAX_SIZE * 10 <= 15
+    assert tp.TENANT_POOL_MAX_SIZE * API_MAX_TASKS <= AA_APP_USER_CONNECTION_LIMIT
     assert tp.TENANT_POOL_ACQUIRE_TIMEOUT_S <= 5
 
 
