@@ -51,6 +51,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, Query, Request
 
 from api.routers.admin import verify_admin_secret
+from services.acp_contract.segment_matching import live_segment_labels
 
 router = APIRouter(prefix="/admin/dashboard", tags=["admin-dashboard"])
 
@@ -597,6 +598,10 @@ async def list_slate(
             """,
             tenant_id, channel,
         )
+        # AA-857 — a Subject stored on an id that has since merged into another shows the live id
+        # and label, as the tenant's Slate does (fetch_slate). `tour_name` stays the stored id's
+        # aggregate (empty once its members were re-pointed) — an admin-only gap, noted in AA-857.
+        moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
 
     by_state = {"proposed": 0, "picked": 0, "used": 0, "cut": 0}
     data = []
@@ -604,6 +609,8 @@ async def list_slate(
         if r["state"] in by_state:
             by_state[r["state"]] += 1
         row = _safe(r, exclude=("route_tour_name", "route_segment_count", "segment_tour_names"))
+        if r["segment_id"] in moved:
+            row["segment_id"], row["canonical_place"], row["canonical_action"] = moved[r["segment_id"]]
         if r["route_id"]:
             row["tour_name"] = r["route_tour_name"]
             row["segment_count"] = r["route_segment_count"]

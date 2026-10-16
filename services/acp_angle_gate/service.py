@@ -28,6 +28,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_angle_gate.brand_audience import fetch_brand_audience
+from services.acp_contract.segment_matching import live_segment_labels
 from services.acp_shared.place_cards import ensure_place_cards
 from services.acp_angle_gate.channel_style import get_channel_style
 from services.acp_angle_gate.generate import generate_angles
@@ -432,7 +433,7 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
         if req["subject_id"] is not None:
             subject_row = await conn.fetchrow(
                 """
-                SELECT s.score, asg.canonical_place, asg.canonical_action, r.hub_name
+                SELECT s.score, s.segment_id, asg.canonical_place, asg.canonical_action, r.hub_name
                 FROM acp_shared.subject s
                 LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
                 LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
@@ -440,6 +441,12 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
                 """,
                 req["subject_id"],
             )
+        # AA-857 — a Subject stored on an id that has since merged into another shows the live
+        # Segment's label, the same one the Slate showed when the tenant picked it.
+        subject_label = None
+        if subject_row is not None:
+            subject_label = (await live_segment_labels(conn, [subject_row["segment_id"]])).get(
+                subject_row["segment_id"])
         # AA-764 — outcome of the latest angle-generation job, so the portal can tell
         # "still generating" from "failed, choose again" without a tenant job endpoint.
         last_generation = await conn.fetchval(
@@ -497,8 +504,10 @@ async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
         # since picking (LEFT JOIN, see this function's own comment above).
         "subject_id": str(req["subject_id"]) if req["subject_id"] else None,
         "subject_score": float(subject_row["score"]) if subject_row and subject_row["score"] is not None else None,
-        "subject_place": subject_row["canonical_place"] if subject_row else None,
-        "subject_action": subject_row["canonical_action"] if subject_row else None,
+        "subject_place": (subject_label[1] if subject_label
+                          else subject_row["canonical_place"] if subject_row else None),
+        "subject_action": (subject_label[2] if subject_label
+                           else subject_row["canonical_action"] if subject_row else None),
         "subject_hub_name": subject_row["hub_name"] if subject_row else None,
     }
 

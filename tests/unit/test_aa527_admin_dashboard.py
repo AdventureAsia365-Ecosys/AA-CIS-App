@@ -353,6 +353,35 @@ class TestListHubs:
 class TestListSlate:
     """AA-564 2.1/2.2 — tenant_id-scoped (not tour_id), real topic name joined in."""
 
+    @pytest.fixture(autouse=True)
+    def _no_aliases(self, monkeypatch):
+        # AA-857 — the alias read is its own query; these tests are about the Subject query.
+        self.live_labels = AsyncMock(return_value={})
+        monkeypatch.setattr(admin_dashboard, "live_segment_labels", self.live_labels)
+
+    @pytest.mark.asyncio
+    async def test_subject_on_an_alias_old_id_shows_the_live_segment(self):
+        """AA-857 — same live id + label as the tenant's Slate (fetch_slate)."""
+        conn = AsyncMock()
+        conn.fetch.return_value = [
+            {"subject_id": uuid.uuid4(), "tenant_id": uuid.uuid4(), "tenant_name": "WanderLux",
+             "channel": "facebook", "state": "picked", "score": 1.0,
+             "segment_id": "old1", "route_id": None, "cleared_bar_reason": '{}',
+             "created_at": "2026-10-16T00:00:00",
+             "canonical_place": "stale label", "canonical_action": "visit",
+             "hub_name": None, "route_tour_name": None, "route_segment_count": None,
+             "segment_tour_names": None},
+        ]
+        self.live_labels.return_value = {"old1": ("live1", "Delhi", "explore")}
+        result = await admin_dashboard.list_slate(
+            _make_request(_make_pool(conn)), tenant_id=str(uuid.uuid4()), channel=None,
+            x_admin_secret=_TEST_SECRET,
+        )
+        row = result["data"][0]
+        assert (row["segment_id"], row["canonical_place"], row["canonical_action"]) == (
+            "live1", "Delhi", "explore")
+        assert self.live_labels.await_args.args[1] == ["old1"]
+
     @pytest.mark.asyncio
     async def test_returns_subjects_and_state_breakdown(self):
         conn = AsyncMock()

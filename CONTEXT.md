@@ -554,6 +554,12 @@ cached columns for Score: `questions_count` (AA-610, migration 163) and `contest
 `docs/adr/0001-*.md`, `docs/adr/0003-*.md`. **A Segment never spans two countries** (tour country,
 `raw_tours.country`): AA-695 vetoes a cross-country pair, and AA-857 holds the rule for the whole
 connected group (an unknown-country atom or pseudo-Segment can no longer bridge two countries).
+A `segment_id` is the mint of the moment that FIRST created it, not a promise about its current
+label: an A3 run relabels only ids it claimed (its atoms' prior Segments + its pool) or ids with no
+member left, re-mints a fresh id that collides with another country's Segment or an alias old id
+(`sha256(id|country|aa857|n)`), and rolls back if a written id would gain a second country among
+its live atoms (AA-857). Subjects stored on an id that later merged resolve through
+`atom_segment_alias` to the live id (an id that still has members is live, never followed).
 _Avoid_: cluster, group, topic.
 
 **Search Demand**:

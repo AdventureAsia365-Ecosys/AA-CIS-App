@@ -18,7 +18,7 @@ class _Conn:
         self.calls = []
 
     async def fetch(self, sql, *args):
-        if "v_active_tour_atoms" in sql:
+        if "v_active_tour_atoms" in sql and "ta.tour_id = $1" in sql:
             return [{"atom_id": "atomX", "tour_id": TOUR, "itinerary_day": 1, "place": "Kyoto", "action": "walk",
                      "activity_type": "culture", "country": "Japan"}]
         if "FROM acp_contract.atom_segment asg" in sql:

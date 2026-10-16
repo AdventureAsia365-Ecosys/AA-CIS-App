@@ -68,6 +68,7 @@ from uuid import UUID
 
 import structlog
 
+from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.subject_seed import (
     choose_representative, load_alias_cards, load_segment_members,
@@ -553,10 +554,16 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         # only what survives both gets proposed.
         chosen = _choose_slate(enabled_channels, segments, routes, hub_of)
         async with conn.transaction():
+            held_via_alias = await _segments_held_via_alias(tenant_id, conn)
             live_segment_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
             live_route_ids: dict[str, set[str]] = {c: set() for c in CHANNEL_BARS}
             for channel in enabled_channels:
                 for candidate, reason in chosen[channel]:
+                    if candidate.segment_id and (channel, candidate.segment_id) in held_via_alias:
+                        # AA-857 — the tenant already picked/used/cut this Segment on this Channel
+                        # under the id it had before a merge; same outcome as the ON CONFLICT no-op
+                        # below for a same-id row (no second, duplicate Subject for one place).
+                        continue
                     if candidate.segment_id:
                         live_segment_ids[channel].add(candidate.segment_id)
                         # The ON CONFLICT target must match idx_subject_unique_segment's own
@@ -609,6 +616,20 @@ async def propose_slate(tenant_id: UUID, pool) -> dict:
         "channels": enabled_channels,
         "proposed_per_channel": {channel: len(chosen[channel]) for channel in enabled_channels},
     }
+
+
+async def _segments_held_via_alias(tenant_id: UUID, conn) -> set[tuple[str, str]]:
+    """AA-857 — (channel, live segment_id) of the tenant's picked/used/cut Subjects stored on an id
+    that has since given way (`atom_segment_alias`): the live id is already taken on that Channel."""
+    rows = await conn.fetch("""
+        SELECT channel, segment_id FROM acp_shared.subject
+        WHERE tenant_id = $1::uuid AND state <> 'proposed' AND segment_id IS NOT NULL
+    """, tenant_id)
+    if not rows:
+        return set()
+    live = await resolve_segment_aliases(conn, [r["segment_id"] for r in rows])
+    return {(r["channel"], live[r["segment_id"]]) for r in rows
+            if live.get(r["segment_id"], r["segment_id"]) != r["segment_id"]}
 
 
 T7_SLATE_KIND = "t7_slate"
@@ -713,6 +734,9 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
             WHERE s.tenant_id = $1::uuid AND s.state != 'cut'
             ORDER BY s.channel, s.score ASC NULLS LAST, s.subject_id
         """, tenant_id)
+        # AA-857 — a Subject stored on an id that has since merged into another (atom_segment_alias)
+        # is shown on the live id, with the live Segment's label (the old row keeps its old label).
+        moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
 
     by_channel: dict[str, list[dict]] = {c: [] for c in CHANNEL_BARS}
     for r in rows:
@@ -721,16 +745,18 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
         reason = r["cleared_bar_reason"]
         if isinstance(reason, str):
             reason = json.loads(reason)
+        segment_id, place, action = moved.get(
+            r["segment_id"], (r["segment_id"], r["canonical_place"], r["canonical_action"]))
         by_channel.setdefault(r["channel"], []).append({
             "subject_id": str(r["subject_id"]),
             "channel": r["channel"],
             "state": r["state"],
             "score": float(r["score"]) if r["score"] is not None else None,
             "cleared_bar_reason": reason,
-            "segment_id": r["segment_id"],
+            "segment_id": segment_id,
             "route_id": r["route_id"],
-            "place": r["canonical_place"],
-            "action": r["canonical_action"],
+            "place": place,
+            "action": action,
             "hub_name": r["hub_name"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
         })
@@ -787,8 +813,13 @@ async def pick_subject(tenant_id: UUID, subject_id: UUID, pool, selected_by: str
                 f"subject_id={subject_id} is '{row['state']}', not 'proposed'"
             )
 
+        # AA-857 — a Subject on an id that has since merged into another seeds from the live id
+        # (the old id has no members left after the merge re-pointed them).
+        segment_id = row["segment_id"]
+        if segment_id:
+            segment_id = (await resolve_segment_aliases(conn, [segment_id])).get(segment_id, segment_id)
         atom_id, trip_id, route_segment_ids = await _resolve_representative_atom(
-            conn, tenant_id, row["segment_id"], row["route_id"],
+            conn, tenant_id, segment_id, row["route_id"],
         )
         if atom_id is None:
             raise SubjectNotEligibleError(
