@@ -73,15 +73,28 @@ class _StatefulAngleOptionConn:
     across multiple choose_angle() calls, unlike the AsyncMock-with-side_effect style the rest
     of this file uses (which only checks call counts/args, not resulting DB state). Needed here
     because the fix's correctness is specifically about final state after 2 calls, not just
-    which queries fire once."""
+    which queries fire once.
 
-    async def fetchval(self, *args, **kwargs):
-        # AA-764 — fetch_request() reads the latest t8_angles job status; none in these tests.
-        return None
+    AA-859 W3 — choose_angle() runs on the caller's connection: the request lock / status read
+    (_CHOOSE_LOCK_SQL), the option check, one `SET chosen = (idx = $2)` UPDATE and the conditional
+    approve. Dispatches on those module constants, so a change to the SQL shows up here."""
 
     def __init__(self):
         self.options = {0: False, 1: False, 2: False}
         self.request_status = "pending_choice"
+
+    async def fetchval(self, query, *args):
+        if query == service._CHOOSE_LOCK_SQL or query == service._REQUEST_STATUS_SQL:
+            return self.request_status
+        if query == service._OPTION_EXISTS_SQL:
+            idx = args[1]
+            return 1 if idx in self.options else None
+        if query == service._REOPEN_SQL:
+            if self.request_status != "approved":
+                return None
+            self.request_status = "reusable"
+            return args[0]
+        return None  # AA-764 — fetch_request()'s latest t8_angles job status; none in these tests.
 
     async def fetchrow(self, query, *args):
         if "angle_gate_request" in query:
@@ -92,21 +105,14 @@ class _StatefulAngleOptionConn:
         return [_option_row(i, chosen=self.options[i]) for i in sorted(self.options)]
 
     async def execute(self, query, *args):
-        if "SET chosen = true" in query:
-            _, idx = args
-            if idx not in self.options:
-                return "UPDATE 0"
-            self.options[idx] = True
-            return "UPDATE 1"
-        if "SET chosen = false" in query:
-            _, idx = args
-            n = 0
+        if query == service._OPTION_CHOOSE_SQL:
+            idx = args[1]
             for i in self.options:
-                if i != idx:
-                    self.options[i] = False
-                    n += 1
-            return f"UPDATE {n}"
-        if "SET status = 'approved'" in query:
+                self.options[i] = i == idx
+            return f"UPDATE {len(self.options)}"
+        if query == service._REQUEST_APPROVE_SQL:
+            if self.request_status not in ("pending_choice", "reusable"):
+                return "UPDATE 0"
             self.request_status = "approved"
             return "UPDATE 1"
         return "UPDATE 0"
@@ -360,25 +366,26 @@ class TestSetGoalAndGenerate:
             await service.set_goal_and_generate(OTHER_TENANT_ID, REQUEST_ID, "promotion", pool)
 
 
+def _choose_conn(status="pending_choice", option_exists=True, approve="UPDATE 1"):
+    """AA-859 W3 — choose_angle(conn, ...) reads: the locked status, then whether the option exists."""
+    conn = AsyncMock()
+    conn.fetchval.side_effect = [status, 1 if option_exists else None]
+    conn.execute.side_effect = ["UPDATE 3", approve]
+    return conn
+
+
 @pytest.mark.asyncio
 class TestChooseAngle:
     async def test_happy_path_sets_chosen_and_approved(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="pending_choice", goal="promotion")
-        conn.execute.side_effect = ["UPDATE 1", "UPDATE 2", "UPDATE 1"]
-        pool = _make_pool(conn)
+        conn = _choose_conn()
+        assert await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 1) is None
 
-        with patch.object(service, "fetch_request", new=AsyncMock(return_value={"status": "approved"})):
-            result = await service.choose_angle(TENANT_ID, REQUEST_ID, 1, pool)
-
-        assert result["status"] == "approved"
-        status_update = [c for c in conn.execute.call_args_list if "SET status = 'approved'" in c[0][0]]
-        assert len(status_update) == 1
-        # AA-494 prerequisite fix — the other 2 options must be explicitly unset in the same call.
-        unset_call = [c for c in conn.execute.call_args_list if "SET chosen = false" in c[0][0]]
-        assert len(unset_call) == 1
-        _, unset_request_id, unset_idx = unset_call[0][0]
-        assert (unset_request_id, unset_idx) == (REQUEST_ID, 1)
+        lock_sql, *lock_args = conn.fetchval.call_args_list[0][0]
+        assert lock_sql == service._CHOOSE_LOCK_SQL and lock_args == [REQUEST_ID, TENANT_ID]
+        assert conn.fetchval.call_args_list[1][0] == (service._OPTION_EXISTS_SQL, REQUEST_ID, 1, TENANT_ID)
+        # AA-494 prerequisite fix — one statement points chosen at idx 1 AND unsets the other 2.
+        assert conn.execute.call_args_list[0][0] == (service._OPTION_CHOOSE_SQL, REQUEST_ID, 1, TENANT_ID)
+        assert conn.execute.call_args_list[1][0] == (service._REQUEST_APPROVE_SQL, REQUEST_ID, TENANT_ID)
 
     async def test_choosing_twice_unsets_previous_choice(self):
         """The bug this fixes: choose_angle() used to leave a previously-chosen option's
@@ -389,31 +396,50 @@ class TestChooseAngle:
         underlying data-mutation logic is verified now and stays meaningful once the guard is
         loosened later, per the build task's own requirement."""
         conn = _StatefulAngleOptionConn()
-        pool = _make_pool(conn)
 
-        await service.choose_angle(TENANT_ID, REQUEST_ID, 0, pool)
+        await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 0)
         assert conn.options == {0: True, 1: False, 2: False}
 
         conn.request_status = "pending_choice"  # simulate a future status allowing re-choice
-        await service.choose_angle(TENANT_ID, REQUEST_ID, 2, pool)
+        await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 2)
 
         assert conn.options == {0: False, 1: False, 2: True}, (
             "only the most recently chosen option should have chosen=true"
         )
 
     async def test_wrong_status_raises(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="pending_goal")  # no angles generated yet
-        pool = _make_pool(conn)
+        conn = _choose_conn(status="pending_goal")  # no angles generated yet
         with pytest.raises(service.WrongStatusError):
-            await service.choose_angle(TENANT_ID, REQUEST_ID, 0, pool)
+            await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 0)
+        conn.execute.assert_not_called()
+
+    async def test_cross_tenant_request_not_found(self):
+        conn = _choose_conn(status=None)  # the tenant-filtered lock found no row
+        with pytest.raises(service.RequestNotFoundError):
+            await service.choose_angle(conn, OTHER_TENANT_ID, REQUEST_ID, 0)
+        assert conn.fetchval.await_count == 1
+        conn.execute.assert_not_called()
 
     async def test_invalid_idx_raises(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="pending_choice")
-        pool = _make_pool(conn)
+        conn = _choose_conn()
         with pytest.raises(service.AngleGateError):
-            await service.choose_angle(TENANT_ID, REQUEST_ID, 7, pool)
+            await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 7)
+        assert conn.fetchval.await_count == 1, "idx is checked before any option SQL"
+        conn.execute.assert_not_called()
+
+    async def test_missing_option_raises_and_writes_nothing(self):
+        conn = _choose_conn(option_exists=False)
+        with pytest.raises(service.AngleGateError) as exc:
+            await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 2)
+        assert not isinstance(exc.value, (service.WrongStatusError, service.RequestNotFoundError))
+        conn.execute.assert_not_called()
+
+    async def test_approve_touching_no_row_is_wrong_status(self):
+        """Backstop: under the lock this cannot happen; if it does (no lock taken), the decision is a 409
+        and the caller's transaction rolls the option change back, never a silent approve-nothing."""
+        conn = _choose_conn(approve="UPDATE 0")
+        with pytest.raises(service.WrongStatusError, match="changed while choosing"):
+            await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 1)
 
 
 @pytest.mark.asyncio

@@ -25,17 +25,26 @@ Endpoint shape:
                                                    reusable, unlocking .../choose again to pick
                                                    a different one of the 3 already-generated
                                                    angles (no new LLM call)
+
+AA-859 W3: .../choose and .../reopen run as one transaction (request row locked FOR UPDATE, then its
+options) on the aa_app_user tenant pool when the Redis flag `aa859:angle_gate_decide_pool` is on (fail
+closed), on the main pool otherwise; the response is re-read on the main pool after commit (see _decide).
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from api.core.aa544_tenant_pool import ANGLE_GATE_DECIDE_FLAG, acquire_scoped_conn
 from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate import service
 from services.acp_angle_gate.goals import GOALS
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/angle-gate", tags=["tenant-angle-gate"])
 
@@ -84,15 +93,34 @@ async def get_request(request_id: UUID, request: Request, tenant=Depends(get_ten
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+# AA-859 W3 (plan PR-D3) — choose and reopen run as ONE transaction behind ANGLE_GATE_DECIDE_FLAG: on the
+# tenant pool (aa_app_user, app.tenant_id LOCAL, RLS on angle_gate_request (229) and angle_gate_option (241))
+# when the flag is on, fail closed (503, never the admin pool); on the main pool with its own transaction when
+# it is off. One tenant connection per request, released before the re-read below.
+async def _decide(request: Request, tenant_id: UUID, request_id: UUID, event: str, decide) -> dict:
+    async with acquire_scoped_conn(
+        request, str(tenant_id), ANGLE_GATE_DECIDE_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info(event, tenant_id=str(tenant_id), request_id=str(request_id), used_tenant_pool=used_tenant_pool)
+        async with (nullcontext() if used_tenant_pool else conn.transaction()):
+            await decide(conn)
+    # AA-859 MAIN exception: fetch_request reads subject / atom_segment / route (no tenant-role grant until
+    # wave 4's 243) and shared.job (no tenant column); ownership was proven inside the transaction above (the
+    # tenant-filtered, on the tenant pool RLS-filtered, request row). Read after commit, on the main pool.
+    return await service.fetch_request(tenant_id, request_id, request.app.state.pool)
+
+
 @router.post(
     "/requests/{request_id}/choose",
     summary="Tenant chooses one of the 3 angles — workflow step 7, the real gate",
 )
 async def choose(request_id: UUID, body: ChooseBody, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
     try:
-        return await service.choose_angle(tenant_id, request_id, body.idx, pool)
+        return await _decide(
+            request, tenant_id, request_id, "aa859_angle_gate_choose",
+            lambda conn: service.choose_angle(conn, tenant_id, request_id, body.idx),
+        )
     except service.RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.WrongStatusError as exc:
@@ -108,9 +136,11 @@ async def choose(request_id: UUID, body: ChooseBody, request: Request, tenant=De
 )
 async def reopen(request_id: UUID, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
-    pool = request.app.state.pool
     try:
-        return await service.reopen_request(tenant_id, request_id, pool)
+        return await _decide(
+            request, tenant_id, request_id, "aa859_angle_gate_reopen",
+            lambda conn: service.reopen_request(conn, tenant_id, request_id),
+        )
     except service.RequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except service.WrongStatusError as exc:
