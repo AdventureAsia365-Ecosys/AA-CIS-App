@@ -338,7 +338,39 @@ async def clear_failed_generation(request_id: str, pool) -> None:
         )
 
 
-async def reopen_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
+# AA-859 W3 (plan PR-D3) — choose / reopen run in ONE transaction the caller opens (the router: the tenant
+# pool behind ANGLE_GATE_DECIDE_FLAG, or the main pool with its own transaction when the flag is off). The
+# request row is locked first (FOR UPDATE), then its options, the same order as the t8_angles worker
+# (UPDATE request, then INSERT options), so two decisions on one request serialize and the second sees the
+# first one's status: no time-of-check / time-of-use gap between the status check and the writes. Every
+# statement keeps its own tenant filter; on the tenant pool RLS (229 on angle_gate_request, 241 on
+# angle_gate_option through its parent) holds the boundary even if one were forgotten. Module constants so
+# tests can mutate them (forgotten WHERE, missing lock).
+_CHOOSE_LOCK_SQL = """
+    SELECT status FROM acp_shared.angle_gate_request
+    WHERE request_id = $1 AND tenant_id = $2::uuid
+    FOR UPDATE
+"""
+_OPTION_EXISTS_SQL = "SELECT 1 FROM acp_shared.angle_gate_option WHERE request_id = $1 AND idx = $2"
+# One statement for "this one chosen, the other two not" (AA-494: T9 reads the chosen=true row, so the
+# previous choice must be unset). Writes only `chosen`, the one column 241 grants UPDATE on.
+_OPTION_CHOOSE_SQL = "UPDATE acp_shared.angle_gate_option SET chosen = (idx = $2) WHERE request_id = $1"
+_REQUEST_APPROVE_SQL = """
+    UPDATE acp_shared.angle_gate_request SET status = 'approved', updated_at = now()
+    WHERE request_id = $1 AND tenant_id = $2::uuid AND status IN ('pending_choice', 'reusable')
+"""
+_REOPEN_SQL = """
+    UPDATE acp_shared.angle_gate_request SET status = 'reusable', updated_at = now()
+    WHERE request_id = $1 AND tenant_id = $2::uuid AND status = 'approved'
+    RETURNING request_id
+"""
+_REQUEST_STATUS_SQL = """
+    SELECT status FROM acp_shared.angle_gate_request
+    WHERE request_id = $1 AND tenant_id = $2::uuid
+"""
+
+
+async def reopen_request(conn, tenant_id: UUID, request_id: UUID) -> None:
     """AA-497 (AA-494 Decision 3) — the tenant-triggered action that moves an 'approved' request
     back to 'reusable', unlocking choose_angle() below to re-point `chosen` at a different one of
     the 3 already-generated angle_gate_option rows — no new LLM call, they were generated once by
@@ -348,68 +380,56 @@ async def reopen_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
     Only valid from 'approved' — a request that hasn't been approved yet has nothing to reopen
     (call set_goal_and_generate()/choose_angle() normally instead), and a request already
     'reusable' is already reopened. Raising WrongStatusError on a double-call (rather than a
-    silent no-op) makes that visible instead of hiding it."""
-    req = await _fetch_request_row(tenant_id, request_id, pool)
-    if req["status"] != "approved":
-        raise WrongStatusError(
-            f"request_id={request_id} is status={req['status']!r}, expected 'approved' — only "
-            "an approved request can be reopened for re-selection."
-        )
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE acp_shared.angle_gate_request SET status = 'reusable', updated_at = now() "
-            "WHERE request_id = $1",
-            request_id,
-        )
-    return await fetch_request(tenant_id, request_id, pool)
+    silent no-op) makes that visible instead of hiding it.
+
+    AA-859 W3 — runs on the caller's `conn`, inside the caller's transaction (see the SQL constants
+    above). One conditional UPDATE: a double click reopens once, the second call finds no 'approved'
+    row and the re-read under the same connection tells "not this tenant's" (404) from "wrong
+    status" (409). The response is the caller's fetch_request() after commit."""
+    if await conn.fetchval(_REOPEN_SQL, request_id, tenant_id) is not None:
+        return
+    status = await conn.fetchval(_REQUEST_STATUS_SQL, request_id, tenant_id)
+    if status is None:
+        raise RequestNotFoundError(f"request_id={request_id} not found for this tenant")
+    raise WrongStatusError(
+        f"request_id={request_id} is status={status!r}, expected 'approved' — only "
+        "an approved request can be reopened for re-selection."
+    )
 
 
-async def choose_angle(tenant_id: UUID, request_id: UUID, idx: int, pool) -> dict:
+async def choose_angle(conn, tenant_id: UUID, request_id: UUID, idx: int) -> None:
     """Workflow step 7 — the real 'gate': tenant picks 1 of the 3 (recommended or not, both
     valid — workflow: 'có thể chọn theo đề xuất... hoặc chọn khác').
 
     AA-497 — also callable from status='reusable' (reopen_request() above), not just the
     original 'pending_choice' — re-points `chosen` at a different already-generated option, no
-    LLM call, and lands back on 'approved' exactly like the first-time choice does below (the
-    final UPDATE already sets 'approved' unconditionally, so that part needed no change)."""
-    req = await _fetch_request_row(tenant_id, request_id, pool)
-    if req["status"] not in ("pending_choice", "reusable"):
+    LLM call, and lands back on 'approved' exactly like the first-time choice does.
+
+    AA-859 W3 — runs on the caller's `conn`, inside the caller's transaction: lock the request
+    (404 if it is not this tenant's), check its status (409), the idx (422), then point `chosen` at
+    the option and approve. Any error rolls the whole decision back. The response is the caller's
+    fetch_request() after commit (AA-448's lesson: re-read, never hand-mutate)."""
+    status = await conn.fetchval(_CHOOSE_LOCK_SQL, request_id, tenant_id)
+    if status is None:
+        raise RequestNotFoundError(f"request_id={request_id} not found for this tenant")
+    if status not in ("pending_choice", "reusable"):
         raise WrongStatusError(
-            f"request_id={request_id} is status={req['status']!r}, expected 'pending_choice' or "
+            f"request_id={request_id} is status={status!r}, expected 'pending_choice' or "
             "'reusable'."
         )
     if idx not in (0, 1, 2):
         raise AngleGateError(f"idx must be 0, 1, or 2, got {idx!r}")
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            updated = await conn.execute(
-                "UPDATE acp_shared.angle_gate_option SET chosen = true "
-                "WHERE request_id = $1 AND idx = $2",
-                request_id, idx,
-            )
-            if updated == "UPDATE 0":
-                raise AngleGateError(f"No angle option idx={idx} for request_id={request_id}")
-            # AA-494 prerequisite fix (PR #253) — the other 2 options were never unset. Was
-            # harmless while the status guard blocked calling this twice; now that AA-497's
-            # 'reusable' reopen makes a second choose_angle() call real and reachable, this
-            # explicit unset is what makes T9 (services/acp_content_writing/service.py::
-            # start_write(), reads angles where chosen=true) pick up the LATEST choice instead
-            # of silently reading the first chosen=true row by idx.
-            await conn.execute(
-                "UPDATE acp_shared.angle_gate_option SET chosen = false "
-                "WHERE request_id = $1 AND idx != $2",
-                request_id, idx,
-            )
-            await conn.execute(
-                "UPDATE acp_shared.angle_gate_request SET status = 'approved', updated_at = now() "
-                "WHERE request_id = $1",
-                request_id,
-            )
-    # AA-448's own live-verify lesson (finalize response showed stale approved=false because the
-    # in-memory object was never re-read after the DB write) — re-fetch fresh from the DB here
-    # instead of hand-mutating an in-memory dict, so this can't repeat that bug class.
-    return await fetch_request(tenant_id, request_id, pool)
+    if await conn.fetchval(_OPTION_EXISTS_SQL, request_id, idx) is None:
+        raise AngleGateError(f"No angle option idx={idx} for request_id={request_id}")
+    await conn.execute(_OPTION_CHOOSE_SQL, request_id, idx)
+    # Backstop: under the FOR UPDATE above the status cannot change before this UPDATE, so 0 rows means
+    # the lock was not taken (or the row is not this tenant's). Never a silent approve-nothing; the
+    # caller's transaction rolls the option change back with it.
+    if await conn.execute(_REQUEST_APPROVE_SQL, request_id, tenant_id) == "UPDATE 0":
+        logger.error("aa859_angle_gate_choose_status_changed", request_id=str(request_id))
+        raise WrongStatusError(
+            f"request_id={request_id} changed while choosing — reload it and choose again."
+        )
 
 
 async def fetch_request(tenant_id: UUID, request_id: UUID, pool) -> dict:
