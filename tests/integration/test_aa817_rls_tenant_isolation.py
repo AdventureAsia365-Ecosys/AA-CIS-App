@@ -4,13 +4,16 @@ The guard the issue asks for: a non-owner, non-BYPASSRLS role with a forged app.
 that FORGETS its `WHERE tenant_id = ...` reads 0 rows of another tenant. Covers the acp_shared tables
 behind the tenant routes on the tenant pool (AA-544 stages 1/5, AA-815, AA-817 latest-piece):
 angle_gate_request (113), content_piece (115), publish_log (116), facts (145, platform rows shared by
-design) and gold_aa_internal.tenant_tour_versions (the stage-2 T2 table), all on the policy template of
-migration 229. The CI DB does not create tenant_tour_versions (migration 001 is skipped), so each test
-creates conftest's stand-in and re-applies 229 in its own rolled-back transaction.
+design), gold_aa_internal.tenant_tour_versions (the stage-2 T2 table), all on the policy template of
+migration 229, and shared.tenant_integrations (the AA-815 disconnect route, same template, migration 237).
+The CI DB does not create tenant_tour_versions (migration 001 is skipped), so each test creates
+conftest's stand-in and re-applies 229 and 237 in its own rolled-back transaction.
 
 Write side: a WHERE-less UPDATE touches only the own tenant's rows, a row can be neither handed to nor
 inserted for another tenant (or under ''), and platform facts can be read but never written or
-re-scoped (229's WITH CHECK; before 229 this was a strict xfail).
+re-scoped (229's WITH CHECK; before 229 this was a strict xfail). tenant_integrations is granted only
+SELECT and DELETE (237): a WHERE-less DELETE removes only the own tenant's row (0 under a forged uuid or
+''), and INSERT/UPDATE are refused by the missing grant.
 
 Lesson S236: on RDS, check RLS by behaviour (row counts under a foreign tenant), not by role
 attributes. Seeding runs as the CI superuser; reads run under SET ROLE aa_app_user in the same
@@ -30,6 +33,8 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TTV_STANDIN_DD
 
 MIGRATION_229 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                              "229_tenant_rls_policies.sql")
+MIGRATION_237 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                             "237_tenant_integrations_rls.sql")
 
 TENANT_ROLE = "aa_app_user"
 # table -> True when rows with tenant_id NULL (platform scope) are visible to every tenant by design
@@ -39,11 +44,14 @@ TENANT_TABLES = {
     "acp_shared.publish_log": False,
     "acp_shared.facts": True,
     "gold_aa_internal.tenant_tour_versions": False,
+    "shared.tenant_integrations": False,
 }
+# tables the tenant role may read and DELETE but not INSERT/UPDATE (237: the disconnect route only)
+DELETE_ONLY_TABLES = {"shared.tenant_integrations"}
 
 
-def _migration_229_body() -> str:
-    with open(MIGRATION_229) as f:
+def _migration_body(path: str) -> str:
+    with open(path) as f:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
 
 
@@ -54,7 +62,8 @@ def cur():
     c = conn.cursor()
     try:
         c.execute(TTV_STANDIN_DDL)
-        c.execute(_migration_229_body())
+        c.execute(_migration_body(MIGRATION_229))
+        c.execute(_migration_body(MIGRATION_237))
         yield c
     finally:
         conn.rollback()
@@ -84,6 +93,8 @@ def _seed(c, tid):
               "VALUES (%s, 'tenant', %s, 't', 'b', 'aa817-test')", (f"fact_{uuid.uuid4().hex[:10]}", tid))
     c.execute("INSERT INTO gold_aa_internal.tenant_tour_versions (tenant_id, published_tour_id, edit_source) "
               "VALUES (%s, %s, 'ai_generated')", (tid, str(uuid.uuid4())))
+    c.execute("INSERT INTO shared.tenant_integrations (tenant_id, integration_type, config, secret_key) "
+              "VALUES (%s, 'wordpress', '{}'::jsonb, %s)", (tid, f"acp/cms/{tid}"))
 
 
 @pytest.fixture
@@ -161,7 +172,7 @@ def test_owner_still_sees_every_tenant(cur, two_tenants):
 # Write side. Every policy here is FOR ALL TO aa_app_user with an explicit WITH CHECK (229), so a
 # WHERE-less UPDATE touches only the own tenant's rows and a row can neither be written for nor handed
 # to another tenant. facts is split: tenant rows like the others, platform rows read-only.
-WRITE_TABLES = sorted(TENANT_TABLES)
+WRITE_TABLES = sorted(set(TENANT_TABLES) - DELETE_ONLY_TABLES)
 _INSERT_FOR = {
     "acp_shared.angle_gate_request": ("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, status) "
                                       "VALUES (%s, 'aa817-atom', 'approved')"),
@@ -208,3 +219,34 @@ def test_tenant_role_cannot_write_platform_facts(cur, two_tenants):
     with _as_tenant(cur, a) as c:              # an own fact cannot be turned into a platform fact
         _rls_violation(c, "UPDATE acp_shared.facts SET scope = 'platform', tenant_id = NULL "
                           "WHERE tenant_id IS NOT NULL")
+
+
+# shared.tenant_integrations (237): the tenant pool may read and DELETE (DELETE /v1/integrations/{type},
+# AA-815), nothing else. The route filters by tenant_id; these checks drop the filter on purpose.
+
+@pytest.mark.parametrize("table", sorted(DELETE_ONLY_TABLES))
+def test_forged_tenant_deletes_no_foreign_rows(cur, two_tenants, table):
+    a, b = two_tenants
+    for guc in (str(uuid.uuid4()), ""):
+        with _as_tenant(cur, guc) as c:
+            c.execute(f"DELETE FROM {table}")                   # no WHERE on purpose
+            assert c.rowcount == 0, (table, guc)
+    with _as_tenant(cur, a) as c:
+        c.execute(f"DELETE FROM {table}")                       # no WHERE: only the own row goes
+        assert c.rowcount == 1, table
+        c.execute("RESET ROLE")                                 # read back as the seeding superuser
+        c.execute(f"SELECT DISTINCT tenant_id::text FROM {table} WHERE tenant_id::text = ANY(%s)", ([a, b],))
+        assert {r[0] for r in c.fetchall()} == {b}, "the other tenant's row must survive"
+
+
+@pytest.mark.parametrize("table", sorted(DELETE_ONLY_TABLES))
+def test_tenant_role_cannot_insert_or_update_delete_only_tables(cur, two_tenants, table):
+    """Connect / test-connection stay on the main pool: no INSERT or UPDATE grant (237), and no
+    TRUNCATE, which RLS does not filter."""
+    a, _ = two_tenants
+    for sql, params in ((f"UPDATE {table} SET updated_at = now()", ()),
+                        (f"INSERT INTO {table} (tenant_id, integration_type) VALUES (%s, 'facebook')", (a,)),
+                        (f"TRUNCATE {table}", ())):
+        with _as_tenant(cur, a) as c:
+            with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
+                c.execute(sql, params)
