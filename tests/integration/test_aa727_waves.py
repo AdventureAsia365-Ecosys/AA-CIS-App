@@ -45,8 +45,11 @@ async def _raw(conn, name, status="active", itin="Day 1: " + "x" * 800):
 
 async def _job(conn, kind, tour_id, status, created_at="now()"):
     return await conn.fetchval(
-        f"""INSERT INTO shared.job (kind, payload, status, created_at, finished_at)
-            VALUES ($1, $2::jsonb, $3, {created_at}, CASE WHEN $3 IN ('queued','running') THEN NULL ELSE now() END)
+        # A running row holds a lease (job_lease_chk, migration 242).
+        f"""INSERT INTO shared.job (kind, payload, status, created_at, finished_at, locked_by, locked_until)
+            VALUES ($1, $2::jsonb, $3, {created_at}, CASE WHEN $3 IN ('queued','running') THEN NULL ELSE now() END,
+                    CASE WHEN $3 = 'running' THEN 'test' END,
+                    CASE WHEN $3 = 'running' THEN now() + interval '5 min' END)
             RETURNING id::text""",
         kind, json.dumps({"tour_id": tour_id}), status)
 

@@ -189,10 +189,13 @@ async def test_job_retention_windows_archive_failed_only_and_keeps_referenced_ro
 
     async def job(status, days_ago, parent=None):
         return str(await pool.fetchval("""
-            INSERT INTO shared.job (kind, payload, status, created_by, parent_job_id, finished_at)
+            INSERT INTO shared.job (kind, payload, status, created_by, parent_job_id, finished_at,
+                                    locked_by, locked_until)
             VALUES ('aa825_test', '{}'::jsonb, $1, $2, $3::uuid,
-                    CASE WHEN $1 IN ('queued', 'running') THEN NULL ELSE now() - make_interval(days => $4) END)
-            RETURNING id""", status, tag, parent, days_ago))
+                    CASE WHEN $1 IN ('queued', 'running') THEN NULL ELSE now() - make_interval(days => $4) END,
+                    CASE WHEN $1 = 'running' THEN 'test' END,
+                    CASE WHEN $1 = 'running' THEN now() + interval '5 min' END)
+            RETURNING id""", status, tag, parent, days_ago))  # a running row holds a lease (job_lease_chk, 242)
 
     ok_old = await job("succeeded", 31)
     ok_new = await job("succeeded", 29)

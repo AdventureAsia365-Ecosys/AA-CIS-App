@@ -177,8 +177,9 @@ async def test_tenant_lifecycle_end_to_end(ctx):
         "INSERT INTO shared.job (kind, payload) VALUES ('aa797_test', jsonb_build_object('tenant_id', $1::text)) "
         "RETURNING id", tid)
     running = await pool.fetchval(
-        "INSERT INTO shared.job (kind, payload, status) VALUES ('aa797_test', "
-        "jsonb_build_object('tenant_id', $1::text), 'running') RETURNING id", tid)
+        "INSERT INTO shared.job (kind, payload, status, locked_by, locked_until) VALUES ('aa797_test', "
+        "jsonb_build_object('tenant_id', $1::text), 'running', 'test', now() + interval '5 min') "
+        "RETURNING id", tid)  # a running row holds a lease (job_lease_chk, migration 242)
     out = await admin.offboard_tenant(tid, admin.OffboardRequest(reason="aa797 test"), req, **HDR)
     assert out["cancelled_jobs"] == 1
     assert await pool.fetchval("SELECT status FROM shared.job WHERE id = $1", queued) == "cancelled"

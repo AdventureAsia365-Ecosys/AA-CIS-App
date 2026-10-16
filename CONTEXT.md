@@ -177,6 +177,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - `shared/jobs/`: `queue.py` (enqueue with idempotency key, claim `FOR UPDATE SKIP LOCKED` under
     an advisory lock, lease + heartbeat, retry with backoff, reaper, cancel/retry), `registry.py`
     (`@job_kind(name, concurrency, max_attempts)`, `JobContext` for progress/cost), `worker.py`.
+  - **Table shape (AA-751 / X6, ADR 0003a decision 2, migration 242)**: `shared/jobs/job_table_template.sql`
+    is the reference DDL of every owner's `<schema>.job` (CIS `shared.job`, Booking `booking.job` keeps a
+    byte copy, a future `tripplanner.job`); no runner applies it, each owner's migration instantiates it.
+    `shared/jobs/job_table_shape.py` renders it and compares a live table through `pg_catalog` (columns,
+    CHECKs, FK, indexes by definition, trigger, reloptions; names ignored), run by
+    `tests/integration/test_aa751_job_table_template.py`. Since 242 `shared.job` enforces
+    `job_kind_chk` (kind `^(?!bk_|tp_)[a-z][a-z0-9_]*$`: lower-case snake_case, never another owner's
+    prefix), `job_lease_chk` (a `running` row has `locked_by` and `locked_until`; test helpers that insert
+    running rows must set a lease) and `job_attempts_chk` (`attempt >= 0`, `max_attempts >= 1`); the
+    BEFORE UPDATE trigger `job_set_updated_at` sets `updated_at` on every UPDATE (writers need not); queue
+    autovacuum `scale_factor 0.02`, `threshold 50` (C5.1b as amended by AA-751). Changing the template =
+    copy it to AA-Booking in the same session + one migration per owner.
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
