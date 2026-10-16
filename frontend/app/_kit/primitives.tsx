@@ -16,6 +16,46 @@ import {
 } from "lucide-react";
 import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
 
+// ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
+// One-line "<root> / <title>" crumb for a shell top bar. The root and separator never shrink; the
+// title is the only flex item that does, and it ends in an ellipsis instead of being hard-clipped
+// (S239 UI verify: "Connect your Facebook Pag" at 390px). `minWidth: 0` on both the wrapper and the
+// title is what lets a flex item shrink below its text width. The full title stays in `title=`.
+export function Breadcrumb({
+  root,
+  title,
+  fontSize = 13,
+  testId = "topbar-breadcrumb",
+}: {
+  root: string;
+  title: string;
+  fontSize?: number;
+  testId?: string;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      style={{
+        display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1,
+        overflow: "hidden", whiteSpace: "nowrap", fontSize, fontFamily: sans,
+      }}
+    >
+      <span style={{ color: K.muted2, flexShrink: 0 }}>{root}</span>
+      <span aria-hidden style={{ color: K.line, flexShrink: 0 }}>/</span>
+      <span
+        data-testid={`${testId}-title`}
+        title={title || undefined}
+        style={{
+          color: K.body, fontWeight: 500, minWidth: 0,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}
+      >
+        {title}
+      </span>
+    </div>
+  );
+}
+
 // ── Button (AA-752) ───────────────────────────────────────────────────────────
 // The canonical brand button. Variants follow adventure.asia: primary = gold pill (uppercase on
 // md/lg), secondary = gold outline, danger = red soft, ghost = line outline. `size="sm"` stays
