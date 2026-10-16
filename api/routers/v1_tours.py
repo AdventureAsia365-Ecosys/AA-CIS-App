@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from pydantic import BaseModel as _BM
+import asyncpg
+from api.core.aa544_tenant_pool import T2_VERSION_WRITE_FLAG, acquire_scoped_conn
 from api.routers.auth import verify_tenant_jwt
 from api.routers.admin import PLAN_LIMITS
 from api.routers._billing import no_plan_usage, usage_row_to_dict
@@ -954,39 +956,34 @@ class VersionActionRequest(_BM):
     edited_by: Optional[str] = None
 
 
-@router.patch("/versions/{version_id}")
-async def update_version(
-    version_id: str,
-    body: VersionActionRequest,
-    request: Request,
-    tenant=Depends(get_tenant),
-):
-    """Approve, reject, or inline-edit a tenant tour version."""
-    import json as _json
-    tenant_id = tenant["sub"]
-    pool = request.app.state.pool
+# ── AA-859 W6: PATCH /v1/tours/versions/{id} on the tenant pool (T2_VERSION_WRITE_FLAG) ──────────────
+# Flag off: the admin pool, exactly the old statements (no transaction, no lock). Flag on: one
+# transaction on the aa_app_user tenant pool (RLS on tenant_tour_versions, migration 229; grants SELECT,
+# INSERT, UPDATE), fail closed:
+#   1. own-row SELECT -> 404;
+#   2. edit: advisory xact lock per (tenant, published tour), MAX(version_number) + 1, INSERT. No
+#      FOR UPDATE: PostgreSQL rejects locking clauses with aggregates (0A000). Two-int lock form, so the
+#      key space cannot meet the one-bigint locks used elsewhere (t2_rewrite, slate, publish limit, ...);
+#      it needs no grant. A duplicate number anyway (UNIQUE (tenant_id, published_tour_id,
+#      version_number), e.g. a concurrent rewrite on MAIN) -> 409 version_conflict, never a 500;
+#   3. approve / reject: status UPDATE.
+# No audit row, no enqueue, no external call: nothing here runs on MAIN after the transaction.
+# SQL in module constants so tests can mutate them (forgotten-WHERE, lock removed).
+AA859_TTV_LOCK_CLASS = 859
+VERSION_CONFLICT_DETAIL = "version_conflict: another edit of this tour was saved at the same time, reload and retry"
 
-    if body.action not in ("approve", "reject", "edit"):
-        raise HTTPException(status_code=400, detail="action must be approve|reject|edit")
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
+_VERSION_OWN_ROW_SQL = """
             SELECT id, published_tour_id, version_number, rewritten_content
             FROM gold_aa_internal.tenant_tour_versions
             WHERE id = $1::uuid AND tenant_id = $2::uuid
-        """, version_id, tenant_id)
-        if not row:
-            raise HTTPException(status_code=404, detail="Version not found")
-
-        if body.action == "edit" and body.edited_content:
-            # Inline edit → create new version
-            next_ver = await conn.fetchval("""
+        """
+_VERSION_EDIT_LOCK_SQL = "SELECT pg_advisory_xact_lock($1::int, hashtext($2::text || ':' || $3::text))"
+_VERSION_NEXT_NUMBER_SQL = """
                 SELECT COALESCE(MAX(version_number), 0) + 1
                 FROM gold_aa_internal.tenant_tour_versions
                 WHERE tenant_id = $1::uuid AND published_tour_id = $2::uuid
-            """, tenant_id, row["published_tour_id"])
-
-            new_id = await conn.fetchval("""
+            """
+_VERSION_EDIT_INSERT_SQL = """
                 INSERT INTO gold_aa_internal.tenant_tour_versions
                     (tenant_id, published_tour_id, version_number,
                      parent_version_id, rewritten_content, status,
@@ -995,52 +992,79 @@ async def update_version(
                         $4::uuid, $5::jsonb, 'pending',
                         'tenant_edit', NOW(), $6)
                 RETURNING id
-            """,
-            tenant_id, row["published_tour_id"], next_ver,  # noqa: E128
-            version_id,  # noqa: E128 E122
-            _json.dumps(body.edited_content), body.edited_by or "tenant")  # noqa: E128 E122
-            return {
-                "status": "edited",
-                "new_version_id": str(new_id),
-                "version_number": next_ver,
-            }
-
-        else:
-            new_status = "approved" if body.action == "approve" else "rejected"
-            await conn.execute("""
+            """
+_VERSION_STATUS_UPDATE_SQL = """
                 UPDATE gold_aa_internal.tenant_tour_versions
                 SET status = $1, edited_at = NOW()
                 WHERE id = $2::uuid AND tenant_id = $3::uuid
-            """, new_status, version_id, tenant_id)
-            return {"status": new_status, "version_id": version_id}
-# P3 complete Tue May  5 11:42:07 +07 2026
+            """
 
 
-# ── P4: Full review endpoint — before/after + inline edit + approve ───────────
-@router.patch("/{tour_id}/approve")
-async def approve_tour_edit(
-    tour_id: str,
-    body: TourEditRequest,
+@router.patch("/versions/{version_id}")
+async def update_version(
+    version_id: str,
+    body: VersionActionRequest,
     request: Request,
     tenant=Depends(get_tenant),
 ):
-    """Inline edit + save a field on published_tour."""
+    """Approve, reject, or inline-edit a tenant tour version (AA-859 W6: tenant pool behind its flag)."""
     tenant_id = tenant["sub"]
-    pool = request.app.state.pool
 
-    ALLOWED = {
-        "aa_name", "aa_subtitle", "aa_summary", "aa_description",
-        "aa_highlights", "aa_itineraries", "mobile_card_text",
-        "seo_title", "seo_meta",
-    }
-    if body.field not in ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Field '{body.field}' not editable")
+    if body.action not in ("approve", "reject", "edit"):
+        raise HTTPException(status_code=400, detail="action must be approve|reject|edit")
+    # AA-859 PR-D6 review: an edit without content used to fall through to the status branch and silently
+    # REJECT the caller's version (200 {"status": "rejected"}). Both paths, before any acquire.
+    if body.action == "edit" and not body.edited_content:
+        raise HTTPException(status_code=400, detail="edited_content is required for action=edit")
 
-    async with pool.acquire() as conn:
-        await conn.execute(f"""
-            UPDATE gold_aa_internal.published_tours
-            SET {body.field} = $1, approved_by = $2
-            WHERE id = $3::uuid AND tenant_id = $4::uuid
-        """, body.value, body.approved_by, tour_id, tenant_id)
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_WRITE_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_t2_version_write", tenant_id=str(tenant_id), version_id=version_id,
+                    action=body.action, used_tenant_pool=used_tenant_pool)
+        return await _apply_version_action(conn, tenant_id, version_id, body, guarded=used_tenant_pool)
 
-    return {"ok": True, "field": body.field}
+
+async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionActionRequest, *,
+                                guarded: bool) -> dict:
+    """The route's statements on `conn`. guarded=True (tenant pool, inside acquire_scoped_conn's
+    transaction): the edit takes the advisory lock and a duplicate version number is a 409. guarded=False
+    (admin pool, flag off): the pre-AA-859 statements, unchanged."""
+    import json as _json
+    row = await conn.fetchrow(_VERSION_OWN_ROW_SQL, version_id, tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    if body.action == "edit":
+        # Inline edit (edited_content checked non-empty before the acquire) → create new version
+        if guarded:
+            await conn.execute(_VERSION_EDIT_LOCK_SQL, AA859_TTV_LOCK_CLASS, str(tenant_id),
+                               str(row["published_tour_id"]))
+        next_ver = await conn.fetchval(_VERSION_NEXT_NUMBER_SQL, tenant_id, row["published_tour_id"])
+        args = (tenant_id, row["published_tour_id"], next_ver, version_id,
+                _json.dumps(body.edited_content), body.edited_by or "tenant")
+        if guarded:
+            try:
+                new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
+            except asyncpg.UniqueViolationError as exc:
+                logger.warning("aa859_t2_version_conflict", tenant_id=str(tenant_id), version_id=version_id,
+                               version_number=next_ver)
+                raise HTTPException(status_code=409, detail=VERSION_CONFLICT_DETAIL) from exc
+        else:
+            new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
+        return {
+            "status": "edited",
+            "new_version_id": str(new_id),
+            "version_number": next_ver,
+        }
+
+    new_status = "approved" if body.action == "approve" else "rejected"
+    await conn.execute(_VERSION_STATUS_UPDATE_SQL, new_status, version_id, tenant_id)
+    return {"status": new_status, "version_id": version_id}
+# P3 complete Tue May  5 11:42:07 +07 2026
+
+
+# AA-859 (PR-D6): PATCH /v1/tours/{tour_id}/approve removed. No caller in frontend/ (its last one,
+# (internal)/catalog/page.tsx, went with AA-663), and it could never work: it updated
+# gold_aa_internal.published_tours WHERE tenant_id = <tenant>, 0 rows for every tenant (published_tours
+# is all AA master content), and still answered ok: true.
