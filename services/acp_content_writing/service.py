@@ -450,11 +450,15 @@ def _cuttable(item: dict, repaired: frozenset) -> bool:
     """AA-777 — may the blog's attempt 3 cut this plan() item? A truth item (its `gate` is F1/F9) once
     any truth gate was repaired before (the S239 #761 rule); r6 fix 6 — an item with an F17 'cut it'
     finding once F17 was repaired before (r6 a2133050: the thin coda held at attempt 3 because the F9
-    item on the same sentence was dropped and F17 items were never cut)."""
+    item on the same sentence was dropped and F17 items were never cut). r7 review — never an item whose
+    sentence must stay (the family caveat 'add ONE', a played-down hazard 'keep the hazard'), checked first:
+    merged with a truth or 'cut it' finding, it would otherwise be cut and the hazard lost."""
+    if sentence_repair.keeps_sentence(item.get("problem")):
+        return False
     if item.get("gate") in TRUTH_CUT_GATES and repaired & TRUTH_CUT_GATES:  # plan() puts a truth gate first
         return True
     return (F17_CUT_GATE in (item.get("gates") or [item.get("gate")]) and F17_CUT_GATE in repaired
-            and bool(_F17_CUT_RE.search(item.get("problem") or "")) and "add ONE" not in (item.get("problem") or ""))
+            and bool(_F17_CUT_RE.search(item.get("problem") or "")))
 
 
 def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: frozenset = frozenset(),
@@ -1517,6 +1521,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     kept = sum(item.get("guard") == "repeat_kept" for item in repair_items)
                     if kept:
                         repair_log[-1]["repeat_guard_kept"] = kept
+                    hazard_kept = sum(item.get("guard") == "hazard_kept" for item in repair_items)
+                    if hazard_kept:  # AA-777 r7 review — a repair that cut a hazard sentence was not spliced
+                        repair_log[-1]["hazard_kept"] = hazard_kept
                     deduped = sum(item.get("guard") == "dedupe" for item in repair_items)
                     if deduped:
                         repair_log[-1]["dedupe_after_repair"] = True

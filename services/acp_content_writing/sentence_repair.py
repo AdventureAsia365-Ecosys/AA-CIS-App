@@ -247,10 +247,21 @@ def _merge_item(content_text: str, out: list[dict], hit: dict, span: tuple[int, 
     covers both), the problems are joined, `gates` keeps every gate and `gate` prefers a truth gate. Before,
     the later finding was skipped as 'same sentence flagged twice' — r6 a2133050 / 35ee6a3d: the F9 claim
     was never shown to the repair and the attempt-3 truth cut never saw an F1/F9 item. A family-caveat item
-    ('add ONE' sentence) is never merged: the first finding wins, as before."""
+    ('add ONE' sentence) is never merged: the first finding wins, as before.
+
+    r7 review — a played-down hazard ('keep the hazard') DOES merge, either way round, so its keep mark is
+    never dropped: the merged item then `keeps_sentence` — never cut (`delete_flagged`, the blog attempt-3
+    cut) and an empty repair is not spliced (`splice_checked`). Not merging would drop a hazard finding that
+    comes second (F17 timing / pace findings and F1 come before it), leaving a cuttable item on the hazard
+    sentence. And the union never widens into the piece's first prose sentence (the hook) when `hit` did
+    not already hold it: a judge quote over 'hook + S2' joined to an S2 item made the item uncuttable."""
     if _adds_sentence(hit) or "add ONE" in (problem or ""):
         return
     start, end = min(hit["start"], span[0]), max(hit["end"], span[1])
+    hook = _hook_span(content_text)
+    if hook is not None and start < hook[1] <= hit["start"]:
+        start = next((sp["start"] for sp in sentence_spans(content_text) if sp["start"] >= hook[1]), hit["start"])
+        start = min(start, hit["start"])
     folded: list[dict] = []
     while True:  # the wider span may overlap other items: they join too (never a family-caveat item)
         more = [o for o in out if o is not hit and o not in folded and not (end <= o["start"] or start >= o["end"])]
@@ -294,6 +305,26 @@ def _adds_sentence(item: dict) -> bool:
     return "add ONE" in (item.get("problem") or "")
 
 
+# AA-777 (r7 review) — a finding whose sentence must stay: the family caveat ('keep this sentence and add ONE')
+# and a played-down hazard ('keep the hazard, cut the reassurance', trip_facts.minimised_hazards).
+_KEEP_MARKS = ("add ONE", "keep the hazard")
+
+
+def keeps_sentence(problem: Optional[str]) -> bool:
+    """Is this a finding (or a merged item's joined problems) whose sentence is never cut?"""
+    return any(m in (problem or "") for m in _KEEP_MARKS)
+
+
+def _keeps_hazard(item: dict) -> bool:
+    return "keep the hazard" in (item.get("problem") or "")
+
+
+def _hook_span(content_text: str) -> Optional[tuple[int, int]]:
+    """The piece's first prose sentence (the hook; the same kinds delete_flagged reads), or None."""
+    prose = [sp for sp in sentence_spans(content_text) if sp["kind"] in ("prose", "bullet", "faq_a")]
+    return (prose[0]["start"], prose[0]["end"]) if prose else None
+
+
 def _added_part(original: str, replacement: str) -> str:
     """The sentences of `replacement` that are not the original sentence kept (copied either way)."""
     orig = " ".join(re.sub(_TAG, " ", original or "").split())
@@ -323,6 +354,9 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
                 item["guard"] = "repeat_kept"
                 continue
         elif new and guard_repeats and repeats_neighbour(text, item["start"], item["end"], new, ignore):
+            if _keeps_hazard(item):  # r7 review — the hazard sentence is never turned into a cut
+                item["guard"] = "repeat_kept"
+                continue
             item["guard"] = "repeat"
             new = ""
         if new:
@@ -430,7 +464,20 @@ def splice_checked(content_text: str, items: list[dict], replacements: list[str]
     AA-777 (r6 fix 1) — with `source` (the F1 grounding text) and/or `trip_ctx` (the job's
     TripFactContext), a replacement that ADDS a number, time, position or (blog) pace word the original
     sentence and the source lack is not spliced first (`new_specifics`; the item keeps its sentence,
-    `"guard": "specifics"`)."""
+    `"guard": "specifics"`).
+
+    AA-777 (r7 review) — an empty replacement (a cut) of a played-down-hazard item is not spliced either: the
+    item keeps its sentence (`"guard": "hazard_kept"`), so the hazard is never lost to a repair."""
+    pairs = []
+    for it, rep in zip(items, replacements):
+        if _keeps_hazard(it) and not (rep or "").strip():
+            it["guard"] = "hazard_kept"
+        else:
+            pairs.append((it, rep))
+    if len(pairs) < len(items):
+        if not pairs:
+            return content_text
+        items, replacements = [p[0] for p in pairs], [p[1] for p in pairs]
     if trip_ctx is not None or source is not None:
         items, replacements = _drop_new_specifics(items, replacements, trip_ctx, source)
         if not items:
@@ -469,21 +516,26 @@ def delete_flagged(content_text: str, items: list[dict], *, ignore: frozenset = 
     cannot run (the repair call failed or returned a bad reply): cut each flagged sentence that is
     safe to cut — not the piece's first prose sentence (the hook), not the CTA, not a FAQ question,
     no pronoun orphaned — and keep the result when the integrity check passes. An item that asks to
-    ADD a sentence (the family access caveat) is never a cut. None when nothing could be cut (the
-    piece is then held as before). r2 #13 (F1, one sentence) and #7 (F9, one sentence) were held
-    at attempt 2/3 with the flagged sentence still in."""
+    ADD a sentence (the family access caveat) or keep a hazard is never a cut. None when nothing could be cut
+    (the piece is then held as before). r2 #13 (F1, one sentence) and #7 (F9, one sentence) were held
+    at attempt 2/3 with the flagged sentence still in.
+
+    AA-777 (r7 review) — an item can span several sentences (a merged plan() item, a two-sentence judge
+    quote): EVERY sentence inside it is checked (hook, CTA, FAQ question, heading), and the orphaned-pronoun
+    test reads the first sentence AFTER the item, not the item's own second sentence."""
     from services.acp_content_writing.hygiene import _is_cta
     spans = sentence_spans(content_text)
     prose = [sp for sp in spans if sp["kind"] in ("prose", "bullet", "faq_a")]
     first = prose[0]["start"] if prose else -1
     cut_items, reps = [], []
     for item in items:
-        if "add ONE" in item.get("problem", ""):
+        if keeps_sentence(item.get("problem")):
             continue
-        k = next((n for n, sp in enumerate(spans) if sp["start"] <= item["start"] < sp["end"]), None)
-        if k is None or spans[k]["kind"] == "faq_q" or spans[k]["start"] == first:
+        ks = [n for n, sp in enumerate(spans) if sp["start"] < item["end"] and item["start"] < sp["end"]]
+        if not ks or any(spans[k]["kind"] in ("faq_q", "heading", "hashtags") or spans[k]["start"] == first
+                         or _is_cta(spans[k]["clean"], cta) for k in ks):
             continue
-        if _is_cta(spans[k]["clean"], cta) or not _safe_to_delete(spans, k):
+        if not _safe_to_delete(spans, ks[-1]):
             continue
         cut_items.append(dict(item))
         reps.append("")

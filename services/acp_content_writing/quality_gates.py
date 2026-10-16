@@ -841,9 +841,15 @@ _F9_PASS_MIN_WORDS = 4
 
 # AA-777 (r6 fix 3) — a sentence that opens on a word that needs the sentence before it ('It was founded in
 # 1692.', 'These are not performances…', 'Here, monks…'): only its key carries the previous sentence.
+# r7 review — kept broad (a miss lets a claim the repaired neighbour no longer backs ship unjudged; a
+# false match only costs one more judging): an optional leading conjunction ('But it…', 'And they…'),
+# place / time words that point back ('There, …', 'Then …', 'Afterwards', 'Nearby', 'From there', 'After
+# that', 'The next day') and any definite noun phrase ('The monastery was founded in 1586.').
 _REFERENT_OPEN_RE = re.compile(
-    r"^\W*(?:it|its|it's|they|their|theirs|them|this|that|these|those|he|she|his|her|here|such|both|"
-    r"the\s+latter|the\s+former|which)\b", re.I)
+    r"^\W*(?:(?:and|but|yet|so|still|or)\s+)?"
+    r"(?:it|its|it's|they|their|theirs|them|this|that|these|those|he|she|his|her|here|such|both|which|"
+    r"there|then|afterwards?|later|nearby|inside|beyond|from\s+there|from\s+here|after\s+that|"
+    r"after\s+this|the)\b", re.I)
 
 
 def _f9_key(prev_clean: Optional[str], clean: str) -> str:

@@ -1118,9 +1118,10 @@ def thin_coda(text: str, moments: list[Moment], cta: Optional[str] = None) -> li
 
 
 # AA-777 (r6 fix 4) — a leading adverbial frame that sets the thin moment in the route: 'Before leaving this part
-# of northern Mongolia, the route passes the ruins…' (r6 a2133050: all 4 extra words were in the frame)
-_LEADING_FRAME_RE = re.compile(r"^(?:before|after|as|while|when|once|on\s+leaving|on\s+the\s+way)\b[^,;:—–]{3,90},\s+",
-                               re.I)
+# of northern Mongolia, the route passes the ruins…' (r6 a2133050: all 4 extra words were in the frame).
+# r7 review — sequence frames only: a conditional frame ('When road access allows, …', 'Once …', 'While …',
+# 'As …') may carry a source-stated condition, and dropping it would turn the sentence into a firm promise.
+_LEADING_FRAME_RE = re.compile(r"^(?:before|after|on\s+leaving|on\s+the\s+way)\b[^,;:—–]{3,90},\s+", re.I)
 
 
 def _trim_thin(sentence: str, m: Moment, moments: list[Moment]) -> Optional[str]:
