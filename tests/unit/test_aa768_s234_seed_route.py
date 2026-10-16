@@ -341,7 +341,6 @@ async def test_write_loop_autofixes_before_the_gates_and_flags_it():
     passing = {"passed": True, "gate_ledger": [], "first_failure": None, "flags": []}
     with patch.object(service, "write_content", return_value=("A hike. Ask Terra.\n\n#PakoTaktsang", 0.01, {}, None)), \
          patch.object(service, "run_quality_gates", return_value=passing) as gates, \
-         patch.object(service, "observe_t10", new=AsyncMock()), \
          patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
     assert gates.call_args.kwargs["content_text"].endswith("#ParoTaktsang")

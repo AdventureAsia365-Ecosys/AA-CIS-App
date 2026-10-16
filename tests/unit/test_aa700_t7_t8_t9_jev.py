@@ -1,10 +1,10 @@
-"""AA-700 — T7 Debate prefilter, T8 angle-answers check, T9 fact relevance (Jev, shadow first)."""
+"""AA-700 — T7 Debate prefilter, T8 angle-answers check (Jev, shadow first). The T9 fact-relevance
+question was removed with facts.select_relevant_facts (AA-701, S234 T-axis Jev off)."""
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from services.acp_angle_gate import ranking
-from services.acp_content_writing import facts as facts_mod
 from services.acp_shared import debate
 from shared.llm_client.decide import Decision, Verdict
 
@@ -49,36 +49,6 @@ def test_t8_no_claims_asks_nothing():
         ev, best, dropped = asyncio.run(ranking.verify_answers(ANGLES, [ranking.RankedAngle(idx=0),
                                                                         ranking.RankedAngle(idx=1)], "t-1"))
     assert m.call_count == 0 and dropped == 0 and best == 0
-
-
-# ---------------------------------------------------------------- T9
-
-FACTS = [{"fact_id": 1, "title": "Visa", "body": "Bhutan requires a visa."},
-         {"fact_id": 2, "title": "Laos budget", "body": "$100 goes far in Laos."}]
-
-
-def _select(zones):
-    async def fake(stage, key, state, qs, **kw):
-        assert stage == facts_mod.T9_STAGE and key.startswith(f"t9:{'1' if 'Visa' in state['fact']['title'] else '2'}:")
-        return _dec(facts_mod.T9_Q, *zones[state["fact"]["title"]])
-    with patch("shared.llm_client.decide.decide", fake):
-        return asyncio.run(facts_mod.select_relevant_facts(
-            FACTS, moment="Hike to Tiger's Nest", angle={"name": "a", "why_it_works": "b"}, trip="Bhutan",
-            tenant_id="t-1"))
-
-
-def test_t9_enforced_reject_leaves_fact_out():
-    kept, out = _select({"Visa": ("accept",), "Laos budget": ("reject",)})
-    assert [f["fact_id"] for f in kept] == [1] and out == 1
-
-
-def test_t9_shadow_or_skipped_keeps_all():
-    kept, out = _select({"Visa": ("skipped", "shadow"), "Laos budget": ("reject", "shadow")})
-    assert kept == FACTS and out == 0
-
-
-def test_t9_no_facts():
-    assert asyncio.run(facts_mod.select_relevant_facts([], moment="m", angle={}, trip=None, tenant_id="t")) == ([], 0)
 
 
 # ---------------------------------------------------------------- T7
