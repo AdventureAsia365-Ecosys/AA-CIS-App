@@ -211,7 +211,8 @@ def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset(),
     # when a new atom bridges both. None = compare every pair (the pure, whole-set behaviour).
     memberships = _connected(sorted(keys.items()),
                              lambda a, b: may_join(by_id[a], by_id[b], apart),
-                             involving)
+                             involving,
+                             country_of={atom.atom_id: atom.country for atom in atoms})
 
     segments = []
     for members in memberships:
@@ -223,6 +224,8 @@ def derive_segments(atoms: list[SegmentAtom], apart: frozenset = frozenset(),
             (atom for atom in atoms if atom.atom_id in members and keys[atom.atom_id] == canonical),
             key=lambda atom: (atom.tour_id, _sort_day(atom.day), atom.place, atom.action),
         )
+        # AA-857 — the guard below `_connected` already enforces; a failure here is a bug, never data.
+        assert_one_country(members, by_id)
         segments.append(
             Segment(
                 id=_mint(canonical, label.country),
@@ -453,11 +456,42 @@ def _about_the_same_thing(left: Key, right: Key) -> bool:
     return bool(left.about & right.about)
 
 
-def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset | None = None) -> list[set[str]]:
+class MixedCountrySegmentError(ValueError):
+    """AA-857 — a derived Segment holds atoms of two known countries (must never be written)."""
+
+
+def known_countries(atom_ids: Iterable[str], by_id: Mapping[str, SegmentAtom]) -> set[str]:
+    """The known (non-empty) countries of these atoms, case/space-insensitive."""
+    return {by_id[a].country.strip().lower() for a in atom_ids
+            if a in by_id and (by_id[a].country or "").strip()}
+
+
+def assert_one_country(atom_ids: Iterable[str], by_id: Mapping[str, SegmentAtom]) -> None:
+    """AA-857 — raise when one Segment's atoms (real or pseudo) name two known countries."""
+    countries = known_countries(atom_ids, by_id)
+    if len(countries) > 1:
+        raise MixedCountrySegmentError(f"segment would span countries {sorted(countries)}")
+
+
+def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset | None = None,
+               country_of: Mapping[str, str] | None = None) -> list[set[str]]:
     """Connected components over `_looks_like_one_moment`, independent of order. `allowed(a, b)`
     (AA-695) can veto a pair the moment rule would join; `involving` skips pairs with no member
-    in it (S218)."""
+    in it (S218).
+
+    AA-857 — `country_of` (atom_id -> country, "" = unknown) makes the country rule hold for the
+    whole COMPONENT, not only for the pair: `allowed` vetoes a Korea–Bhutan pair, but union-find is
+    transitive, so a Korean atom joined to an unknown-country atom (or pseudo-Segment) that also
+    joins a Bhutan atom glued both countries into one Segment (S239: segment d8aa8991e02d6754,
+    "Gyeongju", 37 atoms from 6 countries). Two components merge only when at most one known
+    country is among them. Pairs are visited in sorted order, so the result stays deterministic."""
     parent = {atom_id: atom_id for atom_id, _ in keyed}
+    country: dict[str, str] = {}
+    if country_of is not None:
+        for atom_id, _ in keyed:
+            c = (country_of.get(atom_id) or "").strip().lower()
+            if c:
+                country[atom_id] = c
 
     def find(node: str) -> str:
         while parent[node] != node:
@@ -472,7 +506,13 @@ def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset 
             if _looks_like_one_moment(key, other_key) and (allowed is None or allowed(atom_id, other_id)):
                 left, right = find(atom_id), find(other_id)
                 if left != right:
-                    parent[max(left, right)] = min(left, right)
+                    lc, rc = country.get(left), country.get(right)
+                    if lc and rc and lc != rc:
+                        continue        # AA-857: the components are in two countries
+                    root, child = min(left, right), max(left, right)
+                    parent[child] = root
+                    if lc or rc:
+                        country[root] = lc or rc
 
     memberships: dict[str, set[str]] = {}
     for atom_id, _ in keyed:

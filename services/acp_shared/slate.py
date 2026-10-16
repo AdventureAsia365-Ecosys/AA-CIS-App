@@ -69,6 +69,9 @@ from uuid import UUID
 import structlog
 
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from services.acp_shared.subject_seed import (
+    choose_representative, load_alias_cards, load_segment_members,
+)
 
 logger = structlog.get_logger()
 
@@ -242,6 +245,7 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
               AND ar.superseded_at IS NULL  -- AA-734: current ranking row only
             GROUP BY ar.segment_id
         """, tour_ids, markets)
+        rows = await _segments_with_seed(tenant_id, conn, rows, {str(t) for t in tour_ids})
     return [
         Candidate(
             segment_id=r["segment_id"], route_id=None, score=r["total_rank"],
@@ -250,6 +254,39 @@ async def _fetch_segment_candidates(tenant_id: UUID, pool, markets: list[str]) -
         )
         for r in rows
     ]
+
+
+async def _segments_with_seed(tenant_id: UUID, conn, rows: list, tour_ids: set[str]) -> list:
+    """AA-857 — keep only Segment candidates that have a seed atom for this tenant: a live member on
+    the tenant's own tours whose place is the Segment's `canonical_place`, in one country
+    (`subject_seed.choose_representative`, the same rule `pick_subject()` uses). A Segment without
+    one is not offered — it would be a Subject whose post is about another place (S239: "Gyeongju"
+    written about a Pakistan museum). Each skip is logged with its reason; the count goes to the
+    `slate_subject_skipped` log line once per proposal."""
+    if not rows:
+        return rows
+    segment_ids = [r["segment_id"] for r in rows]
+    members = await load_segment_members(conn, segment_ids, str(tenant_id))
+    alias_cards = await load_alias_cards(
+        conn, [r["canonical_place"] for r in rows] + [m.place for ms in members.values() for m in ms],
+    )
+    kept, skipped = [], {}
+    for r in rows:
+        member, skip = choose_representative(
+            r["canonical_place"], members.get(r["segment_id"], []),
+            tenant_tour_ids=tour_ids, alias_cards=alias_cards,
+        )
+        if member is None:
+            skipped[r["segment_id"]] = skip
+            continue
+        kept.append(r)
+    if skipped:
+        reasons: dict[str, int] = {}
+        for reason in skipped.values():
+            reasons[reason] = reasons.get(reason, 0) + 1
+        logger.info("slate_subject_skipped", tenant_id=str(tenant_id), skipped=len(skipped),
+                    reasons=reasons, segment_ids=sorted(skipped)[:50])
+    return kept
 
 
 async def _fetch_route_candidates(tenant_id: UUID, pool, markets: list[str]) -> list[Candidate]:
@@ -721,8 +758,9 @@ class SubjectNotEligibleError(Exception):
 async def pick_subject(tenant_id: UUID, subject_id: UUID, pool, selected_by: str) -> dict:
     """Flip a Subject `proposed -> picked` and create the matching `angle_gate_request`
     (T8's own entry point, `services/acp_angle_gate/service.py::create_request()` grain is
-    per-atom). `atom_id`/`trip_id` still resolve to ONE representative atom (the Route's first
-    ordered Segment's first member atom for its own `tour_id`) — kept for every existing
+    per-atom). `atom_id`/`trip_id` still resolve to ONE representative atom (AA-857: for a Segment,
+    the member on this tenant's tours whose place is the Subject's place; for a Route, a member of
+    its first ordered Segment on the Route's own `tour_id`) — kept for every existing
     atom-grain reader (`angle_gate_request.atom_id` is `NOT NULL`, and T8's own goal/angle steps
     only ever look at one atom).
 
@@ -755,7 +793,8 @@ async def pick_subject(tenant_id: UUID, subject_id: UUID, pool, selected_by: str
         if atom_id is None:
             raise SubjectNotEligibleError(
                 f"subject_id={subject_id} has no live atom left to write from "
-                "(its Segment/Route was rebuilt away) — refresh the Slate and pick again."
+                "(its Segment/Route was rebuilt away, or no atom on your tours is about its place) "
+                "— refresh the Slate and pick again."
             )
 
         async with conn.transaction():
@@ -852,17 +891,32 @@ async def _resolve_representative_atom(
     angle_gate_request/content_piece ROW a tenant can access (tenant_id on those tables), never
     which underlying atom text they can read. Kept a tenant-owned atom acceptable too (not
     switched to 'platform'-only) so a tenant's own T5-rewritten-tour atoms, on the rare Segment
-    built from them, still resolve exactly as before."""
+    built from them, still resolve exactly as before.
+
+    AA-857 (S239) — the Segment branch no longer takes `ORDER BY atom_id LIMIT 1`: a Segment can
+    hold other places (and, before S218, other countries), so the first atom by id seeded
+    "Gyeongju" with a Pakistan museum and "National Library" with a craft school. The member is now
+    chosen by `subject_seed.choose_representative()` (place = the Subject's `canonical_place`,
+    alias-aware; on this tenant's tours; one country). No such member → `(None, None, None)`, which
+    `pick_subject()` turns into SubjectNotEligibleError, and the next proposal does not offer it."""
     if segment_id:
-        row = await conn.fetchrow("""
-            SELECT m.atom_id, ta.tour_id
-            FROM acp_contract.atom_segment_member m
-            JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
-            WHERE m.segment_id = $1 AND NOT m.is_alias
-              AND ta.owner_scope IN ('platform', $2::text) AND NOT ta.deleted AND NOT ta.is_empty_marker
-            ORDER BY m.atom_id LIMIT 1
-        """, segment_id, str(tenant_id))
-        return (row["atom_id"], str(row["tour_id"]), None) if row else (None, None, None)
+        # AA-857 — the member whose place IS the Subject's place, on this tenant's own tours, in one
+        # country (services/acp_shared/subject_seed.py); never `ORDER BY atom_id LIMIT 1`, which
+        # seeded "Gyeongju" with a Pakistan museum (S239). No such member → no seed (logged).
+        place = await conn.fetchval(
+            "SELECT canonical_place FROM acp_contract.atom_segment WHERE segment_id = $1", segment_id,
+        )
+        members = (await load_segment_members(conn, [segment_id], str(tenant_id))).get(segment_id, [])
+        alias_cards = await load_alias_cards(conn, [place] + [m.place for m in members])
+        tour_ids = {str(t) for t in await _tenant_tour_ids(tenant_id, conn)}
+        member, skip = choose_representative(
+            place, members, tenant_tour_ids=tour_ids, alias_cards=alias_cards,
+        )
+        if member is None:
+            logger.warning("slate_subject_no_seed", tenant_id=str(tenant_id), segment_id=segment_id,
+                           place=place, reason=skip, members=len(members))
+            return None, None, None
+        return member.atom_id, str(member.tour_id), None
 
     route = await conn.fetchrow(
         "SELECT tour_id, ordered_segment_ids FROM acp_contract.route WHERE route_id = $1", route_id,
@@ -874,16 +928,20 @@ async def _resolve_representative_atom(
         segment_ids = json.loads(segment_ids)
     if not segment_ids:
         return None, None, None
-    row = await conn.fetchrow("""
-        SELECT m.atom_id
-        FROM acp_contract.atom_segment_member m
-        JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
-        WHERE m.segment_id = $1 AND ta.tour_id = $2::uuid
-          AND ta.owner_scope IN ('platform', $3::text)
-          AND NOT m.is_alias AND NOT ta.deleted AND NOT ta.is_empty_marker
-        ORDER BY m.atom_id LIMIT 1
-    """, segment_ids[0], route["tour_id"], str(tenant_id))
-    return (row["atom_id"], str(route["tour_id"]), list(segment_ids)) if row else (None, None, None)
+    # AA-857 — the Route's own tour only (one tour = one country); prefer the member that is the
+    # Segment's place, else any live member of that tour (T9 seeds a Route from every Segment along
+    # the walk, `route_segment_ids`, so this atom is only the atom-grain anchor).
+    first = segment_ids[0]
+    place = await conn.fetchval(
+        "SELECT canonical_place FROM acp_contract.atom_segment WHERE segment_id = $1", first,
+    )
+    route_tour = str(route["tour_id"])
+    members = [m for m in (await load_segment_members(conn, [first], str(tenant_id))).get(first, [])
+               if str(m.tour_id) == route_tour]
+    member, _skip = choose_representative(place, members, tenant_tour_ids={route_tour})
+    if member is None and members:
+        member = min(members, key=lambda m: (not (m.evidence or "").strip(), m.atom_id))
+    return (member.atom_id, route_tour, list(segment_ids)) if member else (None, None, None)
 
 
 __all__ = [

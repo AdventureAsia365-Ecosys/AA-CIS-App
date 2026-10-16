@@ -40,7 +40,10 @@ def invoke_judge(system_prompt: str, user_prompt: str, max_tokens: int = 2048, *
     }
 
 
-def parse_judge_json(raw: str) -> dict:
+def parse_judge_json_checked(raw: str) -> tuple[dict, bool]:
+    """(verdict, repaired): `repaired` is True when the reply was not valid JSON and json_repair
+    salvaged it (a truncated reply keeps only the entries before the cut — AA-777 trusts such a
+    verdict for its flags but never for what it passed)."""
     raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -48,9 +51,13 @@ def parse_judge_json(raw: str) -> dict:
             raw = raw[4:]
         raw = raw.strip()
     try:
-        return json.loads(raw)
+        return json.loads(raw), False
     except json.JSONDecodeError:
         salvaged = repair_json(raw, return_objects=True)
         if isinstance(salvaged, dict):
-            return salvaged
+            return salvaged, True
         raise
+
+
+def parse_judge_json(raw: str) -> dict:
+    return parse_judge_json_checked(raw)[0]
