@@ -148,9 +148,18 @@ def test_compare_trigger_rules():
     diffs = shape.compare(t, after)
     assert any("trigger missing: BEFORE UPDATE FOR EACH ROW" in d for d in diffs)
     assert any("trigger not in template: AFTER UPDATE FOR EACH ROW" in d for d in diffs)
-    disabled = _shape("booking", triggers=[shape.Trigger(19, "D", False, False, "BEGIN RETURN NEW; END",
-                                                         ("search_path=pg_catalog",))])
-    assert any("trigger disabled" in d for d in shape.compare(t, disabled))
+
+
+@pytest.mark.parametrize("enabled, fires", [("O", True), ("A", True), ("D", False), ("R", False)])
+def test_compare_trigger_must_fire_in_origin_sessions(enabled, fires):
+    # R (ENABLE REPLICA TRIGGER) fires only under session_replication_role = replica: as broken as D.
+    owner = _shape("booking", triggers=[shape.Trigger(19, enabled, False, False, "BEGIN RETURN NEW; END",
+                                                      ("search_path=pg_catalog",))])
+    diffs = shape.compare(_shape("x6_tmpl"), owner)
+    if fires:
+        assert diffs == []
+    else:
+        assert any(f"trigger not firing in origin sessions (tgenabled={enabled})" in d for d in diffs), diffs
 
 
 def test_compare_reloptions_owner_superset_ok():
@@ -164,3 +173,24 @@ def test_compare_reloptions_owner_superset_ok():
 def test_compare_missing_table():
     assert shape.compare(_shape("x6_tmpl"), _shape("booking", columns={})) == [
         "booking.job: table not found or has no columns"]
+
+
+def test_every_cis_kind_matches_the_kind_check():
+    """Every kind CIS can enqueue passes 242's job_kind_chk (same pattern), so none fails only at enqueue time
+    on Dev with a CheckViolation. The import is the worker's own (shared/jobs/worker.load_kinds)."""
+    import services.jobs  # noqa: F401  (registers every kind)
+    from services.jobs import retention_job
+    from shared import ops_alerts
+    from shared.jobs import registry
+
+    kinds = set(registry.kinds()) | {ops_alerts.KIND} | set(retention_job.KINDS)
+    assert len(kinds) > 10, sorted(kinds)  # the registry really loaded
+    bad = sorted(k for k in kinds if not re.fullmatch(shape.CIS_KIND_PATTERN, k))
+    assert bad == [], f"kinds that job_kind_chk ({shape.CIS_KIND_PATTERN}) would reject: {bad}"
+
+
+@pytest.mark.parametrize("kind, ok", [("a3_atomize", True), ("ops_rds_role_connections", True),
+                                      ("a3-atomize", False), ("A3_x", False), ("bk_x", False), ("tp_x", False),
+                                      ("1kind", False), ("", False)])
+def test_cis_kind_pattern(kind, ok):
+    assert bool(re.fullmatch(shape.CIS_KIND_PATTERN, kind)) is ok

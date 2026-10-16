@@ -43,6 +43,8 @@ TRIGGER_TYPE_DELETE = 8
 TRIGGER_TYPE_UPDATE = 16
 TRIGGER_TYPE_TRUNCATE = 32
 TRIGGER_TYPE_INSTEAD = 64
+# pg_trigger.tgenabled values whose trigger fires in a normal (origin) session: O (origin/local), A (always).
+TRIGGER_FIRES_IN_ORIGIN = ("O", "A")
 
 _SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 _EXTRA_STATUSES_RE = re.compile(r"^(\s*,\s*'[a-z_]+')*$")
@@ -178,11 +180,13 @@ _RELOPTIONS_SQL = "SELECT coalesce(reloptions, '{}') FROM pg_class WHERE oid = $
 
 
 async def read_shape(conn, schema: str) -> Shape:
-    """<schema>.job as pg_catalog describes it.
+    """<schema>.job as pg_catalog describes it; an empty Shape when the table does not exist (compare() then
+    reports "table not found").
 
     Runs in a transaction (a savepoint when the caller already has one) with search_path pinned to
     pg_catalog, so every pg_get_*def qualifies the table whatever the role's own path (a role named like its
-    schema has "$user" on it); the caller's search_path is restored before returning.
+    schema has "$user" on it). On success the caller's search_path is restored before returning; on an error
+    the savepoint rollback undoes the pin, and the original error propagates unmasked.
     """
     if not _SCHEMA_RE.match(schema):
         raise ValueError(f"schema must match {_SCHEMA_RE.pattern}: {schema!r}")
@@ -190,7 +194,7 @@ async def read_shape(conn, schema: str) -> Shape:
     async with conn.transaction():
         old_path = await conn.fetchval("SELECT current_setting('search_path')")
         await conn.fetchval("SELECT set_config('search_path', 'pg_catalog', true)")
-        try:
+        if await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", table):
             columns = {
                 r["attname"]: (r["type"], r["attnotnull"], r["dflt"]) for r in await conn.fetch(_COLUMNS_SQL, table)
             }
@@ -210,8 +214,11 @@ async def read_shape(conn, schema: str) -> Shape:
                 for r in await conn.fetch(_TRIGGERS_SQL, table)
             ]
             reloptions = list(await conn.fetchval(_RELOPTIONS_SQL, table) or [])
-        finally:
-            await conn.fetchval("SELECT set_config('search_path', $1, true)", old_path)
+        else:
+            columns, constraints, indexes, triggers, reloptions = {}, [], [], [], []
+        # Not in a `finally`: after a failed query the transaction is aborted and this would raise
+        # InFailedSQLTransactionError over the real error. A rollback undoes the pin anyway.
+        await conn.fetchval("SELECT set_config('search_path', $1, true)", old_path)
     return Shape(schema, columns, constraints, indexes, triggers, reloptions)
 
 
@@ -376,8 +383,11 @@ def compare(
     for key in sorted((o_keys - t_keys).elements()):
         diffs.append(f"trigger not in template: {describe_tgtype(key[0])} with body {key[3]!r}")
     for ot in o.triggers:
-        if ot.enabled == "D":
-            diffs.append(f"trigger disabled: {describe_tgtype(ot.tgtype)}")
+        if ot.enabled not in TRIGGER_FIRES_IN_ORIGIN:
+            # D (disabled) or R (ENABLE REPLICA: fires only under session_replication_role = replica).
+            diffs.append(
+                f"trigger not firing in origin sessions (tgenabled={ot.enabled}): {describe_tgtype(ot.tgtype)}"
+            )
         for tt in t.triggers:
             if _trigger_key(tt) == _trigger_key(ot):
                 missing_cfg = sorted(set(tt.config) - set(ot.config))

@@ -82,6 +82,32 @@ async def test_read_shape_restores_the_search_path(conn):
     assert await conn.fetchval("SHOW search_path") == before
 
 
+async def test_read_shape_of_a_missing_table_reports_not_found(conn):
+    # Booking B2's first run, or a wrong schema name: compare() says "table not found", read_shape does not
+    # raise InFailedSQLTransactionError over the real problem, and the caller's transaction stays usable.
+    before = await conn.fetchval("SHOW search_path")
+    missing = await shape.read_shape(conn, "x6_no_such_schema")
+    assert missing.columns == {} and missing.constraints == [] and missing.triggers == []
+    tmpl = await _template_shape(conn)
+    assert shape.compare(tmpl, missing) == ["x6_no_such_schema.job: table not found or has no columns"]
+    assert await conn.fetchval("SHOW search_path") == before
+
+
+async def test_read_shape_error_is_not_masked(conn):
+    # A catalog query that fails mid-read surfaces its own error (not "current transaction is aborted"),
+    # and the savepoint rollback leaves the caller's transaction and search_path intact.
+    before = await conn.fetchval("SHOW search_path")
+    orig = shape._INDEXES_SQL
+    shape._INDEXES_SQL = "SELECT no_such_column FROM pg_index WHERE indrelid = $1::regclass"
+    try:
+        with pytest.raises(asyncpg.UndefinedColumnError):
+            await shape.read_shape(conn, "shared")
+    finally:
+        shape._INDEXES_SQL = orig
+    assert await conn.fetchval("SHOW search_path") == before
+    assert (await shape.read_shape(conn, "shared")).columns
+
+
 @pytest.mark.parametrize("kind", ["bk_x", "tp_x", "Bad-Kind", "1kind", ""])
 async def test_kind_check_rejects_other_owners_and_bad_names(conn, kind):
     with pytest.raises(asyncpg.CheckViolationError):
