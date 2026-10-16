@@ -17,13 +17,18 @@
 // Tenant sees content only: the finished view shows the content and nothing about gates, holds
 // or scores (same tenant-safe piece shape as My Content). Copy is locked like My Content's drawer
 // (export is the way out, and every export is audit-logged — AA-613).
+//
+// S239 (AA-668 part 2): the drawer itself is `WriterDrawer`, a generic shell — context header
+// (title + "label value" items), a body slot, a footer slot for result actions. The Social Content
+// panel below and the tour-rewrite panel (TourRewritePanel.tsx, opened from My Catalog Tours) both
+// use it, and both hand a still-running job to `useWriteWatcher` when the tenant closes them.
 
 import { CheckCircle2, Download, ExternalLink, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ConfirmModal, Drawer, useToast } from "../../../_kit";
-import { T, sans, Btn } from "./ui";
+import { Button, ConfirmModal, Drawer, K, useToast } from "../../../_kit";
+import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { AiContentNotice } from "./AiContentNotice";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
@@ -49,6 +54,51 @@ export function channelName(channel: string): string {
 // full-screen sheet on a phone.
 const PANEL_WIDTH = 720;
 
+/** One item of the context line under the panel title: "Writing for **Facebook**", "Segment". */
+export interface ContextItem { label?: string; value: string }
+
+/**
+ * The writer drawer shell (S239): a kit Drawer with the context header (title + context line), the
+ * body and an optional footer for the result actions. Rendered only while `open`. The body carries
+ * `data-testid="writer-panel"` and the title `writer-panel-title`, whatever the job is.
+ */
+export function WriterDrawer({ open, onClose, title, context, footer, children }: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  context: ContextItem[];
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width={PANEL_WIDTH}
+      title={open && (
+        <div style={{ minWidth: 0 }}>
+          <div data-testid="writer-panel-title" style={{ overflowWrap: "anywhere" }}>{title}</div>
+          <div data-testid="writer-panel-context" style={{ fontFamily: sans, fontSize: 12, fontWeight: 500, color: K.muted, marginTop: 2 }}>
+            {context.map((c, i) => (
+              <span key={i}>
+                {i > 0 && <span style={{ color: K.muted2 }}> · </span>}
+                {c.label ? <>{c.label} <strong style={{ color: K.ink }}>{c.value}</strong></> : c.value}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      footer={footer}
+    >
+      {open && (
+        <div data-testid="writer-panel" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {children}
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
 export function WriterPanel({ target, onClose, onBackgroundPiece }: {
   target: WriterTarget | null;
   /** Called with the last piece the panel saw, so the Slate can keep watching a running write. */
@@ -70,31 +120,23 @@ export function WriterPanel({ target, onClose, onBackgroundPiece }: {
   }, [target, onBackgroundPiece]);
 
   return (
-    <Drawer
+    <WriterDrawer
       open={target !== null}
       onClose={close}
-      width={PANEL_WIDTH}
-      title={target && (
-        <div style={{ minWidth: 0 }}>
-          <div data-testid="writer-panel-title" style={{ overflowWrap: "anywhere" }}>{target.title}</div>
-          <div style={{ fontFamily: sans, fontSize: 12, fontWeight: 500, color: T.muted, marginTop: 2 }}>
-            Writing for <strong style={{ color: T.ink }}>{channelName(target.channel)}</strong>
-            <span style={{ color: T.muted2 }}> · </span>{target.kind}
-          </div>
-        </div>
-      )}
+      title={target?.title ?? ""}
+      context={target ? [{ label: "Writing for", value: channelName(target.channel) }, { value: target.kind }] : []}
       footer={ready && target
         ? <ResultActions piece={piece} target={target} confirmPublish={confirmPublish} setConfirmPublish={setConfirmPublish} />
         : undefined}
     >
       {target && (
-        <div data-testid="writer-panel" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <>
           <AngleGateWizard key={target.requestId} requestId={target.requestId} embedded
             onPieceChange={setPiece} onDetachedPiece={detached} />
           {ready && <FinishedPiece piece={piece} />}
-        </div>
+        </>
       )}
-    </Drawer>
+    </WriterDrawer>
   );
 }
 
@@ -161,21 +203,21 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
       {/* AA-819 — the neutral AI notice beside every publish/export action. */}
       <AiContentNotice />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <Btn size="sm" variant="secondary" onClick={() => doExport("text")}>
+        <Button size="sm" variant="secondary" onClick={() => doExport("text")}>
           <Download size={12} /> Export text
-        </Btn>
+        </Button>
         {channel === "blog" && (
-          <Btn size="sm" variant="secondary" onClick={() => doExport("html")}>
+          <Button size="sm" variant="secondary" onClick={() => doExport("html")}>
             <Download size={12} /> Export HTML
-          </Btn>
+          </Button>
         )}
-        <Btn size="sm" variant="secondary" onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}>
+        <Button size="sm" variant="secondary" onClick={() => router.push(`/portal/t10-review?piece=${piece.piece_id}`)}>
           <ExternalLink size={12} /> Open in My Content
-        </Btn>
+        </Button>
         {PUBLISHABLE_CHANNELS.has(channel) && (
-          <Btn size="sm" variant="primary" disabled={publishing} onClick={() => setConfirmPublish(true)}>
+          <Button size="sm" variant="primary" disabled={publishing} onClick={() => setConfirmPublish(true)}>
             <Send size={12} /> Publish
-          </Btn>
+          </Button>
         )}
       </div>
       <ConfirmModal
@@ -192,51 +234,80 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
 }
 
 // ── Background watch ────────────────────────────────────────────────────────────────────────
-// A write keeps running when the panel closes (it is a t9_write job). The Slate keeps a list of
-// pieces it closed mid-write and polls each one until it settles, then raises a toast.
+// A write keeps running when its panel closes (a t9_write / t2_rewrite job). The page keeps a list
+// of jobs it closed mid-write and polls each one until it settles, then raises a toast. Generic
+// since S239: each watched item brings its own status check and messages (a T9 piece here, a T2
+// tour version in TourRewritePanel.tsx).
 
-interface Watched { pieceId: string; requestId: string; title: string; since: number }
+export type WatchOutcome = "running" | "ready" | "failed";
+
+export interface WatchItem {
+  /** What is polled (piece id, tour version id). */
+  id: string;
+  /** What reopening hands back to a panel (`unwatch(group)`): the angle request, the version. */
+  group: string;
+  title: string;
+  /** One status read; null = unknown this tick (try again). */
+  check: () => Promise<WatchOutcome | null>;
+  readyText: string;
+  failedText: string;
+  slowText: string;
+}
+
+interface Watched extends WatchItem { since: number }
 
 const WATCH_POLL_MS = 4000;
 const WATCH_CEILING_MS = 10 * 60_000;
 
+/** The watch item for a T9 piece closed while `ready_state === "in_progress"`. */
+export function watchPiece(pieceId: string, requestId: string, title: string): WatchItem {
+  return {
+    id: pieceId, group: requestId, title,
+    check: () => fetch(`/api/tenant/v1/content-writing/pieces/${pieceId}`, { cache: "no-store" })
+      .then(r => (r.ok ? r.json() : null))
+      .then((p: ContentPiece | null) => (!p ? null : p.ready_state === "in_progress" ? "running" : p.ready_state === "ready" ? "ready" : "failed")),
+    readyText: `"${title}" is ready — find it in My Content.`,
+    failedText: `Writing "${title}" didn't finish — open it again to retry.`,
+    slowText: `"${title}" is still being written — it will show up in My Content.`,
+  };
+}
+
 export function useWriteWatcher() {
   const toast = useToast();
   const [watched, setWatched] = useState<Watched[]>([]);
-  // Settled ids, so a slow response from an older interval can't toast the same piece twice.
+  // Settled ids, so a slow response from an older interval can't toast the same job twice.
   const settled = useRef<Set<string>>(new Set());
 
-  const watch = useCallback((w: Omit<Watched, "since">) => {
-    settled.current.delete(w.pieceId);
-    setWatched(prev => (prev.some(x => x.pieceId === w.pieceId) ? prev : [...prev, { ...w, since: Date.now() }]));
+  const watch = useCallback((w: WatchItem) => {
+    settled.current.delete(w.id);
+    setWatched(prev => (prev.some(x => x.id === w.id) ? prev : [...prev, { ...w, since: Date.now() }]));
   }, []);
 
-  // Reopening a request hands it back to the panel (the wizard resumes it itself).
-  const unwatch = useCallback((requestId: string) => {
-    setWatched(prev => prev.filter(x => x.requestId !== requestId));
+  // Reopening a job hands it back to its panel (the panel resumes it itself).
+  const unwatch = useCallback((group: string) => {
+    setWatched(prev => prev.filter(x => x.group !== group));
   }, []);
 
   useEffect(() => {
     if (watched.length === 0) return;
-    const drop = (pieceId: string) => {
-      settled.current.add(pieceId);
-      setWatched(prev => prev.filter(x => x.pieceId !== pieceId));
+    const drop = (id: string) => {
+      settled.current.add(id);
+      setWatched(prev => prev.filter(x => x.id !== id));
     };
     const id = setInterval(() => {
       for (const w of watched) {
-        if (settled.current.has(w.pieceId)) continue;
+        if (settled.current.has(w.id)) continue;
         if (Date.now() - w.since > WATCH_CEILING_MS) {
-          drop(w.pieceId);
-          toast.info(`"${w.title}" is still being written — it will show up in My Content.`, 8000);
+          drop(w.id);
+          toast.info(w.slowText, 8000);
           continue;
         }
-        fetch(`/api/tenant/v1/content-writing/pieces/${w.pieceId}`, { cache: "no-store" })
-          .then(r => (r.ok ? r.json() : null))
-          .then((p: ContentPiece | null) => {
-            if (!p || p.ready_state === "in_progress" || settled.current.has(w.pieceId)) return;
-            drop(w.pieceId);
-            if (p.ready_state === "ready") toast.success(`"${w.title}" is ready — find it in My Content.`, 8000);
-            else toast.error(`Writing "${w.title}" didn't finish — open it again to retry.`, 8000);
+        w.check()
+          .then((o) => {
+            if (!o || o === "running" || settled.current.has(w.id)) return;
+            drop(w.id);
+            if (o === "ready") toast.success(w.readyText, 8000);
+            else toast.error(w.failedText, 8000);
           })
           .catch(() => { /* transient — next tick */ });
       }

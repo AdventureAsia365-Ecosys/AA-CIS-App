@@ -66,7 +66,7 @@ import { Calendar, ChevronRight, Sparkles, X, Zap, AlertTriangle, ClipboardList,
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, EmptyState, StickyBar } from "./ui";
 import { ToastProvider } from "../../../_kit";
 import type { ContentPiece } from "./AngleGateWizard";
-import { WriterPanel, useWriteWatcher, type WriterTarget } from "./WriterPanel";
+import { WriterPanel, useWriteWatcher, watchPiece, type WriterTarget } from "./WriterPanel";
 
 interface ClearedBarReason {
   channel: string;
@@ -159,7 +159,7 @@ function SlateTabInner() {
 
   const closeWriter = useCallback((lastPiece: ContentPiece | null) => {
     if (panel && lastPiece?.ready_state === "in_progress") {
-      watch({ pieceId: lastPiece.piece_id, requestId: panel.requestId, title: panel.title });
+      watch(watchPiece(lastPiece.piece_id, panel.requestId, panel.title));
     }
     setPanel(null);
   }, [panel, watch]);
@@ -170,7 +170,7 @@ function SlateTabInner() {
   useEffect(() => { panelRef.current = panel; }, [panel]);
   const watchDetached = useCallback((p: ContentPiece, t: WriterTarget) => {
     if (p.ready_state !== "in_progress" || panelRef.current?.requestId === t.requestId) return;
-    watch({ pieceId: p.piece_id, requestId: t.requestId, title: t.title });
+    watch(watchPiece(p.piece_id, t.requestId, t.title));
   }, [watch]);
 
   const writer: WriterControls = { openSubjectId: panel?.subjectId ?? null, known, open: openWriter };
