@@ -307,3 +307,22 @@ def test_get_secret_uses_its_own_session_per_call():
         assert pub_mod._get_secret("acp/x") == {"a": 1}
         assert pub_mod._get_secret("acp/y") == {"a": 1}
     assert session.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_publish_reads_the_secret_in_a_worker_thread_too():
+    """PR-D4 review: _get_secret builds a fresh Session (~50 ms), so publish() must not call it on the event loop."""
+    from tests.unit import test_aa458_publish as t458
+
+    threads = []
+
+    def get_secret(key):
+        threads.append(threading.get_ident())
+        raise ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "gone"}}, "GetSecretValue")
+
+    pool, _ = t458._sequential_pool(t458._piece_row(), t458._integ_row())
+    with patch.object(pub_mod, "_get_secret", side_effect=get_secret):
+        with pytest.raises(HTTPException) as exc_info:
+            await pub_mod.publish(t458.PIECE_ID, t458._make_request(pool), t458.TENANT)
+    assert exc_info.value.status_code == 502, "ClientError from the worker thread still maps to 502"
+    assert threads and threads[0] != threading.get_ident()

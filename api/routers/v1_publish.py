@@ -85,8 +85,9 @@ def _get_secret(secret_key: str) -> dict:
     (v1_integrations.py itself duplicated services/acp_s4_blog/cms/publisher.py::_get_cms_creds()
     for the same reason).
 
-    AA-859: a fresh Session per call, as in v1_integrations._sm_client: unpublish runs this in an
-    asyncio.to_thread worker, and boto3.client() on the shared default Session is not thread-safe."""
+    AA-859: a fresh Session per call, as in v1_integrations._sm_client: publish and unpublish both run
+    this in an asyncio.to_thread worker (the Session build is ~50 ms and must stay off the event loop),
+    and boto3.client() on the shared default Session is not thread-safe."""
     client = boto3.session.Session().client("secretsmanager", region_name=_SM_REGION)
     return json.loads(client.get_secret_value(SecretId=secret_key)["SecretString"])
 
@@ -517,8 +518,8 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     if not integ or not integ["secret_key"]:
         raise HTTPException(status_code=422, detail=f"Connect {_connect_action_verb(channel)} to publish")
 
-    try:
-        creds = _get_secret(integ["secret_key"])
+    try:  # no connection held: sync boto3 off the event loop (a fresh Session per call costs ~50 ms)
+        creds = await asyncio.to_thread(_get_secret, integ["secret_key"])
     except ClientError as exc:
         logger.error("publish_secret_read_failed", tenant_id=tenant_id, channel=channel,
                      secret_key=integ["secret_key"], error=str(exc))
