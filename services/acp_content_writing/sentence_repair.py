@@ -177,7 +177,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     """The sentences to repair, [] when the only failures are a title/meta scope violation the SEO
     fit owns (nothing to change in the text — the attempt re-runs the fit and the gates), or None
     when this attempt needs the full rewrite instead.
-    Each item: {"start", "end", "sentence" (tag-stripped), "problem"}."""
+    Each item: {"start", "end", "sentence" (tag-stripped), "problem", "gate" (the failed gate, AA-777)}."""
     blocking = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True)]
     # F4_seo_surface is fixed by the SEO title/meta fit that runs after every attempt
     # (service._fit_seo_meta), not by the text — it never forces a full rewrite (S233). S234 review:
@@ -225,7 +225,8 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
         if any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
             continue  # same sentence flagged twice
         sentence = " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
-        out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem})
+        # AA-777 — `gate` lets the blog's attempt 3 cut the F1/F9 truth items instead of repairing them again
+        out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem, "gate": gate})
     return out or None
 
 

@@ -703,7 +703,16 @@ not in the body at all but is in the title/meta is a `title …`/`meta …` warn
 LinkedIn, at the last attempt, the sentences behind an F9 product-truth failure are cut (never the
 hook or the CTA); F9 is waived only when every flagged sentence was cut and the post stays in its
 length band, otherwise it stays blocking and the piece is held for the admin (the tenant still
-receives it, AA-770). A CTA failure still holds. Blogs keep the plain hold until AA-777.
+receives it, AA-770). A CTA failure still holds.
+S239 (AA-777) — **F9 sticky pass**: one set per write job (`f9_passed_sentences`, passed to
+`run_quality_gates`) keeps the body sentences an F9 verdict of that piece passed; a later verdict that
+flags one of them while it is unchanged has that claim dropped (`F9_sticky_pass` log, `sticky_pass` on the
+F9 entry). Only a verdict with a checkable reason adds to the set; an outage adds nothing. **Blog truth
+cut**: on a blog's attempt 3, when attempt 2 was a sentence repair of a failing F1/F9 gate, the F1/F9
+items still failing are cut in code (`sentence_repair.delete_flagged` + `tidy_after_cut`) instead of a
+second repair call; other items still go to the repair, and the gates re-judge the cut text. A cut that
+would take the blog under `_BLOG_MIN_CHARS` (or break its FAQ / ending) is refused: the old repair path
+runs and the piece stays held if it fails. The S234 attempt-3 fallback cut obeys the same floor on blogs.
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
