@@ -112,7 +112,9 @@ async def test_save_wordpress_success_writes_secret_and_upserts_row():
     assert value_arg["app_password"] == "app pass 1234"
 
     # DB row scoped to this tenant, never trusting a body-supplied tenant id
-    sql, tenant_id_param, config_param, secret_key_param = conn.fetchrow.call_args[0]
+    # AA-859 W9: integration_type is a parameter ($2) of the shared connect UPSERT
+    sql, tenant_id_param, type_param, config_param, secret_key_param = conn.fetchrow.call_args[0]
+    assert sql == mod._CONNECT_UPSERT_SQL and type_param == "wordpress"
     assert tenant_id_param == TENANT["sub"]
     assert secret_key_param == f"acp/cms/{TENANT['sub']}"
     assert result["connected"] is True

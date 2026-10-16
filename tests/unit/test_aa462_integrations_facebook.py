@@ -81,10 +81,11 @@ async def test_save_facebook_success_writes_secret_and_upserts_row():
     assert value_arg["page_access_token"] == "EAAtoken123"
     assert value_arg["page_id"] == "1234567890"
 
-    sql, tenant_id_param, config_param, secret_key_param = conn.fetchrow.call_args[0]
+    # AA-859 W9: integration_type is a parameter ($2) of the shared connect UPSERT
+    sql, tenant_id_param, type_param, config_param, secret_key_param = conn.fetchrow.call_args[0]
     assert tenant_id_param == TENANT["sub"]
     assert secret_key_param == f"acp/social/{TENANT['sub']}"
-    assert "'facebook'" in sql
+    assert sql == mod._CONNECT_UPSERT_SQL and type_param == "facebook"
     assert result["connected"] is True
     assert result["page_id"] == "1234567890"
 

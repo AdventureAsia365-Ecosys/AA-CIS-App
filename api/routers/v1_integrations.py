@@ -37,7 +37,9 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from api.core.aa544_tenant_pool import INTEGRATION_DISCONNECT_FLAG, acquire_scoped_conn
+from api.core.aa544_tenant_pool import (
+    INTEGRATION_CONNECT_FLAG, INTEGRATION_DISCONNECT_FLAG, acquire_scoped_conn,
+)
 from api.routers.v1_tours import get_tenant
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -145,19 +147,107 @@ def _row_to_status(row) -> dict:
     }
 
 
+# ── AA-859 W9 — status / connect / test-connection on the tenant pool ─────────────────────────────────
+# Behind INTEGRATION_CONNECT_FLAG (aa859:integration_connect_pool), fail closed. Flag off: the main pool,
+# one statement per acquire, exactly as before. Flag on: aa_app_user with app.tenant_id set LOCAL, so the
+# 237 policy (FOR ALL, USING = WITH CHECK = own tenant) holds the boundary even if a WHERE were wrong, and
+# the 241 column grants bound what the writes can touch. No tenant connection is ever held across Secrets
+# Manager or the remote HTTP call (max_size 2 per task):
+#   GET status : one block, the SELECT.
+#   POST       : Secrets Manager put first (worker thread, no connection), then one block with the UPSERT.
+#   POST /test : block 1 reads secret_key; GetSecretValue + the remote GET with no connection; block 2 the
+#                verify UPDATE. A row gone by block 2 (a disconnect in between) is a 404, not a 500.
+# SQL lives in these constants so tests can mutate them (forgotten-WHERE checks). integration_type is $2.
+_STATUS_SQL = (
+    "SELECT config, connected_at, last_verified_at, last_verify_error "
+    "FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = $2"
+)
+# Writes only 241's column grants: INSERT (tenant_id, integration_type, config, secret_key, connected_at)
+# and, on conflict, UPDATE (config, secret_key, updated_at). connected_at is set on the first connect only
+# (a credential update is not a new connection); tenant_id / integration_type are the conflict key and
+# never updated. Adding a column here needs a grant first (else 42501 on the tenant pool).
+_CONNECT_UPSERT_SQL = """
+    INSERT INTO shared.tenant_integrations
+        (tenant_id, integration_type, config, secret_key, connected_at)
+    VALUES ($1::uuid, $2, $3::jsonb, $4, now())
+    ON CONFLICT (tenant_id, integration_type) DO UPDATE SET
+        config = EXCLUDED.config,
+        secret_key = EXCLUDED.secret_key,
+        updated_at = now()
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+_TEST_SELECT_SQL = (
+    "SELECT config, secret_key FROM shared.tenant_integrations "
+    "WHERE tenant_id = $1::uuid AND integration_type = $2"
+)
+# Success: last_verified_at bumped, error cleared. Failure: last_verify_error set, last_verified_at LEFT
+# UNCHANGED (a failed retest must not mark a previously good connection as freshly verified).
+_VERIFY_OK_SQL = """
+    UPDATE shared.tenant_integrations
+    SET last_verified_at = now(), last_verify_error = NULL, updated_at = now()
+    WHERE tenant_id = $1::uuid AND integration_type = $2
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+_VERIFY_FAILED_SQL = """
+    UPDATE shared.tenant_integrations
+    SET last_verify_error = $3, updated_at = now()
+    WHERE tenant_id = $1::uuid AND integration_type = $2
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+
+
+async def _fetch_status_row(request: Request, tenant_id: str, integration_type: str):
+    async with acquire_scoped_conn(
+        request, tenant_id, INTEGRATION_CONNECT_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_integration_status", tenant_id=str(tenant_id), integration_type=integration_type,
+                    used_tenant_pool=used_tenant_pool)
+        return await conn.fetchrow(_STATUS_SQL, tenant_id, integration_type)
+
+
+async def _upsert_integration(request: Request, tenant_id: str, integration_type: str, config: str,
+                              secret_key: str):
+    """The DB half of connect; the caller has already written the secret (no connection held then)."""
+    async with acquire_scoped_conn(
+        request, tenant_id, INTEGRATION_CONNECT_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_integration_connect", tenant_id=str(tenant_id), integration_type=integration_type,
+                    used_tenant_pool=used_tenant_pool)
+        return await conn.fetchrow(_CONNECT_UPSERT_SQL, tenant_id, integration_type, config, secret_key)
+
+
+async def _fetch_test_row(request: Request, tenant_id: str, integration_type: str):
+    """Block 1 of test-connection; released before Secrets Manager and the remote call."""
+    async with acquire_scoped_conn(
+        request, tenant_id, INTEGRATION_CONNECT_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        logger.info("aa859_integration_test", tenant_id=str(tenant_id), integration_type=integration_type,
+                    used_tenant_pool=used_tenant_pool)
+        return await conn.fetchrow(_TEST_SELECT_SQL, tenant_id, integration_type)
+
+
+async def _record_test_result(request: Request, tenant_id: str, integration_type: str, success: bool,
+                              message: Optional[str], name: str):
+    """Block 2 of test-connection. No row any more (a disconnect between the two blocks) -> 404."""
+    async with acquire_scoped_conn(
+        request, tenant_id, INTEGRATION_CONNECT_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        if success:
+            updated = await conn.fetchrow(_VERIFY_OK_SQL, tenant_id, integration_type)
+        else:
+            updated = await conn.fetchrow(_VERIFY_FAILED_SQL, tenant_id, integration_type, message)
+    if updated is None:
+        logger.warning("aa859_integration_test_row_gone", tenant_id=str(tenant_id),
+                       integration_type=integration_type, used_tenant_pool=used_tenant_pool)
+        raise HTTPException(status_code=404, detail=f"{name} is not connected yet")
+    return updated
+
+
 @router.get("/wordpress")
 async def get_wordpress_status(request: Request, tenant=Depends(get_tenant)):
     """Current connection status — never returns the secret itself, only non-secret config +
     verification state. Used by the FE to decide: show the connect form, or the connected state."""
-    pool = request.app.state.pool
-    tenant_id = tenant["sub"]
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT config, connected_at, last_verified_at, last_verify_error "
-            "FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = 'wordpress'",
-            tenant_id,
-        )
+    row = await _fetch_status_row(request, tenant["sub"], "wordpress")
     if not row:
         return {"connected": False, "site_url": None, "connected_at": None,
                 "last_verified_at": None, "last_verify_error": None}
@@ -178,7 +268,6 @@ async def save_wordpress(body: SaveWordPressRequest, request: Request, tenant=De
     if not body.username.strip() or not body.app_password.strip():
         raise HTTPException(status_code=422, detail="username and app_password are required")
 
-    pool = request.app.state.pool
     tenant_id = tenant["sub"]
     secret_key = f"acp/cms/{tenant_id}"
 
@@ -190,21 +279,7 @@ async def save_wordpress(body: SaveWordPressRequest, request: Request, tenant=De
         logger.error("integration_secret_write_failed", tenant_id=tenant_id, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not save credentials — try again")
 
-    config = json.dumps({"site_url": wp_url})
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO shared.tenant_integrations
-                (tenant_id, integration_type, config, secret_key, connected_at)
-            VALUES ($1::uuid, 'wordpress', $2::jsonb, $3, now())
-            ON CONFLICT (tenant_id, integration_type) DO UPDATE SET
-                config = EXCLUDED.config,
-                secret_key = EXCLUDED.secret_key,
-                updated_at = now()
-            RETURNING config, connected_at, last_verified_at, last_verify_error
-            """,
-            tenant_id, config, secret_key,
-        )
+    row = await _upsert_integration(request, tenant_id, "wordpress", json.dumps({"site_url": wp_url}), secret_key)
 
     logger.info("wordpress_integration_saved", tenant_id=tenant_id, site_url=wp_url)
     return _row_to_status(row)
@@ -233,15 +308,9 @@ async def test_wordpress(request: Request, tenant=Depends(get_tenant)):
     WordPress Application Password smoke-test. Success -> last_verified_at bumped, error cleared.
     Failure -> last_verify_error set with a classified message, last_verified_at LEFT UNCHANGED
     (a failed retest must not silently mark a previously-good connection as freshly verified)."""
-    pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT config, secret_key FROM shared.tenant_integrations "
-            "WHERE tenant_id = $1::uuid AND integration_type = 'wordpress'",
-            tenant_id,
-        )
+    row = await _fetch_test_row(request, tenant_id, "wordpress")
     if not row or not row["secret_key"]:
         raise HTTPException(status_code=404, detail="WordPress is not connected yet")
 
@@ -293,27 +362,7 @@ async def test_wordpress(request: Request, tenant=Depends(get_tenant)):
     success = status_code == 200 and not invalid_200_body
     message = None if success else _classify_test_failure(status_code, error, invalid_200_body)
 
-    async with pool.acquire() as conn:
-        if success:
-            updated = await conn.fetchrow(
-                """
-                UPDATE shared.tenant_integrations
-                SET last_verified_at = now(), last_verify_error = NULL, updated_at = now()
-                WHERE tenant_id = $1::uuid AND integration_type = 'wordpress'
-                RETURNING config, connected_at, last_verified_at, last_verify_error
-                """,
-                tenant_id,
-            )
-        else:
-            updated = await conn.fetchrow(
-                """
-                UPDATE shared.tenant_integrations
-                SET last_verify_error = $2, updated_at = now()
-                WHERE tenant_id = $1::uuid AND integration_type = 'wordpress'
-                RETURNING config, connected_at, last_verified_at, last_verify_error
-                """,
-                tenant_id, message,
-            )
+    updated = await _record_test_result(request, tenant_id, "wordpress", success, message, "WordPress")
 
     logger.info("wordpress_test_connection", tenant_id=tenant_id, success=success,
                 status_code=status_code, error=str(error) if error else None)
@@ -352,15 +401,7 @@ def _fb_row_to_status(row) -> dict:
 
 @router.get("/facebook")
 async def get_facebook_status(request: Request, tenant=Depends(get_tenant)):
-    pool = request.app.state.pool
-    tenant_id = tenant["sub"]
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT config, connected_at, last_verified_at, last_verify_error "
-            "FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = 'facebook'",
-            tenant_id,
-        )
+    row = await _fetch_status_row(request, tenant["sub"], "facebook")
     if not row:
         return {"connected": False, "page_id": None, "connected_at": None,
                 "last_verified_at": None, "last_verify_error": None}
@@ -375,7 +416,6 @@ async def save_facebook(body: SaveFacebookRequest, request: Request, tenant=Depe
     if not body.page_id.strip() or not body.page_access_token.strip():
         raise HTTPException(status_code=422, detail="page_id and page_access_token are required")
 
-    pool = request.app.state.pool
     tenant_id = tenant["sub"]
     secret_key = f"acp/social/{tenant_id}"
 
@@ -387,21 +427,8 @@ async def save_facebook(body: SaveFacebookRequest, request: Request, tenant=Depe
         logger.error("integration_secret_write_failed", tenant_id=tenant_id, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not save credentials — try again")
 
-    config = json.dumps({"page_id": body.page_id.strip()})
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO shared.tenant_integrations
-                (tenant_id, integration_type, config, secret_key, connected_at)
-            VALUES ($1::uuid, 'facebook', $2::jsonb, $3, now())
-            ON CONFLICT (tenant_id, integration_type) DO UPDATE SET
-                config = EXCLUDED.config,
-                secret_key = EXCLUDED.secret_key,
-                updated_at = now()
-            RETURNING config, connected_at, last_verified_at, last_verify_error
-            """,
-            tenant_id, config, secret_key,
-        )
+    row = await _upsert_integration(request, tenant_id, "facebook", json.dumps({"page_id": body.page_id.strip()}),
+                                    secret_key)
 
     logger.info("facebook_integration_saved", tenant_id=tenant_id, page_id=body.page_id)
     return _fb_row_to_status(row)
@@ -426,15 +453,9 @@ async def test_facebook(request: Request, tenant=Depends(get_tenant)):
     """Real connection test — GET /{page_id}?fields=id,name&access_token=... (the standard Graph
     API token/page smoke-test, same idea as WordPress's own /users/me check). Success ->
     last_verified_at bumped; failure -> last_verify_error set, last_verified_at unchanged."""
-    pool = request.app.state.pool
     tenant_id = tenant["sub"]
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT config, secret_key FROM shared.tenant_integrations "
-            "WHERE tenant_id = $1::uuid AND integration_type = 'facebook'",
-            tenant_id,
-        )
+    row = await _fetch_test_row(request, tenant_id, "facebook")
     if not row or not row["secret_key"]:
         raise HTTPException(status_code=404, detail="Facebook is not connected yet")
 
@@ -472,27 +493,7 @@ async def test_facebook(request: Request, tenant=Depends(get_tenant)):
     )
     message = None if success else _classify_facebook_test_failure(status_code, parsed_body)
 
-    async with pool.acquire() as conn:
-        if success:
-            updated = await conn.fetchrow(
-                """
-                UPDATE shared.tenant_integrations
-                SET last_verified_at = now(), last_verify_error = NULL, updated_at = now()
-                WHERE tenant_id = $1::uuid AND integration_type = 'facebook'
-                RETURNING config, connected_at, last_verified_at, last_verify_error
-                """,
-                tenant_id,
-            )
-        else:
-            updated = await conn.fetchrow(
-                """
-                UPDATE shared.tenant_integrations
-                SET last_verify_error = $2, updated_at = now()
-                WHERE tenant_id = $1::uuid AND integration_type = 'facebook'
-                RETURNING config, connected_at, last_verified_at, last_verify_error
-                """,
-                tenant_id, message,
-            )
+    updated = await _record_test_result(request, tenant_id, "facebook", success, message, "Facebook")
 
     logger.info("facebook_test_connection", tenant_id=tenant_id, success=success, status_code=status_code)
 
