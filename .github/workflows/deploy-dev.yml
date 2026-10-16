@@ -30,7 +30,9 @@ jobs:
   # queued or running would be interrupted (S212: 3 PRs merged mid Thailand wave killed 16 S1
   # jobs). CI has no RDS access (private subnet), so it asks the LIVE api, which counts shared.job
   # with no time filter. The guard blocks the roll when a job is active, unless a workflow_dispatch
-  # run supplied `override_running_jobs` with a reason (logged below).
+  # run supplied `override_running_jobs` with a reason (logged below). Kinds registered with
+  # `deploy_gate_exempt` (AA-832: the 5-minute ops_rds_role_connections sample) are not counted; the
+  # response lists them in `exempt_kinds`.
   preflight:
     name: Pre-deploy job guard
     runs-on: ubuntu-latest
@@ -52,7 +54,7 @@ jobs:
           SAFE=$(echo "${BODY}" | jq -r '.safe_to_deploy // empty')
           ACTIVE=$(echo "${BODY}" | jq -r '.active // "?"')
           if [ "${SAFE}" = "true" ]; then
-            echo "No queued/running jobs — safe to deploy."
+            echo "No queued/running jobs (deploy-gate exempt kinds not counted) — safe to deploy."
             exit 0
           fi
           if [ -n "${OVERRIDE:-}" ]; then
