@@ -14,9 +14,13 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
   - AA-815 + AA-817 (237): DELETE /v1/integrations/{wordpress,facebook} (v1_integrations.py::_disconnect)
   - AA-817 (S237): GET /v1/content-writing/requests/{id}/latest-piece
     (service.py::fetch_latest_piece_for_request)
-Planned (AA-859 wave 2, S240; flags declared below, each route joins in its own PR): content piece
-PATCH (W2), angle-gate choose + reopen (W3), unpublish (W4), T2 version reads (W5) and PATCH (W6),
-integration connect / test / status (W9).
+  - AA-859 wave 2 (S240, all six flags ON on Dev 16/10/2026 after the automated flip-verify run, root
+    docs/audits/2026-10-16-S240-aa859/flip_report.json):
+    W2 PATCH /v1/content-writing/pieces/{id} (PIECE_EDIT_FLAG); W3 POST /v1/angle-gate/requests/{id}/choose
+    and /reopen (ANGLE_GATE_DECIDE_FLAG, needs 241); W4 DELETE /v1/publish-log/{id} (UNPUBLISH_FLAG);
+    W5a GET /v1/tours/pool, /my-versions, /versions/{id} (T2_VERSION_READS_FLAG); W6 PATCH
+    /v1/tours/versions/{id} (T2_VERSION_WRITE_FLAG); W9 GET/POST /v1/integrations/{wordpress,facebook}
+    and POST .../test (INTEGRATION_CONNECT_FLAG, needs 241).
 
 Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool
 (aa_cis_admin, BYPASSRLS) unchanged, always. This module adds a SECOND pool, aa_app_user
