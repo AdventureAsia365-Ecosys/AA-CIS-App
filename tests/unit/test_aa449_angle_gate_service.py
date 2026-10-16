@@ -437,6 +437,32 @@ class TestFetchRequest:
         with pytest.raises(service.RequestNotFoundError):
             await service.fetch_request(TENANT_ID, REQUEST_ID, pool)
 
+    async def test_subject_header_shows_the_live_segment_label(self):
+        """AA-857 — a Subject stored on an id that later merged into another shows the live
+        Segment's label, the one the tenant saw in the Slate when picking it."""
+        conn = AsyncMock()
+        conn.fetchrow.side_effect = [
+            _request_row(status="pending_choice", goal="promotion", subject_id=uuid.uuid4()),
+            {"score": 2.0, "segment_id": "old1", "canonical_place": "stale", "canonical_action": "visit",
+             "hub_name": None},
+        ]
+        conn.fetch.return_value = []
+        conn.fetchval.return_value = None
+        labels = AsyncMock(return_value={"old1": ("live1", "Delhi", "explore")})
+        with patch.object(service, "live_segment_labels", labels):
+            result = await service.fetch_request(TENANT_ID, REQUEST_ID, _make_pool(conn))
+        assert (result["subject_place"], result["subject_action"]) == ("Delhi", "explore")
+        assert labels.await_args.args[1] == ["old1"]
+
+        conn.fetchrow.side_effect = [
+            _request_row(status="pending_choice", goal="promotion", subject_id=uuid.uuid4()),
+            {"score": 2.0, "segment_id": "seg1", "canonical_place": "Agra", "canonical_action": "visit",
+             "hub_name": None},
+        ]
+        with patch.object(service, "live_segment_labels", AsyncMock(return_value={})):
+            result = await service.fetch_request(TENANT_ID, REQUEST_ID, _make_pool(conn))
+        assert result["subject_place"] == "Agra"
+
     async def test_dfs_paa_snapshot_parsed_from_json_string(self):
         """AA-501 — asyncpg has no jsonb codec registered on this app's connections (same gap
         admin_a4.py's _parse_jsonb already works around), so dfs_paa_snapshot arrives as a raw

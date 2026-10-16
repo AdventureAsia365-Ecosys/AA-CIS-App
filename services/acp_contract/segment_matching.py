@@ -508,8 +508,8 @@ def written_unclaimed_ids(segments: list[Segment], aliases: Mapping[str, str],
 def avoid_foreign_ids(
     segments: list[Segment], aliases: Mapping[str, str], claimed: Iterable[str], own_country: str,
     countries_of: Mapping[str, Iterable[str]], alias_old: Iterable[str], taken: Iterable[str],
-    max_n: int | None = None,
-) -> tuple[list[Segment], dict[str, str], dict[str, dict]]:
+    max_n: int | None = None, has_members: Iterable[str] | None = None,
+) -> tuple[list[Segment], dict[str, str], dict[str, dict], list[str]]:
     """AA-857 — re-mint every id this run would write but did not claim when it belongs to someone else.
 
     A Segment id is the mint of the moment that FIRST created it, while its label (canonical
@@ -524,25 +524,32 @@ def avoid_foreign_ids(
     replaced by `remint_id(id, country, n)` for the first n = 2, 3, ... that is not `taken` (an
     `atom_segment` id), not an id of this run, not an alias old id and not used by another re-mint
     of this run. A later run keeps the replacement through the ordinary `reconcile_ids` claim (the
-    atoms are assigned to it). Unknown tour country -> nothing changes (unknown atoms never mix).
+    atoms are assigned to it). Unknown tour country -> nothing is re-minted (unknown atoms never mix).
 
     `max_n` (the caller probed `taken`/`alias_old` only up to it) raises `RemintExhausted` past it.
-    Returns (segments, aliases, {old_id: {"to": new_id, "reason": str}}).
+    `has_members` (ids that already have member rows) feeds the report only, as in the repair.
+    Returns (segments, aliases, {old_id: {"to": new_id, "reason": str}}, unclaimed_existing), where
+    unclaimed_existing = written, unclaimed ids that already have members and were NOT re-minted
+    (same-country or unknown-country joins of an existing Segment, for the run log).
     """
     own = _country_norm(own_country)
-    if not own:
-        return list(segments), dict(aliases), {}
     alias_old, taken = set(alias_old), set(taken)
+    with_members = set(has_members) if has_members is not None else set()
     in_run = {s.id for s in segments}
     remints: dict[str, dict] = {}
+    unclaimed_existing: list[str] = []
     used: set[str] = set()
     for sid in written_unclaimed_ids(segments, aliases, claimed):
-        foreign = {_country_norm(c) for c in countries_of.get(sid, ())} - {own, ""}
-        if foreign:
-            reason = "foreign:" + ",".join(sorted(foreign))
-        elif sid in alias_old:
-            reason = "alias_old"
-        else:
+        reason = None
+        if own:
+            foreign = {_country_norm(c) for c in countries_of.get(sid, ())} - {own, ""}
+            if foreign:
+                reason = "foreign:" + ",".join(sorted(foreign))
+            elif sid in alias_old:
+                reason = "alias_old"
+        if reason is None:
+            if sid in with_members:
+                unclaimed_existing.append(sid)
             continue
         n = 2
         while True:
@@ -556,23 +563,11 @@ def avoid_foreign_ids(
         used.add(candidate)
         remints[sid] = {"to": candidate, "reason": reason}
     if not remints:
-        return list(segments), dict(aliases), {}
+        return list(segments), dict(aliases), {}, unclaimed_existing
     new_id = {old: r["to"] for old, r in remints.items()}
     segments = [replace(s, id=new_id.get(s.id, s.id)) for s in segments]
     aliases = {was: new_id.get(target, target) for was, target in aliases.items()}
-    return segments, aliases, remints
-
-
-def follow_alias(alias_map: Mapping[str, str], segment_id: str, limit: int = 20) -> str:
-    """The live id behind `segment_id` (old -> canonical, followed to the end; itself when not an
-    old id). `limit` stops a cycle — the alias table should never hold one."""
-    seen = 0
-    while segment_id in alias_map and seen < limit:
-        nxt = alias_map[segment_id]
-        if nxt == segment_id:
-            break
-        segment_id, seen = nxt, seen + 1
-    return segment_id
+    return segments, aliases, remints, unclaimed_existing
 
 
 def _connected(keyed: list[tuple[str, Key]], allowed=None, involving: frozenset | None = None,
@@ -717,13 +712,16 @@ async def _repoint_members(conn, alias_rows: list[tuple[str, str]]) -> None:
 
 
 # AA-857 — what an id this run would write but did not claim already is: an atom_segment row
-# (`taken`), an alias old id, and the known countries of its members (any atom state, the same
-# definition the S239 repair's guard used). One query for the ids and their probed re-mints.
+# (`taken`), an alias old id, whether it has any member row, and the known countries of its members
+# (any atom state, the same definition the S239 repair's guard used). One query for the ids and their
+# probed re-mints.
 _ID_FACTS_SQL = """
     SELECT x.segment_id,
            EXISTS (SELECT 1 FROM acp_contract.atom_segment s WHERE s.segment_id = x.segment_id) AS taken,
            EXISTS (SELECT 1 FROM acp_contract.atom_segment_alias a
                    WHERE a.segment_id_old = x.segment_id) AS alias_old,
+           EXISTS (SELECT 1 FROM acp_contract.atom_segment_member m0
+                   WHERE m0.segment_id = x.segment_id) AS has_members,
            ARRAY(SELECT DISTINCT lower(btrim(rt.country))
                  FROM acp_contract.atom_segment_member m
                  JOIN acp_contract.tour_atoms ta ON ta.atom_id = m.atom_id
@@ -739,6 +737,9 @@ _REMINT_PROBE = 8
 # AA-857 — after the member insert, in the same transaction: a written id whose LIVE members name
 # more than one known country rolls the whole run back. Live (v_active_tour_atoms) is the "mixed"
 # definition the S239 repair verifies to 0; a stale inactive/deleted member never blocks a tour.
+# The same query also runs BEFORE the writes: an id that was already mixed only fails the run when
+# this run makes it worse (a new country), so pre-existing damage does not block every tour that
+# touches it until the repair has run.
 _MIXED_WRITTEN_SQL = """
     SELECT m.segment_id, array_agg(DISTINCT lower(btrim(rt.country))) AS countries
     FROM acp_contract.atom_segment_member m
@@ -750,8 +751,10 @@ _MIXED_WRITTEN_SQL = """
     HAVING count(DISTINCT lower(btrim(rt.country))) > 1
 """
 
-# atom_segment label upsert. AA-857 — $4 = this run claimed the id; an existing id it did not claim
-# keeps its label (the old unconditional DO UPDATE relabelled India's "Delhi" to a Taiwan hotel).
+# atom_segment label upsert. AA-857 — $4 = this run may relabel the id: it claimed it, or the id has
+# no member row at all (nothing to protect; an AA-695 excluded-atom DELETE can empty a Segment while
+# its row stays). An existing id with members that it did not claim keeps its label (the old
+# unconditional DO UPDATE relabelled India's "Delhi" to a Taiwan hotel).
 _SEGMENT_UPSERT_SQL = """
     INSERT INTO acp_contract.atom_segment
         (segment_id, canonical_place, canonical_action)
@@ -763,7 +766,9 @@ _SEGMENT_UPSERT_SQL = """
 """
 
 # AA-857 — old id -> live id through atom_segment_alias, followed to the end (the write path's own
-# chain-resolve UPDATE is one hop per run, so a chain can be longer than one row for a while).
+# chain-resolve UPDATE is one hop per run, so a chain can be longer than one row for a while). An id
+# that has members is live and is not followed even when an alias row names it: before AA-857 a fresh
+# mint could revive an alias old id (members written into it, the alias row left in place).
 _ALIAS_CHAIN_SQL = """
     WITH RECURSIVE chain (start_id, segment_id, depth) AS (
         SELECT x, x, 0 FROM unnest($1::text[]) AS x
@@ -772,6 +777,8 @@ _ALIAS_CHAIN_SQL = """
         FROM chain c
         JOIN acp_contract.atom_segment_alias a ON a.segment_id_old = c.segment_id
         WHERE c.depth < 20 AND a.segment_id_canonical <> c.segment_id
+          AND NOT EXISTS (SELECT 1 FROM acp_contract.atom_segment_member m
+                          WHERE m.segment_id = c.segment_id)
     )
     SELECT DISTINCT ON (start_id) start_id, segment_id
     FROM chain
@@ -791,42 +798,82 @@ async def resolve_segment_aliases(conn, segment_ids: Iterable[str | None]) -> di
     return out
 
 
+async def live_segment_labels(conn, segment_ids: Iterable[str | None]) -> dict[str, tuple]:
+    """AA-857 — {stored id: (live id, canonical_place, canonical_action)} for every given id that
+    resolves to ANOTHER id (`resolve_segment_aliases`); ids that never gave way are absent, so a
+    caller keeps the label it already joined. One read path for "a Subject on an old id shows the
+    live Segment's label" (Slate, angle gate header, admin Subject list)."""
+    live = await resolve_segment_aliases(conn, segment_ids)
+    moved = {old: new for old, new in live.items() if old != new}
+    if not moved:
+        return {}
+    labels = {
+        r["segment_id"]: (r["canonical_place"], r["canonical_action"])
+        for r in await conn.fetch("""
+            SELECT segment_id, canonical_place, canonical_action FROM acp_contract.atom_segment
+            WHERE segment_id = ANY($1::text[])
+        """, sorted(set(moved.values())))
+    }
+    return {old: (new, *labels.get(new, (None, None))) for old, new in moved.items()}
+
+
+class _IdGuard(NamedTuple):
+    segments: list
+    aliases: dict
+    remints: dict
+    unclaimed_existing: list
+    with_members: set          # ids (unclaimed + probed re-mints) that already have member rows
+
+
 async def _avoid_foreign_ids_db(conn, segments: list[Segment], aliases: Mapping[str, str],
-                                claimed: set[str], own_country: str):
-    """`avoid_foreign_ids` over the DB: one query for the unclaimed ids and their probed re-mints."""
+                                claimed: set[str], own_country: str) -> _IdGuard:
+    """`avoid_foreign_ids` over the DB: one query for the unclaimed ids and their probed re-mints
+    (re-mints are probed only for a known tour country; the facts are read either way, for the
+    relabel rule and the report)."""
     own = _country_norm(own_country)
     unclaimed = written_unclaimed_ids(segments, aliases, claimed)
-    if not own or not unclaimed:
-        return list(segments), dict(aliases), {}
+    if not unclaimed:
+        return _IdGuard(list(segments), dict(aliases), {}, [], set())
     probe = _REMINT_PROBE
     while True:
-        ids = unclaimed + [remint_id(sid, own, n) for sid in unclaimed for n in range(2, 2 + probe)]
+        ids = unclaimed + ([remint_id(sid, own, n) for sid in unclaimed for n in range(2, 2 + probe)]
+                           if own else [])
         rows = await conn.fetch(_ID_FACTS_SQL, ids)
+        with_members = {r["segment_id"] for r in rows if r["has_members"]}
         try:
-            return avoid_foreign_ids(
+            out = avoid_foreign_ids(
                 segments, aliases, claimed, own_country,
                 countries_of={r["segment_id"]: list(r["countries"] or []) for r in rows},
                 alias_old={r["segment_id"] for r in rows if r["alias_old"]},
                 taken={r["segment_id"] for r in rows if r["taken"]},
-                max_n=1 + probe,
+                max_n=1 + probe, has_members=with_members,
             )
+            return _IdGuard(*out, with_members)
         except RemintExhausted:
             if probe >= 512:
                 raise
             probe *= 4
 
 
-async def _assert_written_one_country(conn, written_ids: Iterable[str]) -> None:
-    """AA-857 — raise `MixedCountrySegmentError` (the caller's transaction rolls back) when any
-    written id now has live members of more than one known country."""
+async def _mixed_written(conn, written_ids: Iterable[str]) -> dict[str, set[str]]:
+    """AA-857 — {id: its live known countries} for the given ids that hold more than one."""
     ids = sorted(set(written_ids))
     if not ids:
-        return
-    mixed = await conn.fetch(_MIXED_WRITTEN_SQL, ids)
-    if mixed:
+        return {}
+    return {r["segment_id"]: set(r["countries"]) for r in await conn.fetch(_MIXED_WRITTEN_SQL, ids)}
+
+
+async def _assert_written_one_country(conn, written_ids: Iterable[str],
+                                      mixed_before: Mapping[str, set[str]]) -> None:
+    """AA-857 — raise `MixedCountrySegmentError` (the caller's transaction rolls back) when a
+    written id now has live members of more than one known country and was not already mixed with
+    exactly those countries before this run's writes (`mixed_before`, same query)."""
+    mixed = await _mixed_written(conn, written_ids)
+    worse = {sid: c for sid, c in mixed.items() if not c <= mixed_before.get(sid, set())}
+    if worse:
         raise MixedCountrySegmentError(
             "segment write would span countries: "
-            + "; ".join(f"{r['segment_id']} {sorted(r['countries'])}" for r in mixed[:10]))
+            + "; ".join(f"{sid} {sorted(c)}" for sid, c in sorted(worse.items())[:10]))
 
 
 async def run_segment_matching(tour_id: str, pool) -> dict:
@@ -934,17 +981,23 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
             # AA-857 — a fresh mint that collides with another country's Segment (or an alias old
             # id) is re-minted before anything is written; read inside the write transaction to
             # keep the window to a concurrent run short (the check after the member insert closes it).
-            segments, aliases, remints = await _avoid_foreign_ids_db(
-                conn, segments, aliases, claimed, tour_country)
+            guard = await _avoid_foreign_ids_db(conn, segments, aliases, claimed, tour_country)
+            segments, aliases, remints = guard.segments, guard.aliases, guard.remints
             to_write, alias_rows, segment_rows = _plan_writes(segments, aliases)
+            written_ids = {s.id for s in to_write} | {target for _, target in alias_rows}
+            # AA-857 — damage that predates this run (a Segment already mixed) is reported, and the
+            # post-write check below fails only when this run adds a country to it.
+            mixed_before = await _mixed_written(conn, written_ids)
             # atom_segment: UPSERT-only, never DELETEd (module docstring + migration 129 comment
             # — required by atom_segment_alias's own FK, an id that "gave way" still has to
             # exist as a row). AA-857 — the label of an existing id is updated only when this run
-            # claimed it ($4); an unclaimed id that already exists keeps its label (the old DO
-            # UPDATE relabelled India's "Delhi" Segment to a Taiwan hotel).
+            # claimed it or it has no member row ($4); an unclaimed id with members keeps its label
+            # (the old DO UPDATE relabelled India's "Delhi" Segment to a Taiwan hotel). Sorted by
+            # id: the upsert row-locks every written id, so two concurrent runs lock in one order.
             if segment_rows:
                 await conn.executemany(_SEGMENT_UPSERT_SQL, [
-                    (sid, place, action, sid in claimed) for sid, place, action in segment_rows.values()])
+                    (sid, place, action, sid in claimed or sid not in guard.with_members)
+                    for sid, place, action in sorted(segment_rows.values(), key=lambda row: row[0])])
             await _repoint_members(conn, alias_rows)
             # AA-695 (GO item 1) — a previously-formed membership of an atom now excluded from
             # Segments (a re-atomize that used to type it an experience, now transit/unnamed, or
@@ -988,14 +1041,15 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
 
             # AA-857 — last line of defence, still inside the transaction: no id this run wrote
             # members into (directly or by re-pointing) may now hold live atoms of two countries.
-            await _assert_written_one_country(
-                conn, {s.id for s in to_write} | {target for _, target in alias_rows})
+            await _assert_written_one_country(conn, written_ids, mixed_before)
 
     return {
         "segments_written": len(to_write), "atoms": len(new_atoms), "aliases": len(alias_rows),
         "existing_segments": len(existing_rows), "same_place_asked": asked, "kept_apart": len(apart),
         "excluded_atoms": len(excluded_atom_ids), "reminted": len(remints),
         "remints": {old: r["to"] for old, r in remints.items()},
+        "unclaimed_existing": guard.unclaimed_existing,
+        "already_mixed": sorted(mixed_before),
     }
 
 

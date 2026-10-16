@@ -68,7 +68,7 @@ from uuid import UUID
 
 import structlog
 
-from services.acp_contract.segment_matching import resolve_segment_aliases
+from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.subject_seed import (
     choose_representative, load_alias_cards, load_segment_members,
@@ -736,17 +736,7 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
         """, tenant_id)
         # AA-857 — a Subject stored on an id that has since merged into another (atom_segment_alias)
         # is shown on the live id, with the live Segment's label (the old row keeps its old label).
-        live = await resolve_segment_aliases(conn, [r["segment_id"] for r in rows])
-        moved = {old: new for old, new in live.items() if old != new}
-        labels: dict[str, tuple] = {}
-        if moved:
-            labels = {
-                r["segment_id"]: (r["canonical_place"], r["canonical_action"])
-                for r in await conn.fetch("""
-                    SELECT segment_id, canonical_place, canonical_action FROM acp_contract.atom_segment
-                    WHERE segment_id = ANY($1::text[])
-                """, sorted(set(moved.values())))
-            }
+        moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
 
     by_channel: dict[str, list[dict]] = {c: [] for c in CHANNEL_BARS}
     for r in rows:
@@ -755,8 +745,8 @@ async def fetch_slate(tenant_id: UUID, pool) -> dict:
         reason = r["cleared_bar_reason"]
         if isinstance(reason, str):
             reason = json.loads(reason)
-        segment_id = moved.get(r["segment_id"], r["segment_id"])
-        place, action = labels.get(segment_id, (r["canonical_place"], r["canonical_action"]))
+        segment_id, place, action = moved.get(
+            r["segment_id"], (r["segment_id"], r["canonical_place"], r["canonical_action"]))
         by_channel.setdefault(r["channel"], []).append({
             "subject_id": str(r["subject_id"]),
             "channel": r["channel"],

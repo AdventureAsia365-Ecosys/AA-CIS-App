@@ -58,4 +58,27 @@ async def test_alias_chain_and_id_facts(tx):
     assert (facts["zz857_none"]["taken"], facts["zz857_none"]["alias_old"]) == (False, False)
     assert all(list(r["countries"]) == [] for r in facts.values())
 
+    assert all(r["has_members"] is False for r in facts.values())
+
     assert await tx.fetch(sm._MIXED_WRITTEN_SQL, ["zz857_a", "zz857_c"]) == []
+
+
+@pytest.mark.asyncio
+async def test_alias_chain_stops_at_a_revived_old_id(tx):
+    """Before AA-857 a fresh mint could write members into an alias old id and leave the alias
+    row; such an id is live and must not resolve to the alias target. Member rows reference
+    tour_atoms through an FK; FK triggers are off for this rolled-back transaction (replica mode,
+    test superuser — the S218 repoint test does the same)."""
+    await tx.execute("SET LOCAL session_replication_role = replica")
+    await tx.execute("INSERT INTO acp_contract.atom_segment (segment_id, canonical_place, canonical_action) "
+                     "VALUES ('zz857_x', 'X', 'v'), ('zz857_y', 'Y', 'v'), ('zz857_p', 'P', 'v'), "
+                     "('zz857_q', 'Q', 'v')")
+    await tx.execute("INSERT INTO acp_contract.atom_segment_alias (segment_id_old, segment_id_canonical) "
+                     "VALUES ('zz857_x', 'zz857_y'), ('zz857_p', 'zz857_q')")
+    await tx.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id) "
+                     "VALUES ('zz857_x', 'zz857_atom_1')")
+    assert await sm.resolve_segment_aliases(tx, ["zz857_x", "zz857_p"]) == {
+        "zz857_x": "zz857_x", "zz857_p": "zz857_q"}
+    assert await sm.live_segment_labels(tx, ["zz857_x", "zz857_p"]) == {"zz857_p": ("zz857_q", "Q", "v")}
+    facts = {r["segment_id"]: r for r in await tx.fetch(sm._ID_FACTS_SQL, ["zz857_x", "zz857_y"])}
+    assert (facts["zz857_x"]["has_members"], facts["zz857_y"]["has_members"]) == (True, False)

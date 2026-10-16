@@ -14,14 +14,25 @@ import pytest
 
 from services.acp_contract import segment_matching as sm
 from services.acp_contract.segment_matching import (
-    _PSEUDO_PREFIX, MixedCountrySegmentError, RemintExhausted, Segment, avoid_foreign_ids, follow_alias,
-    remint_id, resolve_segment_aliases,
+    _PSEUDO_PREFIX, MixedCountrySegmentError, RemintExhausted, Segment, avoid_foreign_ids,
+    live_segment_labels, remint_id, resolve_segment_aliases,
 )
 from services.acp_shared import slate
 
 INDIA_ID = "e11cd23f51829202"            # live: India's "hotel / check in" Segment
 THAI_TOUR = "22222222-2222-2222-2222-222222222222"
 THAI_ATOM = "atom-th-hotel-1"
+
+
+def follow_alias(alias_map, segment_id, limit=20):
+    """The test fakes' model of `_ALIAS_CHAIN_SQL` (old -> canonical, to the end; a cycle stops)."""
+    seen = 0
+    while segment_id in alias_map and seen < limit:
+        nxt = alias_map[segment_id]
+        if nxt == segment_id:
+            break
+        segment_id, seen = nxt, seen + 1
+    return segment_id
 
 
 def _expected_remint(segment_id, country, n):
@@ -48,7 +59,7 @@ def _thai_segment():
 
 
 def test_foreign_unclaimed_id_is_reminted():
-    segs, aliases, remints = avoid_foreign_ids(
+    segs, aliases, remints, _ = avoid_foreign_ids(
         [_thai_segment()], {}, claimed=set(), own_country=" Thailand ",
         countries_of={INDIA_ID: ["india"]}, alias_old=set(), taken={INDIA_ID})
     new = _expected_remint(INDIA_ID, "thailand", 2)
@@ -59,7 +70,7 @@ def test_foreign_unclaimed_id_is_reminted():
 
 def test_taken_remint_moves_to_the_next_n():
     taken = {INDIA_ID, _expected_remint(INDIA_ID, "thailand", 2)}
-    segs, _, remints = avoid_foreign_ids(
+    segs, _, remints, _ = avoid_foreign_ids(
         [_thai_segment()], {}, set(), "Thailand", {INDIA_ID: ["india"]}, set(), taken)
     assert segs[0].id == _expected_remint(INDIA_ID, "thailand", 3)
     assert remints[INDIA_ID]["to"] == segs[0].id
@@ -68,7 +79,7 @@ def test_taken_remint_moves_to_the_next_n():
 def test_alias_old_id_is_reminted_and_alias_targets_follow():
     old = "aaaaaaaaaaaaaaaa"
     seg = Segment(INDIA_ID, "hotel", "check in", (THAI_ATOM, f"{_PSEUDO_PREFIX}{old}"))
-    segs, aliases, remints = avoid_foreign_ids(
+    segs, aliases, remints, _ = avoid_foreign_ids(
         [seg], {old: INDIA_ID}, claimed={old}, own_country="Thailand",
         countries_of={}, alias_old={INDIA_ID}, taken={INDIA_ID, old})
     new = _expected_remint(INDIA_ID, "thailand", 2)
@@ -83,14 +94,27 @@ def test_alias_old_id_is_reminted_and_alias_targets_follow():
     (set(), "Thailand", []),                   # no known member country
 ])
 def test_id_is_kept(claimed, own, countries):
-    segs, _, remints = avoid_foreign_ids(
-        [_thai_segment()], {}, claimed, own, {INDIA_ID: countries}, set(), {INDIA_ID})
+    segs, _, remints, existing = avoid_foreign_ids(
+        [_thai_segment()], {}, claimed, own, {INDIA_ID: countries}, set(), {INDIA_ID},
+        has_members={INDIA_ID})
     assert segs[0].id == INDIA_ID and remints == {}
+    # reported as a join of an existing Segment unless the run claimed it (the repair's report too)
+    assert existing == ([] if claimed else [INDIA_ID])
+
+
+def test_unclaimed_existing_lists_only_ids_with_members():
+    _, _, _, existing = avoid_foreign_ids(
+        [_thai_segment()], {}, set(), "Thailand", {INDIA_ID: ["thailand"]}, set(), {INDIA_ID}, has_members=set())
+    assert existing == []
+    _, _, remints, existing = avoid_foreign_ids(
+        [_thai_segment()], {}, set(), "Thailand", {INDIA_ID: ["india"]}, set(), {INDIA_ID},
+        has_members={INDIA_ID})
+    assert existing == [] and INDIA_ID in remints          # re-minted, so not a join
 
 
 def test_pseudo_only_segment_is_not_a_write():
     seg = Segment(INDIA_ID, "hotel", "check in", (f"{_PSEUDO_PREFIX}x",))
-    segs, _, remints = avoid_foreign_ids([seg], {}, set(), "Thailand", {INDIA_ID: ["india"]}, set(), set())
+    segs, _, remints, _ = avoid_foreign_ids([seg], {}, set(), "Thailand", {INDIA_ID: ["india"]}, set(), set())
     assert segs[0].id == INDIA_ID and remints == {}
 
 
@@ -101,10 +125,10 @@ def test_exhausted_probe_raises():
                           max_n=3)
 
 
-def test_follow_alias_chain_and_cycle():
-    assert follow_alias({"a": "b", "b": "c"}, "a") == "c"
-    assert follow_alias({"a": "b"}, "z") == "z"
-    assert follow_alias({"a": "b", "b": "a"}, "a") in {"a", "b"}   # stops, never loops
+def test_alias_chain_stops_at_an_id_with_members():
+    """A revived alias old id (members written into it before AA-857) is live, not followed."""
+    sql = " ".join(sm._ALIAS_CHAIN_SQL.split())
+    assert "NOT EXISTS (SELECT 1 FROM acp_contract.atom_segment_member m WHERE m.segment_id = c.segment_id)" in sql
 
 
 # ── run_segment_matching against a fake DB ───────────────────────────────────────────────────────
@@ -125,11 +149,13 @@ class _Conn:
     """Dispatches the queries run_segment_matching sends; `segments` is the DB state of the ids the
     collision guard asks about: {segment_id: {"countries": [...], "alias_old": bool}}."""
 
-    def __init__(self, *, assigned=(), existing=(), segments=None, mixed=()):
+    def __init__(self, *, assigned=(), existing=(), segments=None, mixed=(), mixed_before=()):
         self.assigned = list(assigned)
         self.existing = list(existing)
         self.segments = segments or {}
-        self.mixed = list(mixed)
+        self.mixed = list(mixed)                  # answer of the mixed check AFTER the writes
+        self.mixed_before = list(mixed_before)    # ... and BEFORE them
+        self.mixed_calls = 0
         self.calls = []
         self.facts_queries = 0
         self.rolled_back = None
@@ -147,10 +173,13 @@ class _Conn:
             self.facts_queries += 1
             return [{"segment_id": i, "taken": i in self.segments,
                      "alias_old": self.segments.get(i, {}).get("alias_old", False),
+                     "has_members": self.segments.get(i, {}).get(
+                         "has_members", bool(self.segments.get(i, {}).get("countries"))),
                      "countries": self.segments.get(i, {}).get("countries", [])} for i in args[0]]
         if "HAVING count(DISTINCT" in sql:
             self.checked_ids = list(args[0])
-            return self.mixed
+            self.mixed_calls += 1
+            return self.mixed_before if self.mixed_calls == 1 else self.mixed
         raise AssertionError(f"unexpected query: {sql[:80]}")
 
     async def executemany(self, sql, rows):
@@ -195,7 +224,7 @@ async def test_thai_tour_does_not_land_in_or_relabel_the_india_segment():
     upserts = conn.rows("INSERT INTO acp_contract.atom_segment (")
     members = conn.rows("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id) VALUES")
     assert [r[0] for r in upserts] == [new]                     # India's row is never upserted
-    assert upserts[0][3] is False                               # a fresh id: nothing to relabel anyway
+    assert upserts[0][3] is True                                # a fresh id: no row, no members yet
     assert members == [(new, THAI_ATOM)]
     assert all(INDIA_ID not in r for r in upserts + members)
     assert out["reminted"] == 1 and conn.rolled_back is False
@@ -228,6 +257,49 @@ async def test_same_country_unclaimed_id_is_joined_but_not_relabelled():
     assert "WHERE $4::boolean" in next(sql for sql, _ in conn.calls
                                        if sql.startswith("INSERT INTO acp_contract.atom_segment ("))
     assert out["reminted"] == 0
+    assert out["unclaimed_existing"] == [INDIA_ID]              # the join is visible in the run log
+
+
+@pytest.mark.asyncio
+async def test_empty_existing_segment_is_relabelled():
+    """An existing row with no members (emptied by the AA-695 excluded-atom DELETE) has nothing to
+    protect: the run that fills it gives it its own label, as the old upsert did."""
+    conn = _Conn(segments={INDIA_ID: {"countries": [], "has_members": False}})
+    out = await _run(conn)
+    upserts = conn.rows("INSERT INTO acp_contract.atom_segment (")
+    assert [(r[0], r[1], r[3]) for r in upserts] == [(INDIA_ID, "hotel", True)]
+    assert out["reminted"] == 0 and out["unclaimed_existing"] == []
+
+
+@pytest.mark.asyncio
+async def test_already_mixed_segment_does_not_block_a_run_that_adds_no_country():
+    """Damage that predates the run (repair not applied yet) is reported, not raised."""
+    before = [{"segment_id": INDIA_ID, "countries": ["india", "thailand"]}]
+    conn = _Conn(segments={INDIA_ID: {"countries": ["india", "thailand"]}},
+                 assigned=[{"atom_id": THAI_ATOM, "segment_id": INDIA_ID}],   # the Thai atom already sits there
+                 mixed_before=before, mixed=before)
+    out = await _run(conn)
+    assert conn.rolled_back is False and conn.mixed_calls == 2
+    assert out["already_mixed"] == [INDIA_ID]
+
+
+@pytest.mark.asyncio
+async def test_already_mixed_segment_that_gains_a_country_still_raises():
+    before = [{"segment_id": INDIA_ID, "countries": ["india", "nepal"]}]
+    after = [{"segment_id": INDIA_ID, "countries": ["india", "nepal", "thailand"]}]
+    conn = _Conn(segments={}, assigned=[{"atom_id": THAI_ATOM, "segment_id": INDIA_ID}],
+                 mixed_before=before, mixed=after)
+    with pytest.raises(MixedCountrySegmentError, match="thailand"):
+        await _run(conn)
+    assert conn.rolled_back is True
+
+
+def test_segment_upsert_rows_are_written_in_id_order():
+    """The upsert row-locks every written id; one global order keeps two concurrent runs from
+    deadlocking on overlapping ids."""
+    import inspect
+    src = inspect.getsource(sm.run_segment_matching)
+    assert "sorted(segment_rows.values(), key=lambda row: row[0])" in src
 
 
 @pytest.mark.asyncio
@@ -274,6 +346,14 @@ async def test_resolve_segment_aliases_follows_the_chain():
     conn = _AliasConn({"old1": "mid", "mid": "live"})
     assert await resolve_segment_aliases(conn, ["old1", "live", None, ""]) == {"old1": "live", "live": "live"}
     assert await resolve_segment_aliases(conn, [None]) == {}
+
+
+@pytest.mark.asyncio
+async def test_live_segment_labels_only_for_moved_ids():
+    conn = _AliasConn({"old1": "live1", "old2": "gone"}, labels={"live1": ("Delhi", "explore")})
+    assert await live_segment_labels(conn, ["old1", "old2", "same", None]) == {
+        "old1": ("live1", "Delhi", "explore"), "old2": ("gone", None, None)}
+    assert await live_segment_labels(conn, ["same"]) == {}
 
 
 def _subject_row(segment_id, state="picked", channel="facebook"):
