@@ -335,7 +335,6 @@ async def test_service_linkedin_f9_is_never_held(channel, expect):
          patch.object(service, "rewrite_with_feedback", return_value=(PIECE, 0.01, {}, None)), \
          patch.object(service, "repair_sentences", side_effect=same_sentences), \
          patch.object(service, "run_quality_gates", side_effect=_failing_gates), \
-         patch.object(service, "observe_t10", new=AsyncMock()), \
          patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda t, c: (t, [])), \
          patch("services.acp_content_writing.service.text_integrity.final_pass",
                side_effect=lambda text, hyg, **kw: (text, [], [])), \
@@ -364,7 +363,6 @@ async def test_service_non_repairable_first_failure_does_not_cut():
         return {"passed": False, "gate_ledger": [f16, f9], "first_failure": f16, "flags": []}
     with patch.object(service, "write_content", return_value=(PIECE, 0.01, {}, None)), \
          patch.object(service, "run_quality_gates", side_effect=gates), \
-         patch.object(service, "observe_t10", new=AsyncMock()), \
          patch("services.acp_content_writing.service.hygiene.ensure_cta", side_effect=lambda t, c: (t, [])), \
          patch("services.acp_content_writing.service.text_integrity.final_pass",
                side_effect=lambda text, hyg, **kw: (text, [], [])), \

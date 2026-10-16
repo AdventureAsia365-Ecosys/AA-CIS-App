@@ -737,7 +737,6 @@ async def test_stock_phrase_left_after_repairs_ships_instead_of_held():
             patch.object(writing_service, "repair_sentences",
                          return_value=(["That detail matters on a hot day."], 0.01)), \
             patch.object(writing_service, "run_quality_gates", new=gates), \
-            patch.object(writing_service, "observe_t10", new=AsyncMock()), \
             patch.object(writing_service, "_finalize_piece", new=AsyncMock()) as fin:
         await writing_service.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
     rewrite.assert_not_called()
