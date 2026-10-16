@@ -46,7 +46,8 @@ from services.acp_content_writing import seo_grounding
 from services.acp_shared.channel_spec import channel_spec, first_sentence
 from services.acp_content_writing.quality_gates import (
     _META_DESCRIPTION_MAX_CHARS as _META_MAX_CHARS, _META_DESCRIPTION_MIN_CHARS as _META_MIN_CHARS,
-    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, keyword_covered, title_taken,
+    _SEO_TITLE_MAX_CHARS, _SEO_TITLE_MIN_CHARS, _length_bounds_for_channel, gate_complete, gate_faq_contract,
+    keyword_covered, title_taken,
 )
 from services.acp_content_writing.facts import fetch_facts_for_writing, format_facts_block
 from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
@@ -380,13 +381,94 @@ def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], l
 # AA-786 (Gate-1 policy, S235) — channels where an F9 product-truth failure left after the last
 # attempt is cut in code. PR #709 review (orchestrator, under AA-770 "held = admin-only label; the
 # tenant always receives content"): the F9 entry is waived only when EVERY flagged sentence was cut;
-# anything left keeps F9 blocking, so the piece is labelled held for the admin. The blog keeps the
-# plain hold until AA-777 extends _cut_truth_items to it.
+# anything left keeps F9 blocking, so the piece is labelled held for the admin. AA-777 extends the cut
+# to the blog on its attempt 3 only (BLOG_TRUTH_CUT_ATTEMPT), never under the blog's minimum length.
 F9_CUT_NOT_HOLD_CHANNELS = frozenset({"linkedin"})
+# AA-777 — the blog attempt where an F1/F9 truth item that survived one sentence repair is cut, not
+# repaired again (attempt 2 stays the sentence repair). S233+S234: sentence repair fixes F9 49%, a full
+# rewrite 0/6, and a second repair adds new blocking fails the regression guard then reverts (16×).
+BLOG_TRUTH_CUT_ATTEMPT = MAX_ATTEMPTS
+TRUTH_CUT_GATES = frozenset({"F1_grounding", "F9_cta_fact"})
 
 
 def _plain(text: Optional[str]) -> str:
     return " ".join(strip_citation_tags(text or "").split())
+
+
+_SPACE_BEFORE_MARK = re.compile(r"\s+([.,;:!?…])")
+
+
+def _cut_key(text: Optional[str]) -> str:
+    """AA-777 (AA-786 review leftover) — the form a cut is counted in: tag-free, whitespace-normalised and no
+    space before a mark. sentence_repair quotes a sentence whose tag sat before its full stop as
+    'Zhabdrung .' while strip_citation_tags gives 'Zhabdrung.', so a kept sentence was counted as cut."""
+    return _SPACE_BEFORE_MARK.sub(r"\1", _plain(text))
+
+
+def _blog_cut_refusal(before: str, after: Optional[str]) -> Optional[str]:
+    """AA-777 — why a cut of flagged sentences on a blog is refused, or None when it may stand. Never
+    under the blog minimum (`_BLOG_MIN_CHARS`, measured on the whitespace-normalised tag-free text — the
+    stricter of the F4 measure and this one), and never a FAQ contract or a complete ending the text had
+    before the cut. A refused cut leaves the flagged sentence in, so the piece stays held on it."""
+    if after is None:
+        return "no flagged sentence is safe to cut (the hook, the CTA, a FAQ question or an orphaned pronoun)"
+    lo, _ = _length_bounds_for_channel("blog")
+    n = len(_plain(after))
+    if n < lo:
+        return f"the cut would leave the blog at {n} chars, under the {lo}-char minimum"
+    for gate in (gate_faq_contract, gate_complete):
+        new = gate(after)
+        if not new["passed"] and gate(before)["passed"]:
+            return f"the cut would fail {new['gate']}"
+    return None
+
+
+def _truth_repaired_before(repair_log: list[dict]) -> bool:
+    """AA-777 — did an earlier attempt already send a failing F1/F9 truth gate to a sentence repair?
+    True when a repair_log entry the sentence repair ran on (`repair_mode` 'sentences') had F1_grounding
+    or F9_cta_fact failing and blocking in its own trimmed ledger (AA-791). A truth gate first seen after
+    a full rewrite, or only after a style-only repair, still gets its one repair."""
+    return any(
+        e.get("repair_mode") == "sentences"
+        and any(g.get("gate") in TRUTH_CUT_GATES and not g.get("passed") and g.get("blocking", True)
+                for g in e.get("gate_ledger") or [])
+        for e in repair_log)
+
+
+def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: frozenset = frozenset(),
+                          cta: Optional[str] = None,
+                          moments: Optional[list] = None) -> tuple[str, list[dict], Optional[dict]]:
+    """AA-777 — blog, attempt 3: cut the F1_grounding / F9_cta_fact items of `items` (sentence_repair.plan
+    on attempt 2's ledger, i.e. truth items still failing after attempt 2's sentence repair) with
+    sentence_repair.delete_flagged (+ tidy_after_cut) instead of sending them to a second repair call.
+    Returns (text, items left to repair — relocated in the returned text, entry or None):
+    - no truth item → (text, items, None), nothing changes;
+    - a refused cut (`_blog_cut_refusal`: under the blog minimum, a FAQ / ending broken, nothing safe to
+      cut) or a left item that cannot be found again → (text, items, entry 'truth_cut_refused'): the
+      old path (one more repair of every item) runs and the hold stays if it fails;
+    - otherwise → (cut text, the other items + any truth item delete_flagged refused, entry 'truth_cut')."""
+    truth = [it for it in items if it.get("gate") in TRUTH_CUT_GATES]
+    if not truth:
+        return content_text, items, None
+    cut = sentence_repair.delete_flagged(content_text, truth, ignore=ignore, cta=cta, moments=moments)
+    refusal = _blog_cut_refusal(content_text, cut)
+    if refusal is None:
+        plain_after = _cut_key(cut)
+        cut_items = [it for it in truth if _cut_key(it["sentence"]) not in plain_after]
+        rest: list[dict] = []
+        for it in items:
+            if it in cut_items:
+                continue
+            span = sentence_repair.locate_sentence(cut, it["sentence"])
+            if span is None:
+                refusal = "a sentence left to repair could not be found after the cut"
+                break
+            rest.append({**it, "start": span[0], "end": span[1]})
+    if refusal is not None:
+        return content_text, items, {"repair_mode": "truth_cut_refused", "sentences_cut": 0,
+                                     "truth_cut_refused": refusal}
+    return cut, rest, {"repair_mode": "truth_cut", "sentences_cut": len(cut_items),
+                       "cut_sentences": [it["sentence"][:200] for it in cut_items]}
 
 
 def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
@@ -404,7 +486,7 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     After a cut the length gates (F4 extreme length, F14 social shape) are re-run on the cut text and
     replace their ledger entries, so a piece cut below the band is held on that gate.
     Returns (content_text, gate_ledger, flags, repair_log entry or None); a no-op for any other channel
-    or ledger. Built as its own step so AA-777 can extend it to blogs."""
+    or ledger. The blog has its own cut, before the gates of its attempt 3 (`_cut_blog_truth_items`, AA-777)."""
     if channel not in F9_CUT_NOT_HOLD_CHANNELS:
         return content_text, gate_ledger, flags, None
     f9 = next((g for g in gate_ledger if g["gate"] == "F9_cta_fact" and not g["passed"]
@@ -414,8 +496,8 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     items, unlocated = sentence_repair.truth_items(content_text, f9)
     cut = sentence_repair.delete_flagged(content_text, items, ignore=ignore, cta=cta, moments=moments) \
         if items else None
-    plain_after = _plain(cut if cut is not None else content_text)
-    left = [it["sentence"] for it in items if _plain(it["sentence"]) in plain_after] + unlocated
+    plain_after = _cut_key(cut if cut is not None else content_text)
+    left = [it["sentence"] for it in items if _cut_key(it["sentence"]) in plain_after] + unlocated
     n_cut = len(items) - (len(left) - len(unlocated))
     pre_cut = content_text
     if cut is not None and n_cut:
@@ -1318,6 +1400,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         # paths are needed. Stays None whenever only 1 attempt ever ran.
         discarded_attempt: dict | None = None
         faq_repair_regen = False  # S234 r2 review — the one FAQ regeneration after a sentence repair
+        # AA-777 — the job's F9 sticky-pass memory: the body sentences (folded) an earlier F9 verdict of
+        # this piece passed; run_quality_gates drops a later re-flag of one of them while it is unchanged.
+        f9_passed: set[str] = set()
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if attempt == 1:
@@ -1343,6 +1428,24 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 # sentences (sentence_repair.py) so the rewrite cannot invent new ones; anything
                 # else, or a failed repair call, takes the full rewrite as before.
                 repair_items = sentence_repair.plan(content_text, gate_ledger)
+                # AA-777 — blog, attempt 3: an F1/F9 truth item still failing after one sentence repair
+                # is cut in code (never under the blog minimum) instead of a second repair call.
+                truth_cut, truth_cut_done = None, False
+                if (channel == "blog" and attempt >= BLOG_TRUTH_CUT_ATTEMPT and repair_items
+                        and _truth_repaired_before(repair_log)):
+                    cut_text, repair_items, truth_cut = _cut_blog_truth_items(
+                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)
+                    repair_log[-1].update(truth_cut or {})
+                    if truth_cut and truth_cut["repair_mode"] == "truth_cut":
+                        truth_cut_done = True
+                        content_text = cut_text
+                        _show_live_text(content_text, seo_meta, channel)
+                        logger.info("t9_blog_truth_cut", request_id=str(request_id), attempt=attempt,
+                                    sentences_cut=truth_cut["sentences_cut"], left_to_repair=len(repair_items))
+                    elif truth_cut:
+                        logger.info("t9_blog_truth_cut_refused", request_id=str(request_id), attempt=attempt,
+                                    reason=truth_cut["truth_cut_refused"])
+                cut_only = truth_cut_done and not repair_items
                 replacements = None
                 if repair_items:
                     # S234 — the ±2 neighbouring sentences as context, and only the cited source.
@@ -1360,7 +1463,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         )
                     except SentenceRepairError as e:
                         logger.warning("t9_sentence_repair_failed", request_id=str(request_id), error=str(e)[:200])
-                if repair_items == []:
+                if cut_only:
+                    # AA-777 — every item left was a truth item and all were cut: no repair call; the
+                    # gates below judge the cut text (repair_log[-1] already carries the truth_cut entry).
+                    cost = 0.0
+                elif repair_items == []:
                     # S234 review — only a title/meta scope violation failed: the SEO fit below
                     # owns it; the text stays as it is (no rewrite call).
                     cost = 0.0
@@ -1371,7 +1478,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     content_text = sentence_repair.splice_checked(content_text, repair_items, replacements,
                                                                   ignore=brand_ignore, cta=cta, moments=hyg.moments)
                     _show_live_text(content_text, seo_meta, channel)  # AA-668: the spliced text, not the patch
-                    repair_log[-1]["repair_mode"] = "sentences"
+                    # AA-777 — a truth cut followed by a repair of the other items keeps both in the log
+                    repair_log[-1]["repair_mode"] = "truth_cut+sentences" if truth_cut_done else "sentences"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
                     # S234 — replacements turned into deletes because they restated a neighbour.
                     guarded = sum(item.get("guard") == "repeat" for item in repair_items)
@@ -1388,12 +1496,17 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         repair_log[-1]["integrity_reverts"] = len(reverted)
                         repair_log[-1]["integrity_problems"] = [p for it in reverted for p in it["integrity"]][:5]
                 elif attempt >= 3 and repair_items and (cut := sentence_repair.delete_flagged(
-                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)) is not None:
+                        content_text, repair_items, ignore=brand_ignore, cta=cta, moments=hyg.moments)) is not None \
+                        and (channel != "blog" or _blog_cut_refusal(content_text, cut) is None):
                     # S234 round 3 (r2 §4 fix 7) — the attempt-3 repair call failed: cut the flagged
                     # sentence(s) in code rather than hold a piece on one sentence (r2 #7, #13).
                     content_text, cost = cut, 0.0
-                    repair_log[-1]["repair_mode"] = "sentences_cut"
+                    repair_log[-1]["repair_mode"] = "truth_cut+sentences_cut" if truth_cut_done else "sentences_cut"
                     repair_log[-1]["sentences_repaired"] = len(repair_items)
+                elif truth_cut_done:
+                    # AA-777 — the truth items were cut but the repair of the other items failed: keep the
+                    # cut text (never back to attempt 2's flagged sentence); the gates below report the rest.
+                    cost = 0.0
                 elif attempt >= 3:
                     # AA-770 — attempt 3 never does a full rewrite; keep attempt 2 as it is.
                     content_text, gate_ledger = prev_snapshot["content_text"], prev_snapshot["gate_ledger"]
@@ -1517,6 +1630,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 sibling_texts=sibling_texts,  # S234 round 2 — F15 sibling templates
                 trip_ctx=trip_ctx, brief_texts=briefs,  # S234 round 3 — F17/F18, brief phrases in F15
                 taken_titles=taken_titles,  # S234 round 4 — F4: a title this brand already used
+                f9_passed_sentences=f9_passed,  # AA-777 — sticky pass, one set per job
             )
             gate_ledger = outcome["gate_ledger"]
             flags = outcome["flags"]

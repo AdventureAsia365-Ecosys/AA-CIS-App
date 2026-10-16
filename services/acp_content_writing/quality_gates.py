@@ -833,10 +833,69 @@ def _seo_field_of(sentence: str, seo_title: Optional[str], meta_description: Opt
     return None
 
 
+# AA-777 — the body sentence kinds an F9 verdict can pass (headings, FAQ questions and hashtag lines
+# carry no claim of their own); the same 4-word floor as sentence_repair.locate_sentence.
+_F9_PASS_KINDS = ("prose", "bullet", "faq_a")
+_F9_PASS_MIN_WORDS = 4
+
+
+def _f9_flagged_folds(content_text: str, data: dict, phrases: list[str]) -> set[str]:
+    """AA-777 — every sentence (folded) one F9 verdict flagged in any way: each unsupported claim's
+    sentence (justified or not), each broken sentence, and each flagged phrase (the phrase itself;
+    `_f9_passed_folds` excludes a sentence that contains it)."""
+    out: set[str] = set()
+    for c in data.get("unsupported_claims") or []:
+        if not isinstance(c, dict):
+            continue
+        quote = str(c.get("sentence") or c.get("claim") or "")
+        out.add(_cmp_fold(_locate_in(content_text, quote) or quote))
+    for b in data.get("broken_sentences") or []:
+        quote = b.get("sentence") if isinstance(b, dict) else b if isinstance(b, str) else None
+        if quote:
+            out.add(_cmp_fold(_locate_in(content_text, quote) or quote))
+    for m in _NOTE_QUOTE_RE.finditer(str(data.get("notes") or "")):
+        out.add(_cmp_fold(next(g for g in m.groups() if g)))
+    out |= {_cmp_fold(p) for p in phrases}
+    return {f for f in out if f}
+
+
+def _f9_passed_folds(content_text: str, flagged: set[str]) -> set[str]:
+    """AA-777 — the body sentences (folded) of `content_text` an F9 verdict passed: every prose /
+    bullet / FAQ-answer sentence of at least 4 words that is not flagged and contains no flagged
+    phrase or quote."""
+    out: set[str] = set()
+    for sp in sentence_spans(content_text):
+        if sp["kind"] not in _F9_PASS_KINDS:
+            continue
+        f = _cmp_fold(sp["clean"])
+        if len(f.split()) < _F9_PASS_MIN_WORDS or any(q and (q in f or f in q) for q in flagged):
+            continue
+        out.add(f)
+    return out
+
+
+def _drop_sticky_claims(content_text: str, claims: list[dict],
+                        passed: Optional[set[str]]) -> tuple[list[dict], list[str]]:
+    """AA-777 — (claims kept, sentences dropped): a claim whose body sentence an earlier verdict of
+    this job passed, unchanged, is dropped. A claim in the search title / meta, or one whose quote
+    matches no body sentence, is always kept."""
+    if not passed or not claims:
+        return claims, []
+    kept, sticky = [], []
+    for c in claims:
+        located = _locate_in(content_text, str(c.get("sentence") or c["claim"]))
+        if located and _cmp_fold(located) in passed:
+            if located not in sticky:
+                sticky.append(located)
+        else:
+            kept.append(c)
+    return kept, sticky
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
     voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
-    meta_description: Optional[str] = None,
+    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
 ) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
@@ -864,7 +923,15 @@ def gate_brand_voice(
       becomes TEXT_INTEGRITY; with no locatable quote the F9 result is a NON-blocking warn
       (F9_NO_REASON) — a verdict without a reason is not a hold (Gate-1 policy, AA-770 precedent);
     - `seo_title` / `meta_description` (blog) are shown to the judge; an unsupported claim in them is
-      a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule)."""
+      a 'title …' / 'meta …' violation that never blocks on its own (F17's body_blocking rule).
+
+    AA-777 (sticky pass) — `passed_sentences` is the job's set of body sentences (folded with
+    `_cmp_fold`) an earlier F9 verdict of the same piece judged without a flag. An unsupported claim
+    whose sentence is in that set is dropped (S234: in 10/15 reverted pieces the judge flagged a
+    sentence it had passed one attempt earlier, unchanged); dropped sentences are logged
+    (`F9_sticky_pass`) and listed as `sticky_pass` on the F9_cta_fact result. After the verdict the
+    sentences it passed are ADDED to the set (the caller owns it, one per job). A verdict with no
+    checkable reason, or no verdict (judge unavailable), adds nothing."""
     content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
     has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
     contract = json.dumps({
@@ -973,6 +1040,16 @@ def gate_brand_voice(
             failure_codes = [c for c in failure_codes if c != "FACT_CHECK_MANUAL_CHECK"]
             if not failure_codes and status != "pass":
                 status = "pass"  # the only reason to fail was an unjustified fact flag
+    # AA-777 — what this verdict flagged (folded), read BEFORE the sticky filter: these sentences are
+    # never added to the passed set below.
+    flagged_folds = _f9_flagged_folds(content_text, data, phrases)
+    claims, sticky = _drop_sticky_claims(content_text, claims, passed_sentences)
+    if sticky:
+        logger.info("F9_sticky_pass", dropped=len(sticky), sentences=[s[:160] for s in sticky[:5]])
+        if not claims and "FACT_CHECK_MANUAL_CHECK" in failure_codes:
+            failure_codes = [c for c in failure_codes if c != "FACT_CHECK_MANUAL_CHECK"]
+            if not failure_codes and status != "pass":
+                status = "pass"  # every justified claim was a sentence an earlier verdict passed
     # AA-786 — a claim whose sentence is not in the body but is the search title / meta is owned by
     # the SEO fields: it is reported separately and never blocks on its own.
     body_claims, field_viol = [], []
@@ -1052,9 +1129,14 @@ def gate_brand_voice(
                          extra={"status": status, "failure_codes": failure_codes,
                                 "prompt_version": F9_PROMPT_VERSION,
                                 "piece_tag_free": not TAG_RE.search(content_text),
-                                "reasonless": reasonless})
+                                "reasonless": reasonless, "sticky_pass": len(sticky)})
+    if passed_sentences is not None and not reasonless:
+        passed_sentences |= _f9_passed_folds(content_text, flagged_folds | {_cmp_fold(q) for q in integrity})
+    cta_fact = _result("F9_cta_fact", cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless)
+    if sticky:
+        cta_fact = {**cta_fact, "sticky_pass": sticky}
     return [
-        _result("F9_cta_fact", cta_fact_viol, blocking=cta_fact_blocking, repairable=not reasonless),
+        cta_fact,
         _result("F9_brand_style", brand_style_viol, repairable=False, blocking=False),
     ]
 
@@ -1800,6 +1882,7 @@ def run_quality_gates(
     trip_ctx: Optional[TripFactContext] = None,
     brief_texts: Optional[dict] = None,
     taken_titles: Optional[list[str]] = None,
+    f9_passed_sentences: Optional[set[str]] = None,
 ) -> QualityCheckOutcome:
     """Runs the T10 gate stack for ONE attempt. CTA-presence runs first and short-circuits every
     other gate on failure (same "don't pay for a judge call on content that was always going to
@@ -1900,8 +1983,10 @@ def run_quality_gates(
     # AA-786 — F9 judges what the tenant reads: no citation tags (S234: "visible citation markers"
     # notes on r1#9 / r3#4), plus the blog's search title and meta.
     seo_kw = {"seo_title": seo_title, "meta_description": meta_description} if channel == "blog" else {}
+    # AA-777 — the job's sticky-pass set (sentences an earlier F9 verdict passed); None = no memory.
     gate_ledger += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
-                                    voice=(brand_pack or {}).get("voice"), **seo_kw)
+                                    voice=(brand_pack or {}).get("voice"), passed_sentences=f9_passed_sentences,
+                                    **seo_kw)
     # S234 round 2 — contract gates owned by a dedicated fix step in service.py (FAQ regeneration,
     # first-line rewrite). Last in the ledger and not repairable: when one is the only blocking
     # failure left the piece is held at once; when another gate fails first, that gate's repair
