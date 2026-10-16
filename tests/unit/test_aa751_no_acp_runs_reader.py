@@ -10,15 +10,28 @@ so a new SQL statement against `acp_runs` is a bug: it fails at runtime with
 "relation does not exist".
 
 Comments and docstrings that mention the table as history are allowed: only a SQL keyword
-(FROM / JOIN / UPDATE / INTO) directly followed by the table name counts. Migrations are `.sql`
-and are not scanned; neither is `tests/` (the integration conftest keeps an FK stub).
+(FROM / JOIN / UPDATE / INTO) directly followed by the table name counts. The regex runs over the
+whole file text, so a keyword and table name split across lines of a triple-quoted SQL block are
+still caught; the bare `acp_runs` form is caught too, since `search_path` could resolve it.
+Migrations are `.sql` and are not scanned; neither is `tests/` (the integration conftest keeps an
+FK stub).
 """
 import pathlib
 import re
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCANNED_DIRS = ("api", "services", "shared", "worker")
-ACP_RUNS_SQL = re.compile(r"\b(FROM|JOIN|UPDATE|INTO)\s+(acp_shared|shared)\.acp_runs\b", re.I)
+ACP_RUNS_SQL = re.compile(
+    r"\b(FROM|JOIN|UPDATE|INTO)\s+(?:(?:acp_shared|shared)\.)?acp_runs\b", re.I
+)
+
+
+def _scan_text(text: str) -> list[tuple[int, str]]:
+    """Return (1-based line, matched SQL) for every hit; matches may span lines."""
+    return [
+        (text.count("\n", 0, m.start()) + 1, " ".join(m.group(0).split()))
+        for m in ACP_RUNS_SQL.finditer(text)
+    ]
 
 
 def _offenders() -> list[str]:
@@ -31,9 +44,8 @@ def _offenders() -> list[str]:
             if "__pycache__" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if ACP_RUNS_SQL.search(line):
-                    hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+            for lineno, snippet in _scan_text(text):
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {snippet}")
     return hits
 
 
@@ -59,3 +71,20 @@ def test_pattern_catches_sql_and_ignores_prose():
     assert not ACP_RUNS_SQL.search("# that table is FK'd to acp_shared.acp_runs(run_id)")
     assert not ACP_RUNS_SQL.search("FROM acp_shared.acp_v2_runs")
     assert not ACP_RUNS_SQL.search("0 rows ever durably written to shared.acp_runs either")
+    assert ACP_RUNS_SQL.search("DELETE FROM acp_runs WHERE run_id = $1")
+    assert not ACP_RUNS_SQL.search("FROM public_acp_runs")
+
+
+def test_scan_catches_multiline_sql():
+    # Triple-quoted SQL often breaks the line between the keyword and the table name.
+    text = (
+        "x = 1\n"
+        'QUERY = """\n'
+        "    SELECT run_id\n"
+        "    FROM\n"
+        "        acp_shared.acp_runs\n"
+        "    WHERE status = 'running'\n"
+        '"""\n'
+    )
+    assert _scan_text(text) == [(4, "FROM acp_shared.acp_runs")]
+    assert _scan_text("# FK'd to acp_shared.acp_runs(run_id)\nFROM acp_shared.acp_v2_runs\n") == []
