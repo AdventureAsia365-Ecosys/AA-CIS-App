@@ -256,7 +256,15 @@ async def test_query_error_is_not_reported_as_pool_unavailable(flag_key, call, r
 
 
 @pytest.mark.parametrize("flag_key,call,row,event", ROUTES)
-@pytest.mark.parametrize("bad_id", ["not-a-uuid", "1", "' OR true --"])
+@pytest.mark.parametrize("bad_id", [
+    "not-a-uuid", "1", "' OR true --",
+    # AA-859 review: UUID() parses these, Postgres ::uuid rejects or a text policy would not match them.
+    "urn:uuid:12345678-1234-5678-1234-567812345678",
+    "12345678-1234-5678-1234-56781234567 ",
+    "{12345678-1234-5678-1234-567812345678}",
+    "12345678-1234-5678-1234-56781234567A",
+    "123456781234567812345678123456ab",
+])
 @pytest.mark.asyncio
 async def test_flag_on_malformed_tenant_id_is_503_before_any_acquire(flag_key, call, row, event, bad_id):
     """AA-859: a malformed JWT sub would otherwise reach a policy's ::uuid cast (22P02, a 500)."""
@@ -409,6 +417,17 @@ async def test_disconnect_tombstone_timeout_is_502_and_deletes_nothing():
     assert conn.fetchrow.await_count == 1, "only the step-1 SELECT ran: no DELETE"
     assert request.app.state.tenant_pool.acquire.call_count == 1
     assert not request.app.state.pool.execute.called
+
+
+def test_sm_client_uses_its_own_session_per_call():
+    """AA-859 review: the callers run in to_thread workers; the shared default boto3 Session is not
+    thread-safe, so each client comes from a fresh Session."""
+    with patch.object(integ_mod.boto3.session, "Session") as session_cls:
+        integ_mod._sm_client()
+        integ_mod._sm_client(integ_mod._TOMBSTONE_SM_CONFIG)
+    assert session_cls.call_count == 2
+    kw = session_cls.return_value.client.call_args.kwargs
+    assert kw["region_name"] == "us-west-1" and kw["config"] is integ_mod._TOMBSTONE_SM_CONFIG
 
 
 @pytest.mark.asyncio

@@ -85,7 +85,11 @@ def _validate_wp_url(url: str) -> str:
 
 
 def _sm_client(config: Optional[BotoConfig] = None):
-    return boto3.client("secretsmanager", region_name=_SM_REGION, config=config)
+    """A fresh Session per client: every caller runs in an asyncio.to_thread worker (AA-859), and
+    boto3.client() builds on the shared default Session, which is not thread-safe (concurrent client
+    creation can raise KeyError 'credential_provider', a 500). Calls here are rare tenant clicks, so the
+    per-call Session cost does not matter."""
+    return boto3.session.Session().client("secretsmanager", region_name=_SM_REGION, config=config)
 
 
 def _put_secret(secret_key: str, value: dict) -> None:

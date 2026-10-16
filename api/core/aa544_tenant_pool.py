@@ -143,12 +143,16 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
 
 def _is_uuid(value) -> bool:
     """AA-859: the policies cast app.tenant_id to uuid, so a malformed JWT `sub` would surface as a
-    22P02 inside a policy (a 500). acquire_scoped_conn refuses it up front instead (503)."""
+    22P02 inside a policy (a 500). acquire_scoped_conn refuses it up front instead (503).
+
+    Canonical lower-case form only (what Postgres prints for a uuid column): Python's UUID() also takes
+    'urn:uuid:...', braces, no hyphens, upper case and stray whitespace, some of which `::uuid` rejects
+    (22P02 again) and all of which would silently match nothing under a text-compare policy."""
+    text = str(value)
     try:
-        UUID(str(value))
+        return str(UUID(text)) == text
     except (TypeError, ValueError, AttributeError):
         return False
-    return True
 
 
 def _ms(seconds: float) -> float:
