@@ -83,10 +83,10 @@ async def lifespan(app: FastAPI):
     )
     app.state.pool = pool
 
-    # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS). Best-effort: None on failure,
-    # every caller falls back to app.state.pool (aa_cis_admin, unchanged). Used only by routes
-    # that explicitly opt in via api/core/aa544_tenant_pool.py::acquire_scoped_conn() — today
-    # that's exactly 1 route (GET /v1/publish-log/pending), behind a Redis flag default-off.
+    # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
+    # only when the secret or the pool object cannot be made. Used only by routes that opt in via
+    # api/core/aa544_tenant_pool.py::acquire_scoped_conn(), each behind its own Redis flag; all of
+    # them fail closed (503, never the admin pool) while their flag is on — list in that module.
     from api.core.aa544_tenant_pool import create_tenant_pool
     app.state.tenant_pool = await create_tenant_pool()
 

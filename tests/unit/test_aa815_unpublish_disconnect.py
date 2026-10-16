@@ -6,8 +6,8 @@ integration lookup fix, and DELETE /v1/integrations/{wordpress|facebook}.
 - v1_publish.unpublish: remote delete first; a remote failure / missing connection leaves the row
   'published' (no UPDATE issued).
 - v1_publish.publish: the blog channel looks up integration_type 'wordpress' (was 'blog').
-- v1_integrations disconnect: tombstone the secret (PutSecretValue, never DeleteSecret), then
-  delete the row; a tombstone failure keeps the row.
+- v1_integrations disconnect: one transaction that deletes the row and then tombstones the secret
+  (PutSecretValue, never DeleteSecret); a tombstone failure rolls the DELETE back (AA-817 C3).
 """
 import json
 import uuid
@@ -59,6 +59,11 @@ def _sequential_pool(*fetchrow_returns):
     conn.fetchrow = AsyncMock(side_effect=list(fetchrow_returns))
     conn.fetch = AsyncMock(return_value=[])
     conn.execute = AsyncMock(return_value="DELETE 1")
+    tx = MagicMock()  # conn.transaction() (AA-817: _disconnect runs in one transaction)
+    tx.__aenter__ = AsyncMock(return_value=None)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx)
+    conn.tx = tx
     ctx = AsyncMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)
     ctx.__aexit__ = AsyncMock(return_value=False)
@@ -372,6 +377,9 @@ class TestDisconnect:
                           "last_verified_at": None, "last_verify_error": None, "disconnected": True}
 
     async def test_tombstone_failure_keeps_the_row(self):
+        """AA-817 C3: the DELETE runs first, inside the transaction; a tombstone failure raises
+        through that transaction, which rolls the DELETE back (real-Postgres proof:
+        tests/integration/test_aa817_tenant_pool_routes.py)."""
         pool, conn = _sequential_pool({"secret_key": f"acp/cms/{TENANT_ID}"})
         sm = MagicMock()
         sm.put_secret_value.side_effect = ClientError(
@@ -380,7 +388,10 @@ class TestDisconnect:
             with pytest.raises(HTTPException) as exc_info:
                 await integ_mod.disconnect_wordpress(_request(pool), tenant=TENANT)
         assert exc_info.value.status_code == 502
-        conn.execute.assert_not_awaited()
+        conn.transaction.assert_called_once()
+        exc_type = conn.tx.__aexit__.call_args[0][0]
+        assert exc_type is HTTPException, "the transaction must exit with the error (rollback)"
+        assert not pool.execute.called, "no audit row for a disconnect that did not happen"
 
     async def test_missing_secret_still_disconnects(self):
         pool, conn = _sequential_pool({"secret_key": f"acp/cms/{TENANT_ID}"})
