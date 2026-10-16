@@ -507,6 +507,39 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
 - Write grants are column grants where a route writes only some columns (`tenant_integrations`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
+- **Routes on the tenant pool** (flag in `api/core/aa544_tenant_pool.py`, `fail_closed=True`, one log
+  line per request with `used_tenant_pool=`; rollback = `DEL` the key, no deploy). All ON on Dev since
+  S240 (16/10/2026):
+
+  | Route(s) | Flag | Notes |
+  |---|---|---|
+  | GET `/v1/publish-log/pending` | `aa544:stage1:publish_pending_pool` | |
+  | GET `/v1/content-writing/pieces/{id}` (+ `/export`) | `aa544:stage5:get_piece_pool` | |
+  | GET `/v1/publish-log` | `aa544:publish_log_list_pool` | |
+  | DELETE `/v1/integrations/{wordpress,facebook}` | `aa544:integration_disconnect_pool` | two short transactions around the Secrets Manager tombstone; a double click is 200/200 (`aa859_integration_disconnect_raced`) |
+  | GET `/v1/content-writing/requests/{id}/latest-piece` | `aa817:content_piece_reads_pool` | |
+  | PATCH `/v1/content-writing/pieces/{id}` (W2) | `aa859:piece_edit_pool` | audit after commit on MAIN |
+  | POST `/v1/angle-gate/requests/{id}/choose`, `/reopen` (W3) | `aa859:angle_gate_decide_pool` | one transaction, request locked first (same order as the T8 worker); response re-read on MAIN; needs 241 |
+  | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
+  | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS; `/{id}/full` tenant branch, `/{id}`, `/versions/{id}/export-docx` still on MAIN (D5b) |
+  | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
+  | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
+
+  A 241 rollback must `DEL` the two "needs 241" flags first.
+- **MAIN exceptions** (code comment `# AA-859 MAIN exception: <reason>`): `write_audit_log`
+  (`acp_shared.audit_log` has no RLS and is never granted; written after the tenant transaction
+  commits, best-effort on the tenant path); enqueue-in-transaction routes (angle-gate goal, T2 rewrite /
+  retry, content-writing write, slate refresh); `shared.job` status lookups (no tenant column); tenant
+  self-config and usage reads (`/v1/quota`, `/v1/billing`, `shared.tenants` limits) keyed on the JWT
+  `sub`; the angle-gate `fetch_request` re-read (subject / segment / route have no grant until wave 4);
+  staff branches.
+- **`/admin/atoms*` is staff only** (AA-859, S240): the AA-431 tenant-JWT branch was removed with no flag
+  after 30 days of WAF logs showed 0 Bearer callers (1,041 calls, all `X-Admin-Secret`). A Bearer token
+  gets 403 and logs `aa859_admin_atoms_tenant_refused`. No tenant route writes `acp_contract.tour_atoms`.
+- **Sizing:** tenant pool `max_size` 2 per api task, api autoscaling max 7 (AA-CIS-Infra #156), so 14 ≤
+  `aa_app_user` CONNECTION LIMIT 15. `aa859_tenant_pool_timing` (wait/hold ms) and the 60 s
+  `aa859_main_pool_gauge` line are the inputs for any later resize. Per-role connections are alarmed
+  (`AA/RDS RoleConnectionLimitPct`, AA-832).
 
 ## Boundaries — what this repo does NOT do
 
