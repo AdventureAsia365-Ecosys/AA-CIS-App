@@ -405,10 +405,6 @@ class CountryUpdateRequest(BaseModel):
     country: str
 
 
-class ForceFailRequest(BaseModel):
-    reason: str
-
-
 # ── POST /admin/run-tour ──────────────────────────────────────────────────────
 
 _BRAND_RULE_COLS = (
@@ -5017,67 +5013,3 @@ async def get_admin_billing(
             for a in activity
         ],
     }
-
-
-# ── GET /admin/acp/stuck-runs ─────────────────────────────────────────────────
-
-@router.get("/acp/stuck-runs")
-async def get_stuck_runs(
-    request: Request,
-    x_admin_secret: str = Header(None),
-):
-    """Return acp_shared.acp_runs rows stuck in s1_pending for >30 minutes."""
-    verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT run_id::text, status, started_at,
-                   EXTRACT(EPOCH FROM (NOW() - started_at)) / 60 AS age_minutes
-            FROM acp_shared.acp_runs
-            WHERE status = 's1_pending'
-              AND started_at < NOW() - INTERVAL '30 minutes'
-            ORDER BY started_at ASC
-        """)
-    return {
-        "stuck_runs": [
-            {
-                "run_id":      r["run_id"],
-                "status":      r["status"],
-                "started_at":  r["started_at"].isoformat() if r["started_at"] else None,
-                "age_minutes": round(float(r["age_minutes"]), 1) if r["age_minutes"] else None,
-            }
-            for r in rows
-        ],
-        "count": len(rows),
-    }
-
-
-# ── POST /admin/acp/runs/{run_id}/force-fail ──────────────────────────────────
-
-@router.post("/acp/runs/{run_id}/force-fail")
-async def force_fail_acp_run(
-    run_id: str,
-    body: ForceFailRequest,
-    request: Request,
-    x_admin_secret: str = Header(None),
-):
-    """Force a stuck acp_shared.acp_runs row to status='failed'. x-admin-secret required."""
-    verify_admin_secret(x_admin_secret)
-    try:
-        run_uuid = str(UUID(run_id))
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=422, detail=f"Invalid UUID: {run_id!r}")
-
-    reason = body.reason.strip()[:500]
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        updated = await conn.fetchval(
-            "UPDATE acp_shared.acp_runs SET status='failed', error_message=$2 "
-            "WHERE run_id=$1::uuid RETURNING run_id::text",
-            run_uuid, reason,
-        )
-    if not updated:
-        raise HTTPException(status_code=404, detail=f"run_id {run_id} not found")
-
-    logger.info("acp_run_force_failed", run_id=run_id)
-    return {"run_id": run_id, "status": "failed", "reason": reason}
