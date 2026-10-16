@@ -1046,9 +1046,8 @@ _Avoid_: block (alone), delete, filter.
   keyword cut to its place words; a meta's product nouns must be in the seed or the body (SEO fit
   and F4).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
-  After each attempt, allow-listed tenants get 6 Jev Questions logged next to the gates (F8 rubric,
-  F9 voice / CTA, cannibalization pair, offered-moment sentence, FAQ restatement — AA-701, shadow,
-  observe only: no gate outcome changes).
+  No Jev on T10: the AA-701 shadow questions were turned off in S234 (no signal) and their
+  observer removed; migration 194's `t10_gates` question rows stay at `mode=off` as history.
   `/portal/t10-review` is now **My Content** (AA-614): the tenant's pieces with no gate/held
   details, displayed text is copy-locked (select/copy/right-click blocked, with a "Use Export"
   hint; the edit textarea stays editable). AA-669 migrated it to the UI-kit DataTable

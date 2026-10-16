@@ -108,7 +108,6 @@ async def test_attempt_three_is_a_sentence_repair_only():
                 _outcome(False, violations=[claim]),
                 _outcome(False, violations=[claim.replace("Luang Prabang today", "Luang Prabang today")]),
                 _outcome(True)]), \
-            patch.object(service, "observe_t10", new=AsyncMock()), \
             patch.object(service.sentence_repair, "plan", side_effect=[
                 [{"start": 19, "end": 64, "sentence": "s", "problem": "p"}],
                 [{"start": 19, "end": 64, "sentence": "s", "problem": "p"}],

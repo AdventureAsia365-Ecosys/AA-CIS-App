@@ -342,7 +342,6 @@ async def test_fault_fixture_testimonial_is_repaired_with_gate_evidence():
          patch.object(service, "repair_sentences", side_effect=repair) as rep, \
          patch.object(service, "rewrite_with_feedback") as rw, \
          patch.object(service, "run_quality_gates", side_effect=_real_gates_with_passing_judges), \
-         patch.object(service, "observe_t10", new=AsyncMock()), \
          patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(uuid4(), uuid4(), _context(), pool=MagicMock())
     kw = fin.call_args.kwargs
@@ -365,7 +364,6 @@ async def test_fault_fixture_repair_that_keeps_the_testimonial_is_cut_not_shippe
          patch.object(service, "repair_sentences", side_effect=same), \
          patch.object(service, "rewrite_with_feedback", return_value=(TESTIMONIAL_PIECE, 0.01, {}, None)), \
          patch.object(service, "run_quality_gates", side_effect=_real_gates_with_passing_judges), \
-         patch.object(service, "observe_t10", new=AsyncMock()), \
          patch.object(service, "_finalize_piece", new=AsyncMock(return_value={})) as fin:
         await service.run_write_background(uuid4(), uuid4(), _context(), pool=MagicMock())
     kw = fin.call_args.kwargs

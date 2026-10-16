@@ -52,7 +52,6 @@ from services.acp_content_writing.facts import fetch_facts_for_writing, format_f
 from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
-from services.acp_content_writing.jev_observe import observe_t10
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
                                                           FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
                                                           deep_strip_citation_tags, drop_restated_faq,
@@ -1066,9 +1065,8 @@ async def start_write(
     # write/rewrite call AND fold into the grounding-gate's own `atom_text` argument — see this
     # module's own AA-529 comments below for why it's merged there rather than threaded as a
     # wholly separate pipeline.
-    # AA-764 — Facts are fetched and Jev-filtered in the t9_write job (resolve_facts(), called
-    # first thing in run_write_background()), not here: select_relevant_facts() makes one Jev call
-    # per fact and this is still the HTTP request.
+    # AA-764 — Facts are fetched in the t9_write job (resolve_facts(), called first thing in
+    # run_write_background()), not here: this is still the HTTP request.
 
     context = {
         "atom_text": atom_text, "goal": goal, "channel_style": channel_style,
@@ -1213,7 +1211,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     (Bedrock throttle, network error, anything) BEFORE producing real content — written back as
     status='failed', distinct from status='held' (a real, complete, gate-blocked outcome with
     real content_text) — see migration 118's header for why these must not be conflated."""
-    await resolve_facts(request_id, context, pool)  # AA-764 — Jev fact-select runs here, in the job
+    await resolve_facts(request_id, context, pool)  # AA-764 — seed re-read + Facts, in the job
     _add_date_spans(context)  # S234 round 3 — 'served … until 1955' → the span as a stated fact
     atom_text, goal, channel_style = context["atom_text"], context["goal"], context["channel_style"]
     brand_audience, chosen, cta = context["brand_audience"], context["chosen"], context["cta"]
@@ -1426,7 +1424,6 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # cannibalization_match — never itself a reason to hold.
             embedding = None
             cannibalization_match: dict | None = None
-            nearest_other: dict | None = None     # AA-701: closest other-tenant piece, any similarity
             if tenant_id:
                 embed_text = strip_citation_tags(content_text)
                 embedding = await asyncio.to_thread(compute_embedding, embed_text)
@@ -1435,10 +1432,6 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         embedding, pool, cross_tenant=True,
                         exclude_tenant_id=UUID(tenant_id), limit=1,
                     )
-                    if cross_matches:
-                        nearest_other = {"piece_id": cross_matches[0].piece_id,
-                                         "tenant_id": cross_matches[0].tenant_id,
-                                         "similarity": cross_matches[0].similarity}
                     if cross_matches and cross_matches[0].similarity >= _REUSE_SIMILARITY_THRESHOLD:
                         top = cross_matches[0]
                         # AA-484's own issue text (STEP0, citing AA-425's real finding): the
@@ -1520,12 +1513,6 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             if hygiene_log or first_line_log:  # S234 — every in-place edit, shown in the admin drawer
                 flags.append({"gate": "F13_autofix", "passed": False, "blocking": False, "repairable": False,
                               "violations": hygiene_log + first_line_log})
-            # AA-701 — Jev questions next to this attempt's gates (allow-listed tenants, observe only).
-            await observe_t10(
-                tenant_id=tenant_id, attempt_key=f"{request_id}:{attempt}", content_text=content_text,
-                atom_text=grounding_text, goal_key=goal["key"], cta=cta, brand_rubric_text=brand_rubric_text,
-                channel=channel, route_segments=route_segments, nearest_other=nearest_other, pool=pool,
-            )
 
             if outcome["passed"]:
                 status, held_reason = "approved", None

@@ -463,8 +463,7 @@ def promised_sentences(
     content_text: str, atom_text: str, route_segments: Optional[list[tuple[str, str]]] = None,
 ) -> list[tuple[str, list[str], str]]:
     """The sentences gate_promises_an_option() flags: (sentence without tags, offered Segment ids
-    — [] on the single-atom branch —, the offered source text). Shared with the AA-701 Jev observer
-    so both read the same detection."""
+    — [] on the single-atom branch —, the offered source text)."""
     out: list[tuple[str, list[str], str]] = []
     if route_segments and len(route_segments) > 1:
         # AA-773 — a block with Status lines flags only the sentences that name one of ITS offered
