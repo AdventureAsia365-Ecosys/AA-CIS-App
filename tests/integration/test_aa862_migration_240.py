@@ -61,7 +61,7 @@ def _routes(c):
 def test_conftest_replay_left_the_post_240_state(cur):
     acc3, acc1 = _catalog(cur, ACC3), _catalog(cur, ACC1)
     assert acc3[0] == {"acc3": "global.cohere.embed-v4:0"} and acc3[1] is True and acc3[2] is None
-    assert acc1[0] == {"acc1": "global.cohere.embed-v4:0"} and acc1[1] is False and acc1[2]
+    assert acc1 is None                         # acc1 is not used (Nghiệp, S239)
     routes = _routes(cur)
     assert set(routes) == set(STAGES)
     for model_id, account_route, fallbacks, _ in routes.values():
@@ -74,7 +74,7 @@ def test_copies_the_base_row_and_is_idempotent(cur):
     _undo(cur)
     _run(cur)
     base = _catalog(cur, "cohere-embed-v4")
-    for key in (ACC3, ACC1):
+    for key in (ACC3,):
         row = _catalog(cur, key)
         assert row[3:8] == base[3:8]             # prices, vendor, api_style, callable_via
         assert row[8] == "migration-240-aa862"
@@ -83,10 +83,11 @@ def test_copies_the_base_row_and_is_idempotent(cur):
     cur.execute("UPDATE shared.llm_role_config SET updated_by = 'after-first-run' WHERE stage = ANY (%s)",
                 (list(STAGES),))
     cur.execute("UPDATE shared.llm_model_catalog SET updated_by = 'after-first-run' "
-                "WHERE model_key IN (%s, %s)", (ACC3, ACC1))
+                "WHERE model_key = %s", (ACC3,))
     _run(cur)                                   # second run: no change, no error
     assert all(r[3] == "after-first-run" for r in _routes(cur).values())
-    assert _catalog(cur, ACC3)[8] == "after-first-run" and _catalog(cur, ACC1)[8] == "after-first-run"
+    assert _catalog(cur, ACC3)[8] == "after-first-run"
+    assert _catalog(cur, ACC1) is None
 
 
 def test_keeps_an_admin_disable_of_the_acc3_row(cur):
