@@ -323,6 +323,10 @@ def _apply_schema(conn):
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA gold_aa_internal TO app_user;
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA shared TO app_user;
     """)
+    # AA-817 (237): on Dev only the owner and aa_app_user hold privileges on shared.tenant_integrations,
+    # and 237's guard 1 refuses any other grantee (with RLS on and a policy TO aa_app_user only, it would
+    # read 0 rows). Keep the CI-only app_user off it so test_aa817_* can re-apply 237 per test.
+    cur.execute("REVOKE ALL ON shared.tenant_integrations FROM app_user")
 
     # Seed pipeline_runs for both tenants (FK required by raw_tours.batch_id)
     # Must set RLS context + use BYPASSRLS or set app.tenant_id
