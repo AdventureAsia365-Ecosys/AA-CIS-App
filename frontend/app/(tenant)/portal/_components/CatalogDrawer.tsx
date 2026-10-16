@@ -3,21 +3,17 @@
 // AA-662 PR 3 — the My Content detail/edit drawer, split out of CatalogTab. Uses the kit Drawer +
 // react-query (version detail + original pool tour) + mutations (save edit, request rewrite). The
 // compare editors (summary / highlights / itinerary) and SeeOriginalToggle are unchanged.
+// AA-668 (S239): the drawer shows a finished version only. "Request Rewrite" and a version that is
+// still being written or failed open the Writer panel instead (TourRewritePanel.tsx): live
+// progress, Retry, and the result — the inline LiveWriter / failed states that lived here moved.
 
 import { useQuery } from "@tanstack/react-query";
 import { Download, Save, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { T, mono, sans, Btn, LoadingScreen, parseContent, parseHighlights, fmtDateTime } from "./ui";
 import { AiContentNotice } from "./AiContentNotice";
-import LiveWriter from "./LiveWriter";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
-import {
-  fetchPoolTour,
-  fetchVersionDetail,
-  isAiWriting,
-  isRewriteFailed,
-  type Version,
-} from "./catalogApi";
+import { fetchPoolTour, fetchVersionDetail, type Version } from "./catalogApi";
 
 function TripFact({ label, value }: { label: string; value: string }) {
   return (
@@ -140,10 +136,8 @@ export type CatalogDrawerBody = {
   dirty: boolean;
   exporting: boolean;
   rewriting: boolean;
-  retrying: boolean;
   onSave: (edited: Record<string, unknown>) => void;
   onRequestRewrite: () => void;
-  onRetry: () => void;
   onExportDocx: (versionId: string) => void;
   onDirty: () => void;
   onClose: () => void;
@@ -154,12 +148,9 @@ export type CatalogDrawerBody = {
  * remounts it with a fresh editor (no reset-in-effect; React Compiler rule, AGENTS.md).
  */
 export function CatalogDrawer(props: CatalogDrawerBody) {
-  const { group, saving, saveOk, dirty, exporting, rewriting, retrying } = props;
-  const writing = isAiWriting(group);
-  const failed = isRewriteFailed(group);
+  const { group, saving, saveOk, dirty, exporting, rewriting } = props;
 
-  // Load version detail + original pool tour only when the version is in a readable state.
-  const enabled = !writing && !failed;
+  // Version detail + original pool tour (the parent only opens this drawer on a finished version).
   const { data, isLoading } = useQuery({
     queryKey: ["my-version-detail", group.id],
     queryFn: async () => {
@@ -184,7 +175,6 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
       }
       return { detail, orig };
     },
-    enabled,
   });
 
   const detail = data?.detail ?? null;
@@ -232,7 +222,7 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
       <div>
         <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{group.aa_name}</div>
-        {!writing && <div style={{ fontSize: 11.5, color: T.muted, marginTop: 3, fontFamily: mono }}>{group.rewrite_language}</div>}
+        <div style={{ fontSize: 11.5, color: T.muted, marginTop: 3, fontFamily: mono }}>{group.rewrite_language}</div>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {dirty && (
@@ -247,41 +237,6 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
       </div>
     </div>
   );
-
-  if (writing) {
-    return (
-      <>
-        {header}
-        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-          <LiveWriter kind="tour" jobId={group.id} title="Writing your tour" />
-          <div style={{ fontSize: 12, color: T.muted }}>
-            Usually a few minutes — longer when the checks ask for a revision. You can close this and keep browsing; it will be ready in My Catalog Tours.
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  if (failed) {
-    return (
-      <>
-        {header}
-        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-start" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.ink }}>Writing didn&apos;t finish</div>
-          <div style={{ fontSize: 12.5, color: T.muted }}>
-            Something went wrong while writing this tour. Retrying does not use another rewrite from your plan.
-          </div>
-          <button
-            onClick={props.onRetry}
-            disabled={retrying}
-            style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, border: `1px solid ${T.gold}`, borderRadius: 6, background: T.goldTint, color: T.gold, cursor: "pointer", fontFamily: sans }}
-          >
-            {retrying ? "Retrying…" : "Retry writing"}
-          </button>
-        </div>
-      </>
-    );
-  }
 
   if (isLoading || !detail) {
     return (

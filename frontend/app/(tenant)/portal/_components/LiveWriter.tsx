@@ -28,8 +28,11 @@ function usePrefersReducedMotion(): boolean {
   return reduce;
 }
 
-export default function LiveWriter({ kind, jobId, active = true, title = "Writing", compact = false }: {
+export default function LiveWriter({ kind, jobId, active = true, title = "Writing", compact = false, untilInactive = false }: {
   kind: "tour" | "piece"; jobId: string; active?: boolean; title?: string; compact?: boolean;
+  /** AA-668 (S239): keep polling through a done/failed snapshot until `active` turns false — the
+   *  owner's status decides. A retried tour job first reads the previous run's "failed" snapshot. */
+  untilInactive?: boolean;
 }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [shown, setShown] = useState<Record<string, string>>({});
@@ -37,7 +40,7 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
   const reduce = usePrefersReducedMotion();
   const docRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
-  const terminal = snap?.status === "done" || snap?.status === "failed";
+  const terminal = snap?.status === "done" || snap?.status === "failed" || (untilInactive && !active);
 
   // poll
   useEffect(() => {
@@ -50,14 +53,14 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
         if (r.ok) {
           const d: Snapshot = await r.json();
           if (!stop) setSnap(d);
-          if (d.status === "done" || d.status === "failed") return;
+          if ((d.status === "done" || d.status === "failed") && !untilInactive) return;
         }
       } catch { /* transient — keep polling */ }
       if (!stop && active) timer = setTimeout(tick, POLL_MS);
     };
     tick();
     return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [kind, jobId, active]);
+  }, [kind, jobId, active, untilInactive]);
 
   // typewriter towards the latest sections. A new revision means the draft is being rewritten,
   // so the typed text restarts from empty.

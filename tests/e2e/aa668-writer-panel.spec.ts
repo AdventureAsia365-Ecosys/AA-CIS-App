@@ -14,6 +14,12 @@
 //   BASE_URL=http://localhost:3668 AA668_SHOTS=<dir> npx playwright test tests/e2e/aa668-writer-panel.spec.ts --project=chromium
 // (set NEXT_PUBLIC_API_URL and API_URL by hand). The real end-to-end flow (real T8/T9 jobs) is
 // verified on the Vercel preview with a test tenant — see docs/implementation-notes/AA-668.md.
+//
+// S239 (part 2): the tour rewrite uses the same panel. The "tour rewrite" describe block below
+// mocks My Catalog Tours (/portal/t4-pool): "Request Rewrite" in the version drawer opens the
+// panel (tour title, language, channel in the header), the t2_rewrite live steps + text show, a
+// failed job offers Retry, the result opens in My Catalog, closing mid-write toasts on completion,
+// no page scroll at 1440x900, full-width sheet at 390.
 import { test, expect, type Page, type Route } from '@playwright/test';
 
 const SHOTS = process.env.AA668_SHOTS || 'tests/e2e/results/aa668';
@@ -313,5 +319,196 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
     await expect(page.getByTestId('writer-panel-result')).toBeVisible({ timeout: 30_000 });
     await pageDoesNotScroll(page);
     await page.screenshot({ path: `${SHOTS}/09-panel-finished-mobile.png` });
+  });
+});
+
+// ── Tour rewrite (S239) ────────────────────────────────────────────────────────────────────────
+const TOUR = '66666666-6666-4666-8666-666666666666';       // published_tour_id
+const V1 = '77777777-7777-4777-8777-777777777777';         // the finished version the drawer opens
+const V2 = '88888888-8888-4888-8888-888888888888';         // the new version the rewrite creates
+const TOUR_NAME = 'Mekong Slow Boat & Village Cycling';
+const NEW_SUMMARY = 'Drift down the Mekong at dawn, then pedal between weaving villages on quiet farm tracks.';
+
+type TourState = {
+  rewriteAt: number | null;      // when the rewrite POST arrived
+  writeMs: number;               // how long the job "runs"
+  failFirst: boolean;            // the first run fails (Retry test)
+  retriedAt: number | null;
+  rewriteBodies: unknown[];
+  retries: number;
+};
+
+function v2Status(t: TourState): 'writing' | 'failed' | 'ready' | null {
+  if (t.rewriteAt === null) return null;
+  const now = Date.now();
+  if (t.failFirst && t.retriedAt === null) return now - t.rewriteAt > t.writeMs ? 'failed' : 'writing';
+  const since = t.retriedAt ?? t.rewriteAt;
+  return now - since > t.writeMs ? 'ready' : 'writing';
+}
+
+function version(id: string, n: number, st: 'writing' | 'failed' | 'ready') {
+  const content = st === 'ready'
+    ? JSON.stringify({ name: TOUR_NAME, summary: id === V2 ? NEW_SUMMARY : 'The first version of this tour.', highlights: ['Dawn boat ride', 'Weaving village'] })
+    : JSON.stringify({ name: TOUR_NAME, status: 'generating' });
+  return {
+    id, version_number: n, published_tour_id: TOUR, tour_id: 'T-1',
+    status: st === 'ready' ? 'ai_generated' : 'pending', edit_source: 'ai_generated',
+    job_status: st === 'writing' ? 'running' : st === 'failed' ? 'failed' : 'succeeded',
+    rewrite_language: 'en-US', created_at: `2026-10-16T0${n}:00:00Z`, edited_at: null, rewritten_content: content,
+    seo_mode: 'standard', aa_name: TOUR_NAME, aa_subtitle: '5 days in Laos', aa_summary: 'Original summary.',
+    aa_highlights: 'Dawn boat ride|Weaving village', aa_itineraries: null, aa_seo_title: '', aa_seo_meta: '',
+    country: 'Laos', duration: '5 days',
+  };
+}
+
+async function mockCatalogApi(page: Page, t: TourState) {
+  await page.route('**/api/tenant/**', async (route: Route) => {
+    const req = route.request();
+    const p = new URL(req.url()).pathname.replace(/^\/api\/tenant/, '');
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    const st = v2Status(t);
+
+    if (p === '/me') return json({ tenant_name: 'Trail Pulse (test)', plan_tier: 'growth' });
+    if (p === '/v1/tours/my-versions') {
+      const rows = [version(V1, 1, 'ready')];
+      if (st) rows.push(version(V2, 2, st));
+      return json({ data: rows, pagination: { total: rows.length } });
+    }
+    if (p === `/v1/tours/versions/${V1}`) return json(version(V1, 1, 'ready'));
+    if (p === `/v1/tours/versions/${V2}`) return json(version(V2, 2, st ?? 'writing'));
+    if (p === `/v1/tours/pool/${TOUR}`) return json({ aa_summary: 'Original summary.', aa_highlights: 'Dawn boat ride|Weaving village', aa_itineraries: null });
+    if (p === `/v1/tours/pool/${TOUR}/rewrite` && req.method() === 'POST') {
+      t.rewriteBodies.push(JSON.parse(req.postData() || '{}'));
+      t.rewriteAt = Date.now();
+      return json({ version_id: V2, published_tour_id: TOUR, version_number: 2, status: 'pending', job_id: 'job-1' });
+    }
+    if (p === `/v1/tours/versions/${V2}/retry` && req.method() === 'POST') {
+      t.retries += 1;
+      t.retriedAt = Date.now();
+      return json({ version_id: V2, status: 'pending', job_id: 'job-1' });
+    }
+    if (p === `/v1/progress/tour/${V2}`) {
+      if (st === null) return json({ found: false });
+      const done = st === 'ready';
+      const failed = st === 'failed';
+      const since = t.retriedAt ?? t.rewriteAt ?? Date.now();
+      const typed = NEW_SUMMARY.slice(0, Math.min(NEW_SUMMARY.length, 20 + Math.floor((Date.now() - since) / 40)));
+      return json({
+        found: true, status: done ? 'done' : failed ? 'failed' : 'running', revision: 1 + t.retries,
+        message: failed ? "Writing didn't finish. Please try again." : null,
+        steps: [
+          { key: 'research', label: 'Researching the tour', state: 'done' },
+          { key: 'write', label: 'Writing in your brand voice', state: done ? 'done' : failed ? 'failed' : 'active' },
+          { key: 'check', label: 'Checking it', state: done ? 'done' : 'pending' },
+          { key: 'save', label: 'Saving', state: done ? 'done' : 'pending' },
+        ],
+        sections: [
+          { key: 'name', label: '', text: TOUR_NAME },
+          { key: 'summary', label: 'Summary', text: done ? NEW_SUMMARY : typed },
+        ],
+      });
+    }
+    return json({});
+  });
+}
+
+async function openCatalogVersion(page: Page) {
+  await page.goto('/portal/t4-pool');
+  await page.getByRole('button', { name: 'Open →', exact: true }).click(); // not the phone's "Open menu"
+  await expect(page.getByRole('button', { name: 'Request Rewrite' })).toBeVisible({ timeout: 30_000 });
+}
+
+test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
+  test('desktop 1440x900: Request Rewrite opens the panel, live progress, result opens in My Catalog', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const t: TourState = { rewriteAt: null, writeMs: 4000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0 };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    const consoleErrors: string[] = [];
+    page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+
+    await openCatalogVersion(page);
+    await page.screenshot({ path: `${SHOTS}/10-catalog-drawer-desktop.png` });
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('writer-panel-title')).toHaveText(TOUR_NAME);
+    await expect(page.getByTestId('writer-panel-context')).toHaveText(/Rewriting in en-US · for Tour catalog/);
+    await expect(page.getByRole('dialog')).toHaveCount(1); // the version drawer closed, the panel replaced it
+    expect(t.rewriteBodies).toEqual([{ rewrite_language: 'en-US' }]);
+    await expect(panel.getByText('Writing in your brand voice')).toBeVisible({ timeout: 15_000 });
+    await pageDoesNotScroll(page);
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: `${SHOTS}/11-tour-panel-writing-desktop.png` });
+
+    await expect(page.getByTestId('tour-rewrite-ready')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('ai-content-notice').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Export DOCX/ })).toBeVisible();
+    await pageDoesNotScroll(page);
+    await page.screenshot({ path: `${SHOTS}/12-tour-panel-ready-desktop.png` });
+
+    await page.getByRole('button', { name: /Open in My Catalog/ }).click();
+    await expect(page.getByTestId('writer-panel')).toHaveCount(0);
+    await expect(page.getByText(NEW_SUMMARY)).toBeVisible({ timeout: 15_000 }); // the new version in the drawer
+    await expect(page.getByRole('button', { name: 'Request Rewrite' })).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/13-tour-result-in-catalog-desktop.png` });
+
+    expect(consoleErrors.filter(e => !/favicon|Failed to load resource|sentry|data-sidebar|hydrat/i.test(e))).toEqual([]);
+  });
+
+  test('a failed rewrite shows Retry in the panel; the retried job finishes there', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const t: TourState = { rewriteAt: null, writeMs: 1500, failFirst: true, retriedAt: null, rewriteBodies: [], retries: 0 };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    await expect(page.getByTestId('tour-rewrite-failed')).toBeVisible({ timeout: 30_000 });
+    await pageDoesNotScroll(page);
+    await page.screenshot({ path: `${SHOTS}/14-tour-panel-failed-desktop.png` });
+    await page.getByRole('button', { name: /Retry writing/ }).click();
+    await expect.poll(() => t.retries).toBe(1);
+    await expect(page.getByTestId('tour-rewrite-failed')).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.getByTestId('tour-rewrite-ready')).toBeVisible({ timeout: 30_000 });
+  });
+
+  test('closing mid-rewrite keeps the job and toasts when it is ready; View progress reopens', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const t: TourState = { rewriteAt: null, writeMs: 6000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0 };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    await expect(page.getByTestId('writer-panel')).toBeVisible();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('writer-panel')).toHaveCount(0);
+    // While it is still writing, the row offers the live view again.
+    await page.getByRole('button', { name: /View progress/ }).click();
+    await expect(page.getByTestId('writer-panel-title')).toHaveText(TOUR_NAME);
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByText(/is ready — find it in My Catalog Tours/)).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: `${SHOTS}/15-tour-toast-after-close-desktop.png` });
+  });
+
+  test('phone 390x844: the tour-rewrite panel is a full-screen sheet', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const t: TourState = { rewriteAt: null, writeMs: 3000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0 };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    await expect(page.getByTestId('writer-panel')).toBeVisible();
+    const box = await page.getByRole('dialog').boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(389);
+    await pageDoesNotScroll(page);
+    await page.screenshot({ path: `${SHOTS}/16-tour-panel-writing-mobile.png` });
+    await expect(page.getByTestId('tour-rewrite-ready')).toBeVisible({ timeout: 30_000 });
+    await pageDoesNotScroll(page);
+    await page.screenshot({ path: `${SHOTS}/17-tour-panel-ready-mobile.png` });
   });
 });
