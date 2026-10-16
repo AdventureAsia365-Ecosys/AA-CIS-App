@@ -35,6 +35,19 @@ Gate: apply 238 only when preflight --invoke reports "gate": {"apply_238": true}
 profile answered through the task role and shared.job has nothing queued/running. `f10_embed` is
 called from many job kinds and API routes (angle gate, slate, segment matching, content writing,
 export...), so the gate is "no job in flight", the same rule as a backend deploy.
+
+AA-862 (migration 240, embed routes fall back acc2 -> acc3 -> acc1): `--account acc3|acc1` makes
+`preflight --invoke` call that SATELLITE account instead, through the gateway's satellite client
+(STS AssumeRole into the account's invoker role, ExternalId, the same path the route fallback takes),
+plus one acc2 call of the same text to compare. It checks 1536 floats and cosine >= 0.999 between the
+two vectors (same model, so stored vectors stay comparable). Two calls, two llm_call_log rows (stage
+'adhoc_aa862'), about $0.000002. Result: s3://.../scripts/aa862-probe-preflight-<account>.json.
+  ... python3 /tmp/s.py preflight --invoke --account acc3
+Gate: apply 240 only when it reports "gate": {"apply_240": true} for acc3. An acc2 throttle (20 rpm)
+leaves the cosine unproven (gate false): run it again a minute later. 240 only adds a fallback, so
+jobs in flight are reported but do not block it. For acc1, the same run decides whether the
+cohere-embed-v4-acc1 row may be enabled and appended to the routes (two admin actions, see 240).
+`post-apply --since` also reads the acc3 / acc1 rows and counts successes per account.
 """
 from __future__ import annotations
 
@@ -53,6 +66,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 GLOBAL_PROFILE = "global.cohere.embed-v4:0"
 US_PROFILE = "us.cohere.embed-v4:0"
 MODEL_KEY = "cohere-embed-v4"
+# AA-862 — migration 240: one catalog row per satellite account, same model and profile.
+SATELLITE_KEYS = {"acc3": "cohere-embed-v4-acc3", "acc1": "cohere-embed-v4-acc1"}
+ALL_MODEL_KEYS = [MODEL_KEY, *SATELLITE_KEYS.values()]
+SATELLITE_ADHOC_STAGE = "adhoc_aa862"
+SAME_MODEL_MIN_COSINE = 0.999
+PROBE_TEXT = "Hanoi Old Quarter street food walk"
 EMBED_STAGES = ("f10_embed", "a3_place_embed", "tp_search_embed", "tp_component_embed")
 ADHOC_STAGE = "adhoc_aa856"
 PROBE_DIMENSIONS = 1536
@@ -62,12 +81,13 @@ REGION = "us-west-1"
 CATALOG_SQL = """
 SELECT model_key, bedrock_profile_ids, enabled, blocked_reason, updated_at, updated_by
   FROM shared.llm_model_catalog
- WHERE model_key = $1
+ WHERE model_key = ANY ($1::text[])
+ ORDER BY model_key
 """
 ROUTES_SQL = """
 SELECT stage, role, model_id, fallback_model_ids, account_route, is_active
   FROM shared.llm_role_config
- WHERE model_id = $1 OR $1 = ANY (fallback_model_ids)
+ WHERE model_id = ANY ($1::text[]) OR fallback_model_ids && $1::text[]
  ORDER BY stage
 """
 JOBS_IN_FLIGHT_SQL = """
@@ -135,60 +155,108 @@ def _identity() -> dict[str, Any]:
     return {"account": ident["Account"], "arn": ident["Arn"]}
 
 
-def _invoke_global() -> dict[str, Any]:
-    """One embed on the global profile through the gateway's own call path (acc2, no retry)."""
+def _invoke_global(account: str = "acc2") -> dict[str, Any]:
+    """One embed on the global profile through the gateway's own call path: the acc2 client (task
+    role, no retry), or for acc3 / acc1 the satellite client (AssumeRole into the invoker role)."""
     from shared.llm_client import embed as embed_mod
     from shared.llm_client.catalog import CatalogModel
 
     model = CatalogModel(
-        model_key=MODEL_KEY, label="Cohere Embed v4 (AA-856 probe)", vendor="cohere",
-        provider="bedrock", api_style="embed", bedrock_profile_ids={"acc2": GLOBAL_PROFILE},
+        model_key=SATELLITE_KEYS.get(account, MODEL_KEY),
+        label=f"Cohere Embed v4 ({'AA-862' if account != 'acc2' else 'AA-856'} probe)", vendor="cohere",
+        provider="bedrock", api_style="embed", bedrock_profile_ids={account: GLOBAL_PROFILE},
         callable_via=("embed",), price_in_per_mtok=0.12, price_out_per_mtok=0.0, enabled=True,
     )
     t0 = time.monotonic()
     try:
-        resp = embed_mod._call(model, "acc2", ["Hanoi Old Quarter street food walk"],
-                               "search_query", PROBE_DIMENSIONS)
+        resp = embed_mod._call(model, account, [PROBE_TEXT], "search_query", PROBE_DIMENSIONS)
     except Exception as e:  # noqa: BLE001 — the probe reports every refusal, it never raises
-        return {"ok": False, "model_id": GLOBAL_PROFILE, "error_type": type(e).__name__,
-                "error": str(e)[:500], "ms": round((time.monotonic() - t0) * 1000)}
-    return {"ok": True, "model_id": GLOBAL_PROFILE, "dimensions": len(resp.vectors[0]),
+        return {"ok": False, "account": account, "model_id": GLOBAL_PROFILE,
+                "error_type": type(e).__name__, "error": str(e)[:500],
+                "ms": round((time.monotonic() - t0) * 1000)}
+    return {"ok": True, "account": account, "model_id": GLOBAL_PROFILE,
+            "dimensions": len(resp.vectors[0]),
             "input_tokens": resp.input_tokens, "tokens_estimated": resp.tokens_estimated,
             "cost_usd": resp.cost_usd, "ms": round((time.monotonic() - t0) * 1000), "_resp": resp}
 
 
-async def _log_probe(result: dict[str, Any]) -> None:
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+async def _log_probe(result: dict[str, Any], issue: str = "AA-856") -> None:
     from shared.llm_client.call_log import record_call
 
     resp = result.pop("_resp")
     await record_call(
-        stage=ADHOC_STAGE, role="embed", model=resp.model_used, tokens_in=resp.input_tokens,
-        tokens_out=0, cost_usd=resp.cost_usd,
-        quality_signal={"app": "cis", "issue": "AA-856", "probe": "global_profile",
+        stage=ADHOC_STAGE if issue == "AA-856" else SATELLITE_ADHOC_STAGE, role="embed",
+        model=resp.model_used, tokens_in=resp.input_tokens, tokens_out=0, cost_usd=resp.cost_usd,
+        quality_signal={"app": "cis", "issue": issue,
+                        "probe": "global_profile" if resp.account == "acc2" else "satellite_profile",
                         "model_id": GLOBAL_PROFILE, "texts": 1,
                         "dimensions": len(resp.vectors[0]),
                         "tokens_estimated": resp.tokens_estimated},
-        account=resp.account, fallback_used=False, provider="bedrock-native",
+        account=resp.account, fallback_used=False,
+        provider="bedrock-native" if resp.account == "acc2" else "bedrock-satellite",
     )
 
 
-async def preflight(invoke: bool) -> dict[str, Any]:
-    out: dict[str, Any] = {"mode": "preflight", "invoke_requested": invoke}
+async def _satellite_invoke(account: str) -> dict[str, Any]:
+    """AA-862 — one embed on `account` (satellite) and one on acc2 of the same text; the two vectors
+    must be the same model's (cosine >= SAME_MODEL_MIN_COSINE)."""
+    satellite = await asyncio.to_thread(_invoke_global, account)
+    acc2 = await asyncio.to_thread(_invoke_global, "acc2")
+    cosine = None
+    if satellite.get("ok") and acc2.get("ok"):
+        cosine = round(_cosine(satellite["_resp"].vectors[0], acc2["_resp"].vectors[0]), 6)
+    for r in (satellite, acc2):
+        if r.get("ok"):
+            await _log_probe(r, issue="AA-862")
+    return {"satellite": satellite, "acc2_reference": acc2, "cosine_vs_acc2": cosine}
+
+
+def _catalog_profile(catalog: list[dict[str, Any]], key: str, account: str) -> Any:
+    row = next((r for r in catalog if r["model_key"] == key), {})
+    return (row.get("bedrock_profile_ids") or {}).get(account)
+
+
+async def preflight(invoke: bool, account: str = "acc2") -> dict[str, Any]:
+    out: dict[str, Any] = {"mode": "preflight", "invoke_requested": invoke, "account": account}
     out["identity"] = _identity()
     conn = await _connect()
     try:
-        out["catalog"] = _rows(await conn.fetch(CATALOG_SQL, MODEL_KEY))
-        out["routes"] = _rows(await conn.fetch(ROUTES_SQL, MODEL_KEY))
+        out["catalog"] = _rows(await conn.fetch(CATALOG_SQL, ALL_MODEL_KEYS))
+        out["routes"] = _rows(await conn.fetch(ROUTES_SQL, ALL_MODEL_KEYS))
         jobs = _rows(await conn.fetch(JOBS_IN_FLIGHT_SQL))
     finally:
         await conn.close()
     out["jobs_in_flight"] = jobs
+    if account != "acc2":
+        if invoke:
+            out["invoke"] = await _satellite_invoke(account)
+        sat = out.get("invoke", {}).get("satellite", {})
+        cosine = out.get("invoke", {}).get("cosine_vs_acc2")
+        out["gate"] = {
+            "account": account,
+            "satellite_invoke_ok": bool(sat.get("ok")) if invoke else None,
+            "dimensions_ok": sat.get("dimensions") == PROBE_DIMENSIONS if invoke else None,
+            "cosine_vs_acc2": cosine,
+            "same_model": cosine is not None and cosine >= SAME_MODEL_MIN_COSINE,
+            # Reported only: 240 adds a fallback, a failing satellite fails the call as it did before.
+            "no_jobs_in_flight": not jobs,
+        }
+        g = out["gate"]
+        g["apply_240"] = bool(invoke and g["satellite_invoke_ok"] and g["dimensions_ok"] and g["same_model"])
+        return out
     if invoke:
         result = await asyncio.to_thread(_invoke_global)
         if result.get("ok"):
             await _log_probe(result)
         out["invoke"] = result
-    profile = ((out["catalog"] or [{}])[0].get("bedrock_profile_ids") or {}).get("acc2")
+    profile = _catalog_profile(out["catalog"], MODEL_KEY, "acc2")
     out["gate"] = {
         "catalog_acc2_profile": profile,
         "catalog_profile_expected": profile in (US_PROFILE, GLOBAL_PROFILE),
@@ -203,10 +271,11 @@ async def preflight(invoke: bool) -> dict[str, Any]:
 
 async def post_apply(since: datetime.datetime) -> dict[str, Any]:
     out: dict[str, Any] = {"mode": "post-apply", "since": since.isoformat()}
-    stages = [*EMBED_STAGES, ADHOC_STAGE]
+    stages = [*EMBED_STAGES, ADHOC_STAGE, SATELLITE_ADHOC_STAGE]
     conn = await _connect()
     try:
-        out["catalog"] = _rows(await conn.fetch(CATALOG_SQL, MODEL_KEY))
+        out["catalog"] = _rows(await conn.fetch(CATALOG_SQL, ALL_MODEL_KEYS))
+        out["routes"] = _rows(await conn.fetch(ROUTES_SQL, ALL_MODEL_KEYS))
         out["calls"] = _rows(await conn.fetch(CALLS_SINCE_SQL, since, stages))
         out["failed_call_errors"] = _rows(await conn.fetch(FAILED_ERRORS_SQL, since, stages))
         out["job_errors"] = _rows(await conn.fetch(JOB_ERRORS_SQL, since))
@@ -214,12 +283,19 @@ async def post_apply(since: datetime.datetime) -> dict[str, Any]:
     finally:
         await conn.close()
     ok_by_stage: dict[str, int] = {}
+    ok_by_stage_account: dict[str, dict[str, int]] = {}
     for r in out["calls"]:
         ok_by_stage[r["stage"]] = ok_by_stage.get(r["stage"], 0) + int(r["ok_rows"])
+        per = ok_by_stage_account.setdefault(r["stage"], {})
+        per[r["account"] or "?"] = per.get(r["account"] or "?", 0) + int(r["ok_rows"])
     out["ok_rows_by_stage"] = ok_by_stage
+    # AA-862: after 240 an acc2 throttle shows as a failed acc2 row (TripPlanner only) followed by an
+    # ok acc3 row of model cohere-embed-v4-acc3.
+    out["ok_rows_by_stage_account"] = ok_by_stage_account
     out["verdict"] = {
-        "catalog_on_global": ((out["catalog"] or [{}])[0].get("bedrock_profile_ids") or {}).get("acc2")
-        == GLOBAL_PROFILE,
+        "catalog_on_global": _catalog_profile(out["catalog"], MODEL_KEY, "acc2") == GLOBAL_PROFILE,
+        "stages_served_by_acc3": sorted(s for s, per in ok_by_stage_account.items()
+                                        if s in EMBED_STAGES and per.get("acc3")),
         # A throttle is the 20 rpm quota (expected until L-7089DC7D rises), not a refusal of the
         # profile; AccessDenied / ValidationException / model-access errors are.
         "no_refused_embed_rows": not [r for r in out["failed_call_errors"]
@@ -253,10 +329,14 @@ def main(argv: list[str]) -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("mode", nargs="?", default="preflight", choices=("preflight", "post-apply"))
     p.add_argument("--invoke", action="store_true", help="preflight: make the one global-profile embed")
-    p.add_argument("--since", help="post-apply: ISO-8601 UTC time DB Migrate applied 238")
+    p.add_argument("--since", help="post-apply: ISO-8601 UTC time DB Migrate applied 238 / 240")
+    p.add_argument("--account", default="acc2", choices=("acc2", "acc3", "acc1"),
+                   help="preflight: AA-862 — probe this satellite account (plus an acc2 reference call)")
     a = p.parse_args(argv)
     if a.mode == "preflight":
-        _write(asyncio.run(preflight(a.invoke)), "aa856-probe-preflight.json")
+        name = ("aa856-probe-preflight.json" if a.account == "acc2"
+                else f"aa862-probe-preflight-{a.account}.json")
+        _write(asyncio.run(preflight(a.invoke, a.account)), name)
         return
     if not a.since:
         p.error("post-apply needs --since <ISO-8601 UTC>")
