@@ -165,6 +165,8 @@ class _FakeConn:
         return self.channels_config
 
     async def fetch(self, sql, *args):
+        if "atom_segment_alias" in sql:     # AA-857 alias resolution: no id has given way here
+            return []
         assert "FROM acp_shared.subject" in sql
         return self.subject_rows
 
