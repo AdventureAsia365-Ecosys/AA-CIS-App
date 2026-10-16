@@ -8,7 +8,9 @@
 // AA-668 (S239): "Request Rewrite" (and opening a tour that is being written or failed) opens the
 // Writer panel (TourRewritePanel.tsx) — live progress, Retry, the result; closing it mid-write keeps
 // the job and the page toasts when it settles (useWriteWatcher). The version drawer opens on
-// finished versions only.
+// finished versions only, and stays on the version it was opened on (a save moves it to the new
+// version the save created) — a rewrite of the same tour started elsewhere neither closes it nor
+// reopens it when that rewrite finishes.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
@@ -80,7 +82,11 @@ function CatalogInner() {
   const searchParams = useSearchParams();
   const tourIdFilter = searchParams.get("tour_id");
 
-  const [openTourId, setOpenTourId] = useState<string | null>(null);
+  // The version open in the drawer — pinned by version id, not tour id (AA-668 review): the tour's
+  // latest version can become a rewrite in progress while the drawer is open (another tab, the
+  // Browse Tours batch Rewrite), and following it would close the drawer, drop unsaved edits and
+  // pop it open again when that rewrite finished.
+  const [openVersionId, setOpenVersionId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportingDocxId, setExportingDocxId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -118,10 +124,11 @@ function CatalogInner() {
   );
 
   // The version drawer shows finished versions only; writing / failed ones live in the panel.
+  // (A finished version never turns writing again, so this guard only filters a stale id.)
   const openGroup = useMemo(() => {
-    const g = openTourId ? grouped.find((v) => v.published_tour_id === openTourId) ?? null : null;
+    const g = openVersionId ? list.find((v) => v.id === openVersionId) ?? null : null;
     return g && !isAiWriting(g) && !isRewriteFailed(g) ? g : null;
-  }, [grouped, openTourId]);
+  }, [list, openVersionId]);
 
   const rewriteVersion = useMemo(
     () => (rewrite ? list.find((v) => v.id === rewrite.versionId) ?? null : null),
@@ -131,13 +138,13 @@ function CatalogInner() {
   const openRewritePanel = useCallback((v: Version) => {
     if (!v.published_tour_id) return;
     unwatch(v.id);
-    setOpenTourId(null);
+    setOpenVersionId(null);
     setRewrite({ versionId: v.id, publishedTourId: v.published_tour_id, title: v.aa_name || "Tour", language: v.rewrite_language || "en-US" });
   }, [unwatch]);
 
   function openRow(v: Version) {
     if (isAiWriting(v) || isRewriteFailed(v)) openRewritePanel(v);
-    else setOpenTourId(v.published_tour_id ?? null);
+    else setOpenVersionId(v.id);
   }
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["my-versions"] });
@@ -155,11 +162,14 @@ function CatalogInner() {
   const saveM = useMutation({
     mutationFn: (vars: { versionId: string; edited: Record<string, unknown> }) =>
       saveVersionEdit(vars.versionId, vars.edited),
-    onSuccess: () => {
+    onSuccess: async (r) => {
+      // An edit is saved as a new version: refetch first, then move the drawer onto it (the list
+      // has the row by then, so the drawer never blinks closed).
+      await invalidate();
+      if (r.new_version_id) setOpenVersionId(r.new_version_id);
       setSaveOk(true);
       setDirty(false);
       toast.success("Saved");
-      invalidate();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
@@ -169,7 +179,7 @@ function CatalogInner() {
       apiRequestRewrite(vars.publishedTourId, vars.lang),
     onSuccess: (r, vars) => {
       // AA-668 — follow the new version in the Writer panel instead of a toast.
-      setOpenTourId(null);
+      setOpenVersionId(null);
       setDirty(false);
       setSaveOk(false);
       setRewrite({ versionId: r.version_id, publishedTourId: vars.publishedTourId, title: vars.title, language: vars.lang });
@@ -314,7 +324,7 @@ function CatalogInner() {
                   View progress →
                 </Btn>
               ) : (
-                <Btn variant="secondary" size="sm" onClick={() => setOpenTourId(v.published_tour_id ?? null)}>
+                <Btn variant="secondary" size="sm" onClick={() => setOpenVersionId(v.id)}>
                   Open →
                 </Btn>
               )}
@@ -392,7 +402,7 @@ function CatalogInner() {
         )}
       />
 
-      <Drawer open={!!openGroup} onClose={() => setOpenTourId(null)} title="" width={1000}>
+      <Drawer open={!!openGroup} onClose={() => setOpenVersionId(null)} title="" width={1000}>
         {openGroup && (
           <CatalogDrawer
             key={openGroup.id}
@@ -416,7 +426,7 @@ function CatalogInner() {
               })
             }
             onExportDocx={(id) => exportDocx(id)}
-            onClose={() => setOpenTourId(null)}
+            onClose={() => setOpenVersionId(null)}
           />
         )}
       </Drawer>
@@ -434,7 +444,7 @@ function CatalogInner() {
         onRetry={() => rewrite && retryM.mutate(rewrite.versionId)}
         onOpenResult={() => {
           if (!rewrite) return;
-          setOpenTourId(rewrite.publishedTourId);
+          setOpenVersionId(rewrite.versionId);
           setRewrite(null);
         }}
         onExportDocx={() => rewrite && exportDocx(rewrite.versionId)}

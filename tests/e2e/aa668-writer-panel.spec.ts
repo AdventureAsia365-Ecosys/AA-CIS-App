@@ -20,6 +20,12 @@
 // panel (tour title, language, channel in the header), the t2_rewrite live steps + text show, a
 // failed job offers Retry, the result opens in My Catalog, closing mid-write toasts on completion,
 // no page scroll at 1440x900, full-width sheet at 390.
+// S239 review fixes: the failed version has the shape the backend writes (status 'failed', set by
+// mark_version_failed) and the mocked /retry answers 409 for anything else, like the real route; the
+// retry case keeps serving the previous run's "failed" progress snapshot for a while after Retry
+// (the real store keeps it until the worker starts the new run) and the panel must not show it; a
+// rewrite of the open tour started elsewhere neither closes the version drawer (unsaved edit kept)
+// nor reopens it when that rewrite finishes.
 import { test, expect, type Page, type Route } from '@playwright/test';
 
 const SHOTS = process.env.AA668_SHOTS || 'tests/e2e/results/aa668';
@@ -336,23 +342,29 @@ type TourState = {
   retriedAt: number | null;
   rewriteBodies: unknown[];
   retries: number;
+  /** After Retry, the progress route keeps serving the previous run's "failed" snapshot this long
+   *  (the job is queued, the worker has not started the new run yet). */
+  staleSnapshotMs?: number;
+  /** Another tour that stays "writing" — keeps My Catalog's 5 s my-versions poll running. */
+  otherWriting?: boolean;
 };
 
 function v2Status(t: TourState): 'writing' | 'failed' | 'ready' | null {
   if (t.rewriteAt === null) return null;
   const now = Date.now();
   if (t.failFirst && t.retriedAt === null) return now - t.rewriteAt > t.writeMs ? 'failed' : 'writing';
-  const since = t.retriedAt ?? t.rewriteAt;
-  return now - since > t.writeMs ? 'ready' : 'writing';
+  if (t.retriedAt !== null) return now - t.retriedAt > t.writeMs + (t.staleSnapshotMs ?? 0) ? 'ready' : 'writing';
+  return now - t.rewriteAt > t.writeMs ? 'ready' : 'writing';
 }
 
-function version(id: string, n: number, st: 'writing' | 'failed' | 'ready') {
+function version(id: string, n: number, st: 'writing' | 'failed' | 'ready', tourId = TOUR) {
   const content = st === 'ready'
     ? JSON.stringify({ name: TOUR_NAME, summary: id === V2 ? NEW_SUMMARY : 'The first version of this tour.', highlights: ['Dawn boat ride', 'Weaving village'] })
     : JSON.stringify({ name: TOUR_NAME, status: 'generating' });
   return {
-    id, version_number: n, published_tour_id: TOUR, tour_id: 'T-1',
-    status: st === 'ready' ? 'ai_generated' : 'pending', edit_source: 'ai_generated',
+    id, version_number: n, published_tour_id: tourId, tour_id: tourId === TOUR ? 'T-1' : 'T-2',
+    // A failed rewrite is status 'failed' (+ job 'failed'): what on_terminal=mark_version_failed writes.
+    status: st === 'ready' ? 'ai_generated' : st === 'failed' ? 'failed' : 'pending', edit_source: 'ai_generated',
     job_status: st === 'writing' ? 'running' : st === 'failed' ? 'failed' : 'succeeded',
     rewrite_language: 'en-US', created_at: `2026-10-16T0${n}:00:00Z`, edited_at: null, rewritten_content: content,
     seo_mode: 'standard', aa_name: TOUR_NAME, aa_subtitle: '5 days in Laos', aa_summary: 'Original summary.',
@@ -360,6 +372,30 @@ function version(id: string, n: number, st: 'writing' | 'failed' | 'ready') {
     country: 'Laos', duration: '5 days',
   };
 }
+
+const OTHER_TOUR = '99999999-9999-4999-8999-999999999999';
+const OTHER_V = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+function progressSnapshot(st: 'writing' | 'failed' | 'ready', since: number, revision: number) {
+  const done = st === 'ready';
+  const failed = st === 'failed';
+  const typed = NEW_SUMMARY.slice(0, Math.min(NEW_SUMMARY.length, 20 + Math.floor((Date.now() - since) / 40)));
+  return {
+    found: true, status: done ? 'done' : failed ? 'failed' : 'running', revision,
+    message: failed ? STALE_FAILED_MESSAGE : null,
+    steps: [
+      { key: 'research', label: 'Researching the tour', state: 'done' },
+      { key: 'write', label: 'Writing in your brand voice', state: done ? 'done' : failed ? 'failed' : 'active' },
+      { key: 'check', label: 'Checking it', state: done ? 'done' : 'pending' },
+      { key: 'save', label: 'Saving', state: done ? 'done' : 'pending' },
+    ],
+    sections: [
+      { key: 'name', label: '', text: TOUR_NAME },
+      { key: 'summary', label: 'Summary', text: done ? NEW_SUMMARY : typed },
+    ],
+  };
+}
+const STALE_FAILED_MESSAGE = "Writing didn't finish. Please try again.";
 
 async function mockCatalogApi(page: Page, t: TourState) {
   await page.route('**/api/tenant/**', async (route: Route) => {
@@ -372,6 +408,7 @@ async function mockCatalogApi(page: Page, t: TourState) {
     if (p === '/v1/tours/my-versions') {
       const rows = [version(V1, 1, 'ready')];
       if (st) rows.push(version(V2, 2, st));
+      if (t.otherWriting) rows.push({ ...version(OTHER_V, 1, 'writing', OTHER_TOUR), aa_name: 'Other tour', created_at: '2026-10-15T00:00:00Z' });
       return json({ data: rows, pagination: { total: rows.length } });
     }
     if (p === `/v1/tours/versions/${V1}`) return json(version(V1, 1, 'ready'));
@@ -383,30 +420,20 @@ async function mockCatalogApi(page: Page, t: TourState) {
       return json({ version_id: V2, published_tour_id: TOUR, version_number: 2, status: 'pending', job_id: 'job-1' });
     }
     if (p === `/v1/tours/versions/${V2}/retry` && req.method() === 'POST') {
+      // Like api/routers/v1_tours.py retry_rewrite: only a status='failed' version can be retried.
+      if (st !== 'failed') return json({ detail: 'Only a failed AI rewrite can be retried' }, 409);
       t.retries += 1;
       t.retriedAt = Date.now();
       return json({ version_id: V2, status: 'pending', job_id: 'job-1' });
     }
     if (p === `/v1/progress/tour/${V2}`) {
       if (st === null) return json({ found: false });
-      const done = st === 'ready';
-      const failed = st === 'failed';
-      const since = t.retriedAt ?? t.rewriteAt ?? Date.now();
-      const typed = NEW_SUMMARY.slice(0, Math.min(NEW_SUMMARY.length, 20 + Math.floor((Date.now() - since) / 40)));
-      return json({
-        found: true, status: done ? 'done' : failed ? 'failed' : 'running', revision: 1 + t.retries,
-        message: failed ? "Writing didn't finish. Please try again." : null,
-        steps: [
-          { key: 'research', label: 'Researching the tour', state: 'done' },
-          { key: 'write', label: 'Writing in your brand voice', state: done ? 'done' : failed ? 'failed' : 'active' },
-          { key: 'check', label: 'Checking it', state: done ? 'done' : 'pending' },
-          { key: 'save', label: 'Saving', state: done ? 'done' : 'pending' },
-        ],
-        sections: [
-          { key: 'name', label: '', text: TOUR_NAME },
-          { key: 'summary', label: 'Summary', text: done ? NEW_SUMMARY : typed },
-        ],
-      });
+      // Retried, but the worker has not started the new run: the store still holds the old run's
+      // "failed" snapshot (revision 1).
+      if (t.retriedAt !== null && Date.now() - t.retriedAt < (t.staleSnapshotMs ?? 0)) {
+        return json(progressSnapshot('failed', t.rewriteAt ?? Date.now(), 1));
+      }
+      return json(progressSnapshot(st, t.retriedAt ?? t.rewriteAt ?? Date.now(), 1 + t.retries));
     }
     return json({});
   });
@@ -461,7 +488,7 @@ test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
   test('a failed rewrite shows Retry in the panel; the retried job finishes there', async ({ page, baseURL }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 900 });
-    const t: TourState = { rewriteAt: null, writeMs: 1500, failFirst: true, retriedAt: null, rewriteBodies: [], retries: 0 };
+    const t: TourState = { rewriteAt: null, writeMs: 1500, failFirst: true, retriedAt: null, rewriteBodies: [], retries: 0, staleSnapshotMs: 3000 };
     await mockCatalogApi(page, t);
     await login(page, baseURL!);
     await openCatalogVersion(page);
@@ -472,7 +499,20 @@ test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
     await page.getByRole('button', { name: /Retry writing/ }).click();
     await expect.poll(() => t.retries).toBe(1);
     await expect(page.getByTestId('tour-rewrite-failed')).toHaveCount(0, { timeout: 15_000 });
+    // The progress route still serves the old run's failed snapshot (staleSnapshotMs): the panel
+    // shows "Starting…", never the old failure, until the new run is live.
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel.getByText('Starting…')).toBeVisible({ timeout: 5_000 });
+    const staleUntil = t.retriedAt! + t.staleSnapshotMs!;
+    while (Date.now() < staleUntil) {
+      await expect(panel.getByText(STALE_FAILED_MESSAGE)).toHaveCount(0);
+      await page.waitForTimeout(250);
+    }
+    await page.screenshot({ path: `${SHOTS}/18-tour-panel-retry-starting-desktop.png` });
+    await expect(panel.getByText('Writing in your brand voice')).toBeVisible({ timeout: 15_000 });
+    await expect(panel.getByText(STALE_FAILED_MESSAGE)).toHaveCount(0);
     await expect(page.getByTestId('tour-rewrite-ready')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('tour-rewrite-failed')).toHaveCount(0);
   });
 
   test('closing mid-rewrite keeps the job and toasts when it is ready; View progress reopens', async ({ page, baseURL }) => {
@@ -492,6 +532,37 @@ test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByText(/is ready — find it in My Catalog Tours/)).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: `${SHOTS}/15-tour-toast-after-close-desktop.png` });
+  });
+
+  test('a rewrite of the open tour started elsewhere keeps the drawer and its edit, and does not reopen it', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const t: TourState = { rewriteAt: null, writeMs: 7000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0, otherWriting: true };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    const drawer = page.getByRole('dialog');
+    // An unsaved edit in v1's drawer.
+    await drawer.getByRole('button', { name: /Edit/ }).first().click();
+    const EDIT = 'My own words about the dawn boat ride.';
+    await drawer.locator('textarea').first().fill(EDIT);
+    await drawer.getByRole('button', { name: 'Save', exact: true }).last().click(); // the summary editor's own Save
+    await expect(drawer.getByRole('button', { name: 'Save', exact: true })).toHaveCount(1); // the drawer's (dirty) Save
+
+    // A rewrite of the same tour starts elsewhere (another tab / Browse Tours batch Rewrite); the
+    // 5 s my-versions poll (another tour is writing) picks up v2 as "writing".
+    t.rewriteAt = Date.now();
+    await expect(page.getByRole('button', { name: /View progress/ })).toHaveCount(2, { timeout: 15_000 });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(EDIT)).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Save', exact: true })).toHaveCount(1);
+
+    // The tenant closes the drawer; v2 finishes later — the drawer must not pop open on its own.
+    await page.getByRole('button', { name: 'Close' }).first().click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect.poll(() => v2Status(t), { timeout: 15_000 }).toBe('ready');
+    await page.waitForTimeout(6_000); // one more 5 s poll after v2 is ready
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
   test('phone 390x844: the tour-rewrite panel is a full-screen sheet', async ({ page, baseURL }) => {

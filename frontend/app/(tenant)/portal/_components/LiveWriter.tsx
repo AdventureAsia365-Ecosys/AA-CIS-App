@@ -31,10 +31,16 @@ function usePrefersReducedMotion(): boolean {
 export default function LiveWriter({ kind, jobId, active = true, title = "Writing", compact = false, untilInactive = false }: {
   kind: "tour" | "piece"; jobId: string; active?: boolean; title?: string; compact?: boolean;
   /** AA-668 (S239): keep polling through a done/failed snapshot until `active` turns false — the
-   *  owner's status decides. A retried tour job first reads the previous run's "failed" snapshot. */
+   *  owner's status decides. A retried tour job first reads the previous run's "failed" snapshot
+   *  (the progress store keeps it up to an hour, until the worker starts the new run); while the
+   *  owner says the job is running, that stale "failed" snapshot shows as "Starting…" until this
+   *  view has seen the new run live. */
   untilInactive?: boolean;
 }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  // Set once this mount has read a live (found, not failed) snapshot — from then on a "failed"
+  // snapshot is the new run's own and shows as usual. The owner keys the view per run/retry.
+  const seenLiveRef = useRef(false);
   const [shown, setShown] = useState<Record<string, string>>({});
   const targetRef = useRef<Section[]>([]);
   const reduce = usePrefersReducedMotion();
@@ -52,7 +58,9 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
         const r = await fetch(`/api/tenant/v1/progress/${kind}/${encodeURIComponent(jobId)}`, { cache: "no-store" });
         if (r.ok) {
           const d: Snapshot = await r.json();
-          if (!stop) setSnap(d);
+          if (d.found && d.status !== "failed") seenLiveRef.current = true;
+          const stale = untilInactive && active && d.status === "failed" && !seenLiveRef.current;
+          if (!stop) setSnap(stale ? { found: false } : d);
           if ((d.status === "done" || d.status === "failed") && !untilInactive) return;
         }
       } catch { /* transient — keep polling */ }
