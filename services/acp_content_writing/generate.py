@@ -31,6 +31,7 @@ from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS, SYSTEM_PROMPT, build_user_prompt
 from services.acp_content_writing.quality_gates import strip_citation_tags
+from shared.llm_client import stream_sink
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.call_log import record_call_sync
@@ -333,7 +334,10 @@ def repair_sentences_detailed(
     request = LLMRequest(system_prompt=_REPAIR_SYSTEM,
                          user_prompt=f"SOURCE:\n{source}\n\nSENTENCES TO FIX:\n{numbered}",
                          stage=stage, max_tokens=max_tokens)
-    resp = LLMClient().generate(request)
+    # AA-668 — the reply is a JSON patch, never tenant-facing text: it must not stream into the
+    # T9 live view even though it runs on the writer stage. The job shows the spliced text itself.
+    with stream_sink.suppressed():
+        resp = LLMClient().generate(request)
     record_call_sync(
         stage=stage, role="writer", model=resp.model_used,
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),

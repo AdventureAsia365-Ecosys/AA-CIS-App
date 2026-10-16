@@ -16,6 +16,31 @@ type Snapshot = { found: boolean; status?: string; steps?: Step[]; sections?: Se
 
 const POLL_MS = 800;
 
+// AA-668 — the last snapshot each job showed in this tab, so a view that mounts again (the tenant
+// closed the Writer panel mid-write and reopens it) starts on the text already written instead of
+// "Starting…" and a retype from empty. Per kind + job id; a view only, the server stays the source.
+const lastSnapshots = new Map<string, Snapshot>();
+const snapKey = (kind: string, jobId: string) => `${kind}:${jobId}`;
+
+/** AA-668 — drop the remembered snapshot of a job that starts a new run under the same id (a T2
+ *  Retry keeps the version id). Without it, a view of the retried job could open on the previous
+ *  run's text and steps as if they were live. Call it when the retry is sent. */
+export function forgetLiveSnapshot(kind: "tour" | "piece", jobId: string): void {
+  lastSnapshots.delete(snapKey(kind, jobId));
+}
+
+/** The remembered snapshot a new mount may start from. A "failed" one is left out while the owner
+ *  says the job runs again (`untilInactive` + `active`): that is the previous run's (see the prop). */
+function seedSnapshot(kind: string, jobId: string, active: boolean, untilInactive: boolean): Snapshot | null {
+  const s = lastSnapshots.get(snapKey(kind, jobId));
+  if (!s || (untilInactive && active && s.status === "failed")) return null;
+  return s;
+}
+
+function fullText(sections: Section[] | undefined): Record<string, string> {
+  return Object.fromEntries((sections ?? []).map(s => [s.key, s.text]));
+}
+
 function usePrefersReducedMotion(): boolean {
   const [reduce, setReduce] = useState(false);
   useEffect(() => {
@@ -37,11 +62,12 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
    *  view has seen the new run live. */
   untilInactive?: boolean;
 }) {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
+  // Lazy init (no effect): a remount starts from the snapshot this tab last showed for the job.
+  const [snap, setSnap] = useState<Snapshot | null>(() => seedSnapshot(kind, jobId, active, untilInactive));
   // Set once this mount has read a live (found, not failed) snapshot — from then on a "failed"
   // snapshot is the new run's own and shows as usual. The owner keys the view per run/retry.
   const seenLiveRef = useRef(false);
-  const [shown, setShown] = useState<Record<string, string>>({});
+  const [shown, setShown] = useState<Record<string, string>>(() => fullText(snap?.sections));
   const targetRef = useRef<Section[]>([]);
   const reduce = usePrefersReducedMotion();
   const docRef = useRef<HTMLDivElement>(null);
@@ -61,6 +87,7 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
           if (d.found && d.status !== "failed") seenLiveRef.current = true;
           const stale = untilInactive && active && d.status === "failed" && !seenLiveRef.current;
           if (!stop) setSnap(stale ? { found: false } : d);
+          if (!stale && d.found) lastSnapshots.set(snapKey(kind, jobId), d);
           if ((d.status === "done" || d.status === "failed") && !untilInactive) return;
         }
       } catch { /* transient — keep polling */ }
@@ -74,12 +101,20 @@ export default function LiveWriter({ kind, jobId, active = true, title = "Writin
   // so the typed text restarts from empty.
   // `shownRef` is the source of truth for the typed text (setShown only mirrors it for render),
   // so each animation frame can tell synchronously whether there is more to type.
+  // AA-668: the first snapshot this view gets is shown at once, not typed from empty — a panel
+  // reopened mid-write must show what is already written (it used to retype it, so the text
+  // looked truncated for seconds). Only text that arrives after that is typed out.
   const revisionRef = useRef(0);
   const shownRef = useRef<Record<string, string>>({});
+  const primedRef = useRef(false);
   useEffect(() => {
     targetRef.current = snap?.sections ?? [];
     const revision = snap?.revision ?? 0;
-    if (revision !== revisionRef.current) {
+    if (!primedRef.current && snap?.found) {
+      primedRef.current = true;
+      revisionRef.current = revision;
+      shownRef.current = fullText(snap.sections);
+    } else if (revision !== revisionRef.current) {
       revisionRef.current = revision;
       shownRef.current = {};
     }

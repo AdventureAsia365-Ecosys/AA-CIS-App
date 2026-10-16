@@ -43,6 +43,21 @@ def bind(sink: StreamSink) -> Iterator[StreamSink]:
         _current.reset(token)
 
 
+@contextmanager
+def suppressed() -> Iterator[None]:
+    """No sink for the calls made inside (AA-668). For a call whose reply is not tenant-facing text
+    although it runs on a writer stage — the T9 sentence repair answers on `t9_write` with a JSON
+    patch (`{"replacements": [...]}`) that the job splices into the piece in code. Inside, nothing
+    streams and the call does not count as a writer call (no new revision), so the live view keeps
+    the text it had; the job then publishes the spliced text itself (writing_progress.progress_show).
+    Works across `asyncio.to_thread` like `bind` (the context is copied)."""
+    token = _current.set(None)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
 def _safe(fn: Callable[[], None], what: str) -> None:
     try:
         fn()

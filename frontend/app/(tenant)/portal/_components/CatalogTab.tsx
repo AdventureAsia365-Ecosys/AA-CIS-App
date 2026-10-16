@@ -31,6 +31,7 @@ import {
 import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { useWriteWatcher } from "./WriterPanel";
+import { forgetLiveSnapshot } from "./LiveWriter";
 import { AiContentNotice } from "./AiContentNotice";
 import {
   fetchMyVersions,
@@ -152,7 +153,11 @@ function CatalogInner() {
   // ── Mutations ──
   const retryM = useMutation({
     mutationFn: apiRetryRewrite,
-    onSuccess: () => {
+    // AA-668 — a retry reruns the job under the same version id: the live view must not reopen
+    // on the failed run's remembered text (the Writer panel or the row's "View progress").
+    onMutate: (versionId: string) => forgetLiveSnapshot("tour", versionId),
+    onSuccess: (_r, versionId) => {
+      forgetLiveSnapshot("tour", versionId);
       setRetries((n) => n + 1);
       invalidate();
     },

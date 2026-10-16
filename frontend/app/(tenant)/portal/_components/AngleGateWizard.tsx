@@ -70,6 +70,14 @@ import { Sparkles, CheckCircle2, ChevronRight, RotateCcw, AlertTriangle, Externa
 import { T, serif, sans, mono, Card, CardHead, Badge, Btn, LoadingScreen, EmptyState, Spinner } from "./ui";
 import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
+import { channelName, humanizeKey } from "./channelLabels";
+
+/** AA-668 — the goal's name from the 8-value list (`GET /v1/angle-gate/goals`), never its key:
+ *  "introduction_awareness" → "Introduction / Awareness". Before the list loads, the key as words. */
+export function goalLabel(goals: { key: string; name: string }[], key: string | null): string {
+  if (!key) return "—";
+  return goals.find(g => g.key === key)?.name ?? humanizeKey(key);
+}
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_CEILING_MS = 180_000;
@@ -165,8 +173,8 @@ function SubjectHeader({ req }: { req: AngleGateRequest }) {
   return (
     <div style={{ padding: "10px 14px", background: T.bg, border: `1px solid ${T.line2}`, borderRadius: 8, fontFamily: sans }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink, textTransform: "capitalize" }}>
-          Writing for: {req.channel}
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>
+          Writing for: {req.channel ? channelName(req.channel) : "—"}
         </span>
         {req.subject_score !== null && <Badge variant="default">Score {req.subject_score}</Badge>}
       </div>
@@ -706,9 +714,9 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
               <div style={{ fontSize: 12.5, color: T.body }}>
                 <strong>Angle:</strong> {chosenAngle.name}
                 <span style={{ color: T.muted2 }}> · </span>
-                <strong>Goal:</strong> {req.goal}
+                <strong>Goal:</strong> {goalLabel(goals, req.goal)}
                 <span style={{ color: T.muted2 }}> · </span>
-                <strong>Channel:</strong> {req.channel}
+                <strong>Channel:</strong> {req.channel ? channelName(req.channel) : "—"}
               </div>
               {!writing && (
                 <Btn size="sm" variant="secondary" disabled={reopening} onClick={changeAngle}>

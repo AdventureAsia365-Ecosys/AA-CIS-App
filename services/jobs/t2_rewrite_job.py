@@ -16,7 +16,7 @@ from __future__ import annotations
 import structlog
 
 from services.acp_shared.writing_progress import (
-    TOUR_STAGE_STEPS, TOUR_STEPS, WritingProgress, progress_fail, progress_step,
+    TOUR_STAGE_STEPS, TOUR_STEPS, WritingProgress, progress_fail, progress_show, progress_step,
 )
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
@@ -245,6 +245,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # this version reached the pool despite qa_status='escalated'.
             qa_status = "passed" if qa["passed"] else "escalated"
             qa_auto_passed = not qa["passed"]
+            # AA-668: the live view's final text is the saved version (T3 may keep an earlier draft or
+            # repair sentences, and the em-dash fix runs after the last streamed draft).
+            progress_show(rewritten)
             progress_step("save")  # AA-637
             async with pool.acquire() as _conn3:
                 await _conn3.execute("""

@@ -269,6 +269,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Writer-stage LLM calls stream through that sink into a Redis snapshot
     (`services/acp_shared/writing_progress.py`, key `wp:{tenant}:{kind}:{job}`, 1h TTL).
   - The portal polls `GET /v1/progress/{tour|piece}/{id}` (`LiveWriter.tsx`).
+  - Only piece text reaches the snapshot (AA-668): a writer-stage call whose reply is not piece
+    text (the T9 sentence repair's JSON patch) runs under `stream_sink.suppressed()`, and the job
+    publishes the text it keeps with `progress_show()` (after a repair splice and before the save),
+    so the final snapshot is the saved post / tour version.
   - Both jobs show in the same right-side **Writer panel** (AA-668, `WriterPanel.tsx`'s
     `WriterDrawer` shell): Social Content (Slate → goal → angle → write) and the T2 tour rewrite
     from My Catalog Tours (`TourRewritePanel.tsx`). Closing the panel never stops the job;

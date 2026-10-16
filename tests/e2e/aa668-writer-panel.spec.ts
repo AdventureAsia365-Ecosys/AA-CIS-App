@@ -26,7 +26,30 @@
 // (the real store keeps it until the worker starts the new run) and the panel must not show it; a
 // rewrite of the open tour started elsewhere neither closes the version drawer (unsaved edit kept)
 // nor reopens it when that rewrite finishes.
+// S239 live-run fixes: the Write card shows goal/channel names (not keys), and reopening the panel
+// mid-write shows the text already written at once (no "Starting…", no retype from empty).
+// S239 review: the reopen checks hold the reopened view's progress polls (ProgressHold), so what
+// they see can only come from the view's own remembered text, for the Social "Continue" reopen
+// as well as the tour "View progress"; a Retry after the panel was closed mid-write never opens on
+// the failed run's text.
 import { test, expect, type Page, type Route } from '@playwright/test';
+
+/** Holds every /v1/progress answer while `on`: a view reopened under a hold paints only what it
+ *  had before any answer arrived. `held` counts the polls waiting; release() answers them. */
+class ProgressHold {
+  on = false;
+  held = 0;
+  private waiters: (() => void)[] = [];
+  async wait() {
+    if (!this.on) return;
+    this.held += 1;
+    await new Promise<void>(r => this.waiters.push(r));
+  }
+  release() {
+    this.on = false;
+    this.waiters.splice(0).forEach(r => r());
+  }
+}
 
 const SHOTS = process.env.AA668_SHOTS || 'tests/e2e/results/aa668';
 const REQ = '11111111-1111-4111-8111-111111111111';
@@ -73,6 +96,8 @@ type State = {
   anglePolls: number;
   piecePolls: number;
   writeBodies: unknown[];
+  /** Set once the write call answered with the piece (latest-piece then returns it, like the API). */
+  written?: boolean;
 };
 
 function request(s: State) {
@@ -87,7 +112,7 @@ function request(s: State) {
   };
 }
 
-async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number; noBrandCta?: boolean; slowWriteMs?: number } = {}) {
+async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number; noBrandCta?: boolean; slowWriteMs?: number; hold?: ProgressHold } = {}) {
   const slowPiece = opts.slowPiece ?? 2;
   await page.route('**/api/tenant/**', async (route: Route) => {
     const req = route.request();
@@ -134,13 +159,18 @@ async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number; n
       s.status = 'approved';
       return json(request(s));
     }
-    if (p === `/v1/content-writing/requests/${REQ}/latest-piece`) return json({ piece: null });
+    if (p === `/v1/content-writing/requests/${REQ}/latest-piece`) {
+      if (!s.written) return json({ piece: null });
+      const done = s.piecePolls > slowPiece;
+      return json({ piece: { piece_id: PIECE, angle_gate_request_id: REQ, channel: 'facebook', content_text: done ? FINAL_TEXT : null, ready_state: done ? 'ready' : 'in_progress' } });
+    }
     if (p === `/v1/content-writing/requests/${REQ}/write`) {
       const body = JSON.parse(req.postData() || '{}');
       s.writeBodies.push(body);
       // The server's MissingCTAError: no request CTA, no override and no brand default_cta.
       if (opts.noBrandCta && !body.cta) return json({ detail: 'no CTA' }, 422);
       if (opts.slowWriteMs) await new Promise(r => setTimeout(r, opts.slowWriteMs));
+      s.written = true;
       return json({ piece_id: PIECE, angle_gate_request_id: REQ, channel: 'facebook', ready_state: 'in_progress' }, 202);
     }
     if (p === `/v1/content-writing/pieces/${PIECE}`) {
@@ -149,6 +179,7 @@ async function mockTenantApi(page: Page, s: State, opts: { slowPiece?: number; n
       return json({ piece_id: PIECE, angle_gate_request_id: REQ, channel: 'facebook', content_text: done ? FINAL_TEXT : null, ready_state: done ? 'ready' : 'in_progress' });
     }
     if (p === `/v1/progress/piece/${PIECE}`) {
+      await opts.hold?.wait();
       const done = s.piecePolls > slowPiece;
       const half = FINAL_TEXT.slice(0, Math.min(FINAL_TEXT.length, 120 + s.piecePolls * 120));
       return json({
@@ -230,6 +261,9 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
 
     await expect(page.getByTestId('writer-panel-result')).toBeVisible({ timeout: 30_000 });
     expect(s.writeBodies).toEqual([{}]); // write sent without a cta → server uses the brand default
+    // S239 live fix: the Write card names the goal and channel, never their keys.
+    await expect(panel.getByText(/Goal: Inspire · Channel: Facebook/)).toBeVisible();
+    await expect(panel.getByText(/inspiration|Channel: facebook/)).toHaveCount(0);
     await expect(page.getByTestId('ai-content-notice').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /Export text/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Publish$/ })).toBeVisible();
@@ -268,6 +302,32 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
     await page.screenshot({ path: `${SHOTS}/07-toast-after-close-desktop.png` });
     await page.getByRole('button', { name: /Continue/ }).click();
     await expect(page.getByTestId('writer-panel')).toBeVisible();
+  });
+
+  test('reopening the panel mid-write with Continue shows the text already written at once', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const s: State = { picked: false, status: 'pending_goal', goal: null, chosen: null, anglePolls: 0, piecePolls: 0, writeBodies: [] };
+    const hold = new ProgressHold();
+    await mockTenantApi(page, s, { slowPiece: 10_000, hold }); // stays "writing" for the whole test
+    await login(page, baseURL!);
+    await openFacebookSlate(page);
+    await page.getByText('Mekong River — slow boat at dawn').locator('xpath=ancestor::div[3]').getByRole('button', { name: /Pick to write/ }).click();
+    await page.getByTestId('goal-awareness').click();
+    await page.getByRole('button', { name: /Generate 3 angles/ }).click();
+    await page.getByTestId('angle-0').getByRole('button', { name: /Write with this angle/ }).click();
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel.getByText(/Mist lifts off the water/)).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(panel).toHaveCount(0);
+
+    hold.on = true; // the reopened view gets no progress answer until release()
+    await page.getByRole('button', { name: /Continue/ }).click();
+    await expect(panel).toBeVisible();
+    await expect.poll(() => hold.held, { timeout: 15_000 }).toBeGreaterThan(0);
+    await expect(panel.getByText(/Mist lifts off the water/)).toBeVisible();
+    await expect(panel.getByText('Starting…')).toHaveCount(0);
+    hold.release();
   });
 
   test('closing before the write call answers still toasts when the piece is ready', async ({ page, baseURL }) => {
@@ -347,6 +407,7 @@ type TourState = {
   staleSnapshotMs?: number;
   /** Another tour that stays "writing" — keeps My Catalog's 5 s my-versions poll running. */
   otherWriting?: boolean;
+  hold?: ProgressHold;
 };
 
 function v2Status(t: TourState): 'writing' | 'failed' | 'ready' | null {
@@ -427,13 +488,15 @@ async function mockCatalogApi(page: Page, t: TourState) {
       return json({ version_id: V2, status: 'pending', job_id: 'job-1' });
     }
     if (p === `/v1/progress/tour/${V2}`) {
-      if (st === null) return json({ found: false });
+      await t.hold?.wait();
+      const now = v2Status(t); // after a hold, the state at answer time
+      if (now === null) return json({ found: false });
       // Retried, but the worker has not started the new run: the store still holds the old run's
       // "failed" snapshot (revision 1).
       if (t.retriedAt !== null && Date.now() - t.retriedAt < (t.staleSnapshotMs ?? 0)) {
         return json(progressSnapshot('failed', t.rewriteAt ?? Date.now(), 1));
       }
-      return json(progressSnapshot(st, t.retriedAt ?? t.rewriteAt ?? Date.now(), 1 + t.retries));
+      return json(progressSnapshot(now, t.retriedAt ?? t.rewriteAt ?? Date.now(), 1 + t.retries));
     }
     return json({});
   });
@@ -532,6 +595,68 @@ test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByText(/is ready — find it in My Catalog Tours/)).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: `${SHOTS}/15-tour-toast-after-close-desktop.png` });
+  });
+
+  test('reopening the panel mid-write shows the text already written at once', async ({ page, baseURL }) => {
+    // S239 live run: "View progress" remounted the live view empty — "Starting…", then the whole
+    // text typed again from the start, so it looked truncated for seconds.
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const hold = new ProgressHold();
+    const t: TourState = { rewriteAt: null, writeMs: 30_000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0, hold };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel.getByText(NEW_SUMMARY)).toBeVisible({ timeout: 15_000 }); // fully written live
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(panel).toHaveCount(0);
+    // The reopened panel gets no progress answer while the hold is on: what it shows is what the
+    // view remembered — the steps and the full text, no "Starting…".
+    hold.on = true;
+    await page.getByRole('button', { name: /View progress/ }).click();
+    await expect(page.getByTestId('writer-panel-title')).toHaveText(TOUR_NAME);
+    await expect.poll(() => hold.held, { timeout: 15_000 }).toBeGreaterThan(0);
+    await expect(panel.getByText(NEW_SUMMARY)).toBeVisible();
+    await expect(panel.getByText('Writing in your brand voice')).toBeVisible();
+    await expect(panel.getByText('Starting…')).toHaveCount(0);
+    await page.screenshot({ path: `${SHOTS}/19-tour-panel-reopened-desktop.png` });
+    hold.release();
+  });
+
+  test('a Retry after the panel was closed mid-write never opens on the failed run', async ({ page, baseURL }) => {
+    // S239 review: the view remembers a job's last snapshot by version id, and a Retry keeps the
+    // id. Run 1 is watched, the panel closed, run 1 fails; after Retry the live view must not
+    // open on run 1's half-written text and steps as if they were live.
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const hold = new ProgressHold();
+    const t: TourState = { rewriteAt: null, writeMs: 3000, failFirst: true, retriedAt: null, rewriteBodies: [], retries: 0, staleSnapshotMs: 1500, hold };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel.getByText(/Drift down the Mekon/)).toBeVisible({ timeout: 15_000 }); // run 1, part written
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(panel).toHaveCount(0);
+
+    // Run 1 fails while the panel is closed; the row offers Retry.
+    const rowRetry = page.getByRole('button', { name: 'Retry', exact: true });
+    await expect(rowRetry).toBeVisible({ timeout: 20_000 });
+    await rowRetry.click();
+    await expect.poll(() => t.retries).toBe(1);
+    hold.on = true;
+    await page.getByRole('button', { name: /View progress/ }).click();
+    await expect(page.getByTestId('writer-panel-title')).toHaveText(TOUR_NAME);
+    await expect.poll(() => hold.held, { timeout: 15_000 }).toBeGreaterThan(0);
+    // Nothing answered yet: no text or steps from run 1.
+    await expect(panel.getByText('Starting…')).toBeVisible();
+    await expect(panel.getByText(/Drift down the Mekon/)).toHaveCount(0);
+    await expect(panel.getByText('Writing in your brand voice')).toHaveCount(0);
+    hold.release();
+    await expect(page.getByTestId('tour-rewrite-ready')).toBeVisible({ timeout: 30_000 });
   });
 
   test('a rewrite of the open tour started elsewhere keeps the drawer and its edit, and does not reopen it', async ({ page, baseURL }) => {
