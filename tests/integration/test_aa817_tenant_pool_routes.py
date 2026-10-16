@@ -1,20 +1,25 @@
 """AA-817 PR-A — the other tenant-pool routes against real Postgres, as aa_app_user under the live policies
 (229 for content_piece / angle_gate_request / publish_log, 237 for shared.tenant_integrations):
 
-  - DELETE /v1/integrations/{type} (_disconnect): own row deleted, another tenant's row untouched; a
-    forgotten WHERE still cannot reach another tenant (RLS); a DELETE that RLS lets remove 0 rows is a 503
-    with the secret untouched and the row kept (critique C3); a tombstone failure rolls the DELETE back.
+  - DELETE /v1/integrations/{type} (_disconnect, AA-859: two short transactions around the tombstone): own
+    row deleted, another tenant's row untouched; a forgotten WHERE still cannot reach another tenant (RLS); a
+    DELETE that RLS lets remove 0 rows is a 503 with the row kept and the secret tombstoned; a tombstone
+    failure leaves the row and never deletes; two concurrent disconnects (double click) on two real
+    connections give one `true` and one `false` (raced), never a 503.
   - GET /pieces/{id} (fetch_piece), GET /v1/publish-log/pending, GET /v1/publish-log: a forgotten WHERE
     gives tenant B nothing of tenant A's on the tenant pool, while the admin pool (owner, exempt) leaks it,
     which proves each check can fail.
 
 Same harness as test_aa817_tenant_pool_content.py: the "tenant pool" is the test connection with
 SET LOCAL ROLE aa_app_user (CI's aa_app_user has no LOGIN); everything runs in one transaction that is
-rolled back. Secrets Manager is mocked.
+rolled back. Secrets Manager is mocked. The double-click test is the exception: it needs two real
+connections that see each other's commits, so it seeds committed rows and deletes them in `finally`.
 """
+import asyncio
 import os
 import re
 import sys
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -25,6 +30,7 @@ import pytest
 import pytest_asyncio
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
+from structlog.testing import capture_logs
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
@@ -164,31 +170,40 @@ async def test_disconnect_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_disconnect_zero_row_delete_keeps_row_and_secret(ctx):
-    """Critique C3: a policy that lets the tenant read the row but not delete it (DELETE 0) must not
-    tombstone the secret: 503, row still connected, credentials intact."""
+async def test_disconnect_zero_row_delete_keeps_row_tombstones_secret(ctx):
+    """A policy that lets the tenant read the row but not delete it (DELETE 0, row still visible): 503
+    row_mismatch, the row stays; the secret was tombstoned in step 2 (AA-859 order), so the credential
+    readers answer 422 "reconnect" and a retry finishes the disconnect."""
     await _integration(ctx.conn, ctx.a)
     await ctx.conn.execute("CREATE POLICY aa817_test_no_delete ON shared.tenant_integrations AS RESTRICTIVE "
                            f"FOR DELETE TO {TENANT_ROLE} USING (false)")
     sm = MagicMock()
-    with pytest.raises(HTTPException) as exc:
+    with capture_logs() as logs, pytest.raises(HTTPException) as exc:
         await _disconnect(ctx, ctx.a, flag_on=True, sm=sm)
     assert exc.value.status_code == 503
-    assert not sm.put_secret_value.called
+    assert sm.put_secret_value.call_args.kwargs == {"SecretId": f"acp/x/{ctx.a}/wordpress",
+                                                     "SecretString": '{"disconnected": true}'}
     assert await _integrations_of(ctx.conn, ctx.a) == ["wordpress"]
+    assert [e for e in logs if e["event"] == "aa817_integration_disconnect_row_mismatch"]
+    assert not [e for e in logs if e["event"] == "aa859_integration_disconnect_raced"]
 
 
 @pytest.mark.parametrize("flag_on", [True, False], ids=["tenant_pool", "admin_pool"])
 @pytest.mark.asyncio
-async def test_disconnect_tombstone_failure_rolls_the_delete_back(ctx, flag_on):
+async def test_disconnect_tombstone_failure_leaves_the_row_and_never_deletes(ctx, flag_on):
     await _integration(ctx.conn, ctx.a)
     sm = MagicMock()
     sm.put_secret_value.side_effect = ClientError(
         {"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "PutSecretValue")
+    deletes_before = await ctx.conn.fetchval(
+        "SELECT n_tup_del FROM pg_stat_xact_user_tables WHERE relid = 'shared.tenant_integrations'::regclass")
     with pytest.raises(HTTPException) as exc:
         await _disconnect(ctx, ctx.a, flag_on=flag_on, sm=sm)
     assert exc.value.status_code == 502
-    assert await _integrations_of(ctx.conn, ctx.a) == ["wordpress"], "the DELETE must roll back"
+    assert await _integrations_of(ctx.conn, ctx.a) == ["wordpress"]
+    assert await ctx.conn.fetchval(
+        "SELECT n_tup_del FROM pg_stat_xact_user_tables WHERE relid = 'shared.tenant_integrations'::regclass"
+    ) == deletes_before, "no DELETE was executed (not even one rolled back)"
     assert await ctx.conn.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1",
                                    str(ctx.a)) == 0
 
@@ -246,3 +261,72 @@ async def test_publish_log_list_on_tenant_pool_is_rls_scoped(ctx):
         assert used is True
         seen = await conn.fetchval("SELECT count(*) FROM acp_shared.publish_log WHERE piece_id = $1", piece_a)
     assert seen == 0, "tenant pool leaked another tenant's publish_log row"
+
+
+# ── AA-859: double click on two real connections ──────────────────────────────
+
+class _RoleConnPool:
+    """One real connection per simulated api request; acquire() acts as the tenant role (SET ROLE, reset on
+    release), like a connection from the aa_app_user pool. The transaction is acquire_scoped_conn's own."""
+
+    def __init__(self, conn, as_role=None):
+        self.conn, self.as_role = conn, as_role
+        self.execute = conn.execute  # write_audit_log(pool, ...)
+
+    @asynccontextmanager
+    async def acquire(self, timeout=None):
+        if self.as_role:
+            await self.conn.execute(f"SET ROLE {self.as_role}")
+        try:
+            yield self.conn
+        finally:
+            if self.as_role:
+                await self.conn.execute("RESET ROLE")
+
+
+@pytest.mark.asyncio
+async def test_disconnect_double_click_on_two_connections_is_one_true_one_false():
+    """Both requests pass step 1 (row read) before either reaches step 3 (DELETE): the tombstone, which
+    runs in a worker thread between the two transactions, waits on a barrier until both are there. Then
+    one DELETE wins; the other waits for its row lock, deletes 0 rows, re-SELECTs nothing and answers
+    200 disconnected=false (raced). Under AA-817's single transaction the loser was a 503."""
+    seed = await asyncpg.connect(DSN)
+    conns = [await asyncpg.connect(DSN) for _ in range(4)]  # tenant + main connection per request
+    tid = uuid.uuid4()
+    try:
+        await seed.execute("INSERT INTO shared.tenants (tenant_id, name, slug, posts_per_week) VALUES ($1, $2, $3, 3)",
+                           tid, f"AA-859 race {tid.hex[:8]}", f"aa859race-{tid.hex[:8]}")
+        await _integration(seed, tid)  # committed: both connections must see it
+
+        barrier = threading.Barrier(2, timeout=10)
+        tombstoned = []
+
+        def tombstone(secret_key):
+            tombstoned.append(secret_key)
+            barrier.wait()  # both requests are past step 1 before either goes on to step 3
+
+        def request(i):
+            state = SimpleNamespace(pool=_RoleConnPool(conns[2 * i + 1]),
+                                    tenant_pool=_RoleConnPool(conns[2 * i], TENANT_ROLE), redis=_Redis(True))
+            return SimpleNamespace(app=SimpleNamespace(state=state))
+
+        with capture_logs() as logs, patch.object(integ_mod, "_tombstone_secret", tombstone):
+            results = await asyncio.wait_for(asyncio.gather(
+                integ_mod._disconnect(request(0), str(tid), "wordpress"),
+                integ_mod._disconnect(request(1), str(tid), "wordpress"),
+            ), timeout=30)
+
+        assert sorted(r["disconnected"] for r in results) == [False, True]
+        assert len(tombstoned) == 2
+        assert len([e for e in logs if e["event"] == "aa859_integration_disconnect_raced"]) == 1
+        assert not [e for e in logs if e["event"] in ("aa817_integration_disconnect_row_mismatch",
+                                                      "aa859_integration_disconnect_tombstoned_not_deleted")]
+        assert await _integrations_of(seed, tid) == []
+        assert await seed.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
+                                   "AND action = 'integration.disconnected'", str(tid)) == 1
+    finally:
+        await seed.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", str(tid))
+        await seed.execute("DELETE FROM shared.tenant_integrations WHERE tenant_id = $1", tid)
+        await seed.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", tid)
+        for conn in conns + [seed]:
+            await conn.close()
