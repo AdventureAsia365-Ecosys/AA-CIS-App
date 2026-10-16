@@ -26,6 +26,8 @@
 // (the real store keeps it until the worker starts the new run) and the panel must not show it; a
 // rewrite of the open tour started elsewhere neither closes the version drawer (unsaved edit kept)
 // nor reopens it when that rewrite finishes.
+// S239 live-run fixes: the Write card shows goal/channel names (not keys), and reopening the panel
+// mid-write shows the text already written at once (no "Starting…", no retype from empty).
 import { test, expect, type Page, type Route } from '@playwright/test';
 
 const SHOTS = process.env.AA668_SHOTS || 'tests/e2e/results/aa668';
@@ -230,6 +232,9 @@ test.describe('AA-668 Writer panel (mocked API)', () => {
 
     await expect(page.getByTestId('writer-panel-result')).toBeVisible({ timeout: 30_000 });
     expect(s.writeBodies).toEqual([{}]); // write sent without a cta → server uses the brand default
+    // S239 live fix: the Write card names the goal and channel, never their keys.
+    await expect(panel.getByText(/Goal: Inspire · Channel: Facebook/)).toBeVisible();
+    await expect(panel.getByText(/inspiration|Channel: facebook/)).toHaveCount(0);
     await expect(page.getByTestId('ai-content-notice').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /Export text/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Publish$/ })).toBeVisible();
@@ -532,6 +537,29 @@ test.describe('AA-668 Writer panel — tour rewrite (mocked API)', () => {
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByText(/is ready — find it in My Catalog Tours/)).toBeVisible({ timeout: 30_000 });
     await page.screenshot({ path: `${SHOTS}/15-tour-toast-after-close-desktop.png` });
+  });
+
+  test('reopening the panel mid-write shows the text already written at once', async ({ page, baseURL }) => {
+    // S239 live run: "View progress" remounted the live view empty — "Starting…", then the whole
+    // text typed again from the start, so it looked truncated for seconds.
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const t: TourState = { rewriteAt: null, writeMs: 30_000, failFirst: false, retriedAt: null, rewriteBodies: [], retries: 0 };
+    await mockCatalogApi(page, t);
+    await login(page, baseURL!);
+    await openCatalogVersion(page);
+    await page.getByRole('button', { name: 'Request Rewrite' }).click();
+    const panel = page.getByTestId('writer-panel');
+    await expect(panel.getByText(NEW_SUMMARY)).toBeVisible({ timeout: 15_000 }); // fully written live
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(panel).toHaveCount(0);
+    await page.getByRole('button', { name: /View progress/ }).click();
+    await expect(page.getByTestId('writer-panel-title')).toHaveText(TOUR_NAME);
+    // The first paint of the reopened panel: the steps and the full text, no "Starting…".
+    const firstPaint = await panel.innerText();
+    expect(firstPaint).toContain(NEW_SUMMARY);
+    expect(firstPaint).not.toContain('Starting…');
+    await page.screenshot({ path: `${SHOTS}/19-tour-panel-reopened-desktop.png` });
   });
 
   test('a rewrite of the open tour started elsewhere keeps the drawer and its edit, and does not reopen it', async ({ page, baseURL }) => {

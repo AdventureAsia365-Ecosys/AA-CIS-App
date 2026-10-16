@@ -32,6 +32,7 @@ import { T, sans } from "./ui";
 import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { AiContentNotice } from "./AiContentNotice";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
+import { channelName } from "./channelLabels";
 
 /** What the Slate hands the panel when a Subject is picked (or reopened this session). */
 export interface WriterTarget {
@@ -42,13 +43,7 @@ export interface WriterTarget {
   kind: "Segment" | "Route";
 }
 
-const CHANNEL_LABEL: Record<string, string> = {
-  blog: "Blog", linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram",
-  tiktok: "TikTok", email: "Email", landing_page: "Landing Page", ads: "Ads",
-};
-export function channelName(channel: string): string {
-  return CHANNEL_LABEL[channel] ?? channel;
-}
+export { channelName };
 
 // Desktop width of the panel. The kit Drawer caps it at 100% of the viewport, which makes it a
 // full-screen sheet on a phone.
