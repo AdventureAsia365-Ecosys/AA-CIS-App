@@ -60,10 +60,12 @@ OVERRIDE_TRIGGER = "manual_override"
 # retention_job (idempotency keys), retention_decision_log (Jev verdict cache, 180 d floor) or
 # retention_cost_explorer_snapshot (already has real candidates under its own policy).
 OVERRIDE_KINDS = ("retention_llm_call_log", "retention_tenant_api_usage")
-# The cutoff is at least this old: outside every default 7 / 30-day window and the current-month
-# figures of the raw llm_call_log readers, and (31 > any month) always in a closed month, which the
-# monthly rollup needs.
-OVERRIDE_MIN_AGE_DAYS = 31
+# The cutoff is at least this old: outside every default 7-day window of the raw llm_call_log
+# readers. 21 (not 31) so Dev can prove the archive + rollup paths on its oldest rows now (S239,
+# Nghiệp: no waiting on Dev); a 30-day reader window may lose the deleted rows' raw figures, which
+# the rollup keeps. tenant_api_usage also needs a closed month (override_cutoff checks it), because
+# the monthly rollup only writes months that have ended.
+OVERRIDE_MIN_AGE_DAYS = 21
 OVERRIDE_MAX_ROWS = 1_000
 # ENVIRONMENT is "dev" on the one ECS deployment (Terraform var.environment) and "test" in CI;
 # unset means dev (api/core/sentry.py convention). Any other value (a future prod) refuses.
@@ -112,6 +114,9 @@ def override_cutoff(kind: str, payload: dict, today: date,
     if day > latest:
         raise NonRetryable(f"older_than {older_than} is too recent: at most {latest.isoformat()} "
                            f"({OVERRIDE_MIN_AGE_DAYS} days before today, UTC)")
+    if kind == "retention_tenant_api_usage" and day > today.replace(day=1):
+        raise NonRetryable(f"older_than {older_than} is in the current month: the monthly rollup only writes "
+                           f"closed months, so the cutoff must be at most {today.replace(day=1).isoformat()}")
     return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
 
 

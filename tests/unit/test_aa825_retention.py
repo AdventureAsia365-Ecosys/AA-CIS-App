@@ -267,13 +267,13 @@ async def test_retention_run_endpoint_requires_max_rows_for_a_live_run(monkeypat
 # ── manual override (S239): prove rollup + archive on Dev without waiting for data to age ───────
 
 TODAY = date(2026, 10, 16)
-OK_DAY = (TODAY - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).isoformat()   # 2026-09-15
+OK_DAY = (TODAY - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).isoformat()   # 2026-09-25
 OVR = {"trigger": "manual_override", "older_than": OK_DAY}
 LLM = "retention_llm_call_log"
 
 
 def test_override_cutoff_is_utc_midnight_of_older_than_and_none_for_other_triggers():
-    assert retention_job.override_cutoff(LLM, OVR, TODAY, "dev") == datetime(2026, 9, 15, tzinfo=timezone.utc)
+    assert retention_job.override_cutoff(LLM, OVR, TODAY, "dev") == datetime(2026, 9, 25, tzinfo=timezone.utc)
     assert retention_job.override_cutoff("retention_tenant_api_usage", OVR, TODAY, "test") is not None
     for payload in ({}, {"trigger": "manual"}, {"trigger": "schedule"}, {"trigger": "manual", "dry_run": False}):
         assert retention_job.override_cutoff(LLM, payload, TODAY, "dev") is None
@@ -311,15 +311,26 @@ def test_override_needs_a_plain_utc_date(older_than):
         retention_job.override_cutoff(LLM, {"trigger": "manual_override", "older_than": older_than}, TODAY, "dev")
 
 
-def test_override_cutoff_must_be_at_least_31_days_old():
+def test_override_cutoff_must_be_at_least_the_min_age():
     too_recent = (TODAY - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS - 1)).isoformat()
     with pytest.raises(NonRetryable, match="too recent"):
         retention_job.override_cutoff(LLM, {**OVR, "older_than": too_recent}, TODAY, "dev")
     with pytest.raises(NonRetryable):
         retention_job.override_cutoff(LLM, {**OVR, "older_than": TODAY.isoformat()}, TODAY, "dev")
-    # 31 days back always lands in an earlier, closed month (the monthly rollup needs that)
-    for d in (date(2026, 3, 31), date(2026, 1, 1), date(2026, 12, 31), date(2028, 3, 1)):
-        assert (d - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).replace(day=1) < d.replace(day=1)
+    assert retention_job.OVERRIDE_MIN_AGE_DAYS >= 8   # outside every default 7-day reader window
+
+
+def test_override_tenant_usage_cutoff_must_be_in_a_closed_month():
+    tu = "retention_tenant_api_usage"
+    late_month = date(2026, 10, 31)
+    in_month = (late_month - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).isoformat()   # 2026-10-10
+    with pytest.raises(NonRetryable, match="current month"):
+        retention_job.override_cutoff(tu, {**OVR, "older_than": in_month}, late_month, "dev")
+    # the first day of the current month is fine: rows strictly before it are in closed months
+    assert retention_job.override_cutoff(tu, {**OVR, "older_than": "2026-10-01"}, late_month, "dev")
+    assert retention_job.override_cutoff(tu, {**OVR, "older_than": "2026-09-17"}, TODAY, "dev")
+    # llm_call_log rolls up by day, so the same in-month cutoff is accepted there
+    assert retention_job.override_cutoff(LLM, {**OVR, "older_than": in_month}, late_month, "dev")
 
 
 @pytest.mark.parametrize("env", ["prod", "production", "staging", "PROD"])
