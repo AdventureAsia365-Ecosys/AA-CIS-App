@@ -32,8 +32,9 @@
 --      revoke them anyway). Dev, S240 probe: 13 views, v_destination, v_destination_photo, v_graph_edge,
 --      v_graph_node, v_tour, v_tour_component, v_tour_day, v_tour_day_route, v_tour_junction,
 --      v_tour_leg, v_tour_photo, v_tour_place, v_tour_stop.
---      Revoked on Dev (S240 grants probe, information_schema based, so table level only and blind to
---      other grantors; PR-0 P0 #1 re-reads it from aclexplode with owner and grantor): SELECT on
+--      Revoked on Dev (confirmed 16/10/2026 by the AA-859 P0 preflight, aclexplode on relacl/attacl with
+--      owner and grantor: 33 relations, class (c) empty, every grantor = owner, 13 catalog_owner views
+--      kept; root docs/audits/2026-10-16-S240-aa859/p0_preflight.json): SELECT on
 --        acp_contract.v_active_tour_atoms; acp_shared.angle_gate_option (re-granted in 2),
 --        tenant_atom_state, year_plan; INSERT/SELECT/UPDATE on acp_shared.marketplace_portfolios;
 --        SELECT on shared.cost_explorer_snapshot, decision_cache_hits_daily, decision_log,
