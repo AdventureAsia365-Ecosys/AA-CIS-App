@@ -187,6 +187,21 @@ async def test_bad_action_is_400_before_any_acquire():
     request.app.state.pool.acquire.assert_not_called()
 
 
+@pytest.mark.parametrize("content", [None, {}])
+@pytest.mark.parametrize("flag", [True, False])
+@pytest.mark.asyncio
+async def test_edit_without_content_is_400_and_runs_nothing(flag, content):
+    """Review fix: action=edit with no / empty edited_content used to fall through to the status branch and
+    set the caller's version to 'rejected' (200). Now 400 before any acquire, on both paths."""
+    request = fc._request(flag=flag)
+    body = v1_tours.VersionActionRequest(action="edit", edited_content=content)
+    with pytest.raises(HTTPException) as exc:
+        await v1_tours.update_version(VERSION_ID, body, request, tenant={"sub": str(fc.TENANT_ID)})
+    assert exc.value.status_code == 400 and "edited_content" in exc.value.detail
+    request.app.state.tenant_pool.acquire.assert_not_called()
+    request.app.state.pool.acquire.assert_not_called()
+
+
 def test_tour_approve_route_is_removed():
     """PATCH /v1/tours/{tour_id}/approve had no caller and updated 0 rows for every tenant (AA-859 PR-D6)."""
     paths = {(m, r.path) for r in v1_tours.router.routes for m in getattr(r, "methods", ())}

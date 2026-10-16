@@ -4,11 +4,18 @@ The CI DB never creates the live table (migration 001 is skipped). conftest's TT
 minimal stand-in the AA-817 RLS tests use, and it must stay without `version_number` (test_aa766's
 _ttv_minimal() detects a stand-in by that). The T2 version routes need the live columns, so this helper
 creates the live shape (db-schema-reference.md: every column, the UNIQUE (tenant_id, published_tour_id,
-version_number), the CHECKs and the three FKs), inside the caller's own transaction, then re-applies
-migration 229 (RLS tenant_isolation + SELECT, INSERT, UPDATE to aa_app_user) on it. With
+version_number), the CHECKs, and three of the four live FKs: see below), inside the caller's own
+transaction, then re-applies migration 229 (RLS tenant_isolation + SELECT, INSERT, UPDATE to aa_app_user) on it. With
 master_read=True it also re-applies 239 (the tenant role reads the AA master published_tours /
 raw_tours / seo_context rows, for the pt/rt/sc joins of the read routes) and 241 after it, as
 test_aa817_rls_tenant_isolation does. The caller rolls the transaction back, so nothing persists.
+
+Left out on purpose: the live FK tenant_id -> shared.tenants(tenant_id). The tests use fresh random tenant
+uuids, and seeding shared.tenants (NOT NULL slug, plan_tier enum, ...) in every caller, including the
+committed rows of the concurrency harness and PR-D5's read tests, would add setup without testing anything
+about the tenant role: an RI check runs as the referenced table's owner, so it needs no grant to
+aa_app_user and does not change what RLS or the 229 grants allow. Without it, a test can insert a
+tenant_tour_versions row for a tenant that has no shared.tenants row, which live would refuse.
 
 Defaults: the live dump has no column defaults; the ones below are what the live route INSERTs rely on
 (the edit INSERT names neither rewrite_language nor seo_mode nor the qa_* columns).

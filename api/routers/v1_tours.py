@@ -1012,6 +1012,10 @@ async def update_version(
 
     if body.action not in ("approve", "reject", "edit"):
         raise HTTPException(status_code=400, detail="action must be approve|reject|edit")
+    # AA-859 PR-D6 review: an edit without content used to fall through to the status branch and silently
+    # REJECT the caller's version (200 {"status": "rejected"}). Both paths, before any acquire.
+    if body.action == "edit" and not body.edited_content:
+        raise HTTPException(status_code=400, detail="edited_content is required for action=edit")
 
     async with acquire_scoped_conn(
         request, tenant_id, T2_VERSION_WRITE_FLAG, fail_closed=True,
@@ -1031,8 +1035,8 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
     if not row:
         raise HTTPException(status_code=404, detail="Version not found")
 
-    if body.action == "edit" and body.edited_content:
-        # Inline edit → create new version
+    if body.action == "edit":
+        # Inline edit (edited_content checked non-empty before the acquire) → create new version
         if guarded:
             await conn.execute(_VERSION_EDIT_LOCK_SQL, AA859_TTV_LOCK_CLASS, str(tenant_id),
                                str(row["published_tour_id"]))

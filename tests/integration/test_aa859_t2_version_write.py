@@ -4,8 +4,11 @@
   - edit on the tenant pool inserts the next version (MAX + 1 over the tour, parent = the edited one,
     tenant_edit, pending); approve / reject change the own row;
   - another tenant's version_id is a 404 for edit and for approve, and nothing of the owner changes;
-  - a forgotten WHERE on the own-row SELECT (and the status UPDATE) still cannot reach another tenant on
-    the tenant pool, while the admin pool (owner, RLS exempt) does: the check can fail;
+  - a forgotten WHERE on the own-row SELECT still cannot reach another tenant through the route on the
+    tenant pool, while the admin pool (owner, RLS exempt) does: the check can fail;
+  - a forgotten WHERE on the status UPDATE, run directly as aa_app_user with B's GUC (the route cannot
+    reach it: its own-row SELECT already 404s), updates 0 of A's rows; the same statement without the role
+    switch updates 1 (mutation);
   - two concurrent edits of the same tour on two real connections get N+1 and N+2, never a 500; with the
     advisory lock removed (mutation) the same race is one 200 and one 409, never two 200s with equal
     numbers.
@@ -163,11 +166,11 @@ async def test_foreign_version_is_404_and_nothing_changes(ctx, action, content):
 
 
 @pytest.mark.asyncio
-async def test_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
-    assert OWN_FILTER in v1_tours._VERSION_OWN_ROW_SQL and UPDATE_FILTER in v1_tours._VERSION_STATUS_UPDATE_SQL
+async def test_rls_holds_when_the_own_row_where_is_forgotten(ctx, monkeypatch):
+    """Through the route: only the own-row SELECT is patched. The status UPDATE is never reached on the
+    tenant pool (the SELECT already 404s), so its own forgotten WHERE is tested directly below."""
+    assert OWN_FILTER in v1_tours._VERSION_OWN_ROW_SQL
     monkeypatch.setattr(v1_tours, "_VERSION_OWN_ROW_SQL", v1_tours._VERSION_OWN_ROW_SQL.replace(OWN_FILTER, FORGOT))
-    monkeypatch.setattr(v1_tours, "_VERSION_STATUS_UPDATE_SQL",
-                        v1_tours._VERSION_STATUS_UPDATE_SQL.replace(UPDATE_FILTER, "AND $3::uuid IS NOT NULL"))
     before = await _rows(ctx.conn, ctx.pt)
     for action, content in (("reject", None), ("edit", {"name": "B was here"})):
         with pytest.raises(HTTPException) as exc:
@@ -176,8 +179,29 @@ async def test_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
     assert await _rows(ctx.conn, ctx.pt) == before
 
     leaked = await _patch(ctx.conn, ctx.b, ctx.a2, False, "reject")
-    assert leaked["status"] == "rejected", "sanity: the admin pool is not RLS-filtered"
-    assert await ctx.conn.fetchval(f"SELECT status FROM {TTV} WHERE id = $1", ctx.a2) == "rejected"
+    assert leaked["status"] == "rejected", "sanity: on the admin pool (not RLS-filtered) the patched SELECT finds A"
+    # ...and only the UPDATE's own (unpatched) tenant filter keeps A's row as it was.
+    assert await _rows(ctx.conn, ctx.pt) == before
+
+
+@pytest.mark.asyncio
+async def test_rls_filters_the_status_update_when_its_where_is_forgotten(ctx):
+    """The patched _VERSION_STATUS_UPDATE_SQL itself, as aa_app_user with tenant B's GUC, on A's version:
+    UPDATE 0 and A unchanged. Mutation: the same statement as the owner (RLS exempt) is UPDATE 1."""
+    assert UPDATE_FILTER in v1_tours._VERSION_STATUS_UPDATE_SQL
+    patched = v1_tours._VERSION_STATUS_UPDATE_SQL.replace(UPDATE_FILTER, "AND $3::uuid IS NOT NULL")
+    c = ctx.conn
+    before = await c.fetchrow(f"SELECT status, edited_at FROM {TTV} WHERE id = $1", ctx.a2)
+    await c.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
+    await c.fetchval("SELECT set_config('app.tenant_id', $1, true)", str(ctx.b))
+    try:
+        assert await c.execute(patched, "rejected", ctx.a2, ctx.b) == "UPDATE 0"
+    finally:
+        await c.execute("RESET ROLE")
+    assert await c.fetchrow(f"SELECT status, edited_at FROM {TTV} WHERE id = $1", ctx.a2) == before
+
+    assert await c.execute(patched, "rejected", ctx.a2, ctx.b) == "UPDATE 1", "sanity: owner is RLS exempt"
+    assert await c.fetchval(f"SELECT status FROM {TTV} WHERE id = $1", ctx.a2) == "rejected"
 
 
 @pytest.mark.asyncio
@@ -231,7 +255,7 @@ async def _concurrent_edits():
     outcomes (dict or HTTPException) and the numbers stored."""
     admin = await asyncpg.connect(DSN)
     c1, c2 = await asyncpg.connect(DSN), await asyncpg.connect(DSN)
-    pt = None
+    pt, blocker, tasks = None, None, []
     try:
         async with admin.transaction():
             await install_ttv_live_standin(admin)
@@ -249,7 +273,7 @@ async def _concurrent_edits():
             except HTTPException as exc:
                 return exc
 
-        tasks = [asyncio.create_task(edit(c1)), asyncio.create_task(edit(c2))]
+        tasks += [asyncio.create_task(edit(c1)), asyncio.create_task(edit(c2))]
         await _wait_until_blocked(admin, [c1.get_server_pid(), c2.get_server_pid()])
         await blocker.rollback()
         outcomes = await asyncio.wait_for(asyncio.gather(*tasks), timeout=15)
@@ -257,6 +281,16 @@ async def _concurrent_edits():
             f"SELECT version_number FROM {TTV} WHERE published_tour_id = $1 ORDER BY 1", pt)]
         return outcomes, numbers
     finally:
+        # A failed wait (or a wait_for timeout) leaves the blocker transaction open: roll it back first, or the
+        # DROP / DELETE below run inside it and admin.close() undoes them, leaving the live-shape stand-in
+        # committed in the CI DB for every later test.
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if blocker is not None and admin.is_in_transaction():
+            await blocker.rollback()
         for c in (c1, c2):
             await c.close()
         await admin.execute(f"DROP TABLE IF EXISTS {TTV}")
