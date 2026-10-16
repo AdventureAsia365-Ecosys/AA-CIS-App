@@ -58,7 +58,10 @@ def _routes(c):
     return {r[0]: r[1:] for r in c.fetchall()}
 
 
-def test_conftest_replay_left_the_post_240_state(cur):
+def test_post_240_state(cur):
+    # test_aa712_migration_226 (runs earlier) deletes and re-seeds the a3_place_embed route without a
+    # fallback, so re-run the idempotent migration instead of trusting the session-wide replay.
+    _run(cur)
     acc3, acc1 = _catalog(cur, ACC3), _catalog(cur, ACC1)
     assert acc3[0] == {"acc3": "global.cohere.embed-v4:0"} and acc3[1] is True and acc3[2] is None
     assert acc1 is None                         # acc1 is not used (Nghiệp, S239)
