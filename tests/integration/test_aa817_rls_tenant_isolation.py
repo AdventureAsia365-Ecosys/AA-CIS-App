@@ -6,22 +6,29 @@ behind the tenant routes on the tenant pool (AA-544 stages 1/5, AA-815, AA-817 l
 angle_gate_request (113), content_piece (115), publish_log (116), facts (145, platform rows shared by
 design), gold_aa_internal.tenant_tour_versions (the stage-2 T2 table), all on the policy template of
 migration 229, and shared.tenant_integrations (the AA-815 disconnect route, same template, migration 237).
+acp_shared.angle_gate_option has no tenant column: migration 241 puts it under RLS through its parent
+angle_gate_request (CHILD_RLS_TABLES, checked by the key expression, not by tenant_id).
 The CI DB does not create tenant_tour_versions (migration 001 is skipped), so each test creates
-conftest's stand-in and re-applies 229 and 237 in its own rolled-back transaction.
+conftest's stand-in and re-applies 229, 237, 239 and 241 in its own rolled-back transaction (239 after
+undo_241_for_239_reapply: its guard refuses RLS on angle_gate_option).
 
 Write side: a WHERE-less UPDATE touches only the own tenant's rows, a row can be neither handed to nor
 inserted for another tenant (or under ''), and platform facts can be read but never written or
-re-scoped (229's WITH CHECK; before 229 this was a strict xfail). tenant_integrations is granted only
-SELECT and DELETE (237): a WHERE-less DELETE removes only the own tenant's row (0 under a forged uuid or
-''), and INSERT/UPDATE are refused by the missing grant.
+re-scoped (229's WITH CHECK; before 229 this was a strict xfail). tenant_integrations is granted SELECT
+and DELETE (237) and the columns the connect UPSERT and the test-connection UPDATE write (241): a
+WHERE-less DELETE / UPDATE reaches only the own tenant's row (0 under a forged uuid or ''), a row cannot
+be inserted for another tenant, and tenant_id / integration_type are not updatable. angle_gate_option is
+granted SELECT and UPDATE (chosen) only (241).
 
 The legacy FORCE-RLS tables (004/006/008 policies TO public; migration 239): published_tours, raw_tours
 and seo_context show the tenant its own rows plus the AA master rows (aa_app_user_aa_master_read, the
 T2 read path) and never another tenant's; generated_content, quality_scores, content_exports,
 webhook_deliveries and pipeline_runs show only the own tenant's rows; '' gives no rows instead of
 22P02 on all eight. Master rows stay read-only even with a write grant. acp_shared.acp_output_rules
-(RLS on, no policy) is deny-all for the tenant role. ALL_RLS_TABLES lists the 15 RLS tables of Dev
-(AA-817 plan §0); each is checked here. Tables without RLS lose the tenant role's writes (239).
+(RLS on, no policy) is deny-all for the tenant role. ALL_RLS_TABLES lists the 16 RLS tables of Dev
+after 241 (AA-817 plan §0 + angle_gate_option); each is checked here. On a relation without RLS the
+tenant role holds no privilege at all, the catalog contract excepted (241, AA-859 plan D1:
+NO_PRIVILEGE_WITHOUT_RLS_SQL).
 
 The CI DB skips 007b/008, so aa_app_user has none of Dev's SELECT grants on the five non-master legacy
 tables (nor SELECT/INSERT/UPDATE on pipeline_runs): the fixture grants them in its transaction, as on
@@ -42,13 +49,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TTV_STANDIN_DDL  # noqa: E402
-
-MIGRATION_229 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                             "229_tenant_rls_policies.sql")
-MIGRATION_237 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                             "237_tenant_integrations_rls.sql")
-MIGRATION_239 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                             "239_tenant_master_read_nullif.sql")
+from _rls_fixture_helpers import (  # noqa: E402
+    NO_PRIVILEGE_WITHOUT_RLS_SQL, migration_body, undo_241_for_239_reapply,
+)
 
 TENANT_ROLE = "aa_app_user"
 # table -> True when rows with tenant_id NULL (platform scope) are visible to every tenant by design
@@ -60,8 +63,17 @@ TENANT_TABLES = {
     "gold_aa_internal.tenant_tour_versions": False,
     "shared.tenant_integrations": False,
 }
-# tables the tenant role may read and DELETE but not INSERT/UPDATE (237: the disconnect route only)
-DELETE_ONLY_TABLES = {"shared.tenant_integrations"}
+# tables the tenant role writes through column grants only (241: connect / test-connection columns; 237:
+# DELETE): the generic `SET tenant_id = tenant_id` write tests do not apply, the dedicated ones below do
+COLUMN_WRITE_TABLES = {"shared.tenant_integrations"}
+# RLS tables without a tenant column: table -> (primary key, the row's tenant through its parent). The
+# key is evaluated by the (unfiltered) superuser, never by the tenant role, whose RLS on the parent
+# would turn a leaked row's tenant into NULL.
+CHILD_RLS_TABLES = {
+    "acp_shared.angle_gate_option": (
+        "option_id",
+        "(SELECT r.tenant_id FROM acp_shared.angle_gate_request r WHERE r.request_id = t.request_id)"),
+}
 
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
 # legacy FORCE-RLS tables (004/006/008, tenant_isolation TO public, NULLIF since 225/239) -> True when the
@@ -77,16 +89,7 @@ LEGACY_TABLES = {
     "shared.pipeline_runs": False,
 }
 OUTPUT_RULES = "acp_shared.acp_output_rules"   # RLS on, no policy: deny-all for every non-owner (229)
-ALL_RLS_TABLES = set(TENANT_TABLES) | set(LEGACY_TABLES) | {OUTPUT_RULES}
-# tables WITHOUT RLS on which the tenant role may no longer write (239, plan critique C1)
-NO_RLS_NO_WRITE_TABLES = ("acp_shared.angle_gate_option", "acp_shared.tenant_atom_state", "acp_shared.year_plan")
-# Dev's tenant-role grants on the legacy tables that the CI DB lacks (007b/008 are skipped in CI)
-DEV_LEGACY_GRANTS = (
-    "GRANT USAGE ON SCHEMA gold_aa_internal, silver_aa_internal, shared TO aa_app_user",
-    "GRANT SELECT ON silver_aa_internal.generated_content, silver_aa_internal.quality_scores, "
-    "gold_aa_internal.content_exports, gold_aa_internal.webhook_deliveries TO aa_app_user",
-    "GRANT SELECT, INSERT, UPDATE ON shared.pipeline_runs TO aa_app_user",
-)
+ALL_RLS_TABLES = set(TENANT_TABLES) | set(CHILD_RLS_TABLES) | set(LEGACY_TABLES) | {OUTPUT_RULES}
 # stand-in for the live-only acp_output_rules (no CIS migration creates it; Dev: RLS on, no policy)
 OUTPUT_RULES_STANDIN_DDL = """
     CREATE TABLE IF NOT EXISTS acp_shared.acp_output_rules (
@@ -99,11 +102,6 @@ OUTPUT_RULES_STANDIN_DDL = """
 """
 
 
-def _migration_body(path: str) -> str:
-    with open(path) as f:
-        return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
-
-
 @pytest.fixture
 def cur():
     conn = psycopg2.connect(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
@@ -112,11 +110,11 @@ def cur():
     try:
         c.execute(TTV_STANDIN_DDL)
         c.execute(OUTPUT_RULES_STANDIN_DDL)
-        c.execute(_migration_body(MIGRATION_229))
-        c.execute(_migration_body(MIGRATION_237))
-        for grant in DEV_LEGACY_GRANTS:
-            c.execute(grant)
-        c.execute(_migration_body(MIGRATION_239))
+        c.execute(migration_body(229))
+        c.execute(migration_body(237))
+        undo_241_for_239_reapply(c)            # 239's guard refuses RLS on angle_gate_option; grants Dev's
+        c.execute(migration_body(239))         # legacy-table grants
+        c.execute(migration_body(241))
         yield c
     finally:
         conn.rollback()
@@ -131,10 +129,12 @@ def _tenant(c):
 
 
 def _seed(c, tid):
-    """One row per tenant table for this tenant."""
+    """One row per tenant table (and one angle_gate_option under the request) for this tenant."""
     c.execute("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, status) "
               "VALUES (%s, 'aa817-atom', 'approved') RETURNING request_id", (tid,))
     req = c.fetchone()[0]
+    c.execute("INSERT INTO acp_shared.angle_gate_option (request_id, idx, name, why_it_works, formula_fit, "
+              "best_final_style) VALUES (%s, 0, 'aa817', 'x', 'x', 'x')", (req,))
     c.execute("INSERT INTO acp_shared.content_piece (tenant_id, angle_gate_request_id, attempt_number, "
               "content_text, status, gate_ledger, repair_log) "
               "VALUES (%s, %s, 1, 'x', 'approved', %s::jsonb, '[]'::jsonb) RETURNING piece_id",
@@ -190,7 +190,7 @@ def test_tenant_role_is_not_privileged(cur):
     """The premise of every check below: the tenant role is filtered by RLS, owns none of the tables."""
     cur.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = %s", (TENANT_ROLE,))
     assert cur.fetchone() == (False, False)
-    for table in TENANT_TABLES:
+    for table in sorted(set(TENANT_TABLES) | set(CHILD_RLS_TABLES)):
         cur.execute("SELECT c.relrowsecurity, pg_has_role(%s, c.relowner, 'USAGE') FROM pg_class c "
                     "WHERE c.oid = %s::regclass", (TENANT_ROLE, table))
         rls, owns = cur.fetchone()
@@ -225,7 +225,7 @@ def test_owner_still_sees_every_tenant(cur, two_tenants):
 # Write side. Every policy here is FOR ALL TO aa_app_user with an explicit WITH CHECK (229), so a
 # WHERE-less UPDATE touches only the own tenant's rows and a row can neither be written for nor handed
 # to another tenant. facts is split: tenant rows like the others, platform rows read-only.
-WRITE_TABLES = sorted(set(TENANT_TABLES) - DELETE_ONLY_TABLES)
+WRITE_TABLES = sorted(set(TENANT_TABLES) - COLUMN_WRITE_TABLES)
 _INSERT_FOR = {
     "acp_shared.angle_gate_request": ("INSERT INTO acp_shared.angle_gate_request (tenant_id, atom_id, status) "
                                       "VALUES (%s, 'aa817-atom', 'approved')"),
@@ -274,10 +274,37 @@ def test_tenant_role_cannot_write_platform_facts(cur, two_tenants):
                           "WHERE tenant_id IS NOT NULL")
 
 
-# shared.tenant_integrations (237): the tenant pool may read and DELETE (DELETE /v1/integrations/{type},
-# AA-815), nothing else. The route filters by tenant_id; these checks drop the filter on purpose.
+# shared.tenant_integrations (237 + 241): the tenant pool may read, DELETE (DELETE /v1/integrations/{type},
+# AA-815) and write the columns of the connect UPSERT and the test-connection UPDATE (W9, AA-859). The
+# routes filter by tenant_id; these checks drop the filter on purpose.
 
-@pytest.mark.parametrize("table", sorted(DELETE_ONLY_TABLES))
+# api/routers/v1_integrations.py save_wordpress / save_facebook (connect) and test_* (verify), verbatim
+# but for the placeholders
+_CONNECT_UPSERT = """
+    INSERT INTO shared.tenant_integrations
+        (tenant_id, integration_type, config, secret_key, connected_at)
+    VALUES (%s::uuid, 'wordpress', %s::jsonb, %s, now())
+    ON CONFLICT (tenant_id, integration_type) DO UPDATE SET
+        config = EXCLUDED.config,
+        secret_key = EXCLUDED.secret_key,
+        updated_at = now()
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+_VERIFY_OK = """
+    UPDATE shared.tenant_integrations
+    SET last_verified_at = now(), last_verify_error = NULL, updated_at = now()
+    WHERE tenant_id = %s::uuid AND integration_type = 'wordpress'
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+_VERIFY_FAILED = """
+    UPDATE shared.tenant_integrations
+    SET last_verify_error = %s, updated_at = now()
+    WHERE tenant_id = %s::uuid AND integration_type = 'wordpress'
+    RETURNING config, connected_at, last_verified_at, last_verify_error
+"""
+
+
+@pytest.mark.parametrize("table", sorted(COLUMN_WRITE_TABLES))
 def test_forged_tenant_deletes_no_foreign_rows(cur, two_tenants, table):
     a, b = two_tenants
     for guc in (str(uuid.uuid4()), ""):
@@ -292,13 +319,105 @@ def test_forged_tenant_deletes_no_foreign_rows(cur, two_tenants, table):
         assert {r[0] for r in c.fetchall()} == {b}, "the other tenant's row must survive"
 
 
-@pytest.mark.parametrize("table", sorted(DELETE_ONLY_TABLES))
-def test_tenant_role_cannot_insert_or_update_delete_only_tables(cur, two_tenants, table):
-    """Connect / test-connection stay on the main pool: no INSERT or UPDATE grant (237), and no
-    TRUNCATE, which RLS does not filter."""
-    a, _ = two_tenants
-    for sql, params in ((f"UPDATE {table} SET updated_at = now()", ()),
-                        (f"INSERT INTO {table} (tenant_id, integration_type) VALUES (%s, 'facebook')", (a,)),
+def test_tenant_integrations_connect_and_verify_run_on_the_tenant_role(cur, two_tenants):
+    """The real connect UPSERT (new row and conflict path) and both verify UPDATEs work for the own
+    tenant under the 241 column grants (a missing column grant would be 42501 -> 500 after the flip)."""
+    a, b = two_tenants
+    with _as_tenant(cur, a) as c:
+        c.execute(_CONNECT_UPSERT.replace("'wordpress'", "'facebook'"), (a, "{}", f"acp/social/{a}"))
+        assert c.rowcount == 1                                  # new row
+        c.execute(_CONNECT_UPSERT, (a, '{"site_url": "https://x.invalid"}', f"acp/cms/{a}"))
+        assert c.rowcount == 1                                  # ON CONFLICT DO UPDATE of the seeded row
+        c.execute(_VERIFY_OK, (a,))
+        assert c.rowcount == 1
+        c.execute(_VERIFY_FAILED, ("401 from site", a))
+        assert c.rowcount == 1
+        c.execute("RESET ROLE")
+        c.execute("SELECT count(*) FROM shared.tenant_integrations WHERE tenant_id = %s", (b,))
+        assert c.fetchone()[0] == 1, "the other tenant's row must be untouched"
+
+
+def test_tenant_integrations_writes_stay_in_the_own_tenant(cur, two_tenants):
+    a, b = two_tenants
+    table = "shared.tenant_integrations"
+    for guc, expected in ((a, 1), (str(uuid.uuid4()), 0), ("", 0)):
+        with _as_tenant(cur, guc) as c:
+            c.execute(f"UPDATE {table} SET updated_at = now()")         # no WHERE on purpose
+            assert c.rowcount == expected, guc
+    with _as_tenant(cur, a) as c:                                       # a row for another tenant (WITH CHECK)
+        _rls_violation(c, _CONNECT_UPSERT.replace("'wordpress'", "'facebook'"), (b, "{}", "x"))
+    with _as_tenant(cur, "") as c:                                      # '' is no tenant
+        _rls_violation(c, _CONNECT_UPSERT.replace("'wordpress'", "'facebook'"), (a, "{}", "x"))
+    # No case for "b's existing row through ON CONFLICT": Postgres checks the INSERT WITH CHECK before
+    # conflict arbitration, so it is the first case again, and tenant_id is part of the conflict key and
+    # not updatable, so the DO UPDATE path only ever reaches the own tenant's row.
+
+
+def test_tenant_integrations_columns_outside_the_grant_are_refused(cur, two_tenants):
+    """tenant_id and integration_type are not updatable (a row cannot be moved to another tenant or
+    channel), no other column is insertable, and no TRUNCATE, which RLS does not filter."""
+    a, b = two_tenants
+    table = "shared.tenant_integrations"
+    for sql, params in ((f"UPDATE {table} SET integration_type = 'facebook'", ()),
+                        (f"UPDATE {table} SET tenant_id = %s", (b,)),
+                        (f"UPDATE {table} SET created_at = now()", ()),
+                        (f"INSERT INTO {table} (id, tenant_id, integration_type, config) "
+                         "VALUES (gen_random_uuid(), %s, 'facebook', '{}'::jsonb)", (a,)),
+                        (f"TRUNCATE {table}", ())):
+        with _as_tenant(cur, a) as c:
+            with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
+                c.execute(sql, params)
+
+
+# ── RLS tables without a tenant column (241: angle_gate_option through its parent request) ────────────
+
+def _visible_child_tenants(c, table, guc):
+    """As the tenant role with app.tenant_id = guc, the rows a WHERE-less query returns, mapped to their
+    tenant by the superuser (see CHILD_RLS_TABLES)."""
+    pk, key = CHILD_RLS_TABLES[table]
+    with _as_tenant(c, guc):
+        c.execute(f"SELECT {pk}::text FROM {table}")            # no WHERE on purpose
+        ids = [r[0] for r in c.fetchall()]
+    c.execute(f"SELECT DISTINCT {key}::text FROM {table} t WHERE t.{pk}::text = ANY(%s)", (ids,))
+    return {r[0] for r in c.fetchall()}
+
+
+@pytest.mark.parametrize("table", sorted(CHILD_RLS_TABLES))
+def test_child_forged_tenant_reads_no_foreign_rows(cur, two_tenants, table):
+    a, b = two_tenants
+    assert _visible_child_tenants(cur, table, a) == {a}
+    assert _visible_child_tenants(cur, table, b) == {b}
+    assert _visible_child_tenants(cur, table, str(uuid.uuid4())) == set()
+    assert _visible_child_tenants(cur, table, "") == set()
+
+
+@pytest.mark.parametrize("table", sorted(CHILD_RLS_TABLES))
+def test_owner_still_sees_every_tenant_of_child_tables(cur, two_tenants, table):
+    """Sanity check of the fixture: the rows exist, so the empty sets above come from RLS."""
+    a, b = two_tenants
+    _, key = CHILD_RLS_TABLES[table]
+    cur.execute(f"SELECT count(DISTINCT {key}) FROM {table} t WHERE {key}::text = ANY(%s)", ([a, b],))
+    assert cur.fetchone()[0] == 2, table
+
+
+def test_angle_gate_option_writes(cur, two_tenants):
+    """241: SELECT + UPDATE (chosen) only. A WHERE-less UPDATE reaches only the own tenant's options;
+    INSERT (the T8 worker's, on the main pool) and every other column are refused by the grant."""
+    a, b = two_tenants
+    table = "acp_shared.angle_gate_option"
+    for guc, expected in ((a, 1), (b, 1), (str(uuid.uuid4()), 0), ("", 0)):
+        with _as_tenant(cur, guc) as c:
+            c.execute(f"UPDATE {table} SET chosen = chosen")    # no WHERE on purpose
+            assert c.rowcount == expected, guc
+    cur.execute("SELECT request_id FROM acp_shared.angle_gate_request WHERE tenant_id = %s", (a,))
+    own_request = cur.fetchone()[0]
+    cur.execute("SELECT request_id FROM acp_shared.angle_gate_request WHERE tenant_id = %s", (b,))
+    other_request = cur.fetchone()[0]
+    for sql, params in ((f"INSERT INTO {table} (request_id, idx, name, why_it_works, formula_fit, best_final_style) "
+                         "VALUES (%s, 1, 'n', 'x', 'x', 'x')", (own_request,)),
+                        (f"UPDATE {table} SET request_id = %s", (other_request,)),
+                        (f"UPDATE {table} SET name = name", ()),
+                        (f"DELETE FROM {table}", ()),
                         (f"TRUNCATE {table}", ())):
         with _as_tenant(cur, a) as c:
             with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
@@ -342,8 +461,9 @@ def _ours(tenants, a, b):
 
 
 def test_every_rls_table_is_covered(cur):
-    """The 15 RLS tables of Dev (AA-817 plan §0) all have RLS here, and none is owned by the tenant role."""
-    assert len(ALL_RLS_TABLES) == 15
+    """The 16 RLS tables of Dev after 241 (AA-817 plan §0 + angle_gate_option) all have RLS here, and none
+    is owned by the tenant role."""
+    assert len(ALL_RLS_TABLES) == 16
     for table in sorted(ALL_RLS_TABLES):
         cur.execute("SELECT c.relrowsecurity, pg_has_role(%s, c.relowner, 'USAGE') FROM pg_class c "
                     "WHERE c.oid = %s::regclass", (TENANT_ROLE, table))
@@ -412,15 +532,13 @@ def test_output_rules_is_deny_all_for_the_tenant_role(cur):
                 c.execute(f"SELECT count(*) FROM {OUTPUT_RULES}")
 
 
-@pytest.mark.parametrize("table", NO_RLS_NO_WRITE_TABLES)
-def test_tenant_role_cannot_write_tables_without_rls(cur, table):
-    """No RLS there, so a tenant-pool write could reach any tenant's rows: 239 revokes them."""
-    cur.execute("SELECT has_table_privilege(%s, %s, 'INSERT, UPDATE, DELETE, TRUNCATE')", (TENANT_ROLE, table))
-    assert not cur.fetchone()[0], table
-    with _as_tenant(cur, str(uuid.uuid4())) as c:
-        with pytest.raises(psycopg2.errors.InsufficientPrivilege, match="permission denied"):
-            c.execute(f"UPDATE {table} SET tenant_id = tenant_id" if table != "acp_shared.angle_gate_option"
-                      else f"UPDATE {table} SET chosen = chosen")
+def test_tenant_role_has_no_privilege_on_any_relation_without_rls(cur):
+    """AA-859 plan D1 (241): without RLS a grant to the tenant role is a grant on every tenant's rows, so
+    it holds none (table or column level), the catalog contract (SELECT on catalog_owner's catalog.*
+    views, 225 / 228) excepted. Also holds after test_aa679 / test_aa712_228 re-apply 225 / 228 with
+    commit: they grant only that contract."""
+    cur.execute(NO_PRIVILEGE_WITHOUT_RLS_SQL)
+    assert cur.fetchall() == []
 
 
 def test_tenant_pool_still_reads_angle_gate_option(cur):

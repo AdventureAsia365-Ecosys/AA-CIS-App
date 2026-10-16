@@ -487,6 +487,27 @@ vs LLM cost → margin; same cost definition as billing), `/quality` (T10 gate v
 markets from `tenant_seo_config`, `segment_research_log` coverage over the places in the tenant's
 tours, planning markets, the tenant's `unmapped_market_requests`). None of it is in a tenant API.
 
+### Tenant DB role (`aa_app_user`, AA-817 / AA-859)
+
+Tenant routes moved off the main pool run on the **tenant pool** (`acquire_scoped_conn`, per-route
+Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`) and sets
+`app.tenant_id` for the transaction; isolation is RLS, not the query's own `WHERE tenant_id`.
+
+- **RLS template** (229): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner, i.e. the main pool and
+  the worker, stays exempt), policy `tenant_isolation` `FOR ALL TO aa_app_user`, USING and WITH CHECK on
+  `NULLIF(current_setting('app.tenant_id', true), '')::uuid` (`''` = no rows, never an error). A table
+  without a tenant column goes through its parent: `acp_shared.angle_gate_option` matches options of
+  `angle_gate_request` rows of the tenant (241).
+- **No privilege without RLS** (241): `aa_app_user` holds no privilege, table or column level, on any
+  relation without RLS. The one exception is the cross-app catalog contract: `SELECT` on the
+  `catalog.v_*` views owned by `catalog_owner` (225 / 228), which other apps read too. A new table the
+  tenant pool needs gets RLS and its grants in the same migration. Enforced by
+  `NO_PRIVILEGE_WITHOUT_RLS_SQL` (`tests/integration/_rls_fixture_helpers.py`), the same query as 241's
+  guard 4 and the AA-859 probe.
+- Write grants are column grants where a route writes only some columns (`tenant_integrations`
+  connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
+  channel even inside its own rows.
+
 ## Boundaries — what this repo does NOT do
 
 - It does not provision AWS resources or OIDC roles (that is AA-CIS-Infra).
