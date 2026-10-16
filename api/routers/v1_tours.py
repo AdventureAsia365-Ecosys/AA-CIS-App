@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from pydantic import BaseModel as _BM
 import asyncpg
-from api.core.aa544_tenant_pool import T2_VERSION_WRITE_FLAG, acquire_scoped_conn
+from api.core.aa544_tenant_pool import T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn
 from api.routers.auth import verify_tenant_jwt
 from api.routers.admin import PLAN_LIMITS
 from api.routers._billing import no_plan_usage, usage_row_to_dict
@@ -50,6 +50,83 @@ def get_pool(request: Request):
 
 # ── P3-S4: Shared Pool Browse ─────────────────────────────────────────────────
 
+# AA-859 W5 (D5a) — GET /v1/tours/pool, /my-versions and /versions/{id} run on the aa_app_user tenant pool
+# behind T2_VERSION_READS_FLAG, one acquire_scoped_conn block per request, fail closed. aa_app_user reads
+# the tenant's own tenant_tour_versions rows (229 RLS) and the AA master rows of published_tours /
+# raw_tours (239 aa_app_user_aa_master_read). Flag off: the admin pool and the pre-AA-859 SQL, unchanged.
+# Each request logs one `aa859_t2_version_read route=... used_tenant_pool=...` line. /{id}/full (tenant
+# branch), /{id} and /versions/{id}/export-docx are still on the admin pool (D5b follow-up).
+_AA_MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
+
+
+def _log_t2_read(route: str, tenant_id, used_tenant_pool: bool, **extra) -> None:
+    logger.info("aa859_t2_version_read", route=route, tenant_id=str(tenant_id),
+                used_tenant_pool=used_tenant_pool, **extra)
+
+
+# AA-859 MAIN exception: shared.job has no tenant column (tenant only in `payload`), is worker-hot, and
+# aa_app_user has no SELECT on it after 241 (plan D2). On the tenant pool the version rows come back with
+# their job_id through RLS; the statuses are read here on MAIN, after the tenant block, keyed only by those
+# ids. Flag off keeps the pre-AA-859 LEFT JOIN shared.job instead.
+_JOB_STATUS_SQL = "SELECT id, status FROM shared.job WHERE id = ANY($1::uuid[])"
+_JOB_JOIN = "LEFT JOIN shared.job j ON j.id = ttv.job_id"
+
+
+async def _job_statuses(pool, job_ids) -> dict:
+    """{job_id text: status} for the given ids (None ignored); no query when there is none."""
+    ids = sorted({str(j) for j in job_ids if j is not None})
+    if not ids:
+        return {}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_JOB_STATUS_SQL, ids)
+    return {str(r["id"]): r["status"] for r in rows}
+
+
+# GET /v1/tours/pool. `{where}` is built from _POOL_BASE_CONDITIONS + the filters; `{tid}` is the
+# placeholder number of the caller's tenant id in the `already_rewritten` EXISTS.
+_POOL_BASE_CONDITIONS = (
+    f"pt.tenant_id = '{_AA_MASTER_TENANT}'::uuid",
+    "pt.master_status = 'active'",
+    "pt.deleted_at IS NULL",
+)
+_POOL_COUNT_SQL = """
+    SELECT COUNT(*)
+    FROM gold_aa_internal.published_tours pt
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {where}
+"""
+_POOL_REWRITTEN_TENANT_COND = "ttv.tenant_id = ${tid}::uuid"
+_POOL_ROWS_SQL = """
+    SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
+           pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
+           pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
+           pt.published_at,
+           rt.country, rt.duration, rt.price_raw,
+           EXISTS(
+               SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
+               WHERE ttv.published_tour_id = pt.id
+                 AND {rewritten_cond}
+           ) AS already_rewritten
+    FROM gold_aa_internal.published_tours pt
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {where}
+    ORDER BY {order_by}
+    LIMIT ${limit} OFFSET ${offset}
+"""
+# Countries for the filter dropdown: same master_status/deleted_at gate as the listing, so a
+# trashed/deactivated tour's country doesn't show as a filterable option.
+_POOL_COUNTRIES_SQL = f"""
+    SELECT DISTINCT rt.country
+    FROM gold_aa_internal.published_tours pt
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    WHERE pt.tenant_id = '{_AA_MASTER_TENANT}'::uuid
+      AND pt.master_status = 'active'
+      AND pt.deleted_at IS NULL
+      AND rt.country IS NOT NULL
+    ORDER BY rt.country
+"""
+
+
 @router.get("/pool")
 async def browse_pool(
     request: Request,
@@ -63,7 +140,6 @@ async def browse_pool(
     sort: str = Query("newest"),
 ):
     """Browse AA shared pool (published_tours from aa_internal).
-    All active tenants can read the pool — RLS bypassed via aa_internal filter.
 
     AA-796: no A1 quality score on the tenant side — the `min_quality` filter, the
     `sort=quality` order and the `quality_score` column are gone. An old client still sending
@@ -71,30 +147,18 @@ async def browse_pool(
     unknown query params).
     """
     tenant_id = tenant["sub"]
-    # INTENTIONAL: cross-tenant read via admin pool — see AA-544. All 3 queries below scan
-    # gold_aa_internal.published_tours filtered to the aa_internal sentinel tenant (the shared
-    # pool itself), not the caller's own tenant — this is AA-544's narrow, deliberate admin-pool
-    # exception (Round 2 decision (a)), not RLS accidentally not applying. All active tenants
-    # read the pool this way, unconditionally.
-    #
-    # Nothing in this function is eligible to move to the aa_app_user tenant pool: the
-    # `already_rewritten` EXISTS subquery in the `rows` query below does reference the caller's
-    # OWN tenant_id (gold_aa_internal.tenant_tour_versions), but as a correlated sub-select
-    # inside the same cross-tenant SELECT — not a separable per-tenant query. Splitting it into
-    # its own tenant-pool round trip would add a second DB call + in-Python merge for zero
-    # behavior change; not worth it unless this function's shape changes for an unrelated reason.
-    pool = request.app.state.pool
+    # The listing is the AA master tenant's published tours (the shared pool itself), read by every
+    # active tenant. AA-859 W5: on the tenant pool aa_app_user reads them through 239's master-read
+    # policies, and the `already_rewritten` EXISTS sees only the caller's own tenant_tour_versions (229
+    # RLS) even if its tenant condition were wrong. Flag off: the admin pool, as before (AA-544 Round 2
+    # decision (a)).
     offset = (page - 1) * page_size
 
     # AA-441 (bug #6, AA-438-00-SUMMARY #8): was missing the master_status/deleted_at gate that
     # acp_contract.v_trip_registry already applies (migrations 078/083/090) — a tour an admin
     # trashes/deactivates in Master Content stayed fully visible and rewritable to every tenant
     # here. Same condition v_trip_registry uses: master_status='active' AND deleted_at IS NULL.
-    conditions = [
-        "pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid",
-        "pt.master_status = 'active'",
-        "pt.deleted_at IS NULL",
-    ]
+    conditions = list(_POOL_BASE_CONDITIONS)
     params: list = []
 
     if country:
@@ -116,48 +180,19 @@ async def browse_pool(
 
     order_by = "pt.published_at DESC"  # AA-796 — the only tenant sort; `sort` kept for old clients
     where = "WHERE " + " AND ".join(conditions)
+    # tenant_id added as last param for the already_rewritten subquery
+    params_paged = params + [page_size, offset, tenant_id]
+    rows_sql = _POOL_ROWS_SQL.format(
+        rewritten_cond=_POOL_REWRITTEN_TENANT_COND.format(tid=len(params) + 3),
+        where=where, order_by=order_by, limit=len(params) + 1, offset=len(params) + 2)
 
-    async with pool.acquire() as conn:
-        total = await conn.fetchval(f"""
-            SELECT COUNT(*)
-            FROM gold_aa_internal.published_tours pt
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            {where}
-        """, *params)
-
-        # tenant_id added as last param for already_rewritten subquery
-        params_paged = params + [page_size, offset, tenant_id]
-        tid_idx = len(params) + 3  # position of tenant_id in params_paged
-        rows = await conn.fetch(f"""
-            SELECT pt.id, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
-                   pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
-                   pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
-                   pt.published_at,
-                   rt.country, rt.duration, rt.price_raw,
-                   EXISTS(
-                       SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
-                       WHERE ttv.published_tour_id = pt.id
-                         AND ttv.tenant_id = ${tid_idx}::uuid
-                   ) AS already_rewritten
-            FROM gold_aa_internal.published_tours pt
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            {where}
-            ORDER BY {order_by}
-            LIMIT ${len(params)+1} OFFSET ${len(params)+2}
-        """, *params_paged)
-
-        # Countries for filter dropdown — same master_status/deleted_at gate as the main listing
-        # above, so a trashed/deactivated tour's country doesn't show as a filterable option.
-        countries = await conn.fetch("""
-            SELECT DISTINCT rt.country
-            FROM gold_aa_internal.published_tours pt
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            WHERE pt.tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
-              AND pt.master_status = 'active'
-              AND pt.deleted_at IS NULL
-              AND rt.country IS NOT NULL
-            ORDER BY rt.country
-        """)
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        total = await conn.fetchval(_POOL_COUNT_SQL.format(where=where), *params)
+        rows = await conn.fetch(rows_sql, *params_paged)
+        countries = await conn.fetch(_POOL_COUNTRIES_SQL)
+    _log_t2_read("pool", tenant_id, used_tenant_pool, count=len(rows))
 
     return {
         "data": [project_tour(r) for r in rows],
@@ -505,6 +540,52 @@ async def trigger_rewrite(
 
 # ── P3-S4: My Versions (Tenant Catalog) ──────────────────────────────────────
 
+# GET /v1/tours/my-versions. `{where}` starts with _MY_VERSIONS_TENANT_COND; `{job_col}` / `{job_join}`:
+# flag off, the job status joined from shared.job (pre-AA-859); tenant pool, the job id (_MY_VERSIONS_JOB_SPLIT).
+_MY_VERSIONS_TENANT_COND = "ttv.tenant_id = $1::uuid"
+_MY_VERSIONS_COUNT_SQL = """
+    SELECT COUNT(*)
+    FROM gold_aa_internal.tenant_tour_versions ttv
+    JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {where}
+"""
+_MY_VERSIONS_ROWS_SQL = """
+    SELECT ttv.id, ttv.version_number, ttv.status,
+           ttv.edit_source, ttv.rewrite_language, ttv.created_at,
+           ttv.rewritten_content,
+           pt.id AS published_tour_id, pt.tour_id, pt.aa_name,
+           rt.country, rt.duration,
+           -- AA-652 — the rewrite job's status (queued/running/succeeded/failed/...),
+           -- NULL for manual edits and pre-AA-652 rows. No job error text (tenant-safe).
+           {job_col}
+    FROM gold_aa_internal.tenant_tour_versions ttv
+    JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {job_join}
+    {where}
+    ORDER BY ttv.created_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+"""
+_MY_VERSIONS_JOB_JOINED = {"job_col": "j.status AS job_status", "job_join": _JOB_JOIN}
+_MY_VERSIONS_JOB_SPLIT = {"job_col": "ttv.job_id AS _job_id, NULL::text AS job_status", "job_join": ""}
+
+
+async def _with_job_status(pool, rows, job_id_key: str) -> list:
+    """Tenant-pool rows -> dicts with `job_status` filled from shared.job on MAIN (D2 exception, see
+    _JOB_STATUS_SQL). `_job_id` (my-versions' helper column) is dropped; same keys as the joined form."""
+    statuses = await _job_statuses(pool, [r[job_id_key] for r in rows])
+    out = []
+    for r in rows:
+        d = dict(r)
+        job_id = d[job_id_key]
+        if job_id_key == "_job_id":
+            del d["_job_id"]  # my-versions' helper column, not part of the response
+        d["job_status"] = statuses.get(str(job_id)) if job_id is not None else None  # keeps the key's place
+        out.append(d)
+    return out
+
+
 @router.get("/my-versions")
 async def list_my_versions(
     request: Request,
@@ -516,10 +597,9 @@ async def list_my_versions(
 ):
     """List tenant's own rewritten versions."""
     tenant_id = tenant["sub"]
-    pool = request.app.state.pool
     offset = (page - 1) * page_size
 
-    conditions = ["ttv.tenant_id = $1::uuid"]
+    conditions = [_MY_VERSIONS_TENANT_COND]
     params: list = [tenant_id]
 
     if status:
@@ -533,33 +613,16 @@ async def list_my_versions(
 
     where = "WHERE " + " AND ".join(conditions)
 
-    async with pool.acquire() as conn:
-        total = await conn.fetchval(f"""
-            SELECT COUNT(*)
-            FROM gold_aa_internal.tenant_tour_versions ttv
-            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            {where}
-        """, *params)
-
-        params_paged = params + [page_size, offset]
-        rows = await conn.fetch(f"""
-            SELECT ttv.id, ttv.version_number, ttv.status,
-                   ttv.edit_source, ttv.rewrite_language, ttv.created_at,
-                   ttv.rewritten_content,
-                   pt.id AS published_tour_id, pt.tour_id, pt.aa_name,
-                   rt.country, rt.duration,
-                   -- AA-652 — the rewrite job's status (queued/running/succeeded/failed/...),
-                   -- NULL for manual edits and pre-AA-652 rows. No job error text (tenant-safe).
-                   j.status AS job_status
-            FROM gold_aa_internal.tenant_tour_versions ttv
-            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            LEFT JOIN shared.job j ON j.id = ttv.job_id
-            {where}
-            ORDER BY ttv.created_at DESC
-            LIMIT ${len(params)+1} OFFSET ${len(params)+2}
-        """, *params_paged)
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        total = await conn.fetchval(_MY_VERSIONS_COUNT_SQL.format(where=where), *params)
+        job = _MY_VERSIONS_JOB_SPLIT if used_tenant_pool else _MY_VERSIONS_JOB_JOINED
+        rows = await conn.fetch(_MY_VERSIONS_ROWS_SQL.format(
+            where=where, limit=len(params) + 1, offset=len(params) + 2, **job), *params, page_size, offset)
+    _log_t2_read("my_versions", tenant_id, used_tenant_pool, count=len(rows))
+    if used_tenant_pool:  # after the tenant block: the tenant connection is released before MAIN
+        rows = await _with_job_status(request.app.state.pool, rows, "_job_id")
 
     return {
         "data": [project_version(r) for r in rows],
@@ -749,6 +812,33 @@ async def get_tour(
 
 # AA-796 — the hidden version fields now live in api/routers/_tenant_projection.py.
 
+# GET /v1/tours/versions/{version_id}. `{job_col}` / `{job_join}` as in _MY_VERSIONS_ROWS_SQL; on the tenant
+# pool `job_status` is filled from `ttv.job_id` (part of ttv.*) on MAIN.
+_VERSION_TENANT_COND = "ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid"
+_VERSION_SQL = """
+    SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
+           pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
+           pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
+           rt.country, rt.duration, rt.price_raw,
+           rt.inclusions, rt.exclusions,
+           {job_col}  -- AA-652
+    FROM gold_aa_internal.tenant_tour_versions ttv
+    JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+    LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
+    {job_join}
+    WHERE {tenant_cond}
+"""
+_VERSION_JOB_JOINED = {"job_col": "j.status AS job_status", "job_join": _JOB_JOIN}
+_VERSION_JOB_SPLIT = {"job_col": "NULL::text AS job_status", "job_join": ""}
+_VERSION_HISTORY_TENANT_COND = "tenant_id = $1::uuid"
+_VERSION_HISTORY_SQL = """
+    SELECT id, version_number, status, edit_source, created_at
+    FROM gold_aa_internal.tenant_tour_versions
+    WHERE {tenant_cond} AND published_tour_id = $2::uuid
+    ORDER BY version_number ASC
+"""
+
+
 @router.get("/versions/{version_id}")
 async def get_version(
     version_id: str,
@@ -757,33 +847,23 @@ async def get_version(
 ):
     """Get version detail with AA original for before/after diff."""
     tenant_id = tenant["sub"]
-    pool = request.app.state.pool
 
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
-                   pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
-                   pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
-                   rt.country, rt.duration, rt.price_raw,
-                   rt.inclusions, rt.exclusions,
-                   j.status AS job_status  -- AA-652
-            FROM gold_aa_internal.tenant_tour_versions ttv
-            JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
-            LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-            LEFT JOIN shared.job j ON j.id = ttv.job_id
-            WHERE ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid
-        """, version_id, tenant_id)
+    history = []
+    async with acquire_scoped_conn(
+        request, tenant_id, T2_VERSION_READS_FLAG, fail_closed=True,
+    ) as (conn, used_tenant_pool):
+        job = _VERSION_JOB_SPLIT if used_tenant_pool else _VERSION_JOB_JOINED
+        row = await conn.fetchrow(_VERSION_SQL.format(tenant_cond=_VERSION_TENANT_COND, **job),
+                                  version_id, tenant_id)
+        if row:  # version history
+            history = await conn.fetch(_VERSION_HISTORY_SQL.format(tenant_cond=_VERSION_HISTORY_TENANT_COND),
+                                       tenant_id, row["published_tour_id"])
+    _log_t2_read("version", tenant_id, used_tenant_pool, found=row is not None)
 
-        if not row:
-            raise HTTPException(status_code=404, detail="Version not found")
-
-        # Version history
-        history = await conn.fetch("""
-            SELECT id, version_number, status, edit_source, created_at
-            FROM gold_aa_internal.tenant_tour_versions
-            WHERE tenant_id = $1::uuid AND published_tour_id = $2::uuid
-            ORDER BY version_number ASC
-        """, tenant_id, row["published_tour_id"])
+    if not row:
+        raise HTTPException(status_code=404, detail="Version not found")
+    if used_tenant_pool:  # after the tenant block: the tenant connection is released before MAIN
+        row = (await _with_job_status(request.app.state.pool, [row], "job_id"))[0]
 
     # AA-770 (S233) — scores and QA state stay admin-side (/admin/content-quality).
     # AA-796 — and the score-derived needs_review status reads as ai_generated.
