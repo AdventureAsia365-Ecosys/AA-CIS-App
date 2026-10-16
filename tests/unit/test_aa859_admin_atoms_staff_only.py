@@ -8,6 +8,7 @@ Bearer caller of /admin/atoms*. Through a real FastAPI app, these check that:
   - X-Admin-Secret is unchanged: 200, the same SQL as before with no owner_scope bind filter;
   - no credentials / a wrong secret / no secret configured keep verify_admin_secret's 403 / 503.
 """
+import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -153,6 +154,32 @@ def test_admin_secret_unchanged(method, path, body):
     assert sql_calls
     for call in sql_calls:
         assert "owner_scope = $" not in call.args[0]
+
+
+@pytest.mark.parametrize("body", [
+    pytest.param({"text": "edited"}, id="text only"),
+    pytest.param({"deleted": True, "text": "edited"}, id="deleted + text"),
+])
+def test_staff_patch_update_is_keyed_on_the_atom_id(body):
+    """The owner_scope clause was cut from the PATCH WHERE line: the UPDATE must still hit only the
+    path's atom (bound at the right index) and still skip empty-marker rows."""
+    conn = _conn()
+    conn.fetchrow.return_value = {
+        "atom_id": ATOM_ID, "tour_id": uuid.uuid4(), "text": "edited", "deleted": False,
+        "visual_potential": 2, "media": "{}", "created_at": None, "updated_at": None,
+    }
+    client, _ = _client(conn)
+    resp = _call(client, "PATCH", f"/admin/atoms/{ATOM_ID}", body, {"x-admin-secret": ADMIN_SECRET})
+    assert resp.status_code == 200, resp.text
+    updates = [c for c in conn.fetchrow.call_args_list
+               if "UPDATE acp_contract.tour_atoms" in c.args[0]]
+    assert len(updates) == 1
+    query, *params = updates[0].args
+    match = re.search(r"WHERE atom_id = \$(\d+)", query)
+    assert match, query
+    assert params[int(match.group(1)) - 1] == ATOM_ID
+    assert "NOT is_empty_marker" in query
+    assert "owner_scope" not in query
 
 
 def test_admin_secret_wins_over_a_bearer_header():
