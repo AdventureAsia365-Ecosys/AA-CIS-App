@@ -64,16 +64,20 @@ export async function saveVersionEdit(
   return r.json();
 }
 
+/** POST /v1/tours/pool/{id}/rewrite — returns the new pending version (AA-668: the Writer panel
+ *  follows it). 409 = a rewrite of this tour is already running. */
 export async function requestRewrite(
   publishedTourId: string,
   rewriteLanguage: string,
-): Promise<void> {
+): Promise<{ version_id: string; job_id?: string | null }> {
   const r = await fetch(`/api/tenant/v1/tours/pool/${publishedTourId}/rewrite`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rewrite_language: rewriteLanguage || "en-US" }),
   });
+  if (r.status === 409) throw new Error("A rewrite of this tour is already in progress.");
   if (!r.ok) throw new Error(`Rewrite request failed (${r.status})`);
+  return r.json();
 }
 
 // ── writing-state helpers (unchanged semantics from the original CatalogTab) ──

@@ -269,6 +269,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Writer-stage LLM calls stream through that sink into a Redis snapshot
     (`services/acp_shared/writing_progress.py`, key `wp:{tenant}:{kind}:{job}`, 1h TTL).
   - The portal polls `GET /v1/progress/{tour|piece}/{id}` (`LiveWriter.tsx`).
+  - Both jobs show in the same right-side **Writer panel** (AA-668, `WriterPanel.tsx`'s
+    `WriterDrawer` shell): Social Content (Slate → goal → angle → write) and the T2 tour rewrite
+    from My Catalog Tours (`TourRewritePanel.tsx`). Closing the panel never stops the job;
+    `useWriteWatcher` polls it and raises a toast when it settles.
   - This is a view only: persisted rows are unchanged. There is no SSE, and API Gateway is
     unchanged.
 - **Schemas** (owned here): `silver_aa_internal` / `gold_aa_internal` (raw→published tours),
