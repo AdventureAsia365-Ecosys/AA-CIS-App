@@ -45,7 +45,7 @@ class _OneConnPool:
         self.conn, self.as_role = conn, as_role
 
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self, timeout=None):
         if self.as_role:
             await self.conn.execute(f"SET LOCAL ROLE {self.as_role}")
         try:

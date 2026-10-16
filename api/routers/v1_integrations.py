@@ -22,15 +22,18 @@ draft->publish change — all AA-458.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
+from contextlib import nullcontext
 from typing import Optional
 from urllib.parse import urlparse
 
 import aiohttp
 import boto3
 import structlog
-from botocore.exceptions import ClientError
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -81,8 +84,8 @@ def _validate_wp_url(url: str) -> str:
     return url
 
 
-def _sm_client():
-    return boto3.client("secretsmanager", region_name=_SM_REGION)
+def _sm_client(config: Optional[BotoConfig] = None):
+    return boto3.client("secretsmanager", region_name=_SM_REGION, config=config)
 
 
 def _put_secret(secret_key: str, value: dict) -> None:
@@ -479,8 +482,16 @@ async def test_facebook(request: Request, tenant=Depends(get_tenant)):
 # Deletes the shared.tenant_integrations row and overwrites the secret with a tombstone via
 # PutSecretValue. Not DeleteSecret: the ECS task role is granted only CreateSecret/PutSecretValue
 # on acp/cms/* and acp/social/* (AA-CIS-Infra modules/ecs/main.tf), and a reconnect reuses the
-# same secret name through _put_secret() anyway. The tombstone goes first: if it fails the row
-# stays and the tenant is still connected (502), never a deleted row pointing at live credentials.
+# same secret name through _put_secret() anyway.
+#
+# AA-817 (critique C3) — one transaction, in this order: SELECT the row, DELETE it and check that
+# exactly that 1 row went, tombstone the secret, COMMIT. A DELETE that removes 0 rows (an RLS policy
+# that lets the tenant read the row but not delete it, a wrong GUC) is a 503 before the secret is
+# touched, so a row can never stay "connected" with dead credentials. A tombstone failure raises
+# inside the transaction, so the DELETE rolls back: the tenant stays connected (502), never a deleted
+# row with live credentials. The only window left is a COMMIT that fails after the tombstone (the
+# connection drops in those few ms): logged as aa817_integration_disconnect_commit_failed.
+# The transaction holds the row lock across one PutSecretValue call (run in a thread, ~100 ms).
 
 _DISCONNECTED_STATUS = {
     "wordpress": {"connected": False, "site_url": None, "connected_at": None,
@@ -490,41 +501,76 @@ _DISCONNECTED_STATUS = {
 }
 
 
+# The tombstone runs while _disconnect holds its transaction (and the row lock): bound it, so a slow
+# Secrets Manager call cannot keep the transaction open for botocore's default 60 s x retries.
+_TOMBSTONE_SM_CONFIG = BotoConfig(connect_timeout=3, read_timeout=5,
+                                  retries={"mode": "standard", "total_max_attempts": 2})  # <= ~16 s
+
+
 def _tombstone_secret(secret_key: str) -> None:
     try:
-        _sm_client().put_secret_value(SecretId=secret_key, SecretString=json.dumps({"disconnected": True}))
+        _sm_client(_TOMBSTONE_SM_CONFIG).put_secret_value(
+            SecretId=secret_key, SecretString=json.dumps({"disconnected": True}))
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
             raise
 
 
+_SELECT_INTEGRATION_SQL = (
+    "SELECT secret_key FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = $2"
+)
+_DELETE_INTEGRATION_SQL = (
+    "DELETE FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = $2"
+)
+
+
+def _rows_affected(status: str) -> int:
+    """asyncpg's command tag, e.g. 'DELETE 1' -> 1."""
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except ValueError:
+        return -1
+
+
 async def _disconnect(request: Request, tenant_id: str, integration_type: str) -> dict:
     pool = request.app.state.pool
-    # acquire_scoped_conn (own default-off flag): the same admin pool today, the RLS-scoped tenant
-    # pool once the flag is on. Two short blocks — no transaction is held across the Secrets
-    # Manager call.
-    async with acquire_scoped_conn(request, tenant_id, INTEGRATION_DISCONNECT_FLAG) as (conn, _):
-        row = await conn.fetchrow(
-            "SELECT secret_key FROM shared.tenant_integrations "
-            "WHERE tenant_id = $1::uuid AND integration_type = $2",
-            tenant_id, integration_type,
-        )
-    if not row:  # idempotent: already disconnected
-        return {**_DISCONNECTED_STATUS[integration_type], "disconnected": False}
+    tombstoned = False
+    try:
+        async with acquire_scoped_conn(
+            request, tenant_id, INTEGRATION_DISCONNECT_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            logger.info("aa817_integration_disconnect", tenant_id=str(tenant_id),
+                        integration_type=integration_type, used_tenant_pool=used_tenant_pool)
+            # The tenant pool path already runs inside acquire_scoped_conn's transaction (GUC set
+            # LOCAL); the admin pool path (flag off) gets its own here.
+            async with (nullcontext() if used_tenant_pool else conn.transaction()):
+                row = await conn.fetchrow(_SELECT_INTEGRATION_SQL, tenant_id, integration_type)
+                if not row:  # idempotent: already disconnected
+                    return {**_DISCONNECTED_STATUS[integration_type], "disconnected": False}
 
-    if row["secret_key"]:
-        try:
-            _tombstone_secret(row["secret_key"])
-        except ClientError as exc:
-            logger.error("integration_secret_tombstone_failed", tenant_id=tenant_id,
-                         integration_type=integration_type, error=str(exc))
-            raise HTTPException(status_code=502, detail="Could not remove saved credentials — try again")
+                deleted = _rows_affected(await conn.execute(_DELETE_INTEGRATION_SQL, tenant_id, integration_type))
+                if deleted != 1:
+                    logger.error("aa817_integration_disconnect_row_mismatch", tenant_id=str(tenant_id),
+                                 integration_type=integration_type, rows_deleted=deleted,
+                                 used_tenant_pool=used_tenant_pool)
+                    raise HTTPException(status_code=503, detail="Could not disconnect right now — try again")
 
-    async with acquire_scoped_conn(request, tenant_id, INTEGRATION_DISCONNECT_FLAG) as (conn, _):
-        await conn.execute(
-            "DELETE FROM shared.tenant_integrations WHERE tenant_id = $1::uuid AND integration_type = $2",
-            tenant_id, integration_type,
-        )
+                if row["secret_key"]:
+                    try:
+                        await asyncio.to_thread(_tombstone_secret, row["secret_key"])
+                    except (ClientError, BotoCoreError) as exc:  # BotoCoreError: the bounded timeouts
+                        logger.error("integration_secret_tombstone_failed", tenant_id=tenant_id,
+                                     integration_type=integration_type, error=str(exc))
+                        raise HTTPException(status_code=502,
+                                            detail="Could not remove saved credentials — try again")
+                    tombstoned = True
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if tombstoned:
+            logger.error("aa817_integration_disconnect_commit_failed", tenant_id=str(tenant_id),
+                         integration_type=integration_type, error=repr(exc))
+        raise
     logger.info("integration_disconnected", tenant_id=tenant_id, integration_type=integration_type)
     try:  # best-effort: the disconnect already happened, a lost audit row must not undo the answer
         await write_audit_log(
