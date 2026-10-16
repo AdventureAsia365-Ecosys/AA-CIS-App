@@ -316,6 +316,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (AA-603; `acp_deliver.tenant_tour_pages` is kept), the `/v1/s1-from-atom` route (AA-611), and
   the atom "star" (AA-609; the DB column `tour_atoms.starred` still exists). Do not rebuild on
   any of these.
+- **ACP v1 run model is gone (AA-751, 16/10)**: `acp_shared.acp_runs` was dropped by migration 121;
+  its last readers (`GET /admin/acp/stuck-runs`, `POST /admin/acp/runs/{run_id}/force-fail`,
+  `services/acp_shared/cost_utils.py`, `services/acp_canary/`) are deleted. Stuck or long work is a
+  `shared.job` row (reaper + admin Jobs page). `tests/unit/test_aa751_no_acp_runs_reader.py` fails
+  on any new SQL against `acp_runs`. `infrastructure/canary/` (acc1 EventBridge skeleton) is kept
+  until its live schedule is confirmed absent.
 
 - **Photos (AA-708, migration 198)**: the `photo_sync` job copies the Jira CON board's PHOTOS
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
