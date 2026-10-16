@@ -8,7 +8,8 @@
   GET  /admin/job-runner/jobs/{id}/llm-calls  LLM calls the job made (AA-687)
   GET  /admin/job-runner/workers           worker liveness, running per worker, queue depth (AA-687)
   GET  /admin/job-runner/retention         retention kinds: policy, table size, last runs (AA-825)
-  POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved)
+  POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved);
+                                           with older_than: an admin-only manual override proof run
   POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
 
 Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, A1 run-tour).
@@ -197,6 +198,10 @@ class RetentionRunRequest(BaseModel):
     # Required when dry_run is false: the row count Nghiệp approved from the DRY RUN (DM-7.2).
     max_rows: Optional[int] = Field(None, ge=1)
     batch_size: Optional[int] = Field(None, ge=1, le=5000)
+    # AA-825 S239 — manual override: an explicit UTC cutoff date (YYYY-MM-DD) instead of the policy
+    # window, to prove the rollup + archive path on Dev before data ages. Only for the rolled-up
+    # kinds, at least 31 days old, live runs at most 1,000 rows (retention_job.override_cutoff).
+    older_than: Optional[str] = None
 
 
 @router.post("/retention/run", summary="AA-825 — enqueue one retention kind (DRY RUN by default)")
@@ -207,6 +212,8 @@ async def retention_run(body: RetentionRunRequest, request: Request, x_admin_sec
     from shared.jobs.registry import enqueue
     if body.kind not in retention_job.KINDS:
         raise HTTPException(status_code=422, detail=f"kind must be one of {list(retention_job.KINDS)}")
+    if body.older_than is not None:
+        return await _retention_override(body, request, x_admin_user_id)
     if not body.dry_run:
         if body.max_rows is None:
             raise HTTPException(status_code=422, detail="a live run needs max_rows (the approved DRY RUN count)")
@@ -222,6 +229,30 @@ async def retention_run(body: RetentionRunRequest, request: Request, x_admin_sec
     logger.info("admin_retention_run", kind=body.kind, dry_run=body.dry_run, max_rows=body.max_rows,
                 job_id=job_id, admin_user=x_admin_user_id)
     return {"job_id": job_id, "kind": body.kind, "dry_run": body.dry_run, "max_rows": body.max_rows}
+
+
+async def _retention_override(body: RetentionRunRequest, request: Request, x_admin_user_id: Optional[str]):
+    """Same checks as the job itself (it re-checks with the DB clock), as 422s before anything is
+    enqueued. Logged as trigger manual_override in the job payload and result."""
+    from datetime import datetime, timezone
+    from services.jobs import retention_job
+    from shared.jobs.registry import NonRetryable, enqueue
+    payload = {"trigger": retention_job.OVERRIDE_TRIGGER, "older_than": body.older_than, "dry_run": body.dry_run}
+    if body.max_rows is not None:
+        payload["max_rows"] = body.max_rows
+    if body.batch_size is not None:
+        payload["batch_size"] = body.batch_size
+    try:
+        retention_job.override_cutoff(body.kind, payload, datetime.now(timezone.utc).date())
+        retention_job.decide_mode(payload, {}, 0, None)
+    except NonRetryable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    created_by = f"admin:{x_admin_user_id}" if x_admin_user_id else "admin"
+    job_id, _ = await enqueue(request.app.state.pool, body.kind, payload, created_by=created_by)
+    logger.info("admin_retention_override", kind=body.kind, older_than=body.older_than, dry_run=body.dry_run,
+                max_rows=body.max_rows, job_id=job_id, admin_user=x_admin_user_id)
+    return {"job_id": job_id, "kind": body.kind, "trigger": retention_job.OVERRIDE_TRIGGER,
+            "older_than": body.older_than, "dry_run": body.dry_run, "max_rows": body.max_rows}
 
 
 @router.post("/retention/schedule", summary="AA-825 — daily: enqueue every retention kind (scheduler)")

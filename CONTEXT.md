@@ -199,6 +199,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     day (skipped while a rerun wave is open): a kind stays DRY RUN until a live run with the same
     windows has succeeded, and a scheduled run whose candidates exceed 2x the last live run is HELD
     (bell `platform.retention.held`). Status: `GET /admin/job-runner/retention`.
+    **Manual override** (S239, to prove rollup + archive before data ages): the same POST with
+    `older_than` (a UTC date) enqueues `trigger=manual_override` with that cutoff instead of the window,
+    only for the two rolled-up kinds, only where `ENVIRONMENT` is dev/test, cutoff >= 31 days old, DRY
+    RUN by default, live at most 1,000 rows; it never counts as the last live run (schedule stays DRY
+    RUN). Every live run of a rolled-up kind stops with nothing deleted if a day/month older than the
+    cutoff is still missing from the rollup, and every archive object is HEAD-verified (Content-MD5 on
+    the PUT) before its batch is deleted.
   - The worker runs as its own ECS service `aa-cis-dev-worker` (`python -m shared.jobs.worker`,
     AA-651); the API task sets `JOB_WORKER_IN_API=false`. The in-API loop (FastAPI lifespan) still
     exists for local/dev use.
@@ -731,6 +738,15 @@ items still failing are cut in code (`sentence_repair.delete_flagged` + `tidy_af
 second repair call; other items still go to the repair, and the gates re-judge the cut text. A cut that
 would take the blog under `_BLOG_MIN_CHARS` (or break its FAQ / ending) is refused: the old repair path
 runs and the piece stays held if it fails. The S234 attempt-3 fallback cut obeys the same floor on blogs.
+S239 r6 follow-up — a sentence-repair replacement that ADDS a number, time / ordinal / position or (blog)
+pace word the sentence and the source lack is not spliced (`sentence_repair.new_specifics`, the F1/F17
+functions themselves); `plan()` merges two findings on one sentence (truth gate first) instead of dropping
+the second; the sticky key carries the previous sentence only for a referent-led sentence ('It…', 'These…',
+'There…', 'Then…', 'But it…', 'The <noun>…') and a multi-sentence judge quote is sticky when each sentence is;
+the blog attempt-3 cut also takes F17 'cut it' items once F17 was repaired before. A sentence whose finding
+says to keep it (played-down hazard 'keep the hazard', family caveat 'add ONE') is never cut, merged or not,
+and an empty repair of a hazard sentence is not spliced; a multi-sentence cut checks every sentence in it
+(hook, CTA, FAQ question) and the sentence after it (orphaned pronoun).
 _Avoid_: check, validator, rule (Gate is the specific automated-check object; "rule" is generic).
 
 **Piece**:
