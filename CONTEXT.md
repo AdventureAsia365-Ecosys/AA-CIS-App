@@ -81,7 +81,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     migrated.
 - **AI/Bedrock**: LLM calls (rewrite, research, gates) route through the ecosystem Bedrock path
   (acc3 primary → acc1 fallback); the cross-account trust is provisioned in AA-CIS-Infra.
-  Embeddings (Cohere Embed v4) run natively on acc2. Claude cannot be invoked from a local shell — the satellite roles only trust the
+  Embeddings (Cohere Embed v4) run natively on acc2, through the GLOBAL cross-region profile
+  `global.cohere.embed-v4:0` since migration 238 (AA-856: the `us.` quota is fixed at 20 rpm, the global
+  one is adjustable; one quota shared by f10_embed, a3_place_embed and TripPlanner search). Claude cannot be invoked from a local shell — the satellite roles only trust the
   ECS task role, so real LLM measurements run inside the `api` container via ECS exec.
 - **Model per stage is DB-driven**: `shared.llm_role_config` (20s cache; `SAFE_DEFAULTS` in
   `shared/llm_client/role_config.py` are only a fallback), editable in admin Settings.
