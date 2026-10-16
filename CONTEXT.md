@@ -542,7 +542,9 @@ no `tenant_id`; new `segment_id`s are `sha256(place|verb)` (rows minted before 1
 opaque id). A Segment can span many tours and every tenant reads the same set. Carries two
 cached columns for Score: `questions_count` (AA-610, migration 163) and `contested`
 (AA-631, migration 165) — `NULL` means "recompute next time". History of the per-tenant period:
-`docs/adr/0001-*.md`, `docs/adr/0003-*.md`.
+`docs/adr/0001-*.md`, `docs/adr/0003-*.md`. **A Segment never spans two countries** (tour country,
+`raw_tours.country`): AA-695 vetoes a cross-country pair, and AA-857 holds the rule for the whole
+connected group (an unknown-country atom or pseudo-Segment can no longer bridge two countries).
 _Avoid_: cluster, group, topic.
 
 **Search Demand**:
@@ -612,6 +614,12 @@ Bar-cleared Subjects for a Channel. `services/acp_shared/slate.py::propose_slate
    first; a place appears at most once per Channel and on at most `MAX_CHANNELS_PER_PLACE` (3)
    Channels of one Slate. A Channel the tenant switches off loses its `proposed` rows on the next
    proposal and they are hidden from `GET /v1/slate` at once (picked/used rows stay).
+
+A Segment Subject is offered and written only from its **seed atom** (AA-857,
+`services/acp_shared/subject_seed.py`): a live member on the tenant's own tours whose place IS the
+Subject's place (normalised, alias / place-card aware), in one country — never the first member by
+`atom_id`. A Segment with no such member is not offered (log `slate_subject_skipped`) and cannot
+be picked.
 _Avoid_: Weekly Slots (the pre-AA-511 name — fully replaced, never use again).
 
 **Goal**:
