@@ -263,12 +263,28 @@ async def test_connection_test_rls_holds_when_the_update_where_is_forgotten(ctx,
 
 @pytest.mark.asyncio
 async def test_connection_test_block_one_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
+    """Block 1 with a forgotten WHERE: on the tenant pool RLS hides A's row, so Secrets Manager is never
+    asked. The 404 alone cannot tell this apart from a leak (block 2's correct WHERE also 404s for B),
+    so the proof is whether _get_secret was called, and with whose key."""
     await _seed(ctx.conn, ctx.a)
     monkeypatch.setattr(integ_mod, "_TEST_SELECT_SQL", integ_mod._TEST_SELECT_SQL.replace("tenant_id = $1::uuid",
                                                                                           FORGOT))
-    with pytest.raises(HTTPException) as exc:
-        await _test_wp(ctx, ctx.b, True)
-    assert exc.value.status_code == 404, "tenant B read tenant A's secret_key on the tenant pool"
+
+    async def run(flag_on):
+        get_secret = MagicMock(return_value=dict(WP_CREDS))
+        with patch.object(integ_mod, "_get_secret", get_secret), \
+                patch.object(integ_mod.aiohttp, "ClientSession", _http()):
+            with pytest.raises(HTTPException) as exc:
+                await integ_mod.test_wordpress(_request(ctx.conn, flag_on), tenant={"sub": str(ctx.b)})
+        assert exc.value.status_code == 404
+        return get_secret
+
+    on_tenant_pool = await run(True)
+    assert not on_tenant_pool.called, "tenant B read tenant A's secret_key on the tenant pool"
+
+    on_admin_pool = await run(False)
+    assert [c.args for c in on_admin_pool.call_args_list] == [(f"acp/x/{ctx.a}/wordpress",)], \
+        "sanity: the same mutation on the admin pool leaks A's row into block 1"
 
 
 @pytest.mark.parametrize("sql_name,status,extra", [
