@@ -17,4 +17,3 @@ from . import place_geocode_job  # noqa: F401  AA-712
 from . import tour_graph_job  # noqa: F401  AA-712
 from . import retention_job  # noqa: F401  AA-825
 from . import ops_alert_email_job  # noqa: F401  AA-828
-from . import ops_rds_role_connections_job  # noqa: F401  AA-832

@@ -39,7 +39,7 @@ class JobKind:
     background: bool = False
     # AA-832: the pre-deploy guard (GET /admin/job-runner/deploy-gate) does not count this kind's
     # queued/running rows. Only for short, read-only, frequently re-scheduled kinds whose loss to a
-    # deploy costs one sample at most (ops_rds_role_connections, every 5 min).
+    # deploy costs one sample at most. Unused since AA-751 (the RDS sample left the job runner).
     deploy_gate_exempt: bool = False
 
 
