@@ -343,18 +343,25 @@ async def clear_failed_generation(request_id: str, pool) -> None:
 # request row is locked first (FOR UPDATE), then its options, the same order as the t8_angles worker
 # (UPDATE request, then INSERT options), so two decisions on one request serialize and the second sees the
 # first one's status: no time-of-check / time-of-use gap between the status check and the writes. Every
-# statement keeps its own tenant filter; on the tenant pool RLS (229 on angle_gate_request, 241 on
-# angle_gate_option through its parent) holds the boundary even if one were forgotten. Module constants so
-# tests can mutate them (forgotten WHERE, missing lock).
+# statement keeps its own tenant filter: the request statements on `tenant_id = $2`, the option statements
+# (angle_gate_option has no tenant_id) through _OPTION_TENANT_FILTER on the parent request, so neither depends
+# on running after _CHOOSE_LOCK_SQL to stay inside the tenant on the main pool (owner, RLS-exempt). On the
+# tenant pool RLS (229 on angle_gate_request, 241 on angle_gate_option through its parent) holds the boundary
+# even if one were forgotten. Module constants so tests can mutate them (forgotten WHERE, missing lock).
 _CHOOSE_LOCK_SQL = """
     SELECT status FROM acp_shared.angle_gate_request
     WHERE request_id = $1 AND tenant_id = $2::uuid
     FOR UPDATE
 """
-_OPTION_EXISTS_SQL = "SELECT 1 FROM acp_shared.angle_gate_option WHERE request_id = $1 AND idx = $2"
+# $1 request_id, $3 tenant_id ($2 is the idx in both option statements).
+_OPTION_TENANT_FILTER = ("EXISTS (SELECT 1 FROM acp_shared.angle_gate_request r "
+                         "WHERE r.request_id = $1 AND r.tenant_id = $3::uuid)")
+_OPTION_EXISTS_SQL = ("SELECT 1 FROM acp_shared.angle_gate_option WHERE request_id = $1 AND idx = $2 "
+                      f"AND {_OPTION_TENANT_FILTER}")
 # One statement for "this one chosen, the other two not" (AA-494: T9 reads the chosen=true row, so the
 # previous choice must be unset). Writes only `chosen`, the one column 241 grants UPDATE on.
-_OPTION_CHOOSE_SQL = "UPDATE acp_shared.angle_gate_option SET chosen = (idx = $2) WHERE request_id = $1"
+_OPTION_CHOOSE_SQL = ("UPDATE acp_shared.angle_gate_option SET chosen = (idx = $2) WHERE request_id = $1 "
+                      f"AND {_OPTION_TENANT_FILTER}")
 _REQUEST_APPROVE_SQL = """
     UPDATE acp_shared.angle_gate_request SET status = 'approved', updated_at = now()
     WHERE request_id = $1 AND tenant_id = $2::uuid AND status IN ('pending_choice', 'reusable')
@@ -419,9 +426,9 @@ async def choose_angle(conn, tenant_id: UUID, request_id: UUID, idx: int) -> Non
         )
     if idx not in (0, 1, 2):
         raise AngleGateError(f"idx must be 0, 1, or 2, got {idx!r}")
-    if await conn.fetchval(_OPTION_EXISTS_SQL, request_id, idx) is None:
+    if await conn.fetchval(_OPTION_EXISTS_SQL, request_id, idx, tenant_id) is None:
         raise AngleGateError(f"No angle option idx={idx} for request_id={request_id}")
-    await conn.execute(_OPTION_CHOOSE_SQL, request_id, idx)
+    await conn.execute(_OPTION_CHOOSE_SQL, request_id, idx, tenant_id)
     # Backstop: under the FOR UPDATE above the status cannot change before this UPDATE, so 0 rows means
     # the lock was not taken (or the row is not this tenant's). Never a silent approve-nothing; the
     # caller's transaction rolls the option change back with it.

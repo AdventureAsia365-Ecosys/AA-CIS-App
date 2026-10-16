@@ -87,7 +87,7 @@ class _StatefulAngleOptionConn:
         if query == service._CHOOSE_LOCK_SQL or query == service._REQUEST_STATUS_SQL:
             return self.request_status
         if query == service._OPTION_EXISTS_SQL:
-            _, idx = args
+            idx = args[1]
             return 1 if idx in self.options else None
         if query == service._REOPEN_SQL:
             if self.request_status != "approved":
@@ -106,7 +106,7 @@ class _StatefulAngleOptionConn:
 
     async def execute(self, query, *args):
         if query == service._OPTION_CHOOSE_SQL:
-            _, idx = args
+            idx = args[1]
             for i in self.options:
                 self.options[i] = i == idx
             return f"UPDATE {len(self.options)}"
@@ -382,9 +382,9 @@ class TestChooseAngle:
 
         lock_sql, *lock_args = conn.fetchval.call_args_list[0][0]
         assert lock_sql == service._CHOOSE_LOCK_SQL and lock_args == [REQUEST_ID, TENANT_ID]
-        assert conn.fetchval.call_args_list[1][0] == (service._OPTION_EXISTS_SQL, REQUEST_ID, 1)
+        assert conn.fetchval.call_args_list[1][0] == (service._OPTION_EXISTS_SQL, REQUEST_ID, 1, TENANT_ID)
         # AA-494 prerequisite fix — one statement points chosen at idx 1 AND unsets the other 2.
-        assert conn.execute.call_args_list[0][0] == (service._OPTION_CHOOSE_SQL, REQUEST_ID, 1)
+        assert conn.execute.call_args_list[0][0] == (service._OPTION_CHOOSE_SQL, REQUEST_ID, 1, TENANT_ID)
         assert conn.execute.call_args_list[1][0] == (service._REQUEST_APPROVE_SQL, REQUEST_ID, TENANT_ID)
 
     async def test_choosing_twice_unsets_previous_choice(self):

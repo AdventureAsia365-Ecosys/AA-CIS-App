@@ -6,8 +6,11 @@ aa_app_user under the live policies (229 on angle_gate_request, 241 on angle_gat
   - forgotten WHERE: with the tenant filters removed from the request statements, B still cannot reach A's
     request on the tenant pool (RLS), while the main pool (owner, exempt) does: proof each check can fail.
   - the 241 option policy, run directly (the route's request lock already 404s for B, so it cannot test the
-    option policy): as aa_app_user under B's GUC, _OPTION_CHOOSE_SQL on A's request updates 0 rows; the
-    mutation check runs the same statement with RLS disabled in the transaction and must update rows.
+    option policy): as aa_app_user under B's GUC, _OPTION_CHOOSE_SQL with its parent-request tenant filter
+    stripped on A's request updates 0 rows; the mutation check runs the same statement with RLS disabled in the
+    transaction and must update rows.
+  - the option statements' own tenant filter, on the main pool (owner, RLS-exempt), without the lock step:
+    B's tenant id reaches none of A's options; with the filter stripped (mutation) it reaches all three.
   - two concurrent chooses on one request (two real connections): one 200, one 409 from the lock step, never
     two approvals; without the FOR UPDATE (mutation) the loser is caught only by the approve backstop.
 
@@ -36,6 +39,10 @@ from services.acp_angle_gate import service  # noqa: E402
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 TENANT_ROLE = "aa_app_user"
 FORGOT = "$2::uuid IS NOT NULL"
+FORGOT_OPTION = "$3::uuid IS NOT NULL"
+# _OPTION_CHOOSE_SQL with no tenant filter of its own: only the 241 option policy stands between B and A's rows.
+OPTION_CHOOSE_UNFILTERED = service._OPTION_CHOOSE_SQL.replace(f" AND {service._OPTION_TENANT_FILTER}", "")
+assert OPTION_CHOOSE_UNFILTERED != service._OPTION_CHOOSE_SQL
 # The live CHECK (migration 124, which needs pgvector and does not apply in CI) allows 'reusable'.
 LIVE_STATUS_CHECK = """
     ALTER TABLE acp_shared.angle_gate_request DROP CONSTRAINT IF EXISTS angle_gate_request_status_check;
@@ -197,6 +204,10 @@ async def test_choose_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
         forgot = getattr(service, name).replace("tenant_id = $2::uuid", FORGOT)
         assert forgot != getattr(service, name)
         monkeypatch.setattr(service, name, forgot)
+    for name in ("_OPTION_EXISTS_SQL", "_OPTION_CHOOSE_SQL"):
+        forgot = getattr(service, name).replace("r.tenant_id = $3::uuid", FORGOT_OPTION)
+        assert forgot != getattr(service, name)
+        monkeypatch.setattr(service, name, forgot)
     with pytest.raises(HTTPException) as exc:
         await ag.choose(req, ag.ChooseBody(idx=1), _request(ctx.conn, True), tenant={"sub": str(ctx.b)})
     assert exc.value.status_code == 404, "tenant B reached tenant A's request on the tenant pool"
@@ -231,7 +242,8 @@ async def test_reopen_rls_holds_when_the_where_is_forgotten(ctx, monkeypatch):
 # ── the 241 option policy, directly ───────────────────────────────────────────
 
 async def _option_choose_as_tenant(conn, guc_tenant, req, disable_rls=False):
-    """_OPTION_CHOOSE_SQL as aa_app_user under `guc_tenant`'s GUC, in a savepoint that is rolled back."""
+    """_OPTION_CHOOSE_SQL without its own tenant filter, as aa_app_user under `guc_tenant`'s GUC, in a savepoint
+    that is rolled back."""
     tr = conn.transaction()
     await tr.start()
     try:
@@ -239,7 +251,7 @@ async def _option_choose_as_tenant(conn, guc_tenant, req, disable_rls=False):
             await conn.execute("ALTER TABLE acp_shared.angle_gate_option DISABLE ROW LEVEL SECURITY")
         await conn.execute(f"SET LOCAL ROLE {TENANT_ROLE}")
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(guc_tenant))
-        status = await conn.execute(service._OPTION_CHOOSE_SQL, req, 1)
+        status = await conn.execute(OPTION_CHOOSE_UNFILTERED, req, 1)
         await conn.execute("RESET ROLE")
         after = await _state(conn, req)
         return int(status.split()[-1]), after
@@ -269,11 +281,44 @@ async def test_option_policy_check_fails_without_rls(ctx):
                                     "WHERE oid = 'acp_shared.angle_gate_option'::regclass"))[0] is True
 
 
+# ── the option statements' own tenant filter, on the main pool ────────────────
+
+async def _option_choose_as_owner(conn, tenant, req, sql):
+    """An option-choose statement as the owner (RLS-exempt, like the main pool), no lock step before it, in a
+    savepoint that is rolled back."""
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        status = await conn.execute(sql, req, 1, tenant)
+        return int(status.split()[-1]), await _state(conn, req)
+    finally:
+        await tr.rollback()
+
+
+@pytest.mark.asyncio
+async def test_option_statements_keep_the_tenant_on_the_main_pool(ctx):
+    req_a = await _angle_request(ctx.conn, ctx.a, status="approved", chosen=0)
+    assert await ctx.conn.fetchval(service._OPTION_EXISTS_SQL, req_a, 1, ctx.b) is None
+    updated, after = await _option_choose_as_owner(ctx.conn, ctx.b, req_a, service._OPTION_CHOOSE_SQL)
+    assert updated == 0, "tenant B's id updated tenant A's angle_gate_option rows on the main pool"
+    assert after == ("approved", [True, False, False])
+
+    assert await ctx.conn.fetchval(service._OPTION_EXISTS_SQL, req_a, 1, ctx.a) == 1  # positive control
+    updated, after = await _option_choose_as_owner(ctx.conn, ctx.a, req_a, service._OPTION_CHOOSE_SQL)
+    assert updated == 3 and after == ("approved", [False, True, False])
+
+    # mutation: the tenant filter stripped, B's id reaches A's rows (the check above can fail)
+    forgot = service._OPTION_CHOOSE_SQL.replace("r.tenant_id = $3::uuid", FORGOT_OPTION)
+    updated, after = await _option_choose_as_owner(ctx.conn, ctx.b, req_a, forgot)
+    assert updated == 3 and after == ("approved", [False, True, False])
+
+
 # ── two concurrent chooses on two real connections ────────────────────────────
 
 # The option check sleeps while the winner holds the request lock, so both requests are in flight at once.
-SLOW_OPTION_EXISTS_SQL = ("SELECT 1 FROM acp_shared.angle_gate_option, pg_sleep(0.5) "
-                          "WHERE request_id = $1 AND idx = $2")
+SLOW_OPTION_EXISTS_SQL = service._OPTION_EXISTS_SQL.replace(
+    "FROM acp_shared.angle_gate_option", "FROM acp_shared.angle_gate_option, pg_sleep(0.5)")
+assert SLOW_OPTION_EXISTS_SQL != service._OPTION_EXISTS_SQL
 
 
 async def _race(monkeypatch, lock_sql=None):

@@ -286,6 +286,11 @@ def test_every_decision_statement_keeps_its_tenant_filter():
     for sql in (service._CHOOSE_LOCK_SQL, service._REQUEST_APPROVE_SQL, service._REOPEN_SQL,
                 service._REQUEST_STATUS_SQL):
         assert "tenant_id = $2::uuid" in sql
+    # The option statements (no tenant_id column) filter through the parent request, so on the main pool they
+    # do not depend on running after the lock step to stay inside the tenant.
+    assert "r.tenant_id = $3::uuid" in service._OPTION_TENANT_FILTER
+    for sql in (service._OPTION_EXISTS_SQL, service._OPTION_CHOOSE_SQL):
+        assert sql.endswith(f"AND {service._OPTION_TENANT_FILTER}")
     assert service._CHOOSE_LOCK_SQL.rstrip().endswith("FOR UPDATE"), "the request row is locked first"
     assert "status IN ('pending_choice', 'reusable')" in service._REQUEST_APPROVE_SQL
     assert "AND status = 'approved'" in service._REOPEN_SQL and "RETURNING request_id" in service._REOPEN_SQL
@@ -295,7 +300,8 @@ def test_option_write_touches_only_the_granted_column():
     """241 grants aa_app_user UPDATE (chosen) only on angle_gate_option."""
     sql = service._OPTION_CHOOSE_SQL
     assert sql.startswith("UPDATE acp_shared.angle_gate_option SET chosen = (idx = $2) WHERE")
-    assert sql.count("=") == 3 and "," not in sql.split("SET", 1)[1].split("WHERE", 1)[0]
+    set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
+    assert set_clause.strip() == "chosen = (idx = $2)" and "," not in set_clause
 
 
 def test_route_uses_its_own_flag():
