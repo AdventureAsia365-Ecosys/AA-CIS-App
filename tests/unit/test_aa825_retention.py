@@ -7,7 +7,7 @@ import ast
 import gzip
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -195,17 +195,48 @@ def test_object_key_is_partitioned_by_table_year_month():
     assert key == "archive/llm_call_log/2026/03/J-R-raw-b00007.jsonl.gz"
 
 
+class _S3:
+    """put_object records; head_object answers from what was put (or from `head` if given)."""
+
+    def __init__(self, head=None):
+        self.calls, self.heads, self.head = [], [], head
+
+    def put_object(self, **kw):
+        self.calls.append(kw)
+
+    def head_object(self, **kw):
+        self.heads.append(kw)
+        if self.head is not None:
+            return self.head
+        put = next(c for c in self.calls if c["Key"] == kw["Key"])
+        return {"ContentLength": len(put["Body"]), "Metadata": put["Metadata"]}
+
+
 @pytest.mark.asyncio
 async def test_archiver_writes_gzipped_json_lines_with_sse():
-    calls = []
-    s3 = SimpleNamespace(put_object=lambda **kw: calls.append(kw))
+    s3 = _S3()
     a = archive.S3Archiver(s3, "job1", run="run1")
     key = await a.put("job", "failed", 1, datetime(2026, 1, 9, tzinfo=timezone.utc), ['{"a": 1}', '{"a": 2}'])
-    [kw] = calls
+    [kw] = s3.calls
     assert kw["Key"] == key == "archive/job/2026/01/job1-run1-failed-b00001.jsonl.gz"
     assert kw["Bucket"] == "aa-cis-bronze-005097885195" and kw["ServerSideEncryption"] == "AES256"
     assert gzip.decompress(kw["Body"]).decode().splitlines() == ['{"a": 1}', '{"a": 2}']
     assert kw["Metadata"]["rows"] == "2"
+    # S3 checks the body against Content-MD5; the object is HEAD-verified before the caller deletes
+    assert kw["ContentMD5"] == archive.content_md5(kw["Body"])
+    assert s3.heads == [{"Bucket": kw["Bucket"], "Key": key}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head", [
+    {"ContentLength": 3, "Metadata": {"rows": "2"}},          # truncated object
+    {"ContentLength": None, "Metadata": {"rows": "2"}},       # nothing there
+    {"Metadata": {"rows": "1"}},                               # wrong row count
+])
+async def test_archiver_refuses_an_object_it_cannot_verify(head):
+    a = archive.S3Archiver(_S3(head=head), "job1", run="run1")
+    with pytest.raises(archive.ArchiveNotVerified):
+        await a.put("job", "failed", 1, datetime(2026, 1, 9, tzinfo=timezone.utc), ['{"a": 1}', '{"a": 2}'])
 
 
 def test_two_attempts_of_one_job_never_share_a_key():
@@ -231,3 +262,146 @@ async def test_retention_run_endpoint_requires_max_rows_for_a_live_run(monkeypat
         await r.retention_run(r.RetentionRunRequest(kind="retention_job", dry_run=False,
                                                     max_rows=retention_job.RUN_MAX_ROWS + 1), req, "s", None)
     assert e.value.status_code == 422
+
+
+# ── manual override (S239): prove rollup + archive on Dev without waiting for data to age ───────
+
+TODAY = date(2026, 10, 16)
+OK_DAY = (TODAY - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).isoformat()   # 2026-09-15
+OVR = {"trigger": "manual_override", "older_than": OK_DAY}
+LLM = "retention_llm_call_log"
+
+
+def test_override_cutoff_is_utc_midnight_of_older_than_and_none_for_other_triggers():
+    assert retention_job.override_cutoff(LLM, OVR, TODAY, "dev") == datetime(2026, 9, 15, tzinfo=timezone.utc)
+    assert retention_job.override_cutoff("retention_tenant_api_usage", OVR, TODAY, "test") is not None
+    for payload in ({}, {"trigger": "manual"}, {"trigger": "schedule"}, {"trigger": "manual", "dry_run": False}):
+        assert retention_job.override_cutoff(LLM, payload, TODAY, "dev") is None
+
+
+@pytest.mark.parametrize("trigger", ["schedule", "manual", None])
+def test_older_than_is_refused_outside_a_manual_override(trigger):
+    payload = {"older_than": OK_DAY, **({"trigger": trigger} if trigger else {})}
+    with pytest.raises(NonRetryable):
+        retention_job.override_cutoff(LLM, payload, TODAY, "dev")
+
+
+def test_schedule_all_never_sends_an_override():
+    # the only payload the daily scheduler enqueues
+    src = open(os.path.join(ROOT, "services/jobs/retention_job.py")).read()
+    assert '{"trigger": "schedule"}' in src.split("async def schedule_all")[1].split("def ")[0]
+
+
+@pytest.mark.parametrize("kind", ["retention_job", "retention_decision_log", "retention_cost_explorer_snapshot"])
+def test_override_is_refused_for_kinds_without_a_rollup(kind):
+    with pytest.raises(NonRetryable):
+        retention_job.override_cutoff(kind, OVR, TODAY, "dev")
+
+
+def test_override_kinds_are_exactly_the_rolled_up_ones():
+    assert set(retention_job.OVERRIDE_KINDS) == {k for k, s in SPECS.items() if s.rollup}
+    assert all(len(SPECS[k].parts) == 1 for k in retention_job.OVERRIDE_KINDS)
+
+
+@pytest.mark.parametrize("older_than", [
+    None, "", "2026-9-15", "2026-09-15T00:00:00", "15/09/2026", "2026-02-30", 20260915,
+])
+def test_override_needs_a_plain_utc_date(older_than):
+    with pytest.raises(NonRetryable):
+        retention_job.override_cutoff(LLM, {"trigger": "manual_override", "older_than": older_than}, TODAY, "dev")
+
+
+def test_override_cutoff_must_be_at_least_31_days_old():
+    too_recent = (TODAY - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS - 1)).isoformat()
+    with pytest.raises(NonRetryable, match="too recent"):
+        retention_job.override_cutoff(LLM, {**OVR, "older_than": too_recent}, TODAY, "dev")
+    with pytest.raises(NonRetryable):
+        retention_job.override_cutoff(LLM, {**OVR, "older_than": TODAY.isoformat()}, TODAY, "dev")
+    # 31 days back always lands in an earlier, closed month (the monthly rollup needs that)
+    for d in (date(2026, 3, 31), date(2026, 1, 1), date(2026, 12, 31), date(2028, 3, 1)):
+        assert (d - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).replace(day=1) < d.replace(day=1)
+
+
+@pytest.mark.parametrize("env", ["prod", "production", "staging", "PROD"])
+def test_override_is_refused_outside_dev_and_test(env):
+    with pytest.raises(NonRetryable, match="environment"):
+        retention_job.override_cutoff(LLM, OVR, TODAY, env)
+
+
+def test_override_reads_environment_from_the_process(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    with pytest.raises(NonRetryable):
+        retention_job.override_cutoff(LLM, OVR, TODAY)
+    monkeypatch.delenv("ENVIRONMENT")                     # unset = dev (sentry.py convention)
+    assert retention_job.override_cutoff(LLM, OVR, TODAY) is not None
+
+
+def test_override_is_a_dry_run_unless_explicitly_live():
+    assert retention_job.decide_mode(OVR, W, 10, None)[0] == "dry_run"
+    assert retention_job.decide_mode({**OVR, "dry_run": True, "max_rows": 5}, W, 10, None)[0] == "dry_run"
+
+
+@pytest.mark.parametrize("max_rows", [None, 0, -1, True, "200", retention_job.OVERRIDE_MAX_ROWS + 1, 10 ** 6])
+def test_live_override_needs_a_small_max_rows_and_is_refused_not_capped(max_rows):
+    payload = {**OVR, "dry_run": False}
+    if max_rows is not None:
+        payload["max_rows"] = max_rows
+    with pytest.raises(NonRetryable):
+        retention_job.decide_mode(payload, W, 10, None)
+
+
+def test_live_override_deletes_at_most_max_rows_and_ignores_the_schedule_rules():
+    payload = {**OVR, "dry_run": False, "max_rows": 200}
+    # no previous live run, 10^6 candidates: still live (an override is never held), limited to 200
+    assert retention_job.decide_mode(payload, W, 10 ** 6, None)[:2] == ("live", 200)
+    # a retry counts earlier deletions against the approved total, like a manual run
+    assert retention_job.rows_left("manual_override", 200, 150) == 50
+
+
+def test_an_override_live_run_never_unlocks_scheduled_live_runs():
+    sql = " ".join(retention_job._LAST_LIVE_SQL.split())
+    assert "result ->> 'mode' = 'live'" in sql and "<> 'manual_override'" in sql
+    status_sql = " ".join(retention_job._STATUS_JOBS_SQL.split())
+    assert "result ->> 'trigger' = 'manual_override' THEN 'override'" in status_sql
+
+
+@pytest.mark.asyncio
+async def test_retention_run_endpoint_refuses_bad_overrides(monkeypatch):
+    from fastapi import HTTPException
+    from api.routers import admin_job_runner as r
+    monkeypatch.setattr(r, "verify_admin_secret", lambda s: None)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=None)))
+    today = datetime.now(timezone.utc).date()
+    ok = (today - timedelta(days=retention_job.OVERRIDE_MIN_AGE_DAYS)).isoformat()
+    recent = (today - timedelta(days=5)).isoformat()
+    bad = [
+        dict(kind="retention_job", older_than=ok),                                    # no rollup
+        dict(kind=LLM, older_than=recent),                                            # too recent
+        dict(kind=LLM, older_than="yesterday"),                                       # not a date
+        dict(kind=LLM, older_than=ok, dry_run=False),                                 # live, no max_rows
+        dict(kind=LLM, older_than=ok, dry_run=False, max_rows=retention_job.OVERRIDE_MAX_ROWS + 1),
+    ]
+    for body in bad:
+        with pytest.raises(HTTPException) as e:
+            await r.retention_run(r.RetentionRunRequest(**body), req, "s", None)
+        assert e.value.status_code == 422, body
+
+
+@pytest.mark.asyncio
+async def test_retention_run_endpoint_enqueues_an_override_as_manual_override(monkeypatch):
+    from api.routers import admin_job_runner as r
+    from shared.jobs import registry
+    monkeypatch.setattr(r, "verify_admin_secret", lambda s: None)
+    seen = {}
+
+    async def fake_enqueue(pool, kind, payload, **kw):
+        seen.update(kind=kind, payload=payload, **kw)
+        return "job-1", True
+    monkeypatch.setattr(registry, "enqueue", fake_enqueue)
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=None)))
+    ok = (datetime.now(timezone.utc).date() - timedelta(days=40)).isoformat()
+    out = await r.retention_run(r.RetentionRunRequest(kind=LLM, older_than=ok, dry_run=False, max_rows=200),
+                                req, "s", "nghiep")
+    assert out["trigger"] == "manual_override" and out["job_id"] == "job-1"
+    assert seen["payload"] == {"trigger": "manual_override", "older_than": ok, "dry_run": False, "max_rows": 200}
+    assert seen["created_by"] == "admin:nghiep"

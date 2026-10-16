@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -35,6 +36,10 @@ class FakeS3:
 
     def put_object(self, **kw):
         self.objects[kw["Key"]] = kw
+
+    def head_object(self, **kw):
+        put = self.objects[kw["Key"]]
+        return {"ContentLength": len(put["Body"]), "Metadata": put["Metadata"]}
 
     def lines(self):
         out = []
@@ -248,7 +253,10 @@ async def test_tenant_usage_monthly_rollup_keeps_the_admin_usage_numbers(pool):
                ($1::uuid, '/v1/tours', 'GET', 429, NULL, {month} + interval '2 days', 'tenant'),
                ($1::uuid, '/v1/tours', 'GET', 500, 30, {month} + interval '20 days', 'tenant'),
                ($1::uuid, '/v1/tours', 'GET', 200, 5, now(), 'tenant')""", tid)
-    before = [dict(r) for r in await pool.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
+    # the reader buckets raw months in the session time zone (UTC on Dev RDS); pin it so a local
+    # Postgres in another zone compares the same months
+    utc = await asyncpg.connect(DSN, server_settings={"timezone": "UTC"})
+    before = [dict(r) for r in await utc.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
 
     s3 = FakeS3()
     res = await _run(pool, "retention_tenant_api_usage",
@@ -261,7 +269,8 @@ async def test_tenant_usage_monthly_rollup_keeps_the_admin_usage_numbers(pool):
     assert await pool.fetchval("SELECT count(*) FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid "
                                "AND called_at >= date_trunc('month', now())", tid) == 1
     assert len([x for x in s3.lines() if x["tenant_id"] == tid]) >= 1
-    after = [dict(r) for r in await pool.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
+    after = [dict(r) for r in await utc.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
+    await utc.close()
     assert after == before
     await pool.execute("DELETE FROM shared.tenant_api_usage_monthly WHERE tenant_id = $1::uuid", tid)
     await pool.execute("DELETE FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid", tid)
@@ -321,3 +330,132 @@ async def test_small_batches_walk_the_keyset_and_resume_from_the_stored_cursor(p
                                        archiver=S3Archiver(s3, job_id))
     assert res["resumed_after"] == 2 and res["deleted_total"] == 4
     assert await pool.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE stage = $1", stage) == 1
+
+
+# ── manual override (S239): explicit cutoff, rollup first, archive verified, schedule untouched ──
+
+def _override_day(days_back: int) -> str:
+    return (datetime.now(timezone.utc).date() - timedelta(days=days_back)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_llm_override_rolls_up_then_archives_the_oldest_rows_and_keeps_the_day_totals(pool):
+    stage = f"adhoc_aa825o_{uuid.uuid4().hex[:8]}"
+    # one whole UTC day 40 days back (inside the 180-day window, older than the 31-day floor)
+    day = "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '40 days'"
+    await pool.execute(f"""
+        INSERT INTO shared.llm_call_log (stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal,
+                                         provider, account, fallback_used, created_at)
+        SELECT $1, 'writer', 'm1', 10, 1, 0.01, '{{}}'::jsonb, 'bedrock', 'acc3', false,
+               {day} + make_interval(mins => g)
+          FROM generate_series(1, 5) g""", stage)
+    raw_before = await pool.fetchrow(
+        "SELECT count(*) AS calls, sum(tokens_in) AS tin, sum(cost_usd) AS cost FROM shared.llm_call_log "
+        "WHERE stage = $1", stage)
+    payload = {"trigger": "manual_override", "older_than": _override_day(39), "pause_ms": 0}
+
+    dry = await _run(pool, "retention_llm_call_log", payload)
+    assert dry["mode"] == "dry_run" and dry["trigger"] == "manual_override"
+    assert dry["override"]["older_than"] == _override_day(39) and dry["candidates_total"] >= 5
+    assert dry["rollup_pending"] >= 1
+    assert await pool.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE stage = $1", stage) == 5
+    assert await pool.fetchval("SELECT count(*) FROM shared.llm_call_daily WHERE stage = $1", stage) == 0
+
+    s3 = FakeS3()
+    live = await _run(pool, "retention_llm_call_log", {**payload, "dry_run": False, "max_rows": 3}, s3)
+    assert live["mode"] == "live" and live["trigger"] == "manual_override"
+    assert live["deleted_total"] == 3 and live["archived_total"] == 3 and live["rollup_rows"] >= 1
+    # the day's rollup holds the complete day, written before any of it was deleted
+    roll = await pool.fetchrow("SELECT sum(calls) AS calls, sum(tokens_in) AS tin, sum(cost_usd) AS cost "
+                               "FROM shared.llm_call_daily WHERE stage = $1", stage)
+    assert (roll["calls"], roll["tin"], roll["cost"]) == (raw_before["calls"], raw_before["tin"], raw_before["cost"])
+    # every deleted row is in a HEAD-verified archive object under archive/llm_call_log/yyyy/mm/
+    assert len(s3.lines()) == 3 and all(k.startswith("archive/llm_call_log/") for k in s3.objects)
+    assert all(kw["ContentMD5"] for kw in s3.objects.values())
+
+    # the override is not "the last live run": scheduled runs stay DRY RUN
+    assert await retention_job.last_live(pool, "retention_llm_call_log") is None
+    sched = await _run(pool, "retention_llm_call_log", {"trigger": "schedule", "pause_ms": 0})
+    assert sched["mode"] == "dry_run"
+    st = {k["kind"]: k for k in (await retention_job.status(pool))["kinds"]}
+    assert st["retention_llm_call_log"]["scheduled_mode"] == "dry_run"
+    assert st["retention_llm_call_log"]["last"]["override"]["trigger"] == "manual_override"
+    await pool.execute("DELETE FROM shared.llm_call_daily WHERE stage = $1", stage)
+    await pool.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", stage)
+
+
+@pytest.mark.asyncio
+async def test_tenant_usage_override_keeps_the_admin_usage_numbers(pool):
+    from api.routers.admin import TENANT_USAGE_MONTHLY_SQL
+    tid = await _tenant(pool)
+    # a closed month two months back (inside the 90-day window), plus this month
+    month = "date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '2 months'"
+    await pool.execute(f"""
+        INSERT INTO shared.tenant_api_usage (tenant_id, endpoint, method, status_code, response_ms,
+                                             called_at, actor_type)
+        VALUES ($1::uuid, '/v1/tours', 'GET', 200, 10, {month} + interval '1 day', 'tenant'),
+               ($1::uuid, '/v1/tours', 'GET', 429, NULL, {month} + interval '2 days', 'tenant'),
+               ($1::uuid, '/v1/tours', 'GET', 500, 30, {month} + interval '20 days', 'tenant'),
+               ($1::uuid, '/v1/tours', 'GET', 200, 5, now(), 'tenant')""", tid)
+    first = (datetime.now(timezone.utc).date().replace(day=1) - timedelta(days=1)).replace(day=1)
+    older_than = (first - timedelta(days=1)).replace(day=1) + timedelta(days=10)     # day 11 of that month
+    # the reader buckets raw months in the session time zone; Dev RDS runs UTC
+    conn = await asyncpg.connect(DSN, server_settings={"timezone": "UTC"})
+    try:
+        before = [dict(r) for r in await conn.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
+        s3 = FakeS3()
+        res = await _run(pool, "retention_tenant_api_usage",
+                         {"trigger": "manual_override", "older_than": older_than.isoformat(), "dry_run": False,
+                          "max_rows": 1000, "pause_ms": 0}, s3)
+        assert res["trigger"] == "manual_override" and res["rollup_rows"] >= 1
+        # two rows were older than day 11, the day-21 row and this month's row stay
+        assert await pool.fetchval("SELECT count(*) FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid",
+                                   tid) == 2
+        assert len([x for x in s3.lines() if x["tenant_id"] == tid]) == 2
+        m = await pool.fetchrow("SELECT * FROM shared.tenant_api_usage_monthly WHERE tenant_id = $1::uuid", tid)
+        assert (m["calls"], m["ok_calls"], m["rate_limited_calls"], m["server_error_calls"]) == (3, 1, 1, 1)
+        after = [dict(r) for r in await conn.fetch(TENANT_USAGE_MONTHLY_SQL, uuid.UUID(tid), 6)]
+        assert after == before
+    finally:
+        await conn.close()
+        await pool.execute("DELETE FROM shared.tenant_api_usage_monthly WHERE tenant_id = $1::uuid", tid)
+        await pool.execute("DELETE FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid", tid)
+        await pool.execute("DELETE FROM shared.tenants WHERE tenant_id = $1::uuid", tid)
+
+
+@pytest.mark.asyncio
+async def test_no_raw_row_is_deleted_when_the_rollup_misses_a_day(pool, monkeypatch):
+    from services.retention import rollups
+    stage = f"adhoc_aa825g_{uuid.uuid4().hex[:8]}"
+    await pool.execute("""
+        INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, created_at)
+        VALUES ($1, 'writer', 'm', '{}'::jsonb, now() - interval '45 days')""", stage)
+
+    async def no_write(conn, rollup, cutoff):
+        return 0
+    monkeypatch.setattr(rollups, "write", no_write)
+    with pytest.raises(retention_job.RollupIncomplete):
+        await _run(pool, "retention_llm_call_log",
+                   {"trigger": "manual_override", "older_than": _override_day(40), "dry_run": False,
+                    "max_rows": 10, "pause_ms": 0}, FakeS3())
+    assert await pool.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE stage = $1", stage) == 1
+    await pool.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", stage)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_archive_verification_deletes_nothing(pool):
+    from services.retention.archive import ArchiveNotVerified
+    stage = f"adhoc_aa825v_{uuid.uuid4().hex[:8]}"
+    await pool.execute("""
+        INSERT INTO shared.llm_call_log (stage, role, model, quality_signal, created_at)
+        VALUES ($1, 'writer', 'm', '{}'::jsonb, now() - interval '45 days')""", stage)
+
+    class LossyS3(FakeS3):
+        def head_object(self, **kw):
+            return {"ContentLength": 0, "Metadata": {}}
+    with pytest.raises(ArchiveNotVerified):
+        await _run(pool, "retention_llm_call_log",
+                   {"trigger": "manual_override", "older_than": _override_day(40), "dry_run": False,
+                    "max_rows": 10, "pause_ms": 0}, LossyS3())
+    assert await pool.fetchval("SELECT count(*) FROM shared.llm_call_log WHERE stage = $1", stage) == 1
+    await pool.execute("DELETE FROM shared.llm_call_log WHERE stage = $1", stage)
