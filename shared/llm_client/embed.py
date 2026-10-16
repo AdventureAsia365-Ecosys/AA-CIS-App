@@ -55,15 +55,17 @@ class EmbedResponse:
 
 
 def _acc2_client():
-    # No retry (max_attempts=1): callers pace to the account's per-minute quota, and a throttle
-    # retried at once spends the same minute's quota again (AA-610).
+    # No retry (total_max_attempts=1, one attempt): callers pace to the account's per-minute quota,
+    # and a throttle retried at once spends the same minute's quota again (AA-610). AA-862: the legacy
+    # `max_attempts` key counts RETRIES in botocore (`max_attempts=1` = 2 attempts), which spent two
+    # acc2 calls per throttle and delayed the fall-through to acc3.
     global _native_client
     with _native_lock:
         if _native_client is None:
             _native_client = boto3.client(
                 "bedrock-runtime", region_name=BEDROCK_REGION,
                 config=Config(read_timeout=30, connect_timeout=10,
-                              retries={"max_attempts": 1, "mode": "standard"}),
+                              retries={"total_max_attempts": 1, "mode": "standard"}),
             )
         return _native_client
 

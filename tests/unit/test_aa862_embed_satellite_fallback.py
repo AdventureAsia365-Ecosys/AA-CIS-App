@@ -1,6 +1,7 @@
 """AA-862 — Cohere Embed v4 falls through acc2 -> acc3 (-> acc1 once enabled) through the stage route
-that migration 240 writes: one catalog row per account, chained with fallback_model_ids. No gateway
-code changed; these tests pin the behaviour the migration relies on."""
+that migration 240 writes: one catalog row per account, chained with fallback_model_ids. Routing
+code is unchanged (only the acc2 client now makes a single attempt); these tests pin the behaviour
+the migration relies on."""
 import io
 import json
 from unittest.mock import MagicMock, patch
@@ -124,3 +125,14 @@ class TestCallLog:
         kwargs = m_log.call_args.kwargs
         assert kwargs["model"] == ACC3 and kwargs["account"] == "acc3"
         assert kwargs["fallback_used"] is True and kwargs["provider"] == "bedrock-satellite"
+
+
+def test_acc2_client_makes_one_attempt_only(monkeypatch):
+    """botocore reads the legacy `max_attempts` as retries (1 -> 2 attempts); a throttle must cost one
+    acc2 call before the fall-through, so the client sets `total_max_attempts=1`."""
+    monkeypatch.setattr(embed_mod, "_native_client", None)
+    client = embed_mod._acc2_client()
+    try:
+        assert client.meta.config.retries == {"total_max_attempts": 1, "mode": "standard"}
+    finally:
+        monkeypatch.setattr(embed_mod, "_native_client", None)
