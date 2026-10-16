@@ -21,7 +21,15 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   changed limit needs no code change. `usename` is the session user, the one CONNECTION LIMIT counts.
   The main pool runs as aa_cis_admin, which sees other roles' rows (verified live 16/10/2026).
 - boto3 runs in asyncio.to_thread with short timeouts and no retries, so a CloudWatch outage costs one
-  thread for at most ~8 s per call, never the event loop.
+  thread for at most ~8 s per call, never the event loop. Each part of a tick (AA/RDS, retired-kind
+  sweep, AA/Jobs/CIS) also runs under asyncio.wait_for(PART_TIMEOUT_S): the main pool has no
+  command_timeout, so a hung acquire/query (half-open TCP to RDS) lands as a `*_error` TimeoutError
+  and the next tick tries again instead of stalling the loop until the task restarts.
+- Retired kinds (shared/jobs/registry.RETIRED_KINDS, kinds whose handler was removed): every tick
+  cancels their queued/running rows before the backlog sample. No live worker can claim them, so a
+  row left over from a rolling deploy (the old api enqueueing during the roll) would otherwise page
+  `*-jobs-queue-age` as starved `unregistered` and block every later Deploy Dev. A kind is swept only
+  while it is NOT registered.
 - api only (not the worker service); started from api/main.py's lifespan after the main pool,
   cancelled before the pool closes. Off when ENVIRONMENT == "test". Never raises: a failing part is
   logged in the tick's line (`*_error`) and the loop goes on. With two api tasks (rolling deploy)
@@ -40,6 +48,7 @@ logger = structlog.get_logger()
 
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
+PART_TIMEOUT_S = 60.0              # bound on each part of a tick (3 parts -> < 300 s interval)
 
 NAMESPACE_RDS = "AA/RDS"
 METRIC_CONNECTIONS = "RoleConnections"
@@ -126,40 +135,75 @@ async def _put(client, namespace: str, data: list[dict]) -> None:
     await asyncio.to_thread(client.put_metric_data, Namespace=namespace, MetricData=data)
 
 
-async def sample_once(pool, client, kinds: Optional[dict] = None) -> dict:
-    """One tick: AA/RDS then AA/Jobs/CIS, each part on its own (one failing never blocks the other).
-    Returns the fields of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
+async def _rds_part(pool, client, ts: datetime, out: dict) -> None:
+    samples = role_samples(await pool.fetch(ROLE_CONNECTIONS_SQL))
+    out["roles"] = {s["role"]: {"connections": s["connections"], "limit": s["limit"], "pct": s["pct"]}
+                    for s in samples}
+    if samples:   # no limited role: nothing to publish (sampling-stopped will say so)
+        await _put(client, NAMESPACE_RDS, metric_data(samples, ts))
+    out["rds_published"] = 2 * len(samples)
+
+
+async def _retired_part(pool, kinds: dict, out: dict) -> None:
+    from shared.jobs import queue
+    from shared.jobs.registry import RETIRED_KINDS
+
+    retired = {k: v for k, v in RETIRED_KINDS.items() if k not in kinds}
+    if retired:
+        n = await queue.cancel_retired_kinds(pool, retired)
+        if n:
+            out["retired_cancelled"] = n
+
+
+async def _jobs_part(pool, client, kinds: dict, ts: datetime, out: dict) -> None:
     from shared.jobs import backlog
 
+    b = await backlog.sample(pool, kinds)
+    out.update(oldest_queued_age_seconds=b["oldest_queued_age_seconds"],
+               overdue_running_jobs=b["overdue_running_jobs"], starved=b["starved"], overdue=b["overdue"],
+               queued_due=b["queued_due"], running=b["running"], live_workers=b["live_workers"])
+    await _put(client, NAMESPACE_JOBS, jobs_metric_data(b, ts))
+    out["jobs_published"] = 2
+
+
+def _err(e: BaseException) -> str:
+    return f"{type(e).__name__}: {str(e)[:300]}"
+
+
+async def sample_once(pool, client, kinds: Optional[dict] = None,
+                      part_timeout_s: float = PART_TIMEOUT_S) -> dict:
+    """One tick: AA/RDS, the retired-kind sweep, then AA/Jobs/CIS, each part on its own and under
+    part_timeout_s (one failing or hanging never blocks the others). Returns the fields of the
+    `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
     out: dict[str, Any] = {"sampled_at": ts.isoformat()}
 
     try:
-        samples = role_samples(await pool.fetch(ROLE_CONNECTIONS_SQL))
-        out["roles"] = {s["role"]: {"connections": s["connections"], "limit": s["limit"], "pct": s["pct"]}
-                        for s in samples}
-        if samples:   # no limited role: nothing to publish (sampling-stopped will say so)
-            await _put(client, NAMESPACE_RDS, metric_data(samples, ts))
-        out["rds_published"] = 2 * len(samples)
-    except Exception as e:
-        out["rds_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        await asyncio.wait_for(_rds_part(pool, client, ts, out), timeout=part_timeout_s)
+    except Exception as e:   # asyncio.TimeoutError included
+        out["rds_error"] = _err(e)
 
     try:
         if kinds is None:
-            kinds = await asyncio.to_thread(_registry)
-        b = await backlog.sample(pool, kinds)
-        out.update(oldest_queued_age_seconds=b["oldest_queued_age_seconds"],
-                   overdue_running_jobs=b["overdue_running_jobs"], starved=b["starved"], overdue=b["overdue"],
-                   queued_due=b["queued_due"], running=b["running"], live_workers=b["live_workers"])
-        await _put(client, NAMESPACE_JOBS, jobs_metric_data(b, ts))
-        out["jobs_published"] = 2
+            kinds = await asyncio.wait_for(asyncio.to_thread(_registry), timeout=part_timeout_s)
     except Exception as e:
-        out["jobs_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        out["jobs_error"] = _err(e)
+        return out
+
+    try:
+        await asyncio.wait_for(_retired_part(pool, kinds, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["retired_error"] = _err(e)
+
+    try:
+        await asyncio.wait_for(_jobs_part(pool, client, kinds, ts, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["jobs_error"] = _err(e)
     return out
 
 
 def _log(out: dict) -> None:
-    if "rds_error" in out or "jobs_error" in out:
+    if any(k in out for k in ("rds_error", "retired_error", "jobs_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)
@@ -167,7 +211,8 @@ def _log(out: dict) -> None:
 
 async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_S,
                                   first_delay_s: float = OPS_METRICS_FIRST_DELAY_S,
-                                  client_factory: Callable[[], Any] = cloudwatch_client) -> None:
+                                  client_factory: Callable[[], Any] = cloudwatch_client,
+                                  part_timeout_s: float = PART_TIMEOUT_S) -> None:
     """Loops until cancelled. Reads app.state.pool on every tick, so it never holds a stale pool; the
     CloudWatch client is made once (in a thread), and again on the next tick if making it failed."""
     client = None
@@ -178,9 +223,9 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
             if pool is not None:
                 if client is None:
                     client = await asyncio.to_thread(client_factory)
-                _log(await sample_once(pool, client))
+                _log(await sample_once(pool, client, part_timeout_s=part_timeout_s))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
-            logger.warning("ops_metrics_sampled", error=f"{type(e).__name__}: {str(e)[:300]}")
+            logger.warning("ops_metrics_sampled", error=_err(e))
         await asyncio.sleep(interval_s)
 
 

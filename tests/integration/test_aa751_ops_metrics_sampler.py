@@ -183,3 +183,25 @@ async def test_deploy_gate_exempt_mechanism_still_filters(pool):
     await _queued(pool, "aa751_k", 1)
     assert (await queue.active_count(pool))["active"] == 2
     assert (await queue.active_count(pool, exempt_kinds=["aa751_exempt"]))["active"] == 1
+
+
+# ── retired kinds: rolling-deploy leftovers are cancelled, nothing else is touched ──────────────
+
+async def test_retired_kind_rows_cancelled_on_a_tick(pool):
+    q = await _queued(pool, "ops_rds_role_connections", 30)
+    r = await _queued(pool, "ops_rds_role_connections", 1)
+    await pool.execute("UPDATE shared.job SET status = 'running', started_at = now(), locked_by = 'old-w', "
+                       "locked_until = now() + interval '5 min' WHERE id = $1::uuid", r)
+    other = await _queued(pool, "aa751_k", 30)
+    out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    assert out["retired_cancelled"] == 2 and "retired_error" not in out, out
+    rows = {str(x["id"]): x for x in await pool.fetch("SELECT id, status, error, locked_by, finished_at FROM shared.job")}
+    for jid in (q, r):
+        assert rows[jid]["status"] == "cancelled" and rows[jid]["error"] == "kind removed (AA-751)"
+        assert rows[jid]["locked_by"] is None and rows[jid]["finished_at"] is not None
+    assert rows[other]["status"] == "queued"
+    # the old worker finishing its row afterwards cannot overwrite the cancel
+    assert not await queue.complete(pool, r, "old-w", {"ok": True}, None)
+    # idempotent: the next tick finds nothing
+    again = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    assert "retired_cancelled" not in again

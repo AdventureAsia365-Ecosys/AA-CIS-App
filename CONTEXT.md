@@ -226,8 +226,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     the **api** (not the worker) started in `api/main.py`'s lifespan after the main pool, cancelled
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
     start) it makes one PutMetricData per namespace (boto3 in a thread, connect 3 s / read 5 s, one
-    attempt) and logs one `ops_metrics_sampled` line with the values (`rds_error` / `jobs_error` when a
-    part fails; the other part still runs):
+    attempt) and logs one `ops_metrics_sampled` line with the values (`rds_error` / `retired_error` /
+    `jobs_error` when a part fails; the other parts still run). Each part runs under
+    `asyncio.wait_for(PART_TIMEOUT_S = 60)` (the main pool has no `command_timeout`), so a hung query
+    is a `TimeoutError` in the line and the next tick retries. Before the backlog sample it cancels
+    queued/running rows of `shared.jobs.registry.RETIRED_KINDS` (kinds whose handler was removed;
+    `ops_rds_role_connections` today, error `kind removed (AA-751)`, `retired_cancelled` in the line),
+    so a rolling-deploy leftover neither pages as starved nor blocks the deploy gate:
     - `AA/RDS`, dimension `Role`: `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) for
       every LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered
       each tick; the main pool's aa_cis_admin sees every role's sessions);

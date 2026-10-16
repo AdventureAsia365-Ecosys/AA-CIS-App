@@ -45,6 +45,15 @@ class JobKind:
 
 _KINDS: dict[str, JobKind] = {}
 
+# Kinds whose handler was removed -> the issue that removed it. No worker can claim their rows, so
+# the api's ops metrics sampler (api/core/ops_metrics_sampler.py) cancels any queued/running row of
+# them on every tick (queue.cancel_retired_kinds), while the kind is not registered. Keeps a row
+# left over from a rolling deploy from paging `*-jobs-queue-age` and blocking Deploy Dev. Drop an
+# entry once no row of it can appear any more (its scheduler is gone and a deploy has passed).
+RETIRED_KINDS: dict[str, str] = {
+    "ops_rds_role_connections": "AA-751",   # AA-832 Lambda -> job chain, replaced by the sampler
+}
+
 
 def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,

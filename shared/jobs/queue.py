@@ -272,6 +272,27 @@ async def request_cancel(pool, job_id: str) -> Optional[str]:
     return row["status"] if row else None
 
 
+async def cancel_retired_kinds(pool, retired: dict[str, str]) -> int:
+    """Cancel every queued/running row of the retired kinds ({kind: issue}); returns the count.
+    The lock is cleared too, so a worker still finishing such a row cannot overwrite the status
+    (_finish matches on locked_by). Idempotent; a no-op when nothing matches."""
+    if not retired:
+        return 0
+    status = await pool.execute(
+        """
+        UPDATE shared.job SET status = 'cancelled',
+               error = 'kind removed (' || ($2::jsonb ->> kind) || ')',
+               locked_by = NULL, locked_until = NULL, finished_at = now(), updated_at = now()
+        WHERE kind = ANY($1::text[]) AND status IN ('queued', 'running')
+        """,
+        list(retired), json.dumps(retired),
+    )
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except ValueError:
+        return 0
+
+
 async def retry(pool, job_id: str) -> bool:
     """A finished-unsuccessfully job gets a fresh set of attempts."""
     row = await pool.fetchrow(

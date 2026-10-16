@@ -317,10 +317,15 @@ _SAMPLE = {"oldest_queued_age_seconds": 0.0, "overdue_running_jobs": 0, "starved
            "queued_due": 3, "running": 2, "live_workers": 1}
 
 
-def _pool(rows=None, error=None):
+def _pool(rows=None, error=None, execute="UPDATE 0"):
     pool = MagicMock()
     pool.fetch = AsyncMock(return_value=_role_rows() if rows is None else rows, side_effect=error)
+    pool.execute = AsyncMock(return_value=execute)   # the retired-kind sweep
     return pool
+
+
+async def _hang(*a, **kw):
+    await asyncio.sleep(3600)
 
 
 @pytest.mark.asyncio
@@ -379,6 +384,93 @@ async def test_sample_once_loads_the_registry_when_not_given():
         await sampler.sample_once(_pool(), StubCloudWatch())
     kinds = bs.call_args[0][1]
     assert "a3_atomize" in kinds and "ops_rds_role_connections" not in kinds
+
+
+# ── per-part timeout (a hung acquire/query never stalls the loop) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_hung_rds_query_times_out_jobs_still_published():
+    pool = _pool()
+    pool.fetch = AsyncMock(side_effect=_hang)
+    cw = StubCloudWatch()
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await asyncio.wait_for(sampler.sample_once(pool, cw, kinds=KINDS, part_timeout_s=0.05), 2)
+    assert out["rds_error"].startswith("TimeoutError")
+    assert [c["Namespace"] for c in cw.calls] == ["AA/Jobs/CIS"] and out["jobs_published"] == 2
+
+
+@pytest.mark.asyncio
+async def test_hung_backlog_sample_times_out_rds_still_published():
+    cw = StubCloudWatch()
+    with patch.object(backlog, "sample", AsyncMock(side_effect=_hang)):
+        out = await asyncio.wait_for(sampler.sample_once(_pool(), cw, kinds=KINDS, part_timeout_s=0.05), 2)
+    assert out["jobs_error"].startswith("TimeoutError") and out["rds_published"] == 6
+    assert [c["Namespace"] for c in cw.calls] == ["AA/RDS"]
+
+
+@pytest.mark.asyncio
+async def test_loop_keeps_ticking_with_a_pool_that_never_answers():
+    pool = _pool()
+    pool.fetch = AsyncMock(side_effect=_hang)
+    pool.execute = AsyncMock(side_effect=_hang)
+    app = SimpleNamespace(state=SimpleNamespace(pool=pool))
+    with capture_logs() as logs, patch.object(backlog, "sample", AsyncMock(side_effect=_hang)):
+        task = asyncio.create_task(sampler.run_ops_metrics_sampler(
+            app, 0.01, 0, client_factory=StubCloudWatch, part_timeout_s=0.02))
+        await _wait_for(logs, "ops_metrics_sampled", count=2)
+        await sampler.stop_ops_metrics_sampler(task)
+    lines = [e for e in logs if e["event"] == "ops_metrics_sampled"][:2]
+    assert all(e["log_level"] == "warning" for e in lines)
+    assert all(e["rds_error"].startswith("TimeoutError") and e["retired_error"].startswith("TimeoutError")
+               and e["jobs_error"].startswith("TimeoutError") for e in lines)
+
+
+def test_part_timeout_bounds_a_tick_below_the_interval():
+    assert 3 * sampler.PART_TIMEOUT_S < sampler.OPS_METRICS_INTERVAL_S
+
+
+# ── retired kinds (rolling-deploy leftovers) ───────────────────────────────────────────────────
+
+def test_ops_rds_role_connections_is_retired():
+    assert registry.RETIRED_KINDS == {"ops_rds_role_connections": "AA-751"}
+
+
+@pytest.mark.asyncio
+async def test_retired_rows_are_cancelled_before_the_backlog_sample():
+    pool = _pool(execute="UPDATE 2")
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, StubCloudWatch(), kinds=KINDS)
+    pool.execute.assert_awaited_once()
+    sql, kinds_arg, reasons = pool.execute.call_args[0]
+    assert "status IN ('queued', 'running')" in sql and "locked_by = NULL" in sql
+    assert kinds_arg == ["ops_rds_role_connections"] and '"AA-751"' in reasons
+    assert out["retired_cancelled"] == 2 and "retired_error" not in out
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_cancel_adds_no_field():
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(_pool(), StubCloudWatch(), kinds=KINDS)
+    assert "retired_cancelled" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_registered_kind_is_never_swept():
+    pool = _pool()
+    kinds = dict(KINDS, ops_rds_role_connections=K())
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        await sampler.sample_once(pool, StubCloudWatch(), kinds=kinds)
+    pool.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_failure_does_not_block_jobs():
+    pool = _pool()
+    pool.execute = AsyncMock(side_effect=RuntimeError("permission denied"))
+    cw = StubCloudWatch()
+    with patch.object(backlog, "sample", AsyncMock(return_value=_SAMPLE)):
+        out = await sampler.sample_once(pool, cw, kinds=KINDS)
+    assert "permission denied" in out["retired_error"] and out["jobs_published"] == 2
 
 
 # ── the loop ────────────────────────────────────────────────────────────────────────────────────
