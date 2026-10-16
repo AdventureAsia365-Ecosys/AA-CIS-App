@@ -7,48 +7,51 @@ duplicate) — this file only covers the NEW behavior, not re-testing choose_ang
 happy path or set_goal_and_generate()/create_request() (already covered there).
 """
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from services.acp_angle_gate import service
 from tests.unit.test_aa449_angle_gate_service import (
-    OTHER_TENANT_ID, REQUEST_ID, TENANT_ID, _make_pool, _option_row, _request_row,
+    OTHER_TENANT_ID, REQUEST_ID, TENANT_ID, _make_pool, _option_row, _request_row, _StatefulAngleOptionConn,
 )
 
 
 # ── reopen_request() ─────────────────────────────────────────────────────────
+# AA-859 W3 — reopen_request(conn, tenant_id, request_id) runs on the caller's connection, in the
+# caller's transaction: one conditional UPDATE (RETURNING), and on 0 rows a status re-read that tells
+# 404 from 409. The response (fetch_request) is the router's, after commit.
+
+def _reopen_conn(returned, status=None):
+    conn = AsyncMock()
+    conn.fetchval.side_effect = [returned, status]
+    return conn
+
 
 @pytest.mark.asyncio
 class TestReopenRequest:
     async def test_happy_path_approved_to_reusable(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="approved", goal="promotion")
-        pool = _make_pool(conn)
-
-        with patch.object(service, "fetch_request", new=AsyncMock(return_value={"status": "reusable"})):
-            result = await service.reopen_request(TENANT_ID, REQUEST_ID, pool)
-
-        assert result["status"] == "reusable"
-        update_calls = [c for c in conn.execute.call_args_list if "SET status = 'reusable'" in c[0][0]]
-        assert len(update_calls) == 1
-        assert update_calls[0][0][1] == REQUEST_ID
+        conn = _reopen_conn(REQUEST_ID)
+        assert await service.reopen_request(conn, TENANT_ID, REQUEST_ID) is None
+        assert conn.fetchval.call_args_list[0][0] == (service._REOPEN_SQL, REQUEST_ID, TENANT_ID)
+        assert conn.fetchval.await_count == 1
+        assert "SET status = 'reusable'" in service._REOPEN_SQL
+        assert "status = 'approved'" in service._REOPEN_SQL, "only an approved request is reopened"
+        assert "tenant_id = $2::uuid" in service._REOPEN_SQL
 
     @pytest.mark.parametrize("status", ["pending_goal", "pending_choice", "reusable"])
     async def test_wrong_status_raises(self, status):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status=status)
-        pool = _make_pool(conn)
-        with pytest.raises(service.WrongStatusError):
-            await service.reopen_request(TENANT_ID, REQUEST_ID, pool)
+        conn = _reopen_conn(None, status)
+        with pytest.raises(service.WrongStatusError, match=repr(status)):
+            await service.reopen_request(conn, TENANT_ID, REQUEST_ID)
+        assert conn.fetchval.call_args_list[1][0] == (service._REQUEST_STATUS_SQL, REQUEST_ID, TENANT_ID)
         conn.execute.assert_not_called()
 
     async def test_cross_tenant_request_not_found(self):
-        conn = AsyncMock()
-        conn.fetchrow.return_value = None
-        pool = _make_pool(conn)
+        conn = _reopen_conn(None, None)
         with pytest.raises(service.RequestNotFoundError):
-            await service.reopen_request(OTHER_TENANT_ID, REQUEST_ID, pool)
+            await service.reopen_request(conn, OTHER_TENANT_ID, REQUEST_ID)
+        assert conn.fetchval.call_args_list[1][0][2] == OTHER_TENANT_ID
 
 
 # ── choose_angle() widened guard ─────────────────────────────────────────────
@@ -57,92 +60,61 @@ class TestReopenRequest:
 class TestChooseAngleAcceptsReusable:
     async def test_choose_from_reusable_status_succeeds(self):
         conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="reusable", goal="promotion")
-        conn.execute.side_effect = ["UPDATE 1", "UPDATE 2", "UPDATE 1"]
-        pool = _make_pool(conn)
+        conn.fetchval.side_effect = ["reusable", 1]
+        conn.execute.side_effect = ["UPDATE 3", "UPDATE 1"]
 
-        with patch.object(service, "fetch_request", new=AsyncMock(return_value={"status": "approved"})):
-            result = await service.choose_angle(TENANT_ID, REQUEST_ID, 2, pool)
+        await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 2)
 
-        assert result["status"] == "approved"
         # lands back on 'approved' regardless of whether it came from pending_choice or reusable
-        status_update = [c for c in conn.execute.call_args_list if "SET status = 'approved'" in c[0][0]]
+        status_update = [c for c in conn.execute.call_args_list if c[0][0] == service._REQUEST_APPROVE_SQL]
         assert len(status_update) == 1
+        assert "SET status = 'approved'" in service._REQUEST_APPROVE_SQL
+        assert "status IN ('pending_choice', 'reusable')" in service._REQUEST_APPROVE_SQL
 
     async def test_choose_from_approved_status_still_rejected(self):
         """'approved' itself is not a valid source status — only 'pending_choice' (first pick)
         or 'reusable' (re-pick, via reopen_request() above) can call choose_angle()."""
         conn = AsyncMock()
-        conn.fetchrow.return_value = _request_row(status="approved")
-        pool = _make_pool(conn)
+        conn.fetchval.side_effect = ["approved"]
         with pytest.raises(service.WrongStatusError):
-            await service.choose_angle(TENANT_ID, REQUEST_ID, 0, pool)
+            await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 0)
+        conn.execute.assert_not_called()
 
 
 # ── Full reopen -> re-choose -> approved cycle, real state mutation ─────────
 
-class _StatefulReopenConn:
-    """Same spirit as test_aa449_angle_gate_service.py's _StatefulAngleOptionConn, extended with
-    a real 'reusable' transition (reopen_request()'s own UPDATE) so this test exercises the ACTUAL
-    guard/status logic end-to-end, not a bypass."""
-
-    async def fetchval(self, *args, **kwargs):
-        # AA-764 — fetch_request() reads the latest t8_angles job status; none in these tests.
-        return None
+class _StatefulReopenConn(_StatefulAngleOptionConn):
+    """test_aa449_angle_gate_service.py's _StatefulAngleOptionConn (which also implements reopen's
+    conditional UPDATE), starting from an approved request whose idx 0 was the first pick, so this test
+    exercises the ACTUAL guard/status logic end-to-end, not a bypass."""
 
     def __init__(self):
+        super().__init__()
         self.options = {0: True, 1: False, 2: False}  # idx 0 chosen from the "first" pick
         self.request_status = "approved"
-
-    async def fetchrow(self, query, *args):
-        if "angle_gate_request" in query:
-            return _request_row(status=self.request_status, goal="promotion")
-        return None
-
-    async def fetch(self, query, *args):
-        return [_option_row(i, chosen=self.options[i]) for i in sorted(self.options)]
-
-    async def execute(self, query, *args):
-        if "SET status = 'reusable'" in query:
-            self.request_status = "reusable"
-            return "UPDATE 1"
-        if "SET chosen = true" in query:
-            _, idx = args
-            if idx not in self.options:
-                return "UPDATE 0"
-            self.options[idx] = True
-            return "UPDATE 1"
-        if "SET chosen = false" in query:
-            _, idx = args
-            n = 0
-            for i in self.options:
-                if i != idx:
-                    self.options[i] = False
-                    n += 1
-            return f"UPDATE {n}"
-        if "SET status = 'approved'" in query:
-            self.request_status = "approved"
-            return "UPDATE 1"
-        return "UPDATE 0"
 
 
 @pytest.mark.asyncio
 async def test_full_reopen_reselect_cycle_lands_on_approved_with_new_choice():
     conn = _StatefulReopenConn()
-    pool = _make_pool(conn)
 
     assert conn.request_status == "approved"
     assert conn.options == {0: True, 1: False, 2: False}
 
-    reopened = await service.reopen_request(TENANT_ID, REQUEST_ID, pool)
-    assert reopened["status"] == "reusable"
+    await service.reopen_request(conn, TENANT_ID, REQUEST_ID)
     assert conn.request_status == "reusable"
 
-    result = await service.choose_angle(TENANT_ID, REQUEST_ID, 2, pool)
+    with pytest.raises(service.WrongStatusError):  # a double click: the second reopen is a 409
+        await service.reopen_request(conn, TENANT_ID, REQUEST_ID)
 
-    assert result["status"] == "approved"
+    await service.choose_angle(conn, TENANT_ID, REQUEST_ID, 2)
+
     assert conn.request_status == "approved"
     assert conn.options == {0: False, 1: False, 2: True}, "the re-selected option must be the only one chosen=true"
+
+    reread = await service.fetch_request(TENANT_ID, REQUEST_ID, _make_pool(conn))
+    assert reread["status"] == "approved"
+    assert [a["chosen"] for a in reread["angles"]] == [False, False, True]
 
 
 # ── fetch_request() now returns option_id per angle (needed by T9's content_writing) ─

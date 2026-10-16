@@ -152,7 +152,9 @@ async def update_piece(
     if not body.content_text.strip():
         raise HTTPException(status_code=422, detail="Content cannot be empty")
     try:
-        return await service.update_piece_content_text(tenant_id, piece_id, body.content_text, pool)
+        # AA-859 W2: request passed so the UPDATE runs on the tenant pool when PIECE_EDIT_FLAG is on.
+        return await service.update_piece_content_text(tenant_id, piece_id, body.content_text, pool,
+                                                       request=request)
     except service.ContentWritingError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
