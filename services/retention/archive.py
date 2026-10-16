@@ -9,11 +9,17 @@ of two UTC months in one object, so the yyyy/mm partition is exact. <run> is the
 this attempt, so a retry of the same job (batch numbers restart) never overwrites an object of an
 earlier attempt whose rows are already deleted. Re-running after a failed delete writes a new object
 for the same rows; duplicates in the archive are harmless, a lost row is not.
+
+Verified before the DELETE (S239): the PUT carries Content-MD5, so S3 refuses a body that arrived
+damaged, and a HEAD of the new key must report the exact byte length and row count; otherwise
+`ArchiveNotVerified` is raised inside the batch transaction and nothing of that batch is deleted.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,6 +33,15 @@ def object_key(archive_name: str, month_of: datetime, job_id: str, run: str, par
 
 def encode(docs: list[str]) -> bytes:
     return gzip.compress(("\n".join(docs) + "\n").encode("utf-8"))
+
+
+def content_md5(body: bytes) -> str:
+    """Base64 MD5 for the Content-MD5 header (an integrity check S3 enforces, not security)."""
+    return base64.b64encode(hashlib.md5(body, usedforsecurity=False).digest()).decode("ascii")
+
+
+class ArchiveNotVerified(Exception):
+    """The archive object is missing or differs from what was written; the batch is not deleted."""
 
 
 class S3Archiver:
@@ -43,8 +58,15 @@ class S3Archiver:
         key = object_key(archive_name, month_of, self.job_id, self.run, part, batch_no)
         body = encode(docs)
         await asyncio.to_thread(
-            self.s3.put_object, Bucket=self.bucket, Key=key, Body=body,
+            self.s3.put_object, Bucket=self.bucket, Key=key, Body=body, ContentMD5=content_md5(body),
             ContentType="application/x-ndjson", ContentEncoding="gzip",
             ServerSideEncryption="AES256", Metadata={"rows": str(len(docs)), "source": "aa-825"},
         )
+        head = await asyncio.to_thread(self.s3.head_object, Bucket=self.bucket, Key=key)
+        size = (head or {}).get("ContentLength")
+        rows = ((head or {}).get("Metadata") or {}).get("rows")
+        if size != len(body) or rows != str(len(docs)):
+            raise ArchiveNotVerified(
+                f"s3://{self.bucket}/{key}: HEAD says {size} bytes / rows={rows!r}, "
+                f"wrote {len(body)} bytes / {len(docs)} rows")
         return key
