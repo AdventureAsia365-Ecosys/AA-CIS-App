@@ -38,13 +38,19 @@ Chore, no Linear issue. Source numbers: `AA-Ecosys/docs/audits/2026-10-16-S240-v
   the cookie and never touched this cache. Worst case (documented in the file): JWT_SECRET rotation
   leaves already-cached tokens accepted up to 5 min per warm instance (was 20 s).
 
+- **Proxy streaming**: one helper `frontend/lib/proxyResponse.ts` `streamUpstream(res)` used by the
+  three proxies — `new NextResponse(res.body, {status, Content-Type only})`. Header set is identical
+  to before (only Content-Type; Content-Encoding/Length never forwarded — undici already decoded the
+  body; Set-Cookie was never forwarded). Request-side code, auth, rbac, 400/403/503/502 paths untouched.
+
 ## Changed
 - Backend: `shared/jobs/queue.py` `list_jobs(include_blobs=...)` + `_SUMMARY_COLUMNS`;
   `api/routers/admin_job_runner.py` `fields` query param. Unit tests:
   `tests/unit/test_s241_jobs_list_summary.py`. CONTEXT.md job-runner bullet updated.
 - Frontend: `app/admin/jobs/page.tsx`, `JobDrawer.tsx`, `app/_kit/Topbar.tsx`, `Sidebar.tsx`,
   `BottomNav.tsx`, new `app/_kit/useReviewPendingCount.ts` (exported from the kit barrel),
-  `lib/auth-server.ts` (also shared by `middleware.ts`).
+  `lib/auth-server.ts` (also shared by `middleware.ts`), new `lib/proxyResponse.ts`,
+  `app/api/{admin,tenant,pipeline}/[...path]/route.ts`.
 
 ## Tradeoffs
 - A NULL-ed column keeps the response shape stable at the cost of a few bytes per row (`"payload":null`).
@@ -54,6 +60,19 @@ Chore, no Linear issue. Source numbers: `AA-Ecosys/docs/audits/2026-10-16-S240-v
 - 30 s instead of 10 s makes the ETA/progress column update less often; the ETA rate math is
   per-sample-time, so it stays correct, just coarser.
 
+- Streaming: a mid-body upstream failure now reaches the client as a truncated response with the
+  upstream status instead of a clean 502. Accepted (rare; the JSON parse fails client-side the same
+  way an error would).
+
 ## Should know
+- **Behaviour change (fix) in the proxies**: a bodyless upstream status (204/304) used to become a
+  502 — `new NextResponse(new ArrayBuffer(0), {status: 204})` throws "Invalid response status code
+  204" inside the try. With `res.body` (null for 204) it now passes through. No backend route
+  returns 204 today (grep), so nothing visible changes.
+- Local checks done (scratchpad scripts, not committed): gzip upstream → streamed body equals the
+  decoded JSON and no content-encoding header; 204 → 204; 500 → 500 with body. `tokenExpiryMs`
+  decodes base64url payloads (incl. non-ASCII username) and returns null for garbage.
+- Not verified here: a Vercel preview, real Fluid CPU numbers after deploy, browser behaviour of the
+  pollers (tab hidden/focus). The integrate stage builds and smokes once.
 - The router compares `fields` as a str (`isinstance`): a direct Python call (unit tests) receives
   the FastAPI `Query` default object, which must mean "full".
