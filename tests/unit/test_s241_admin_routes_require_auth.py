@@ -15,8 +15,13 @@ walks EVERY entry of app.routes (not only /admin):
 - Staff-only paths (STAFF_ONLY_PREFIXES: /admin, /v1/pipeline, /v1/rules, /v1/social) need a STAFF
   check. A tenant-or-staff dependency (a tenant JWT satisfies it) is accepted there only for the
   routes in ADMIN_TENANT_OR_STAFF.
-- Mount: recursed into when the mounted app is a router; any other mounted ASGI app, and any plain
-  Starlette Route / WebSocketRoute, fails unless listed in NON_API_ALLOWED with a reason.
+- Included routers: FastAPI 0.110 copies an included router's routes into the parent, FastAPI >= 0.143
+  keeps one `_IncludedRouter` entry (original router + include context). The scan expands that entry,
+  carrying the include prefix and the `include_router(dependencies=...)` list into each route, so both
+  versions are checked against the same effective path and dependencies (see `_walk`).
+- Mount: recursed into when the mounted app is a router (include-level dependencies do NOT reach a
+  mounted app, so none are carried); any other mounted ASGI app, and any plain Starlette Route /
+  WebSocketRoute, fails unless listed in NON_API_ALLOWED with a reason.
 - Anything else must be in ALLOWED_PUBLIC (or INLINE_REVIEWED) with a written reason.
 """
 from __future__ import annotations
@@ -27,8 +32,9 @@ import textwrap
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import Depends, FastAPI, Header, WebSocket
+from fastapi import APIRouter, Depends, FastAPI, Header, WebSocket
 from fastapi import params as fastapi_params
+from fastapi.dependencies.utils import get_parameterless_sub_dependant
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from starlette.routing import Mount
 
@@ -151,12 +157,20 @@ def _has_inline_staff_check(endpoint) -> bool:
     return False
 
 
-def _check_endpoint(method, path, route, problems):
+def _inherited_calls(inherited, path):
+    """Callables of the include-level Depends(...) that wrap a route, sub-dependencies included."""
+    for depends in inherited:
+        sub = get_parameterless_sub_dependant(depends=depends, path=path)
+        yield sub.call
+        yield from _dependency_calls(sub)
+
+
+def _check_endpoint(method, path, route, inherited, problems):
     key = (method, path)
     where = f"{method} {path} ({route.endpoint.__module__}.{route.endpoint.__name__})"
     if key in ALLOWED_PUBLIC or key in INLINE_REVIEWED:
         return
-    calls = set(_dependency_calls(route.dependant))
+    calls = set(_dependency_calls(route.dependant)) | set(_inherited_calls(inherited, path))
     if calls & STAFF_DEPENDENCIES:
         return
     if isinstance(route, APIRoute) and _has_inline_staff_check(route.endpoint):
@@ -169,46 +183,74 @@ def _check_endpoint(method, path, route, problems):
     problems.append(f"{where}: no auth check")
 
 
-def find_problems(routes, prefix: str = "") -> list[str]:
+def _is_included_router(route) -> bool:
+    """FastAPI >= 0.143 `_IncludedRouter`: one entry per include_router() call (duck-typed, private)."""
+    return hasattr(route, "original_router") and hasattr(route, "include_context")
+
+
+def _served_routes(app_or_router) -> list:
+    """The routes an app or router serves, low-priority ones (FastAPI >= 0.143 frontend routes) last."""
+    router = getattr(app_or_router, "router", app_or_router)
+    return [*router.routes, *getattr(router, "_low_priority_routes", [])]
+
+
+def _walk(routes, prefix: str = "", inherited: tuple = ()):
+    """Yield (full path, route, inherited Depends) for every entry reachable through `routes`.
+
+    `inherited` holds the include_router(dependencies=...) of every enclosing _IncludedRouter. A
+    route's own path already carries its APIRouter(prefix=...) and its dependant already carries the
+    APIRouter(dependencies=...) on both FastAPI versions; an include context's prefix and dependencies
+    already hold the parent router's (FastAPI's `_RouterIncludeContext.for_include`), so nesting
+    only concatenates — exactly what `_RouterIncludeContext.combine` does at runtime.
+    """
+    for route in routes:
+        if _is_included_router(route):
+            ctx = route.include_context
+            yield from _walk(_served_routes(route.original_router), prefix + ctx.prefix,
+                             (*inherited, *ctx.dependencies))
+            continue
+        path = prefix + getattr(route, "path", "")
+        if (isinstance(route, Mount) and path not in NON_API_ALLOWED
+                and getattr(route.app, "routes", None) is not None):
+            yield from _walk(_served_routes(route.app), path, ())
+            continue
+        yield path, route, inherited
+
+
+def find_problems(routes) -> list[str]:
     """Every route reachable through `routes` that has no acceptable auth check."""
     problems: list[str] = []
-    for route in routes:
-        path = prefix + getattr(route, "path", "")
+    for path, route, inherited in _walk(routes):
         if isinstance(route, APIRoute):
             for method in sorted(route.methods):
-                _check_endpoint(method, path, route, problems)
+                _check_endpoint(method, path, route, inherited, problems)
         elif isinstance(route, APIWebSocketRoute):
-            _check_endpoint("WS", path, route, problems)
+            _check_endpoint("WS", path, route, inherited, problems)
         elif path in NON_API_ALLOWED:
             continue
-        elif isinstance(route, Mount) and getattr(route.app, "routes", None) is not None:
-            problems.extend(find_problems(route.app.routes, prefix=path))
         else:
             problems.append(f"{type(route).__name__} {path}: not an APIRoute, not scanned — add auth or "
                             "a NON_API_ALLOWED entry with a reason")
     return problems
 
 
-def _all_keys(routes, prefix=""):
-    for route in routes:
-        path = prefix + getattr(route, "path", "")
+def _all_keys(routes):
+    for path, route, _ in _walk(routes):
         if isinstance(route, APIRoute):
             yield from ((m, path) for m in route.methods)
-        elif isinstance(route, Mount) and getattr(route.app, "routes", None) is not None:
-            yield from _all_keys(route.app.routes, path)
 
 
 # ── The real app ─────────────────────────────────────────────────────────────────────────────────
 
 def test_scan_sees_the_whole_app():
     """Guard against the scan silently checking nothing (e.g. a renamed prefix)."""
-    keys = set(_all_keys(app.routes))
+    keys = set(_all_keys(_served_routes(app)))
     assert sum(1 for _, p in keys if p.startswith("/admin")) > 150
     assert sum(1 for _, p in keys if p.startswith("/v1/")) > 50
 
 
 def test_every_route_requires_auth():
-    problems = find_problems(app.routes)
+    problems = find_problems(_served_routes(app))
     assert not problems, (
         "These routes have no acceptable auth check (S241). Add the router's auth dependency — "
         "prefer dependencies=[Depends(verify_admin_secret)] on the APIRouter — or, for a route that "
@@ -217,12 +259,12 @@ def test_every_route_requires_auth():
 
 
 def test_allowlist_entries_are_real_routes():
-    known = set(_all_keys(app.routes))
+    known = set(_all_keys(_served_routes(app)))
     lists = {"ALLOWED_PUBLIC": ALLOWED_PUBLIC, "INLINE_REVIEWED": INLINE_REVIEWED,
              "ADMIN_TENANT_OR_STAFF": ADMIN_TENANT_OR_STAFF}
     stale = [(name, k) for name, entries in lists.items() for k in entries if k not in known]
     assert not stale, f"Allowlists name routes that no longer exist: {stale}"
-    paths = {getattr(r, "path", None) for r in app.routes}
+    paths = {path for path, _, _ in _walk(_served_routes(app))}
     assert not [p for p in NON_API_ALLOWED if p not in paths]
 
 
@@ -298,7 +340,7 @@ def test_checker_reports_mounts_websockets_and_tenant_auth_on_staff_paths():
     throwaway.mount("/admin/tools", sub)
     throwaway.mount("/admin/static", raw_asgi)
 
-    report = "\n".join(find_problems(throwaway.routes))
+    report = "\n".join(find_problems(_served_routes(throwaway)))
     assert "WS /admin/ws/jobs" in report
     assert "GET /admin/tools/open" in report
     assert "Mount /admin/static" in report
@@ -306,6 +348,66 @@ def test_checker_reports_mounts_websockets_and_tenant_auth_on_staff_paths():
     assert "GET /internal/queue-dump" in report
     # FastAPI's own /docs etc. are plain Starlette routes: reported too.
     assert "Route /docs" in report
+
+
+def test_checker_carries_include_prefix_and_dependencies(monkeypatch):
+    """APIRouter(dependencies=...) and include_router(dependencies=...) count — also through a nested
+    include — and the full prefixed path is what gets checked. Same verdict on FastAPI 0.110 (routes
+    copied into the parent) and >= 0.143 (`_IncludedRouter`), and the verdict matches real requests.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(admin, "ADMIN_SECRET", _SECRET)
+    staff = [Depends(admin.verify_admin_secret)]
+    throwaway = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    by_router = APIRouter(prefix="/admin/by-router", dependencies=staff)
+
+    @by_router.get("/x")
+    async def by_router_x():
+        return {}
+
+    by_include = APIRouter(prefix="/by-include")
+
+    @by_include.get("/x")
+    async def by_include_x():
+        return {}
+
+    leaf = APIRouter(prefix="/leaf")
+
+    @leaf.get("/open")
+    async def leaf_open():
+        return {}
+
+    outer = APIRouter(prefix="/outer")
+    outer.include_router(leaf, prefix="/mid")
+    tenant_only = APIRouter()
+
+    @tenant_only.get("/y")
+    async def tenant_y():
+        return {}
+
+    throwaway.include_router(by_router)
+    throwaway.include_router(by_include, prefix="/admin", dependencies=staff)
+    throwaway.include_router(outer, prefix="/admin/nest")
+    throwaway.include_router(outer, prefix="/admin/nest-guarded", dependencies=staff)
+    throwaway.include_router(tenant_only, prefix="/admin/t", dependencies=[Depends(v1_tours.get_tenant)])
+
+    guarded = ["/admin/by-router/x", "/admin/by-include/x", "/admin/nest-guarded/outer/mid/leaf/open"]
+    open_path = "/admin/nest/outer/mid/leaf/open"
+    routes = _served_routes(throwaway)
+    assert set(_all_keys(routes)) == {("GET", p) for p in [*guarded, open_path, "/admin/t/y"]}
+    problems = find_problems(routes)
+    assert sorted(problems) == sorted([
+        f"GET {open_path} ({__name__}.leaf_open): no auth check",
+        f"GET /admin/t/y ({__name__}.tenant_y): staff-only path accepts a tenant JWT",
+    ])
+
+    client = TestClient(throwaway)
+    assert client.get(open_path).status_code == 200
+    for path in guarded:
+        assert client.get(path).status_code in (401, 403), path
+        assert client.get(path, headers={"X-Admin-Secret": _SECRET}).status_code == 200, path
 
 
 # ── Live checks through the real app: the S241 routes refuse an anonymous caller ─────────────
