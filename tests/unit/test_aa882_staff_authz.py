@@ -231,6 +231,50 @@ def test_app_machine_reaches_retention_schedule(client, monkeypatch):
                        headers=_headers("content")).status_code == 403
 
 
+def _tenant_proxy_headers(role):
+    """What frontend/app/api/tenant/[...path]/route.ts sends upstream for a staff session."""
+    return {"x-admin-secret": _SECRET, "x-admin-user-id": "aa882-test", "x-admin-role": role}
+
+
+_MACHINE_POLICY_ROUTES = sorted(k for k in POLICY if k in MACHINE_ROUTES)
+
+
+def test_the_machine_policy_routes_are_the_four_scheduler_posts():
+    """The routes a role-less call could still reach: why the tenant proxy must forward the role."""
+    assert _MACHINE_POLICY_ROUTES == sorted([
+        ("POST", "/admin/dfs-balance/check"), ("POST", "/admin/jev-canary/check"),
+        ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/job-runner/retention/schedule"),
+    ])
+
+
+@pytest.mark.parametrize("key", _MACHINE_POLICY_ROUTES)
+@pytest.mark.parametrize("role", ["reviewer", "content"])
+def test_app_tenant_proxy_staff_branch_refuses_reviewer_and_content(client, role, key):
+    """POST /api/tenant/admin/jev-canary/check (and the other machine-allowed POLICY POSTs) by a
+    reviewer/content session: 403 before the endpoint (no paid Jev probe, no breaker reset)."""
+    method, path = key
+    resp = client.request(method, _concrete(path), json={}, headers=_tenant_proxy_headers(role))
+    assert resp.status_code == 403, (role, key, resp.text)
+    assert resp.json()["detail"] == f"Role '{role}' lacks the 'ops.write' permission"
+
+
+def test_app_tenant_proxy_staff_branch_admin_reaches_retention_schedule(client, monkeypatch):
+    from services.jobs import retention_job
+
+    monkeypatch.setattr(retention_job, "schedule_all", AsyncMock(return_value={"enqueued": [], "skipped": []}))
+    resp = client.post("/admin/job-runner/retention/schedule", headers=_tenant_proxy_headers("admin"))
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.parametrize("bff", ["frontend/app/api/tenant/[...path]/route.ts",
+                                 "frontend/app/api/admin/[...path]/route.ts"])
+def test_bff_proxies_to_any_backend_path_forward_the_verified_role(bff):
+    """Both staff proxies that carry the admin secret to an arbitrary backend path must forward the
+    role from requireAdmin(): a missing x-admin-role makes the backend see the machine principal."""
+    src = (REPO / bff).read_text()
+    assert re.search(r'(headers\["x-admin-role"\]\s*=|"x-admin-role":)\s*auth\.role\b', src), bff
+
+
 @pytest.mark.parametrize("role", [*_STAFF_ROLES, None])
 def test_app_get_llm_config_stays_open_to_every_staff_role_and_the_machine(client, monkeypatch, role):
     """S1 (reviewer/content) reads the stage configs; the policy must not touch that GET (S241 R3)."""

@@ -472,6 +472,8 @@ router-level dependency `staff_policy` (secret check, then policy) refuses with 
 the route's capability. The role is the `x-admin-role` the BFF forwards from the verified JWT (header
 trust until the staff Bearer JWT / Cognito). The secret **without** a role header is the *machine*
 principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
+Both catch-all staff proxies that carry the secret (`/api/admin/*` and the staff branch of
+`/api/tenant/*`) forward `x-admin-role`; a staff proxy without it would act as the machine.
 GĐ1 covers the money/model writes (LLM config/catalog, Jev, budgets, job cancel/retry/retention,
 Jev credit, SEO settings); every GET stays open to every staff role. The other `/admin` writes are
 reported by `tests/unit/test_aa882_route_policy.py` (snapshot, report-only) until GĐ3. Staff roles
