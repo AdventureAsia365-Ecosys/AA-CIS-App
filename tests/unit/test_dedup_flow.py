@@ -52,6 +52,16 @@ def test_normalize_returns_tuple():
 
 # ── decide_staging: bypass ────────────────────────────────────────────────────
 
+# S241: decide_staging now checks the admin secret (it declared the header but never verified it).
+_SECRET = "s241-test-secret"
+
+
+@pytest.fixture(autouse=True)
+def _admin_secret(monkeypatch):
+    from api.routers import admin
+    monkeypatch.setattr(admin, "ADMIN_SECRET", _SECRET)
+
+
 def _make_conn(staging_row: dict):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=staging_row)
@@ -101,7 +111,8 @@ async def test_bypass_deletes_staging_row():
     conn = _make_conn(_STAGING_ROW)
     pool = _make_pool(conn)
     body = DecideRequest(decision="bypass")
-    result = await decide_staging("aaaaaaaa-0000-0000-0000-000000000001", body, _make_request(pool))
+    result = await decide_staging("aaaaaaaa-0000-0000-0000-000000000001", body, _make_request(pool),
+                                  x_admin_secret=_SECRET)
     assert result["decision"] == "bypass"
     assert result["committed"] is False
     # DELETE must have been called
@@ -118,7 +129,7 @@ async def test_bypass_invalid_decision_raises_400():
     pool = _make_pool(conn)
     body = DecideRequest(decision="unknown_action")
     with pytest.raises(HTTPException) as exc:
-        await decide_staging("aaaaaaaa-0000-0000-0000-000000000001", body, _make_request(pool))
+        await decide_staging("aaaaaaaa-0000-0000-0000-000000000001", body, _make_request(pool), x_admin_secret=_SECRET)
     assert exc.value.status_code == 400
 
 
@@ -135,5 +146,19 @@ async def test_staging_not_found_raises_404():
     pool.acquire = MagicMock(return_value=ctx)
     body = DecideRequest(decision="bypass")
     with pytest.raises(HTTPException) as exc:
-        await decide_staging("nonexistent", body, _make_request(pool))
+        await decide_staging("nonexistent", body, _make_request(pool), x_admin_secret=_SECRET)
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_decide_staging_without_secret_is_403_and_touches_nothing():
+    """S241 — the hole: no X-Admin-Secret used to reach the DB write."""
+    from api.routers.admin_pipeline import decide_staging, DecideRequest
+    from fastapi import HTTPException
+    conn = _make_conn(_STAGING_ROW)
+    pool = _make_pool(conn)
+    with pytest.raises(HTTPException) as exc:
+        await decide_staging("aaaaaaaa-0000-0000-0000-000000000001", DecideRequest(decision="bypass"),
+                             _make_request(pool), x_admin_secret=None)
+    assert exc.value.status_code == 403
+    pool.acquire.assert_not_called()

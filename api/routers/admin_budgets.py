@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
@@ -19,7 +19,11 @@ from shared.cost_guard import PROVIDERS, day_spend
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/budgets", tags=["admin-budgets"])
+# S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
+# ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
+# the write routes are kept as-is (same check, run twice).
+router = APIRouter(prefix="/admin/budgets", tags=["admin-budgets"],
+                   dependencies=[Depends(verify_admin_secret)])
 
 
 class BudgetUpdate(BaseModel):

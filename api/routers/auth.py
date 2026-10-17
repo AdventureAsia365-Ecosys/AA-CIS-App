@@ -21,6 +21,7 @@ import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+from api.core.secret_compare import secrets_equal
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -215,7 +216,7 @@ async def verify_tenant_api_key(
     """
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin = request.headers.get("X-Admin-Secret", "")
-    if admin_secret and x_admin == admin_secret:
+    if admin_secret and secrets_equal(x_admin, admin_secret):
         return {
             "sub": AA_INTERNAL_ADMIN_SUB,
             "tenant_id": AA_INTERNAL_ADMIN_SUB,

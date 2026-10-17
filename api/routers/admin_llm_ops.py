@@ -7,11 +7,10 @@ Two concerns, one router (they share the same `stage` vocabulary, see migration 
                                         AA/A4 piece view via ?content_piece_id=, and by the tree
                                         page's own "show recent calls for this branch" drill-in).
 
-Same admin-secret gate as every other admin-mutation router in this app (admin_a4.py's
-verify_admin_secret + x-admin-user-id header convention, AA-232/AA-455) — reads are open behind
-the BFF's requireAdmin() layer (frontend/app/api/admin/[...path]/route.ts), same as every other
-/admin/* endpoint; only the PATCH additionally re-checks the secret server-side, matching
-admin_a4.py's own force_unpublish() precedent.
+Auth: the admin secret on every route (router-level Depends(verify_admin_secret), S241). Until
+S241 the reads relied on the BFF alone (frontend/app/api/admin/[...path]/route.ts), which left them
+public on the API domain; the BFF already sends X-Admin-Secret on GET, so callers are unchanged.
+The writes keep their own inline verify_admin_secret() call as before.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
@@ -58,7 +57,11 @@ _DFS_BALANCE_LOW_EVENT = "platform.dfs_balance.low"
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin", tags=["admin-llm-ops"])
+# S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
+# ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
+# the write routes are kept as-is (same check, run twice).
+router = APIRouter(prefix="/admin", tags=["admin-llm-ops"],
+                   dependencies=[Depends(verify_admin_secret)])
 
 # ── Static availability metadata (AA-518 STEP0, docs/implementation-notes/AA-518.md) ──────────
 # Not queried live on every request — this reflects the real Bedrock/OpenAI access state

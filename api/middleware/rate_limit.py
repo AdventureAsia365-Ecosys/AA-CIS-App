@@ -2,6 +2,7 @@ import json, time, os, logging, uuid
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from api.routers.auth import verify_jwt
+from api.core.secret_compare import secrets_equal
 from shared.services.billing_service import track_api_call
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ async def _track_admin_call(request: Request, call_next):
     """
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin_secret = request.headers.get("X-Admin-Secret", "")
-    if not admin_secret or x_admin_secret != admin_secret:
+    if not admin_secret or not secrets_equal(x_admin_secret, admin_secret):
         return await call_next(request)
 
     # AA-232: verified admin identity, forwarded by the admin BFF proxy

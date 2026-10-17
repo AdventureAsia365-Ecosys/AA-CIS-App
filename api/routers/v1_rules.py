@@ -16,6 +16,7 @@ from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredent
 from pydantic import BaseModel
 
 from api.routers.auth import verify_jwt as _verify_jwt
+from api.core.secret_compare import secrets_equal
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/rules", tags=["Rules"])
@@ -29,7 +30,7 @@ def _get_admin(
 ):
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin = request.headers.get("X-Admin-Secret", "")
-    if admin_secret and x_admin == admin_secret:
+    if admin_secret and secrets_equal(x_admin, admin_secret):
         return {"sub": "00000000-0000-0000-0000-000000000001", "role": "admin"}
     if credentials:
         try:
