@@ -20,6 +20,7 @@ import { A, alpha, serif, sans } from "../admin/_components/adminUi";
 import { LOGO_SRC } from "../_brand/tokens";
 import { NAV_GROUPS, SETTINGS_ENTRY, navActive, type NavEntry } from "./adminNav";
 import { useSidebarCollapsed } from "./useSidebar";
+import { useHydrated } from "./useHydrated";
 import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { useReviewPendingCount } from "./useReviewPendingCount";
@@ -29,6 +30,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   const pathname = usePathname();
   const { role } = useAdminIdentity();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
+  // AA-834 — e2e hook: `data-hydrated="true"` appears only once the toggle handlers are live.
+  const hydrated = useHydrated();
 
   // `[` toggles collapse, ignored while typing in an input/textarea/select or contenteditable.
   useEffect(() => {
@@ -57,6 +60,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       className={`aa-admin-sidebar aa-shell-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
       data-testid="admin-sidebar"
       data-collapsed={collapsed ? "true" : "false"}
+      data-hydrated={hydrated ? "true" : undefined}
       style={{
         width: collapsed ? 68 : 236, flexShrink: 0,
         background: "var(--aa-side-bg)", color: "var(--aa-side-text)",
