@@ -414,6 +414,19 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
   (`check` → `apply`) from a byte-identical copy in `db/migrations/cis/` (S225); never by hand. A
   migration that the new code needs is applied before that code merges.
+- **`catalog.*` views are frozen from the X1 S1 merge until X1 S22** (AA-852 / AA-860, X1 plan XD9,
+  `AA-Ecosys/docs/audits/2026-10-17-S241-x1/x1-plan.md`). The views belong to the NOLOGIN role
+  `catalog_owner`; DB Migrate logs in as the RDS master until S22, the master has not been a member of
+  `catalog_owner` since 225 and must never become one (the `catalog_owner_aa_master_read` policies
+  would reach the CIS runtime). The old 225/235 `GRANT catalog_owner TO CURRENT_USER` dance is refused
+  by the AA-CIS-Infra role lint for files ≥ 243. So no migration here may `CREATE/ALTER/DROP VIEW
+  catalog.*` until S22: the lint asks for the recipe below and DB Migrate refuses a recipe file at
+  `check` (exit 8, "login role is not a member of catalog_owner"). From S22 (`db_migrator`, a member
+  of `catalog_owner`, is the login) a catalog view change uses this recipe, never `RESET ROLE` (it
+  returns to `db_migrator` and leaves mis-owned objects):
+  `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
+  VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
+  A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
