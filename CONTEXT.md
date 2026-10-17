@@ -268,7 +268,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     = `shared.job.cost_usd` (non-LLM spend the handler reports, e.g. DataForSEO) + the sum of
     those log rows, computed on read (`queue.LLM_COST_SQL`).
   - Admin: `/admin/jobs` page, API `/admin/job-runner/*`. (`/admin/jobs/{id}` is still the older
-    `shared.pipeline_jobs` poll for A1 run-tour.)
+    `shared.pipeline_jobs` poll for A1 run-tour.) The page lists with `fields=summary` (S241:
+    payload/result come back null; the drawer reads them from `GET /jobs/{id}`) and polls every 30 s
+    only while the summary shows queued/running jobs (Vercel Fluid CPU, S240 audit).
   - Observability (AA-687, migration 178): each worker upserts its row in `shared.job_worker`
     (start, ~every 15 s, `stopped_at` at shutdown; reaper totals + last reaped ids). Read-only for
     the page (`GET /admin/job-runner/workers`); the queue never reads it. `GET /jobs/{id}` adds

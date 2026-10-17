@@ -323,6 +323,14 @@ _LIST_COLUMNS = (
 )
 
 
+# S241 — the Jobs page list polls; payload/result can be large JSON (and only the drawer, which
+# reads one job via `get`, shows them). `fields="summary"` selects them as NULL so the response
+# keeps the same keys but carries no blobs. `progress` stays: the list's progress column reads it.
+_SUMMARY_COLUMNS = _LIST_COLUMNS.replace(
+    "payload, progress, result,", "NULL::jsonb AS payload, progress, NULL::jsonb AS result,"
+)
+
+
 def _row_dict(row) -> dict:
     d = dict(row)
     for k in ("payload", "progress", "result"):
@@ -390,17 +398,19 @@ async def list_jobs(pool, *, kind: Optional[str] = None, status: Optional[str] =
                     limit: int = 50, offset: int = 0, tour_id: Optional[str] = None,
                     since: Optional[datetime] = None, until: Optional[datetime] = None,
                     created_by: Optional[str] = None, q: Optional[str] = None,
-                    sort: str = "created_at", sort_dir: str = "desc") -> list[dict]:
+                    sort: str = "created_at", sort_dir: str = "desc",
+                    include_blobs: bool = True) -> list[dict]:
     """`tour_id` (AA-687) matches the payload's tour: a3_atomize / segment work (`tour_id`) and
     tenant rewrites of it (t2_rewrite's `published_tour_id`). AA-755: `since`/`until` bound
     created_at, `created_by` is an exact match, `q` is a free-text match on id prefix / kind /
     created_by; `sort`/`sort_dir` select a whitelisted ORDER BY (unknown key → ValueError),
-    `offset`/`limit` page the result."""
+    `offset`/`limit` page the result. `include_blobs=False` (S241) returns payload/result as None."""
     order_by = _order_by(sort, sort_dir)
     args = _filter_args(kind, status, tour_id, since, until, created_by, q)
+    columns = _LIST_COLUMNS if include_blobs else _SUMMARY_COLUMNS
     rows = await pool.fetch(
         f"""
-        SELECT {_LIST_COLUMNS} FROM shared.job j
+        SELECT {columns} FROM shared.job j
         WHERE {_LIST_WHERE}
         ORDER BY {order_by} LIMIT $8 OFFSET $9
         """,

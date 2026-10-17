@@ -1,6 +1,6 @@
 """AA-650 — admin view of the durable job queue (shared.job).
 
-  GET  /admin/job-runner/jobs              list, filter by kind/status
+  GET  /admin/job-runner/jobs              list, filter by kind/status (fields=summary: no payload/result)
   GET  /admin/job-runner/jobs/{id}         one job (status, progress, result, cost, error)
   POST /admin/job-runner/jobs/{id}/cancel  queued -> cancelled; running -> flagged, worker stops it
   POST /admin/job-runner/jobs/{id}/retry   failed / stopped_budget / cancelled -> queued
@@ -69,7 +69,12 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
                     since: Optional[str] = Query(None, description="AA-755: created_at >= this ISO datetime"),
                     until: Optional[str] = Query(None, description="AA-755: created_at < this ISO datetime"),
                     created_by: Optional[str] = Query(None, description="AA-755: exact created_by match"),
-                    q: Optional[str] = Query(None, description="AA-755: id prefix / kind / created_by search")):
+                    q: Optional[str] = Query(None, description="AA-755: id prefix / kind / created_by search"),
+                    fields: Optional[str] = Query(None, description="S241: full (default) | summary — summary "
+                                                  "returns payload/result as null (read them from /jobs/{id})")):
+    # `fields` is compared as a str: a direct call (unit tests) gets the Query default object.
+    if isinstance(fields, str) and fields not in ("full", "summary"):
+        raise HTTPException(status_code=422, detail="fields must be 'full' or 'summary'")
     if status is not None and status not in _STATUSES:
         raise HTTPException(status_code=422, detail=f"status must be one of {_STATUSES}")
     if sort not in queue.JOB_SORTS:
@@ -85,7 +90,7 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
     filters = dict(kind=kind, status=status, tour_id=tour_id, since=since_dt, until=until_dt,
                    created_by=created_by, q=q_clean)
     rows = await queue.list_jobs(pool, limit=size, offset=offset, sort=sort, sort_dir=sort_dir,
-                                 **filters)
+                                 include_blobs=fields != "summary", **filters)
     total = await queue.count_jobs(pool, **filters)
     return {
         "jobs": [_iso(r) for r in rows],
