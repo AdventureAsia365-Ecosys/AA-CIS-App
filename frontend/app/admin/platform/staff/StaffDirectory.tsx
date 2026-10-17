@@ -15,7 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -261,26 +261,61 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
   );
 }
 
+type CopyState = "idle" | "copied" | "failed";
+
 function AccountId({ id }: { id: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard?.writeText(id).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+  const [state, setState] = useState<CopyState>("idle");
+  const idRef = useRef<HTMLSpanElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flash = (next: CopyState, ms: number) => {
+    setState(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), ms);
   };
+  // Fallback when the Clipboard API is missing (non-secure origin, old browser) or refuses: select
+  // the id so a Ctrl/Cmd+C copies it, and say so next to the button.
+  const selectId = () => {
+    const el = idRef.current;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (!el || !sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  const copy = () => {
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+    if (!clip?.writeText) {
+      selectId();
+      flash("failed", 6000);
+      return;
+    }
+    clip.writeText(id).then(
+      () => flash("copied", 2000),
+      () => { selectId(); flash("failed", 6000); },
+    );
+  };
+
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-      <span data-testid="staff-account-id" title={id} style={{
+    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
+      <span ref={idRef} data-testid="staff-account-id" title={id} style={{
         fontFamily: mono, fontSize: 11.5, color: K.ink2, whiteSpace: "nowrap", overflow: "hidden",
-        textOverflow: "ellipsis", minWidth: 0, padding: "3px 7px", background: K.line2, borderRadius: RADIUS.sm,
+        textOverflow: "ellipsis", minWidth: 0, maxWidth: "100%", padding: "3px 7px", background: K.line2,
+        borderRadius: RADIUS.sm, userSelect: "all",
       }}>
         {id}
       </span>
-      <Button variant="ghost" size="sm" onClick={copy} ariaLabel={copied ? "Account id copied" : "Copy account id"}
-        title="Copy the account id" style={{ flexShrink: 0, padding: "4px 8px" }}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
+      {/* 28×28 minimum hit area (the icon alone was ~22px tall). */}
+      <Button variant="ghost" size="sm" onClick={copy} ariaLabel="Copy account id"
+        title="Copy the account id" style={{ flexShrink: 0, minWidth: 28, minHeight: 28, padding: "4px 8px" }}>
+        {state === "copied" ? <Check size={12} /> : <Copy size={12} />}
       </Button>
+      <span role="status" aria-live="polite" data-testid="staff-account-id-copy-status"
+        style={{ fontSize: 12, fontWeight: 500, color: state === "failed" ? K.danger : K.success }}>
+        {state === "copied" && "Copied"}
+        {state === "failed" && "Copy not available here: the id is selected, press Ctrl+C (⌘C)."}
+      </span>
     </span>
   );
 }

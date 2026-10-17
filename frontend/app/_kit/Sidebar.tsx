@@ -139,7 +139,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
               ))}
               {!closed && groups.map((group, i) => (
                 <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
-                  spaceAbove={groupSpaceAbove(group, i, showHeaders, rail)} />
+                  spaceAbove={groupSpaceAbove(group, groups[i - 1], showHeaders, rail)} />
               ))}
             </div>
           );
@@ -190,12 +190,15 @@ function groupHasTitle(group: NavGroup): boolean {
 }
 
 // Vertical rhythm (S241 UI verify: untitled one-item groups sat ~51px apart vs 37px inside a group).
-// A titled group keeps the 16px break above its title; an untitled one only gets a 6px nudge, so
-// Staff → Tenants → Jobs read as rows (≈42px pitch), not as islands. The first group keeps 16px under a
-// section header (0 with no header). In the icon rail the titles are hidden, so every group gets 16.
-function groupSpaceAbove(group: NavGroup, index: number, showHeaders: boolean, rail: boolean): number {
-  if (index === 0) return showHeaders ? 16 : 0;
-  return rail || groupHasTitle(group) ? 16 : 6;
+// Only two untitled groups in a row (Tenants → Jobs) close up to a 6px nudge, so they read as rows
+// (≈42px pitch), not as islands. Any group that follows a TITLED group keeps the full 16px break:
+// with 6px, Tenants and Jobs sat right under "People & access › Staff" and read as its children.
+// The first group keeps 16px under a section header (0 with no header). In the icon rail the titles
+// are hidden, so every group gets 16.
+function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, showHeaders: boolean, rail: boolean): number {
+  if (!prev) return showHeaders ? 16 : 0;
+  if (rail) return 16;
+  return groupHasTitle(prev) || groupHasTitle(group) ? 16 : 6;
 }
 
 function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {

@@ -483,3 +483,15 @@ body {
   .aa-topbar-spacer { display: block !important; }
 }
 
+/* AA-883 (S241 polish) — kit PageHeader. The text block takes the free space and the actions sit
+   right-aligned beside it. On a phone, a header that has a description AND actions
+   (`aa-page-header--stack`) gives the text the full row so the actions drop under it, left aligned.
+   CSS, not a JS media query, so the server HTML is already right on a phone (no hydration shift). */
+.aa-page-header-text { flex: 1 1 240px; }
+.aa-page-header-actions { justify-content: flex-end; }
+
+@media (max-width: 767px) {
+  .aa-page-header--stack > .aa-page-header-text { flex-basis: 100%; }
+  .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; }
+}
+

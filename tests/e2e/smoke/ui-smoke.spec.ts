@@ -132,13 +132,22 @@ async function firstStaffId(browser: import('@playwright/test').Browser): Promis
   const page = await context.newPage();
   try {
     await assertNavOk(page, '/admin/platform/staff');
-    const id = await page.evaluate(async () => {
+    const res = await page.evaluate(async () => {
       const r = await fetch('/api/admin/platform/staff', { credentials: 'same-origin' });
-      if (!r.ok) return `HTTP ${r.status}`;
-      const body = (await r.json()) as { staff?: { id?: string }[] };
-      return body.staff?.[0]?.id ?? '';
+      return { ok: r.ok, status: r.status, text: await r.text() };
     });
-    expect(id, 'Staff list API returned no account id').toMatch(/^[0-9a-f-]{36}$/i);
+    // Two separate checks so a failure says which one broke: the API call itself (status + body
+    // snippet), or a 200 whose payload has no usable account id.
+    expect(res.ok, `GET /api/admin/platform/staff → HTTP ${res.status}: ${res.text.slice(0, 300)}`).toBe(true);
+    let id = '';
+    try {
+      const body = JSON.parse(res.text) as { staff?: { id?: string }[] };
+      id = body.staff?.[0]?.id ?? '';
+    } catch {
+      id = '';
+    }
+    expect(id, `Staff list API (HTTP ${res.status}) returned no account id: ${res.text.slice(0, 300)}`)
+      .toMatch(/^[0-9a-f-]{36}$/i);
     return id;
   } finally {
     await context.close();
