@@ -56,7 +56,7 @@ class _Redis:
         self.on = on
 
     async def get(self, key):
-        return "true" if self.on and key == ag.ANGLE_GATE_DECIDE_FLAG else None
+        return "true" if self.on and key == ag.ANGLE_GATE_DECIDE_FLAG else "false"
 
 
 class _OneConnPool:

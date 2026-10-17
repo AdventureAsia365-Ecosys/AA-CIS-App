@@ -148,10 +148,11 @@ def _row_to_status(row) -> dict:
 
 
 # ── AA-859 W9 — status / connect / test-connection on the tenant pool ─────────────────────────────────
-# Behind INTEGRATION_CONNECT_FLAG (aa859:integration_connect_pool), fail closed. Flag off: the main pool,
-# one statement per acquire, exactly as before. Flag on: aa_app_user with app.tenant_id set LOCAL, so the
-# 237 policy (FOR ALL, USING = WITH CHECK = own tenant) holds the boundary even if a WHERE were wrong, and
-# the 241 column grants bound what the writes can touch. No tenant connection is ever held across Secrets
+# Behind INTEGRATION_CONNECT_FLAG (aa859:integration_connect_pool), fail closed. S241 D-12: a missing key is
+# ON; rollback = SET <key> false, which gives the main pool, one statement per acquire, exactly as before.
+# Flag on: aa_app_user with app.tenant_id set LOCAL, so the 237 policy (FOR ALL, USING = WITH CHECK = own
+# tenant) holds the boundary even if a WHERE were wrong, and the 241 column grants bound what the writes can
+# touch. No tenant connection is ever held across Secrets
 # Manager or the remote HTTP call (max_size 2 per task):
 #   GET status : one block, the SELECT.
 #   POST       : Secrets Manager put first (worker thread, no connection), then one block with the UPSERT.

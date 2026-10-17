@@ -71,7 +71,7 @@ class _Redis:
         self.on = on
 
     async def get(self, key):
-        return "true" if self.on else None
+        return "true" if self.on else "false"
 
 
 class _OneConnPool:
