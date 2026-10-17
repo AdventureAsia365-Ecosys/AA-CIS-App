@@ -1,0 +1,790 @@
+{
+  "DELETE /admin/brands/{brand_name}": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "DELETE /admin/decisions/jev-credit/topups/{topup_id}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_decisions"
+  },
+  "DELETE /admin/raw-tours/{tour_id}": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/a4/content-log": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_a4"
+  },
+  "GET /admin/a4/gate-telemetry": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_a4"
+  },
+  "GET /admin/a4/platform-stats": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_a4"
+  },
+  "GET /admin/a4/publish-log": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_a4"
+  },
+  "GET /admin/a4/review-log": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_a4"
+  },
+  "GET /admin/atoms": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_atoms"
+  },
+  "GET /admin/atoms/summary": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_atoms"
+  },
+  "GET /admin/atoms/unatomized-tours": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_atoms"
+  },
+  "GET /admin/billing": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/brand-identity": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/brand-rules": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/brands": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/brands/{brand_name}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/budgets": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_budgets"
+  },
+  "GET /admin/catalog": {
+    "capability": null,
+    "module": "api.routers.admin"
+  },
+  "GET /admin/content-quality/pieces": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/pieces/{piece_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/pieces/{piece_id}/label": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/place-cards": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/place-cards/duplicates": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/place-cards/{card_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/stats": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/tour-versions": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/content-quality/tour-versions/{version_id}": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_content_quality"
+  },
+  "GET /admin/cost-explorer": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/dashboard/hubs": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/routes": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/routes/{route_id}/days": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/score": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/segments": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/slate": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/dashboard/summary": {
+    "capability": null,
+    "module": "api.routers.admin_dashboard"
+  },
+  "GET /admin/decisions/jev-credit": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_decisions"
+  },
+  "GET /admin/decisions/log": {
+    "capability": null,
+    "module": "api.routers.admin_decisions"
+  },
+  "GET /admin/decisions/outcomes/summary": {
+    "capability": null,
+    "module": "api.routers.admin_decisions"
+  },
+  "GET /admin/decisions/summary": {
+    "capability": null,
+    "module": "api.routers.admin_decisions"
+  },
+  "GET /admin/dfs-balance": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/dfs-usage": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/dfs-usage/by-country": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/export-audit": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/infra/status": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/job-runner/deploy-gate": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/jobs": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/jobs/{job_id}": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/jobs/{job_id}/llm-calls": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/retention": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/summary": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/job-runner/workers": {
+    "capability": null,
+    "module": "api.routers.admin_job_runner"
+  },
+  "GET /admin/jobs/{job_id}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/llm-catalog": {
+    "capability": null,
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/llm-config": {
+    "capability": null,
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/llm-shadow/report": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/llm-usage/calls": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/llm-usage/tree": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/metrics": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/metrics/library": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/metrics/seo": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/metrics/spot-workers": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/notifications": {
+    "capability": null,
+    "module": "api.routers.admin"
+  },
+  "GET /admin/notifications/count": {
+    "capability": null,
+    "module": "api.routers.admin"
+  },
+  "GET /admin/openapi.json": {
+    "capability": null,
+    "module": "api.routers.admin_api_docs"
+  },
+  "GET /admin/overview": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_overview"
+  },
+  "GET /admin/photos": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/photos/destinations": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/photos/folders": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/photos/summary": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/photos/tour-coverage": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/photos/tours": {
+    "capability": null,
+    "module": "api.routers.admin_photos"
+  },
+  "GET /admin/platform/staff": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
+  "GET /admin/platform/staff/{staff_id}": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
+  "GET /admin/progress/s1/{job_id}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/review-queue": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/s1-batch/{job_id}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/search": {
+    "capability": null,
+    "module": "api.routers.admin_search"
+  },
+  "GET /admin/segment-research/status": {
+    "capability": null,
+    "module": "api.routers.admin_segment_research"
+  },
+  "GET /admin/seo-intelligence": {
+    "capability": null,
+    "module": "api.routers.admin_seo"
+  },
+  "GET /admin/settings": {
+    "capability": null,
+    "module": "api.routers.admin_settings"
+  },
+  "GET /admin/spend/daily": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/tenants": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/audit": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/config": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/cost": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant360"
+  },
+  "GET /admin/tenants/{tenant_id}/details": {
+    "capability": null,
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/markets": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant360"
+  },
+  "GET /admin/tenants/{tenant_id}/quality": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_tenant360"
+  },
+  "GET /admin/tenants/{tenant_id}/rewrite-activity": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tenants/{tenant_id}/usage": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin"
+  },
+  "GET /admin/tours": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours-ready": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours-trashed": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/export": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/detail": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/history": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/seo-context": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/source": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/versions": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/versions/export": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/versions/{version_num}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/versions/{version_num}/export-docx": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/unmapped-market-requests": {
+    "capability": "tenant.read",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "GET /admin/upload-history": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/upload-staging/{batch_id}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/waves": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_waves"
+  },
+  "GET /admin/waves/{wave_id}/report": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_waves"
+  },
+  "GET /v1/pipeline/execution/{execution_id:path}": {
+    "capability": null,
+    "module": "api.routers.v1_pipeline"
+  },
+  "GET /v1/pipeline/review-queue": {
+    "capability": null,
+    "module": "api.routers.v1_pipeline"
+  },
+  "GET /v1/pipeline/sources": {
+    "capability": null,
+    "module": "api.routers.v1_pipeline"
+  },
+  "GET /v1/rules": {
+    "capability": null,
+    "module": "api.routers.v1_rules"
+  },
+  "GET /v1/social": {
+    "capability": null,
+    "module": "api.routers.v1_social"
+  },
+  "GET /v1/social/{social_id}": {
+    "capability": null,
+    "module": "api.routers.v1_social"
+  },
+  "GET /v1/social/{social_id}/context": {
+    "capability": null,
+    "module": "api.routers.v1_social"
+  },
+  "PATCH /admin/atoms/{atom_id}": {
+    "capability": "atoms.write",
+    "module": "api.routers.admin_atoms"
+  },
+  "PATCH /admin/content-quality/place-cards/{card_id}": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "PATCH /admin/content-quality/place-cards/{card_id}/facts": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "PATCH /admin/llm-catalog/{model_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "PATCH /admin/llm-config/{stage}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "PATCH /admin/llm-config/{stage}/route": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "PATCH /admin/master/{tour_id}/activate": {
+    "capability": "master.admin",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/master/{tour_id}/deactivate": {
+    "capability": "master.admin",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/master/{tour_id}/restore": {
+    "capability": "master.admin",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/master/{tour_id}/status": {
+    "capability": "master.admin",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/master/{tour_id}/trash": {
+    "capability": "master.admin",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/settings/seo": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_settings"
+  },
+  "PATCH /admin/tenants/{tenant_id}": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/tours/{tour_id}/country": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "PATCH /admin/tours/{tour_id}/generated/{content_id}": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "PATCH /admin/tours/{tour_id}/raw": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "PATCH /admin/tours/{tour_id}/restore": {
+    "capability": "content.write",
+    "module": "api.routers.admin"
+  },
+  "PATCH /admin/tours/{tour_id}/trash": {
+    "capability": "content.write",
+    "module": "api.routers.admin"
+  },
+  "PATCH /v1/rules/{rule_id}": {
+    "capability": "content.settings.write",
+    "module": "api.routers.v1_rules"
+  },
+  "POST /admin/a4/publish-log/{publish_id}/unpublish": {
+    "capability": "a4.unpublish",
+    "module": "api.routers.admin_a4"
+  },
+  "POST /admin/atoms/atomize": {
+    "capability": "atoms.write",
+    "module": "api.routers.admin_atoms"
+  },
+  "POST /admin/brand-identity": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/brand-identity/parse": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/brand-identity/upload": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/brands": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/brands/parse-docx": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/brands/{brand_name}/activate": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/content-quality/pieces/{piece_id}/label": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/pieces/{piece_id}/sentences/apply": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/pieces/{piece_id}/sentences/suggest": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/place-cards/build": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/place-cards/{keep_id}/merge": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/requests/{request_id}/regenerate-angles": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/tour-versions/{version_id}/sentences/apply": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/content-quality/tour-versions/{version_id}/sentences/suggest": {
+    "capability": "quality.write",
+    "module": "api.routers.admin_content_quality"
+  },
+  "POST /admin/cost-explorer/check": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/decisions/jev-credit/topups": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_decisions"
+  },
+  "POST /admin/dfs-balance/check": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/ingest-s3": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/jev-canary/check": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/jev/402-sweep": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/job-runner/jobs/{job_id}/cancel": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/jobs/{job_id}/retry": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/retention/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/job-runner/retention/schedule": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
+  "POST /admin/photos/sync": {
+    "capability": "photos.write",
+    "module": "api.routers.admin_photos"
+  },
+  "POST /admin/photos/{photo_id}/assign": {
+    "capability": "photos.write",
+    "module": "api.routers.admin_photos"
+  },
+  "POST /admin/places/backfill": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
+  "POST /admin/raw-tours/{tour_id}/set-active": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/review-queue/{review_id}/approve": {
+    "capability": "review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/review-queue/{review_id}/dismiss": {
+    "capability": "review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/review-queue/{review_id}/reject": {
+    "capability": "review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/review-queue/{review_id}/supersede": {
+    "capability": "review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/run-tour": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/run-tour-async": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/s1-batch/submit": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/s1/seo-prefetch": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/segment-research/preview": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_segment_research"
+  },
+  "POST /admin/segment-research/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_segment_research"
+  },
+  "POST /admin/tenants": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "POST /admin/tenants/{tenant_id}/generate-key": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "POST /admin/tenants/{tenant_id}/offboard": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "POST /admin/tenants/{tenant_id}/restore": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "POST /admin/tours/{tour_id}/generated/{content_id}/revalidate": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/tours/{tour_id}/versions/{version_num}/promote": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/trip-pages/recheck": {
+    "capability": "ops.write",
+    "module": "api.routers.v1_trip_page"
+  },
+  "POST /admin/trip-pages/{tour_id}/publish": {
+    "capability": "master.admin",
+    "module": "api.routers.v1_trip_page"
+  },
+  "POST /admin/upload-staging/{staging_id}/decide": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/upload-url": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/waves": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /admin/waves/check": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /admin/waves/{wave_id}/close": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_waves"
+  },
+  "POST /v1/pipeline/review-queue/{review_id}/approve": {
+    "capability": "review.act",
+    "module": "api.routers.v1_pipeline"
+  },
+  "POST /v1/pipeline/review-queue/{review_id}/reject": {
+    "capability": "review.act",
+    "module": "api.routers.v1_pipeline"
+  },
+  "POST /v1/pipeline/run": {
+    "capability": "content.write",
+    "module": "api.routers.v1_pipeline"
+  },
+  "POST /v1/social/batch-review": {
+    "capability": "atoms.write",
+    "module": "api.routers.v1_social"
+  },
+  "PUT /admin/brands/{brand_name}": {
+    "capability": "content.settings.write",
+    "module": "api.routers.admin_pipeline"
+  },
+  "PUT /admin/budgets/{provider}/{scope}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_budgets"
+  },
+  "PUT /admin/decisions/questions/{question_key}": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_decisions"
+  },
+  "PUT /admin/notifications/read-all": {
+    "capability": "content.read",
+    "module": "api.routers.admin"
+  },
+  "PUT /admin/notifications/{notif_id}/read": {
+    "capability": "content.read",
+    "module": "api.routers.admin"
+  },
+  "PUT /admin/tenants/{tenant_id}/brand-identity": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  },
+  "PUT /admin/tenants/{tenant_id}/config": {
+    "capability": "tenant.write",
+    "module": "api.routers.admin"
+  }
+}

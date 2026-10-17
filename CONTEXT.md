@@ -444,40 +444,68 @@ One staff identity model. Every staff user is a row in `shared.admin_users` (rol
 `shared.admin_role`: `admin`, `reviewer`, `content` — migration 218) and logs in through
 `/auth/admin-login`, which returns a signed JWT kept in the httpOnly `cis_admin_token` cookie. Access
 is decided from the **verified** token role (`/auth/verify-admin`), never from the `cis_role` cookie
-(that cookie is a display hint only). Tenants are separate (`cis_tenant_token`, role `tenant`).
+(that cookie is a display hint only). `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s):
+an inactive or unknown account gets 401 and the role returned is the DB role, not the JWT claim, so a
+deactivation or demotion takes effect within ~6 min (BFF verify cache 5 min + 60 s), not at token expiry. Tenants are separate (`cis_tenant_token`, role `tenant`).
 
 The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 
+**Admin console layout (AA-883, S241 design option A).** One console (`aa-cis-frontend`), nav model
+`frontend/app/_kit/adminNav.tsx` in two sections named after who a page serves: **Platform** (Overview,
+People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
+Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
+The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
+public site; no tenant-portal link until there is a real support view, since the portal needs a tenant
+session); deep links are built only there, never from a return URL, never with a
+token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
+
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
-| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| BFF `/api/admin/openapi.json` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks `x-admin-role`) | ✓ | — | — | — |
+| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883: Staff directory, read-only) | ✓ | — | — | — |
+| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
 | `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
-`content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
-so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed).
+`content_creator` → content. Reviewer and content reach the backend through the same admin secret;
+what they may call there is narrowed by the backend capabilities below (AA-882), not by the BFF yet
+(`canWriteAdminPath` still allows writes by default until GĐ4b).
 
-**Backend capabilities (AA-882, S241 GĐ1).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
-capabilities such as `ai.admin`, `spend.write`, `ops.write`, `content.settings.write`; `staff.write`
-is an owner flag, not a role permission) and `POLICY` keyed by `(method, route template)`. The
-router-level dependency `staff_policy` (secret check, then policy) refuses with 403 a role that lacks
-the route's capability. The role is the `x-admin-role` the BFF forwards from the verified JWT (header
+**Backend capabilities (AA-882, S241 GĐ1 + GĐ3).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
+capabilities: `content.read/write` and `review.act` for every staff role; `master.admin`,
+`atoms.write`, `photos.write`, `a4.unpublish`, `quality.write`, `content.settings.write`, `tenant.*`,
+`ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read` for admin; `staff.write` is an owner flag,
+not a role permission) and `POLICY` keyed by `(method, route template)`. The router-level dependency
+`staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
+`staff_policy_if_staff` does the same only for a request carrying the valid secret, on the routers
+whose own guard also admits a tenant JWT or answers 401 (`admin_pipeline`, `admin_atoms`,
+`/v1/pipeline`, `/v1/rules`, `/v1/social`). The role is the `x-admin-role` the BFF forwards from the verified JWT (header
 trust until the staff Bearer JWT / Cognito). The secret **without** a role header is the *machine*
 principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
-Both catch-all staff proxies that carry the secret (`/api/admin/*` and the staff branch of
-`/api/tenant/*`) forward `x-admin-role`; a staff proxy without it would act as the machine.
-GĐ1 covers the money/model writes (LLM config/catalog, Jev, budgets, job cancel/retry/retention,
-Jev credit, SEO settings); every GET stays open to every staff role. The other `/admin` writes are
-reported by `tests/unit/test_aa882_route_policy.py` (snapshot, report-only) until GĐ3. Staff roles
-here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
+Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/api/tour-full/*`,
+`/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`
+(a test lists them); a staff proxy without it would act as the machine. Since GĐ3 every staff write
+(`/admin/*`, `/v1/pipeline|rules|social/*`) has a POLICY entry, and a GET has one only when its data
+is admin-only (tenant accounts and billing, spend incl. the Jev credit ledger and the shadow cost
+report, system overview/infra, rerun waves, every tenant's A4 logs / content quality / atoms (`tenant.read`),
+the staff directory `GET /admin/platform/staff[/{staff_id}]` = `staff.read`, AA-883 GĐ2); other GETs
+stay open to every staff role. Three open reads filter by role inside the handler: `GET
+/admin/tenants/{id}/details` is open only for the aa_internal tenant (Master Content) and `tenant.read`
+otherwise; `GET /admin/search` returns tenants only with `tenant.read` and jobs only with `ops.read`;
+the notification bell (`/admin/notifications*`, one global list with one `is_read`) shows, counts and
+clears for a role without `ops.read` only the rows targeted at a content role, never a `platform.*` or
+`spend_budget_alert` row. The UI mirrors the capabilities in `lib/rbac.ts` `ROLE_PERMS` / `can()` (kept
+equal by a test) to hide controls the backend would refuse. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
+has a policy, every staff router runs the policy, `/admin/platform/*` has no open read, snapshot
+`tests/unit/snapshots/aa882_staff_route_policy.json`). Behaviour change for reviewer/content: Master
+Content lifecycle (activate/deactivate/trash/restore) and Settings brand writes are admin-only (§5.1
+of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
 `%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a

@@ -1,6 +1,7 @@
 "use client";
 // app/_kit/Topbar.tsx
-// AA-752 — the admin shell topbar (60px, on every admin page). Left: breadcrumb (Admin / <page>).
+// AA-752 — the admin shell topbar (60px, on every admin page). Left: breadcrumb (<Section> / <page>;
+// AA-883: the nav section, Platform or CIS Content, "Admin" for pages outside the nav).
 // Centre: the global search trigger (a pill that opens the ⌘K palette, with a ⌘K / Ctrl K hint).
 // Right: theme switch (moved from the sidebar), notifications bell + dropdown (moved as-is), and
 // the account menu (avatar initial + name → Settings, Sign out — the existing admin-logout). No
@@ -19,7 +20,7 @@ import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
 import { ROLE_LABEL, isStaffRole } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
-import { pageTitle } from "./adminNav";
+import { pageSection, pageTitle } from "./adminNav";
 
 interface Notif {
   id: number; event_type: string; title: string; message: string;
@@ -29,6 +30,7 @@ interface Notif {
 export function Topbar({ onOpenSearch, onOpenMenu }: { onOpenSearch: () => void; onOpenMenu: () => void }) {
   const pathname = usePathname();
   const title = pageTitle(pathname);
+  const section = pageSection(pathname) ?? "Admin";
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
   return (
@@ -56,7 +58,7 @@ export function Topbar({ onOpenSearch, onOpenMenu }: { onOpenSearch: () => void;
 
       {/* Breadcrumb (truncates when space is tight). */}
       <div className="aa-topbar-crumb" style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1, overflow: "hidden" }}>
-        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2, flexShrink: 0 }}>Admin</span>
+        <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2, flexShrink: 0 }}>{section}</span>
         <span className="aa-topbar-crumb-root" style={{ fontSize: 13, color: K.muted2, flexShrink: 0 }}>/</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: K.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
       </div>

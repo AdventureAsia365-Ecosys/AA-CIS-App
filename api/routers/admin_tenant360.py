@@ -24,14 +24,16 @@ from typing import Any, Optional
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/tenants", tags=["admin-tenant360"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/tenants", tags=["admin-tenant360"], dependencies=[Depends(staff_policy)])
 
 AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
 

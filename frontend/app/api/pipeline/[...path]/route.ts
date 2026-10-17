@@ -35,6 +35,11 @@ async function handler(
 
   const outHeaders: Record<string, string> = {
     "X-Admin-Secret": ADMIN_SECRET,
+    "x-admin-user-id": auth.adminId,
+    // AA-882 (GĐ3) — the verified JWT role, as /api/admin/[...path] sends it. /v1/pipeline runs
+    // staff_policy_if_staff (api/core/staff_authz.py): without a role the backend sees the machine
+    // principal, which no /v1/pipeline write allows.
+    "x-admin-role": auth.role,
   };
 
   let body: ArrayBuffer | string | undefined;

@@ -18,11 +18,11 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(1500);
 });
 
-// ── Part 1 — sub-nav 01-07, "07 · Platform Stats" reachable + active ────────────────────────────
+// ── Part 1 — sub-nav 01-07, "07 · A4 Quality" reachable + active ────────────────────────────
 
-test('01 - Social Content sub-nav shows 07 · Platform Stats alongside 01-06', async ({ page }) => {
+test('01 - Social Content sub-nav shows 07 · A4 Quality alongside 01-06', async ({ page }) => {
   await page.goto('/admin/atom-curation');
-  for (const label of ['01 · Atomize', '02 · Segment', '03 · Score', '04 · Route/Hub', '05 · Slate', '06 · Content Trace', '07 · Platform Stats']) {
+  for (const label of ['01 · Atomize', '02 · Segment', '03 · Score', '04 · Route/Hub', '05 · Slate', '06 · Content Trace', '07 · A4 Quality']) {
     await expect(subNavItem(page, label)).toBeVisible();
   }
   await page.screenshot({ path: `${SHOT_DIR}/01-subnav-shows-07.png`, fullPage: false });
@@ -32,12 +32,12 @@ test('02 - clicking 07 navigates to /admin/platform-stats with 07 active', async
   await page.goto('/admin/atom-curation');
   await Promise.all([
     page.waitForURL('**/admin/platform-stats', { timeout: 10000 }),
-    subNavItem(page, '07 · Platform Stats').click(),
+    subNavItem(page, '07 · A4 Quality').click(),
   ]);
   await page.waitForTimeout(500);
   expect(page.url()).toContain('/admin/platform-stats');
-  await expect(page.locator('h1', { hasText: '07 · Platform Stats' })).toBeVisible();
-  const item = page.locator('a', { hasText: '07 · Platform Stats' });
+  await expect(page.locator('h1', { hasText: '07 · A4 Quality' })).toBeVisible();
+  const item = page.locator('a', { hasText: '07 · A4 Quality' });
   await expect(item).toHaveCSS('font-weight', '700');
   await page.screenshot({ path: `${SHOT_DIR}/02-platform-stats-active.png`, fullPage: true });
 });
@@ -45,10 +45,10 @@ test('02 - clicking 07 navigates to /admin/platform-stats with 07 active', async
 test('03 - direct URL entry to /admin/platform-stats shows full sub-nav 01-07 with 07 active', async ({ page }) => {
   await page.goto('/admin/platform-stats');
   await page.waitForTimeout(800);
-  for (const label of ['01 · Atomize', '02 · Segment', '03 · Score', '04 · Route/Hub', '05 · Slate', '06 · Content Trace', '07 · Platform Stats']) {
+  for (const label of ['01 · Atomize', '02 · Segment', '03 · Score', '04 · Route/Hub', '05 · Slate', '06 · Content Trace', '07 · A4 Quality']) {
     await expect(subNavItem(page, label)).toBeVisible();
   }
-  const item = page.locator('a', { hasText: '07 · Platform Stats' });
+  const item = page.locator('a', { hasText: '07 · A4 Quality' });
   await expect(item).toHaveCSS('font-weight', '700');
   await page.screenshot({ path: `${SHOT_DIR}/03-direct-url-subnav-persists.png`, fullPage: true });
 });
@@ -57,7 +57,7 @@ test('03 - direct URL entry to /admin/platform-stats shows full sub-nav 01-07 wi
 
 test('04 - Review Log section renders and every column header sorts', async ({ page }) => {
   await page.goto('/admin/platform-stats');
-  await expect(page.getByText('Review Log — T3/T5 Escalations')).toBeVisible();
+  await expect(page.getByText('Review Log — T3 / A3 atomize Escalations')).toBeVisible();
   await page.waitForTimeout(1000);
 
   const headers = ['Tenant', 'Failure Summary', 'Checks', 'Status', 'Created'];
@@ -76,7 +76,7 @@ test('04 - Review Log section renders and every column header sorts', async ({ p
 
 test('05 - Platform Stats aggregate section shows total/by-channel/by-status/top-gate-failures', async ({ page }) => {
   await page.goto('/admin/platform-stats');
-  await expect(page.getByText('Platform Stats — Gate/Error Aggregate')).toBeVisible();
+  await expect(page.getByText('A4 Quality — Gate/Error Aggregate')).toBeVisible();
   await page.waitForTimeout(1000);
   await expect(page.getByText('Total pieces')).toBeVisible();
   await expect(page.getByText('By channel', { exact: false })).toBeVisible();
@@ -86,7 +86,8 @@ test('05 - Platform Stats aggregate section shows total/by-channel/by-status/top
 
 // ── Part 4 — Trust Ramp renders + sorts ──────────────────────────────────────────────────────────
 
-test('06 - Trust Ramp section renders with sortable per-tenant packet tables', async ({ page }) => {
+// AA-633 (23/09/2026) removed the Trust Ramp section; kept as fixme so the old evidence path stays readable.
+test.fixme('06 - Trust Ramp section renders with sortable per-tenant packet tables', async ({ page }) => {
   await page.goto('/admin/platform-stats');
   await expect(page.getByText('Trust Ramp — Current State')).toBeVisible();
   await page.waitForTimeout(1000);

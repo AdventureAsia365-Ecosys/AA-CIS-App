@@ -9,7 +9,8 @@ import {
   A, alpha, serif, sans, mono,
   SLabel, Badge, Btn, LoadingScreen, StatCard, Card, TH, TD,
 } from "../_components/adminUi";
-import { PageHeader, formatDate, useIsPhone } from "../../_kit";
+import { PageHeader, formatDate, useIsPhone, useAdminIdentity } from "../../_kit";
+import { can, staffErrorMessage } from "@/lib/rbac";
 import { BarChart2, Star, DollarSign } from "lucide-react";
 import { TourDetailPanelV2 } from "../_components/TourDetailPanelV2";
 import { CompareModal } from "../_components/CompareModal";
@@ -797,6 +798,9 @@ export default function MasterContentPage() {
 }
 
 function MasterContentPageInner() {
+  // AA-882 — the master lifecycle (activate / deactivate / trash / restore) is master.admin on the
+  // backend; other roles see the catalog without those buttons.
+  const canLifecycle = can(useAdminIdentity().role, "master.admin");
   // AA-752 — deep link from the ⌘K palette: /admin/master-content?tour=<tour_id> opens that tour's
   // detail panel. Read the param once with a lazy useState initializer (no setState-in-effect).
   const searchParams = useSearchParams();
@@ -1019,7 +1023,7 @@ function MasterContentPageInner() {
       const r = await fetch(`/api/admin/master/${tourId}/${endpoint}`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.detail || `Failed to set ${newStatus}`);
+        alert(staffErrorMessage(r.status, err.detail, `Failed to set ${newStatus}`));
         return;
       }
       refetch();
@@ -1036,7 +1040,7 @@ function MasterContentPageInner() {
       const r = await fetch(`/api/admin/master/${tourId}/trash`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.detail || "Failed to trash tour");
+        alert(staffErrorMessage(r.status, err.detail, "Failed to trash tour"));
         return;
       }
       refetch();
@@ -1052,7 +1056,7 @@ function MasterContentPageInner() {
       const r = await fetch(`/api/admin/master/${tourId}/restore`, { method: "PATCH" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        alert(err.detail || "Failed to restore tour");
+        alert(staffErrorMessage(r.status, err.detail, "Failed to restore tour"));
         return;
       }
       refetch();
@@ -1320,25 +1324,25 @@ function MasterContentPageInner() {
                             {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
                           </button>
                         )}
-                        {t.tour_id && t.master_status === "active" && (
+                        {canLifecycle && t.tour_id && t.master_status === "active" && (
                           <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")} disabled={toggling === t.tour_id} title="Set to inactive"
                             style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-amber-border)", borderRadius: 5, background: "var(--aa-amber-bg5)", cursor: "pointer", color: "var(--aa-amber-orange2)", fontWeight: 600 }}>
                             {toggling === t.tour_id ? "…" : "Set Inactive"}
                           </button>
                         )}
-                        {t.tour_id && t.master_status === "inactive" && (
+                        {canLifecycle && t.tour_id && t.master_status === "inactive" && (
                           <button onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")} disabled={toggling === t.tour_id} title="Set to active"
                             style={{ padding: "3px 8px", fontSize: 11, border: "1px solid var(--aa-green-border2)", borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, fontWeight: 600 }}>
                             {toggling === t.tour_id ? "…" : "Set Active"}
                           </button>
                         )}
-                        {t.tour_id && t.master_status !== "trashed" && (
+                        {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
                           <button onClick={() => trashMaster(t.tour_id!, t.tour_name)} disabled={trashing === t.tour_id} title="Move to trash"
                             style={{ padding: "3px 6px", fontSize: 11, border: `1px solid ${A.redBorder}`, borderRadius: 5, background: A.redTint, cursor: "pointer", color: A.red, display: "flex", alignItems: "center", gap: 3 }}>
                             <Trash2 size={11} />{trashing === t.tour_id ? "…" : "Trash"}
                           </button>
                         )}
-                        {t.tour_id && t.master_status === "trashed" && (
+                        {canLifecycle && t.tour_id && t.master_status === "trashed" && (
                           <button onClick={() => restoreMaster(t.tour_id!, t.tour_name)} disabled={restoring === t.tour_id} title="Restore from trash (→ inactive)"
                             style={{ padding: "3px 6px", fontSize: 11, border: `1px solid var(--aa-green-border2)`, borderRadius: 5, background: "var(--aa-green-bg2)", cursor: "pointer", color: A.green, display: "flex", alignItems: "center", gap: 3 }}>
                             <RotateCcw size={11} />{restoring === t.tour_id ? "…" : "Restore"}
@@ -1461,7 +1465,7 @@ function MasterContentPageInner() {
                                   {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />} Versions
                                 </button>
                               )}
-                              {t.tour_id && t.master_status === "active" && (
+                              {canLifecycle && t.tour_id && t.master_status === "active" && (
                                 <button
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "inactive")}
                                   disabled={toggling === t.tour_id}
@@ -1471,7 +1475,7 @@ function MasterContentPageInner() {
                                   {toggling === t.tour_id ? "…" : "Set Inactive"}
                                 </button>
                               )}
-                              {t.tour_id && t.master_status === "inactive" && (
+                              {canLifecycle && t.tour_id && t.master_status === "inactive" && (
                                 <button
                                   onClick={() => toggleMasterStatus(t.tour_id!, t.tour_name, "active")}
                                   disabled={toggling === t.tour_id}
@@ -1481,7 +1485,7 @@ function MasterContentPageInner() {
                                   {toggling === t.tour_id ? "…" : "Set Active"}
                                 </button>
                               )}
-                              {t.tour_id && t.master_status !== "trashed" && (
+                              {canLifecycle && t.tour_id && t.master_status !== "trashed" && (
                                 <button
                                   onClick={() => trashMaster(t.tour_id!, t.tour_name)}
                                   disabled={trashing === t.tour_id}
@@ -1492,7 +1496,7 @@ function MasterContentPageInner() {
                                   {trashing === t.tour_id ? "…" : "Trash"}
                                 </button>
                               )}
-                              {t.tour_id && t.master_status === "trashed" && (
+                              {canLifecycle && t.tour_id && t.master_status === "trashed" && (
                                 <button
                                   onClick={() => restoreMaster(t.tour_id!, t.tour_name)}
                                   disabled={restoring === t.tour_id}

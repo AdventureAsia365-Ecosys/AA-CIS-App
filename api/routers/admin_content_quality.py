@@ -33,7 +33,8 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
@@ -47,7 +48,9 @@ from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction,
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
 
-router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],
+                   dependencies=[Depends(staff_policy)])
 
 _PIECE_SORTS = {"created_at": "cp.created_at", "status": "cp.status", "channel": "channel",
                 "tenant": "t.name", "cost_usd": "cost_usd", "attempt": "cp.attempt_number"}

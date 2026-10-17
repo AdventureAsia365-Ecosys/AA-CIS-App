@@ -37,6 +37,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -44,7 +45,9 @@ from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from services.acp_shared.atom_constants import THIN_TRIP_ATOM_MIN
 
-router = APIRouter(prefix="/admin", tags=["admin-atoms"])
+# AA-882 (GĐ3): staff_policy_if_staff narrows the staff calls (X-Admin-Secret) by role, per
+# api/core/staff_authz.py POLICY; the routes' own guard still decides who else gets in.
+router = APIRouter(prefix="/admin", tags=["admin-atoms"], dependencies=[Depends(staff_policy_if_staff)])
 
 # AA-723 — the delete-triggered Segment/Score/Route recompute is now a durable `recompute` job
 # (services/jobs/recompute_job.py), not an in-process asyncio task, so no task-reference set.

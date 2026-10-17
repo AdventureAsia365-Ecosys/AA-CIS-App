@@ -43,7 +43,7 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview' },
   { id: 'photos', label: 'Photos', path: '/admin/photos' },
-  { id: 'platform-stats', label: 'Platform Stats', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
+  { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
   { id: 'content-quality', label: 'Content Quality', path: '/admin/content-quality', readySelector: '[data-testid="content-quality-ready"]' },
   { id: 'review', label: 'Review Queue', path: '/admin/review' },
@@ -121,9 +121,24 @@ async function runPageCheck(
   }
 }
 
+// AA-883 — the Staff directory (Platform › People & access). The PR preview's BFF calls the Dev API,
+// which has no /admin/platform/staff route until the backend of the same PR deploys, so these are
+// test.fixme until then. Follow-up after the deploy: move both rows into ADMIN_PAGES (390px layout +
+// theme switch) and delete this list.
+const ADMIN_PAGES_AFTER_DEPLOY: PageSpec[] = [
+  { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff' },
+  { id: 'platform-staff-detail', label: 'Staff · detail', path: '/admin/platform/staff/00000000-0000-0000-0000-000000000000' },
+];
+
 test.describe('UI smoke — admin', () => {
   for (const spec of ADMIN_PAGES) {
     test(`admin: ${spec.label} (${spec.path})`, async ({ browser }) => {
+      await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
+    });
+  }
+
+  for (const spec of ADMIN_PAGES_AFTER_DEPLOY) {
+    test.fixme(`admin: ${spec.label} (${spec.path}) — after the AA-883 backend deploy`, async ({ browser }) => {
       await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
     });
   }

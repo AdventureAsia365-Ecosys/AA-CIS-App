@@ -12,6 +12,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Upload } from "lucide-react";
 import { A, alpha, serif, sans, Card, SLabel, Btn } from "./adminUi";
+import { useAdminIdentity } from "../../_kit/useAdminIdentity";
+import { can } from "@/lib/rbac";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -358,6 +360,8 @@ function parseBrandText(paragraphs: string[]): Partial<BrandForm> {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function BrandIdentityEditor() {
+  // AA-882 — brand writes are content.settings.write (admin) on the backend; other roles read only.
+  const canEdit = can(useAdminIdentity().role, "content.settings.write");
   const [brands, setBrands]           = useState<BrandSummary[]>([]);
   const [selected, setSelected]       = useState<string | null>(null);
   const [detail, setDetail]           = useState<BrandDetail | null>(null);
@@ -517,8 +521,9 @@ export default function BrandIdentityEditor() {
   }
 
   const canSave = isNew ? form.brand_name.trim().length > 0 : selected != null;
-  const isReadOnly = viewingVersion !== null;
-  const viewedEntry = isReadOnly && detail
+  const viewingOld = viewingVersion !== null;
+  const isReadOnly = viewingOld || !canEdit;
+  const viewedEntry = viewingOld && detail
     ? detail.history.find(h => h.version === viewingVersion) ?? null
     : null;
 
@@ -533,6 +538,7 @@ export default function BrandIdentityEditor() {
                 <button onClick={loadBrands} style={{ background: "none", border: "none", cursor: "pointer", color: A.muted, padding: 4 }}>
                   <RefreshCw size={13} />
                 </button>
+                {canEdit && (<>
                 <button
                   onClick={() => { startNew(); docxRef.current?.click(); }}
                   disabled={parsing}
@@ -553,6 +559,7 @@ export default function BrandIdentityEditor() {
                 }}>
                   <Plus size={11} /> New
                 </button>
+                </>)}
               </div>
             </div>
 
@@ -591,8 +598,17 @@ export default function BrandIdentityEditor() {
               </div>
             ) : (
               <>
+                {!canEdit && (
+                  <div data-testid="brand-read-only" style={{
+                    marginBottom: 16, padding: "10px 16px", borderRadius: 8,
+                    background: A.goldTint, border: `1px solid ${A.line}`, fontSize: 13, color: A.body,
+                  }}>
+                    Read-only for your role. Brand identity changes are made by an admin.
+                  </div>
+                )}
+
                 {/* Read-only banner when viewing old version */}
-                {isReadOnly && (
+                {viewingOld && (
                   <div style={{
                     marginBottom: 16, padding: "10px 16px", borderRadius: 8,
                     background: "var(--aa-amber-bg6)", border: "1px solid var(--aa-amber-border2)",
@@ -767,16 +783,16 @@ export default function BrandIdentityEditor() {
                     </div>
                   )}
 
-                  {isReadOnly && (
+                  {viewingOld && (
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
-                      <Btn
+                      {canEdit && <Btn
                         onClick={() => activateVersion(viewingVersion!)}
                         disabled={activating || detail?.history.find(h => h.version === viewingVersion)?.is_active}
                         variant="primary"
                         style={{ background: A.gold, border: `1px solid ${A.gold}` }}
                       >
                         {activating ? "Activating…" : `Set v${viewingVersion} as Active`}
-                      </Btn>
+                      </Btn>}
                       <Btn variant="secondary" onClick={exitVersionView}>Cancel</Btn>
                       {msg && (
                         <span style={{ fontSize: 12, color: msg.ok ? A.green : A.red }}>{msg.text}</span>
@@ -824,7 +840,7 @@ export default function BrandIdentityEditor() {
                               >
                                 View
                               </button>
-                              {!v.is_active && (
+                              {canEdit && !v.is_active && (
                                 <button
                                   onClick={() => activateVersion(v.version)}
                                   disabled={activating}

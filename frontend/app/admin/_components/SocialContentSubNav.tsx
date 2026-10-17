@@ -99,7 +99,7 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
           textDecoration: "none", fontSize: 12.5, fontWeight: active === "platform_stats" ? 700 : 500,
         }}>
           <BarChart3 size={15} />
-          <span style={{ flex: 1 }}>07 · Platform Stats</span>
+          <span style={{ flex: 1 }}>07 · A4 Quality</span>
         </Link>
         {/* AA-769 — every quality signal tenants no longer see (AA-770), for every tenant. */}
         <Link href="/admin/content-quality" style={{

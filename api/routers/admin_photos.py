@@ -23,6 +23,7 @@ from typing import Optional
 import boto3
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -33,8 +34,9 @@ logger = structlog.get_logger()
 # S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
 # ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
 # the write routes are kept as-is (same check, run twice).
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/photos", tags=["admin-photos"],
-                   dependencies=[Depends(verify_admin_secret)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
 public_router = APIRouter(prefix="/content/photos", tags=["photos"])
 
 STATUSES = ("matched", "unmatched", "rejected", "error")

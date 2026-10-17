@@ -350,7 +350,7 @@ function PlatformStatsSection() {
     <Card style={{ marginBottom: 24 }}>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, margin: "0 0 4px" }}>
-          Platform Stats — Gate/Error Aggregate
+          A4 Quality — Gate/Error Aggregate
         </h2>
         <div style={{ fontSize: 12, color: A.muted }}>
           Real backend aggregate across EVERY content piece ever written, platform-wide — not a
@@ -630,7 +630,7 @@ export default function PlatformStatsPage() {
     <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ flexShrink: 0, background: A.bg, padding: "28px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
           <PageHeader
-            title="07 · Platform Stats"
+            title="07 · A4 Quality"
             description="Post-hoc, cross-tenant monitoring — AA does not gate tenant content at any T0-T11 step. Review Log is read-only pattern review; the aggregate below is a real platform-wide backend rollup, not a per-page-load client-side count."
           />
         </div>
