@@ -19,6 +19,11 @@ on:
 permissions:
   id-token: write
   contents: read
+# AA-868: one CIS deploy at a time (40/550 runs overlapped before; one failed on the same-SHA step).
+# Queued, never cancelled: a later merge waits for the running roll instead of killing it.
+concurrency:
+  group: deploy-dev-cis
+  cancel-in-progress: false
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
@@ -38,31 +43,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
+      - uses: actions/checkout@v5
+      # Fails closed (AA-868): a missing secret or an unreachable gate blocks the roll; an
+      # override reason lets it through (also the way out when the API itself is down).
       - name: Check for queued/running jobs
         env:
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
           OVERRIDE: ${{ inputs.override_running_jobs }}
           GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
-        run: |
-          set -euo pipefail
-          if [ -z "${ADMIN_SECRET:-}" ]; then
-            echo "::warning::ADMIN_SECRET not configured — pre-deploy job guard is DISABLED. Set the ADMIN_SECRET repo secret to enable it (AA-725)."
-            exit 0
-          fi
-          BODY=$(curl -s --max-time 20 -H "x-admin-secret: ${ADMIN_SECRET}" "${GATE_URL}")
-          echo "deploy-gate: ${BODY}"
-          SAFE=$(echo "${BODY}" | jq -r '.safe_to_deploy // empty')
-          ACTIVE=$(echo "${BODY}" | jq -r '.active // "?"')
-          if [ "${SAFE}" = "true" ]; then
-            echo "No queued/running jobs (deploy-gate exempt kinds not counted) — safe to deploy."
-            exit 0
-          fi
-          if [ -n "${OVERRIDE:-}" ]; then
-            echo "::warning::Deploy guard OVERRIDDEN with ${ACTIVE} active job(s). Reason: ${OVERRIDE}"
-            exit 0
-          fi
-          echo "::error::Deploy blocked: ${ACTIVE} job(s) queued/running. Wait for them to finish, or re-run via workflow_dispatch with an 'override_running_jobs' reason."
-          exit 1
+        run: bash .github/scripts/deploy_job_guard.sh
 
   build-and-push:
     name: Build and Push ECR
@@ -144,6 +133,8 @@ jobs:
           # AA-725 part 5 — pin the exact per-commit image passed by the deploy steps (DEPLOY_IMAGE),
           # not `:latest`, so api and worker are guaranteed to roll the SAME SHA in one deploy.
           NEW_IMAGE="${DEPLOY_IMAGE:?DEPLOY_IMAGE not set}"
+          # --desired-count 1 on purpose: it wakes a service scaled to 0 (cost stop) so the roll
+          # has a task to replace; Dev runs one task per service (AA-868 kept this).
           aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" \
             --desired-count 1 --region "$AWS_REGION" >/dev/null
           aws ecs describe-task-definition --task-definition "$FAMILY" --region "$AWS_REGION" \

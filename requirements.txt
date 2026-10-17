@@ -39,9 +39,9 @@ langfuse==2.26.0
 
 # Utils
 json-repair==0.61.0
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 structlog==24.1.0
-markdown==3.7
+markdown==3.8.1
 
 # Database
 asyncpg==0.29.0
