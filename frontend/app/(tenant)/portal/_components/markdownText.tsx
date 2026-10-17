@@ -2,7 +2,7 @@
 // AA-836 (D6) — writer output (blog pieces especially) is markdown; a tenant must never see raw
 // `##` / `**` in the portal. Two helpers, no dependency, no dangerouslySetInnerHTML (piece text is
 // turned into React elements, so it can never inject HTML):
-//   - stripMarkdown(text)  → plain text, for one-line / clamped previews (T11 Ready to Publish).
+//   - stripMarkdown(text, opts?) → plain text, for one-line / clamped previews (T11 Ready to Publish).
 //   - <MarkdownBody text/> → readable rendering for a full body (T10 My Content drawer):
 //     headings, paragraphs, bullet / numbered lists, quotes, bold / italic, links as their text.
 // Hashtags (`#Bhutan`, no space after `#`) are text, not headings — same rule as the backend's
@@ -38,21 +38,48 @@ const CUT_OPENER_RE = /(^|\s)[*_`]+(?=\S)/g;
 const CUT_TAIL_RE = /\s[*_`]+$/;
 const BARE_HEADING_RE = /^\s{0,3}#{1,6}\s*$/;
 
+export type StripMarkdownOptions = {
+  /** Drop the first block when it is a heading (a card that already shows the piece title would
+   * otherwise repeat it: "…Northern Mongolia There is a line…"). */
+  dropLeadingHeading?: boolean;
+  /** Joins two blocks (a heading, or text separated by a blank line) when the first one does not
+   * already end in sentence punctuation. Default " " — one run of text, the original behaviour. */
+  blockSeparator?: string;
+};
+
+// A block that already ends a sentence needs no separator, only a space.
+const TERMINAL_RE = /[.!?…:;)"'”’]$/;
+
 /** Markdown → plain text: markers removed, links / images kept as their text, lines joined.
- * Also safe on a truncated slice: markers left unpaired by the cut are dropped too. */
-export function stripMarkdown(text: string | null | undefined): string {
+ * Also safe on a truncated slice: markers left unpaired by the cut are dropped too.
+ * Without options every line is joined with a space (unchanged). S241 — previews pass
+ * `{ dropLeadingHeading, blockSeparator }` so a heading never runs into the next sentence. */
+export function stripMarkdown(text: string | null | undefined, opts: StripMarkdownOptions = {}): string {
   if (!text) return "";
-  const lines = text
-    .split(/\r?\n/)
-    .filter((l) => !FENCE_RE.test(l) && !RULE_RE.test(l) && !BARE_HEADING_RE.test(l));
-  return lines
-    .map((l) => {
-      const h = HEADING_RE.exec(l);
-      if (h) return h[2];
-      const b = BULLET_RE.exec(l) ?? ORDERED_RE.exec(l) ?? QUOTE_RE.exec(l);
-      return b ? b[1] : l;
-    })
-    .join(" ")
+  const sep = opts.blockSeparator ?? " ";
+  // Blocks: a heading line is one block; other lines group until a blank line. Lines inside a
+  // block (list items, a hard-wrapped paragraph) are joined with a space as before.
+  const blocks: { heading: boolean; text: string }[] = [];
+  let para: string[] = [];
+  const flush = () => {
+    if (para.length) blocks.push({ heading: false, text: para.join(" ") });
+    para = [];
+  };
+  for (const l of text.split(/\r?\n/)) {
+    if (FENCE_RE.test(l) || RULE_RE.test(l) || BARE_HEADING_RE.test(l)) continue;
+    if (!l.trim()) { flush(); continue; }
+    const h = HEADING_RE.exec(l);
+    if (h) { flush(); blocks.push({ heading: true, text: h[2] }); continue; }
+    const b = BULLET_RE.exec(l) ?? ORDERED_RE.exec(l) ?? QUOTE_RE.exec(l);
+    para.push(b ? b[1] : l);
+  }
+  flush();
+  if (opts.dropLeadingHeading && blocks[0]?.heading) blocks.shift();
+  const joined = blocks.reduce((acc, blk, i) => {
+    if (i === 0) return blk.text;
+    return acc + (TERMINAL_RE.test(acc.trimEnd()) ? " " : sep) + blk.text;
+  }, "");
+  return joined
     .replace(INLINE_RE, (_m, img, linkText, _url, code, b1, b2, p1, i1, p2, i2) =>
       img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
     )

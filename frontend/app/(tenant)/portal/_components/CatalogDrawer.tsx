@@ -201,10 +201,8 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
   // ── Header ──
   const header = (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-      <div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{group.aa_name}</div>
-        <div style={{ fontSize: 11.5, color: T.muted, marginTop: 3, fontFamily: mono }}>{group.rewrite_language}</div>
-      </div>
+      {/* The tour name is the kit Drawer title (CatalogTab.tsx), so only the language stays here. */}
+      <div style={{ fontSize: 11.5, color: T.muted, fontFamily: mono }}>{group.rewrite_language}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {dirty && (
           <Btn variant="primary" size="sm" disabled={saving} onClick={doSave}>

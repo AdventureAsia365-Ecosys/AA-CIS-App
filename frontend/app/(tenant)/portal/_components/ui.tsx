@@ -138,6 +138,17 @@ export function Card({ children, style = {}, dark = false }: {
 // stays in normal flow just before it. Margin / padding are the same in both states (the band is a
 // background layer that starts `bleedTop` lower at rest), so nothing moves when the bar sticks; at
 // rest the transparent band also lets clicks through to what is above.
+//
+// S241 UI verify (AA-836 D3) — the bleed never actually covered the 28px strip: Chrome resolves
+// `top: 0` against `<main>`'s CONTENT edge (scrollport inset by its padding), so the stuck bar's
+// border box started at y 84 (1440) / y 76 (390, padding 20) and the whole `bleedTop` band sat
+// INSIDE the bar, below the strip — scrolled card text showed between the topbar (y 56) and the
+// bar (measured 28px / 20px). Fix: stick at `top: -bleedTop`. The stuck border box now starts
+// `padding - bleedTop` from the scrollport edge (0 at 1440; -8 at 390, clipped by `<main>`'s
+// overflow), so the band paints from the topbar's bottom edge down, and the bar's content lands
+// exactly where `top: 0` without a bleed would have put it. Requires bleedTop >= `<main>`'s
+// padding-top (28 desktop / 20 phone) — the default 28 covers both. At rest nothing changes:
+// sticky offsets apply only once the bar reaches that line, and the band stays transparent.
 export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 28 }: {
   children: React.ReactNode; background?: string; style?: React.CSSProperties; bleedTop?: number;
 }) {
@@ -177,7 +188,7 @@ export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 
     <>
       <div ref={sentinelRef} aria-hidden style={{ display: "flow-root", height: 0 }} />
       <div ref={barRef} style={{
-        position: "sticky", top: 0, zIndex: 5,
+        position: "sticky", top: bleedTop > 0 ? -bleedTop : 0, zIndex: 5,
         marginTop: mt, paddingTop: pt,
         pointerEvents: showBleed ? undefined : "none",
         ...rest,
@@ -230,16 +241,23 @@ export function CardHead({ title, action, light = false }: {
   );
 }
 
-export function Badge({ children, variant = "default" }: {
+export function Badge({ children, variant = "default", icon }: {
   children: React.ReactNode; variant?: BadgeVariant;
+  /** Leading icon (e.g. a lucide `<Milestone size={11} />`), drawn on the same line as the text. */
+  icon?: React.ReactNode;
 }) {
   const s = BADGE_MAP[variant];
   return (
     // AA-836 — one line, always a pill: a long label (T11 "Route: <hub> · N Segments") used to wrap
     // inside the 999px radius and render as a tall oval; now it ends in an ellipsis instead.
+    // S241 UI verify — an icon passed INSIDE the text span (global CSS makes `svg` display:block)
+    // rendered on its own line above the text (pill 33.5px tall instead of 22.5px). Icons now go
+    // through `icon`: their own non-shrinking flex item between the dot and the text, so dot, icon
+    // and text share one row; only the text span shrinks and ends in an ellipsis.
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, letterSpacing: "0.04em", textTransform: "uppercase", background: s.bg, color: s.color }}>
       <span style={{ width: 5, height: 5, borderRadius: "50%", background: s.dot, display: "block", flexShrink: 0 }} />
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
+      {icon && <span aria-hidden style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, lineHeight: 0 }}>{icon}</span>}
+      <span style={{ display: "block", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
     </span>
   );
 }

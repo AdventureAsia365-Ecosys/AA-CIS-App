@@ -76,7 +76,24 @@ export function Drawer({
             flexShrink: 0,
           }}
         >
-          <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: K.ink }}>
+          {/* S241 UI verify — at 390 a long title + badge pushed the close X off-screen: the title
+              box had no min-width, so it kept its content width and the row overflowed. It now
+              takes the free space (flex 1, min-width 0) and clips; a plain-string title ends in an
+              ellipsis (full text in the tooltip). A node title clips at the box edge — give its own
+              text span min-width 0 + ellipsis (JobDrawer does). */}
+          <div
+            title={typeof title === "string" ? title : undefined}
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflow: "hidden",
+              fontFamily: serif,
+              fontSize: 17,
+              fontWeight: 600,
+              color: K.ink,
+              ...(typeof title === "string" ? { whiteSpace: "nowrap", textOverflow: "ellipsis" } : {}),
+            }}
+          >
             {title}
           </div>
           <button
@@ -89,6 +106,7 @@ export function Drawer({
               cursor: "pointer",
               padding: 0,
               lineHeight: 0,
+              flexShrink: 0,
             }}
           >
             <X size={18} />

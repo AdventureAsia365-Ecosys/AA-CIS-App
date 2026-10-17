@@ -85,9 +85,11 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const links = job?.links;
 
   const header = (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-      <span style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink }}>{job?.kind ?? "Job"}</span>
-      {job && <StatusBadge status={job.status} />}
+    // S241 UI verify — one row that fits the Drawer's title box: the kind ends in an ellipsis and the
+    // status badge keeps its size (it used to push the close X off-screen at 390).
+    <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, maxWidth: "100%" }}>
+      <span title={job?.kind ?? "Job"} style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: A.ink, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job?.kind ?? "Job"}</span>
+      {job && <span style={{ flexShrink: 0, display: "inline-flex" }}><StatusBadge status={job.status} /></span>}
     </span>
   );
 

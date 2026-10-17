@@ -197,7 +197,10 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               // AA-836 — title column can shrink (minmax(0, 1fr)) and the tour name is one line with
               // an ellipsis; on a phone the trailing short date goes (the full date/time is already
               // under the title), which gives the name the room instead of 1–2 words per line.
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0, 1fr) auto" : "36px minmax(0, 1fr) auto auto", alignItems: "center", gap: phone ? 10 : 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
+              // S241 UI verify — on a phone the status badge (~140px) still left the name ~10
+              // characters; it now moves to the meta line under the name, so the name gets the
+              // whole row (grid is just icon + text) and stays one line with an ellipsis.
+              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0, 1fr)" : "36px minmax(0, 1fr) auto auto", alignItems: "center", gap: phone ? 10 : 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: iconBg, color: iconColor, display: "grid", placeItems: "center" }}>
                   <Icon size={15} strokeWidth={2.2} />
                 </div>
@@ -210,9 +213,16 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
                       · {a.edit_source === "ai_generated" ? "AI" : "Edited"}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
+                  {phone ? (
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 8px", marginTop: 4, minWidth: 0 }}>
+                      <span style={{ fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>{fmtDateTime(a.created_at)}</span>
+                      <Badge variant={v}>{statusLabel(a.status)}</Badge>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
+                  )}
                 </div>
-                <Badge variant={v}>{statusLabel(a.status)}</Badge>
+                {!phone && <Badge variant={v}>{statusLabel(a.status)}</Badge>}
                 {!phone && (
                   <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
                     {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}

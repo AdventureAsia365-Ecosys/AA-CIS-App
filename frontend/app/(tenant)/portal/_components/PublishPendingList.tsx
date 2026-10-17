@@ -130,15 +130,16 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                     {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
                     {p.route_segment_count != null && (
                       <div style={{ marginBottom: 5 }}>
-                        <Badge variant="gold">
-                          <Milestone size={11} style={{ verticalAlign: -2, marginRight: 3 }} />
+                        <Badge variant="gold" icon={<Milestone size={11} />}>
                           Route: {p.route_hub_name ?? "—"} · {p.route_segment_count} Segments
                         </Badge>
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {/* AA-836 (D6) — plain text, never raw markdown (`## Title`, `**bold**`). */}
-                      {stripMarkdown(p.content_preview)}
+                      {/* S241 — the card shows the title already: drop a leading `# Title` and keep
+                          a separator between blocks so a heading never runs into the next sentence. */}
+                      {stripMarkdown(p.content_preview, { dropLeadingHeading: true, blockSeparator: " · " })}
                     </div>
                     <div style={{ fontSize: 11, color: T.muted2, marginTop: 6, fontFamily: sans }}>
                       {p.channel} · {fmtDate(p.created_at)}
