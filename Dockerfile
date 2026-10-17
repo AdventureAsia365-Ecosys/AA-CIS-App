@@ -23,6 +23,11 @@ COPY services/ ./services/
 # AA-651 — the standalone job worker's `python -m worker` entrypoint (worker ECS service).
 COPY worker/ ./worker/
 
+# AA-870: the commit this image was built from, used as the Sentry release (shared/sentry_init.py).
+# Declared after the COPY layers so a new SHA does not invalidate the dependency cache.
+ARG GIT_SHA=unknown
+ENV APP_GIT_SHA=$GIT_SHA
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

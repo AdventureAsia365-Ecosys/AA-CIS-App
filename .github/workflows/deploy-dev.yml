@@ -91,7 +91,7 @@ jobs:
                --image-ids imageTag="$IMAGE_TAG" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1; then
             echo "Image $IMAGE_TAG already in ECR — reusing it, no build."
           else
-            docker build -t $FULL_IMAGE .
+            docker build --build-arg GIT_SHA=${{ github.sha }} -t $FULL_IMAGE .
             docker push $FULL_IMAGE
           fi
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT

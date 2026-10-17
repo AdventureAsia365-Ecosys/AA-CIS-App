@@ -10,6 +10,9 @@ for local/dev.
 import asyncio
 
 from shared.jobs.worker import _main
+from shared.sentry_init import init_sentry
 
 if __name__ == "__main__":
+    # AA-870: job errors logged at ERROR level reach Sentry (logging integration), tagged service=worker.
+    init_sentry(service="worker")
     asyncio.run(_main())
