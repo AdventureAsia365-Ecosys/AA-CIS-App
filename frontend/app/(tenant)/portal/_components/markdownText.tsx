@@ -39,21 +39,44 @@ const CUT_TAIL_RE = /\s[*_`]+$/;
 const BARE_HEADING_RE = /^\s{0,3}#{1,6}\s*$/;
 
 export type StripMarkdownOptions = {
-  /** Drop the first block when it is a heading (a card that already shows the piece title would
-   * otherwise repeat it: "…Northern Mongolia There is a line…"). */
-  dropLeadingHeading?: boolean;
+  /** Drop the first block when it is a heading whose text matches this string (compared on
+   * letters and digits only, case-insensitive). A card that already shows that same title would
+   * otherwise repeat it. A heading that differs (e.g. the writer's post title under the angle name
+   * on a T11 card) is kept — it is what goes live. */
+  dropHeadingMatching?: string | null;
   /** Joins two blocks (a heading, or text separated by a blank line) when the first one does not
    * already end in sentence punctuation. Default " " — one run of text, the original behaviour. */
   blockSeparator?: string;
 };
 
-// A block that already ends a sentence needs no separator, only a space.
+// A block that already ends a sentence needs no separator, only a space. Tested on the block's
+// plain text (inline markup removed), never on raw markdown: `[our site](https://x)` ends in a
+// `)` that is not punctuation, and `**Done.**` ends in a `.` once the markers are gone.
 const TERMINAL_RE = /[.!?…:;)"'”’]$/;
+const TRAILING_MARKER_RE = /[*_`]+$/;
+
+/** Inline markdown → its text (images / links as their text, code / bold / italic unwrapped). */
+function inlineToText(s: string): string {
+  INLINE_RE.lastIndex = 0;
+  const out = s.replace(INLINE_RE, (_m, img, linkText, _url, code, b1, b2, p1, i1, p2, i2) =>
+    img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
+  );
+  INLINE_RE.lastIndex = 0;
+  return out;
+}
+
+/** Lower-case, whitespace and punctuation removed — for "is this heading the same as the card
+ * title". (No `\p{L}` + `u` flag: the tsconfig target is ES2017.) */
+const NOT_TITLE_CHAR_RE = /[\s!-/:-@[-`{-~\u00a0-\u00bf\u2000-\u206f]+/g;
+function normTitle(s: string): string {
+  return inlineToText(s).toLowerCase().replace(NOT_TITLE_CHAR_RE, "");
+}
 
 /** Markdown → plain text: markers removed, links / images kept as their text, lines joined.
  * Also safe on a truncated slice: markers left unpaired by the cut are dropped too.
  * Without options every line is joined with a space (unchanged). S241 — previews pass
- * `{ dropLeadingHeading, blockSeparator }` so a heading never runs into the next sentence. */
+ * `{ blockSeparator }` (and `dropHeadingMatching` when the card already shows that exact title)
+ * so a heading never runs into the next sentence. */
 export function stripMarkdown(text: string | null | undefined, opts: StripMarkdownOptions = {}): string {
   if (!text) return "";
   const sep = opts.blockSeparator ?? " ";
@@ -74,15 +97,18 @@ export function stripMarkdown(text: string | null | undefined, opts: StripMarkdo
     para.push(b ? b[1] : l);
   }
   flush();
-  if (opts.dropLeadingHeading && blocks[0]?.heading) blocks.shift();
+  if (opts.dropHeadingMatching && blocks[0]?.heading) {
+    const want = normTitle(opts.dropHeadingMatching);
+    if (want && normTitle(blocks[0].text) === want) blocks.shift();
+  }
+  // Inline markup is removed per block BEFORE the join, so the sentence-end test sees plain text.
   const joined = blocks.reduce((acc, blk, i) => {
-    if (i === 0) return blk.text;
-    return acc + (TERMINAL_RE.test(acc.trimEnd()) ? " " : sep) + blk.text;
+    const t = inlineToText(blk.text);
+    if (i === 0) return t;
+    const end = acc.trimEnd().replace(TRAILING_MARKER_RE, "");
+    return acc + (TERMINAL_RE.test(end) ? " " : sep) + t;
   }, "");
   return joined
-    .replace(INLINE_RE, (_m, img, linkText, _url, code, b1, b2, p1, i1, p2, i2) =>
-      img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
-    )
     .replace(/\s+/g, " ")
     .trim()
     .replace(CUT_LINK_RE, "$1")
