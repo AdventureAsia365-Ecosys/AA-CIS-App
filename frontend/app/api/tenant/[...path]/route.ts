@@ -62,6 +62,11 @@ async function handler(
     }
     headers["x-admin-secret"] = ADMIN_SECRET;
     headers["x-admin-user-id"] = auth.adminId;
+    // AA-882 — the verified JWT role, as /api/admin/[...path] sends it. Without it the backend
+    // treats the call as the machine principal (api/core/staff_authz.py), which may call the
+    // scheduler POSTs (jev-canary/check, dfs-balance/check, jev/402-sweep, retention/schedule)
+    // whatever the staff role; with it, reviewer/content get 403 on every POLICY route.
+    headers["x-admin-role"] = auth.role;
   } else {
     // AA-656: verify the tenant JWT before forwarding it (was: presence only).
     const auth = await requireTenant(req);

@@ -4,11 +4,13 @@ import json
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from api.core.secret_compare import secrets_equal
+from api.core.staff_authz import staff_policy
 
-router = APIRouter(prefix="/admin", tags=["admin-settings"])
+# AA-882 (GĐ1): PATCH /admin/settings/seo needs content.settings.write (api/core/staff_authz.py POLICY).
+router = APIRouter(prefix="/admin", tags=["admin-settings"], dependencies=[Depends(staff_policy)])
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"

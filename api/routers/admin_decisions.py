@@ -17,16 +17,18 @@ from datetime import date
 from typing import Literal, Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from services.acp_shared.audit_log import write_audit_log
 from shared.llm_client.decide import JEV_CREDIT_EXHAUSTED_EVENT, PLATFORM_TENANT_ID
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/decisions", tags=["admin-decisions"])
+# AA-882 (GĐ1): the PUT/POST/DELETE need ai.admin / spend.write (api/core/staff_authz.py POLICY).
+router = APIRouter(prefix="/admin/decisions", tags=["admin-decisions"], dependencies=[Depends(staff_policy)])
 
 _ZONES = ("accept", "grey", "reject", "error", "skipped")
 
