@@ -3,8 +3,8 @@
 Lesson S236 (test_aa679 / test_aa712): conftest applies migrations as a SUPERUSER, which owns
 everything and skips every privilege check; Dev RDS runs DB Migrate as a plain role. The module
 fixture undoes the superuser-applied 231 and applies it again as a NOSUPERUSER NOBYPASSRLS runner
-with only the privileges the file needs (CREATE on acp_shared, REFERENCES on content_piece, INSERT
-on schema_versions) — twice (idempotent), errors NOT swallowed.
+with only the privileges the file needs (CREATE on acp_shared, REFERENCES on content_piece, ownership of
+schema_versions as on Dev) — twice (idempotent), errors NOT swallowed.
 """
 import os
 import sys
@@ -43,7 +43,9 @@ def rds_like_231():
     a.execute(f"GRANT USAGE ON SCHEMA shared TO {RUNNER}")
     a.execute(f"GRANT USAGE, CREATE ON SCHEMA acp_shared TO {RUNNER}")
     a.execute(f"GRANT REFERENCES ON acp_shared.content_piece TO {RUNNER}")
-    a.execute(f"GRANT SELECT, INSERT ON shared.schema_versions TO {RUNNER}")
+    # Dev: the runner (the master) owns the registry. Since CIS 243 the key guard lets only members of the
+    # registry's owner insert a CIS key, so a plain INSERT grant is no longer enough (AA-852).
+    a.execute(f"ALTER TABLE shared.schema_versions OWNER TO {RUNNER}")
     runner = _connect(RUNNER)
     runner.autocommit = True
     try:
