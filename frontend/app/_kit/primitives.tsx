@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
+import { useIsPhone } from "./useMediaQuery";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
 // One-line "<root> / <title>" crumb for a shell top bar. The root and separator never shrink; the
@@ -422,6 +423,11 @@ export function PageHeader({
   description?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  // On a phone a header with a description puts its actions on their own row under the text, left
+  // aligned (S241 UI verify: on /admin/platform/staff the description was squeezed into ~250px
+  // beside Refresh). Without a description the actions still sit beside a short title.
+  const isPhone = useIsPhone();
+  const stack = isPhone && !!description && !!actions;
   return (
     <div
       style={{
@@ -436,7 +442,7 @@ export function PageHeader({
         flexWrap: "wrap",
       }}
     >
-      <div style={{ minWidth: 0, flex: "1 1 240px" }}>
+      <div style={{ minWidth: 0, flex: stack ? "1 1 100%" : "1 1 240px" }}>
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div
             style={{
@@ -478,7 +484,7 @@ export function PageHeader({
         )}
       </div>
       {actions && (
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap", justifyContent: stack ? "flex-start" : "flex-end" }}>
           {actions}
         </div>
       )}

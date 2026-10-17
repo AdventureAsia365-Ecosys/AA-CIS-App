@@ -14,7 +14,7 @@
 // id comes from the [id] route as a prop — no setState in an effect (React Compiler).
 
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -151,13 +151,23 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
         }
       />
 
+      {/* Two totals, then one "Active by role" chip holding every role count, so the strip is at most
+          two rows at 390px (S241 UI verify: five separate chips wrapped to three rows). */}
       {counts && (
-        <div data-testid="staff-counts" style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        <div data-testid="staff-counts" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <CountChip label="Accounts" value={counts.total} />
           <CountChip label="Active" value={counts.active} />
-          {Object.entries(counts.active_by_role).map(([role, n]) => (
-            <CountChip key={role} label={`Active ${roleLabel(role).toLowerCase()}`} value={n} />
-          ))}
+          {Object.keys(counts.active_by_role).length > 0 && (
+            <div data-testid="staff-counts-by-role" style={{ ...chipStyle, flexWrap: "wrap", rowGap: 2 }}>
+              <span style={{ fontSize: 12, color: K.muted }}>Active by role</span>
+              {Object.entries(counts.active_by_role).map(([role, n]) => (
+                <span key={role} style={{ display: "inline-flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: K.ink }}>{n}</span>
+                  <span style={{ fontSize: 12, color: K.muted }}>{roleLabel(role).toLowerCase()}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -186,13 +196,15 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
   );
 }
 
+const chipStyle: React.CSSProperties = {
+  display: "flex", alignItems: "baseline", gap: 8, padding: "7px 12px", minWidth: 0,
+  background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, fontFamily: sans,
+};
+
 function CountChip({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{
-      display: "flex", alignItems: "baseline", gap: 8, padding: "8px 14px",
-      background: K.card, border: `1px solid ${K.line}`, borderRadius: RADIUS.lg, fontFamily: sans,
-    }}>
-      <span style={{ fontSize: 18, fontWeight: 600, color: K.ink }}>{value}</span>
+    <div style={chipStyle}>
+      <span style={{ fontSize: 17, fontWeight: 600, color: K.ink }}>{value}</span>
       <span style={{ fontSize: 12, color: K.muted }}>{label}</span>
     </div>
   );
@@ -220,7 +232,7 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
         <ErrorState message={(detail.error as Error)?.message || "Staff account not found"} />
       )}
       {s && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: sans }}>
+        <div data-testid="staff-detail-ready" style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: sans }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <RoleBadge role={s.role} />
             <ActiveBadge active={s.is_active} />
@@ -235,7 +247,9 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
             <Field label="Status" value={s.is_active ? "Active" : "Inactive (cannot sign in; open sessions end within ~6 min)"} />
             <Field label="Created" value={formatDateTime(s.created_at)} />
             <Field label="Updated" value={formatDateTime(s.updated_at)} />
-            <Field label="Account id" value={<span style={{ fontFamily: mono, fontSize: 12, wordBreak: "break-all" }}>{s.id}</span>} />
+            {/* Full width, one line, with a copy button: in the label/value grid the UUID wrapped at
+                390px and left one character alone on the second line (S241 UI verify). */}
+            <Field wide label="Account id" value={<AccountId id={s.id} />} />
           </dl>
           <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>
             Changing a role or deactivating an account is not available here yet. It will be limited to the
@@ -247,11 +261,37 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
   );
 }
 
-function Field({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+function AccountId({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <span data-testid="staff-account-id" title={id} style={{
+        fontFamily: mono, fontSize: 11.5, color: K.ink2, whiteSpace: "nowrap", overflow: "hidden",
+        textOverflow: "ellipsis", minWidth: 0, padding: "3px 7px", background: K.line2, borderRadius: RADIUS.sm,
+      }}>
+        {id}
+      </span>
+      <Button variant="ghost" size="sm" onClick={copy} ariaLabel={copied ? "Account id copied" : "Copy account id"}
+        title="Copy the account id" style={{ flexShrink: 0, padding: "4px 8px" }}>
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </Button>
+    </span>
+  );
+}
+
+function Field({ label, value, hint, wide = false }: { label: string; value: React.ReactNode; hint?: string; wide?: boolean }) {
+  // `wide`: label above the value, across both grid columns (long values such as the account id).
+  const span = wide ? { gridColumn: "1 / -1" } : undefined;
   return (
     <>
-      <dt style={{ color: K.muted, fontWeight: 500 }}>{label}</dt>
-      <dd style={{ margin: 0, color: K.ink, minWidth: 0 }} title={hint}>{value}</dd>
+      <dt style={{ color: K.muted, fontWeight: 500, ...span, ...(wide ? { marginBottom: -6 } : null) }}>{label}</dt>
+      <dd style={{ margin: 0, color: K.ink, minWidth: 0, ...span }} title={hint}>{value}</dd>
     </>
   );
 }

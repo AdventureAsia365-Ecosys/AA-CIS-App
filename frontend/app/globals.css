@@ -169,8 +169,9 @@
   --aa-amber-soft:    #38290F;
   --aa-kit-amber:      #E0A040;
   --aa-kit-amber-soft: #352711;
-  /* Info */
-  --aa-info:          #7FA0F0;
+  /* Info — S241 UI verify: #7FA0F0 read dim on the navy pill (REVIEWER badge, 11px caps); lifted to
+     7.8:1 on --aa-info-soft (8.7:1 on card), in line with the accent badge (8.6:1). */
+  --aa-info:          #A5BEF7;
   --aa-info-soft:     #1C2847;
   /* Purple */
   --aa-purple:        #B99BF0;

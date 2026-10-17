@@ -42,6 +42,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'llm-usage', label: 'External Spend', path: '/admin/llm-usage' },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview' },
+  // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).
+  { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff' },
   { id: 'photos', label: 'Photos', path: '/admin/photos' },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).
@@ -121,14 +123,27 @@ async function runPageCheck(
   }
 }
 
-// AA-883 — the Staff directory (Platform › People & access). The PR preview's BFF calls the Dev API,
-// which has no /admin/platform/staff route until the backend of the same PR deploys, so these are
-// test.fixme until then. Follow-up after the deploy: move both rows into ADMIN_PAGES (390px layout +
-// theme switch) and delete this list.
-const ADMIN_PAGES_AFTER_DEPLOY: PageSpec[] = [
-  { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff' },
-  { id: 'platform-staff-detail', label: 'Staff · detail', path: '/admin/platform/staff/00000000-0000-0000-0000-000000000000' },
-];
+// AA-883 — the Staff deep link /admin/platform/staff/{id} opens the drawer. A made-up id answers
+// 404 (a real failure for this smoke), so the test reads the first account id from the list API in
+// the browser (same cookie + bypass route as the page) and checks the deep link with that id.
+async function firstStaffId(browser: import('@playwright/test').Browser): Promise<string> {
+  const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE });
+  await installBypassRoute(context);
+  const page = await context.newPage();
+  try {
+    await assertNavOk(page, '/admin/platform/staff');
+    const id = await page.evaluate(async () => {
+      const r = await fetch('/api/admin/platform/staff', { credentials: 'same-origin' });
+      if (!r.ok) return `HTTP ${r.status}`;
+      const body = (await r.json()) as { staff?: { id?: string }[] };
+      return body.staff?.[0]?.id ?? '';
+    });
+    expect(id, 'Staff list API returned no account id').toMatch(/^[0-9a-f-]{36}$/i);
+    return id;
+  } finally {
+    await context.close();
+  }
+}
 
 test.describe('UI smoke — admin', () => {
   for (const spec of ADMIN_PAGES) {
@@ -137,11 +152,15 @@ test.describe('UI smoke — admin', () => {
     });
   }
 
-  for (const spec of ADMIN_PAGES_AFTER_DEPLOY) {
-    test.fixme(`admin: ${spec.label} (${spec.path}) — after the AA-883 backend deploy`, async ({ browser }) => {
-      await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
-    });
-  }
+  test('admin: Staff · detail (/admin/platform/staff/{id}, first account)', async ({ browser }) => {
+    const id = await firstStaffId(browser);
+    await runPageCheck(browser, ADMIN_STATE, {
+      id: 'platform-staff-detail',
+      label: 'Staff · detail',
+      path: `/admin/platform/staff/${id}`,
+      readySelector: '[data-testid="staff-detail-ready"]',
+    }, { checkMobileLayout: true });
+  });
 
   // AA-722 — the legacy /admin/dashboard page is retired. As an admin, a request to it must land
   // on /admin/overview (middleware's role-aware redirect). Bounded wait; keep this independent of
