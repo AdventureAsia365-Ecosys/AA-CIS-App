@@ -6,7 +6,10 @@
 //   (c) ⌘K opens the palette and typing 2+ chars of a REAL tour name (read from the Master Content
 //       table on the page, not hardcoded) returns ≥ 1 tour row;
 //   (d) at 390px the bottom nav is visible and the page has no horizontal overflow (prints the
-//       offending elements on failure).
+//       offending elements on failure);
+//   (e) AA-883: an admin sees the Platform and CIS Content sections with fold toggles, the Apps block
+//       links to Booking admin in a new tab (no Tenant portal link), and in the collapsed rail the
+//       section headers become plain dividers.
 import { test, expect } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute, waitForShellHydrated } from './smoke-helpers';
 
@@ -118,6 +121,34 @@ test.describe('AA-752 — admin shell', () => {
       // A tour row (its deep link href carries ?tour=) appears for the real name. Bounded.
       const tourRow = dialog.locator('button', { hasText: new RegExp(frag, 'i') });
       await expect(tourRow.first()).toBeVisible({ timeout: 10000 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(e) AA-883: Platform / CIS Content sections and the Apps links', async ({ browser }) => {
+    const { context, page } = await adminPage(browser);
+    try {
+      await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await waitForShellHydrated(page);
+      const rail = page.getByTestId('admin-sidebar');
+      await expect(rail).toHaveAttribute('data-collapsed', 'false', { timeout: 5000 });
+      await expect(page.getByTestId('nav-section-platform')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('nav-section-cis')).toBeVisible();
+      await expect(page.getByTestId('nav-section-toggle-platform')).toBeVisible();
+      await expect(page.getByTestId('nav-section-toggle-cis')).toBeVisible();
+
+      const booking = page.getByTestId('sidebar-app-booking');
+      await expect(booking).toBeVisible();
+      await expect(booking).toHaveAttribute('href', /^https:\/\/[^/]+/);
+      await expect(booking).toHaveAttribute('target', '_blank');
+      await expect(page.getByTestId('sidebar-app-portal')).toHaveCount(0);
+
+      // Collapsed rail: no clickable section header, a divider instead.
+      await page.getByTestId('sidebar-collapse').click();
+      await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
+      await expect(page.getByTestId('nav-section-toggle-platform')).toHaveCount(0);
+      await expect(page.getByTestId('nav-section-divider-platform')).toHaveCount(1);
     } finally {
       await context.close();
     }

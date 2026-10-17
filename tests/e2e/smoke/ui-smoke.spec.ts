@@ -121,9 +121,24 @@ async function runPageCheck(
   }
 }
 
+// AA-883 — the Staff directory (Platform › People & access). The PR preview's BFF calls the Dev API,
+// which has no /admin/platform/staff route until the backend of the same PR deploys, so these are
+// test.fixme until then. Follow-up after the deploy: move both rows into ADMIN_PAGES (390px layout +
+// theme switch) and delete this list.
+const ADMIN_PAGES_AFTER_DEPLOY: PageSpec[] = [
+  { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff' },
+  { id: 'platform-staff-detail', label: 'Staff · detail', path: '/admin/platform/staff/00000000-0000-0000-0000-000000000000' },
+];
+
 test.describe('UI smoke — admin', () => {
   for (const spec of ADMIN_PAGES) {
     test(`admin: ${spec.label} (${spec.path})`, async ({ browser }) => {
+      await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
+    });
+  }
+
+  for (const spec of ADMIN_PAGES_AFTER_DEPLOY) {
+    test.fixme(`admin: ${spec.label} (${spec.path}) — after the AA-883 backend deploy`, async ({ browser }) => {
       await runPageCheck(browser, ADMIN_STATE, spec, { checkMobileLayout: true });
     });
   }

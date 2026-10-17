@@ -16,14 +16,14 @@
 // AA-883 (S241 admin console) — the nav is split into two sections, Platform and CIS Content
 // (adminNav.tsx NAV_SECTIONS). Each section has a header that folds it (state in useNavSections,
 // localStorage, useSyncExternalStore). Headers render only when the role sees both sections, so
-// reviewer/content keep the flat CIS list. In the collapsed icon rail the headers become a divider
-// and folded sections still show their icons (the header label is hidden there). Below the nav, an
-// "Apps" block links to the other apps from lib/apps.ts (new tab each; the portal only for roles
-// PAGE_RULES lets in).
+// reviewer/content keep the flat CIS list. In the collapsed icon rail (desktop only: the phone drawer
+// is always the full panel) the headers become a plain divider and folded sections still show their
+// icons. Below the nav, an "Apps" block links to the other apps from lib/apps.ts (new tab each), with
+// one icon per app so the collapsed rail tells them apart.
 
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ExternalLink } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, Map as MapIcon } from "lucide-react";
 import { A, alpha, serif, sans } from "../admin/_components/adminUi";
 import { LOGO_SRC } from "../_brand/tokens";
 import {
@@ -31,7 +31,7 @@ import {
   type NavEntry, type NavGroup, type NavSection,
 } from "./adminNav";
 import { useNavSections } from "./useNavSections";
-import { APP_LINKS, type AppLink } from "@/lib/apps";
+import { APP_LINKS, type AppId, type AppLink } from "@/lib/apps";
 import { useSidebarCollapsed } from "./useSidebar";
 import { useHydrated } from "./useHydrated";
 import { canSeePage } from "@/lib/rbac";
@@ -67,7 +67,9 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
   const sections = visibleSections(role);
   const showHeaders = sections.length > 1;
   const [isClosed, toggleSection] = useNavSections();
-  const appLinks = APP_LINKS.filter((a) => a.id !== "portal" || canSeePage(role, a.href));
+  // The 68px icon rail: desktop collapsed. The phone drawer always shows the full panel (globals.css),
+  // whatever the stored desktop state, so folding works there as on the expanded desktop sidebar.
+  const rail = collapsed && !drawerOpen;
 
   function go(href: string) {
     router.push(href);
@@ -122,15 +124,19 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
             .map((g) => ({ ...g, items: g.items.filter((n) => canSeePage(role, n.href)) }))
             .filter((g) => g.items.length > 0);
           // The icon rail has no header label to unfold with, so a folded section still shows there.
-          const closed = showHeaders && isClosed(section.id) && !collapsed;
+          const closed = showHeaders && isClosed(section.id) && !rail;
           const hasActive = groups.some((g) => g.items.some((n) => navActive(n, pathname)));
           return (
             <div key={section.id} data-testid={`nav-section-${section.id}`}
               style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {showHeaders && (
+              {showHeaders && (rail ? (
+                <div role="separator" aria-label={section.label}
+                  data-testid={`nav-section-divider-${section.id}`}
+                  style={{ borderTop: "1px solid rgba(255,255,255,0.07)", margin: "0 6px" }} />
+              ) : (
                 <SectionHeader section={section} closed={closed} hasActive={hasActive}
                   onToggle={() => toggleSection(section.id)} />
-              )}
+              ))}
               {!closed && groups.map((group) => (
                 <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go} />
               ))}
@@ -142,7 +148,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       {/* AA-883 — the other apps of the ecosystem (lib/apps.ts), each in a new tab. */}
       <div data-testid="sidebar-apps" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         <div className="aa-sidebar-group-title" style={groupTitleStyle}>Apps</div>
-        {appLinks.map((a) => <AppLinkItem key={a.id} app={a} />)}
+        {APP_LINKS.map((a) => <AppLinkItem key={a.id} app={a} />)}
       </div>
 
       {/* Settings + collapse toggle */}
@@ -230,6 +236,11 @@ function SectionHeader({ section, closed, hasActive, onToggle }: {
   );
 }
 
+const APP_ICON: Record<AppId, React.ReactNode> = {
+  booking: <CalendarCheck size={15} />,
+  tripplanner: <MapIcon size={15} />,
+};
+
 function AppLinkItem({ app }: { app: AppLink }) {
   return (
     <a
@@ -245,10 +256,15 @@ function AppLinkItem({ app }: { app: AppLink }) {
         color: "var(--aa-side-text2)", fontSize: 12.5, fontWeight: 500, fontFamily: sans,
       }}
     >
-      <span style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}><ExternalLink size={15} /></span>
+      <span style={{ flexShrink: 0, opacity: 0.75, display: "flex" }}>{APP_ICON[app.id]}</span>
       <span className="aa-sidebar-label" style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {app.label}
       </span>
+      {app.external && (
+        <span className="aa-sidebar-label" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.6 }}>
+          <ArrowUpRight size={12} />
+        </span>
+      )}
     </a>
   );
 }

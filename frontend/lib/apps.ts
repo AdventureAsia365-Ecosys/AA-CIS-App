@@ -22,10 +22,11 @@ export const BOOKING_ADMIN_URL = trimSlash(process.env.NEXT_PUBLIC_BOOKING_ADMIN
 /** TripPlanner public site (no admin of its own, design §6.4). */
 export const TRIPPLANNER_URL = trimSlash(process.env.NEXT_PUBLIC_TRIPPLANNER_URL || DEV_TRIPPLANNER_URL);
 
-/** Tenant portal: a route of this same app (admin may open it for support, lib/rbac.ts). */
-export const PORTAL_PATH = "/portal";
+// No "Tenant portal" entry: the portal needs a tenant session (cis_tenant_token), so an admin opening
+// it sees an empty shell. It comes back with a real support view (tenant picker / impersonation);
+// until then tenant support is Tenant 360 (/admin/tenants).
 
-export type AppId = "booking" | "tripplanner" | "portal";
+export type AppId = "booking" | "tripplanner";
 
 export interface AppLink {
   id: AppId;
@@ -50,13 +51,6 @@ export const APP_LINKS: AppLink[] = [
     label: "TripPlanner",
     href: TRIPPLANNER_URL,
     hint: "TripPlanner public site (opens in a new tab)",
-    external: true,
-  },
-  {
-    id: "portal",
-    label: "Tenant portal",
-    href: PORTAL_PATH,
-    hint: "Tenant portal (support view, opens in a new tab)",
     external: true,
   },
 ];

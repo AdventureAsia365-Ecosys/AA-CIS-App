@@ -448,7 +448,8 @@ body {
 }
 .aa-shell-sidebar[data-collapsed="true"] nav button,
 .aa-shell-sidebar[data-collapsed="true"] > div:last-child button,
-.aa-shell-sidebar[data-collapsed="true"] > div:first-child button {
+.aa-shell-sidebar[data-collapsed="true"] > div:first-child button,
+.aa-shell-sidebar[data-collapsed="true"] [data-testid^="sidebar-app-"] {
   justify-content: center;
 }
 

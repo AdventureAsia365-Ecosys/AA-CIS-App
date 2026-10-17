@@ -57,10 +57,6 @@ const BASE_PATH = "/admin/platform/staff";
 
 const ROLE_TONE: Record<string, Tone> = { admin: "accent", reviewer: "info", content: "purple" };
 
-// Booking derives its own role from the CIS role on first sign-in (AA-Booking auth/staff.py
-// ROLE_FROM_CIS); shown read-only, Booking stays the owner of booking.staff_users (ADR 0008).
-const BOOKING_ROLE: Record<string, string> = { admin: "admin", reviewer: "sales", content: "content_creator" };
-
 function roleLabel(role: string): string {
   return isStaffRole(role) ? ROLE_LABEL[role] : role;
 }
@@ -138,7 +134,6 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
     <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
       <PageHeader
         title="Staff"
-        breadcrumbs={[{ label: "Platform" }, { label: "People & access" }]}
         description={
           <>
             Every CIS staff account and its role. The same account signs in to{" "}
@@ -233,9 +228,11 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "10px 18px", margin: 0, fontSize: 13 }}>
             <Field label="Username" value={s.username} />
             <Field label="CIS role" value={roleLabel(s.role)} />
-            <Field label="Booking role" value={BOOKING_ROLE[s.role] ?? "—"}
-              hint="Derived from the CIS role when the account first signs in to Booking" />
-            <Field label="Status" value={s.is_active ? "Active" : "Inactive (cannot sign in)"} />
+            {/* Booking owns booking.staff_users (ADR 0008): its role starts from the CIS role on first
+                sign-in and a Booking admin can change it there, so CIS does not show a copy. */}
+            <Field label="Booking role" value={<BookingLink id={s.id} label="See in Booking admin" />}
+              hint="Managed in Booking admin; it starts from the CIS role when the account first signs in there" />
+            <Field label="Status" value={s.is_active ? "Active" : "Inactive (cannot sign in; open sessions end within ~6 min)"} />
             <Field label="Created" value={formatDateTime(s.created_at)} />
             <Field label="Updated" value={formatDateTime(s.updated_at)} />
             <Field label="Account id" value={<span style={{ fontFamily: mono, fontSize: 12, wordBreak: "break-all" }}>{s.id}</span>} />
