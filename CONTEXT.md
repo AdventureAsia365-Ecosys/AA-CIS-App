@@ -463,7 +463,19 @@ shows only when the role may open its page).
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
 so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed); the backend sees only `x-admin-user-id`. Every secret-bearing proxy builds its backend path with
+can open are narrowed).
+
+**Backend capabilities (AA-882, S241 GĐ1).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
+capabilities such as `ai.admin`, `spend.write`, `ops.write`, `content.settings.write`; `staff.write`
+is an owner flag, not a role permission) and `POLICY` keyed by `(method, route template)`. The
+router-level dependency `staff_policy` (secret check, then policy) refuses with 403 a role that lacks
+the route's capability. The role is the `x-admin-role` the BFF forwards from the verified JWT (header
+trust until the staff Bearer JWT / Cognito). The secret **without** a role header is the *machine*
+principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
+GĐ1 covers the money/model writes (LLM config/catalog, Jev, budgets, job cancel/retry/retention,
+Jev credit, SEO settings); every GET stays open to every staff role. The other `/admin` writes are
+reported by `tests/unit/test_aa882_route_policy.py` (snapshot, report-only) until GĐ3. Staff roles
+here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
 `%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
