@@ -1,6 +1,8 @@
 // app/admin/content-quality/shared.ts — AA-769. Types + helpers for the Content Quality page
 // (GET /admin/content-quality/*). Cross-tenant, admin only.
 
+import type { SeedInfo } from "../_components/SeedLine";
+
 export interface PieceRow {
   piece_id: string;
   tenant_id: string;
@@ -22,6 +24,9 @@ export interface PieceRow {
   // AA-791 — only once migration 231 is applied (`labels_enabled` on the list response).
   label?: PieceLabelValue | null;
   label_count?: number;
+  // AA-863 — the Slate seed (angle_gate_request.atom_id): place · country, Segment label, mismatch.
+  // null when the piece has no request row or the seed read failed (fail-soft).
+  seed?: SeedInfo | null;
 }
 
 export interface Gate {
