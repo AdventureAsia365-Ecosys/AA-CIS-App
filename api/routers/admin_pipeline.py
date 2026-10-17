@@ -1686,6 +1686,8 @@ async def decide_staging(
     update     → same as replace (alias)
     keep_both  → incoming INSERT as superseded; active unchanged; delete staging
     """
+    # S241: the header was declared but never checked, so this write was public on the API domain.
+    verify_admin_secret(x_admin_secret)
     VALID = {"bypass", "replace", "update", "keep_both"}
     if body.decision not in VALID:
         raise HTTPException(status_code=400, detail=f"decision must be one of {VALID}")

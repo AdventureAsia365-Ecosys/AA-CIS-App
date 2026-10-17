@@ -22,7 +22,7 @@ from typing import Optional
 
 import boto3
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -30,7 +30,11 @@ from api.routers.admin import verify_admin_secret
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/photos", tags=["admin-photos"])
+# S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
+# ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
+# the write routes are kept as-is (same check, run twice).
+router = APIRouter(prefix="/admin/photos", tags=["admin-photos"],
+                   dependencies=[Depends(verify_admin_secret)])
 public_router = APIRouter(prefix="/content/photos", tags=["photos"])
 
 STATUSES = ("matched", "unmatched", "rejected", "error")

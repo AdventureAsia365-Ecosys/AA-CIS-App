@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
+from api.core.secret_compare import secrets_equal
 
 router = APIRouter(prefix="/admin", tags=["admin-settings"])
 
@@ -26,7 +27,7 @@ PIPELINE_GATES = {
 def verify_admin(x_admin_secret: str = Header(None)):
     if not ADMIN_SECRET:
         raise HTTPException(status_code=503, detail="Admin secret not configured")
-    if x_admin_secret != ADMIN_SECRET:
+    if not secrets_equal(x_admin_secret, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
 

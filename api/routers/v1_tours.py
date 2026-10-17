@@ -6,6 +6,7 @@ from pydantic import BaseModel as _BM
 import asyncpg
 from api.core.aa544_tenant_pool import T2_VERSION_READS_FLAG, T2_VERSION_WRITE_FLAG, acquire_scoped_conn
 from api.routers.auth import verify_tenant_jwt
+from api.core.secret_compare import secrets_equal
 from api.routers.admin import PLAN_LIMITS
 from api.routers._billing import no_plan_usage, usage_row_to_dict
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -682,7 +683,7 @@ async def get_tour_full(
     """Full before/after data for catalog review panel."""
     import os
     ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
-    is_admin = bool(ADMIN_SECRET and x_admin_secret == ADMIN_SECRET)
+    is_admin = bool(ADMIN_SECRET and secrets_equal(x_admin_secret, ADMIN_SECRET))
     if is_admin:
         tenant_id = "00000000-0000-0000-0000-000000000001"
     elif credentials:
