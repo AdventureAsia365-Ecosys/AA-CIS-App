@@ -15,6 +15,7 @@ from fastapi import HTTPException
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
+from api.core import aa544_tenant_pool as tp  # noqa: E402
 from api.routers import v1_integrations as integ_mod  # noqa: E402
 from api.routers import v1_publish as pub_mod  # noqa: E402
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter  # noqa: E402
@@ -42,10 +43,22 @@ async def ctx():
     await p.close()
 
 
+class _FlagsOff:
+    """S241 D-12: a tenant-pool flag that cannot be read means ON (tenant pool, RLS), so a bare MagicMock
+    redis would now send these routes to the tenant pool (503 here: no tenant pool). These tests check the
+    route SQL on the admin pool (the owner connection `p`), so they state it: every flag read is an explicit
+    OFF. The same routes on the tenant pool under RLS: test_aa817_tenant_pool_routes.py and
+    test_aa859_unpublish_pool.py."""
+
+    async def get(self, key):
+        return tp.FLAG_OFF_VALUE if key in tp.ALL_TENANT_POOL_FLAGS else None
+
+
 def _request(pool):
     req = MagicMock()
     req.app.state.pool = pool
     req.app.state.tenant_pool = None
+    req.app.state.redis = _FlagsOff()  # admin-pool path on purpose, see _FlagsOff
     return req
 
 

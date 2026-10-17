@@ -86,6 +86,7 @@ def _request(conn):
     pool.acquire = MagicMock(return_value=ctx)
     request = MagicMock()
     request.app.state.pool = pool
+    request.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     return request
 
 

@@ -6,7 +6,7 @@ from fastapi.openapi.docs import (get_redoc_html, get_swagger_ui_html,
 from contextlib import asynccontextmanager
 import asyncio
 import asyncpg
-import redis.asyncio as aioredis
+import redis.asyncio as aioredis  # noqa: F401 -- tests patch main.aioredis.from_url (shared module)
 import os
 import uuid
 import structlog
@@ -70,9 +70,11 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
-    redis = aioredis.from_url(
+    # S241: socket timeouts + one retry (api/core/redis_client.py), so a hung Redis fails fast and every
+    # fail-open Redis caller (rate limit, tenant-pool flags) answers instead of waiting for the 30 s API GW.
+    from api.core.redis_client import build_api_redis
+    redis = build_api_redis(
         f"redis://{os.environ.get('REDIS_HOST', 'aa-cis-dev-redis.wvp8vb.0001.usw1.cache.amazonaws.com')}:6379",
-        encoding="utf-8", decode_responses=True
     )
     app.state.redis = redis
     pool = await asyncpg.create_pool(

@@ -77,7 +77,8 @@ def _sequential_pool(*fetchrow_returns):
 def _request(pool):
     req = MagicMock()
     req.app.state.pool = pool
-    req.app.state.tenant_pool = None  # acquire_scoped_conn -> admin pool
+    req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
+    req.app.state.tenant_pool = None
     return req
 
 

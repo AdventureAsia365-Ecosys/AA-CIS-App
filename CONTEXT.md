@@ -575,8 +575,25 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
 - **Routes on the tenant pool** (flag in `api/core/aa544_tenant_pool.py`, `fail_closed=True`, one log
-  line per request with `used_tenant_pool=`; rollback = `DEL` the key, no deploy). All ON on Dev since
-  S240 (16/10/2026):
+  line per request with `used_tenant_pool=`). All ON on Dev since S240 (16/10/2026).
+  **Flags fail closed (S241 D-12):** only an explicit OFF value puts a route back on the main pool;
+  `true`, a missing key, any other value, a Redis error or a read slower than 0.5 s all mean the tenant
+  pool (`aa817_tenant_flag_read_failed` at ERROR on a failed read, `aa817_tenant_flag_unrecognized` at
+  ERROR on a value that is neither ON nor OFF). The decision is read once per request (memoised on
+  `request.state`), so a multi-block route (unpublish, disconnect) never switches pools mid-request.
+  Rollback = `SET <key> false`, no deploy. Accepted OFF values (after trim + lower-case): `false` (what
+  `aa859_flag.py` writes), `0`, `off`, `no`. `DEL` is not a rollback (it means ON). Confirm any rollback
+  with `used_tenant_pool=False` in Logs Insights. **A Redis-only rollback does not survive a Redis node
+  reboot / replacement / FLUSHALL** (single node, no persistence: every key is lost, so every route goes
+  back ON with no log line). For an incident rollback that must stick, also add the key to the api env
+  var `TENANT_POOL_FORCE_ADMIN_FLAGS` (comma-separated flag keys, ECS task definition, read once at
+  process start; needs a task-definition deploy): a listed key is OFF whatever Redis says
+  (`aa817_tenant_flag_forced_admin` INFO once per key per process; an unknown key logs
+  `aa817_tenant_flag_force_admin_unknown_keys` at ERROR). A newly wired route is ON from its first deploy:
+  to ship it dark, `SET <key> false` before the deploy, and add its constant to `ALL_TENANT_POOL_FLAGS`
+  and to the `aa859_flag.py` ALLOWED set. `acquire_scoped_conn` defaults to `fail_closed=True`.
+  The api's Redis client has 0.5 s socket connect / read timeouts and one retry
+  (`api/core/redis_client.py`), so a hung Redis fails fast in the rate-limit middleware too.
 
   | Route(s) | Flag | Notes |
   |---|---|---|
@@ -592,7 +609,8 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
 
-  A 241 rollback must `DEL` the two "needs 241" flags first.
+  A 241 rollback must `SET ... false` the two "needs 241" flags first (and list them in
+  `TENANT_POOL_FORCE_ADMIN_FLAGS`), as 241's rollback comment STEP 0 says.
 - **MAIN exceptions** (code comment `# AA-859 MAIN exception: <reason>`): `write_audit_log`
   (`acp_shared.audit_log` has no RLS and is never granted; written after the tenant transaction
   commits, best-effort on the tenant path); enqueue-in-transaction routes (angle-gate goal, T2 rewrite /

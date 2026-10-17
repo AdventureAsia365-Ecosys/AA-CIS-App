@@ -80,7 +80,7 @@ class _DecideConn:
 
 def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True, acquire_error=None, events=None):
     request = MagicMock()
-    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "true" if flag and key == FLAG else None)
+    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "true" if flag and key == FLAG else "false")
     main = MagicMock()
     main.acquire = MagicMock(return_value=_ctx(main_conn or _DecideConn(), events=events, name="main"))
     request.app.state.pool = main
@@ -210,16 +210,18 @@ async def test_flag_on_no_tenant_connection_is_503_with_metric_event(call, statu
 
 @pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)
 @pytest.mark.asyncio
-async def test_redis_error_falls_back_to_main_loudly(call, status, decision_sql, event):
-    main = _DecideConn(status=status)
-    request = _request(flag=True, main_conn=main)
+async def test_redis_error_keeps_tenant_pool_loudly(call, status, decision_sql, event):
+    """S241 D-12: an unreadable flag is ON -- the decision runs on the tenant pool, never on MAIN."""
+    tenant = _DecideConn(status=status)
+    request = _request(flag=True, tenant_conn=tenant)
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
     with capture_logs() as logs, patch.object(service, "fetch_request", new=_fetch_request_stub()):
         await call(request)
-    request.app.state.tenant_pool.acquire.assert_not_called()
+    request.app.state.tenant_pool.acquire.assert_called_once()
     failed = [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
     assert failed and failed[0]["flag_key"] == FLAG and failed[0]["log_level"] == "error"
-    assert [entry["used_tenant_pool"] for entry in logs if entry["event"] == event] == [False]
+    assert failed[0]["fallback"] == "tenant_pool"
+    assert [entry["used_tenant_pool"] for entry in logs if entry["event"] == event] == [True]
 
 
 @pytest.mark.parametrize("call,status,decision_sql,event", ROUTES)

@@ -97,6 +97,7 @@ def _request(conn):
     ctx.__aexit__ = AsyncMock(return_value=False)
     req = MagicMock()
     req.app.state.pool.acquire.return_value = ctx
+    req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     return req
 
 
