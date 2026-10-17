@@ -21,8 +21,12 @@ global), so it cannot help. Same change in AA-CIS-App, AA-TripPlanner-Web and AA
   commit, to match what the Git integration used to deploy.
 - `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` are plain workflow env (ids are not secret); the token is only in
   the deploy step's env and goes to the CLI as `--token "$VERCEL_TOKEN"` (GitHub masks it in logs).
-- Token absent → the plan step sets `enabled=false`: `::notice::` on previews, `::warning::` on a push to
-  `main` (production was NOT deployed). Fork PRs are skipped by the job `if:`.
+- Token absent → the plan step prints `::error::` and exits 1 on EVERY target (preview, push to `main`,
+  dispatch), so the run is red. Review fix: the first version only warned on `main` / noticed on PRs and
+  ended green — with the Git integration off nothing else deploys, so a missing or revoked token would
+  have left production on an old build behind a green run list (passes the aa-ship "CI green" check).
+  Fork PRs (no secrets) are still skipped by the job `if:`. No Dependabot config exists in the repo, so
+  no bot PR is expected to hit the red path.
 - Concurrency group = ref + target; `cancel-in-progress` only for previews. A production run is never
   cancelled; a newer main push waits (GitHub keeps only the newest pending run).
 - Production check: `curl -L` the returned deployment URL; with `VERCEL_AUTOMATION_BYPASS_SECRET` present it
@@ -60,10 +64,17 @@ global), so it cannot help. Same change in AA-CIS-App, AA-TripPlanner-Web and AA
   Vercel keeps building and still counts — accepted (it is still far fewer deployments than before).
 
 ## Should know
-- Nothing changes until the repo secret `VERCEL_TOKEN` exists. Set it BEFORE merging this PR, otherwise the
-  merge to `main` gets no production deploy (the Git integration is off from that commit on) — the run
-  shows a warning; re-run it or dispatch `target=production` after setting the secret.
+- Merge gate: set the repo secret `VERCEL_TOKEN` BEFORE merging this PR, then confirm THIS PR's own
+  "Vercel deploy" run logged `deploy enabled: true` and returned a deployment URL. Do not queue an
+  auto-merge until then. Without the token the run is red (it no longer skips green); if the merge to
+  `main` happens anyway, set the secret and re-run, or dispatch `target=production`.
 - The PR that adds `frontend/vercel.json` already has the Git integration off for its own branch.
+- After this lands on `main`: rebase (or merge `main` into) every open branch / PR that touches
+  `frontend/**`, or cut new frontend branches from the new `main`. Vercel reads `git.deploymentEnabled`
+  from the commit it deploys, so a branch cut before this change still gets Git-integration deployments
+  (counting against the cap) AND a CLI preview from this workflow (its `pull_request` run uses the merge
+  ref) — two deploys per push; in CIS the stale head also still has the old `deployment_status` UI smoke,
+  so the smoke runs twice and both runs edit the same `ui-smoke-report` comment.
 - The project-level Ignored Build Step (`git diff HEAD^ HEAD --quiet -- .`) is now irrelevant; it may still be
   evaluated for CLI deployments (unverified) — without `.git` in the upload the command errors, which Vercel
   treats as "build". Clearing it in the dashboard is optional and safe.

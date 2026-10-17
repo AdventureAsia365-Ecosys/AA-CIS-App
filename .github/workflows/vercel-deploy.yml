@@ -15,8 +15,9 @@ name: Vercel Deploy
 # builds `frontend/` remotely with the project's own env vars (no `vercel pull` / prebuilt here).
 #
 # Needs the repo secret VERCEL_TOKEN (a Vercel token scoped to the team). While it is empty the job
-# skips cleanly — a PR gets a notice, but a push to main gets a WARNING because production was then
-# NOT deployed. The org / project ids are not secrets.
+# FAILS (red) on every target — nothing else deploys the frontend, so a silent green skip would hide a
+# production that stopped updating. Fork PRs get no secrets and are skipped by the job `if:` instead.
+# The org / project ids are not secrets.
 
 on:
   pull_request:
@@ -90,16 +91,17 @@ jobs:
             echo "::error::Production deploys only from main (this run is on $REF)."
             exit 1
           fi
-          if [ "$HAS_TOKEN" = "true" ]; then
-            ENABLED=true
-          else
-            ENABLED=false
+          # No token = no deployment at all (the Git integration is off), so fail RED on every target:
+          # a green run with nothing deployed would pass a "CI green" check while production stays old.
+          if [ "$HAS_TOKEN" != "true" ]; then
             if [ "$TARGET" = "production" ]; then
-              echo "::warning::VERCEL_TOKEN is not set — this commit was NOT deployed to Vercel production (the Git integration is off). Set the secret, then re-run this workflow or dispatch it with target=production."
+              echo "::error::VERCEL_TOKEN is not set — this commit was NOT deployed to Vercel production (the Git integration is off). Set the secret, then re-run this workflow or dispatch it with target=production."
             else
-              echo "::notice::VERCEL_TOKEN is not set — preview deploy skipped."
+              echo "::error::VERCEL_TOKEN is not set — no preview was deployed (the Git integration is off). Set the secret, then re-run this workflow."
             fi
+            exit 1
           fi
+          ENABLED=true
           {
             echo "target=$TARGET"
             echo "sha=$SHA"

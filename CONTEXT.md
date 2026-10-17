@@ -395,7 +395,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `frontend/**`: PR → preview of the head commit + one PR comment with the URL, then the UI smoke;
   `main` → production (+ a 200 check with the bypass header); `workflow_dispatch` → preview or
   production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
-  without it the job skips (a push to `main` then warns that production was NOT deployed). A PR
+  without it the job fails red on every target (nothing else deploys the frontend). A PR
   that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
   successful preview deploy (`workflow_call`, inputs `base_url` + `sha`), or run by hand
