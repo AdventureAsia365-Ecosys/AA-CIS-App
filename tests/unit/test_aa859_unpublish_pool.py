@@ -16,6 +16,7 @@ from uuid import uuid4
 import pytest
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
+from redis.exceptions import RedisError
 from structlog.testing import capture_logs
 
 from api.core import aa544_tenant_pool as tp
@@ -193,6 +194,26 @@ async def test_flag_off_runs_the_same_three_statements_on_the_admin_pool_without
                    "unpublished_at": NOW.isoformat(), "unpublished_by": f"tenant:{TENANT_ID}", "remote": "trashed"}
     update_args = conn.fetchrow.await_args_list[2][0]
     assert update_args[1:] == (PUBLISH_ID, TENANT_ID, f"tenant:{TENANT_ID}")
+
+
+@pytest.mark.asyncio
+async def test_rollback_read_once_holds_for_all_three_blocks_despite_later_redis_errors():
+    """S241 review: under a rollback ("false"), a Redis blip at block 3 -- after the irreversible remote
+    delete -- must not move the status UPDATE onto the tenant pool. One decision per request."""
+    order = []
+    request, conn = _ordered_request(order, [PUBLISHED, INTEG, UPDATED], flag=False)
+    request.app.state.redis.get = AsyncMock(side_effect=["false", RedisError("blip"), RedisError("blip")])
+    with patch.object(pub_mod, "_get_secret", return_value=dict(WP_CREDS)), \
+            patch.object(pub_mod, "_delete_remote", AsyncMock(return_value="trashed")), \
+            capture_logs() as logs:
+        out = await pub_mod.unpublish(PUBLISH_ID, request, tenant={"sub": TENANT_ID})
+    assert out["status"] == "unpublished"
+    assert order == ["acquire", "select_log", "release", "acquire", "select_integration", "release",
+                     "acquire", "update", "release"]
+    assert request.app.state.pool.acquire.call_count == 3
+    request.app.state.tenant_pool.acquire.assert_not_called()
+    request.app.state.redis.get.assert_awaited_once()
+    assert not [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
 
 
 def _tenant_request(*rows):

@@ -1,10 +1,12 @@
 """AA-817 — tenant content-piece reads on the aa_app_user pool: acquire_scoped_conn(fail_closed=True)
 and service.fetch_latest_piece_for_request(request=...).
 
-Flag explicitly off ("false"): the admin pool, exactly as before. Flag on -- "true", a missing key, or a
-flag that cannot be read (S241 D-12, fail closed): the tenant pool inside one transaction with the
-GUC set LOCAL; no tenant pool, no tenant id, or a GUC that did not take is a 503, never a fallback to
-the admin pool (which RLS does not filter). Callers without fail_closed keep the old fallback.
+Flag explicitly off (an OFF value, or the TENANT_POOL_FORCE_ADMIN_FLAGS env override): the admin pool,
+exactly as before. Flag on -- "true", a missing key, or a flag that cannot be read (S241 D-12, fail
+closed): the tenant pool inside one transaction with the GUC set LOCAL; no tenant pool, no tenant id, or
+a GUC that did not take is a 503, never a fallback to the admin pool (which RLS does not filter).
+fail_closed defaults to True; only an explicit fail_closed=False keeps the old fallback. One flag decision
+per request (memoised on request.state).
 """
 import asyncio
 from datetime import datetime, timezone
@@ -118,8 +120,12 @@ async def _hang(_key):
     ("FALSE", False),
     (" false ", False),
     (b"false", False),
-    ("garbage", True),         # unrecognised = ON (logged)
-    ("0", True),
+    ("0", False),              # hand-typed OFF values accepted too (S241 review)
+    ("off", False),
+    (" NO ", False),
+    ("garbage", True),         # unrecognised = ON (logged at ERROR)
+    ("disabled", True),
+    ("1", True),
 ])
 @pytest.mark.asyncio
 async def test_flag_value_encoding(redis_value, expect_tenant_pool):
@@ -185,14 +191,16 @@ async def test_missing_key_uses_tenant_pool_without_error_log():
 
 
 @pytest.mark.asyncio
-async def test_unrecognised_value_is_on_and_warns():
+async def test_unrecognised_value_is_on_and_logs_error():
+    """Most likely a hand-typed rollback that did not take: ERROR, not WARNING."""
     request = _request(flag=True)
     request.app.state.redis.get = AsyncMock(return_value="ture")
     with capture_logs() as logs:
         _, used = await _enter(request, str(TENANT_ID), fail_closed=True)
     assert used is True
-    warned = [e for e in logs if e["event"] == "aa817_tenant_flag_unrecognized"]
-    assert len(warned) == 1 and warned[0]["log_level"] == "warning" and warned[0]["treated_as"] == "on"
+    logged = [e for e in logs if e["event"] == "aa817_tenant_flag_unrecognized"]
+    assert len(logged) == 1 and logged[0]["log_level"] == "error" and logged[0]["treated_as"] == "on"
+    assert logged[0]["off_values"] == sorted(tp.FLAG_OFF_VALUES)
 
 
 @pytest.mark.asyncio
@@ -207,12 +215,123 @@ async def test_redis_error_without_tenant_pool_is_503_not_admin_pool():
 
 
 @pytest.mark.asyncio
-async def test_existing_callers_keep_admin_pool_fallback():
-    """Without fail_closed (AA-544 stage 1/5, AA-815 routes) a missing tenant pool still falls back."""
+async def test_explicit_fail_open_keeps_admin_pool_fallback():
+    """Only an explicit fail_closed=False (no production caller) still falls back on a missing tenant pool."""
     main = _conn()
     request = _request(flag=True, main_conn=main, tenant_pool=False)
-    conn, used = await _enter(request, str(TENANT_ID))
+    conn, used = await _enter(request, str(TENANT_ID), fail_closed=False)
     assert conn is main and used is False
+
+
+@pytest.mark.asyncio
+async def test_fail_closed_is_the_default():
+    """A newly wired route that leaves out the keyword cannot reach the admin-pool fallback by omission."""
+    request = _request(flag=True, tenant_pool=False)
+    with pytest.raises(HTTPException) as exc:
+        await _enter(request, str(TENANT_ID))
+    assert exc.value.status_code == 503
+    request.app.state.pool.acquire.assert_not_called()
+
+
+# ── one decision per request (memoised on request.state) ─────────────────────
+
+@pytest.mark.asyncio
+async def test_flag_is_read_once_per_request_and_reused_by_later_blocks():
+    """A rollback read in block 1 holds for the whole request even if Redis fails later (no pool switch
+    after an irreversible side effect), with one Redis round-trip and no ERROR line."""
+    main = _conn()
+    request = _request(flag=False, main_conn=main)
+    request.app.state.redis.get = AsyncMock(side_effect=["false", ConnectionError("blip"), ConnectionError("blip")])
+    with capture_logs() as logs:
+        for _ in range(3):
+            conn, used = await _enter(request, str(TENANT_ID))
+            assert conn is main and used is False
+    request.app.state.redis.get.assert_awaited_once()
+    request.app.state.tenant_pool.acquire.assert_not_called()
+    assert not [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
+
+
+@pytest.mark.asyncio
+async def test_failed_read_is_logged_once_per_request():
+    request = _request(flag=True)
+    request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
+    with capture_logs() as logs:
+        for _ in range(3):
+            _, used = await _enter(request, str(TENANT_ID))
+            assert used is True
+    request.app.state.redis.get.assert_awaited_once()
+    assert len([e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cache_is_per_flag_and_per_request():
+    request = _request(flag=True)
+    request.app.state.redis.get = AsyncMock(side_effect=lambda key: "false" if key == tp.UNPUBLISH_FLAG else "true")
+    assert await tp._flag_enabled(request, tp.UNPUBLISH_FLAG) is False
+    assert await tp._flag_enabled(request, tp.CONTENT_PIECE_READS_FLAG) is True
+    assert request.app.state.redis.get.await_count == 2
+    other = _request(flag=True)  # a new request reads Redis again
+    assert await tp._flag_enabled(other, tp.UNPUBLISH_FLAG) is True
+    other.app.state.redis.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_request_without_state_is_not_cached_but_still_works():
+    class _Bare:  # no .state attribute at all
+        pass
+    request = _Bare()
+    request.app = MagicMock()
+    request.app.state.redis.get = AsyncMock(return_value="false")
+    assert await tp._flag_enabled(request, tp.UNPUBLISH_FLAG) is False
+    assert await tp._flag_enabled(request, tp.UNPUBLISH_FLAG) is False
+    assert request.app.state.redis.get.await_count == 2
+
+
+# ── durable override: TENANT_POOL_FORCE_ADMIN_FLAGS ───────────────────────────
+
+def test_parse_force_admin():
+    assert tp._parse_force_admin(None) == frozenset()
+    assert tp._parse_force_admin("") == frozenset()
+    assert tp._parse_force_admin(" aa859:unpublish_pool , ,aa859:piece_edit_pool") == frozenset(
+        {tp.UNPUBLISH_FLAG, tp.PIECE_EDIT_FLAG})
+
+
+@pytest.mark.asyncio
+async def test_force_admin_override_wins_over_redis_and_logs_once(monkeypatch):
+    """Survives a Redis flush: the key reads as missing (= ON) but the env override keeps it OFF."""
+    monkeypatch.setattr(tp, "_FORCE_ADMIN_FLAGS", frozenset({tp.CONTENT_PIECE_READS_FLAG}))
+    monkeypatch.setattr(tp, "_force_admin_logged", set())
+    main = _conn()
+    with capture_logs() as logs:
+        for _ in range(2):
+            request = _request(flag=True, main_conn=main)
+            request.app.state.redis.get = AsyncMock(return_value=None)
+            conn, used = await _enter(request, str(TENANT_ID))
+            assert conn is main and used is False
+            request.app.state.redis.get.assert_not_awaited()
+            request.app.state.tenant_pool.acquire.assert_not_called()
+    forced = [e for e in logs if e["event"] == "aa817_tenant_flag_forced_admin"]
+    assert len(forced) == 1 and forced[0]["log_level"] == "info"
+    assert forced[0]["flag_key"] == tp.CONTENT_PIECE_READS_FLAG
+
+
+@pytest.mark.asyncio
+async def test_force_admin_override_leaves_other_flags_alone(monkeypatch):
+    monkeypatch.setattr(tp, "_FORCE_ADMIN_FLAGS", frozenset({tp.UNPUBLISH_FLAG}))
+    tenant = _conn()
+    request = _request(flag=True, tenant_conn=tenant)
+    conn, used = await _enter(request, str(TENANT_ID))
+    assert conn is tenant and used is True
+
+
+# ── flag inventory ─────────────────────────────────────────────────────────────
+
+def test_every_flag_constant_is_in_the_inventory():
+    """A new *_FLAG constant must join ALL_TENANT_POOL_FLAGS (and the aa859_flag.py ALLOWED set), so it
+    cannot ship without tooling to SET it false."""
+    constants = {v for k, v in vars(tp).items() if k.endswith("_FLAG") and isinstance(v, str)}
+    assert constants == set(tp.ALL_TENANT_POOL_FLAGS)
+    assert len(constants) == 11
 
 
 def _piece_row():

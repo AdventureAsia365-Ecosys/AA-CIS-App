@@ -85,3 +85,53 @@ Nghiệp decision D-12 (S241): when a tenant-pool route flag cannot be read, the
 - Integration tests: only the flag mocks changed (`None` → `"false"` for the off case). They could not run
   locally (the local `cis_integration_test` DB lacks `aa_app_user`; same 71 failures before and after the
   change); CI runs them on a fresh Postgres.
+
+## Review round 1 (S241) — six findings, all accepted
+
+### Decisions
+- **One flag decision per request.** `_flag_enabled` memoises on `request.state._tenant_flag_cache`
+  (keyed by flag). Unpublish (3 blocks) and disconnect (2 blocks) can no longer switch pools mid-request:
+  under a rollback (`"false"`), a Redis blip at the last block (after the WordPress trash / Graph DELETE or
+  the secret tombstone) used to give ON → tenant pool → 42501 if the route was rolled back for broken
+  grants. Also one Redis round-trip and at most one ERROR line per request. A request object without
+  `.state` (SimpleNamespace in integration tests, direct callers) is simply not cached.
+- **OFF values widened (review option a):** `FLAG_OFF_VALUES = {"false", "0", "off", "no"}`. This reverses
+  the "only `false`" decision above: during an incident a hand-typed `SET key 0` silently not rolling back is
+  worse than a slightly wider OFF set. Still explicit values only; garbage and missing stay ON, and an
+  unrecognised value now logs at ERROR (was WARNING).
+- **Durable rollback:** env var `TENANT_POOL_FORCE_ADMIN_FLAGS` (comma-separated keys, read once at import),
+  checked before Redis. Redis is single-node with no persistence, so a reboot / replacement / FLUSHALL drops
+  every key = every route back ON with no log line; the env var survives that. INFO
+  `aa817_tenant_flag_forced_admin` once per key per process; unknown keys log ERROR at import (a typo would
+  otherwise be a no-op rollback). Not set in the task definition today (empty = no override).
+- **Redis client bounds:** `api/core/redis_client.py::build_api_redis` — socket connect / read timeout 0.5 s,
+  `Retry(NoBackoff(), 1)`. The rate-limit middleware awaited Redis unbounded before the route ran, so the
+  0.5 s `wait_for` on the flag never helped a blackholed Redis. **Deviation from the review:** no
+  `health_check_interval`. Measured against a local server that accepts and never answers: redis-py 5.2.1
+  with `health_check_interval` + `retry` hangs (no timeout fires), and 8.1 doubles the wait. Explicit
+  `retry` keeps the bound the same on redis-py 5.x (local venv) and 8.x (what `redis[asyncio]>=5.0.0`
+  installs in CI / the image today).
+- **`fail_closed` defaults to True** (kept the parameter and the fail-open branch for an explicit
+  `fail_closed=False`; no production caller uses it). `ALL_TENANT_POOL_FLAGS` lists the 11 keys; a unit test
+  fails when a new `*_FLAG` constant is not in it.
+
+### Changed
+- `api/core/aa544_tenant_pool.py` (memo, OFF set, override, default, inventory), new
+  `api/core/redis_client.py`, `api/main.py` (uses it; `aioredis` import kept for tests that patch it).
+- Docstrings: `v1_publish.py` list_publish_log + list_pending, `service.py::fetch_piece`, `v1_integrations.py`
+  W9 block comment (missing key = ON, rollback = SET false).
+- Migrations 237 / 241: rollback comments only (STEP 0 = `SET <key> false` + env override, confirm
+  `used_tenant_pool=False`). Comment-only; DB Migrate's sha256 is a transport check, not a stored checksum,
+  and both are already applied. The AA-CIS-Infra copies must be byte-identical (Migration Copy Guard):
+  the copy PR goes after this one merges.
+- Old notes that said `DEL` (AA-817, AA-859-d5/d6/i) carry a "superseded" marker.
+- Tests: memo (3 blocks, `["false", RedisError, RedisError]` → admin pool in all three, one GET, no ERROR),
+  per-flag / per-request cache, real Starlette `Request.state`, override, OFF matrix, default fail closed,
+  inventory, Redis client kwargs, lifespan builds the bounded client, middleware + flag read against a hung
+  local server (fail open in < 3 s / < 2 s).
+
+### Should know
+- Root `docs/audits/2026-10-16-S240-aa859/aa859_flag.py` `ALLOWED` must hold all 11 keys (it does in the
+  root working tree, uncommitted) — keep it in step with `ALL_TENANT_POOL_FLAGS`.
+- To make a rollback stick: add the key to `TENANT_POOL_FORCE_ADMIN_FLAGS` in the api task definition
+  (AA-CIS-Infra `modules/ecs`), which is a deploy.

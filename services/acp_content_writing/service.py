@@ -2144,10 +2144,10 @@ async def fetch_piece(tenant_id: UUID, piece_id: UUID, pool, request: Optional[R
     """AA-544 Stage 5 canary — when `request` is passed (the router does; a direct caller that
     only has a bare `pool` falls back to it unchanged, same admin-pool behavior as before this
     stage) and the aa544:stage5:get_piece_pool flag is on, this runs through the aa_app_user
-    tenant pool with app.tenant_id set LOCAL to the transaction. Flag off (today's default):
-    identical to pre-AA-544 behavior. The WHERE tenant_id = $2 clause below already scoped this
-    query correctly before RLS existed — RLS is defense-in-depth here, not the only thing
-    standing between tenants for this query.
+    tenant pool with app.tenant_id set LOCAL to the transaction. S241 D-12: a missing key is ON;
+    rollback = SET <key> false, which gives the pre-AA-544 behavior (admin pool). The WHERE
+    tenant_id = $2 clause below already scoped this query correctly before RLS existed — RLS is
+    defense-in-depth here, not the only thing standing between tenants for this query.
 
     AA-817 PR-A — fail closed (the flag has been on since S239): flag on without a tenant pool, a
     tenant id or a tenant connection is a 503, never the admin pool. Serves GET /pieces/{id} and

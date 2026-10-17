@@ -98,8 +98,9 @@ async def list_publish_log(request: Request, tenant=Depends(get_tenant),
     """AA-815 — the tenant's own published and unpublished rows, newest first, for the portal's
     "Published" list (the Unpublish action needs a publish_id). Tenant-safe projection: no
     last_error, idempotency key or actor — a removal shows as 'unpublished' whoever did it.
-    Runs through acquire_scoped_conn behind its own default-off flag (AA-544 rollout), fail closed
-    (AA-817 PR-A): flag on without a tenant pool or tenant connection is a 503, never the admin pool."""
+    Runs through acquire_scoped_conn behind its own flag (AA-544 rollout), fail closed (AA-817 PR-A):
+    flag on without a tenant pool or tenant connection is a 503, never the admin pool. S241 D-12: a missing
+    key is ON; rollback = SET <key> false (see api/core/aa544_tenant_pool.py)."""
     tenant_id = tenant["sub"]
     async with acquire_scoped_conn(
         request, tenant_id, PUBLISH_LOG_LIST_FLAG, fail_closed=True,
@@ -325,9 +326,9 @@ async def list_pending(request: Request, tenant=Depends(get_tenant)):
     piece stays retryable rather than disappearing.
 
     AA-544 Stage 1 canary — this is the first route wired to the aa_app_user pool (real RLS)
-    behind a default-off Redis flag (see api/core/aa544_tenant_pool.py). Flag off (today's
-    default): identical to pre-AA-544 behavior, admin pool, no RLS. Flag on: runs through
-    aa_app_user with app.tenant_id set LOCAL to this request's transaction. Response shape is
+    behind its own Redis flag (see api/core/aa544_tenant_pool.py). S241 D-12: a missing key is ON
+    (the default); rollback = SET <key> false, which gives the pre-AA-544 behavior, admin pool, no RLS.
+    Flag on: runs through aa_app_user with app.tenant_id set LOCAL to this request's transaction. Response shape is
     unchanged either way — the WHERE cp.tenant_id = $1 clause below already scoped this query
     correctly before RLS existed; RLS is defense-in-depth here, not the only thing standing
     between tenants for this specific query. AA-817 PR-A: fail closed — flag on without a tenant
