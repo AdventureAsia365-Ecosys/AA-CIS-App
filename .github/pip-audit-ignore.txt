@@ -1,5 +1,5 @@
 # AA-868 — pip-audit findings accepted for now. Format: <vuln id> <expires YYYY-MM-DD> <reason>
-# scripts/ci/pip_audit_gate.sh fails CI once an entry expires. Renew only with a new reason.
+# .github/scripts/pip_audit_gate.sh fails CI once an entry expires. Renew only with a new reason.
 PYSEC-2026-3813 2026-12-31 chromadb 0.4.24, no fixed release; only shared/rag/client.py imports it and no runtime code imports that module; drop the dependency
 PYSEC-2026-3814 2026-12-31 chromadb 0.4.24, no fixed release; only shared/rag/client.py imports it and no runtime code imports that module; drop the dependency
 PYSEC-2026-1845 2026-11-30 pytest 8.1.1 (fix 9.0.3, major bump); test-only, the CI runner is the only place it runs

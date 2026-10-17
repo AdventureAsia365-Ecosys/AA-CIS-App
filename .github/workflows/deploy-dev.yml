@@ -51,7 +51,7 @@ jobs:
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
           OVERRIDE: ${{ inputs.override_running_jobs }}
           GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
-        run: bash scripts/ci/deploy_job_guard.sh
+        run: bash .github/scripts/deploy_job_guard.sh
 
   build-and-push:
     name: Build and Push ECR

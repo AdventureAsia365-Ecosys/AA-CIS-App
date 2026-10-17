@@ -1,10 +1,10 @@
 """AA-868 — the CI/deploy gates fail closed.
 
 Runs the real bash scripts:
-- scripts/ci/deploy_job_guard.sh against a local HTTP stand-in of the API deploy gate: a missing
+- .github/scripts/deploy_job_guard.sh against a local HTTP stand-in of the API deploy gate: a missing
   credential, a gate error, a non-JSON answer and active jobs all block; an override reason lets
   each through; an idle gate passes.
-- scripts/ci/pip_audit_gate.sh: an expired or malformed ignore entry fails before pip-audit runs.
+- .github/scripts/pip_audit_gate.sh: an expired or malformed ignore entry fails before pip-audit runs.
 """
 import http.server
 import json
@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-GUARD = REPO / "scripts" / "ci" / "deploy_job_guard.sh"
-AUDIT = REPO / "scripts" / "ci" / "pip_audit_gate.sh"
+GUARD = REPO / ".github" / "scripts" / "deploy_job_guard.sh"
+AUDIT = REPO / ".github" / "scripts" / "pip_audit_gate.sh"
 
 pytestmark = pytest.mark.skipif(
     not (shutil.which("bash") and shutil.which("curl") and shutil.which("jq")),

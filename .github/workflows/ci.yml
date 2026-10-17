@@ -50,7 +50,7 @@ jobs:
       # AA-868: failing. Accepted findings live in .github/pip-audit-ignore.txt with an expiry date;
       # an expired entry or any finding not on the list turns this check red.
       - name: Audit main requirements (failing)
-        run: bash scripts/ci/pip_audit_gate.sh requirements.txt
+        run: bash .github/scripts/pip_audit_gate.sh requirements.txt
 
 
   test-unit:
