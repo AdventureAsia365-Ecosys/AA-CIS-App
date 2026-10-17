@@ -76,7 +76,23 @@ export function Drawer({
             flexShrink: 0,
           }}
         >
-          <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 600, color: K.ink }}>
+          {/* S241 UI verify — at 390 a long title + badge pushed the close X off-screen: the title
+              box had no min-width, so it kept its content width and the row overflowed. It now
+              takes the free space (flex 1, min-width 0) and the X never shrinks. Titles WRAP (long
+              words break anywhere) so the whole text stays readable on a phone, where a tooltip
+              cannot be opened — no ellipsis here. A caller that wants one line passes a node with
+              its own min-width 0 + ellipsis span (JobDrawer does). */}
+          <div
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflowWrap: "anywhere",
+              fontFamily: serif,
+              fontSize: 17,
+              fontWeight: 600,
+              color: K.ink,
+            }}
+          >
             {title}
           </div>
           <button
@@ -89,6 +105,7 @@ export function Drawer({
               cursor: "pointer",
               padding: 0,
               lineHeight: 0,
+              flexShrink: 0,
             }}
           >
             <X size={18} />

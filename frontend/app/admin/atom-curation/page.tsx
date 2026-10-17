@@ -51,7 +51,7 @@ import {
 import SocialContentSubNav, { type SectionKey } from "../_components/SocialContentSubNav";
 import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
-import { PageHeader, formatDateTime } from "../../_kit";
+import { PageHeader, formatDateTime, useIsPhone } from "../../_kit";
 import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 
 const MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"];
@@ -1263,6 +1263,10 @@ export default function AtomCurationDashboardPage() {
 
 function AtomCurationDashboard() {
   const searchParams = useSearchParams();
+  // S241 UI verify (AA-863) — on a phone `.aa-admin-main` already pads 16px (globals.css), so the
+  // header / body's own 32px side padding stacked to 48px and left a 294px column at 390.
+  const phone = useIsPhone();
+  const padX = phone ? 0 : 32;
   const sectionParam = searchParams.get("section");
   const initialSection: SectionKey =
     sectionParam && VALID_SECTIONS.has(sectionParam) ? (sectionParam as SectionKey) : "atomize";
@@ -1313,7 +1317,7 @@ function AtomCurationDashboard() {
 
   return (
       <div className="aa-admin-main" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        <div style={{ flexShrink: 0, background: A.bg, padding: "24px 32px 16px", borderBottom: `1px solid ${A.line}` }}>
+        <div style={{ flexShrink: 0, background: A.bg, padding: `24px ${padX}px 16px`, borderBottom: `1px solid ${A.line}` }}>
           <PageHeader
             title="Social Content"
             description={
@@ -1384,7 +1388,7 @@ function AtomCurationDashboard() {
             internally, which pushed the overflow up to the document — dragging the header (which
             relies on being outside this scroll region, not on `position:sticky`) off-screen on a
             real full-page scroll. This is the actual root cause AA-554/AA-557 both missed. */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "20px 32px 32px" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `20px ${padX}px 32px` }}>
           <div className="a527-dash-body" style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
             {/* AA-575 — inner-sidebar extracted into a shared component (was JSX embedded only
                 in this page, which is exactly why Content Trace (06) had no sub-nav at all: it's
@@ -1394,7 +1398,12 @@ function AtomCurationDashboard() {
                 (real links, no local tab state to hook into). */}
             <SocialContentSubNav active={activeSection} onSelectSection={gotoSection} />
 
-            <div style={{ flex: 1, minWidth: 0 }}>
+            {/* S241 UI verify (AA-863) — width/maxWidth 100%: in the phone column layout
+                (.a527-dash-body, < 980px) this column would otherwise shrink-wrap to its content's
+                min-content, which a table's overflow-x wrapper does NOT cap (the Slate table's
+                columns incl. the nowrap Seed line), so it grew past the scroller and the whole body
+                scrolled sideways. Same fix as content-quality/page.tsx. */}
+            <div style={{ flex: 1, minWidth: 0, width: "100%", maxWidth: "100%" }}>
               {activeSection === "atomize" && (
                 <AtomizeSection
                   summary={summary} summaryLoading={summaryLoading}

@@ -2,7 +2,7 @@
 // AA-836 (D6) — writer output (blog pieces especially) is markdown; a tenant must never see raw
 // `##` / `**` in the portal. Two helpers, no dependency, no dangerouslySetInnerHTML (piece text is
 // turned into React elements, so it can never inject HTML):
-//   - stripMarkdown(text)  → plain text, for one-line / clamped previews (T11 Ready to Publish).
+//   - stripMarkdown(text, opts?) → plain text, for one-line / clamped previews (T11 Ready to Publish).
 //   - <MarkdownBody text/> → readable rendering for a full body (T10 My Content drawer):
 //     headings, paragraphs, bullet / numbered lists, quotes, bold / italic, links as their text.
 // Hashtags (`#Bhutan`, no space after `#`) are text, not headings — same rule as the backend's
@@ -38,24 +38,77 @@ const CUT_OPENER_RE = /(^|\s)[*_`]+(?=\S)/g;
 const CUT_TAIL_RE = /\s[*_`]+$/;
 const BARE_HEADING_RE = /^\s{0,3}#{1,6}\s*$/;
 
+export type StripMarkdownOptions = {
+  /** Drop the first block when it is a heading whose text matches this string (compared on
+   * letters and digits only, case-insensitive). A card that already shows that same title would
+   * otherwise repeat it. A heading that differs (e.g. the writer's post title under the angle name
+   * on a T11 card) is kept — it is what goes live. */
+  dropHeadingMatching?: string | null;
+  /** Joins two blocks (a heading, or text separated by a blank line) when the first one does not
+   * already end in sentence punctuation. Default " " — one run of text, the original behaviour. */
+  blockSeparator?: string;
+};
+
+// A block that already ends a sentence needs no separator, only a space. Tested on the block's
+// plain text (inline markup removed), never on raw markdown: `[our site](https://x)` ends in a
+// `)` that is not punctuation, and `**Done.**` ends in a `.` once the markers are gone.
+const TERMINAL_RE = /[.!?…:;)"'”’]$/;
+const TRAILING_MARKER_RE = /[*_`]+$/;
+
+/** Inline markdown → its text (images / links as their text, code / bold / italic unwrapped). */
+function inlineToText(s: string): string {
+  INLINE_RE.lastIndex = 0;
+  const out = s.replace(INLINE_RE, (_m, img, linkText, _url, code, b1, b2, p1, i1, p2, i2) =>
+    img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
+  );
+  INLINE_RE.lastIndex = 0;
+  return out;
+}
+
+/** Lower-case, whitespace and punctuation removed — for "is this heading the same as the card
+ * title". (No `\p{L}` + `u` flag: the tsconfig target is ES2017.) */
+const NOT_TITLE_CHAR_RE = /[\s!-/:-@[-`{-~\u00a0-\u00bf\u2000-\u206f]+/g;
+function normTitle(s: string): string {
+  return inlineToText(s).toLowerCase().replace(NOT_TITLE_CHAR_RE, "");
+}
+
 /** Markdown → plain text: markers removed, links / images kept as their text, lines joined.
- * Also safe on a truncated slice: markers left unpaired by the cut are dropped too. */
-export function stripMarkdown(text: string | null | undefined): string {
+ * Also safe on a truncated slice: markers left unpaired by the cut are dropped too.
+ * Without options every line is joined with a space (unchanged). S241 — previews pass
+ * `{ blockSeparator }` (and `dropHeadingMatching` when the card already shows that exact title)
+ * so a heading never runs into the next sentence. */
+export function stripMarkdown(text: string | null | undefined, opts: StripMarkdownOptions = {}): string {
   if (!text) return "";
-  const lines = text
-    .split(/\r?\n/)
-    .filter((l) => !FENCE_RE.test(l) && !RULE_RE.test(l) && !BARE_HEADING_RE.test(l));
-  return lines
-    .map((l) => {
-      const h = HEADING_RE.exec(l);
-      if (h) return h[2];
-      const b = BULLET_RE.exec(l) ?? ORDERED_RE.exec(l) ?? QUOTE_RE.exec(l);
-      return b ? b[1] : l;
-    })
-    .join(" ")
-    .replace(INLINE_RE, (_m, img, linkText, _url, code, b1, b2, p1, i1, p2, i2) =>
-      img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
-    )
+  const sep = opts.blockSeparator ?? " ";
+  // Blocks: a heading line is one block; other lines group until a blank line. Lines inside a
+  // block (list items, a hard-wrapped paragraph) are joined with a space as before.
+  const blocks: { heading: boolean; text: string }[] = [];
+  let para: string[] = [];
+  const flush = () => {
+    if (para.length) blocks.push({ heading: false, text: para.join(" ") });
+    para = [];
+  };
+  for (const l of text.split(/\r?\n/)) {
+    if (FENCE_RE.test(l) || RULE_RE.test(l) || BARE_HEADING_RE.test(l)) continue;
+    if (!l.trim()) { flush(); continue; }
+    const h = HEADING_RE.exec(l);
+    if (h) { flush(); blocks.push({ heading: true, text: h[2] }); continue; }
+    const b = BULLET_RE.exec(l) ?? ORDERED_RE.exec(l) ?? QUOTE_RE.exec(l);
+    para.push(b ? b[1] : l);
+  }
+  flush();
+  if (opts.dropHeadingMatching && blocks[0]?.heading) {
+    const want = normTitle(opts.dropHeadingMatching);
+    if (want && normTitle(blocks[0].text) === want) blocks.shift();
+  }
+  // Inline markup is removed per block BEFORE the join, so the sentence-end test sees plain text.
+  const joined = blocks.reduce((acc, blk, i) => {
+    const t = inlineToText(blk.text);
+    if (i === 0) return t;
+    const end = acc.trimEnd().replace(TRAILING_MARKER_RE, "");
+    return acc + (TERMINAL_RE.test(end) ? " " : sep) + t;
+  }, "");
+  return joined
     .replace(/\s+/g, " ")
     .trim()
     .replace(CUT_LINK_RE, "$1")

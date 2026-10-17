@@ -45,12 +45,16 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
     <>
       {/* Media query shared across every page that mounts this component — <style> tags are
           global (not scoped to this subtree), so defining it once here covers atom-curation's
-          own ".a527-dash-body" wrapper too without duplicating the block per-page. */}
+          own ".a527-dash-body" wrapper too without duplicating the block per-page.
+          S241 UI verify (AA-863) — stacked, the wrappers' `align-items: flex-start` sized each
+          child to its fit-content width; a table's min-content (the overflow-x wrapper does not
+          cap it) then pushed the body column wider than the page. `stretch` gives every stacked
+          child exactly the container width on all four pages that use this split. */}
       <style>{`
         @media (max-width: 980px) {
           .a527-inner-sidebar { flex-direction: row !important; overflow-x: auto !important; width: 100% !important; border-right: none !important; border-bottom: 1px solid ${A.line}; position: static !important; }
           .a527-inner-sidebar button, .a527-inner-sidebar a { white-space: nowrap; }
-          .a527-dash-body { flex-direction: column !important; }
+          .a527-dash-body { flex-direction: column !important; align-items: stretch !important; }
         }
       `}</style>
       <div className="a527-inner-sidebar" style={{

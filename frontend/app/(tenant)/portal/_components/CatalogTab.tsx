@@ -407,7 +407,9 @@ function CatalogInner() {
         )}
       />
 
-      <Drawer open={!!openGroup} onClose={() => setOpenVersionId(null)} title="" width={1000}>
+      {/* S241 UI verify — the tour name is the kit Drawer title (it stays visible while the body
+          scrolls); CatalogDrawer's in-body header no longer repeats it. */}
+      <Drawer open={!!openGroup} onClose={() => setOpenVersionId(null)} title={openGroup?.aa_name || "Tour"} width={1000}>
         {openGroup && (
           <CatalogDrawer
             key={openGroup.id}

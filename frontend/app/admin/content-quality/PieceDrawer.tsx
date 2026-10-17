@@ -144,9 +144,12 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
           )}
 
           <Section title={`Text · ${p.highlights.length} flagged span${p.highlights.length === 1 ? "" : "s"}`}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
-              <Badge tone="danger" dot={false}>blocking</Badge><Badge tone="warning" dot={false}>warning</Badge>
-              <span>hover a highlight for the gate and reason, click it to jump to its actions</span>
+            {/* S241 UI verify — alignItems flex-start: with the default `stretch` the two pills grew
+                to the height of the 3-line helper text at 390 (~50px tall). */}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
+              <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="danger" dot={false}>blocking</Badge></span>
+              <span style={{ flexShrink: 0, display: "inline-flex" }}><Badge tone="warning" dot={false}>warning</Badge></span>
+              <span style={{ minWidth: 0 }}>hover a highlight for the gate and reason, click it to jump to its actions</span>
             </div>
             <HighlightedText text={p.content_text || ""} highlights={p.highlights} />
             {p.channel === "blog" && (
