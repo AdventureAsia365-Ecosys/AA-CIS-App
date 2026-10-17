@@ -7,8 +7,15 @@
 // (the worker panel for the separate aa-cis-dev-worker ECS service + the queue-by-kind view) and
 // "Job kinds" (the registered-kind table). API: /admin/job-runner/* (NOT /admin/jobs, the older
 // AA-223 run-tour poll). Built on the kit DataTable / StatusBadge / Drawer / PageHeader / Tabs and
-// react-query (useQuery + refetchInterval for the 10 s poll on the CURRENT page only, useMutation
+// react-query (useQuery + refetchInterval for the poll on the CURRENT page only, useMutation
 // for cancel/retry) — no setInterval, no hand-rolled fetch loop.
+//
+// Polling budget (S241, Vercel Fluid CPU — the S240 audit put this page at ~25 % of CIS function
+// invocations): the poll runs every 30 s and ONLY while the last response shows queued/running work
+// (`hasActiveWork`); an idle queue is fetched once, then again on window focus, a filter/page change,
+// the Refresh button or after cancel/retry. Hidden tabs never poll (refetchIntervalInBackground
+// false). The list asks for `fields=summary` (no payload/result blobs — the drawer reads them from
+// /jobs/{id}); an older API ignores the param and still works. Default page size 25.
 //
 // URL state (AA-755): tab, kind, status, created_by, since, until, q, sort, dir, page, page_size are
 // all kept in the URL via history.replaceState (same approach as the older deep links), so a view is
@@ -43,14 +50,28 @@ import {
   type Count, type Job, type Kind, type WorkerHealthResp,
 } from "./jobsShared";
 
-const REFRESH_MS = 10_000;
-const PAGE_SIZES = [50, 100, 200];
-const DEFAULT_PAGE_SIZE = 100;
+const REFRESH_MS = 30_000;
+// 25 is the default; 100/200 stay so an old `?page_size=100` deep link keeps working.
+const PAGE_SIZES = [25, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 25;
 type TabKey = "jobs" | "queue" | "kinds";
 
 interface Pagination { page: number; page_size: number; total: number; pages: number }
 interface JobsResp { jobs: Job[]; total?: number; pagination?: Pagination }
 interface SummaryResp { counts: Count[]; kinds: Kind[]; max_releases?: number }
+
+/** Statuses that mean the queue still has work in flight — the only time the page polls. */
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+
+/** True when any of the three responses shows queued/running work: the 30-day summary counts, the
+ * current page rows, or the worker panel's live (not time-bound) queue/running view. */
+function hasActiveWork(d: { jobs: Job[]; counts: Count[]; workers: WorkerHealthResp | null } | undefined): boolean {
+  if (!d) return false;
+  if (d.counts.some(c => ACTIVE_STATUSES.has(c.status) && c.n > 0)) return true;
+  if (d.jobs.some(j => ACTIVE_STATUSES.has(j.status))) return true;
+  const w = d.workers;
+  return !!w && ((w.running ?? []).some(r => r.n > 0) || (w.queued ?? []).some(q => q.n > 0));
+}
 
 /** First sample seen per (job, step): the ETA is (total - done) / observed rate since then. */
 type Sample = { step: string; done: number; t: number };
@@ -155,10 +176,12 @@ function JobsPageInner() {
   // data — the render path never touches the ref (React Compiler: no refs/impure calls in render).
   const samples = useRef<Map<string, Sample>>(new Map());
 
-  // ── Query: jobs (current page) + summary + workers, polled together every 10 s. The query key
-  // carries every server-side filter + sort + page so any change re-fetches; the poll stays on the
-  // CURRENT page + filters only.
-  const qs = new URLSearchParams({ page: String(page + 1), page_size: String(pageSize), sort, sort_dir: dir });
+  // ── Query: jobs (current page) + summary + workers, polled together every 30 s while there is
+  // queued/running work (see the header). The query key carries every server-side filter + sort +
+  // page so any change re-fetches; the poll stays on the CURRENT page + filters only.
+  const qs = new URLSearchParams({
+    page: String(page + 1), page_size: String(pageSize), sort, sort_dir: dir, fields: "summary",
+  });
   if (kind) qs.set("kind", kind);
   if (status) qs.set("status", status);
   if (createdBy) qs.set("created_by", createdBy);
@@ -206,8 +229,12 @@ function JobsPageInner() {
       };
     },
     placeholderData: (prev) => prev,
-    refetchInterval: REFRESH_MS,
+    refetchInterval: (query) => (hasActiveWork(query.state.data) ? REFRESH_MS : false),
+    refetchIntervalInBackground: false,
+    // Idle queue = no poll, so pick up work enqueued elsewhere when the admin comes back to the tab.
+    refetchOnWindowFocus: true,
   });
+  const polling = hasActiveWork(data);
 
   const jobs = useMemo(() => data?.jobs ?? [], [data]);
   const counts = data?.counts ?? [];
@@ -261,7 +288,9 @@ function JobsPageInner() {
     <main className="aa-admin-main" style={{ flex: 1, padding: "32px 36px 56px", minWidth: 0, minHeight: 0, overflowY: "auto" }}>
       <PageHeader
         title="Jobs"
-        description="Background work that survives deploys — queued, running, finished. Refreshes every 10 s."
+        description={`Background work that survives deploys — queued, running, finished. ${
+          polling ? "Refreshes every 30 s while jobs are queued or running." : "Queue idle — auto-refresh paused; use Refresh."
+        }`}
         actions={
           <>
             {tourId && (
