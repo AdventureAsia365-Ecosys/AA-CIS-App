@@ -189,7 +189,7 @@ def test_admin_secret_wins_over_a_bearer_header():
     client, pool = _client()
     with capture_logs() as logs:
         resp = client.get("/admin/atoms/summary",
-                          headers={**_tenant_bearer(), "x-admin-secret": ADMIN_SECRET})
+                          headers={**_tenant_bearer(), "x-admin-secret": ADMIN_SECRET, "x-admin-role": "admin"})
     assert resp.status_code == 200
     pool.acquire.assert_called_once()
     assert REFUSED not in [entry["event"] for entry in logs]
@@ -217,6 +217,8 @@ def test_admin_secret_not_configured_is_503_but_a_tenant_still_gets_403(monkeypa
 def test_owner_scope_class_filter_still_works_for_staff():
     conn = _conn()
     client, _pool_ = _client(conn)
-    resp = client.get("/admin/atoms?owner_scope_class=legacy", headers={"x-admin-secret": ADMIN_SECRET})
+    # AA-882: GET /admin/atoms is tenant.read, so the staff call carries the role the BFF forwards.
+    resp = client.get("/admin/atoms?owner_scope_class=legacy",
+                      headers={"x-admin-secret": ADMIN_SECRET, "x-admin-role": "admin"})
     assert resp.status_code == 200
     assert "ta.owner_scope != 'platform'" in conn.fetch.call_args.args[0]

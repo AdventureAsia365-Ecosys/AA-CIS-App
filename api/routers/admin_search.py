@@ -2,7 +2,8 @@
 # AA-752 — global admin search powering the ⌘K command palette.
 #
 # GET /admin/search?q=&limit= (admin-secret, same gate as every other /admin/*). Returns a small,
-# capped bundle of tours / tenants / jobs matching `q` by a parameterised, case-insensitive
+# capped bundle of tours / tenants (tenant.read only) / jobs (ops.read only) matching `q` by a
+# parameterised, case-insensitive
 # substring (ILIKE '%q%' with %/_ escaped so a literal underscore or percent is not a wildcard).
 # The command palette fetches this debounced; it is deliberately cheap (fixed small caps) and never
 # writes anything.
@@ -12,8 +13,10 @@
 from __future__ import annotations
 
 import structlog
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Header, Query, Request
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import OPS_READ, TENANT_READ, has_perm, staff_policy
 
 from api.routers.admin import verify_admin_secret
 
@@ -100,9 +103,15 @@ async def admin_search(
     q: str = Query("", description="search term, >= 2 chars after trimming"),
     limit: int = Query(0, ge=0, le=20, description="optional override per group (clamped to the caps)"),
     x_admin_secret: str = Header(None),
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     term = (q or "").strip()
+    # AA-882 (GĐ3 review) — the palette is open to every staff role, but tenant accounts (tenant.read)
+    # and the job queue (ops.read) are admin-only pages: a role without the capability gets no rows of
+    # that group (and the query is not run).
+    show_tenants = has_perm(x_admin_role, TENANT_READ)
+    show_jobs = has_perm(x_admin_role, OPS_READ)
     empty = {"tours": [], "tenants": [], "jobs": []}
     if len(term) < MIN_Q_LEN:
         return empty
@@ -119,8 +128,8 @@ async def admin_search(
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         tour_rows = await conn.fetch(tours_sql, *tours_params)
-        tenant_rows = await conn.fetch(tenants_sql, *tenants_params)
-        job_rows = await conn.fetch(jobs_sql, *jobs_params)
+        tenant_rows = await conn.fetch(tenants_sql, *tenants_params) if show_tenants else []
+        job_rows = await conn.fetch(jobs_sql, *jobs_params) if show_jobs else []
 
     return {
         "tours": [

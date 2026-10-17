@@ -12,35 +12,35 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/a4/content-log": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/gate-telemetry": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/platform-stats": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/publish-log": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/a4/review-log": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_a4"
   },
   "GET /admin/atoms": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/atoms/summary": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/atoms/unatomized-tours": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_atoms"
   },
   "GET /admin/billing": {
@@ -72,39 +72,39 @@
     "module": "api.routers.admin"
   },
   "GET /admin/content-quality/pieces": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/pieces/{piece_id}/label": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards/duplicates": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/place-cards/{card_id}": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/stats": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/content-quality/tour-versions/{version_id}": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_content_quality"
   },
   "GET /admin/cost-explorer": {
@@ -140,7 +140,7 @@
     "module": "api.routers.admin_dashboard"
   },
   "GET /admin/decisions/jev-credit": {
-    "capability": null,
+    "capability": "spend.read",
     "module": "api.routers.admin_decisions"
   },
   "GET /admin/decisions/log": {
@@ -216,7 +216,7 @@
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/llm-shadow/report": {
-    "capability": null,
+    "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/llm-usage/calls": {
@@ -408,7 +408,7 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/unmapped-market-requests": {
-    "capability": null,
+    "capability": "tenant.read",
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/upload-history": {
@@ -420,11 +420,11 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/waves": {
-    "capability": null,
+    "capability": "ops.read",
     "module": "api.routers.admin_waves"
   },
   "GET /admin/waves/{wave_id}/report": {
-    "capability": null,
+    "capability": "ops.read",
     "module": "api.routers.admin_waves"
   },
   "GET /v1/pipeline/execution/{execution_id:path}": {

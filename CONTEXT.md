@@ -444,7 +444,9 @@ One staff identity model. Every staff user is a row in `shared.admin_users` (rol
 `shared.admin_role`: `admin`, `reviewer`, `content` — migration 218) and logs in through
 `/auth/admin-login`, which returns a signed JWT kept in the httpOnly `cis_admin_token` cookie. Access
 is decided from the **verified** token role (`/auth/verify-admin`), never from the `cis_role` cookie
-(that cookie is a display hint only). Tenants are separate (`cis_tenant_token`, role `tenant`).
+(that cookie is a display hint only). `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s):
+an inactive or unknown account gets 401 and the role returned is the DB role, not the JWT claim, so a
+deactivation or demotion takes effect within ~6 min (BFF verify cache 5 min + 60 s), not at token expiry. Tenants are separate (`cis_tenant_token`, role `tenant`).
 
 The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
@@ -455,7 +457,8 @@ shows only when the role may open its page).
 People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
 Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
 The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
-public site, tenant portal); deep links are built only there, never from a return URL, never with a
+public site; no tenant-portal link until there is a real support view, since the portal needs a tenant
+session); deep links are built only there, never from a return URL, never with a
 token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
 
 | Area | admin | reviewer | content | tenant |
@@ -489,9 +492,16 @@ Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/
 `/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`
 (a test lists them); a staff proxy without it would act as the machine. Since GĐ3 every staff write
 (`/admin/*`, `/v1/pipeline|rules|social/*`) has a POLICY entry, and a GET has one only when its data
-is admin-only (tenant accounts and billing, spend, system overview/infra, the staff directory
-`GET /admin/platform/staff[/{staff_id}]` = `staff.read`, AA-883 GĐ2); other GETs
-stay open to every staff role. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
+is admin-only (tenant accounts and billing, spend incl. the Jev credit ledger and the shadow cost
+report, system overview/infra, rerun waves, every tenant's A4 logs / content quality / atoms (`tenant.read`),
+the staff directory `GET /admin/platform/staff[/{staff_id}]` = `staff.read`, AA-883 GĐ2); other GETs
+stay open to every staff role. Three open reads filter by role inside the handler: `GET
+/admin/tenants/{id}/details` is open only for the aa_internal tenant (Master Content) and `tenant.read`
+otherwise; `GET /admin/search` returns tenants only with `tenant.read` and jobs only with `ops.read`;
+the notification bell (`/admin/notifications*`, one global list with one `is_read`) shows, counts and
+clears for a role without `ops.read` only the rows targeted at a content role, never a `platform.*` or
+`spend_budget_alert` row. The UI mirrors the capabilities in `lib/rbac.ts` `ROLE_PERMS` / `can()` (kept
+equal by a test) to hide controls the backend would refuse. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
 has a policy, every staff router runs the policy, `/admin/platform/*` has no open read, snapshot
 `tests/unit/snapshots/aa882_staff_route_policy.json`). Behaviour change for reviewer/content: Master
 Content lifecycle (activate/deactivate/trash/restore) and Settings brand writes are admin-only (§5.1

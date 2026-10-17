@@ -117,6 +117,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/llm-usage/calls"): SPEND_READ,
     ("GET", "/admin/llm-usage/tree"): SPEND_READ,
     ("GET", "/admin/spend/daily"): SPEND_READ,
+    # admin_llm_ops — primary vs shadow model cost (Settings › LLM Models, admin-only tab)
+    ("GET", "/admin/llm-shadow/report"): SPEND_READ,
+    # admin_llm_ops — market requests tenants made that no market covers (Tenants page, admin-only)
+    ("GET", "/admin/unmapped-market-requests"): TENANT_READ,
     # ── admin_budgets
     ("GET", "/admin/budgets"): SPEND_READ,
     ("PUT", "/admin/budgets/{provider}/{scope}"): SPEND_WRITE,
@@ -129,6 +133,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
     ("DELETE", "/admin/decisions/jev-credit/topups/{topup_id}"): SPEND_WRITE,
+    ("GET", "/admin/decisions/jev-credit"): SPEND_READ,   # top-ups + estimated balance (money)
     # ── admin_settings — SEO config of the aa_internal tenant
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
 
@@ -203,9 +208,28 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_atoms — Social Content atoms (Atom Curation page, admin-only)
     ("POST", "/admin/atoms/atomize"): ATOMS_WRITE,
     ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
+    ("GET", "/admin/atoms"): TENANT_READ,
+    ("GET", "/admin/atoms/summary"): TENANT_READ,
+    ("GET", "/admin/atoms/unatomized-tours"): TENANT_READ,
     # ── admin_a4 — Content Trace force-unpublish (admin-only)
     ("POST", "/admin/a4/publish-log/{publish_id}/unpublish"): A4_UNPUBLISH,
-    # ── admin_content_quality — T2/T9 quality (admin-only page; the BFF API_WRITE_RULES agree)
+    # admin_a4 — every tenant's A4 content, publish and review logs (Content Trace, A4 Quality, Tenants)
+    ("GET", "/admin/a4/content-log"): TENANT_READ,
+    ("GET", "/admin/a4/gate-telemetry"): TENANT_READ,
+    ("GET", "/admin/a4/platform-stats"): TENANT_READ,
+    ("GET", "/admin/a4/publish-log"): TENANT_READ,
+    ("GET", "/admin/a4/review-log"): TENANT_READ,
+    # ── admin_content_quality — T2/T9 quality (admin-only page; the BFF API_WRITE_RULES agree).
+    # The reads show every tenant's pieces and tour versions: tenant.read.
+    ("GET", "/admin/content-quality/pieces"): TENANT_READ,
+    ("GET", "/admin/content-quality/pieces/{piece_id}"): TENANT_READ,
+    ("GET", "/admin/content-quality/pieces/{piece_id}/label"): TENANT_READ,
+    ("GET", "/admin/content-quality/place-cards"): TENANT_READ,
+    ("GET", "/admin/content-quality/place-cards/duplicates"): TENANT_READ,
+    ("GET", "/admin/content-quality/place-cards/{card_id}"): TENANT_READ,
+    ("GET", "/admin/content-quality/stats"): TENANT_READ,
+    ("GET", "/admin/content-quality/tour-versions"): TENANT_READ,
+    ("GET", "/admin/content-quality/tour-versions/{version_id}"): TENANT_READ,
     ("POST", "/admin/content-quality/pieces/{piece_id}/label"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/suggest"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"): QUALITY_WRITE,
@@ -228,6 +252,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/waves"): OPS_WRITE,
     ("POST", "/admin/waves/{wave_id}/close"): OPS_WRITE,
     ("POST", "/admin/waves/check"): OPS_WRITE,
+    ("GET", "/admin/waves"): OPS_READ,
+    ("GET", "/admin/waves/{wave_id}/report"): OPS_READ,   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
     ("GET", "/admin/overview"): OPS_READ,
     # ── v1_trip_page admin_router — public trip pages of AA content

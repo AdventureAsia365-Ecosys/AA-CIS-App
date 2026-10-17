@@ -487,3 +487,18 @@ def test_staff_roles_match_frontend_rbac():
     labels = set(re.findall(r"^\s+(\w+):\s*\"", re.search(
         r"export const ROLE_LABEL[^{]*\{([^}]*)\}", rbac, re.S).group(1), re.M))
     assert union == staff_roles == labels == set(ROLE_PERMS), (union, staff_roles, labels)
+
+
+def test_frontend_capability_mirror_matches_role_perms():
+    """AA-882 review: frontend/lib/rbac.ts ROLE_PERMS (UI hiding of admin-only controls) must name the
+    same capabilities per role as the backend, and its Capability union must be the backend's
+    role capabilities (staff.write is owner-only, never a role's)."""
+    rbac = (REPO / "frontend" / "lib" / "rbac.ts").read_text()
+    block = re.search(r"export const ROLE_PERMS[^=]*=\s*\{(.*?)\n\};", rbac, re.S)
+    assert block, "ROLE_PERMS not found in frontend/lib/rbac.ts"
+    fe = {role: set(re.findall(r'"([a-z0-9_.]+)"', caps))
+          for role, caps in re.findall(r"^\s+(\w+):\s*\[(.*?)\]", block.group(1), re.S | re.M)}
+    assert fe == {role: set(perms) for role, perms in ROLE_PERMS.items()}, fe
+    union = set(re.findall(r'"([a-z0-9_.]+)"', re.search(
+        r"export type Capability\s*=([^;]+);", rbac, re.S).group(1)))
+    assert union == set().union(*ROLE_PERMS.values())
