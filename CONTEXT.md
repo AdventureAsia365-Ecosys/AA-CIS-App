@@ -34,8 +34,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
 - **Frontend**: Next.js app with an **Admin** surface (`app/admin/*`) and a **Tenant portal**
-  (`app/(tenant)/portal/*`). Deployed on **Vercel** (check the Vercel CI status on the PR for
-  deploy success; Vercel is not one of the 5 required checks).
+  (`app/(tenant)/portal/*`). Deployed on **Vercel** by the `Vercel Deploy` workflow (check its
+  "Vercel deploy" job on the PR; not one of the 5 required checks — see Deploy & CI).
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
@@ -388,9 +388,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
-- **Frontend (Vercel)**: preview per PR, production on merge.
-- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: on each Vercel `deployment_status`
-  (successful Preview) a Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
+- **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
+  cap ~100 deployments / 24 h for the whole team, canceled ones included).
+  `frontend/vercel.json` sets `git.deploymentEnabled: false`; `.github/workflows/vercel-deploy.yml`
+  runs `vercel deploy` (CLI pinned) from the repo root only when a PR or a push to `main` touches
+  `frontend/**`: PR → preview of the head commit + one PR comment with the URL, then the UI smoke;
+  `main` → production (+ a 200 check with the bypass header); `workflow_dispatch` → preview or
+  production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
+  without it the job fails red on every target (nothing else deploys the frontend). A PR
+  that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
+- **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
+  successful preview deploy (`workflow_call`, inputs `base_url` + `sha`), or run by hand
+  (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
   opens the key admin pages as a logged-in admin and fails the check on any HTTP/console error,
   failing same-origin `/api/` call, or a blank page (no table rows and no kit empty state).
   Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact

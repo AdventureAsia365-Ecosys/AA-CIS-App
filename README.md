@@ -64,14 +64,17 @@ cd frontend && npm run lint
 ```
 
 CI (`.github/workflows/ci.yml`) requires Lint, Security Audit, Unit Tests, Integration Tests and
-Docker Build Check; a separate workflow runs a Playwright UI smoke on every Vercel preview.
+Docker Build Check; `vercel-deploy.yml` deploys the frontend preview and then runs a Playwright UI
+smoke on it.
 
 ## Deploy
 
 - **Backend:** merge to `main` → `Deploy Dev` (`.github/workflows/deploy-dev.yml`): pre-deploy job
   guard (blocks while `shared.job` has queued/running jobs), build + push to ECR, new task
   definitions for api and worker on one image, wait stable, same-SHA check, smoke tests.
-- **Frontend:** Vercel builds every PR (preview) and `main` (production).
+- **Frontend deploys:** CI-created via `.github/workflows/vercel-deploy.yml` (only when `frontend/**`
+  changes: PR → preview + UI smoke, `main` → production); the Vercel Git integration is off via
+  `frontend/vercel.json` (`git.deploymentEnabled: false`). Needs the repo secret `VERCEL_TOKEN`.
 - **Migrations are not applied by the deploy.** A new `api/migrations/NNN_*.sql` is applied to Dev
   from its identical copy in `AA-CIS-Infra/db/migrations/cis/` by the **DB Migrate** workflow
   (check → apply), **before** the code that needs it merges.
