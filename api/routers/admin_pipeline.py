@@ -15,6 +15,7 @@ import asyncpg
 import boto3 as _boto3
 import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from typing import Awaitable, Callable, Optional, List
@@ -29,7 +30,9 @@ from shared.validators.prompt_sanitize import (
 )
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/admin", tags=["admin-pipeline"])
+# AA-882 (GĐ3): staff_policy_if_staff narrows the staff calls (X-Admin-Secret) by role, per
+# api/core/staff_authz.py POLICY; the routes' own guard still decides who else gets in.
+router = APIRouter(prefix="/admin", tags=["admin-pipeline"], dependencies=[Depends(staff_policy_if_staff)])
 
 _pipeline_semaphore = asyncio.Semaphore(2)
 

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Optional
 import asyncpg
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 
@@ -28,7 +29,8 @@ from services.acp_planning.tenant_config import (
 
 import structlog
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 _log = structlog.get_logger()
 

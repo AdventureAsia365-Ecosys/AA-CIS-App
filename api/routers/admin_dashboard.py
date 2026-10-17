@@ -48,13 +48,15 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 from services.acp_contract.segment_matching import live_segment_labels
 from services.acp_shared import seed_audit
 
-router = APIRouter(prefix="/admin/dashboard", tags=["admin-dashboard"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/dashboard", tags=["admin-dashboard"], dependencies=[Depends(staff_policy)])
 
 # AA-551 — the 6 real markets DataForSEO/Search Demand cover today (Score/Route panels already
 # rendered these as free text; kept as a plain list, not a DB enum, so a new market doesn't need a

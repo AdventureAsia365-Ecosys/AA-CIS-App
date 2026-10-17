@@ -12,11 +12,13 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 logger = structlog.get_logger()
 
 # Minimum query length — a 1-char query would match almost everything and is not useful.

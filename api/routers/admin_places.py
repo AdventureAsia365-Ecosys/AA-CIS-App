@@ -14,14 +14,16 @@ import uuid
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/places", tags=["admin-places"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/places", tags=["admin-places"], dependencies=[Depends(staff_policy)])
 
 
 class BackfillRequest(BaseModel):

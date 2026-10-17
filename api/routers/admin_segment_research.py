@@ -23,6 +23,7 @@ from typing import Literal, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field, field_validator
 
 from api.routers.admin import verify_admin_secret
@@ -36,8 +37,9 @@ logger = structlog.get_logger()
 # S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
 # ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
 # the write routes are kept as-is (same check, run twice).
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/segment-research", tags=["admin-segment-research"],
-                   dependencies=[Depends(verify_admin_secret)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
 
 # Hard ceiling on scope size: one run can never cover more places than this.
 MAX_PLACES_PER_RUN = 200
