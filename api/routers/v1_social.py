@@ -13,13 +13,17 @@ from uuid import UUID
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy_if_staff
 from pydantic import BaseModel, field_validator
 
 from api.core.staff_secret import require_staff_secret
 
 logger = structlog.get_logger()
 # S241: staff-only. Admin secret required; any JWT (tenant or staff) gets 403 — api/core/staff_secret.py.
-router = APIRouter(prefix="/v1/social", tags=["Social Content"], dependencies=[Depends(require_staff_secret)])
+# AA-882 (GĐ3): staff_policy_if_staff narrows the staff calls (X-Admin-Secret) by role, per
+# api/core/staff_authz.py POLICY; the routes' own guard still decides who else gets in.
+router = APIRouter(prefix="/v1/social", tags=["Social Content"],
+                   dependencies=[Depends(require_staff_secret), Depends(staff_policy_if_staff)])
 
 
 def _get_pool(request: Request) -> asyncpg.Pool:

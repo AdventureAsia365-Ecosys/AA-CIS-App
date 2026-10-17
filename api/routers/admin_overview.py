@@ -18,7 +18,8 @@ from __future__ import annotations
 import json
 
 import structlog
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 from shared.cost_guard import PROVIDERS, day_spend
@@ -26,7 +27,8 @@ from shared.jobs import queue
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/overview", tags=["admin-overview"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/overview", tags=["admin-overview"], dependencies=[Depends(staff_policy)])
 
 _CACHE_KEY = "admin:overview:v1"
 _CACHE_TTL_S = 60

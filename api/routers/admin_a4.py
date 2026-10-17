@@ -74,12 +74,14 @@ from typing import Optional
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/admin/a4", tags=["admin-a4"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/a4", tags=["admin-a4"], dependencies=[Depends(staff_policy)])
 
 
 def _parse_jsonb(val, default):

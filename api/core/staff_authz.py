@@ -1,4 +1,4 @@
-"""AA-882 (S241 GĐ1) — server-side staff authorization: capabilities per role, policy per route.
+"""AA-882 (S241 GĐ1 + GĐ3) — server-side staff authorization: capabilities per role, policy per route.
 
 Until now the backend only checked the shared X-Admin-Secret (held by the staff BFF) and trusted
 whatever came with it, so a reviewer or content user could change a stage's model, a spend budget
@@ -16,8 +16,10 @@ Pieces
 - MACHINE_ROUTES: the routes a machine caller (secret, no role header) may call — the CI deploy
   preflight/smoke and the ops-probe Lambda scheduler. Callers that never send x-admin-role must keep
   working, or the next deploy's preflight gets 403 and every CIS deploy is blocked.
-- staff_policy: the FastAPI dependency. Attach it router-level next to verify_admin_secret; it
-  checks the secret itself too (same function, FastAPI runs it once per request).
+- staff_policy: the FastAPI dependency, attached router-level. It checks the secret itself
+  (admin.verify_admin_secret, called directly) and then the route's POLICY entry.
+  staff_policy_if_staff: the same, but only for a request carrying the valid secret — for routers whose
+  own guard also admits a tenant JWT or answers 401 (see its docstring).
 
 Principal (GĐ1, until the staff JWT of GĐ4)
 ------------------------------------------
@@ -27,19 +29,25 @@ Principal (GĐ1, until the staff JWT of GĐ4)
 - secret, no x-admin-role -> machine principal: allowed only on MACHINE_ROUTES.
 - a role header that is not a staff role (empty, "tenant", typo) -> 403, never a machine.
 
-Routes with no POLICY entry are not narrowed here (GĐ1 covers the money/model writes only; the
-route-policy test in tests/unit/test_aa882_route_policy.py reports the rest). GĐ3 extends POLICY to
-every /admin route and turns that test to enforcing.
+Coverage (GĐ3)
+--------------
+Every non-GET route under /admin, /v1/pipeline, /v1/rules and /v1/social has a POLICY entry, and every
+router behind those prefixes runs staff_policy (or staff_policy_if_staff, for the routers whose own
+guard also takes a tenant JWT or answers 401): tests/unit/test_aa882_route_policy.py enforces both and
+keeps the snapshot. GETs stay open to every staff role unless they return data that only an admin
+needs (tenant accounts, money, system ops, the staff list); those are in POLICY too. A GET with no
+entry is open to every staff role and to the machine.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
 import structlog
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request
 
-from api.routers.admin import verify_admin_secret
+from api.core.secret_compare import secrets_equal
 
 logger = structlog.get_logger()
 
@@ -52,6 +60,7 @@ MASTER_ADMIN = "master.admin"
 ATOMS_WRITE = "atoms.write"
 PHOTOS_WRITE = "photos.write"
 A4_UNPUBLISH = "a4.unpublish"
+QUALITY_WRITE = "quality.write"              # T2/T9 quality: sentence cut/rewrite, labels, place cards
 CONTENT_SETTINGS_WRITE = "content.settings.write"   # gates, brand, SEO
 TENANT_READ = "tenant.read"
 TENANT_WRITE = "tenant.write"
@@ -68,7 +77,7 @@ _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
 ROLE_PERMS: dict[str, frozenset[str]] = {
     "admin": _CONTENT_WORK | {
-        MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, CONTENT_SETTINGS_WRITE,
+        MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         TENANT_READ, TENANT_WRITE, OPS_READ, OPS_WRITE, AI_ADMIN, SPEND_READ, SPEND_WRITE,
         STAFF_READ, AUDIT_READ,
     },
@@ -77,17 +86,21 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
 }
 
 # staff.write is not a role capability: it needs the owner flag (Nghiệp + one break-glass account,
-# S241 Q2), which has no column yet (admin_users.is_owner arrives with GĐ5). No route uses it in GĐ1.
+# S241 Q2), which has no column yet (admin_users.is_owner arrives with GĐ5). No route uses it yet.
 OWNER_PERMS: frozenset[str] = frozenset({STAFF_WRITE})
 
 CAPABILITIES: frozenset[str] = frozenset().union(*ROLE_PERMS.values(), OWNER_PERMS)
 
 STAFF_ROLES: tuple[str, ...] = tuple(ROLE_PERMS)
 
-# ── Route policy (GĐ1: the money / model / Jev / job-control / settings writes) ─────────────────
+# ── Route policy ─────────────────────────────────────────────────────────────────────────────────
+# (method, route template) -> capability. Every staff write is here (GĐ3, enforced by the route-policy
+# test); a GET is here only when its data is admin-only. Mapping rule: the S241 §5.1 table, then the
+# page that calls the route (frontend/lib/rbac.ts PAGE_RULES) — an every-staff content page (Upload,
+# S1, Review) keeps content.write / review.act, an admin-only page gets an admin capability.
 
 POLICY: dict[tuple[str, str], str] = {
-    # admin_llm_ops — stage model, fallback route, catalog
+    # ── admin_llm_ops — stage model, fallback route, catalog (GĐ1)
     ("PATCH", "/admin/llm-config/{stage}"): AI_ADMIN,
     ("PATCH", "/admin/llm-config/{stage}/route"): AI_ADMIN,
     ("PATCH", "/admin/llm-catalog/{model_key}"): AI_ADMIN,
@@ -96,24 +109,158 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,
     ("POST", "/admin/jev-canary/check"): OPS_WRITE,
     ("POST", "/admin/jev/402-sweep"): OPS_WRITE,
-    # admin_budgets
+    # admin_llm_ops — money reads (External Spend page, admin-only)
+    ("GET", "/admin/cost-explorer"): SPEND_READ,
+    ("GET", "/admin/dfs-balance"): SPEND_READ,
+    ("GET", "/admin/dfs-usage"): SPEND_READ,
+    ("GET", "/admin/dfs-usage/by-country"): SPEND_READ,
+    ("GET", "/admin/llm-usage/calls"): SPEND_READ,
+    ("GET", "/admin/llm-usage/tree"): SPEND_READ,
+    ("GET", "/admin/spend/daily"): SPEND_READ,
+    # ── admin_budgets
+    ("GET", "/admin/budgets"): SPEND_READ,
     ("PUT", "/admin/budgets/{provider}/{scope}"): SPEND_WRITE,
-    # admin_job_runner — job control + retention
+    # ── admin_job_runner — job control + retention
     ("POST", "/admin/job-runner/jobs/{job_id}/cancel"): OPS_WRITE,
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
-    # admin_decisions — Jev question mode/floors, Jev credit ledger
+    # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
     ("DELETE", "/admin/decisions/jev-credit/topups/{topup_id}"): SPEND_WRITE,
-    # admin_settings — SEO config of the aa_internal tenant
+    # ── admin_settings — SEO config of the aa_internal tenant
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
+
+    # ── admin (admin.py) — tenant accounts (Tenants page, admin-only; AA-797 already re-checks writes)
+    ("GET", "/admin/tenants"): TENANT_READ,
+    ("POST", "/admin/tenants"): TENANT_WRITE,
+    ("PATCH", "/admin/tenants/{tenant_id}"): TENANT_WRITE,
+    ("GET", "/admin/tenants/{tenant_id}/usage"): TENANT_READ,
+    ("GET", "/admin/tenants/{tenant_id}/audit"): TENANT_READ,
+    ("GET", "/admin/tenants/{tenant_id}/rewrite-activity"): TENANT_READ,
+    ("GET", "/admin/tenants/{tenant_id}/config"): TENANT_READ,
+    ("PUT", "/admin/tenants/{tenant_id}/config"): TENANT_WRITE,
+    ("PUT", "/admin/tenants/{tenant_id}/brand-identity"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/generate-key"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/offboard"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/restore"): TENANT_WRITE,
+    # GET /admin/tenants/{tenant_id}/details stays open: Master Content (every staff role) reads the
+    # aa_internal catalog through it.
+    # admin — master tour lifecycle (S241 §5.1 master.admin; Master Content page)
+    ("PATCH", "/admin/master/{tour_id}/activate"): MASTER_ADMIN,
+    ("PATCH", "/admin/master/{tour_id}/deactivate"): MASTER_ADMIN,
+    ("PATCH", "/admin/master/{tour_id}/status"): MASTER_ADMIN,
+    ("PATCH", "/admin/master/{tour_id}/trash"): MASTER_ADMIN,
+    ("PATCH", "/admin/master/{tour_id}/restore"): MASTER_ADMIN,
+    # admin — source tours (Upload page, every staff role)
+    ("PATCH", "/admin/tours/{tour_id}/trash"): CONTENT_WRITE,
+    ("PATCH", "/admin/tours/{tour_id}/restore"): CONTENT_WRITE,
+    # admin — the notification bell (Topbar, every staff role)
+    ("PUT", "/admin/notifications/read-all"): CONTENT_READ,
+    ("PUT", "/admin/notifications/{notif_id}/read"): CONTENT_READ,
+    # ── admin_tenant360 — Tenant 360 tabs (admin-only)
+    ("GET", "/admin/tenants/{tenant_id}/cost"): TENANT_READ,
+    ("GET", "/admin/tenants/{tenant_id}/quality"): TENANT_READ,
+    ("GET", "/admin/tenants/{tenant_id}/markets"): TENANT_READ,
+
+    # ── admin_pipeline — Upload (S0), every staff role
+    ("POST", "/admin/upload-url"): CONTENT_WRITE,
+    ("POST", "/admin/ingest-s3"): CONTENT_WRITE,
+    ("POST", "/admin/upload-staging/{staging_id}/decide"): CONTENT_WRITE,
+    ("POST", "/admin/raw-tours/{tour_id}/set-active"): CONTENT_WRITE,
+    ("DELETE", "/admin/raw-tours/{tour_id}"): CONTENT_WRITE,
+    # admin_pipeline — S1 rewrite, every staff role
+    ("POST", "/admin/run-tour"): CONTENT_WRITE,
+    ("POST", "/admin/run-tour-async"): CONTENT_WRITE,
+    ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE,
+    ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
+    # admin_pipeline — Review Queue + tour edits, every staff role
+    ("POST", "/admin/review-queue/{review_id}/approve"): REVIEW_ACT,
+    ("POST", "/admin/review-queue/{review_id}/reject"): REVIEW_ACT,
+    ("POST", "/admin/review-queue/{review_id}/dismiss"): REVIEW_ACT,
+    ("POST", "/admin/review-queue/{review_id}/supersede"): REVIEW_ACT,
+    ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE,
+    ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
+    ("PATCH", "/admin/tours/{tour_id}/generated/{content_id}"): CONTENT_WRITE,
+    ("POST", "/admin/tours/{tour_id}/generated/{content_id}/revalidate"): CONTENT_WRITE,
+    ("POST", "/admin/tours/{tour_id}/versions/{version_num}/promote"): CONTENT_WRITE,
+    # admin_pipeline — brand rules + AA brand identity (Settings › Brand; §5.1 content.settings.write).
+    # The brand-identity routes also take a tenant JWT (own brand, AA-424): POLICY applies to the
+    # staff branch only (the router runs staff_policy_if_staff).
+    ("POST", "/admin/brands"): CONTENT_SETTINGS_WRITE,
+    ("PUT", "/admin/brands/{brand_name}"): CONTENT_SETTINGS_WRITE,
+    ("DELETE", "/admin/brands/{brand_name}"): CONTENT_SETTINGS_WRITE,
+    ("POST", "/admin/brands/{brand_name}/activate"): CONTENT_SETTINGS_WRITE,
+    ("POST", "/admin/brands/parse-docx"): CONTENT_SETTINGS_WRITE,
+    ("POST", "/admin/brand-identity"): CONTENT_SETTINGS_WRITE,
+    ("POST", "/admin/brand-identity/upload"): CONTENT_SETTINGS_WRITE,
+    ("POST", "/admin/brand-identity/parse"): CONTENT_SETTINGS_WRITE,
+    # admin_pipeline — admin-only reads: any tenant's billing, live AWS infra state
+    ("GET", "/admin/billing"): TENANT_READ,
+    ("GET", "/admin/infra/status"): OPS_READ,
+
+    # ── admin_atoms — Social Content atoms (Atom Curation page, admin-only)
+    ("POST", "/admin/atoms/atomize"): ATOMS_WRITE,
+    ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
+    # ── admin_a4 — Content Trace force-unpublish (admin-only)
+    ("POST", "/admin/a4/publish-log/{publish_id}/unpublish"): A4_UNPUBLISH,
+    # ── admin_content_quality — T2/T9 quality (admin-only page; the BFF API_WRITE_RULES agree)
+    ("POST", "/admin/content-quality/pieces/{piece_id}/label"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/suggest"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/pieces/{piece_id}/sentences/apply"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/suggest"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/tour-versions/{version_id}/sentences/apply"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/requests/{request_id}/regenerate-angles"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/place-cards/build"): QUALITY_WRITE,
+    ("PATCH", "/admin/content-quality/place-cards/{card_id}"): QUALITY_WRITE,
+    ("PATCH", "/admin/content-quality/place-cards/{card_id}/facts"): QUALITY_WRITE,
+    ("POST", "/admin/content-quality/place-cards/{keep_id}/merge"): QUALITY_WRITE,
+    # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
+    ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
+    ("POST", "/admin/photos/{photo_id}/assign"): PHOTOS_WRITE,
+    # ── admin_places — place_extract backfill (paid geocoder jobs)
+    ("POST", "/admin/places/backfill"): OPS_WRITE,
+    # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
+    ("POST", "/admin/segment-research/preview"): OPS_READ,
+    ("POST", "/admin/segment-research/run"): OPS_WRITE,
+    # ── admin_waves — rerun waves (check is the ops-probe Lambda, a MACHINE_ROUTE)
+    ("POST", "/admin/waves"): OPS_WRITE,
+    ("POST", "/admin/waves/{wave_id}/close"): OPS_WRITE,
+    ("POST", "/admin/waves/check"): OPS_WRITE,
+    # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
+    ("GET", "/admin/overview"): OPS_READ,
+    # ── v1_trip_page admin_router — public trip pages of AA content
+    ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
+    ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,
+    # ── AA-883 (GĐ2) staff directory — read is admin-only (staff.read); see AWAITING_ROUTE
+    ("GET", "/admin/platform/staff"): STAFF_READ,
+    ("GET", "/admin/platform/staff/{staff_id}"): STAFF_READ,
+
+    # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
+    # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
+    ("POST", "/v1/pipeline/run"): CONTENT_WRITE,
+    ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): REVIEW_ACT,
+    ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
+    ("PATCH", "/v1/rules/{rule_id}"): CONTENT_SETTINGS_WRITE,      # global output rules, every tenant
+    ("POST", "/v1/social/batch-review"): ATOMS_WRITE,              # A3 social HITL, every tenant
 }
 
-# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it.
-# The GETs carry no POLICY entry yet (any secret holder may read them); they are listed so the
-# allowlist is complete when GĐ3 puts every /admin route under POLICY.
+# POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The
+# route-policy test allows these to be missing from the app; once the route exists it must match the
+# template exactly (every /admin/platform/* route needs a POLICY entry, so a different parameter name
+# fails CI there instead of leaving the route open to every staff role).
+AWAITING_ROUTE: dict[tuple[str, str], str] = {
+    ("GET", "/admin/platform/staff"): "AA-883 (GĐ2) admin_staff.py staff list",
+    ("GET", "/admin/platform/staff/{staff_id}"): "AA-883 (GĐ2) admin_staff.py staff detail",
+}
+
+# Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope).
+STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
+
+# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only
+# /admin/overview has a POLICY entry (ops.read); the job-runner ones are open to any secret holder and
+# are listed so the allowlist stays complete if they ever get one.
 MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/admin/job-runner/deploy-gate"): "CI deploy-dev.yml: pre-deploy gate + post-deploy smoke",
     ("GET", "/admin/job-runner/summary"): "CI deploy-dev.yml: post-deploy smoke",
@@ -164,7 +311,7 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
     """None when the principal may call (method, route); otherwise the 403 detail."""
     capability = POLICY.get((method, route))
     if capability is None:
-        return None  # not narrowed in GĐ1 (reported by the route-policy test)
+        return None  # a GET open to every staff role and the machine (writes all have an entry)
     if principal.is_machine:
         if (method, route) in MACHINE_ROUTES:
             return None
@@ -188,17 +335,15 @@ def _route_template(request: Request) -> Optional[str]:
     return path if isinstance(path, str) else None
 
 
-def staff_policy(
-    request: Request,
-    _secret: None = Depends(verify_admin_secret),
-    x_admin_role: Optional[str] = Header(None),
-) -> StaffPrincipal:
-    """Router-level dependency: the admin secret, then the route's POLICY capability for the caller.
+def _check_secret(x_admin_secret: Optional[str]) -> None:
+    """admin.verify_admin_secret (503 / 403 "Invalid admin secret"), imported here, not at module top:
+    api/routers/admin.py itself attaches staff_policy, so a top-level import would be circular."""
+    from api.routers import admin
 
-    503/403 from verify_admin_secret as before; 403 when the role lacks the capability, the role is
-    unknown, or a machine caller hits a non-machine POLICY route. Fails closed (403) when the matched
-    route can not be read from the request, since the policy can not be looked up then.
-    """
+    admin.verify_admin_secret(x_admin_secret)
+
+
+def _enforce(request: Request, x_admin_role: Optional[str]) -> StaffPrincipal:
     principal = principal_from_role(x_admin_role)
     template = _route_template(request)
     if template is None:
@@ -212,3 +357,49 @@ def staff_policy(
                        admin_user=request.headers.get("x-admin-user-id"))
         raise HTTPException(status_code=403, detail=reason)
     return principal
+
+
+def staff_policy(
+    request: Request,
+    x_admin_secret: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+) -> StaffPrincipal:
+    """Router-level dependency: the admin secret, then the route's POLICY capability for the caller.
+
+    503/403 from verify_admin_secret as before; 403 when the role lacks the capability, the role is
+    unknown, or a machine caller hits a non-machine POLICY route. Fails closed (403) when the matched
+    route can not be read from the request, since the policy can not be looked up then.
+    """
+    _check_secret(x_admin_secret)
+    return _enforce(request, x_admin_role)
+
+
+def staff_policy_if_staff(
+    request: Request,
+    x_admin_secret: Optional[str] = Header(None),
+    x_admin_role: Optional[str] = Header(None),
+) -> Optional[StaffPrincipal]:
+    """POLICY for a request that carries the valid admin secret; a no-op for any other request.
+
+    For routers whose own guard decides who else gets in and how it refuses: admin_pipeline (the
+    brand-identity routes also take a tenant JWT, AA-424), admin_atoms (logs a refused tenant Bearer,
+    AA-859), /v1/pipeline, /v1/rules, /v1/social (401 without credentials, 403 for any JWT, secret read
+    from the environment per call). A missing or wrong secret is left to that guard, so its status,
+    detail and logging stay exactly as they were. This is NOT an auth check by itself: every route of
+    such a router keeps its own (the S241 route-auth test proves it), and every staff call — the only
+    kind that carries the valid secret — goes through POLICY.
+    """
+    if not _is_valid_secret(x_admin_secret):
+        return None
+    return _enforce(request, x_admin_role)
+
+
+def _is_valid_secret(x_admin_secret: Optional[str]) -> bool:
+    """The admin secret as admin.verify_admin_secret knows it (read at import) or as the /v1 guards
+    read it (os.environ per call). Both are the ECS ADMIN_SECRET; tests set one or the other."""
+    if not x_admin_secret:
+        return False
+    from api.routers import admin
+
+    known = [s for s in (admin.ADMIN_SECRET, os.environ.get("ADMIN_SECRET", "")) if s]
+    return any(secrets_equal(x_admin_secret, s) for s in known)

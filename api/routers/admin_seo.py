@@ -23,7 +23,8 @@ from __future__ import annotations
 import json
 
 import structlog
-from fastapi import APIRouter, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_llm_ops import (
@@ -36,7 +37,9 @@ from api.routers.admin_llm_ops import (
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/seo-intelligence", tags=["admin-seo"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/seo-intelligence", tags=["admin-seo"],
+                   dependencies=[Depends(staff_policy)])
 
 _AA_INTERNAL = "00000000-0000-0000-0000-000000000001"
 # The research cache's own freshness horizon (services/acp_contract/segment_research.py FRESH_FOR).

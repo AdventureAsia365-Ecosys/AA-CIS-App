@@ -461,23 +461,31 @@ shows only when the role may open its page).
 | `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
-`content_creator` → content. Known limit: reviewer and content share the admin secret on the backend,
-so the proxy matrix does not yet narrow which backend `/admin/*` paths they may call (the pages they
-can open are narrowed).
+`content_creator` → content. Reviewer and content reach the backend through the same admin secret;
+what they may call there is narrowed by the backend capabilities below (AA-882), not by the BFF yet
+(`canWriteAdminPath` still allows writes by default until GĐ4b).
 
-**Backend capabilities (AA-882, S241 GĐ1).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
-capabilities such as `ai.admin`, `spend.write`, `ops.write`, `content.settings.write`; `staff.write`
-is an owner flag, not a role permission) and `POLICY` keyed by `(method, route template)`. The
-router-level dependency `staff_policy` (secret check, then policy) refuses with 403 a role that lacks
-the route's capability. The role is the `x-admin-role` the BFF forwards from the verified JWT (header
+**Backend capabilities (AA-882, S241 GĐ1 + GĐ3).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
+capabilities: `content.read/write` and `review.act` for every staff role; `master.admin`,
+`atoms.write`, `photos.write`, `a4.unpublish`, `quality.write`, `content.settings.write`, `tenant.*`,
+`ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read` for admin; `staff.write` is an owner flag,
+not a role permission) and `POLICY` keyed by `(method, route template)`. The router-level dependency
+`staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
+`staff_policy_if_staff` does the same only for a request carrying the valid secret, on the routers
+whose own guard also admits a tenant JWT or answers 401 (`admin_pipeline`, `admin_atoms`,
+`/v1/pipeline`, `/v1/rules`, `/v1/social`). The role is the `x-admin-role` the BFF forwards from the verified JWT (header
 trust until the staff Bearer JWT / Cognito). The secret **without** a role header is the *machine*
 principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
-Both catch-all staff proxies that carry the secret (`/api/admin/*` and the staff branch of
-`/api/tenant/*`) forward `x-admin-role`; a staff proxy without it would act as the machine.
-GĐ1 covers the money/model writes (LLM config/catalog, Jev, budgets, job cancel/retry/retention,
-Jev credit, SEO settings); every GET stays open to every staff role. The other `/admin` writes are
-reported by `tests/unit/test_aa882_route_policy.py` (snapshot, report-only) until GĐ3. Staff roles
-here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
+Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/api/tour-full/*`,
+`/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`
+(a test lists them); a staff proxy without it would act as the machine. Since GĐ3 every staff write
+(`/admin/*`, `/v1/pipeline|rules|social/*`) has a POLICY entry, and a GET has one only when its data
+is admin-only (tenant accounts and billing, spend, system overview/infra, the staff list); other GETs
+stay open to every staff role. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
+has a policy, every staff router runs the policy, `/admin/platform/*` has no open read, snapshot
+`tests/unit/snapshots/aa882_staff_route_policy.json`). Behaviour change for reviewer/content: Master
+Content lifecycle (activate/deactivate/trash/restore) and Settings brand writes are admin-only (§5.1
+of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
 `%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
 same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a

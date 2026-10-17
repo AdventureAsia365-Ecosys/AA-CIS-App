@@ -11,11 +11,13 @@ what keeps them out; the BFF also refuses them (lib/rbac.ts API_READ_RULES) befo
 """
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
 
 def require_admin_role(x_admin_role: Optional[str]) -> None:

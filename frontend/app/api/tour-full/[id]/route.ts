@@ -27,6 +27,9 @@ export async function GET(
   const res = await fetch(`${API_URL}/v1/tours/${tourPath}/full`, {
     headers: {
       "X-Admin-Secret": ADMIN_SECRET,
+      // AA-882 (GĐ3) — the verified staff identity, like every staff BFF (api/core/staff_authz.py).
+      "x-admin-user-id": auth.adminId,
+      "x-admin-role": auth.role,
       ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
     },
     cache: "no-store",

@@ -146,7 +146,8 @@ def test_admin_secret_unchanged(method, path, body):
         }
     client, pool = _client(conn)
     with capture_logs() as logs:
-        resp = _call(client, method, path, body, {"x-admin-secret": ADMIN_SECRET})
+        # AA-882 (GĐ3): the BFF forwards the staff role; a role-less PATCH is the machine (refused).
+        resp = _call(client, method, path, body, {"x-admin-secret": ADMIN_SECRET, "x-admin-role": "admin"})
     assert resp.status_code == 200, resp.text
     pool.acquire.assert_called_once()
     assert REFUSED not in [entry["event"] for entry in logs]
@@ -169,7 +170,8 @@ def test_staff_patch_update_is_keyed_on_the_atom_id(body):
         "visual_potential": 2, "media": "{}", "created_at": None, "updated_at": None,
     }
     client, _ = _client(conn)
-    resp = _call(client, "PATCH", f"/admin/atoms/{ATOM_ID}", body, {"x-admin-secret": ADMIN_SECRET})
+    resp = _call(client, "PATCH", f"/admin/atoms/{ATOM_ID}", body,
+                 {"x-admin-secret": ADMIN_SECRET, "x-admin-role": "admin"})
     assert resp.status_code == 200, resp.text
     updates = [c for c in conn.fetchrow.call_args_list
                if "UPDATE acp_contract.tour_atoms" in c.args[0]]

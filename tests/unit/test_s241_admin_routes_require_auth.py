@@ -39,7 +39,7 @@ from fastapi.routing import APIRoute, APIWebSocketRoute
 from starlette.routing import Mount
 
 from api import main
-from api.core import staff_secret
+from api.core import staff_authz, staff_secret
 from api.main import app
 from api.routers import admin, admin_atoms, admin_pipeline, admin_settings, v1_pipeline, v1_tours
 
@@ -50,6 +50,8 @@ STAFF_DEPENDENCIES = {
     admin_atoms._require_atoms_staff,          # X-Admin-Secret; logs + refuses a tenant Bearer
     v1_pipeline._require_admin,                # X-Admin-Secret; any JWT -> 403 (AA-799)
     staff_secret.require_staff_secret,         # same rule, shared by /v1/rules + /v1/social (S241)
+    staff_authz.staff_policy,                  # AA-882: admin.verify_admin_secret, then the route POLICY
+    # NOT staff_authz.staff_policy_if_staff: a no-op without the secret, so it is no auth check alone.
     main.require_admin_secret_for_docs,        # X-Admin-Secret on /docs, /redoc, /openapi.json (AA-577)
 }
 # Dependencies that a tenant JWT also satisfies.
