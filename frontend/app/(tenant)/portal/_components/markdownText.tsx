@@ -24,10 +24,27 @@ const FENCE_RE = /^\s*```/;
 const INLINE_RE =
   /!\[([^\]]*)\]\([^)\s]*\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+?)\*\*|__([^_]+?)__|(^|[^\w*])\*([^\s*][^*\n]*?)\*(?![\w*])|(^|[^\w_])_([^\s_][^_\n]*?)_(?![\w_])/g;
 
-/** Markdown → plain text: markers removed, links / images kept as their text, lines joined. */
+// Leftovers of a span the preview cut in half (the T11 `content_preview` is the first 280 RAW
+// characters, so the slice can end inside `**bold`, `[text](https://ex` or `` `code ``). Applied
+// after INLINE_RE, so everything matched here is an unpaired marker:
+//   - a trailing partial link / image `[text`, `[text]`, `[text](partial` → its text;
+//   - any `**` / `__` still present (closed pairs are already gone);
+//   - a single `*` / `_` / `` ` `` that opens a word (start or after a space) and never closes,
+//     and a lone marker run at the very end. `2 * 3` and snake_case stay: no word follows / no
+//     space precedes.
+const CUT_LINK_RE = /!?\[([^\]\n]*)(?:\](?:\([^)\s]*)?)?$/;
+const CUT_STRONG_RE = /\*\*|__/g;
+const CUT_OPENER_RE = /(^|\s)[*_`]+(?=\S)/g;
+const CUT_TAIL_RE = /\s[*_`]+$/;
+const BARE_HEADING_RE = /^\s{0,3}#{1,6}\s*$/;
+
+/** Markdown → plain text: markers removed, links / images kept as their text, lines joined.
+ * Also safe on a truncated slice: markers left unpaired by the cut are dropped too. */
 export function stripMarkdown(text: string | null | undefined): string {
   if (!text) return "";
-  const lines = text.split(/\r?\n/).filter((l) => !FENCE_RE.test(l) && !RULE_RE.test(l));
+  const lines = text
+    .split(/\r?\n/)
+    .filter((l) => !FENCE_RE.test(l) && !RULE_RE.test(l) && !BARE_HEADING_RE.test(l));
   return lines
     .map((l) => {
       const h = HEADING_RE.exec(l);
@@ -40,6 +57,11 @@ export function stripMarkdown(text: string | null | undefined): string {
       img ?? linkText ?? code ?? b1 ?? b2 ?? (i1 !== undefined ? `${p1}${i1}` : `${p2}${i2}`),
     )
     .replace(/\s+/g, " ")
+    .trim()
+    .replace(CUT_LINK_RE, "$1")
+    .replace(CUT_STRONG_RE, "")
+    .replace(CUT_OPENER_RE, "$1")
+    .replace(CUT_TAIL_RE, "")
     .trim();
 }
 
