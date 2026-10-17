@@ -2,7 +2,11 @@
 // app/admin/jobs/JobDrawer.tsx — AA-721 job detail in the kit Drawer, data via react-query.
 // Lifecycle (attempts, releases, lease), cost split (LLM from llm_call_log vs what the handler
 // reported), the job's LLM calls, progress/ETA, and the domain rows the job wrote (tenant version /
-// content piece / tour deep links). Re-fetches on the same 10 s cadence as the list while open.
+// content piece / tour deep links). Payload/result come from here (`/jobs/{id}`), not the list
+// (S241: the list asks for fields=summary). Polls on the list's cadence only while the job is
+// queued/running; a finished job is fetched once (S241, Vercel Fluid CPU). The LLM-calls query
+// carries the job's active flag in its key, so the running→finished transition triggers one last
+// fetch of the calls and then it stops too.
 
 import { useQuery } from "@tanstack/react-query";
 import { A, serif, mono, SLabel, Btn, TH, TD } from "../_components/adminUi";
@@ -55,13 +59,21 @@ export default function JobDrawer({ jobId, refetchMs, expectedSeconds, maxReleas
   const { data: job, isError, error } = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => apiGet<Job>(`/api/admin/job-runner/jobs/${jobId}`, { admin: true }),
-    refetchInterval: refetchMs,
+    // Before the first response (no data) keep polling so a transient error still retries.
+    refetchInterval: (query) => {
+      const st = query.state.data?.status;
+      return st === undefined || st === "queued" || st === "running" ? refetchMs : false;
+    },
+    refetchIntervalInBackground: false,
     placeholderData: (prev) => prev,
   });
+  const active = job ? job.status === "queued" || job.status === "running" : false;
   const { data: llm } = useQuery({
-    queryKey: ["job-llm", jobId],
+    queryKey: ["job-llm", jobId, active],
     queryFn: () => apiGet<LlmCalls>(`/api/admin/job-runner/jobs/${jobId}/llm-calls?limit=200`, { admin: true }),
-    refetchInterval: refetchMs,
+    enabled: !!job,
+    refetchInterval: active ? refetchMs : false,
+    refetchIntervalInBackground: false,
     placeholderData: (prev) => prev,
   });
 

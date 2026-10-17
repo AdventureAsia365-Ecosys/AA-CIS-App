@@ -8,7 +8,7 @@
 //   (d) at 390px the bottom nav is visible and the page has no horizontal overflow (prints the
 //       offending elements on failure).
 import { test, expect } from '@playwright/test';
-import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
+import { ADMIN_STATE, baseUrl, installBypassRoute, waitForShellHydrated } from './smoke-helpers';
 
 async function adminPage(browser: import('@playwright/test').Browser) {
   const context = await browser.newContext({
@@ -34,6 +34,8 @@ test.describe('AA-752 — admin shell', () => {
       // signal — the page's own <main className="aa-admin-main"> mounts only once the client page
       // component has rendered — then retry the click within a bound in case it still raced.
       await expect(page.locator('.aa-admin-main')).toBeVisible({ timeout: 15000 });
+      // AA-834: the sidebar's own post-hydration marker; the retry-click poll below stays as a backstop.
+      await waitForShellHydrated(page);
       await expect
         .poll(
           async () => {
@@ -58,19 +60,26 @@ test.describe('AA-752 — admin shell', () => {
       await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
       const rail = page.getByTestId('admin-sidebar');
       await expect(rail).toBeVisible({ timeout: 10000 });
+      // AA-834: the rail is in the SSR HTML, so "visible" is not "interactive". Clicking before React
+      // hydrates the toggle was a silent no-op (gh run 38684738547: 236px on both tries). Wait for
+      // the sidebar's post-hydration marker before clicking.
+      await waitForShellHydrated(page);
+      await expect(rail).toHaveAttribute('data-collapsed', 'false', { timeout: 2000 });
 
       const expandedWidth = await rail.evaluate((el) => el.getBoundingClientRect().width);
       await page.getByTestId('sidebar-collapse').click();
+      // The state flips in the same commit as the click — assert it first, then the width.
+      await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
       // Bounded wait for the width transition to land on the collapsed rail.
       await expect
         .poll(async () => rail.evaluate((el) => Math.round(el.getBoundingClientRect().width)), { timeout: 5000 })
         .toBeLessThan(expandedWidth - 50);
-      // data-collapsed flips too.
-      await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 2000 });
 
-      // Survives a reload (localStorage cis_sidebar + the no-flash restore script).
+      // Survives a reload (localStorage cis_sidebar + the no-flash restore script). The SSR HTML
+      // always says data-collapsed="false"; the stored state is applied by the hydrated client.
       await page.reload({ waitUntil: 'domcontentloaded' });
       await expect(rail).toBeVisible({ timeout: 10000 });
+      await waitForShellHydrated(page);
       await expect(rail).toHaveAttribute('data-collapsed', 'true', { timeout: 5000 });
       // Poll the width (the 0.18s transition can be mid-flight on a single read).
       await expect
@@ -98,6 +107,8 @@ test.describe('AA-752 — admin shell', () => {
       const frag = (name.match(/[A-Za-z]{2,}/)?.[0] ?? name).slice(0, 4);
       expect(frag.length, 'could not read a real tour name from the Master Content table').toBeGreaterThanOrEqual(2);
 
+      // AA-834: the ⌘K listener is client-only — make sure the shell has hydrated before the shortcut.
+      await waitForShellHydrated(page);
       await page.keyboard.press('ControlOrMeta+KeyK');
       const dialog = page.getByRole('dialog', { name: /Global search/i });
       const input = dialog.getByRole('textbox');

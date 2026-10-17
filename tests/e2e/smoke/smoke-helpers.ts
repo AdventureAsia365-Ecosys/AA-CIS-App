@@ -433,3 +433,17 @@ export async function assertNavOk(page: Page, pathToVisit: string): Promise<void
   // unbounded wait burned the whole 60 s test timeout on Master Content (S220 live run).
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 }
+
+/**
+ * AA-834 — wait until the admin shell is interactive. The sidebar is in the SSR HTML, so "visible"
+ * after `domcontentloaded` does not mean its buttons work: a click before React hydrates them is a
+ * silent no-op (the collapse test saw the rail stay 236px on both tries). The kit Sidebar sets
+ * `data-hydrated="true"` only in a post-hydration commit (app/_kit/useHydrated.ts). Bounded.
+ * Call it after every `goto` / `reload` that is followed by a click or a shell keyboard shortcut.
+ */
+export async function waitForShellHydrated(page: Page, timeout = 15000): Promise<void> {
+  await expect(
+    page.locator('[data-testid="admin-sidebar"][data-hydrated="true"]').first(),
+    'admin shell did not hydrate (no data-hydrated="true" on the sidebar)',
+  ).toBeAttached({ timeout });
+}

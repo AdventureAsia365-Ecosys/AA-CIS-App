@@ -4,8 +4,8 @@
 // link to /admin/overview; the nav groups/items/roles are the shared AA-663 IA (adminNav.tsx).
 // Collapse/expand via the chevron button and the `[` key (ignored while typing); collapsed = a
 // 68px icon rail with tooltips (title + aria-label). The active item gets a gold rail + tinted bg.
-// The Review Queue item shows the pending count (review-queue total, cached ~60s; badge hidden on
-// error). Collapsed state is read via useSyncExternalStore (useSidebarCollapsed) — no
+// The Review Queue item shows the pending count (useReviewPendingCount: one query shared with the
+// BottomNav, 180 s; badge hidden on error). Collapsed state is read via useSyncExternalStore (useSidebarCollapsed) — no
 // setState-in-effect, no flash.
 //
 // Collapse presentation is CSS-driven off `data-collapsed` on the <aside> (the labels/group titles
@@ -16,25 +16,22 @@
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { A, alpha, serif, sans } from "../admin/_components/adminUi";
 import { LOGO_SRC } from "../_brand/tokens";
 import { NAV_GROUPS, SETTINGS_ENTRY, navActive, type NavEntry } from "./adminNav";
 import { useSidebarCollapsed } from "./useSidebar";
+import { useHydrated } from "./useHydrated";
 import { canSeePage } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
-import { apiGet } from "./api";
-
-interface ReviewTotal {
-  pagination?: { total?: number };
-  total?: number;
-}
+import { useReviewPendingCount } from "./useReviewPendingCount";
 
 export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () => void; drawerOpen?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const { role } = useAdminIdentity();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
+  // AA-834 — e2e hook: `data-hydrated="true"` appears only once the toggle handlers are live.
+  const hydrated = useHydrated();
 
   // `[` toggles collapse, ignored while typing in an input/textarea/select or contenteditable.
   useEffect(() => {
@@ -50,17 +47,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
     return () => window.removeEventListener("keydown", onKey);
   }, [collapsed, setCollapsed]);
 
-  // Review Queue pending count — reuse the review-queue reader's `pagination.total`. Cached ~60s;
-  // the badge is simply hidden on error (never a blocking failure for the shell).
-  const { data: reviewTotal } = useQuery({
-    queryKey: ["sidebar", "review-pending"],
-    queryFn: () =>
-      apiGet<ReviewTotal>("/api/admin/review-queue?status=pending&page=1&page_size=1", { admin: true }),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    retry: false,
-  });
-  const pending = reviewTotal?.pagination?.total ?? reviewTotal?.total;
+  // Review Queue pending count — shared with the BottomNav (one key, one request).
+  const pending = useReviewPendingCount();
 
   function go(href: string) {
     router.push(href);
@@ -72,6 +60,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
       className={`aa-admin-sidebar aa-shell-sidebar${drawerOpen ? " aa-admin-sidebar--open" : ""}`}
       data-testid="admin-sidebar"
       data-collapsed={collapsed ? "true" : "false"}
+      data-hydrated={hydrated ? "true" : undefined}
       style={{
         width: collapsed ? 68 : 236, flexShrink: 0,
         background: "var(--aa-side-bg)", color: "var(--aa-side-text)",

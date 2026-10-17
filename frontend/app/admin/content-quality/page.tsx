@@ -20,6 +20,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import type { SortingState } from "@tanstack/react-table";
+import { SeedLine } from "../_components/SeedLine";
 import SocialContentSubNav from "../_components/SocialContentSubNav";
 import { A, mono, Btn } from "../_components/adminUi";
 import {
@@ -119,8 +120,15 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
       cell: (c) => <span style={{ whiteSpace: "nowrap", color: A.muted }}>{fmtTime(c.row.original.created_at)}</span> },
     { id: "tenant", accessorKey: "tenant_name", header: "Tenant" },
     { id: "channel", accessorKey: "channel", header: "Channel" },
-    { id: "title", accessorKey: "title", header: "Title / angle", enableSorting: false,
-      cell: (c) => <span style={{ display: "block", maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.row.original.title ?? ""}>{c.row.original.title ?? "—"}</span> },
+    // AA-863 — under the title: the Segment the piece was written for and its seed place · country,
+    // with a warning badge when the seed does not fit the Subject (SeedLine).
+    { id: "title", accessorKey: "title", header: "Title / angle · seed", enableSorting: false,
+      cell: (c) => (
+        <span style={{ display: "block", maxWidth: 320, minWidth: 0 }}>
+          <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.row.original.title ?? ""}>{c.row.original.title ?? "—"}</span>
+          <SeedLine seed={c.row.original.seed} showSegment />
+        </span>
+      ) },
     { id: "status", accessorKey: "status", header: "Status", cell: (c) => statusBadge(c.row.original.status) },
     // AA-791 — the latest human label (and how many people labelled), once migration 231 is applied.
     // Sits right after Status (S239) so it is on screen at 1440 px; the gate-chip columns after it

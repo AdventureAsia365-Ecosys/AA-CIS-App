@@ -41,7 +41,7 @@ from services.acp_content_writing import hygiene, sentence_repair, text_integrit
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
-from services.acp_shared import place_cards
+from services.acp_shared import place_cards, seed_audit
 from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
@@ -197,7 +197,13 @@ async def list_pieces(
             ORDER BY {order} {direction} NULLS LAST, cp.piece_id
             LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
             """, *params, limit, offset)
-    return {"data": [_row(r) for r in rows], "total": total, "limit": limit, "offset": offset,
+        # AA-863 — the seed atom's place / country and the Segment label next to each piece, with a
+        # mismatch flag (seed_audit.seed_check); set-based reads for the whole page, never per row.
+        seeds = await seed_audit.load_piece_seeds(conn, [r["piece_id"] for r in rows]) if rows else {}
+    data = [_row(r) for r in rows]
+    for d in data:
+        d["seed"] = seeds.get(str(d.get("piece_id")))
+    return {"data": data, "total": total, "limit": limit, "offset": offset,
             "labels_enabled": labels_enabled}
 
 
@@ -363,6 +369,7 @@ async def _load_piece_detail(conn, piece_id: str) -> dict:
     piece["exported"] = row["exported_at"] is not None
     piece["tenant_copy"] = tenant_copy_state(row["published_at"], row["exported_at"],
                                              [r["created_at"] for r in edits])
+    piece["seed"] = (await seed_audit.load_piece_seeds(conn, [row["piece_id"]])).get(str(row["piece_id"]))  # AA-863
     return piece
 
 

@@ -211,7 +211,8 @@ function ReviewListInner() {
         emptyDescription="Once you've written content from Social Content, it'll show up here to review before publishing."
         onRowClick={(r) => setOpenPieceId(r.piece_id)}
         toolbarExtra={
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          // AA-836 — the three selects wrap inside their own row on a phone (they overflowed 390px).
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", minWidth: 0 }}>
             <select value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)} style={selectStyle}>
               <option value="all">All channels</option>
               {channels.map((c) => (
@@ -280,6 +281,8 @@ function ReviewListInner() {
 }
 
 const selectStyle: React.CSSProperties = {
+  maxWidth: "100%",
+  minWidth: 0,
   padding: "7px 12px",
   background: T.card,
   border: `1px solid ${T.line}`,

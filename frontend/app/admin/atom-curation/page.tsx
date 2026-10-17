@@ -52,6 +52,7 @@ import SocialContentSubNav, { type SectionKey } from "../_components/SocialConte
 import { A, mono, sans, Card, Badge, Btn, LoadingScreen, TH, TD } from "../_components/adminUi";
 import { fetchJson, EmptyState, ErrorState, AuditTable, Col } from "../_components/auditPanels";
 import { PageHeader, formatDateTime } from "../../_kit";
+import { SeedLine, type SeedInfo } from "../_components/SeedLine";
 
 const MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"];
 
@@ -1068,6 +1069,8 @@ interface SlateRow {
   // (services/acp_shared/slate.py::fetch_slate()) instead of a raw segment_id/route_id.
   canonical_place: string | null; canonical_action: string | null; hub_name: string | null;
   tour_name: string | null; segment_count: number | null;
+  // AA-863 — the Slate seed: the frozen request atom once picked, else the seed a pick would use now.
+  seed?: SeedInfo | null;
 }
 
 interface TenantOption { tenant_id: string; name: string; }
@@ -1112,6 +1115,10 @@ function SlateExplainerNote() {
           <strong>Kind — Segment</strong> = idea about one specific place/moment
         </span>
         <span><strong>Kind — Route</strong> = idea about a whole multi-day journey</span>
+        <span style={{ borderLeft: `1px solid ${A.line}`, paddingLeft: 18 }}>
+          <strong>Seed</strong> = the tour moment the post is written from (once picked: the one it was
+          written from); an amber badge = not this place or not this country
+        </span>
       </div>
     </Card>
   );
@@ -1220,6 +1227,17 @@ function SlateSection() {
             </div>
           ),
           sortValue: r => slateTopicTitle(r), filterValue: r => `${slateTopicTitle(r)} ${r.tour_name ?? ""}`,
+        },
+        {
+          // AA-863 — the seed atom's place · country next to the Subject, with a warning badge when
+          // the seed is not the Subject's place (seed rule) or not in the Segment's country.
+          key: "seed", label: "Seed (place · country)", render: r => (
+            <div style={{ maxWidth: 280, minWidth: 0 }}>
+              {r.seed ? <SeedLine seed={r.seed} /> : <span style={{ color: A.muted2 }}>—</span>}
+            </div>
+          ),
+          sortValue: r => (r.seed?.mismatch ? "0" : "1") + (r.seed?.place ?? ""),
+          filterValue: r => `${r.seed?.place ?? ""} ${r.seed?.country ?? ""} ${r.seed?.mismatch ? "mismatch" : ""}`,
         },
         { key: "created", label: "Proposed", render: r => formatDateTime(r.created_at),
           sortValue: r => r.created_at },

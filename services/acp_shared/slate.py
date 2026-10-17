@@ -71,7 +71,7 @@ import structlog
 from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.subject_seed import (
-    choose_representative, load_alias_cards, load_segment_members,
+    choose_representative, choose_route_anchor, load_alias_cards, load_segment_members,
 )
 
 logger = structlog.get_logger()
@@ -967,11 +967,8 @@ async def _resolve_representative_atom(
         "SELECT canonical_place FROM acp_contract.atom_segment WHERE segment_id = $1", first,
     )
     route_tour = str(route["tour_id"])
-    members = [m for m in (await load_segment_members(conn, [first], str(tenant_id))).get(first, [])
-               if str(m.tour_id) == route_tour]
-    member, _skip = choose_representative(place, members, tenant_tour_ids={route_tour})
-    if member is None and members:
-        member = min(members, key=lambda m: (not (m.evidence or "").strip(), m.atom_id))
+    members = (await load_segment_members(conn, [first], str(tenant_id))).get(first, [])
+    member = choose_route_anchor(place, members, route_tour)
     return (member.atom_id, route_tour, list(segment_ids)) if member else (None, None, None)
 
 

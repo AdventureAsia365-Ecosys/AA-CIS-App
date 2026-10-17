@@ -18,6 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, ExternalLink, Loader2, FileText, Milestone } from "lucide-react";
 import { T, sans, Card, CardHead, Btn, Badge, EmptyState, StickyBar } from "./ui";
 import { AiContentNotice } from "./AiContentNotice";
+import { stripMarkdown } from "./markdownText";
 import { PUBLISH_LOG_QUERY_KEY, channelName } from "./PublishedList";
 
 interface PendingPiece {
@@ -121,9 +122,11 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                 padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`,
                 display: "flex", flexDirection: "column", gap: 10,
               }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3 }}>{p.title}</div>
+                {/* AA-836 (D2) — wraps: on a phone the button drops below the content, so the title
+                    and preview use the full card width instead of a ~90px column beside it. */}
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3, overflowWrap: "anywhere" }}>{p.title}</div>
                     {/* AA-519 Việc 4 — Route-aware piece, distinct from a plain single-atom one. */}
                     {p.route_segment_count != null && (
                       <div style={{ marginBottom: 5 }}>
@@ -134,7 +137,8 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                      {p.content_preview}
+                      {/* AA-836 (D6) — plain text, never raw markdown (`## Title`, `**bold**`). */}
+                      {stripMarkdown(p.content_preview)}
                     </div>
                     <div style={{ fontSize: 11, color: T.muted2, marginTop: 6, fontFamily: sans }}>
                       {p.channel} · {fmtDate(p.created_at)}
@@ -144,7 +148,7 @@ export function PublishPendingList({ connected, reloadSignal = 0 }: {
                     size="sm" variant="primary"
                     onClick={() => handlePublish(p.piece_id)}
                     disabled={busy || !channelConnected}
-                    style={!channelConnected ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+                    style={{ flexShrink: 0, ...(!channelConnected ? { opacity: 0.5, cursor: "not-allowed" } : {}) }}
                   >
                     {busy ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Publishing…</>
                       : !channelConnected ? `Connect ${channelName(p.channel)} to publish`

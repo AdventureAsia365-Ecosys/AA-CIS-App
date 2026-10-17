@@ -35,6 +35,7 @@ import { cookies } from "next/headers";
 import { requireAdmin, requireTenant } from "@/lib/auth-server";
 import { API_RULES, isApiDocsPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
+import { streamUpstream } from "@/lib/proxyResponse";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -104,12 +105,8 @@ async function handler(
 
   try {
     const res = await fetch(url, { method: req.method, headers, body });
-    const resContentType = res.headers.get("content-type") ?? "application/json";
-    const data = await res.arrayBuffer();
-    return new NextResponse(data, {
-      status: res.status,
-      headers: { "Content-Type": resContentType },
-    });
+    // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only).
+    return streamUpstream(res);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }

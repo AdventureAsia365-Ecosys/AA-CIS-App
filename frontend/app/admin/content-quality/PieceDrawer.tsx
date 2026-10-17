@@ -6,11 +6,13 @@
 // S234: each flagged sentence can be cut or rewritten by an admin (SentenceActions.tsx).
 // AA-791: a "Label" section (PieceLabel.tsx) and, per failed attempt, the gates that failed in it
 // (repair_log[].gate_ledger, kept for pieces written after AA-791).
+// AA-863: a "Slate seed" line — the frozen seed atom's place · country and a mismatch badge.
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { A, mono } from "../_components/adminUi";
 import { Badge, Drawer, StatusBadge, apiGet } from "../../_kit";
+import { SeedLine, seedSkipText } from "../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
 import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
@@ -132,6 +134,15 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
               <b>Held (admin label only — the tenant received this piece):</b> {p.held_reason}
             </div>
           )}
+          {p.seed && (
+            <Section title="Slate seed — the atom this piece was written from">
+              <SeedLine seed={p.seed} showSegment />
+              {!p.seed.atom_id && seedSkipText(p.seed.skip_reason) && (
+                <div style={{ fontSize: 12, color: A.muted, marginTop: 4 }}>No seed: {seedSkipText(p.seed.skip_reason)}.</div>
+              )}
+            </Section>
+          )}
+
           <Section title={`Text · ${p.highlights.length} flagged span${p.highlights.length === 1 ? "" : "s"}`}>
             <div style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 11.5, color: A.muted }}>
               <Badge tone="danger" dot={false}>blocking</Badge><Badge tone="warning" dot={false}>warning</Badge>

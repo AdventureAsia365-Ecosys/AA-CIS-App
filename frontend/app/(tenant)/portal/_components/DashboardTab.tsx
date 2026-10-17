@@ -13,6 +13,7 @@ import {
   fmtDateTime, statusVariant, statusLabel,
 } from "./ui";
 import { usePortalShell } from "./PortalShellContext";
+import { useIsPhone } from "../../../_kit";
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
@@ -39,6 +40,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const [dismissAlert, setDismissAlert] = useState(false);
   const [resetsAt, setResetsAt] = useState<string | null>(null);
   const { tenantName, catTotal } = usePortalShell();
+  const phone = useIsPhone(); // AA-836 — Recent Activity drops its short-date column on a phone
 
   useEffect(() => {
     Promise.all([
@@ -192,23 +194,30 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             const iconColor = a.status === "approved" ? T.green    : a.status === "rejected" ? T.red     : T.amber;
             const Icon      = a.status === "approved" ? Check : a.status === "rejected" ? X : RefreshCw;
             return (
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: "36px 1fr auto auto", alignItems: "center", gap: 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
+              // AA-836 — title column can shrink (minmax(0, 1fr)) and the tour name is one line with
+              // an ellipsis; on a phone the trailing short date goes (the full date/time is already
+              // under the title), which gives the name the room instead of 1–2 words per line.
+              <div key={a.id} style={{ display: "grid", gridTemplateColumns: phone ? "36px minmax(0, 1fr) auto" : "36px minmax(0, 1fr) auto auto", alignItems: "center", gap: phone ? 10 : 12, padding: "13px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line2}` }}>
                 <div style={{ width: 36, height: 36, borderRadius: 8, background: iconBg, color: iconColor, display: "grid", placeItems: "center" }}>
                   <Icon size={15} strokeWidth={2.2} />
                 </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
-                    <strong>{a.tour_name || "Tour"}</strong>
-                    <span style={{ color: T.muted2, fontSize: 11, marginLeft: 6, fontWeight: 400 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", minWidth: 0, fontSize: 13, fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
+                    <strong title={a.tour_name || "Tour"} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {a.tour_name || "Tour"}
+                    </strong>
+                    <span style={{ color: T.muted2, fontSize: 11, marginLeft: 6, fontWeight: 400, flexShrink: 0, whiteSpace: "nowrap" }}>
                       · {a.edit_source === "ai_generated" ? "AI" : "Edited"}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{fmtDateTime(a.created_at)}</div>
                 </div>
                 <Badge variant={v}>{statusLabel(a.status)}</Badge>
-                <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
-                  {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
-                </div>
+                {!phone && (
+                  <div style={{ fontSize: 11, color: T.muted2, fontFamily: mono, whiteSpace: "nowrap" }}>
+                    {a.created_at ? new Date(a.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "—"}
+                  </div>
+                )}
               </div>
             );
           })}

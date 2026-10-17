@@ -175,6 +175,19 @@ def choose_representative(
     return best[0], None
 
 
+def choose_route_anchor(place: Optional[str], members: Iterable[Member], route_tour: str) -> Optional[Member]:
+    """The atom-grain anchor of a Route Subject (AA-857): among the Route's first Segment's members on
+    the Route's own tour (one tour = one country), the member that is the Segment's place, else any
+    live member of that tour (evidence first, then lowest atom_id). T9 seeds a Route from every
+    Segment along the walk, so this atom is only the anchor. Shared by `slate.pick_subject()` and the
+    admin seed view (AA-863)."""
+    on_tour = [m for m in members if str(m.tour_id) == route_tour]
+    member, _skip = choose_representative(place, on_tour, tenant_tour_ids={route_tour})
+    if member is None and on_tour:
+        member = min(on_tour, key=lambda m: (not (m.evidence or "").strip(), m.atom_id))
+    return member
+
+
 # ── DB reads (the only impure part) ───────────────────────────────────────────────────────────
 
 # Live (active tour, not deleted, not an empty marker), non-alias members of the given Segments,
@@ -225,7 +238,8 @@ async def load_alias_cards(conn, places: Iterable[Optional[str]]) -> dict[tuple[
 
 
 __all__ = [
-    "Member", "match_grade", "place_matches", "choose_representative", "load_segment_members",
+    "Member", "match_grade", "place_matches", "choose_representative", "choose_route_anchor",
+    "load_segment_members",
     "load_alias_cards", "SKIP_NO_MEMBER", "SKIP_NO_TENANT_MEMBER", "SKIP_NO_PLACE_MATCH",
     "SKIP_SEVERAL_COUNTRIES", "SKIP_LOOSE_COUNTRY_UNKNOWN", "GRADE_EXACT", "GRADE_FORM", "GRADE_CORE",
     "GRADE_PAREN", "GRADE_TOKENS",
