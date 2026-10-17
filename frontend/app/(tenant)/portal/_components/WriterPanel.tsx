@@ -33,6 +33,7 @@ import AngleGateWizard, { type ContentPiece } from "./AngleGateWizard";
 import { AiContentNotice } from "./AiContentNotice";
 import { PUBLISHABLE_CHANNELS, exportPiece, publishPiece } from "./reviewListApi";
 import { channelName } from "./channelLabels";
+import { MarkdownBody } from "./markdownText";
 
 /** What the Slate hands the panel when a Subject is picked (or reopened this session). */
 export interface WriterTarget {
@@ -152,11 +153,12 @@ function FinishedPiece({ piece }: { piece: ContentPiece }) {
         onContextMenu={(e) => { e.preventDefault(); hint(); }}
         style={{
           padding: "14px 16px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card,
-          whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 13.5, lineHeight: 1.65, color: T.body,
+          overflowWrap: "anywhere", fontSize: 13.5, lineHeight: 1.65, color: T.body,
           userSelect: "none", WebkitUserSelect: "none",
         }}
       >
-        {piece.content_text}
+        {/* AA-836 (D6) — rendered like the T10 drawer, never raw markdown (blog keeps ## / **). */}
+        <MarkdownBody text={piece.content_text} />
       </div>
     </div>
   );
