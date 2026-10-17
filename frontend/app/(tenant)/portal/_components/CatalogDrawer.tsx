@@ -1,7 +1,7 @@
 "use client";
 // app/(tenant)/portal/_components/CatalogDrawer.tsx
 // AA-662 PR 3 — the My Content detail/edit drawer, split out of CatalogTab. Uses the kit Drawer +
-// react-query (version detail + original pool tour) + mutations (save edit, request rewrite). The
+// react-query (version detail, which also carries the Master text) + mutations (save edit, request rewrite). The
 // compare editors (summary / highlights / itinerary) and SeeOriginalToggle are unchanged.
 // AA-668 (S239): the drawer shows a finished version only. "Request Rewrite" and a version that is
 // still being written or failed open the Writer panel instead (TourRewritePanel.tsx): live
@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import { T, mono, sans, Btn, LoadingScreen, parseContent, parseHighlights, fmtDateTime } from "./ui";
 import { AiContentNotice } from "./AiContentNotice";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
-import { fetchPoolTour, fetchVersionDetail, type Version } from "./catalogApi";
+import { fetchVersionDetail, type Version } from "./catalogApi";
 
 function TripFact({ label, value }: { label: string; value: string }) {
   return (
@@ -150,35 +150,16 @@ export type CatalogDrawerBody = {
 export function CatalogDrawer(props: CatalogDrawerBody) {
   const { group, saving, saveOk, dirty, exporting, rewriting } = props;
 
-  // Version detail + original pool tour (the parent only opens this drawer on a finished version).
-  const { data, isLoading } = useQuery({
+  // Version detail (the parent only opens this drawer on a finished version).
+  // AA-836 (D4) — "See original content" reads the Master text from this same response: GET
+  // /v1/tours/versions/{id} joins published_tours and returns aa_summary / aa_highlights /
+  // aa_itineraries (tenant pool, RLS-scoped). The old extra call to GET /v1/tours/pool/{id} hit a
+  // route that never existed (404 + console error on every open) and then fell back to these
+  // same fields anyway.
+  const { data: detail, isLoading } = useQuery({
     queryKey: ["my-version-detail", group.id],
-    queryFn: async () => {
-      const detail = await fetchVersionDetail(group.id);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let orig: any = null;
-      if (group.published_tour_id) {
-        try {
-          orig = await fetchPoolTour(group.published_tour_id);
-        } catch {
-          orig = null;
-        }
-      }
-      if (!orig) {
-        orig = {
-          aa_summary: detail.aa_summary ?? null,
-          seo_title: detail.aa_seo_title ?? null,
-          seo_meta: detail.aa_seo_meta ?? null,
-          aa_highlights: detail.aa_highlights ?? null,
-          aa_itineraries: detail.aa_itineraries ?? null,
-        };
-      }
-      return { detail, orig };
-    },
+    queryFn: () => fetchVersionDetail(group.id),
   });
-
-  const detail = data?.detail ?? null;
-  const orig = data?.orig ?? null;
 
   // Editor state, initialised from detail once it loads (lazy-ish: derived initial via useMemo of
   // the parsed content, then held in local state so edits stick). We key the whole drawer by
@@ -248,7 +229,7 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
   }
 
   const itinYours = String(parsed?.itineraries ?? "");
-  const showItin = Boolean((orig?.aa_itineraries ?? detail.aa_itineraries) || parsed?.itineraries);
+  const showItin = Boolean(detail.aa_itineraries || parsed?.itineraries);
 
   return (
     <>
@@ -264,11 +245,11 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
         {showItin && <ItineraryCompare yours={itinYours} expand={expandItin} setExpand={setExpandItin} />}
 
         <SeeOriginalToggle
-          summary={String(orig?.aa_summary ?? detail.aa_summary ?? "")}
+          summary={String(detail.aa_summary ?? "")}
           seoTitle={null}
           seoMeta={null}
-          highlightsRaw={String(orig?.aa_highlights ?? detail.aa_highlights ?? "")}
-          itineraries={String(orig?.aa_itineraries ?? detail.aa_itineraries ?? "") || null}
+          highlightsRaw={String(detail.aa_highlights ?? "")}
+          itineraries={String(detail.aa_itineraries ?? "") || null}
         />
 
         {(detail.duration || detail.inclusions || detail.exclusions) && (

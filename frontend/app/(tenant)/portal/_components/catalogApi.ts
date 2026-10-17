@@ -41,11 +41,6 @@ export function fetchVersionDetail(id: string): Promise<Version> {
   return apiGet<Version>(`/api/tenant/v1/tours/versions/${id}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function fetchPoolTour(publishedTourId: string): Promise<any> {
-  return apiGet(`/api/tenant/v1/tours/pool/${publishedTourId}`);
-}
-
 export async function retryRewrite(versionId: string): Promise<void> {
   const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/retry`, { method: "POST" });
   if (!r.ok) throw new Error(`Retry failed (${r.status})`);

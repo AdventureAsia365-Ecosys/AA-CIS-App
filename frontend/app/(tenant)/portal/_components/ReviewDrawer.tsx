@@ -9,6 +9,7 @@ import { useState } from "react";
 import { T, sans, mono, Btn } from "./ui";
 import { type ReviewItem } from "./reviewListApi";
 import { AiContentNotice } from "./AiContentNotice";
+import { MarkdownBody } from "./markdownText";
 
 export function ReviewDrawer({
   item,
@@ -73,7 +74,6 @@ export function ReviewDrawer({
             borderRadius: 10,
             border: `1px solid ${T.line}`,
             background: T.card,
-            whiteSpace: "pre-wrap",
             fontSize: 13.5,
             lineHeight: 1.6,
             color: T.body,
@@ -82,7 +82,8 @@ export function ReviewDrawer({
             MozUserSelect: "none",
           }}
         >
-          {item.content_text}
+          {/* AA-836 (D6) — rendered, not raw markdown; the Edit textarea keeps the source. */}
+          <MarkdownBody text={item.content_text} />
         </div>
       )}
 
