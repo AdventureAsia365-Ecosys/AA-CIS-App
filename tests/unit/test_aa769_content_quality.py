@@ -17,6 +17,13 @@ def _secret(monkeypatch):
     monkeypatch.setattr("api.routers.admin.ADMIN_SECRET", SECRET)
 
 
+@pytest.fixture(autouse=True)
+def _no_seed_reads(monkeypatch):
+    # AA-863 — the seed read is its own query set (tests/unit/test_aa863_seed_audit.py); these tests
+    # are about the piece query.
+    monkeypatch.setattr(cq.seed_audit, "load_piece_seeds", AsyncMock(return_value={}))
+
+
 def _request(conn):
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=conn)

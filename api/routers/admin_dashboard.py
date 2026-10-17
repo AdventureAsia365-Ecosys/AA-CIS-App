@@ -52,6 +52,7 @@ from fastapi import APIRouter, Header, Query, Request
 
 from api.routers.admin import verify_admin_secret
 from services.acp_contract.segment_matching import live_segment_labels
+from services.acp_shared import seed_audit
 
 router = APIRouter(prefix="/admin/dashboard", tags=["admin-dashboard"])
 
@@ -576,12 +577,17 @@ async def list_slate(
                    r.hub_name, rt_route.src_name AS route_tour_name,
                    CASE WHEN r.ordered_segment_ids IS NOT NULL
                         THEN jsonb_array_length(r.ordered_segment_ids) END AS route_segment_count,
-                   seg_tours.tour_names AS segment_tour_names
+                   seg_tours.tour_names AS segment_tour_names,
+                   -- AA-863 — what the Route anchor (seed) rule reads: the Route's tour, its first
+                   -- Segment and that Segment's place; and the tour's country.
+                   r.tour_id::text AS route_tour_id, r.ordered_segment_ids->>0 AS route_first_segment_id,
+                   asg_first.canonical_place AS route_first_place, rt_route.country AS route_country
             FROM acp_shared.subject s
             LEFT JOIN shared.tenants t ON t.tenant_id = s.tenant_id
             LEFT JOIN acp_contract.atom_segment asg ON asg.segment_id = s.segment_id
             LEFT JOIN acp_contract.route r ON r.route_id = s.route_id
             LEFT JOIN silver_aa_internal.raw_tours rt_route ON rt_route.tour_id = r.tour_id
+            LEFT JOIN acp_contract.atom_segment asg_first ON asg_first.segment_id = r.ordered_segment_ids->>0
             -- A Segment's own definition (CONTEXT.md) is "usually from different tours" — unlike
             -- a Route (inherently one tour's day-span), a Segment-based Subject can legitimately
             -- point at more than one tour, so this aggregates rather than assuming a single one.
@@ -602,13 +608,21 @@ async def list_slate(
         # and label, as the tenant's Slate does (fetch_slate). `tour_name` stays the stored id's
         # aggregate (empty once its members were re-pointed) — an admin-only gap, noted in AA-857.
         moved = await live_segment_labels(conn, [r["segment_id"] for r in rows])
+        # AA-863 — each Subject's seed atom (place · country) and whether it fits the Subject: the
+        # frozen request seed once picked, else the seed a pick would use now. Set-based reads.
+        seeds = await seed_audit.load_subject_seeds(conn, tenant_id, [
+            {**dict(r), **({"segment_id": moved[r["segment_id"]][0], "canonical_place": moved[r["segment_id"]][1],
+                            "canonical_action": moved[r["segment_id"]][2]} if r["segment_id"] in moved else {})}
+            for r in rows
+        ]) if rows else {}
 
     by_state = {"proposed": 0, "picked": 0, "used": 0, "cut": 0}
     data = []
     for r in rows:
         if r["state"] in by_state:
             by_state[r["state"]] += 1
-        row = _safe(r, exclude=("route_tour_name", "route_segment_count", "segment_tour_names"))
+        row = _safe(r, exclude=("route_tour_name", "route_segment_count", "segment_tour_names", "route_tour_id",
+                                "route_first_segment_id", "route_first_place", "route_country"))
         if r["segment_id"] in moved:
             row["segment_id"], row["canonical_place"], row["canonical_action"] = moved[r["segment_id"]]
         if r["route_id"]:
@@ -617,6 +631,7 @@ async def list_slate(
         else:
             row["tour_name"] = ", ".join(r["segment_tour_names"] or [])
             row["segment_count"] = None
+        row["seed"] = seeds.get(str(r["subject_id"]))
         data.append(row)
 
     return {

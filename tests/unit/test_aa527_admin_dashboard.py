@@ -358,6 +358,9 @@ class TestListSlate:
         # AA-857 — the alias read is its own query; these tests are about the Subject query.
         self.live_labels = AsyncMock(return_value={})
         monkeypatch.setattr(admin_dashboard, "live_segment_labels", self.live_labels)
+        # AA-863 — the seed reads are their own query set (tests/unit/test_aa863_seed_audit.py).
+        self.subject_seeds = AsyncMock(return_value={})
+        monkeypatch.setattr(admin_dashboard.seed_audit, "load_subject_seeds", self.subject_seeds)
 
     @pytest.mark.asyncio
     async def test_subject_on_an_alias_old_id_shows_the_live_segment(self):

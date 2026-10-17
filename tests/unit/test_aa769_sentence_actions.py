@@ -24,6 +24,12 @@ def _secret(monkeypatch):
     monkeypatch.setattr("api.routers.admin.ADMIN_SECRET", SECRET)
 
 
+@pytest.fixture(autouse=True)
+def _no_seed_reads(monkeypatch):
+    # AA-863 — the piece detail's seed read is tested in tests/unit/test_aa863_seed_audit.py.
+    monkeypatch.setattr(cq.seed_audit, "load_piece_seeds", AsyncMock(return_value={}))
+
+
 TEXT = ("Opening line here. The monastery sits above Luang Prabang today. "
         "At Arcadia Adventures, we build it. It is a hidden gem.")
 F9_PHRASE = {"gate": "F9_brand_style", "passed": False, "blocking": False,
