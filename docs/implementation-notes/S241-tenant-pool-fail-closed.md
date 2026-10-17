@@ -135,3 +135,36 @@ Nghiệp decision D-12 (S241): when a tenant-pool route flag cannot be read, the
   root working tree, uncommitted) — keep it in step with `ALL_TENANT_POOL_FLAGS`.
 - To make a rollback stick: add the key to `TENANT_POOL_FORCE_ADMIN_FLAGS` in the api task definition
   (AA-CIS-Infra `modules/ecs`), which is a deploy.
+
+## CI round (PR #792, Integration Tests red) — tests state the flag explicitly
+
+### Changed
+- `tests/integration/test_aa802_pending_latest_piece.py` and `tests/integration/test_aa815_publish_log_sql.py`
+  built a `MagicMock` request whose `app.state.redis.get` is not awaitable and `tenant_pool = None`. Before
+  D-12 the failed read meant OFF, so they silently ran on the admin pool; under D-12 it means ON, so 11 tests
+  got 503 (`aa817_tenant_flag_read_failed reason=redis_error`). Both harnesses now set
+  `app.state.redis = _FlagsOff()` (async `get` returning `"false"` for every key in
+  `ALL_TENANT_POOL_FLAGS`): they test the route SQL on the admin pool (owner connection) on purpose. The
+  tenant-pool / RLS side of the same routes is `test_aa817_tenant_pool_routes.py` and
+  `test_aa859_unpublish_pool.py` (explicit `_Redis(flag_on)`). Production rule unchanged.
+- Every other integration test that reaches `acquire_scoped_conn` already passes an explicit `_Redis` fake
+  (`"true"` / `"false"`); the remaining `MagicMock` / `redis=None` requests (aa791 label routes, aa819 admin
+  override) call admin routes that read no tenant-pool flag.
+- New unit test `tests/unit/test_s241_tenant_flag_keys.py`: AST-scans `api/`, `services/`, `shared/`,
+  `worker/` for every flag key handed to `acquire_scoped_conn` / `_flag_enabled` / `_read_flag` (must resolve
+  to a `*_FLAG` constant or a literal) and asserts the set equals a documented literal list of 11 keys, which
+  must also equal `ALL_TENANT_POOL_FLAGS`; a third check refuses any other `aaNNN:..._pool`-shaped string
+  literal in production code. Under D-12 a new or renamed key is a missing key = ON, so it cannot appear
+  silently. Scanned `services/` too: three of the 11 keys are read there (`fetch_piece`,
+  `fetch_latest_piece_for_request`, `update_piece_content_text`).
+
+### Should know
+- **`aa544:publish_log_list_pool` was MISSING in live Redis** (not `"true"` as the notes above assumed for all
+  11). Under D-12 a missing key is ON, so merging would have moved GET /v1/publish-log onto the tenant pool
+  with no A/B. The orchestrator pinned it to `"false"` on Dev before merge. Turning it on needs the AA-859
+  A/B check (tenant pool vs admin pool response for the same tenant, `used_tenant_pool=True` in the logs)
+  first, then `SET aa544:publish_log_list_pool true`.
+- Verified locally: the unit file passes, and a mutation (one call site switched to `"aa999:new_pool"`)
+  fails both scan checks; the two integration modules import and collect (12 tests), and their `_request`
+  harness sends all 11 flags to the admin pool through the real `acquire_scoped_conn`. The integration tests
+  themselves only run in CI (no `aa_app_user` locally).
