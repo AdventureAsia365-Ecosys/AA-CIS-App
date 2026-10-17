@@ -283,6 +283,14 @@
     "capability": null,
     "module": "api.routers.admin_photos"
   },
+  "GET /admin/platform/staff": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
+  "GET /admin/platform/staff/{staff_id}": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
   "GET /admin/progress/s1/{job_id}": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
