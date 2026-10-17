@@ -1,22 +1,23 @@
-"""S241 (GĐ −1) — every /admin route must authenticate the caller.
+"""S241 (GĐ −1) — every route of the API must authenticate the caller, unless allowlisted as public.
 
-Until S241, 27 routes under /admin answered without any check on the public API domain: 25 GETs
-in admin_job_runner / admin_llm_ops / admin_budgets / admin_photos / admin_segment_research, plus
-POST /admin/segment-research/preview (dry run) and POST /admin/upload-staging/{id}/decide (a write
-that declared the X-Admin-Secret header but never verified it). The admin BFF always sent the
-secret, so the pages worked and nobody noticed: those routers relied on the BFF alone.
+Until S241, 27 routes under /admin answered without any check on the public API domain (25 GETs in
+admin_job_runner / admin_llm_ops / admin_budgets / admin_photos / admin_segment_research, plus POST
+/admin/segment-research/preview and POST /admin/upload-staging/{id}/decide). The admin BFF always
+sent the secret, so the pages worked and nobody noticed. The S241 review then found /v1/rules and
+/v1/social accepting ANY JWT (a tenant token included) as "admin".
 
-This test makes that mistake a red CI run instead of a live hole. It imports the real app and, for
-every APIRoute whose path starts with /admin, requires ONE of:
+This test makes those mistakes a red CI run instead of a live hole. It imports the real app and
+walks EVERY entry of app.routes (not only /admin):
 
-1. an auth dependency in the route's dependant tree (router-level or route-level
-   `dependencies=[Depends(...)]`, or a `Depends(...)` parameter), or
-2. an unconditional inline call to an auth function at the TOP LEVEL of the endpoint body, with no
-   `await` and no `return` before it — so nothing touches the DB before the check runs. A check
-   nested in an `if`/`try` does not count.
-
-ALLOWED_PUBLIC lists the /admin routes that may stay without auth. It is empty: every /admin route
-is staff-only. Add an entry only with a written reason.
+- APIRoute / APIWebSocketRoute: needs an auth dependency in its dependant tree (router-level or
+  route-level `dependencies=[Depends(...)]`, or a `Depends(...)` parameter) — or, for HTTP routes, a
+  strict inline staff check (see `_has_inline_staff_check`).
+- Staff-only paths (STAFF_ONLY_PREFIXES: /admin, /v1/pipeline, /v1/rules, /v1/social) need a STAFF
+  check. A tenant-or-staff dependency (a tenant JWT satisfies it) is accepted there only for the
+  routes in ADMIN_TENANT_OR_STAFF.
+- Mount: recursed into when the mounted app is a router; any other mounted ASGI app, and any plain
+  Starlette Route / WebSocketRoute, fails unless listed in NON_API_ALLOWED with a reason.
+- Anything else must be in ALLOWED_PUBLIC (or INLINE_REVIEWED) with a written reason.
 """
 from __future__ import annotations
 
@@ -26,28 +27,68 @@ import textwrap
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi import Depends, FastAPI, Header, WebSocket
+from fastapi import params as fastapi_params
+from fastapi.routing import APIRoute, APIWebSocketRoute
+from starlette.routing import Mount
 
+from api import main
+from api.core import staff_secret
 from api.main import app
-from api.routers import admin, admin_atoms, admin_pipeline, admin_settings
+from api.routers import admin, admin_atoms, admin_pipeline, admin_settings, v1_pipeline, v1_tours
 
-# Dependency callables that authenticate a caller.
-AUTH_DEPENDENCIES = {
+# Dependencies that admit staff only (the X-Admin-Secret held by the staff BFF).
+STAFF_DEPENDENCIES = {
     admin.verify_admin_secret,                 # X-Admin-Secret (constant-time compare)
     admin_settings.verify_admin,               # same check, local copy in admin_settings
     admin_atoms._require_atoms_staff,          # X-Admin-Secret; logs + refuses a tenant Bearer
-    admin_pipeline._resolve_brand_tenant_id,   # tenant JWT (own brand) or X-Admin-Secret (AA-424)
+    v1_pipeline._require_admin,                # X-Admin-Secret; any JWT -> 403 (AA-799)
+    staff_secret.require_staff_secret,         # same rule, shared by /v1/rules + /v1/social (S241)
+    main.require_admin_secret_for_docs,        # X-Admin-Secret on /docs, /redoc, /openapi.json (AA-577)
 }
-# Function names accepted as an inline check at the top of an endpoint body.
-INLINE_AUTH_CALLS = {"verify_admin_secret", "verify_admin"}
+# Dependencies that a tenant JWT also satisfies.
+TENANT_OR_STAFF_DEPENDENCIES = {
+    admin_pipeline._resolve_brand_tenant_id,   # tenant JWT (own brand) or X-Admin-Secret (AA-424)
+    v1_tours.get_tenant,                       # tenant portal routes
+}
+# Functions accepted as an inline staff check at the top of an endpoint body (identity, not name).
+STAFF_INLINE_CHECKS = {admin.verify_admin_secret, admin_settings.verify_admin}
 
-# (METHOD, path) -> reason. Keep empty unless a route truly must be public.
-ALLOWED_PUBLIC: dict[tuple[str, str], str] = {}
+STAFF_ONLY_PREFIXES = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
+
+# Staff-only paths where a tenant JWT is accepted on purpose. (METHOD, path) -> reason.
+ADMIN_TENANT_OR_STAFF: dict[tuple[str, str], str] = {
+    ("GET", "/admin/brand-identity"): "AA-424: tenant portal edits its own brand; JWT scoped to own tenant",
+    ("POST", "/admin/brand-identity"): "AA-424: same",
+    ("POST", "/admin/brand-identity/upload"): "AA-424: same",
+    ("POST", "/admin/brand-identity/parse"): "AA-424: same",
+}
+
+# Routes that are public by design. (METHOD, path) -> reason.
+ALLOWED_PUBLIC: dict[tuple[str, str], str] = {
+    ("GET", "/health"): "ALB / deploy health check",
+    ("POST", "/auth/tenant-login"): "login: trades a tenant API key for a JWT",
+    ("POST", "/auth/admin-login"): "login: staff username + password",
+    ("POST", "/auth/verify-tenant"): "verifies the JWT in the request body (portal middleware)",
+    ("POST", "/auth/verify-admin"): "verifies the JWT in the request body (admin middleware)",
+    ("POST", "/auth/booking-token"): "AA-Booking token exchange; authenticates by body credentials",
+    ("GET", "/auth/.well-known/jwks.json"): "public signing keys",
+    ("GET", "/v1/trip/{tour_id}"): "AA-482: public trip page data",
+    ("GET", "/content/photos/{photo_id}"): "AA-708: public image redirect (TripPlanner, published pages)",
+    ("GET", "/v1/angle-gate/goals"): "AA-449: static list of content goals",
+}
+
+# Routes whose auth is an inline check the scan cannot prove (it branches). (METHOD, path) -> reason.
+INLINE_REVIEWED: dict[tuple[str, str], str] = {
+    ("GET", "/v1/tours/{tour_id}/full"):
+        "admin secret or verify_tenant_jwt, inline, before any DB access; 401 otherwise (reviewed S241)",
+}
+
+# Non-APIRoute entries (mounts, plain Starlette routes). path -> reason. Empty today.
+NON_API_ALLOWED: dict[str, str] = {}
 
 
-def _admin_routes():
-    return [r for r in app.routes if isinstance(r, APIRoute) and r.path.startswith("/admin")]
-
+# ── Checker ──────────────────────────────────────────────────────────────────────────────────────
 
 def _dependency_calls(dependant):
     for dep in dependant.dependencies:
@@ -56,78 +97,215 @@ def _dependency_calls(dependant):
         yield from _dependency_calls(dep)
 
 
-def _has_auth_dependency(route: APIRoute) -> bool:
-    return any(call in AUTH_DEPENDENCIES for call in _dependency_calls(route.dependant))
+def _is_staff_only(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in STAFF_ONLY_PREFIXES)
 
 
-def _is_auth_call(stmt: ast.stmt) -> bool:
-    return (
-        isinstance(stmt, ast.Expr)
-        and isinstance(stmt.value, ast.Call)
-        and isinstance(stmt.value.func, ast.Name)
-        and stmt.value.func.id in INLINE_AUTH_CALLS
-    )
+def _header_name(param: inspect.Parameter):
+    """The HTTP header a parameter reads, or None when it is not a Header(...) parameter."""
+    marker = param.default
+    if not isinstance(marker, fastapi_params.Header):
+        meta = getattr(param.annotation, "__metadata__", ())
+        marker = next((m for m in meta if isinstance(m, fastapi_params.Header)), None)
+        if marker is None:
+            return None
+    if marker.alias:
+        return marker.alias.lower()
+    name = param.name.replace("_", "-") if marker.convert_underscores else param.name
+    return name.lower()
 
 
-def _has_inline_auth(route: APIRoute) -> bool:
-    """An auth call among the endpoint's top-level statements, before any await or return."""
-    source = textwrap.dedent(inspect.getsource(route.endpoint))
-    func = ast.parse(source).body[0]
-    assert isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)), route.path
+def _is_staff_inline_call(stmt: ast.stmt, endpoint, params, assigned: set) -> bool:
+    """`<staff check>(<x-admin-secret header param>)`, resolved through the endpoint's globals."""
+    if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+        return False
+    call = stmt.value
+    if not isinstance(call.func, ast.Name):
+        return False
+    if endpoint.__globals__.get(call.func.id) not in STAFF_INLINE_CHECKS:
+        return False
+    if call.keywords or len(call.args) != 1 or not isinstance(call.args[0], ast.Name):
+        return False
+    arg = call.args[0].id
+    return arg in params and arg not in assigned and _header_name(params[arg]) == "x-admin-secret"
+
+
+def _has_inline_staff_check(endpoint) -> bool:
+    """A staff check among the endpoint's top-level statements, before any await or return.
+
+    The name must resolve (endpoint globals) to admin.verify_admin_secret or
+    admin_settings.verify_admin, and the argument must be the endpoint's own X-Admin-Secret header
+    parameter, not reassigned before the call. A check nested in an `if`/`try` does not count.
+    """
+    endpoint = inspect.unwrap(endpoint)
+    params = inspect.signature(endpoint).parameters
+    func = ast.parse(textwrap.dedent(inspect.getsource(endpoint))).body[0]
+    assert isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)), endpoint
+    assigned: set = set()
     for stmt in func.body:
-        if _is_auth_call(stmt):
+        if _is_staff_inline_call(stmt, endpoint, params, assigned):
             return True
         if isinstance(stmt, ast.Return) or any(isinstance(n, ast.Await) for n in ast.walk(stmt)):
             return False
+        assigned |= {n.id for n in ast.walk(stmt) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
     return False
 
 
-def test_admin_routes_exist():
+def _check_endpoint(method, path, route, problems):
+    key = (method, path)
+    where = f"{method} {path} ({route.endpoint.__module__}.{route.endpoint.__name__})"
+    if key in ALLOWED_PUBLIC or key in INLINE_REVIEWED:
+        return
+    calls = set(_dependency_calls(route.dependant))
+    if calls & STAFF_DEPENDENCIES:
+        return
+    if isinstance(route, APIRoute) and _has_inline_staff_check(route.endpoint):
+        return
+    if calls & TENANT_OR_STAFF_DEPENDENCIES:
+        if not _is_staff_only(path) or key in ADMIN_TENANT_OR_STAFF:
+            return
+        problems.append(f"{where}: staff-only path accepts a tenant JWT")
+        return
+    problems.append(f"{where}: no auth check")
+
+
+def find_problems(routes, prefix: str = "") -> list[str]:
+    """Every route reachable through `routes` that has no acceptable auth check."""
+    problems: list[str] = []
+    for route in routes:
+        path = prefix + getattr(route, "path", "")
+        if isinstance(route, APIRoute):
+            for method in sorted(route.methods):
+                _check_endpoint(method, path, route, problems)
+        elif isinstance(route, APIWebSocketRoute):
+            _check_endpoint("WS", path, route, problems)
+        elif path in NON_API_ALLOWED:
+            continue
+        elif isinstance(route, Mount) and getattr(route.app, "routes", None) is not None:
+            problems.extend(find_problems(route.app.routes, prefix=path))
+        else:
+            problems.append(f"{type(route).__name__} {path}: not an APIRoute, not scanned — add auth or "
+                            "a NON_API_ALLOWED entry with a reason")
+    return problems
+
+
+def _all_keys(routes, prefix=""):
+    for route in routes:
+        path = prefix + getattr(route, "path", "")
+        if isinstance(route, APIRoute):
+            yield from ((m, path) for m in route.methods)
+        elif isinstance(route, Mount) and getattr(route.app, "routes", None) is not None:
+            yield from _all_keys(route.app.routes, path)
+
+
+# ── The real app ─────────────────────────────────────────────────────────────────────────────────
+
+def test_scan_sees_the_whole_app():
     """Guard against the scan silently checking nothing (e.g. a renamed prefix)."""
-    assert len(_admin_routes()) > 150
+    keys = set(_all_keys(app.routes))
+    assert sum(1 for _, p in keys if p.startswith("/admin")) > 150
+    assert sum(1 for _, p in keys if p.startswith("/v1/")) > 50
 
 
-def test_every_admin_route_requires_auth():
-    open_routes = []
-    for route in _admin_routes():
-        for method in sorted(route.methods):
-            if (method, route.path) in ALLOWED_PUBLIC:
-                continue
-            if _has_auth_dependency(route) or _has_inline_auth(route):
-                continue
-            open_routes.append(f"{method} {route.path} ({route.endpoint.__module__}.{route.endpoint.__name__})")
-    assert not open_routes, (
-        "These /admin routes have no auth check (S241). Add the router's auth dependency — "
-        "prefer dependencies=[Depends(verify_admin_secret)] on the APIRouter:\n" + "\n".join(open_routes)
+def test_every_route_requires_auth():
+    problems = find_problems(app.routes)
+    assert not problems, (
+        "These routes have no acceptable auth check (S241). Add the router's auth dependency — "
+        "prefer dependencies=[Depends(verify_admin_secret)] on the APIRouter — or, for a route that "
+        "must be public, an ALLOWED_PUBLIC entry with a reason:\n" + "\n".join(problems)
     )
 
 
 def test_allowlist_entries_are_real_routes():
-    known = {(m, r.path) for r in _admin_routes() for m in r.methods}
-    stale = [k for k in ALLOWED_PUBLIC if k not in known]
-    assert not stale, f"ALLOWED_PUBLIC names routes that no longer exist: {stale}"
+    known = set(_all_keys(app.routes))
+    lists = {"ALLOWED_PUBLIC": ALLOWED_PUBLIC, "INLINE_REVIEWED": INLINE_REVIEWED,
+             "ADMIN_TENANT_OR_STAFF": ADMIN_TENANT_OR_STAFF}
+    stale = [(name, k) for name, entries in lists.items() for k in entries if k not in known]
+    assert not stale, f"Allowlists name routes that no longer exist: {stale}"
+    paths = {getattr(r, "path", None) for r in app.routes}
+    assert not [p for p in NON_API_ALLOWED if p not in paths]
 
 
-def test_inline_check_after_an_await_does_not_count():
-    """The inline rule itself: a check placed after DB access is not accepted."""
-    async def late_check(request, x_admin_secret=None):
-        await request.app.state.pool.fetch("SELECT 1")
-        admin.verify_admin_secret(x_admin_secret)
+# ── Self-tests of the checker ────────────────────────────────────────────────────────────────────
 
-    async def nested_check(request, x_admin_secret=None):
-        if request:
-            verify_admin_secret(x_admin_secret)  # noqa: F821 — parsed only, never called
+verify_admin_secret = admin.verify_admin_secret  # resolved by the inline rule through these globals
+verify_admin = main.verify_admin                 # the POST /auth/verify-admin ENDPOINT, not a check
 
-    async def first_check(request, x_admin_secret=None):
-        verify_admin_secret(x_admin_secret)  # noqa: F821 — parsed only, never called
-        return await request.app.state.pool.fetch("SELECT 1")
 
-    def fake(endpoint):
-        return MagicMock(endpoint=endpoint, path="/admin/x")
+async def _late_check(request, x_admin_secret: str = Header(None)):
+    await request.app.state.pool.fetch("SELECT 1")
+    verify_admin_secret(x_admin_secret)
 
-    assert not _has_inline_auth(fake(late_check))
-    assert not _has_inline_auth(fake(nested_check))
-    assert _has_inline_auth(fake(first_check))
+
+async def _nested_check(request, x_admin_secret: str = Header(None)):
+    if request:
+        verify_admin_secret(x_admin_secret)
+
+
+async def _first_check(request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    return await request.app.state.pool.fetch("SELECT 1")
+
+
+async def _wrong_function(request, x_admin_secret: str = Header(None)):
+    verify_admin(request)  # same name as admin_settings.verify_admin, but the /auth endpoint
+    return await request.app.state.pool.fetch("SELECT 1")
+
+
+async def _query_param_secret(request, secret: str = None):
+    verify_admin_secret(secret)  # a query parameter, not the X-Admin-Secret header
+    return await request.app.state.pool.fetch("SELECT 1")
+
+
+async def _reassigned_secret(request, x_admin_secret: str = Header(None)):
+    x_admin_secret = admin.ADMIN_SECRET
+    verify_admin_secret(x_admin_secret)
+    return await request.app.state.pool.fetch("SELECT 1")
+
+
+def test_inline_rule_accepts_only_a_real_staff_check_first():
+    assert _has_inline_staff_check(_first_check)
+    assert not _has_inline_staff_check(_late_check)
+    assert not _has_inline_staff_check(_nested_check)
+    assert not _has_inline_staff_check(_wrong_function)
+    assert not _has_inline_staff_check(_query_param_secret)
+    assert not _has_inline_staff_check(_reassigned_secret)
+
+
+def test_checker_reports_mounts_websockets_and_tenant_auth_on_staff_paths():
+    throwaway = FastAPI()
+    sub = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+    @sub.get("/open")
+    async def sub_open():
+        return {}
+
+    async def raw_asgi(scope, receive, send):  # e.g. a metrics exporter or StaticFiles
+        pass
+
+    @throwaway.websocket("/admin/ws/jobs")
+    async def ws_jobs(websocket: WebSocket):
+        await websocket.accept()
+
+    @throwaway.get("/admin/tenant-ok-by-mistake")
+    async def tenant_on_staff_path(tenant=Depends(v1_tours.get_tenant)):
+        return tenant
+
+    @throwaway.get("/internal/queue-dump")
+    async def queue_dump():
+        return []
+
+    throwaway.mount("/admin/tools", sub)
+    throwaway.mount("/admin/static", raw_asgi)
+
+    report = "\n".join(find_problems(throwaway.routes))
+    assert "WS /admin/ws/jobs" in report
+    assert "GET /admin/tools/open" in report
+    assert "Mount /admin/static" in report
+    assert "GET /admin/tenant-ok-by-mistake" in report and "tenant JWT" in report
+    assert "GET /internal/queue-dump" in report
+    # FastAPI's own /docs etc. are plain Starlette routes: reported too.
+    assert "Route /docs" in report
 
 
 # ── Live checks through the real app: the S241 routes refuse an anonymous caller ─────────────
@@ -227,6 +405,58 @@ def test_unconfigured_secret_is_still_503(client, monkeypatch):
     """Behaviour of verify_admin_secret is unchanged: no server secret -> 503, not open."""
     monkeypatch.setattr(admin, "ADMIN_SECRET", "")
     assert client.get("/admin/budgets").status_code == 503
+
+
+# ── /v1/rules + /v1/social: staff only; a tenant JWT is refused (S241 review) ─────────────────
+
+_SOCIAL_ID = "aaaaaaaa-0000-0000-0000-000000000001"
+_RULE_ID = "bbbbbbbb-0000-0000-0000-000000000001"
+_V1_STAFF_ROUTES = [
+    ("GET", "/v1/rules", None),
+    ("PATCH", f"/v1/rules/{_RULE_ID}", {"active": False}),
+    ("GET", "/v1/social?limit=200", None),
+    ("POST", "/v1/social/batch-review",
+     {"decisions": [{"social_id": _SOCIAL_ID, "status": "approved"}], "reviewer_id": "x"}),
+    ("GET", f"/v1/social/{_SOCIAL_ID}/context", None),
+    ("GET", f"/v1/social/{_SOCIAL_ID}", None),
+]
+
+
+@pytest.fixture
+def v1_client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from api.routers import v1_rules, v1_social
+
+    # The two routers alone (no rate-limit middleware, which would look up the tenant in Redis/DB).
+    # The DB pool raises if touched: the guard must refuse before any query runs.
+    monkeypatch.setenv("ADMIN_SECRET", _SECRET)
+    v1_app = FastAPI()
+    v1_app.include_router(v1_rules.router)
+    v1_app.include_router(v1_social.router)
+    v1_app.state.pool = MagicMock(acquire=MagicMock(side_effect=AssertionError("the DB must not be reached")))
+    return TestClient(v1_app, raise_server_exceptions=True)
+
+
+@pytest.mark.parametrize("method,path,body", _V1_STAFF_ROUTES)
+def test_v1_staff_routes_refuse_a_tenant_jwt(v1_client, method, path, body):
+    from api.routers.auth import _create_jwt
+
+    token = _create_jwt("11111111-1111-1111-1111-111111111111", "Some Tenant", "starter")
+    resp = v1_client.request(method, path, json=body, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 403, f"{method} {path} -> {resp.status_code} with a tenant JWT"
+
+
+@pytest.mark.parametrize("method,path,body", _V1_STAFF_ROUTES)
+def test_v1_staff_routes_refuse_anonymous_and_a_wrong_secret(v1_client, method, path, body):
+    assert v1_client.request(method, path, json=body).status_code == 401
+    wrong = v1_client.request(method, path, json=body, headers={"X-Admin-Secret": _SECRET + "x"})
+    assert wrong.status_code == 403
+
+
+def test_v1_staff_routes_refuse_a_bad_jwt_with_401(v1_client):
+    resp = v1_client.get("/v1/rules", headers={"Authorization": "Bearer not-a-jwt"})
+    assert resp.status_code == 401
 
 
 @pytest.mark.parametrize("provided,expected,ok", [
