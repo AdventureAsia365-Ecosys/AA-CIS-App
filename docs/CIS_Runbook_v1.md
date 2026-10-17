@@ -43,12 +43,10 @@ docker login --username AWS \
 # Build
 docker build -t aa-cis-dev-api .
 
-# Tag + Push
-docker tag aa-cis-dev-api:latest $ECR:latest
-docker tag aa-cis-dev-api:latest $ECR:$(git rev-parse --short HEAD)
-
-docker push $ECR:latest
-docker push $ECR:$(git rev-parse --short HEAD)
+# Tag + Push (AA-869: the ECR repo is IMMUTABLE; push only the per-commit dev-<full sha> tag,
+# never :latest. Normal deploys go through the Deploy Dev workflow, not this manual path.)
+docker tag aa-cis-dev-api:latest $ECR:dev-$(git rev-parse HEAD)
+docker push $ECR:dev-$(git rev-parse HEAD)
 ```
 
 ### 1.2 Force ECS redeploy
