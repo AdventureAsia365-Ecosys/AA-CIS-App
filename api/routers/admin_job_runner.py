@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
@@ -29,7 +29,11 @@ from shared.jobs.registry import kinds, run_terminal_hook
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/job-runner", tags=["admin-job-runner"])
+# S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
+# ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
+# the write routes are kept as-is (same check, run twice).
+router = APIRouter(prefix="/admin/job-runner", tags=["admin-job-runner"],
+                   dependencies=[Depends(verify_admin_secret)])
 
 _STATUSES = ("queued", "running") + queue.TERMINAL
 

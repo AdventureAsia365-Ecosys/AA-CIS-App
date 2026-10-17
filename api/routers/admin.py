@@ -10,6 +10,7 @@ from typing import List, Optional
 import asyncpg
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from api.core.secret_compare import secrets_equal
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
@@ -110,7 +111,7 @@ RATE_LIMIT_RPM_MAX = 10000
 def verify_admin_secret(x_admin_secret: str = Header(None)):
     if not ADMIN_SECRET:
         raise HTTPException(status_code=503, detail="Admin secret not configured")
-    if x_admin_secret != ADMIN_SECRET:
+    if not secrets_equal(x_admin_secret, ADMIN_SECRET):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
 
 

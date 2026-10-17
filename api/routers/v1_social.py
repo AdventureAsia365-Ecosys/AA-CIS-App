@@ -7,38 +7,19 @@ Routes (specific before parameterized):
   GET  /v1/social/{social_id}      → get single row
 """
 import json
-import os
 from typing import List, Optional
 from uuid import UUID
 
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.security import HTTPBearer as _HTTPBearer, HTTPAuthorizationCredentials as _Creds
 from pydantic import BaseModel, field_validator
 
-from api.routers.auth import verify_jwt as _verify_jwt
+from api.core.staff_secret import require_staff_secret
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/v1/social", tags=["Social Content"])
-
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-def _get_admin(
-    request: Request,
-    credentials: Optional[_Creds] = Depends(_HTTPBearer(auto_error=False)),
-):
-    admin_secret = os.environ.get("ADMIN_SECRET", "")
-    x_admin = request.headers.get("X-Admin-Secret", "")
-    if admin_secret and x_admin == admin_secret:
-        return {"sub": "00000000-0000-0000-0000-000000000001", "role": "admin"}
-    if credentials:
-        try:
-            return _verify_jwt(credentials.credentials)
-        except Exception:
-            pass
-    raise HTTPException(status_code=401, detail="Not authenticated")
+# S241: staff-only. Admin secret required; any JWT (tenant or staff) gets 403 — api/core/staff_secret.py.
+router = APIRouter(prefix="/v1/social", tags=["Social Content"], dependencies=[Depends(require_staff_secret)])
 
 
 def _get_pool(request: Request) -> asyncpg.Pool:
@@ -67,7 +48,6 @@ async def list_social_content(
     tour_id: Optional[str] = Query(None),
     validation_status: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    _auth=Depends(_get_admin),
 ):
     pool = _get_pool(request)
     async with pool.acquire() as conn:
@@ -141,7 +121,6 @@ class BatchReviewRequest(BaseModel):
 async def batch_review_social(
     body: BatchReviewRequest,
     request: Request,
-    _auth=Depends(_get_admin),
 ):
     """Gate 3-social bulk HITL decisions — single transaction."""
     pool = _get_pool(request)
@@ -201,7 +180,6 @@ async def batch_review_social(
 async def get_social_context(
     social_id: str,
     request: Request,
-    _auth=Depends(_get_admin),
 ):
     """Gate 3-social context panel data — quality score, validation, formula [AA-127]."""
     try:
@@ -230,7 +208,6 @@ async def get_social_context(
 async def get_social_content(
     social_id: str,
     request: Request,
-    _auth=Depends(_get_admin),
 ):
     try:
         UUID(social_id)

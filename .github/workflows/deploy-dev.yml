@@ -289,7 +289,8 @@ jobs:
             # (missing a new kind) fails this.
             REG=$(curl -s --max-time 25 -H "x-admin-secret: ${ADMIN_SECRET}" \
                     "${BASE}/admin/job-runner/summary" | jq -r '[.kinds[].kind] | sort | @json')
-            WK=$(curl -s --max-time 25 "${BASE}/admin/job-runner/workers")
+            # S241: /workers needs the admin secret now (it was public by mistake until S241).
+            WK=$(curl -s --max-time 25 -H "x-admin-secret: ${ADMIN_SECRET}" "${BASE}/admin/job-runner/workers")
             ALIVE=$(echo "$WK" | jq '[.workers[] | select(.alive)] | length')
             if [ "${ALIVE:-0}" -lt 1 ]; then
               echo "::error::smoke [worker-kinds] no alive worker after deploy"

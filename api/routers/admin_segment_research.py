@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from api.routers.admin import verify_admin_secret
@@ -33,7 +33,11 @@ from shared.jobs.registry import enqueue
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/admin/segment-research", tags=["admin-segment-research"])
+# S241 (GĐ −1): every route of this router needs the admin secret. Router-level so a new GET can not
+# ship open again (the reads here were public until S241). The inline verify_admin_secret() calls in
+# the write routes are kept as-is (same check, run twice).
+router = APIRouter(prefix="/admin/segment-research", tags=["admin-segment-research"],
+                   dependencies=[Depends(verify_admin_secret)])
 
 # Hard ceiling on scope size: one run can never cover more places than this.
 MAX_PLACES_PER_RUN = 200
