@@ -128,7 +128,7 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
           const hasActive = groups.some((g) => g.items.some((n) => navActive(n, pathname)));
           return (
             <div key={section.id} data-testid={`nav-section-${section.id}`}
-              style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              style={{ display: "flex", flexDirection: "column" }}>
               {showHeaders && (rail ? (
                 <div role="separator" aria-label={section.label}
                   data-testid={`nav-section-divider-${section.id}`}
@@ -137,8 +137,9 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
                 <SectionHeader section={section} closed={closed} hasActive={hasActive}
                   onToggle={() => toggleSection(section.id)} />
               ))}
-              {!closed && groups.map((group) => (
-                <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go} />
+              {!closed && groups.map((group, i) => (
+                <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={go}
+                  spaceAbove={groupSpaceAbove(group, groups[i - 1], showHeaders, rail)} />
               ))}
             </div>
           );
@@ -183,13 +184,30 @@ const groupTitleStyle: React.CSSProperties = {
   color: "var(--aa-side-text3)", padding: "0 10px 8px", fontWeight: 600,
 };
 
-function NavGroupBlock({ group, pathname, pending, go }: {
+// A one-item group named like its item (Overview, Tenants, Jobs) needs no title over it.
+function groupHasTitle(group: NavGroup): boolean {
+  return !(group.items.length === 1 && group.items[0].label === group.label);
+}
+
+// Vertical rhythm (S241 UI verify: untitled one-item groups sat ~51px apart vs 37px inside a group).
+// Only two untitled groups in a row (Tenants → Jobs) close up to a 6px nudge, so they read as rows
+// (≈42px pitch), not as islands. Any group that follows a TITLED group keeps the full 16px break:
+// with 6px, Tenants and Jobs sat right under "People & access › Staff" and read as its children.
+// The first group keeps 16px under a section header (0 with no header). In the icon rail the titles
+// are hidden, so every group gets 16.
+function groupSpaceAbove(group: NavGroup, prev: NavGroup | undefined, showHeaders: boolean, rail: boolean): number {
+  if (!prev) return showHeaders ? 16 : 0;
+  if (rail) return 16;
+  return groupHasTitle(prev) || groupHasTitle(group) ? 16 : 6;
+}
+
+function NavGroupBlock({ group, pathname, pending, go, spaceAbove }: {
   group: NavGroup; pathname: string; pending: number | null | undefined; go: (href: string) => void;
+  spaceAbove: number;
 }) {
-  // A one-item group named like its item (Overview, Tenants, Jobs) needs no title over it.
-  const showTitle = !(group.items.length === 1 && group.items[0].label === group.label);
+  const showTitle = groupHasTitle(group);
   return (
-    <div>
+    <div style={{ marginTop: spaceAbove }}>
       {showTitle && <div className="aa-sidebar-group-title" style={groupTitleStyle}>{group.label}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         {group.items.map((n) => (

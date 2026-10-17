@@ -422,8 +422,16 @@ export function PageHeader({
   description?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  // On a phone a header with a description puts its actions on their own row under the text, left
+  // aligned (S241 UI verify: on /admin/platform/staff the description was squeezed into ~250px
+  // beside Refresh). Without a description the actions still sit beside a short title. The switch
+  // is the `aa-page-header--stack` rule in globals.css (< 768px), not a JS media query, so the
+  // server HTML already has the phone layout (no shift on hydration). The text block's `flex` and
+  // the actions' `justify-content` live in those classes because an inline style would win over them.
+  const stack = !!description && !!actions;
   return (
     <div
+      className={stack ? "aa-page-header aa-page-header--stack" : "aa-page-header"}
       style={{
         display: "flex",
         alignItems: "flex-start",
@@ -436,7 +444,7 @@ export function PageHeader({
         flexWrap: "wrap",
       }}
     >
-      <div style={{ minWidth: 0, flex: "1 1 240px" }}>
+      <div className="aa-page-header-text" style={{ minWidth: 0 }}>
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div
             style={{
@@ -478,7 +486,7 @@ export function PageHeader({
         )}
       </div>
       {actions && (
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div className="aa-page-header-actions" style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
           {actions}
         </div>
       )}

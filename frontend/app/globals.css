@@ -169,8 +169,9 @@
   --aa-amber-soft:    #38290F;
   --aa-kit-amber:      #E0A040;
   --aa-kit-amber-soft: #352711;
-  /* Info */
-  --aa-info:          #7FA0F0;
+  /* Info — S241 UI verify: #7FA0F0 read dim on the navy pill (REVIEWER badge, 11px caps); lifted to
+     7.8:1 on --aa-info-soft (8.7:1 on card), in line with the accent badge (8.6:1). */
+  --aa-info:          #A5BEF7;
   --aa-info-soft:     #1C2847;
   /* Purple */
   --aa-purple:        #B99BF0;
@@ -480,5 +481,17 @@ body {
   .aa-topbar-menu,
   .aa-topbar-search-icon { display: inline-flex !important; }
   .aa-topbar-spacer { display: block !important; }
+}
+
+/* AA-883 (S241 polish) — kit PageHeader. The text block takes the free space and the actions sit
+   right-aligned beside it. On a phone, a header that has a description AND actions
+   (`aa-page-header--stack`) gives the text the full row so the actions drop under it, left aligned.
+   CSS, not a JS media query, so the server HTML is already right on a phone (no hydration shift). */
+.aa-page-header-text { flex: 1 1 240px; }
+.aa-page-header-actions { justify-content: flex-end; }
+
+@media (max-width: 767px) {
+  .aa-page-header--stack > .aa-page-header-text { flex-basis: 100%; }
+  .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; }
 }
 
