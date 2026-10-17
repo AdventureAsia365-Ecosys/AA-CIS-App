@@ -12,6 +12,7 @@ import tempfile
 import structlog
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from api.core.staff_authz import staff_policy_if_staff
 from fastapi.responses import JSONResponse
 from typing import Optional
 
@@ -57,7 +58,10 @@ def _require_admin(
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"], dependencies=[Depends(_require_admin)])
+# AA-882 (GĐ3): staff_policy_if_staff narrows the staff calls (X-Admin-Secret) by role, per
+# api/core/staff_authz.py POLICY; the routes' own guard still decides who else gets in.
+router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"],
+                   dependencies=[Depends(_require_admin), Depends(staff_policy_if_staff)])
 
 
 def _normalize_generated(generated: dict, tour: dict) -> dict:

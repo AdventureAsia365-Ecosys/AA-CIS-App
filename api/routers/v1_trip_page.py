@@ -44,14 +44,17 @@ import datetime as _dt
 import json
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/v1/trip", tags=["Trip Page (public)"])
-admin_router = APIRouter(prefix="/admin/trip-pages", tags=["Trip Page (admin)"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+admin_router = APIRouter(prefix="/admin/trip-pages", tags=["Trip Page (admin)"],
+                         dependencies=[Depends(staff_policy)])
 
 _AA_INTERNAL_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 

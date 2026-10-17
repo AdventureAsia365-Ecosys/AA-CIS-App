@@ -84,7 +84,7 @@ class TestBatchReview:
                 resp = await client.post(
                     "/v1/social/batch-review",
                     json=payload,
-                    headers={"X-Admin-Secret": ADMIN_SECRET},
+                    headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},  # AA-882: BFF-forwarded role
                 )
 
         assert resp.status_code == 200
@@ -121,7 +121,7 @@ class TestBatchReview:
                 resp = await client.post(
                     "/v1/social/batch-review",
                     json=payload,
-                    headers={"X-Admin-Secret": ADMIN_SECRET},
+                    headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},  # AA-882: BFF-forwarded role
                 )
 
         assert resp.status_code == 200
@@ -150,7 +150,7 @@ class TestBatchReview:
                 resp = await client.post(
                     "/v1/social/batch-review",
                     json=payload,
-                    headers={"X-Admin-Secret": ADMIN_SECRET},
+                    headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},  # AA-882: BFF-forwarded role
                 )
 
         assert resp.status_code == 422
@@ -175,7 +175,7 @@ class TestBatchReview:
                 resp = await client.post(
                     "/v1/social/batch-review",
                     json=payload,
-                    headers={"X-Admin-Secret": ADMIN_SECRET},
+                    headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},  # AA-882: BFF-forwarded role
                 )
 
         assert resp.status_code == 422
@@ -197,7 +197,7 @@ class TestBatchReview:
                 resp = await client.post(
                     "/v1/social/batch-review",
                     json=payload,
-                    headers={"X-Admin-Secret": ADMIN_SECRET},
+                    headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},  # AA-882: BFF-forwarded role
                 )
 
         assert resp.status_code == 422

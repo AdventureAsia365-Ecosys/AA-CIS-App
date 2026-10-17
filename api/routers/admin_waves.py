@@ -16,14 +16,16 @@ from __future__ import annotations
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
 from services.waves import report as wave_report
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/admin/waves", tags=["admin-waves"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin/waves", tags=["admin-waves"], dependencies=[Depends(staff_policy)])
 
 _STATUSES = ("open", "complete", "incomplete", "closed")
 

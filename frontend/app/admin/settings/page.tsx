@@ -13,7 +13,8 @@ import {
   A, alpha, serif, sans, mono,
   Card, SLabel, TabBar, Badge, Btn, Spinner, LoadingScreen,
 } from "../_components/adminUi";
-import { PageHeader, formatDateTime, apiGet } from "../../_kit";
+import { PageHeader, formatDateTime, apiGet, useAdminIdentity } from "../../_kit";
+import { can, staffErrorMessage, type Capability } from "@/lib/rbac";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ function PipelineGatesTab({ gates }: { gates: SettingsData["pipeline_gates"] }) 
 
 // ─── SEO Config Tab ───────────────────────────────────────────────────────────
 
-function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) {
+function SeoConfigTab({ seo: initialSeo, canEdit }: { seo: SettingsData["seo_config"]; canEdit: boolean }) {
   const [seo, setSeo] = useState(initialSeo);
   const [keywords, setKeywords] = useState<string[]>(initialSeo?.custom_keywords ?? []);
   const [kwInput, setKwInput] = useState("");
@@ -157,7 +158,7 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setError(d.detail ?? "Save failed");
+        setError(staffErrorMessage(res.status, d.detail, "Save failed"));
         return;
       }
       const updated = await res.json();
@@ -207,19 +208,21 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
               fontSize: 12, fontWeight: 500, fontFamily: mono,
             }}>
               {kw}
-              <button onClick={() => removeKeyword(kw)} style={{
-                background: "none", border: "none", cursor: "pointer",
-                color: A.accentDeep, display: "flex", padding: 0,
-              }}>
-                <X size={11} />
-              </button>
+              {canEdit && (
+                <button onClick={() => removeKeyword(kw)} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: A.accentDeep, display: "flex", padding: 0,
+                }}>
+                  <X size={11} />
+                </button>
+              )}
             </span>
           ))}
           {keywords.length === 0 && (
             <span style={{ fontSize: 13, color: A.muted2 }}>No custom keywords</span>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        {canEdit && <div style={{ display: "flex", gap: 8 }}>
           <input
             value={kwInput}
             onChange={e => setKwInput(e.target.value)}
@@ -234,7 +237,7 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
           <Btn variant="secondary" size="sm" onClick={addKeyword}>
             <Plus size={13} /> Add
           </Btn>
-        </div>
+        </div>}
       </Card>
 
       <Card>
@@ -242,6 +245,7 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
         <textarea
           value={targetJson}
           onChange={e => setTargetJson(e.target.value)}
+          readOnly={!canEdit}
           rows={6}
           style={{
             width: "100%", padding: "10px 12px", borderRadius: 8,
@@ -253,10 +257,16 @@ function SeoConfigTab({ seo: initialSeo }: { seo: SettingsData["seo_config"] }) 
       </Card>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Btn variant="primary" onClick={save} disabled={saving}>
-          {saving ? <Spinner size={13} /> : <Save size={13} />}
-          {saving ? "Saving…" : "Save SEO Config"}
-        </Btn>
+        {canEdit ? (
+          <Btn variant="primary" onClick={save} disabled={saving}>
+            {saving ? <Spinner size={13} /> : <Save size={13} />}
+            {saving ? "Saving…" : "Save SEO Config"}
+          </Btn>
+        ) : (
+          <span data-testid="seo-read-only" style={{ fontSize: 12, color: A.muted }}>
+            Read-only for your role. SEO config changes are made by an admin.
+          </span>
+        )}
         {saved && (
           <span style={{ fontSize: 12, color: A.green, fontWeight: 600 }}>
             Saved ✓
@@ -366,12 +376,14 @@ function TenantInfoTab({
 // AA-663 — "Brand Rules" (a read-only summary of the active brand) is replaced by the full Brand
 // Identity editor, which used to be its own top-level page at /admin/brand (now a redirect to
 // ?tab=brand). `?tab=` selects the initial tab so old links land in the right place.
-const TABS = [
+// AA-882 — `needs`: a tab whose reads the backend keeps admin-only (LLM Models: model routes, catalog
+// and the shadow cost report; Jev Credit: the top-up ledger) is not shown to a role without it.
+const TABS: { key: string; label: string; needs?: Capability }[] = [
   { key: "pipeline",  label: "Pipeline Gates" },
   { key: "brand",     label: "Brand Identity" },
   { key: "seo",       label: "SEO Config" },
-  { key: "models",    label: "LLM Models" },
-  { key: "jev-credit", label: "Jev Credit" },
+  { key: "models",    label: "LLM Models", needs: "ai.admin" },
+  { key: "jev-credit", label: "Jev Credit", needs: "spend.read" },
   { key: "tenant",    label: "Tenant Info" },
   // AA-662 — UI-kit living reference (design system), moved here from a standalone /admin/kit-demo
   // page so it lives under Settings as a system/reference tab rather than a top-level nav item.
@@ -389,7 +401,11 @@ export default function SettingsPage() {
 
 function SettingsPageInner() {
   const wanted = useSearchParams().get("tab");
-  const [tab, setTab] = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "pipeline"));
+  const { role } = useAdminIdentity();
+  const tabs = TABS.filter(t => !t.needs || can(role, t.needs));
+  const [picked, setTab] = useState(() => (TABS.some(t => t.key === wanted) ? wanted! : "pipeline"));
+  // A deep link to a tab the role does not see falls back to the first tab (derived, no effect).
+  const tab = tabs.some(t => t.key === picked) ? picked : "pipeline";
 
   // AA-686 — react-query instead of a hand-rolled useState/useEffect fetch (the React Compiler
   // flags setState inside an effect; the kit standard is useQuery).
@@ -420,7 +436,7 @@ function SettingsPageInner() {
             {/* AA-601 — "content rendered" signal for the UI smoke: present only once the settings
                 payload has loaded, never on the LoadingScreen. */}
             <div data-testid="admin-content-ready" style={{ marginBottom: 24 }}>
-              <TabBar tabs={TABS} active={tab} onChange={setTab} />
+              <TabBar tabs={tabs} active={tab} onChange={setTab} />
             </div>
 
             {tab === "pipeline" && (
@@ -428,7 +444,7 @@ function SettingsPageInner() {
             )}
             {tab === "brand" && <BrandIdentityEditor />}
             {tab === "seo" && (
-              <SeoConfigTab seo={data.seo_config} />
+              <SeoConfigTab seo={data.seo_config} canEdit={can(role, "content.settings.write")} />
             )}
             {tab === "models" && <ModelsTab />}
             {tab === "jev-credit" && <JevCreditTab />}

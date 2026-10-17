@@ -42,9 +42,11 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
   { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
+  // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
+  // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
+  { prefix: "/admin/platform", roles: ["admin"] },
   // Content work — every staff role.
   { prefix: "/admin/upload", roles: ALL_STAFF },
-  { prefix: "/admin/pipeline", roles: ALL_STAFF },
   { prefix: "/admin/master-content", roles: ALL_STAFF },
   { prefix: "/admin/review", roles: ALL_STAFF },
   { prefix: "/admin/s1-rewrite", roles: ALL_STAFF },
@@ -95,6 +97,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
 // /admin/openapi.json re-checks the forwarded x-admin-role.
 export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "openapi.json", roles: ["admin"] },
+  // AA-883 — backend /admin/platform/* (staff directory): admin only, re-checked by the backend
+  // (staff_policy, capability staff.read). Matches "platform" and "platform/…", not "platform-stats".
+  { prefix: "platform", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
@@ -123,6 +128,38 @@ export function canWriteAdminPath(role: string | null | undefined, method: strin
 /** Landing page after login / for the retired /admin/dashboard. */
 export function landingPage(role: string | null | undefined): string {
   return role === "admin" ? "/admin/overview" : "/admin/review";
+}
+
+// AA-882 (GĐ3 review) — the backend capability map (api/core/staff_authz.py ROLE_PERMS), mirrored so
+// a page can hide or disable a control the backend would refuse with 403. The backend stays the
+// authority; this is UI only. tests/unit/test_aa882_staff_authz.py keeps the two maps identical. One
+// explicit list per role (no spreads) so that test can read it.
+export type Capability =
+  | "content.read" | "content.write" | "review.act" | "master.admin" | "atoms.write" | "photos.write"
+  | "a4.unpublish" | "quality.write" | "content.settings.write" | "tenant.read" | "tenant.write"
+  | "ops.read" | "ops.write" | "ai.admin" | "spend.read" | "spend.write" | "staff.read" | "audit.read";
+
+export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
+  admin: [
+    "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
+    "a4.unpublish", "quality.write", "content.settings.write", "tenant.read", "tenant.write",
+    "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
+  ],
+  reviewer: ["content.read", "content.write", "review.act"],
+  content: ["content.read", "content.write", "review.act"],
+};
+
+/** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */
+export function can(role: string | null | undefined, capability: Capability): boolean {
+  return isStaffRole(role) && ROLE_PERMS[role].includes(capability);
+}
+
+/** A readable message for a failed staff call: the backend's policy 403 reads "Role 'x' lacks …". */
+export function staffErrorMessage(status: number, detail: unknown, fallback: string): string {
+  if (status === 403 && typeof detail === "string" && detail.startsWith("Role '")) {
+    return "Admin only: your role cannot make this change.";
+  }
+  return typeof detail === "string" && detail ? detail : fallback;
 }
 
 export const ROLE_LABEL: Record<StaffRole, string> = {

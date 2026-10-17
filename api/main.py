@@ -8,7 +8,9 @@ import asyncio
 import asyncpg
 import redis.asyncio as aioredis  # noqa: F401 -- tests patch main.aioredis.from_url (shared module)
 import os
+import time
 import uuid
+from typing import Optional
 import structlog
 
 from api.routers.auth import (
@@ -49,6 +51,7 @@ from api.routers.admin_segment_research import router as admin_segment_research_
 from api.routers.admin_job_runner import router as admin_job_runner_router  # AA-650
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
+from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
 from api.routers.admin_places import router as admin_places_router  # AA-712
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
@@ -241,6 +244,7 @@ app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-r
 app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
+app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
@@ -338,22 +342,53 @@ async def admin_login(
         role=row["role"],
     )
 
+# AA-882 (GĐ3 review, S241 §5.2) — /auth/verify-admin re-reads the staff row, so a deactivated or
+# demoted user loses the old role within this TTL (plus the BFF's own verify cache, lib/auth-server.ts)
+# instead of at the 24 h JWT expiry. Keyed by admin id; a miss (unknown or inactive) is cached too.
+_STAFF_STATE_TTL_S = 60.0
+_STAFF_STATE_MAX = 2048
+_staff_state_cache: dict[str, tuple[float, Optional[tuple[str, str]]]] = {}
+
+
+async def _current_staff(db: asyncpg.Pool, admin_id: str) -> Optional[tuple[str, str]]:
+    """(username, role) of an active staff account, or None; cached for _STAFF_STATE_TTL_S."""
+    now = time.monotonic()
+    hit = _staff_state_cache.get(admin_id)
+    if hit and hit[0] > now:
+        return hit[1]
+    row = await _load_active_staff(db, admin_id)
+    state = (row["username"], row["role"]) if row else None
+    if len(_staff_state_cache) >= _STAFF_STATE_MAX:
+        _staff_state_cache.clear()
+    _staff_state_cache[admin_id] = (now + _STAFF_STATE_TTL_S, state)
+    return state
+
+
 @app.post("/auth/verify-admin", response_model=VerifyAdminResponse, tags=["auth"])
-async def verify_admin(request: Request):
+async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     """
     Verify an admin JWT (server-side, called by Next.js middleware) — mirrors
-    /auth/verify-tenant. Stateless: does not re-check admin_users.is_active on
-    each call, so a deactivated admin stays valid until token expiry (24h).
+    /auth/verify-tenant. Then re-reads shared.admin_users (cached 60 s): 401 when the account is
+    gone or inactive, and the role returned is the DB role, not the JWT claim, so the BFF forwards the
+    current role (x-admin-role) and staff_policy enforces it. The staff directory and the enforced
+    role therefore agree within the cache TTLs, not at the 24 h token expiry.
     """
     body = await request.json()
     payload = verify_jwt(body.get("token", ""))
     if payload.get("role") not in STAFF_ROLES:
         # Explicit whitelist — same secret/alg means a tenant JWT would decode fine here.
         raise HTTPException(status_code=401, detail="Not an admin token")
+    state = await _current_staff(db, str(payload.get("sub", "")))
+    if state is None or state[1] not in STAFF_ROLES:
+        logger.warning("verify_admin_refused", admin_id=str(payload.get("sub")),
+                       session_role=payload.get("role"),
+                       reason="inactive_or_unknown" if state is None else "role_not_staff")
+        raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
+    username, role = state
     return VerifyAdminResponse(
         admin_id=payload["sub"],
-        username=payload["username"],
-        role=payload["role"],
+        username=username,
+        role=role,
         valid=True,
     )
 

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from typing import List, Optional
 import asyncpg
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.staff_authz import OPS_READ, TENANT_READ, has_perm, staff_policy
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
 
@@ -28,7 +29,8 @@ from services.acp_planning.tenant_config import (
 
 import structlog
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+# AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
 _log = structlog.get_logger()
 
@@ -801,8 +803,17 @@ async def get_tenant_details(
     score: Optional[str] = Query(None),  # 9.5+ / 9.0+ / 8.0+ / below8
     search: Optional[str] = Query(None),
     version: Optional[str] = Query(None),  # AA-739: v1 / v2+ / v3+ on the latest content version
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
+    # AA-882 (GĐ3 review) — this route has no POLICY entry because Master Content (every staff role)
+    # reads the aa_internal catalog through it. Any other tenant's account, usage and LLM spend is
+    # tenant.read, like the sibling /usage, /audit and /config routes.
+    if str(tenant_id) != AA_INTERNAL_TENANT and not has_perm(x_admin_role, TENANT_READ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{x_admin_role or 'machine'}' lacks the '{TENANT_READ}' permission",
+        )
     pool = request.app.state.pool
 
     # AA-718 — windowed LLM cost (reconcile with External Spend: rolling 30 days, UTC).
@@ -2113,6 +2124,29 @@ async def deactivate_master_tour(
     return {"tour_id": tour_id, "master_status": "inactive"}
 
 
+# ── The notification bell: what a role may see and clear ─────────────────────
+# AA-882 (GĐ3 review). shared.notifications is one global list with one is_read flag (no per-user read
+# state yet), and it carries admin-only alerts: platform.* events (DFS balance, Jev credit, rerun
+# waves, retention), spend budget alerts, tenant CTA review claims, master lifecycle. A role without
+# ops.read (reviewer, content) sees, counts and clears only the rows targeted at a content role and
+# never a platform.* / spend alert, so one click on "Mark all read" can not hide an admin's alert.
+# Admin (and a machine caller, which holds the secret) sees every row. Longer term: per-user read
+# state (a notification_reads table), so one user's click never clears another user's bell.
+
+_NOTIF_CONTENT_SCOPE = (
+    "(target_roles && ARRAY['content','reviewer']::text[]"
+    " AND event_type NOT LIKE 'platform.%'"
+    " AND event_type <> 'spend_budget_alert')"
+)
+
+
+def notification_scope(x_admin_role: Optional[str]) -> str:
+    """SQL predicate on shared.notifications for the caller's role (a constant, never user input)."""
+    if x_admin_role is None or has_perm(x_admin_role, OPS_READ):
+        return "TRUE"
+    return _NOTIF_CONTENT_SCOPE
+
+
 # ── GET /admin/notifications/count ────────────────────────────────────────────
 
 
@@ -2120,12 +2154,14 @@ async def deactivate_master_tour(
 async def notification_count(
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT COUNT(*) AS unread FROM shared.notifications WHERE is_read = FALSE"
+            "SELECT COUNT(*) AS unread FROM shared.notifications "
+            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
         )
     return {"unread": int(row["unread"])}
 
@@ -2137,12 +2173,14 @@ async def notification_count(
 async def mark_all_read(
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE shared.notifications SET is_read = TRUE WHERE is_read = FALSE"
+            "UPDATE shared.notifications SET is_read = TRUE "
+            f"WHERE is_read = FALSE AND {notification_scope(x_admin_role)}"
         )
     cleared = int(result.split()[-1])
     return {"cleared": cleared}
@@ -2158,9 +2196,11 @@ async def list_notifications(
     unread_only: bool = False,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    where = "WHERE is_read = FALSE" if unread_only else ""
+    scope = notification_scope(x_admin_role)
+    where = f"WHERE is_read = FALSE AND {scope}" if unread_only else f"WHERE {scope}"
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2215,12 +2255,17 @@ async def mark_read(
     notif_id: int,
     request: Request,
     x_admin_secret: str = Header(None),
+    x_admin_role: Optional[str] = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE shared.notifications SET is_read = TRUE WHERE id = $1",
+        result = await conn.execute(
+            "UPDATE shared.notifications SET is_read = TRUE "
+            f"WHERE id = $1 AND {notification_scope(x_admin_role)}",
             notif_id,
         )
+    if result.split()[-1] == "0":
+        # Unknown id, or a row outside the caller's scope (an admin-only alert): same answer.
+        raise HTTPException(status_code=404, detail="Notification not found")
     return {"id": notif_id, "is_read": True}

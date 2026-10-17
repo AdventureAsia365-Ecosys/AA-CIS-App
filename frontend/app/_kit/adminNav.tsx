@@ -1,14 +1,21 @@
 "use client";
 // app/_kit/adminNav.tsx
 // AA-752 — the single admin navigation model, shared by the kit Sidebar, Topbar breadcrumb,
-// CommandPalette (Pages group) and BottomNav. Groups/items/roles are identical to the AA-663
-// information architecture that lived in AdminSidebar before the shell: Overview · Content ·
-// Intelligence · Tenants · Operations, plus the standalone Settings entry. Visibility follows
-// lib/rbac.ts PAGE_RULES (AA-656): an item renders only when the role may open its page.
+// CommandPalette (Pages group) and BottomNav. Visibility follows lib/rbac.ts PAGE_RULES (AA-656): an
+// item renders only when the role may open its page.
+//
+// AA-883 (S241 admin console, design §4) — groups belong to one of two sections, named after who the
+// page serves (not how it runs):
+//   - Platform: people, tenants (accounts), machines and money — Overview · People & access ·
+//     Tenants · Jobs · AI & spend · Developer;
+//   - CIS Content: what CIS produces, including the QA of tenant output — Pipeline · Assets ·
+//     Intelligence · Tenant output.
+// No URL changed. Settings stays the standalone footer entry until it is split (design GĐ6). The
+// other apps (Booking admin, TripPlanner, tenant portal) are links from lib/apps.ts, not nav entries.
 
 import {
-  Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet,
-  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen,
+  Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
+  Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -20,37 +27,77 @@ export interface NavEntry {
   also?: string[];
 }
 
+export type NavSectionId = "platform" | "cis";
+
+export interface NavSection {
+  id: NavSectionId;
+  label: string;
+}
+
+export const NAV_SECTIONS: NavSection[] = [
+  { id: "platform", label: "Platform" },
+  { id: "cis", label: "CIS Content" },
+];
+
 export interface NavGroup {
   label: string;
+  section: NavSectionId;
   items: NavEntry[];
 }
 
 export const NAV_GROUPS: NavGroup[] = [
-  { label: "Overview", items: [
+  // ── Platform ──
+  { label: "Overview", section: "platform", items: [
     { href: "/admin/overview", icon: <Gauge size={16} />, label: "Overview" },
   ] },
-  { label: "Content", items: [
+  { label: "People & access", section: "platform", items: [
+    { href: "/admin/platform/staff", icon: <UserCog size={16} />, label: "Staff" },  // AA-883
+  ] },
+  { label: "Tenants", section: "platform", items: [
+    { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants" },
+  ] },
+  { label: "Jobs", section: "platform", items: [
+    { href: "/admin/jobs", icon: <ListChecks size={16} />, label: "Jobs" },
+  ] },
+  { label: "AI & spend", section: "platform", items: [
+    { href: "/admin/llm-usage", icon: <Wallet size={16} />, label: "External Spend" },
+    { href: "/admin/decisions", icon: <Scale size={16} />,  label: "Jev Decisions" },
+  ] },
+  { label: "Developer", section: "platform", items: [
+    { href: "/admin/api-docs", icon: <BookOpen size={16} />, label: "API Docs" },  // AA-577 follow-up
+  ] },
+  // ── CIS Content ──
+  { label: "Pipeline", section: "cis", items: [
     { href: "/admin/upload",         icon: <Upload size={16} />,        label: "Upload (S0)" },
     { href: "/admin/s1-rewrite",     icon: <Wand2 size={16} />,         label: "Rewrite (S1)" },
     { href: "/admin/review",         icon: <ClipboardList size={16} />, label: "Review Queue" },
     { href: "/admin/master-content", icon: <Library size={16} />,       label: "Master Content" },
-    { href: "/admin/photos",         icon: <ImageIcon size={16} />,     label: "Photos" },
   ] },
-  { label: "Intelligence", items: [
-    { href: "/admin/atom-curation", icon: <Puzzle size={16} />, label: "Social Content",
-      also: ["/admin/tenant-activity", "/admin/platform-stats", "/admin/content-quality"] },
+  { label: "Assets", section: "cis", items: [
+    { href: "/admin/photos", icon: <ImageIcon size={16} />, label: "Photos" },
+  ] },
+  { label: "Intelligence", section: "cis", items: [
+    { href: "/admin/atom-curation",    icon: <Puzzle size={16} />, label: "Social Content" },
     { href: "/admin/seo-intelligence", icon: <Search size={16} />, label: "SEO Intelligence" },
   ] },
-  { label: "Tenants", items: [
-    { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants" },
-  ] },
-  { label: "Operations", items: [
-    { href: "/admin/llm-usage", icon: <Wallet size={16} />,     label: "External Spend" },
-    { href: "/admin/jobs",      icon: <ListChecks size={16} />, label: "Jobs" },
-    { href: "/admin/decisions", icon: <Scale size={16} />,      label: "Jev Decisions" },
-    { href: "/admin/api-docs",  icon: <BookOpen size={16} />,   label: "API Docs" },  // AA-577 follow-up
+  { label: "Tenant output", section: "cis", items: [
+    { href: "/admin/tenant-activity", icon: <Radio size={16} />,       label: "Content Trace" },
+    { href: "/admin/platform-stats",  icon: <BarChart3 size={16} />,   label: "A4 Quality" },
+    { href: "/admin/content-quality", icon: <ShieldCheck size={16} />, label: "Content Quality" },
   ] },
 ];
+
+/** The groups of one section. */
+export function sectionGroups(section: NavSectionId): NavGroup[] {
+  return NAV_GROUPS.filter((g) => g.section === section);
+}
+
+/** The sections `role` sees at least one page of, in display order. */
+export function visibleSections(role: string): NavSection[] {
+  return NAV_SECTIONS.filter((s) =>
+    sectionGroups(s.id).some((g) => g.items.some((it) => canSeePage(role, it.href))),
+  );
+}
 
 /** The standalone Settings entry (all staff roles, same as middleware.ts). */
 export const SETTINGS_ENTRY: NavEntry = {
@@ -75,7 +122,17 @@ export function allEntries(role: string): NavEntry[] {
   return out;
 }
 
-/** The human page title for the breadcrumb (Admin / <title>). Falls back to a prettified slug. */
+/** The section label of the page at `pathname` (breadcrumb root), or null outside the nav. */
+export function pageSection(pathname: string): string | null {
+  for (const g of NAV_GROUPS) {
+    if (g.items.some((it) => navActive(it, pathname))) {
+      return NAV_SECTIONS.find((s) => s.id === g.section)?.label ?? null;
+    }
+  }
+  return null;
+}
+
+/** The human page title for the breadcrumb (<Section> / <title>). Falls back to a prettified slug. */
 export function pageTitle(pathname: string): string {
   for (const g of NAV_GROUPS) {
     for (const it of g.items) {

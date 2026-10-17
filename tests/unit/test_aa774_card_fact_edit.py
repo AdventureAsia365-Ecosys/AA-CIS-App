@@ -219,7 +219,8 @@ def test_patch_facts_route():
     assert client.patch(url, json=body, headers={**headers, "x-admin-role": "reviewer"}).status_code == 403
     assert client.patch(url, json=body, headers={**headers, "x-admin-secret": "nope"}).status_code in (401, 403)
     # GET detail resolves to the card route, not /duplicates
-    g = client.get(f"/admin/content-quality/place-cards/{CARD_ID}", headers={"x-admin-secret": SECRET})
+    # (AA-882: the content-quality reads are tenant.read, so the GET carries the admin role too)
+    g = client.get(f"/admin/content-quality/place-cards/{CARD_ID}", headers=headers)
     assert g.status_code == 200 and g.json()["fact_rows"][1]["in_writer_seed"] is False
 
 

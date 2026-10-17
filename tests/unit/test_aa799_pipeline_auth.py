@@ -134,7 +134,8 @@ def test_admin_secret_end_to_end_review_queue():
 
 def test_admin_secret_end_to_end_run_reaches_handler():
     # A non-Excel upload is rejected by the handler itself (400) — proves auth passed, no work done.
-    res = _client().post("/v1/pipeline/run", headers={"X-Admin-Secret": ADMIN_SECRET},
+    # AA-882 (GĐ3): a write needs the staff role the BFF forwards (no role = machine, refused).
+    res = _client().post("/v1/pipeline/run", headers={"X-Admin-Secret": ADMIN_SECRET, "x-admin-role": "admin"},
                          files={"file": ("x.txt", b"nope", "text/plain")})
     assert res.status_code == 400
 
