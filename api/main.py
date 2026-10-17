@@ -49,6 +49,7 @@ from api.routers.admin_segment_research import router as admin_segment_research_
 from api.routers.admin_job_runner import router as admin_job_runner_router  # AA-650
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
+from api.routers.admin_platform import router as admin_platform_router  # AA-883
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
 from api.routers.admin_places import router as admin_places_router  # AA-712
 from api.routers.admin_search import router as admin_search_router  # AA-752 — global ⌘K search
@@ -241,6 +242,7 @@ app.include_router(admin_segment_research_router)  # AA-646 — /admin/segment-r
 app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
+app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)

@@ -91,7 +91,8 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
 def test_staff_list_is_staff_read():
     """AA-883 (GĐ2): GET /admin/platform/staff needs staff.read (admin), never an open read."""
     assert POLICY[("GET", "/admin/platform/staff")] == "staff.read"
-    assert all(POLICY[k] == "staff.read" for k in AWAITING_ROUTE if "/platform/staff" in k[1])
+    assert POLICY[("GET", "/admin/platform/staff/{staff_id}")] == "staff.read"
+    assert [r for r in ROLE_PERMS if "staff.read" in ROLE_PERMS[r]] == ["admin"]
 
 
 # ── Principal ────────────────────────────────────────────────────────────────────────────────────

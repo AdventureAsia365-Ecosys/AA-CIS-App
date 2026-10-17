@@ -450,11 +450,20 @@ The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages)
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 
+**Admin console layout (AA-883, S241 design option A).** One console (`aa-cis-frontend`), nav model
+`frontend/app/_kit/adminNav.tsx` in two sections named after who a page serves: **Platform** (Overview,
+People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
+Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
+The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
+public site, tenant portal); deep links are built only there, never from a return URL, never with a
+token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
+
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
-| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| BFF `/api/admin/openapi.json` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks `x-admin-role`) | ✓ | — | — | — |
+| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883: Staff directory, read-only) | ✓ | — | — | — |
+| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
@@ -480,7 +489,8 @@ Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/
 `/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`
 (a test lists them); a staff proxy without it would act as the machine. Since GĐ3 every staff write
 (`/admin/*`, `/v1/pipeline|rules|social/*`) has a POLICY entry, and a GET has one only when its data
-is admin-only (tenant accounts and billing, spend, system overview/infra, the staff list); other GETs
+is admin-only (tenant accounts and billing, spend, system overview/infra, the staff directory
+`GET /admin/platform/staff[/{staff_id}]` = `staff.read`, AA-883 GĐ2); other GETs
 stay open to every staff role. `tests/unit/test_aa882_route_policy.py` enforces it (every staff write
 has a policy, every staff router runs the policy, `/admin/platform/*` has no open read, snapshot
 `tests/unit/snapshots/aa882_staff_route_policy.json`). Behaviour change for reviewer/content: Master

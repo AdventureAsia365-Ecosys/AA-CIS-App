@@ -233,7 +233,7 @@ POLICY: dict[tuple[str, str], str] = {
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
     ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,
-    # ── AA-883 (GĐ2) staff directory — read is admin-only (staff.read); see AWAITING_ROUTE
+    # ── admin_platform (AA-883, GĐ2) — the staff directory; who has access is admin-only (staff.read)
     ("GET", "/admin/platform/staff"): STAFF_READ,
     ("GET", "/admin/platform/staff/{staff_id}"): STAFF_READ,
 
@@ -249,11 +249,9 @@ POLICY: dict[tuple[str, str], str] = {
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The
 # route-policy test allows these to be missing from the app; once the route exists it must match the
 # template exactly (every /admin/platform/* route needs a POLICY entry, so a different parameter name
-# fails CI there instead of leaving the route open to every staff role).
-AWAITING_ROUTE: dict[tuple[str, str], str] = {
-    ("GET", "/admin/platform/staff"): "AA-883 (GĐ2) admin_staff.py staff list",
-    ("GET", "/admin/platform/staff/{staff_id}"): "AA-883 (GĐ2) admin_staff.py staff detail",
-}
+# fails CI there instead of leaving the route open to every staff role). Empty since AA-883's two
+# /admin/platform/staff routes landed.
+AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 
 # Path prefixes where the staff secret is accepted and POLICY applies (route-policy test scope).
 STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")

@@ -42,9 +42,11 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/platform-stats", roles: ["admin"] },    // AA-560
   { prefix: "/admin/content-quality", roles: ["admin"] },   // AA-769
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
+  // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
+  // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
+  { prefix: "/admin/platform", roles: ["admin"] },
   // Content work — every staff role.
   { prefix: "/admin/upload", roles: ALL_STAFF },
-  { prefix: "/admin/pipeline", roles: ALL_STAFF },
   { prefix: "/admin/master-content", roles: ALL_STAFF },
   { prefix: "/admin/review", roles: ALL_STAFF },
   { prefix: "/admin/s1-rewrite", roles: ALL_STAFF },
@@ -95,6 +97,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
 // /admin/openapi.json re-checks the forwarded x-admin-role.
 export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   { prefix: "openapi.json", roles: ["admin"] },
+  // AA-883 — backend /admin/platform/* (staff directory): admin only, re-checked by the backend
+  // (staff_policy, capability staff.read). Matches "platform" and "platform/…", not "platform-stats".
+  { prefix: "platform", roles: ["admin"] },
 ];
 
 /** May `role` call backend /admin/{path} at all (any method)? (path without the leading slash) */
