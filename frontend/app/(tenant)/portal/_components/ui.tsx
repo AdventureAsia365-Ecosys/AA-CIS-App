@@ -4,6 +4,7 @@
 
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_MONO, FONT_SANS } from "../../../_brand/tokens";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
@@ -130,18 +131,64 @@ export function Card({ children, style = {}, dark = false }: {
 // bar's own opaque background up to cover it — every usage needs this, not just page-level ones,
 // since the 28px offset is constant no matter the nesting depth. Only skip it (bleedTop=0) for a
 // bar that is deliberately NOT the first sticky point `<main>` will hit while scrolling.
+//
+// AA-836 (D3) — the bleed band is painted ONLY while the bar is actually stuck. At rest it sat 28px
+// above the bar and covered whatever was there (T11: the bottom border of the card above, and the
+// card's own top border). Stuck = the bar has moved down relative to a zero-height sentinel that
+// stays in normal flow just before it. Margin / padding are the same in both states (the band is a
+// background layer that starts `bleedTop` lower at rest), so nothing moves when the bar sticks; at
+// rest the transparent band also lets clicks through to what is above.
 export function StickyBar({ children, background = T.bg, style = {}, bleedTop = 28 }: {
   children: React.ReactNode; background?: string; style?: React.CSSProperties; bleedTop?: number;
 }) {
-  const { marginTop, paddingTop, ...rest } = style;
+  const { marginTop, paddingTop, borderRadius, ...rest } = style;
   const mt = (typeof marginTop === "number" ? marginTop : 0) - bleedTop;
   const pt = (typeof paddingTop === "number" ? paddingTop : 0) + bleedTop;
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+
+  useEffect(() => {
+    if (bleedTop <= 0) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const s = sentinelRef.current;
+      const b = barRef.current;
+      if (!s || !b) return;
+      // At rest the bar's top is exactly `mt` from the sentinel; stuck pushes it further down.
+      const next = b.getBoundingClientRect().top - s.getBoundingClientRect().top > mt + 0.5;
+      setStuck(prev => (prev === next ? prev : next));
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    schedule();
+    // `scroll` does not bubble; capture catches `<main>` (or any other scroll container).
+    document.addEventListener("scroll", schedule, { capture: true, passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      document.removeEventListener("scroll", schedule, { capture: true });
+      window.removeEventListener("resize", schedule);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [mt, bleedTop]);
+
+  const showBleed = stuck || bleedTop <= 0;
   return (
-    <div style={{
-      position: "sticky", top: 0, zIndex: 5, background,
-      marginTop: mt, paddingTop: pt,
-      ...rest,
-    }}>{children}</div>
+    <>
+      <div ref={sentinelRef} aria-hidden style={{ display: "flow-root", height: 0 }} />
+      <div ref={barRef} style={{
+        position: "sticky", top: 0, zIndex: 5,
+        marginTop: mt, paddingTop: pt,
+        pointerEvents: showBleed ? undefined : "none",
+        ...rest,
+      }}>
+        <div aria-hidden style={{
+          position: "absolute", left: 0, right: 0, bottom: 0, top: showBleed ? 0 : bleedTop,
+          background, borderRadius,
+        }} />
+        <div style={{ position: "relative", pointerEvents: "auto" }}>{children}</div>
+      </div>
+    </>
   );
 }
 
@@ -188,9 +235,11 @@ export function Badge({ children, variant = "default" }: {
 }) {
   const s = BADGE_MAP[variant];
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, letterSpacing: "0.04em", textTransform: "uppercase", background: s.bg, color: s.color }}>
+    // AA-836 — one line, always a pill: a long label (T11 "Route: <hub> · N Segments") used to wrap
+    // inside the 999px radius and render as a tall oval; now it ends in an ellipsis instead.
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, maxWidth: "100%", whiteSpace: "nowrap", fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 999, letterSpacing: "0.04em", textTransform: "uppercase", background: s.bg, color: s.color }}>
       <span style={{ width: 5, height: 5, borderRadius: "50%", background: s.dot, display: "block", flexShrink: 0 }} />
-      {children}
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children}</span>
     </span>
   );
 }
