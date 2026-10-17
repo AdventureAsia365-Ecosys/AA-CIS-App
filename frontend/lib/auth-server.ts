@@ -33,21 +33,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { STAFF_ROLES, type StaffRole } from "./rbac";
 
-const VERIFY_CACHE_TTL_MS = 20_000;
+//
+// S241 — TTLs (Vercel Fluid CPU: POST /auth/verify-admin was the top proxied
+// backend call, 42.2k in 13 days at a 20 s TTL — S240 audit). The admin cache
+// keeps a "yes" for up to 5 min; the tenant cache keeps the old 20 s (not part
+// of that audit). What a longer admin TTL can and cannot change:
+//   - Both backend verify endpoints are STATELESS (api/main.py verify_admin /
+//     verify_tenant: JWT signature + exp + role claim only — no DB read, no
+//     denylist). So a role change or a deactivated user already only takes
+//     effect at the next login / at token exp; this cache never made that
+//     faster and does not make it slower.
+//   - Logout (/api/auth/admin-logout) deletes the cookie; it never touched this
+//     cache and never revoked the token server-side. A browser that logged out
+//     no longer sends the token, so logout is unaffected.
+//   - Expiry: every entry is capped at the token's own `exp` claim (see
+//     tokenExpiryMs), so an expired JWT is never accepted from cache.
+//   - Worst-case staleness: a JWT_SECRET rotation, or a backend change that
+//     makes verify stricter, still lets an already-cached token through for up
+//     to ADMIN_VERIFY_CACHE_TTL_MS on a warm instance (was 20 s). Each serverless
+//     instance has its own Map, so a redeploy clears it.
+const ADMIN_VERIFY_CACHE_TTL_MS = 300_000;
+const TENANT_VERIFY_CACHE_TTL_MS = 20_000;
+// Used when a token carries no readable `exp` (never the case for tokens the
+// backend issues today) — the pre-S241 TTL, the conservative choice.
+const NO_EXP_TTL_MS = 20_000;
+
+/** The JWT's `exp` in epoch ms, or null. The payload is decoded WITHOUT
+ * checking the signature — only ever used to SHORTEN a cache entry for a token
+ * the backend has just verified (whose signature covers this same payload). */
+function tokenExpiryMs(token: string): number | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
+    const exp = (JSON.parse(atob(b64)) as { exp?: unknown }).exp;
+    return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
 
 interface CachedVerify<T> { result: T; expiresAt: number; }
 
 // Only successful verifications are cached — a failure is never cached, so
 // a real revoke/expiry is never masked past its own TTL by this layer; the
-// worst case of a cache hit is serving an already-correct "yes" a few
-// seconds sooner from a round trip that would have said the same thing.
+// worst case of a cache hit is serving an already-correct "yes" from a round
+// trip that would have said the same thing (see the S241 note above).
 class VerifyCache<T> {
   private entries = new Map<string, CachedVerify<T>>();
+
+  constructor(private readonly ttlMs: number) {}
 
   get(token: string): T | undefined {
     const hit = this.entries.get(token);
     if (!hit) return undefined;
-    if (Date.now() > hit.expiresAt) {
+    if (Date.now() >= hit.expiresAt) {
       this.entries.delete(token);
       return undefined;
     }
@@ -55,11 +95,14 @@ class VerifyCache<T> {
   }
 
   set(token: string, result: T) {
-    this.entries.set(token, { result, expiresAt: Date.now() + VERIFY_CACHE_TTL_MS });
+    const now = Date.now();
+    const exp = tokenExpiryMs(token);
+    const expiresAt = exp === null ? now + Math.min(this.ttlMs, NO_EXP_TTL_MS) : Math.min(now + this.ttlMs, exp);
+    if (expiresAt <= now) return; // already expired by its own claim — never cache it
+    this.entries.set(token, { result, expiresAt });
     // Cheap, bounded cleanup — avoids an unbounded map across many distinct
     // tokens/sessions over a long-lived warm serverless instance.
     if (this.entries.size > 500) {
-      const now = Date.now();
       for (const [key, entry] of this.entries) {
         if (now > entry.expiresAt) this.entries.delete(key);
       }
@@ -74,8 +117,10 @@ class VerifyCache<T> {
 // but as a separate module they never benefited from it. A fresh login
 // followed immediately by a client-side navigation to a protected route is
 // exactly this shape — see docs/implementation-notes/AA-573.md.
-export const adminVerifyCache = new VerifyCache<{ adminId: string; role: string }>();
-export const tenantVerifyCache = new VerifyCache<{ tenantId: string; name: string; planTier: string }>();
+export const adminVerifyCache = new VerifyCache<{ adminId: string; role: string }>(ADMIN_VERIFY_CACHE_TTL_MS);
+export const tenantVerifyCache = new VerifyCache<{ tenantId: string; name: string; planTier: string }>(
+  TENANT_VERIFY_CACHE_TTL_MS,
+);
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 
