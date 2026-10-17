@@ -89,7 +89,31 @@ def test_gd1_write_routes_have_an_enforced_policy():
 
 def test_every_policy_route_is_a_write_route_seen_by_the_scan():
     seen = {(m, p) for m, p, _, _ in _admin_write_routes()}
-    assert not [k for k in POLICY if k not in seen]
+    assert not [k for k in POLICY if k[0] not in _READ_METHODS and k not in seen]
+
+
+def _admin_read_routes():
+    """(method, full path, route, inherited include dependencies) for every GET /admin route."""
+    from api.main import app
+
+    for path, route, inherited in _walk(_served_routes(app)):
+        if not isinstance(route, APIRoute) or not (path == "/admin" or path.startswith("/admin/")):
+            continue
+        if "GET" in route.methods:
+            yield "GET", path, route, inherited
+
+
+def test_policy_reads_are_served_enforced_and_unprefixed():
+    """AA-883 (GĐ2): the GETs under POLICY (staff directory) exist, run staff_policy, and are not
+    behind an include_router(prefix=...) (same three rules as the writes)."""
+    reads = {(m, p): (route, inherited) for m, p, route, inherited in _admin_read_routes()}
+    policy_reads = [k for k in POLICY if k[0] in _READ_METHODS]
+    assert policy_reads, "expected the AA-883 staff directory GETs under POLICY"
+    for key in policy_reads:
+        assert key in reads, f"POLICY names a GET route that is not served: {key}"
+        route, inherited = reads[key]
+        assert _runs_staff_policy(route, inherited, key[1]), f"{key} does not run staff_policy"
+        assert route.path == key[1], f"{key} is behind an include prefix (route.path {route.path})"
 
 
 def test_report_admin_write_routes_against_the_snapshot():

@@ -3,12 +3,16 @@
 // AA-752 — phone (< 768px) bottom navigation: Overview · Review (badge) · Master · Jobs · More.
 // Fixed to the bottom, hidden ≥ 768px (the `.aa-bottom-nav` media query in globals.css). Each
 // target is ≥ 44px tall; the active item is gold. "More" opens the existing off-canvas drawer.
+// AA-883 — items are filtered by role (lib/rbac.ts canSeePage, same rule as the sidebar), so a
+// reviewer / content user no longer gets Overview and Jobs buttons that only redirect them away.
 
 import { useRouter, usePathname } from "next/navigation";
 import { Gauge, ClipboardList, Library, ListChecks, Menu } from "lucide-react";
 import { K } from "./tokens";
 import { navActive } from "./adminNav";
 import { useReviewPendingCount } from "./useReviewPendingCount";
+import { useAdminIdentity } from "./useAdminIdentity";
+import { canSeePage } from "@/lib/rbac";
 
 const ITEMS = [
   { href: "/admin/overview", label: "Overview", icon: Gauge },
@@ -20,13 +24,15 @@ const ITEMS = [
 export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { role } = useAdminIdentity();
+  const items = ITEMS.filter((it) => canSeePage(role, it.href));
 
   // Same query (key + request) as the Sidebar badge — see useReviewPendingCount.
   const pending = useReviewPendingCount();
 
   return (
     <nav className="aa-bottom-nav" data-testid="admin-bottom-nav" aria-label="Primary (mobile)">
-      {ITEMS.map((it) => {
+      {items.map((it) => {
         const Icon = it.icon;
         const active = navActive({ href: it.href }, pathname);
         const showBadge = "badge" in it && it.badge && pending;

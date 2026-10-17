@@ -24,6 +24,7 @@ from api.core.staff_authz import (
     MACHINE_ROUTES,
     OWNER_PERMS,
     POLICY,
+    POLICY_READ_PREFIX,
     ROLE_PERMS,
     denial_reason,
     principal_from_role,
@@ -69,8 +70,9 @@ def test_policy_and_machine_routes_are_admin_routes():
 
 
 def test_gd1_leaves_reads_open():
-    """GĐ1 narrows writes only: no GET is under POLICY (S1 needs GET /admin/llm-config)."""
-    assert not [k for k in POLICY if k[0] == "GET"]
+    """GĐ1 narrows writes only (S1 needs GET /admin/llm-config). The one exception is AA-883 (GĐ2):
+    the staff directory GETs under /admin/platform/ are admin-only from day one."""
+    assert not [k for k in POLICY if k[0] == "GET" and not k[1].startswith(POLICY_READ_PREFIX)]
     assert ("GET", "/admin/llm-config") not in POLICY
 
 

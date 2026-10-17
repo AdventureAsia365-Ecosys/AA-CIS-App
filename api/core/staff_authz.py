@@ -27,9 +27,10 @@ Principal (GĐ1, until the staff JWT of GĐ4)
 - secret, no x-admin-role -> machine principal: allowed only on MACHINE_ROUTES.
 - a role header that is not a staff role (empty, "tenant", typo) -> 403, never a machine.
 
-Routes with no POLICY entry are not narrowed here (GĐ1 covers the money/model writes only; the
-route-policy test in tests/unit/test_aa882_route_policy.py reports the rest). GĐ3 extends POLICY to
-every /admin route and turns that test to enforcing.
+Routes with no POLICY entry are not narrowed here (GĐ1 covers the money/model writes only, GĐ2 adds
+the two staff-directory GETs under /admin/platform/; the route-policy test in
+tests/unit/test_aa882_route_policy.py reports the rest). GĐ3 extends POLICY to every /admin route and
+turns that test to enforcing.
 """
 from __future__ import annotations
 
@@ -109,7 +110,15 @@ POLICY: dict[tuple[str, str], str] = {
     ("DELETE", "/admin/decisions/jev-credit/topups/{topup_id}"): SPEND_WRITE,
     # admin_settings — SEO config of the aa_internal tenant
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
+    # admin_platform (AA-883, GĐ2) — the staff directory. The only GETs under POLICY: every other
+    # read stays open to any secret holder until GĐ3; who has access is admin-only from day one.
+    ("GET", "/admin/platform/staff"): STAFF_READ,
+    ("GET", "/admin/platform/staff/{staff_id}"): STAFF_READ,
 }
+
+# GETs narrowed by POLICY (reads are otherwise open in GĐ1/GĐ2). Kept to the /admin/platform/ prefix
+# so a GET the S1 page needs (GET /admin/llm-config) can not be narrowed by accident.
+POLICY_READ_PREFIX = "/admin/platform/"
 
 # Machine callers send the secret and no x-admin-role. (method, route) -> who calls it.
 # The GETs carry no POLICY entry yet (any secret holder may read them); they are listed so the

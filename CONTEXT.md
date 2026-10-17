@@ -450,11 +450,20 @@ The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages)
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 
+**Admin console layout (AA-883, S241 design option A).** One console (`aa-cis-frontend`), nav model
+`frontend/app/_kit/adminNav.tsx` in two sections named after who a page serves: **Platform** (Overview,
+People & access › Staff, Tenants, Jobs, AI & spend, Developer) and **CIS Content** (Pipeline, Assets,
+Intelligence, Tenant output). Section headers fold and show only when the role sees both sections.
+The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking admin, TripPlanner
+public site, tenant portal); deep links are built only there, never from a return URL, never with a
+token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
+
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
-| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Pipeline, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation, tenant activity, platform stats), SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| BFF `/api/admin/openapi.json` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks `x-admin-role`) | ✓ | — | — | — |
+| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883: Staff directory, read-only) | ✓ | — | — | — |
+| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
 | BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
@@ -475,7 +484,9 @@ principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MA
 Both catch-all staff proxies that carry the secret (`/api/admin/*` and the staff branch of
 `/api/tenant/*`) forward `x-admin-role`; a staff proxy without it would act as the machine.
 GĐ1 covers the money/model writes (LLM config/catalog, Jev, budgets, job cancel/retry/retention,
-Jev credit, SEO settings); every GET stays open to every staff role. The other `/admin` writes are
+Jev credit, SEO settings); every GET stays open to every staff role, except the staff directory
+(AA-883, GĐ2: `GET /admin/platform/staff[/{id}]`, capability `staff.read`, admin only; GETs may be
+under `POLICY` only below `/admin/platform/`). The other `/admin` writes are
 reported by `tests/unit/test_aa882_route_policy.py` (snapshot, report-only) until GĐ3. Staff roles
 here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
