@@ -16,6 +16,12 @@ Chore, no Linear issue. Source numbers: `AA-Ecosys/docs/audits/2026-10-16-S240-v
   `refetchOnWindowFocus: true` on that query so an idle page picks up work enqueued elsewhere when
   the admin returns to the tab (the app default is no focus refetch; 30 s staleTime bounds it).
   Header text now says whether auto-refresh is on or paused.
+- **Review fix (mount + first-load failure)**: the jobs query sets `staleTime: 0` and
+  `refetchOnMount: "always"`. Without it the global 30 s staleTime let a client-side return to
+  /admin/jobs reuse the cached idle snapshot, so a job enqueued on another admin page never showed
+  (poll off, focus never fires in-tab). It also keeps polling while `data` is still undefined (first
+  load failed): queue state unknown → retry every 30 s, same rule as JobDrawer; the header says
+  "Retrying every 30 s until the queue loads." in that state instead of "Queue idle".
 - **Drawer** polls only while its job is queued/running (unknown status before the first response
   still polls, so a transient error retries). The LLM-calls query key includes the active flag, so
   the running→finished flip refetches the calls exactly once more, then stops.

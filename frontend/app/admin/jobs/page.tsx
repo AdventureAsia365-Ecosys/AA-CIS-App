@@ -229,12 +229,18 @@ function JobsPageInner() {
       };
     },
     placeholderData: (prev) => prev,
-    refetchInterval: (query) => (hasActiveWork(query.state.data) ? REFRESH_MS : false),
+    // Keep polling while there is no data yet (first load failed — e.g. a transient 502 or a slow
+    // verify-admin 401): the queue state is unknown, so retry on the interval like JobDrawer does.
+    refetchInterval: (query) =>
+      query.state.data === undefined || hasActiveWork(query.state.data) ? REFRESH_MS : false,
     refetchIntervalInBackground: false,
-    // Idle queue = no poll, so pick up work enqueued elsewhere when the admin comes back to the tab.
+    // Idle queue = no poll, so every mount (incl. client-side navigation back within the global
+    // 30 s staleTime) and every return to the tab fetches once, to pick up work enqueued elsewhere.
+    staleTime: 0,
+    refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const polling = hasActiveWork(data);
+  const polling = data === undefined || hasActiveWork(data);
 
   const jobs = useMemo(() => data?.jobs ?? [], [data]);
   const counts = data?.counts ?? [];
@@ -289,7 +295,11 @@ function JobsPageInner() {
       <PageHeader
         title="Jobs"
         description={`Background work that survives deploys — queued, running, finished. ${
-          polling ? "Refreshes every 30 s while jobs are queued or running." : "Queue idle — auto-refresh paused; use Refresh."
+          !data
+            ? "Retrying every 30 s until the queue loads."
+            : polling
+              ? "Refreshes every 30 s while jobs are queued or running."
+              : "Queue idle — auto-refresh paused; use Refresh."
         }`}
         actions={
           <>
