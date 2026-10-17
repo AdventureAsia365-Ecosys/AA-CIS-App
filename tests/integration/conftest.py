@@ -108,6 +108,20 @@ def _apply_schema(conn):
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'booking') THEN
                 CREATE ROLE booking;
             END IF;
+            -- AA-852 (X1): the roles of the Infra role bootstrap rl-001, which DB Migrate applies before
+            -- CIS 243 on Dev, with rl-001's attributes: bk_owner / tp_owner NOLOGIN (243 grants to them
+            -- unguarded, schema-ownership rule 5); cis_app, the CIS runtime 244 grants, LOGIN with
+            -- CONNECTION LIMIT 90 and no password. Tests reach them with SET ROLE. (rl-001 also makes the
+            -- master a member of all three; test_aa852_migration_243 sets that up for its master stand-in.)
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'bk_owner') THEN
+                CREATE ROLE bk_owner NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tp_owner') THEN
+                CREATE ROLE tp_owner NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cis_app') THEN
+                CREATE ROLE cis_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS CONNECTION LIMIT 90;
+            END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
