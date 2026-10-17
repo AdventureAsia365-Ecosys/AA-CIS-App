@@ -83,7 +83,7 @@ def _conn(guc_echo=None, fetchrow=None, execute="DELETE 1"):
 
 def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True, acquire_error=None):
     request = MagicMock()
-    request.app.state.redis.get = AsyncMock(return_value="true" if flag else None)
+    request.app.state.redis.get = AsyncMock(return_value="true" if flag else "false")
     request.app.state.pool = _pool(main_conn or _conn())
     request.app.state.tenant_pool = (_pool(tenant_conn or _conn(), acquire_error=acquire_error)
                                      if tenant_pool else None)
@@ -130,7 +130,7 @@ ROUTES = [
 def _flag_only(flag_key):
     """A Redis whose only 'true' key is `flag_key` — proves each route reads its OWN flag."""
     async def get(key):
-        return "true" if key == flag_key else None
+        return "true" if key == flag_key else "false"
     return AsyncMock(side_effect=get)
 
 
@@ -222,20 +222,35 @@ async def test_flag_on_no_tenant_connection_is_503_with_metric_event(flag_key, c
 
 @pytest.mark.parametrize("flag_key,call,row,event", ROUTES)
 @pytest.mark.asyncio
-async def test_redis_error_falls_back_to_admin_pool_loudly(flag_key, call, row, event):
-    """Critique C5: kept behaviour (a Redis outage is not a 503 on every tenant read), but logged at
-    ERROR, and the per-request line says used_tenant_pool=False, which is what the evidence reads."""
-    main = _conn(fetchrow=row())
-    request = _request(flag=True, main_conn=main)
+async def test_redis_error_keeps_tenant_pool_loudly(flag_key, call, row, event):
+    """S241 D-12 (replaces critique C5's admin-pool fallback): a flag that cannot be read is ON, so a Redis
+    outage keeps the route on the tenant pool (RLS), never the admin pool; logged at ERROR."""
+    tenant = _conn(fetchrow=row())
+    request = _request(flag=True, tenant_conn=tenant)
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
     with capture_logs() as logs:
         await call(request, TENANT_ID)
-    request.app.state.tenant_pool.acquire.assert_not_called()
+    request.app.state.pool.acquire.assert_not_called()
     failed = [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
     assert failed and failed[0]["log_level"] == "error" and failed[0]["flag_key"] == flag_key
-    assert failed[0]["fallback"] == "admin_pool"
+    assert failed[0]["fallback"] == "tenant_pool" and failed[0]["reason"] == "redis_error"
     lines = [entry for entry in logs if entry["event"] == event]
-    assert lines and all(entry["used_tenant_pool"] is False for entry in lines)
+    assert lines and all(entry["used_tenant_pool"] is True for entry in lines)
+
+
+@pytest.mark.parametrize("flag_key,call,row,event", ROUTES)
+@pytest.mark.asyncio
+async def test_missing_flag_key_uses_tenant_pool(flag_key, call, row, event):
+    """S241 D-12: a missing key is ON. Only an explicit "false" is the rollback to the admin pool."""
+    tenant = _conn(fetchrow=row())
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = AsyncMock(return_value=None)
+    with capture_logs() as logs:
+        await call(request, TENANT_ID)
+    request.app.state.pool.acquire.assert_not_called()
+    assert not [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
+    lines = [entry for entry in logs if entry["event"] == event]
+    assert lines and all(entry["used_tenant_pool"] is True for entry in lines)
 
 
 @pytest.mark.parametrize("flag_key,call,row,event", ROUTES)
@@ -483,6 +498,7 @@ def _main_request(*fetchrows):
     conn = _conn(fetchrow=list(fetchrows))
     request = MagicMock()
     request.app.state.pool = _pool(conn)
+    request.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF = main pool
     return request, conn
 
 

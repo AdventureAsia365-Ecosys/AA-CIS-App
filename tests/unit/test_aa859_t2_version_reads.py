@@ -58,7 +58,7 @@ def _conn(rows=(), row=None, total=1, guc_echo=None):
 def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True, acquire_error=None):
     request = MagicMock()
     request.app.state.redis.get = AsyncMock(
-        side_effect=lambda key: "true" if flag and key == tp.T2_VERSION_READS_FLAG else None)
+        side_effect=lambda key: "true" if flag and key == tp.T2_VERSION_READS_FLAG else "false")
     main = MagicMock()
     main.acquire = MagicMock(return_value=_ctx(main_conn or _conn()))
     request.app.state.pool = main
@@ -204,14 +204,16 @@ async def test_flag_on_no_tenant_connection_is_503_with_metric_event(call, row, 
 
 @pytest.mark.parametrize("call,row,route", ROUTES)
 @pytest.mark.asyncio
-async def test_redis_error_falls_back_to_admin_pool_loudly(call, row, route):
-    request = _request(flag=True, main_conn=_conn(row=row()))
+async def test_redis_error_keeps_tenant_pool_loudly(call, row, route):
+    """S241 D-12: an unreadable flag is ON -- the tenant pool, never the admin pool."""
+    request = _request(flag=True, tenant_conn=_conn(row=row()))
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
     with capture_logs() as logs:
         await call(request, TENANT_ID)
-    request.app.state.tenant_pool.acquire.assert_not_called()
-    assert [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
-    assert _lines(logs, route)[0]["used_tenant_pool"] is False
+    request.app.state.pool.acquire.assert_not_called()
+    failed = [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
+    assert failed and failed[0]["fallback"] == "tenant_pool"
+    assert _lines(logs, route)[0]["used_tenant_pool"] is True
 
 
 @pytest.mark.parametrize("call,row,route", ROUTES)

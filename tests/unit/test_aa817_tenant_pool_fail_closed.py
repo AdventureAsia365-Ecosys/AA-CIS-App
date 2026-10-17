@@ -1,16 +1,19 @@
 """AA-817 — tenant content-piece reads on the aa_app_user pool: acquire_scoped_conn(fail_closed=True)
 and service.fetch_latest_piece_for_request(request=...).
 
-Flag off: the admin pool, exactly as before. Flag on: the tenant pool inside one transaction with the
+Flag explicitly off ("false"): the admin pool, exactly as before. Flag on -- "true", a missing key, or a
+flag that cannot be read (S241 D-12, fail closed): the tenant pool inside one transaction with the
 GUC set LOCAL; no tenant pool, no tenant id, or a GUC that did not take is a 503, never a fallback to
 the admin pool (which RLS does not filter). Callers without fail_closed keep the old fallback.
 """
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from structlog.testing import capture_logs
 
 from api.core import aa544_tenant_pool as tp
 from services.acp_content_writing import service
@@ -42,7 +45,7 @@ def _conn(guc_echo=None):
 
 def _request(flag, tenant_conn=None, main_conn=None, tenant_pool=True):
     request = MagicMock()
-    request.app.state.redis.get = AsyncMock(return_value="true" if flag else None)
+    request.app.state.redis.get = AsyncMock(return_value="true" if flag else "false")
     request.app.state.pool = _pool(main_conn or _conn())
     request.app.state.tenant_pool = _pool(tenant_conn or _conn()) if tenant_pool else None
     return request
@@ -102,12 +105,105 @@ async def test_guc_not_applied_is_503():
     assert exc.value.status_code == 503
 
 
+# ── S241 decision D-12: the flag read fails closed ────────────────────────────────────────────────
+
+async def _hang(_key):
+    await asyncio.sleep(10)
+
+
+@pytest.mark.parametrize("redis_value,expect_tenant_pool", [
+    ("true", True),
+    (None, True),              # missing key = ON
+    ("false", False),          # the one explicit OFF value = the rollback
+    ("FALSE", False),
+    (" false ", False),
+    (b"false", False),
+    ("garbage", True),         # unrecognised = ON (logged)
+    ("0", True),
+])
 @pytest.mark.asyncio
-async def test_redis_error_counts_as_flag_off():
-    request = _request(flag=True)
-    request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
+async def test_flag_value_encoding(redis_value, expect_tenant_pool):
+    tenant, main = _conn(), _conn()
+    request = _request(flag=True, tenant_conn=tenant, main_conn=main)
+    request.app.state.redis.get = AsyncMock(return_value=redis_value)
     conn, used = await _enter(request, str(TENANT_ID), fail_closed=True)
-    assert used is False
+    assert used is expect_tenant_pool
+    assert conn is (tenant if expect_tenant_pool else main)
+
+
+@pytest.mark.asyncio
+async def test_redis_error_uses_tenant_pool_and_logs_read_failed():
+    tenant = _conn()
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
+    with capture_logs() as logs:
+        conn, used = await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert conn is tenant and used is True
+    request.app.state.pool.acquire.assert_not_called()
+    failed = [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
+    assert len(failed) == 1 and failed[0]["log_level"] == "error"
+    assert failed[0]["fallback"] == "tenant_pool" and failed[0]["reason"] == "redis_error"
+    assert failed[0]["flag_key"] == tp.CONTENT_PIECE_READS_FLAG
+
+
+@pytest.mark.asyncio
+async def test_redis_timeout_uses_tenant_pool(monkeypatch):
+    monkeypatch.setattr(tp, "FLAG_READ_TIMEOUT_S", 0.01)
+    tenant = _conn()
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = _hang
+    with capture_logs() as logs:
+        conn, used = await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert conn is tenant and used is True
+    request.app.state.pool.acquire.assert_not_called()
+    failed = [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
+    assert len(failed) == 1 and failed[0]["reason"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_no_redis_client_uses_tenant_pool():
+    tenant = _conn()
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis = None
+    with capture_logs() as logs:
+        conn, used = await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert conn is tenant and used is True
+    failed = [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
+    assert len(failed) == 1 and failed[0]["reason"] == "client_missing"
+
+
+@pytest.mark.asyncio
+async def test_missing_key_uses_tenant_pool_without_error_log():
+    tenant = _conn()
+    request = _request(flag=True, tenant_conn=tenant)
+    request.app.state.redis.get = AsyncMock(return_value=None)
+    with capture_logs() as logs:
+        conn, used = await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert conn is tenant and used is True
+    request.app.state.pool.acquire.assert_not_called()
+    assert not [e for e in logs if e["event"].startswith("aa817_tenant_flag_")]
+
+
+@pytest.mark.asyncio
+async def test_unrecognised_value_is_on_and_warns():
+    request = _request(flag=True)
+    request.app.state.redis.get = AsyncMock(return_value="ture")
+    with capture_logs() as logs:
+        _, used = await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert used is True
+    warned = [e for e in logs if e["event"] == "aa817_tenant_flag_unrecognized"]
+    assert len(warned) == 1 and warned[0]["log_level"] == "warning" and warned[0]["treated_as"] == "on"
+
+
+@pytest.mark.asyncio
+async def test_redis_error_without_tenant_pool_is_503_not_admin_pool():
+    """Redis and the tenant pool both down: still never the admin pool."""
+    request = _request(flag=True, tenant_pool=False)
+    request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
+    with pytest.raises(HTTPException) as exc:
+        await _enter(request, str(TENANT_ID), fail_closed=True)
+    assert exc.value.status_code == 503
+    request.app.state.pool.acquire.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -144,17 +144,18 @@ async def test_flag_on_no_tenant_connection_is_503_with_metric_event(error, reas
 
 
 @pytest.mark.asyncio
-async def test_redis_error_falls_back_to_admin_pool_loudly():
-    main = _conn(fetchrow=_piece_row())
-    request = _request(flag=True, main_conn=main)
+async def test_redis_error_keeps_tenant_pool_loudly():
+    """S241 D-12: an unreadable flag is ON -- the tenant pool, never the admin pool."""
+    tenant = _conn(fetchrow=_piece_row())
+    request = _request(flag=True, tenant_conn=tenant)
     request.app.state.redis.get = AsyncMock(side_effect=ConnectionError("redis down"))
     with capture_logs() as logs:
         await _call(request, TENANT_ID)
-    request.app.state.tenant_pool.acquire.assert_not_called()
+    request.app.state.pool.acquire.assert_not_called()
     failed = [entry for entry in logs if entry["event"] == "aa817_tenant_flag_read_failed"]
-    assert failed and failed[0]["flag_key"] == FLAG and failed[0]["fallback"] == "admin_pool"
+    assert failed and failed[0]["flag_key"] == FLAG and failed[0]["fallback"] == "tenant_pool"
     lines = [entry for entry in logs if entry["event"] == EVENT]
-    assert lines and lines[0]["used_tenant_pool"] is False
+    assert lines and lines[0]["used_tenant_pool"] is True
 
 
 @pytest.mark.asyncio

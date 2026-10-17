@@ -27,7 +27,7 @@ def _make_request():
     request = MagicMock()
     request.app.state.pool = MagicMock()
     request.app.state.pool.acquire = MagicMock(return_value=_async_cm(conn))
-    request.app.state.redis.get = AsyncMock(return_value=None)
+    request.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     return request
 
 

@@ -35,7 +35,7 @@ class _Redis:
         self.on = on
 
     async def get(self, key):
-        return "true" if self.on and key == CONTENT_PIECE_READS_FLAG else None
+        return "true" if self.on and key == CONTENT_PIECE_READS_FLAG else "false"
 
 
 class _OneConnPool:

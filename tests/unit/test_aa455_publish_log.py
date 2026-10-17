@@ -41,6 +41,7 @@ def _make_pool(fetchval=None, fetchrow=None, fetch=None, execute=None):
 def _make_request(pool, headers=None):
     req = MagicMock()
     req.app.state.pool = pool
+    req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     req.headers = headers or {}
     return req
 

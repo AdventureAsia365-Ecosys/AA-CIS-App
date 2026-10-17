@@ -96,8 +96,14 @@ async def test_flag_on_no_tenant_connection_is_503_with_metric_event(flag_key, c
 
 @_route
 @pytest.mark.asyncio
-async def test_redis_error_falls_back_to_admin_pool_loudly(flag_key, call, row, event):
-    await matrix.test_redis_error_falls_back_to_admin_pool_loudly(flag_key, call, row, event)
+async def test_redis_error_keeps_tenant_pool_loudly(flag_key, call, row, event):
+    await matrix.test_redis_error_keeps_tenant_pool_loudly(flag_key, call, row, event)
+
+
+@_route
+@pytest.mark.asyncio
+async def test_missing_flag_key_uses_tenant_pool(flag_key, call, row, event):
+    await matrix.test_missing_flag_key_uses_tenant_pool(flag_key, call, row, event)
 
 
 @_route

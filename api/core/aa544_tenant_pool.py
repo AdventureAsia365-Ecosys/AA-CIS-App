@@ -27,9 +27,13 @@ Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.stat
 (non-BYPASSRLS, real RLS applies), used ONLY by routes that explicitly opt in via
 acquire_scoped_conn() below, and only when that route's OWN flag is on.
 
-Rollback (per route, independent of every other route on this pool): `redis-cli DEL
-<that route's flag key>` (or SET ... false) reverts it to the admin pool immediately -- no
-deploy needed, and does not affect any other route already on the tenant pool.
+Flag encoding (S241 decision D-12, fail closed): the tenant pool is the default. Only the explicit
+value FLAG_OFF_VALUE ("false") switches a route back to the admin pool. "true", a missing key, any
+other value, a Redis error / timeout or no Redis client all mean ON (tenant pool, RLS).
+
+Rollback (per route, independent of every other route on this pool): `redis-cli SET <that route's
+flag key> false` reverts it to the admin pool immediately -- no deploy needed, and does not affect
+any other route already on the tenant pool. `DEL` is NOT a rollback any more: a deleted key means ON.
 
 GUC safety: app.tenant_id is set via set_config(..., is_local=true) INSIDE an explicit
 transaction (SET LOCAL semantics) -- scoped to that one transaction so it cannot leak onto the
@@ -54,9 +58,11 @@ logger = structlog.get_logger()
 
 # One flag per canary route -- each independently revertible. Add a new named constant here
 # (don't invent ad hoc string literals at call sites) whenever a new route joins the rollout.
+# S241 D-12: a missing key is ON, so a newly wired route runs on the tenant pool from its first deploy.
+# To ship one dark, `SET <its key> false` on Dev BEFORE that deploy.
 STAGE1_PUBLISH_PENDING_FLAG = "aa544:stage1:publish_pending_pool"
 STAGE5_GET_PIECE_FLAG = "aa544:stage5:get_piece_pool"
-# AA-815 — GET /v1/publish-log (tenant's published/unpublished rows). Default off (admin pool).
+# AA-815 — GET /v1/publish-log (tenant's published/unpublished rows).
 PUBLISH_LOG_LIST_FLAG = "aa544:publish_log_list_pool"
 # AA-815 — DELETE /v1/integrations/{wordpress|facebook} (tenant disconnect). Needs migration 237
 # (RLS + GRANT SELECT, DELETE on shared.tenant_integrations for aa_app_user), applied 16/10/2026.
@@ -75,6 +81,14 @@ ANGLE_GATE_DECIDE_FLAG = "aa859:angle_gate_decide_pool"      # W3 angle-gate cho
 UNPUBLISH_FLAG = "aa859:unpublish_pool"                      # W4 unpublish; no 241
 T2_VERSION_READS_FLAG = "aa859:t2_version_reads_pool"        # W5 T2 version reads (job status on MAIN); no 241
 INTEGRATION_CONNECT_FLAG = "aa859:integration_connect_pool"  # W9 integration GET / POST / test; needs 241
+
+# S241 D-12: the one value that turns a route's flag OFF (admin pool). Compared after strip + lower-case.
+# Anything else -- including a missing key -- is ON. FLAG_ON_VALUE is what the flag tooling writes for ON.
+FLAG_OFF_VALUE = "false"
+FLAG_ON_VALUE = "true"
+# Bound on the flag read: a hung Redis must not hold the request. On timeout the route stays on the
+# tenant pool (fail closed), like any other read failure.
+FLAG_READ_TIMEOUT_S = 0.5
 
 _SECRET_ID = "aa-cis/dev/rds-app-user"
 
@@ -146,17 +160,42 @@ def _unavailable_reason(exc: BaseException) -> str:
 
 
 async def _flag_enabled(request: Request, flag_key: str) -> bool:
-    """Any Redis error or unset key means "off" (the admin pool, the pre-rollout behavior for that
-    route). Kept for every route, fail_closed or not: a Redis outage must not turn into a 503 on every
-    tenant read. AA-817 (critique C5): this is the one remaining path from a flag that is on to the admin
-    pool, so it logs at ERROR with its own event, and the evidence that a route runs on the tenant pool
-    is the per-request `used_tenant_pool=True` log line, never the flag value alone."""
+    """S241 decision D-12: tenant-pool flags FAIL CLOSED. Returns False (admin pool) only when Redis
+    holds the explicit FLAG_OFF_VALUE for this key -- the per-route rollback. Everything else is True
+    (tenant pool, RLS): "true", a missing key, an unrecognised value, a Redis error, a read slower than
+    FLAG_READ_TIMEOUT_S, or no Redis client on app.state. A Redis outage therefore never moves tenant
+    traffic onto the admin pool (which RLS does not filter); with the tenant pool down too, the
+    fail_closed routes answer 503.
+
+    A failed read logs `aa817_tenant_flag_read_failed` at ERROR (`fallback="tenant_pool"`, `reason=`), and
+    an unrecognised value logs `aa817_tenant_flag_unrecognized` at WARNING. The evidence that a route
+    runs on the tenant pool is still the per-request `used_tenant_pool=True` line, never the flag value."""
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",
+                     reason="client_missing")
+        return True
     try:
-        val = await request.app.state.redis.get(flag_key)
+        val = await asyncio.wait_for(redis.get(flag_key), timeout=FLAG_READ_TIMEOUT_S)
+    except asyncio.TimeoutError as e:
+        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",
+                     reason="timeout", error=repr(e))
+        return True
     except Exception as e:
-        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="admin_pool", error=repr(e))
+        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",
+                     reason="redis_error", error=repr(e))
+        return True
+    if val is None:
+        return True  # missing key = ON (D-12); rollback is an explicit SET <key> false
+    if isinstance(val, bytes):
+        val = val.decode("utf-8", "replace")
+    normalized = str(val).strip().lower()
+    if normalized == FLAG_OFF_VALUE:
         return False
-    return val == "true"
+    if normalized != FLAG_ON_VALUE:
+        logger.warning("aa817_tenant_flag_unrecognized", flag_key=flag_key, value=str(val)[:32],
+                       treated_as="on")
+    return True
 
 
 def _is_uuid(value) -> bool:
@@ -190,16 +229,17 @@ async def acquire_scoped_conn(request: Request, tenant_id: str, flag_key: str, *
     `async with` block MUST happen inside that same transaction for the GUC to apply -- do not
     acquire a second connection or start a nested transaction on this one mid-block.
 
-    Otherwise (flag off, or tenant pool never came up): acquires from
-    request.app.state.pool (aa_cis_admin, current behavior, completely unchanged) with no
-    transaction wrapper -- this is the fail-closed default path, not an error case.
+    Otherwise (flag explicitly off -- FLAG_OFF_VALUE, see _flag_enabled -- or, without fail_closed, the
+    tenant pool never came up): acquires from request.app.state.pool (aa_cis_admin, the pre-rollout
+    behavior) with no transaction wrapper. A flag that cannot be read counts as ON (S241 D-12).
 
     AA-817 `fail_closed=True` (every caller since AA-817 PR-A): once the route's flag is on, the
     route is meant to be isolated by RLS, so it never silently falls back to the admin pool, which
     RLS does not filter (owner exempt). A missing tenant pool, an empty or malformed (not a uuid, AA-859)
     tenant id, no tenant connection within TENANT_POOL_ACQUIRE_TIMEOUT_S (CONNECTION LIMIT reached, RDS
-    unreachable), or a GUC that did not take the tenant id raises 503 instead. Flag off is unchanged
-    (admin pool).
+    unreachable), or a GUC that did not take the tenant id raises 503 instead. An explicit OFF value is
+    unchanged (admin pool); an unreadable flag is ON, so a Redis outage gives the tenant pool, not the
+    admin pool.
 
     AA-859 pool timing: when the tenant pool was used, one INFO line `aa859_tenant_pool_timing` with
     `wait_ms` (acquire) and `hold_ms` (acquire -> release), so Logs Insights can take percentiles. Never

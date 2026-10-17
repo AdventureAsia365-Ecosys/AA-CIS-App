@@ -27,6 +27,7 @@ PIECE_ID = uuid.uuid4()
 def _make_request(pool):
     req = MagicMock()
     req.app.state.pool = pool
+    req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     return req
 
 
