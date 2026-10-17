@@ -6,12 +6,9 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { Gauge, ClipboardList, Library, ListChecks, Menu } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { K } from "./tokens";
 import { navActive } from "./adminNav";
-import { apiGet } from "./api";
-
-interface ReviewTotal { pagination?: { total?: number }; total?: number; }
+import { useReviewPendingCount } from "./useReviewPendingCount";
 
 const ITEMS = [
   { href: "/admin/overview", label: "Overview", icon: Gauge },
@@ -24,15 +21,8 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  const { data: reviewTotal } = useQuery({
-    queryKey: ["bottomnav", "review-pending"],
-    queryFn: () =>
-      apiGet<ReviewTotal>("/api/admin/review-queue?status=pending&page=1&page_size=1", { admin: true }),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    retry: false,
-  });
-  const pending = reviewTotal?.pagination?.total ?? reviewTotal?.total;
+  // Same query (key + request) as the Sidebar badge — see useReviewPendingCount.
+  const pending = useReviewPendingCount();
 
   return (
     <nav className="aa-bottom-nav" data-testid="admin-bottom-nav" aria-label="Primary (mobile)">

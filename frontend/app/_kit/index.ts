@@ -24,3 +24,4 @@ export * from "./adminNav";
 export { useSidebarCollapsed } from "./useSidebar";
 export { useAdminIdentity } from "./useAdminIdentity";
 export { useMediaQuery, useIsPhone, PHONE_QUERY } from "./useMediaQuery";
+export { useReviewPendingCount, REVIEW_PENDING_KEY } from "./useReviewPendingCount";

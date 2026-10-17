@@ -5,8 +5,13 @@
 // Right: theme switch (moved from the sidebar), notifications bell + dropdown (moved as-is), and
 // the account menu (avatar initial + name → Settings, Sign out — the existing admin-logout). No
 // environment label.
+//
+// S241 (Vercel Fluid CPU): the unread count is a react-query poll every 120 s (was a window
+// setInterval every 30 s that also ran in hidden tabs — 17.8k proxied calls in 13 days, S240 audit).
+// Hidden tabs pause (refetchIntervalInBackground false) and refetch on focus when stale.
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, usePathname } from "next/navigation";
 import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu as MenuIcon } from "lucide-react";
 import { K, sans, serif, alpha, formatDateTime } from "./tokens";
@@ -135,24 +140,34 @@ function ThemeToggle() {
 }
 
 // ── Notifications (moved from AdminSidebar) ─────────────────────────────────
+const NOTIF_COUNT_KEY = ["admin-notifications-count"] as const;
+const NOTIF_POLL_MS = 120_000;
+
+async function fetchUnreadCount(): Promise<number> {
+  const r = await fetch("/api/admin/notifications/count");
+  if (!r.ok) throw new Error(`notifications/count ${r.status}`);
+  const d = await r.json();
+  return typeof d?.unread === "number" ? d.unread : 0;
+}
+
 function Notifications() {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [unread, setUnread] = useState(0);
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Poll the unread count (same cadence as before). setState runs in the fetch callback.
-  useEffect(() => {
-    const fetchCount = () => {
-      fetch("/api/admin/notifications/count")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => d && setUnread(d.unread))
-        .catch(() => {});
-    };
-    fetchCount();
-    const id = window.setInterval(fetchCount, 30000);
-    return () => window.clearInterval(id);
-  }, []);
+  // Unread count: polled every 120 s, paused while the tab is hidden, refreshed on focus when
+  // older than 60 s. A failed fetch keeps the last count (react-query keeps data on error), as the
+  // old setInterval did; no retry so a down backend costs one call per tick, not two.
+  const { data: unread = 0 } = useQuery({
+    queryKey: NOTIF_COUNT_KEY,
+    queryFn: fetchUnreadCount,
+    refetchInterval: NOTIF_POLL_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    staleTime: 60_000,
+    retry: false,
+  });
 
   // Click-outside closes the dropdown.
   useEffect(() => {
@@ -177,7 +192,10 @@ function Notifications() {
 
   function markAllRead() {
     fetch("/api/admin/notifications/read-all", { method: "PUT" })
-      .then(() => { setUnread(0); setNotifs((n) => n.map((x) => ({ ...x, is_read: true }))); })
+      .then(() => {
+        qc.setQueryData(NOTIF_COUNT_KEY, 0);
+        setNotifs((n) => n.map((x) => ({ ...x, is_read: true })));
+      })
       .catch(() => {});
   }
 
