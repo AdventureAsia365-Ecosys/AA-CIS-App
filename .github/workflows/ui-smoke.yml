@@ -1,48 +1,69 @@
 name: UI Smoke
 
-# AA-732 — run the Playwright UI smoke suite against a PR's Vercel preview on every deployment.
-# Vercel posts a `deployment_status` event per deployment; we react to the successful Preview one.
+# AA-732 — run the Playwright UI smoke suite against a PR's Vercel preview.
+# S241: the Vercel Git integration is off (frontend/vercel.json), so Vercel no longer sends
+# `deployment_status`. `vercel-deploy.yml` now calls this workflow after a successful PREVIEW deploy
+# (workflow_call). Inside a called workflow `github.event_name` / `github.event` belong to the
+# CALLER (pull_request, …), so everything here reads `inputs.*`, never the event payload.
 on:
-  deployment_status:
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Deployment URL to run the smoke against"
+        required: true
+        type: string
+      sha:
+        description: "Commit to check out and to find the PR by (the PR head sha)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      VERCEL_AUTOMATION_BYPASS_SECRET:
+        required: false
+      E2E_ADMIN_USERNAME:
+        required: false
+      E2E_ADMIN_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       base_url:
         description: "Base URL to run the smoke against (e.g. a preview or production URL)"
         required: true
         type: string
+      sha:
+        description: "Optional commit sha to check out and comment on (default: the dispatched ref)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
   pull-requests: write
-  deployments: read
 
 concurrency:
-  # One run per deployment target / manual dispatch; a newer deployment cancels an in-flight run.
-  group: ui-smoke-${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+  # One run per deployment URL; a re-run on the same URL cancels the in-flight one.
+  group: ui-smoke-${{ inputs.base_url }}
   cancel-in-progress: true
 
 jobs:
   smoke:
     name: UI smoke (Playwright)
     runs-on: ubuntu-latest
-    # Gate: on deployment_status, only a SUCCESSFUL PREVIEW deployment. workflow_dispatch always runs.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.deployment_status.state == 'success' &&
-       github.event.deployment_status.environment == 'Preview')
+    # Both triggers carry inputs.base_url (the caller only calls after a successful preview deploy).
+    if: inputs.base_url != ''
     env:
       # Preview is behind Vercel SSO — the bypass secret lets Playwright reach it; the spec only
       # sends the header to the BASE_URL origin, and only when the secret is present.
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
       E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
-      BASE_URL: ${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+      BASE_URL: ${{ inputs.base_url }}
     steps:
       - name: Checkout the deployed commit
         uses: actions/checkout@v5
         with:
-          # On deployment_status the default ref is the deployment sha; be explicit for clarity.
-          ref: ${{ github.event.deployment_status.deployment.sha || github.sha }}
+          # The deployed commit (PR head sha from vercel-deploy.yml); the dispatched ref otherwise.
+          ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
@@ -80,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.event.deployment_status.deployment.sha || github.sha }}
+          SHA: ${{ inputs.sha || github.sha }}
         run: |
           PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
@@ -95,7 +116,7 @@ jobs:
           OUTCOME: ${{ job.status }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
-          BASE_URL: ${{ github.event.deployment_status.target_url || github.event.inputs.base_url }}
+          BASE_URL: ${{ inputs.base_url }}
         run: |
           MARKER="<!-- ui-smoke-report -->"
           RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"

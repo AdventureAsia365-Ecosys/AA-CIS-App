@@ -312,7 +312,7 @@ jobs:
 
           [ "$fail" = "0" ] && echo "All smoke checks passed" || (echo "Smoke checks failed" && exit 1)
 
-  # S240: the "Deploy Frontend to Vercel" job (deploy hook on every Deploy Dev run) was removed. The Vercel
-  # Git integration already builds every push to main (Production), with the Ignored Build Step skipping
-  # backend-only commits; the hook added a second production deployment per merge and used up the Hobby
-  # cap (~100 deployments / 24 h, team-wide) — canceled deployments count too.
+  # S240: the "Deploy Frontend to Vercel" job (deploy hook on every Deploy Dev run) was removed — it added a
+  # second production deployment per merge and used up the Hobby cap (~100 deployments / 24 h, team-wide;
+  # canceled deployments count too). S241: frontend deploys (preview + production) now come only from
+  # .github/workflows/vercel-deploy.yml; the Vercel Git integration is off (frontend/vercel.json).
