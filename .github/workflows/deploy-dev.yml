@@ -85,8 +85,15 @@ jobs:
           # placeholder image of the Terraform task definitions, which the services ignore.
           IMAGE_TAG=dev-${{ github.sha }}
           FULL_IMAGE=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-          docker build -t $FULL_IMAGE .
-          docker push $FULL_IMAGE
+          # An immutable tag cannot be pushed twice: a re-run or a dispatch of a commit that was already
+          # built (S241 run 39036415606 failed on exactly that) reuses the image already in ECR.
+          if aws ecr describe-images --repository-name "${{ env.ECR_REPOSITORY }}" \
+               --image-ids imageTag="$IMAGE_TAG" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1; then
+            echo "Image $IMAGE_TAG already in ECR — reusing it, no build."
+          else
+            docker build -t $FULL_IMAGE .
+            docker push $FULL_IMAGE
+          fi
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
   deploy:
     name: Deploy to ECS Dev
