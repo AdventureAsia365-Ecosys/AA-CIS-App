@@ -29,12 +29,22 @@ Chore, no Linear issue. Source numbers: `AA-Ecosys/docs/audits/2026-10-16-S240-v
   Review Queue page's existing `invalidateQueries(["review-queue"])` after approve/reject refreshes
   the badge immediately (180 s otherwise). staleTime = refetchInterval = 180 s, no background.
 
+- **Verify cache**: admin TTL 20 s → 300 s; tenant stays 20 s (not in the audit; same class now
+  takes a per-cache TTL). Every entry is capped at the JWT's own `exp` (payload decoded without
+  signature check — only used to shorten an entry for a token the backend just verified). Token
+  without a readable `exp` → old 20 s TTL. `get` now treats `now == expiresAt` as expired.
+  Safe because `/auth/verify-admin` is stateless (signature + exp + role claim; no DB, no
+  denylist): role change / deactivation already only bite at re-login or exp; logout only deletes
+  the cookie and never touched this cache. Worst case (documented in the file): JWT_SECRET rotation
+  leaves already-cached tokens accepted up to 5 min per warm instance (was 20 s).
+
 ## Changed
 - Backend: `shared/jobs/queue.py` `list_jobs(include_blobs=...)` + `_SUMMARY_COLUMNS`;
   `api/routers/admin_job_runner.py` `fields` query param. Unit tests:
   `tests/unit/test_s241_jobs_list_summary.py`. CONTEXT.md job-runner bullet updated.
 - Frontend: `app/admin/jobs/page.tsx`, `JobDrawer.tsx`, `app/_kit/Topbar.tsx`, `Sidebar.tsx`,
-  `BottomNav.tsx`, new `app/_kit/useReviewPendingCount.ts` (exported from the kit barrel).
+  `BottomNav.tsx`, new `app/_kit/useReviewPendingCount.ts` (exported from the kit barrel),
+  `lib/auth-server.ts` (also shared by `middleware.ts`).
 
 ## Tradeoffs
 - A NULL-ed column keeps the response shape stable at the cost of a few bytes per row (`"payload":null`).
