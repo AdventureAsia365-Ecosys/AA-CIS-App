@@ -7,6 +7,9 @@ no new variables (S242 plan, stage B / C2):
 - ``COGNITO_WORKFORCE_ISSUER``       default :data:`DEV_WORKFORCE_ISSUER`
 - ``COGNITO_CIS_ADMIN_CLIENT_ID``    default :data:`DEV_CIS_ADMIN_CLIENT_ID`
 - ``COGNITO_BREAKGLASS_CLIENT_ID``   default :data:`DEV_BREAKGLASS_CLIENT_ID`
+- ``COGNITO_WORKFORCE_POOL_ID``      default: the pool id at the end of the WORKFORCE issuer
+  (:data:`DEV_WORKFORCE_POOL_ID` on Dev). Used by the staff directory writer (C6,
+  ``api/services/staff_directory.py``); the region is the pool id's prefix.
 
 The issuer is the pool issuer as published by Terraform (``identity.tf`` outputs) and the pool's
 ``/.well-known/openid-configuration``, never the custom/hosted domain. Client ids are public values (they appear
@@ -33,10 +36,12 @@ log = structlog.get_logger(__name__)
 DEV_WORKFORCE_ISSUER = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS"
 DEV_CIS_ADMIN_CLIENT_ID = "3oqkumijh04cp81k3nlnub6qtv"
 DEV_BREAKGLASS_CLIENT_ID = "2g3f3ncfuqdiuu1o5b70o4h0lq"
+DEV_WORKFORCE_POOL_ID = "us-west-1_bCcFvbSOS"
 
 ENV_WORKFORCE_ISSUER = "COGNITO_WORKFORCE_ISSUER"
 ENV_CIS_ADMIN_CLIENT_ID = "COGNITO_CIS_ADMIN_CLIENT_ID"
 ENV_BREAKGLASS_CLIENT_ID = "COGNITO_BREAKGLASS_CLIENT_ID"
+ENV_WORKFORCE_POOL_ID = "COGNITO_WORKFORCE_POOL_ID"
 
 _verifier: MultiIssuerVerifier | None = None
 
@@ -56,6 +61,17 @@ def cis_admin_client_id() -> str:
 
 def breakglass_client_id() -> str:
     return _env(ENV_BREAKGLASS_CLIENT_ID, DEV_BREAKGLASS_CLIENT_ID)
+
+
+def workforce_pool_id() -> str:
+    """The WORKFORCE user pool id: the env override, else the last path segment of the issuer (so an issuer
+    override for another pool moves the directory writer with it)."""
+    return _env(ENV_WORKFORCE_POOL_ID, workforce_issuer().rstrip("/").rsplit("/", 1)[-1])
+
+
+def workforce_region() -> str:
+    """The pool's region: the pool id prefix (``us-west-1_xxxx`` -> ``us-west-1``)."""
+    return workforce_pool_id().split("_", 1)[0]
 
 
 def cis_staff_issuers() -> tuple[IssuerConfig, ...]:

@@ -1,20 +1,23 @@
 "use client";
 // app/admin/platform/staff/StaffDirectory.tsx
 // AA-883 (S241 admin console GĐ2, design §5.4) — Platform › People & access › Staff: who has a CIS
-// staff account, with which role, and whether it is active. Read-only (Nghiệp S241 Q6): accounts are
-// created / reset with scripts/create_staff_user.py until Cognito (ADR 0006); role and active changes
-// (owner-only staff.write, Q2) come with GĐ5.
+// staff account, with which role, and whether it is active.
 //
 // API: GET /api/admin/platform/staff and /api/admin/platform/staff/{id} (backend
-// api/routers/admin_platform.py, admin only: staff_policy staff.read + BFF API_READ_RULES). Only the
-// existing shared.admin_users columns exist: no e-mail and no last login yet.
+// api/routers/admin_platform.py, admin only: staff_policy staff.read + BFF API_READ_RULES). Since
+// AA-816 C6 a row also carries the work email, display name, owner flag, last sign-in, whether a
+// company sign-in (Cognito) is linked, and the Booking role (shared.staff_app_grant).
+//
+// AA-816 C6 writes (StaffManage.tsx): a platform owner on a company sign-in creates accounts and
+// changes roles / access from this page; everyone else sees it read-only. Who may write comes from
+// the list's `viewer` block (lib/rbac.ts canWriteStaff); the backend refuses everyone else anyway.
 //
 // The drawer is driven by local state; the URL follows it (/admin/platform/staff/{id}) through
 // history.replaceState, so a deep link (from Booking later, §6.3) opens the same drawer. The initial
 // id comes from the [id] route as a prop — no setState in an effect (React Compiler).
 
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, RefreshCw, UserPlus } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import {
   Badge,
@@ -33,23 +36,25 @@ import {
   type ColumnDef,
   type Tone,
 } from "../../../_kit";
-import { ROLE_LABEL, isStaffRole } from "@/lib/rbac";
+import { ROLE_LABEL, canWriteStaff, isStaffRole, type StaffViewer } from "@/lib/rbac";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
+import {
+  CreateStaffModal,
+  OutcomeBanner,
+  StaffManagePanel,
+  bookingRoleLabel,
+  type Outcome,
+  type StaffAccount,
+} from "./StaffManage";
 
-export interface StaffAccount {
-  id: string;
-  username: string;
-  role: string;
-  is_active: boolean;
-  created_at: string | null;
-  updated_at: string | null;
-}
+export type { StaffAccount } from "./StaffManage";
 
 interface StaffListResp {
   staff: StaffAccount[];
   total: number;
   active: number;
   active_by_role: Record<string, number>;
+  viewer?: StaffViewer;
 }
 
 const LIST_KEY = ["platform-staff"] as const;
@@ -66,7 +71,7 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 function ActiveBadge({ active }: { active: boolean }) {
-  return <Badge tone={active ? "success" : "neutral"}>{active ? "Active" : "Inactive"}</Badge>;
+  return <Badge tone={active ? "success" : "neutral"}>{active ? "Active" : "Disabled"}</Badge>;
 }
 
 function BookingLink({ id, label = "Open in Booking" }: { id: string; label?: string }) {
@@ -94,6 +99,8 @@ function setUrl(id: string | null): void {
 
 export default function StaffDirectory({ initialId = null }: { initialId?: string | null }) {
   const [openId, setOpenId] = useState<string | null>(initialId);
+  const [creating, setCreating] = useState(false);
+  const [pageOutcome, setPageOutcome] = useState<Outcome | null>(null);
 
   const list = useQuery({
     queryKey: LIST_KEY,
@@ -101,25 +108,38 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
     staleTime: 60_000,
   });
   const staff = useMemo(() => list.data?.staff ?? [], [list.data]);
+  const viewer = list.data?.viewer;
+  const canWrite = canWriteStaff(viewer);
 
   const open = (id: string) => { setOpenId(id); setUrl(id); };
   const close = () => { setOpenId(null); setUrl(null); };
 
   const columns = useMemo<ColumnDef<StaffAccount, unknown>[]>(() => [
     {
-      accessorKey: "username",
-      header: "Username",
-      cell: (c) => <span style={{ fontWeight: 600, color: K.ink }}>{c.row.original.username}</span>,
+      id: "name",
+      accessorFn: (r) => `${r.display_name ?? ""} ${r.username} ${r.email ?? ""}`,
+      header: "Name",
+      cell: (c) => <NameCell s={c.row.original} />,
     },
-    { accessorKey: "role", header: "Role", cell: (c) => <RoleBadge role={c.row.original.role} /> },
+    { accessorKey: "role", header: "CIS role", cell: (c) => <RoleBadge role={c.row.original.role} /> },
+    {
+      id: "booking_role",
+      accessorFn: (r) => r.booking_role ?? "",
+      header: "Booking role",
+      cell: (c) => <span style={{ color: c.row.original.booking_role ? K.ink : K.muted }}>{bookingRoleLabel(c.row.original.booking_role)}</span>,
+    },
     {
       id: "status",
       accessorFn: (r) => (r.is_active ? "active" : "inactive"),
       header: "Status",
       cell: (c) => <ActiveBadge active={c.row.original.is_active} />,
     },
+    {
+      accessorKey: "last_login_at",
+      header: "Last sign-in",
+      cell: (c) => (c.row.original.last_login_at ? formatDateTime(c.row.original.last_login_at) : <span style={{ color: K.muted }}>Never</span>),
+    },
     { accessorKey: "created_at", header: "Created", cell: (c) => formatDate(c.row.original.created_at) },
-    { accessorKey: "updated_at", header: "Updated", cell: (c) => formatDateTime(c.row.original.updated_at) },
     {
       id: "booking",
       header: "Booking",
@@ -140,16 +160,36 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
             <a href={BOOKING_ADMIN_URL} target="_blank" rel="noopener noreferrer" style={{ color: K.accentDeep, fontWeight: 600 }}>
               Booking admin
             </a>
-            , which derives its own role from the CIS role. Read-only for now: accounts are created and reset by
-            the platform owner until the move to single sign-on.
+            . {canWrite
+              ? "As a platform owner you can add accounts and change roles and access here; each change is saved in CIS, then in the company sign-in, and recorded in the audit log."
+              : viewer?.auth === "legacy"
+                ? "Read-only on a password session: platform owners sign in with their company email to change accounts."
+                : "Read-only: only a platform owner can change accounts."}
           </>
         }
         actions={
-          <Button variant="secondary" size="sm" onClick={() => list.refetch()} disabled={list.isFetching}>
-            <RefreshCw size={13} /> Refresh
-          </Button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {canWrite && (
+              <Button variant="primary" size="sm" onClick={() => { setPageOutcome(null); setCreating(true); }}>
+                <UserPlus size={13} /> Add staff
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => list.refetch()} disabled={list.isFetching}>
+              <RefreshCw size={13} /> Refresh
+            </Button>
+          </div>
         }
       />
+
+      {pageOutcome && (
+        <div style={{ marginBottom: 14 }}>
+          <OutcomeBanner outcome={pageOutcome} onRetried={setPageOutcome} />
+        </div>
+      )}
+      {canWrite && (
+        <CreateStaffModal open={creating} onClose={() => setCreating(false)}
+          onDone={(o) => { setCreating(false); setPageOutcome(o); }} />
+      )}
 
       {/* Two totals, then one "Active by role" chip holding every role count, so the strip is at most
           two rows at 390px (S241 UI verify: five separate chips wrapped to three rows). */}
@@ -181,17 +221,18 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           getRowId={(r) => r.id}
           loading={list.isLoading}
           searchable
-          searchPlaceholder="Search username or role…"
+          searchPlaceholder="Search name, email or role…"
           enableCsv
           csvFilename="cis-staff.csv"
           emptyTitle="No staff accounts"
           emptyDescription="No account in shared.admin_users yet."
           onRowClick={(r) => open(r.id)}
-          tableMinWidth={640}
+          tableMinWidth={860}
         />
       )}
 
-      <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close} />
+      <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close}
+        canWrite={canWrite} selfId={viewer?.admin_id ?? null} />
     </main>
   );
 }
@@ -210,7 +251,28 @@ function CountChip({ label, value }: { label: string; value: number }) {
   );
 }
 
-function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: StaffAccount | null; onClose: () => void }) {
+function NameCell({ s }: { s: StaffAccount }) {
+  return (
+    <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span style={{ fontWeight: 600, color: K.ink }}>{s.display_name || s.username}</span>
+        {s.is_owner && <Badge tone="accent" dot={false}>Owner</Badge>}
+        {s.breakglass && <Badge tone="warning" dot={false}>Break-glass</Badge>}
+      </span>
+      <span style={{ fontSize: 12, color: K.muted }}>{s.email ?? `${s.username} · no work email`}</span>
+    </span>
+  );
+}
+
+function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
+  id: string | null;
+  fallback: StaffAccount | null;
+  onClose: () => void;
+  canWrite: boolean;
+  selfId: string | null;
+}) {
+  // The last write's outcome, kept per account id so it survives the panel remounting after a refresh.
+  const [outcome, setOutcome] = useState<{ id: string; outcome: Outcome } | null>(null);
   const detail = useQuery({
     queryKey: ["platform-staff", id],
     queryFn: () => apiGet<StaffAccount>(`/api/admin/platform/staff/${encodeURIComponent(id ?? "")}`),
@@ -225,7 +287,7 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
     <Drawer
       open={!!id}
       onClose={onClose}
-      title={s ? s.username : notFound ? "Staff account" : "Loading…"}
+      title={s ? (s.display_name || s.username) : notFound ? "Staff account" : "Loading…"}
       footer={id && s ? <BookingLink id={s.id} label="Open this account in Booking admin" /> : undefined}
     >
       {notFound && (
@@ -236,25 +298,37 @@ function StaffDrawer({ id, fallback, onClose }: { id: string | null; fallback: S
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <RoleBadge role={s.role} />
             <ActiveBadge active={s.is_active} />
+            {s.is_owner && <Badge tone="accent" dot={false}>Owner</Badge>}
+            {s.breakglass && <Badge tone="warning" dot={false}>Break-glass</Badge>}
           </div>
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "10px 18px", margin: 0, fontSize: 13 }}>
+            <Field label="Name" value={s.display_name || "—"} />
+            <Field label="Work email" value={s.email || "— (no company sign-in yet)"} />
             <Field label="Username" value={s.username} />
             <Field label="CIS role" value={roleLabel(s.role)} />
-            {/* Booking owns booking.staff_users (ADR 0008): its role starts from the CIS role on first
-                sign-in and a Booking admin can change it there, so CIS does not show a copy. */}
-            <Field label="Booking role" value={<BookingLink id={s.id} label="See in Booking admin" />}
-              hint="Managed in Booking admin; it starts from the CIS role when the account first signs in there" />
-            <Field label="Status" value={s.is_active ? "Active" : "Inactive (cannot sign in; open sessions end within ~6 min)"} />
+            {/* AA-816 C6: the Booking role is the shared.staff_app_grant row, written here together with the
+                booking-<role> Cognito group. */}
+            <Field label="Booking role" value={bookingRoleLabel(s.booking_role)} />
+            <Field label="Status" value={s.is_active ? "Active" : "Disabled (cannot sign in)"} />
+            <Field label="Company sign-in" value={s.linked ? "Linked" : "Not linked yet (links on the first sign-in)"} />
+            <Field label="Last sign-in" value={s.last_login_at ? formatDateTime(s.last_login_at) : "Never"} />
             <Field label="Created" value={formatDateTime(s.created_at)} />
             <Field label="Updated" value={formatDateTime(s.updated_at)} />
             {/* Full width, one line, with a copy button: in the label/value grid the UUID wrapped at
                 390px and left one character alone on the second line (S241 UI verify). */}
             <Field wide label="Account id" value={<AccountId id={s.id} />} />
           </dl>
-          <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>
-            Changing a role or deactivating an account is not available here yet. It will be limited to the
-            platform owner and recorded in the audit log.
-          </div>
+          {outcome && outcome.id === s.id && (
+            <OutcomeBanner outcome={outcome.outcome} onRetried={(o) => setOutcome({ id: s.id, outcome: o })} />
+          )}
+          {canWrite ? (
+            <StaffManagePanel key={`${s.id}:${s.role}:${s.booking_role ?? ""}:${s.is_active}`} staff={s} selfId={selfId}
+              onOutcome={(o) => setOutcome({ id: s.id, outcome: o })} />
+          ) : (
+            <div style={{ fontSize: 12.5, color: K.muted, lineHeight: 1.5 }}>
+              Only a platform owner, signed in with their company email, can change roles or access.
+            </div>
+          )}
         </div>
       )}
     </Drawer>
