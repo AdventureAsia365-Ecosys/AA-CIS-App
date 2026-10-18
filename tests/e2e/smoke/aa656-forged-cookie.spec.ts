@@ -5,9 +5,45 @@
 // page added to the matrix is covered automatically.
 //   • pages  → a redirect to /login (or /tenant-login for the portal), never a 200;
 //   • proxies → 401/403, never a forwarded backend answer.
+// AA-816 (C4): cis_admin_token can now hold a Cognito access token (RS256, has `iss`). The forged
+// RS256 cases below are signed with a key made up on the spot but carry every claim a real WORKFORCE
+// access token has (issuer, client_id, token_use, cis-admin group, email), so only the signature is
+// wrong. An expired one is sent to the refresh route first (middleware), which also lands on /login.
+import { generateKeyPairSync, createSign, randomUUID } from 'node:crypto';
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
 import { PAGE_RULES } from '../../../frontend/lib/rbac';
 import { baseUrl } from './smoke-helpers';
+
+const WORKFORCE_ISSUER = 'https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS';
+const CIS_ADMIN_CLIENT_ID = '3oqkumijh04cp81k3nlnub6qtv';
+
+function b64url(input: Buffer | string): string {
+  return Buffer.from(input).toString('base64url');
+}
+
+/** An RS256 JWT shaped like a WORKFORCE access token, signed with a throwaway (attacker) key. */
+function forgedCognitoToken(expOffsetS: number): string {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT', kid: 'forged-kid' };
+  const payload = {
+    iss: WORKFORCE_ISSUER,
+    sub: randomUUID(),
+    client_id: CIS_ADMIN_CLIENT_ID,
+    token_use: 'access',
+    scope: 'openid profile email',
+    'cognito:groups': ['cis-admin'],
+    email: 'attacker@adventure.asia',
+    username: randomUUID(),
+    iat: now - 60,
+    auth_time: now - 60,
+    exp: now + expOffsetS,
+    jti: randomUUID(),
+  };
+  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  const signature = createSign('RSA-SHA256').update(signingInput).sign(privateKey);
+  return `${signingInput}.${b64url(signature)}`;
+}
 
 const FORGED: Record<string, string> = {
   'role cookie only (admin)': 'cis_role=admin',
@@ -15,6 +51,8 @@ const FORGED: Record<string, string> = {
   'role cookie only (reviewer)': 'cis_role=reviewer',
   'garbage admin token': 'cis_role=admin; cis_admin_token=not-a-jwt',
   'garbage tenant token': 'cis_role=tenant; cis_tenant_token=not-a-jwt',
+  'forged RS256 Cognito token': `cis_role=admin; cis_admin_token=${forgedCognitoToken(600)}`,
+  'forged RS256 Cognito token (expired)': `cis_role=admin; cis_admin_token=${forgedCognitoToken(-600)}`,
 };
 
 const PROXY_ROUTES: { method: 'GET' | 'POST'; path: string }[] = [
@@ -45,8 +83,18 @@ test.describe('AA-656 — forged staff/tenant sessions are rejected', () => {
           const res = await ctx.get(rule.prefix, { maxRedirects: 0, timeout: 15000 });
           const location = res.headers()['location'] ?? '';
           // A garbage admin token on /portal lands on /login (staff login), a tenant one on
-          // /tenant-login — either is a rejection.
+          // /tenant-login — either is a rejection. AA-816: an expired Cognito token goes to the
+          // refresh route first; with no refresh cookie that route answers with /login (checked below).
           const toLogin = /\/(tenant-)?login(\?|$)/.test(new URL(location || '/', baseUrl()).pathname + '?');
+          const toRefresh = new URL(location || '/', baseUrl()).pathname === '/api/auth/refresh';
+          if (res.status() >= 300 && res.status() < 400 && toRefresh) {
+            const next = await ctx.get(location, { maxRedirects: 0, timeout: 15000 });
+            const nextLoc = next.headers()['location'] ?? '';
+            const refusedToLogin =
+              next.status() >= 300 && next.status() < 400 && new URL(nextLoc || '/', baseUrl()).pathname === '/login';
+            if (!refusedToLogin) leaks.push(`${rule.prefix} → refresh → ${next.status()} ${nextLoc}`);
+            continue;
+          }
           const redirected = res.status() >= 300 && res.status() < 400 && toLogin;
           if (!redirected) leaks.push(`${rule.prefix} → ${res.status()} ${location}`);
         }
