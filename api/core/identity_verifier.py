@@ -11,8 +11,9 @@ Rules (ADR 0006 §8, numbered as there):
 2. The issuer entry is chosen by the *unverified* ``iss``; only that issuer's key set is consulted, so a
    ``kid`` is never looked up across issuers. Unknown ``iss`` -> :class:`InvalidToken`.
 3. Keys are cached by ``kid`` per issuer. An unknown ``kid`` triggers a refetch at most once per
-   :data:`UNKNOWN_KID_REFETCH_S`; a failed fetch keeps the last good key set. :meth:`prefetch` loads every
-   issuer's keys at start-up (the JWKS is reached through the single NAT instance).
+   :data:`UNKNOWN_KID_REFETCH_S`; a failed fetch keeps the last good key set, and a stale set that holds the
+   ``kid`` is served without waiting while a refresh is in flight or not yet due. :meth:`prefetch` loads every
+   issuer's keys at start-up (the JWKS is reached through the single NAT instance). JWKS redirects are refused.
 4. Signature, ``exp`` (leeway <= :data:`MAX_LEEWAY_S`), ``iss``, ``token_use`` and the audience claim are
    checked. For Cognito access tokens the audience claim is ``client_id`` and there is no ``aud``.
 5. Access tokens only (``token_use == "access"``); ID tokens are rejected.
@@ -31,6 +32,7 @@ import asyncio
 import json
 import logging
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
@@ -50,6 +52,7 @@ FETCH_TIMEOUT_S = 5.0
 MAX_JWKS_BYTES = 256 * 1024
 MAX_TOKEN_CHARS = 8192
 MAX_SUB_CHARS = 128
+MAX_TEXT_CHARS = 320
 
 JwksFetcher = Callable[[str], Awaitable[dict[str, Any]]]
 
@@ -64,13 +67,18 @@ class AuthUnavailable(Exception):
 
 @dataclass(frozen=True)
 class Principal:
-    """Who the verified token belongs to. Authorisation (role, tenant, ownership) is the caller's job."""
+    """Who the verified token belongs to. Authorisation (role, tenant, ownership) is the caller's job.
+
+    ``iss`` is the configured issuer (ADR 0006 §8 rule 7 calls it ``issuer``). ``email_verified`` is None when
+    the token does not carry it (WORKFORCE access tokens today); only EXTERNAL tokens are expected to.
+    """
 
     iss: str
     sub: str
     client_id: str
     groups: tuple[str, ...]
     email: str | None
+    email_verified: bool | None
     username: str | None
 
 
@@ -109,14 +117,24 @@ class IssuerConfig:
             raise ValueError(f"leeway_s must be between 0 and {MAX_LEEWAY_S}: {self.leeway_s}")
 
 
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """A JWKS URL never redirects; following one could leave https or the issuer's own host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201 - urllib signature
+        raise urllib.error.HTTPError(req.full_url, code, "JWKS redirect refused", headers, fp)
+
+
 def http_fetcher(timeout: float = FETCH_TIMEOUT_S) -> JwksFetcher:
     """GET a JWKS URL with the standard library in a worker thread (no extra HTTP client dependency)."""
+    opener = urllib.request.build_opener(_RefuseRedirects)
 
     def _get(url: str) -> dict[str, Any]:
         if not url.startswith("https://"):
             raise ValueError("JWKS URL must be https")
         request = urllib.request.Request(url, headers={"Accept": "application/json"})  # noqa: S310 - https checked
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+            if response.geturl() != url:
+                raise ValueError("JWKS response came from another URL")
             body = response.read(MAX_JWKS_BYTES + 1)
         if len(body) > MAX_JWKS_BYTES:
             raise ValueError("JWKS response too large")
@@ -202,9 +220,15 @@ class JwksCache:
         return None
 
     async def key(self, kid: str) -> Any:
-        hit = self._fresh_hit(kid, self._clock())
+        now = self._clock()
+        hit = self._fresh_hit(kid, now)
         if hit is not None:
             return hit
+        # A stale set still holding the kid: serve it without waiting while a refresh is in flight or not due
+        # yet, so a slow or failing JWKS costs at most one request per window, not every request.
+        stale_hit = self._keys.get(kid) if self._keys is not None else None
+        if stale_hit is not None and (self._lock.locked() or not self._may_fetch(now)):
+            return stale_hit
         async with self._lock:
             now = self._clock()
             hit = self._fresh_hit(kid, now)
@@ -306,6 +330,7 @@ class MultiIssuerVerifier:
             client_id=client_id,
             groups=_groups(claims.get(cfg.groups_claim)),
             email=_text(claims.get("email")),
+            email_verified=_flag(claims.get("email_verified")),
             username=_text(claims.get("username")),
         )
 
@@ -332,7 +357,22 @@ def _groups(value: Any) -> tuple[str, ...]:
 
 
 def _text(value: Any) -> str | None:
+    """The stripped string, or None. Over-long values are dropped, never cut: callers may match on them."""
     if not isinstance(value, str):
         return None
     value = value.strip()
-    return value[:320] or None
+    if not value or len(value) > MAX_TEXT_CHARS:
+        return None
+    return value
+
+
+def _flag(value: Any) -> bool | None:
+    """A boolean claim. Cognito pre token triggers emit "true"/"false" strings (EXTERNAL ``email_verified``),
+    so exactly those two strings are accepted besides real booleans; anything else is None (unknown)."""
+    if isinstance(value, bool):
+        return value
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None

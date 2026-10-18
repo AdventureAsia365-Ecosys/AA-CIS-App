@@ -466,8 +466,9 @@ RS256 access-token verifier of root ADR 0006 §8 (issuer chosen by the unverifie
 issuer, `token_use=access`, `client_id` allow-list, returns a `Principal`); it is written to be copied
 byte-identical into AA-Booking. `api/core/identity_config.py` holds the CIS staff surface: WORKFORCE ×
 {`cis-admin`, `breakglass`}, Dev pool/client ids as code constants with `COGNITO_*` env overrides, and the
-`prefetch_cis_staff_jwks()` start-up hook. Not wired into `api/main.py` yet (AA-816 C2); the routes above still
-use the HS256 session token.
+start-up prefetch (the API lifespan loads the WORKFORCE JWKS in a background task and logs
+`identity_jwks_prefetched`; off when `ENVIRONMENT=test`). No route uses the verifier yet (AA-816 C2); the routes
+above still use the HS256 session token.
 
 The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item

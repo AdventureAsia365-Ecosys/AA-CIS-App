@@ -583,6 +583,7 @@ async def test_api_lifespan_starts_the_sampler_and_cancels_it_before_the_pool_cl
             patch("api.core.aa544_tenant_pool.create_tenant_pool", AsyncMock(return_value=None)), \
             patch("shared.jobs.worker.in_api_enabled", return_value=False), \
             patch.object(sampler, "stop_ops_metrics_sampler", stop), \
+            patch("api.core.identity_config.start_cis_staff_jwks_prefetch", return_value=None), \
             patch.dict("os.environ", {"DATABASE_URL": "postgresql://x:y@localhost/z"}):
         app = SimpleNamespace(state=SimpleNamespace())
         async with main.lifespan(app):

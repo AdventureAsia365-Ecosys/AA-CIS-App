@@ -5,11 +5,14 @@ A local RSA "issuer" serves a fake JWKS and mints Cognito-shaped access tokens; 
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 import jwt
@@ -107,9 +110,12 @@ class FakeFetcher:
         self.issuers = {f"{i.iss}/.well-known/jwks.json": i for i in issuers}
         self.calls: list[str] = []
         self.fail = False
+        self.gate: asyncio.Event | None = None  # when set, every fetch waits for the event (slow JWKS)
 
     async def __call__(self, url: str) -> dict[str, Any]:
         self.calls.append(url)
+        if self.gate is not None:
+            await self.gate.wait()
         if self.fail:
             raise OSError("NAT blip")
         if url not in self.issuers:
@@ -153,6 +159,7 @@ async def test_cis_admin_access_token_returns_principal(issuer_a):
         client_id=CIS_ADMIN,
         groups=("cis-admin", "booking-admin"),
         email="staff@adventure.asia",
+        email_verified=None,
         username="4a1b2c3d-0000-4000-8000-000000000001",
     )
     assert fetcher.calls == [f"{ISS_A}/.well-known/jwks.json"]
@@ -165,6 +172,25 @@ async def test_breakglass_client_accepted_and_missing_optional_claims(issuer_a):
     v = _verifier(cognito_cfg(), fetcher=FakeFetcher(issuer_a))
     p = await v.verify(issuer_a.token(client_id=BREAKGLASS, email=_DROP, username=_DROP, **{"cognito:groups": _DROP}))
     assert (p.client_id, p.groups, p.email, p.username) == (BREAKGLASS, (), None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim, expected", [(True, True), (False, False), ("true", True), ("false", False),
+                                             ("True", None), ("yes", None), (1, None), (_DROP, None)])
+async def test_email_verified_accepts_bools_and_exact_trigger_strings_only(issuer_a, claim, expected):
+    # The EXTERNAL pre token trigger emits "true"/"false" strings (identity_triggers/external.py).
+    v = _verifier(cognito_cfg(), fetcher=FakeFetcher(issuer_a))
+    assert (await v.verify(issuer_a.token(email_verified=claim))).email_verified is expected
+
+
+@pytest.mark.asyncio
+async def test_overlong_email_or_username_is_dropped_not_truncated(issuer_a):
+    v = _verifier(cognito_cfg(), fetcher=FakeFetcher(issuer_a))
+    long_email = "a" * 310 + "@adventure.asia"
+    p = await v.verify(issuer_a.token(email=long_email, username="u" * 321))
+    assert (p.email, p.username) == (None, None)
+    p = await v.verify(issuer_a.token(email="  Staff@Adventure.Asia  "))
+    assert p.email == "Staff@Adventure.Asia"
 
 
 @pytest.mark.asyncio
@@ -255,7 +281,13 @@ async def test_malformed_tokens_rejected(issuer_a, token):
         await _verifier(cognito_cfg(), fetcher=FakeFetcher(issuer_a)).verify(token)
 
 
+def _pyjwt_version() -> tuple[int, ...]:
+    return tuple(int(part) for part in jwt.__version__.split(".")[:2] if part.isdigit())
+
+
 @pytest.mark.asyncio
+@pytest.mark.skipif(_pyjwt_version() < (2, 15), reason="PyJWT < 2.15 ignores the per-call "
+                    "enforce_minimum_key_length option; requirements.txt pins 2.15.1 (CI)")
 async def test_small_rsa_key_rejected():
     weak = LocalIssuer(ISS_A, kid="weak", key=_rsa_key(1024))
     with pytest.raises(InvalidToken):
@@ -467,6 +499,67 @@ async def test_lazy_first_fetch_without_prefetch(issuer_a):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_cold_requests_fetch_once(issuer_a):
+    fetcher = FakeFetcher(issuer_a)
+    fetcher.gate = asyncio.Event()
+    v = _verifier(cognito_cfg(), fetcher=fetcher)
+    pending = asyncio.gather(*(v.verify(issuer_a.token()) for _ in range(10)))
+    await asyncio.sleep(0)
+    fetcher.gate.set()
+    principals = await pending
+    assert {p.client_id for p in principals} == {CIS_ADMIN}
+    assert len(fetcher.calls) == 1  # single flight
+
+
+@pytest.mark.asyncio
+async def test_stale_key_set_refreshed_after_ttl(issuer_a):
+    clock = Clock()
+    fetcher = FakeFetcher(issuer_a)
+    v = _verifier(cognito_cfg(), fetcher=fetcher, clock=clock)
+    await v.prefetch()
+    clock.now += JWKS_TTL_S + 1
+    assert (await v.verify(issuer_a.token())).client_id == CIS_ADMIN
+    assert len(fetcher.calls) == 2  # stale -> one refresh
+    await v.verify(issuer_a.token())
+    assert len(fetcher.calls) == 2  # fresh again: no fetch
+
+
+@pytest.mark.asyncio
+async def test_stale_key_served_without_waiting_for_an_in_flight_refresh(issuer_a):
+    clock = Clock()
+    fetcher = FakeFetcher(issuer_a)
+    v = _verifier(cognito_cfg(), fetcher=fetcher, clock=clock)
+    await v.prefetch()
+    clock.now += JWKS_TTL_S + 1
+    fetcher.gate = asyncio.Event()  # the refresh hangs (slow NAT)
+    first = asyncio.ensure_future(v.verify(issuer_a.token()))
+    await asyncio.sleep(0)
+    assert len(fetcher.calls) == 2 and not first.done()
+    # Other requests holding a known kid answer from the stale set at once.
+    assert (await asyncio.wait_for(v.verify(issuer_a.token()), timeout=1)).client_id == CIS_ADMIN
+    fetcher.gate.set()
+    assert (await first).client_id == CIS_ADMIN
+    assert len(fetcher.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_does_not_make_every_request_wait(issuer_a):
+    clock = Clock()
+    fetcher = FakeFetcher(issuer_a)
+    v = _verifier(cognito_cfg(), fetcher=fetcher, clock=clock)
+    await v.prefetch()
+    fetcher.fail = True
+    clock.now += JWKS_TTL_S + 1
+    await v.verify(issuer_a.token())  # one refresh attempt, fails, stale key used
+    fetcher.gate = asyncio.Event()  # any further fetch would hang
+    for _ in range(5):
+        clock.now += 1
+        assert (await asyncio.wait_for(v.verify(issuer_a.token()), timeout=1)).client_id == CIS_ADMIN
+    assert len(fetcher.calls) == 2  # no new attempt inside the 60 s window
+    fetcher.gate.set()
+
+
+@pytest.mark.asyncio
 async def test_prefetch_loads_every_issuer_separately(issuer_a, issuer_b):
     fetcher = FakeFetcher(issuer_a, issuer_b)
     v = _verifier(cognito_cfg(), bridge_cfg(), fetcher=fetcher)
@@ -478,6 +571,14 @@ async def test_prefetch_loads_every_issuer_separately(issuer_a, issuer_b):
 async def test_http_fetcher_refuses_plain_http():
     with pytest.raises(ValueError, match="https"):
         await http_fetcher()("http://example.test/.well-known/jwks.json")
+
+
+def test_http_fetcher_refuses_redirects():
+    from api.core.identity_verifier import _RefuseRedirects
+
+    req = urllib.request.Request("https://cognito.test/.well-known/jwks.json")
+    with pytest.raises(urllib.error.HTTPError, match="redirect refused"):
+        _RefuseRedirects().redirect_request(req, None, 302, "Found", {}, "http://evil.test/jwks.json")
 
 
 # ---------------------------------------------------------------- configuration
@@ -554,3 +655,65 @@ async def test_prefetch_hook_uses_cis_staff_verifier_and_never_raises(clean_iden
     identity_config.reset_cis_staff_verifier()
     clean_identity_env.setenv(identity_config.ENV_WORKFORCE_ISSUER, "http://not-https.test")
     assert await identity_config.prefetch_cis_staff_jwks() == {}
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prefetch_task_off_in_test_env(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    assert identity_config.start_cis_staff_jwks_prefetch() is None
+    await identity_config.stop_cis_staff_jwks_prefetch(None)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prefetch_task_runs_in_background(clean_identity_env, issuer_a):
+    clean_identity_env.setenv("ENVIRONMENT", "dev")
+    clean_identity_env.setenv(identity_config.ENV_WORKFORCE_ISSUER, ISS_A)
+    fetcher = FakeFetcher(issuer_a)
+    identity_config._verifier = identity_config.build_cis_staff_verifier(fetcher)
+    task = identity_config.start_cis_staff_jwks_prefetch()
+    assert task is not None
+    assert await task == {ISS_A: 1}
+    await identity_config.stop_cis_staff_jwks_prefetch(task)
+    # A prefetch still hanging at shutdown is cancelled without raising.
+    fetcher.gate = asyncio.Event()
+    identity_config._verifier = identity_config.build_cis_staff_verifier(fetcher)
+    task = identity_config.start_cis_staff_jwks_prefetch()
+    await asyncio.sleep(0)
+    await identity_config.stop_cis_staff_jwks_prefetch(task)
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_api_lifespan_starts_the_prefetch_in_background_and_cancels_it(clean_identity_env, issuer_a):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from api import main
+
+    clean_identity_env.setenv("ENVIRONMENT", "dev")
+    clean_identity_env.setenv(identity_config.ENV_WORKFORCE_ISSUER, ISS_A)
+    fetcher = FakeFetcher(issuer_a)
+    fetcher.gate = asyncio.Event()  # the JWKS hangs: start-up must not wait for it
+    identity_config._verifier = identity_config.build_cis_staff_verifier(fetcher)
+    pool = MagicMock()
+    pool.close = AsyncMock()
+    redis = MagicMock()
+    redis.aclose = AsyncMock()
+
+    def prefetch_tasks():
+        return [t for t in asyncio.all_tasks() if t.get_name() == "aa854-identity-jwks-prefetch"]
+
+    with patch.object(main.asyncpg, "create_pool", AsyncMock(return_value=pool)), \
+            patch.object(main.aioredis, "from_url", return_value=redis), \
+            patch("api.core.aa544_tenant_pool.create_tenant_pool", AsyncMock(return_value=None)), \
+            patch("shared.jobs.worker.in_api_enabled", return_value=False), \
+            patch("api.core.ops_metrics_sampler.start_ops_metrics_sampler", return_value=None), \
+            patch("api.core.aa859_main_pool_gauge.start_main_pool_gauge", return_value=None), \
+            patch.dict("os.environ", {"DATABASE_URL": "postgresql://x:y@localhost/z"}):
+        async with main.lifespan(SimpleNamespace(state=SimpleNamespace())):
+            running = prefetch_tasks()
+            assert len(running) == 1
+            await asyncio.sleep(0)
+            assert fetcher.calls == [f"{ISS_A}/.well-known/jwks.json"] and not running[0].done()
+        assert running[0].cancelled()
+    assert not prefetch_tasks()

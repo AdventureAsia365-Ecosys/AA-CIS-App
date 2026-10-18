@@ -12,13 +12,17 @@ The issuer is the pool issuer as published by Terraform (``identity.tf`` outputs
 ``/.well-known/openid-configuration``, never the custom/hosted domain. Client ids are public values (they appear
 in every authorize URL); client secrets never live here.
 
-Nothing here is wired into ``api/main.py`` yet: :func:`prefetch_cis_staff_jwks` is the start-up hook that a later
-step (the bearer middleware / verify-admin change) will call from the lifespan.
+No route or middleware uses the verifier yet (C3 wires it into the bearer middleware / verify-admin). The only
+thing ``api/main.py`` calls is :func:`start_cis_staff_jwks_prefetch`: a background task that loads the WORKFORCE
+JWKS once at start-up and logs ``identity_jwks_prefetched`` (off when ``ENVIRONMENT == "test"``, never raises,
+never delays start-up).
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
+from typing import Optional
 
 import structlog
 
@@ -86,7 +90,7 @@ def reset_cis_staff_verifier() -> None:
 async def prefetch_cis_staff_jwks() -> dict[str, int]:
     """Start-up hook: load the WORKFORCE JWKS once so a NAT blip later never becomes a sign-in outage.
 
-    Never raises: a failure is logged and the verifier retries on first use. Not called from main.py yet.
+    Never raises: a failure is logged and the verifier retries on first use.
     """
     try:
         counts = await get_cis_staff_verifier().prefetch()
@@ -99,3 +103,20 @@ async def prefetch_cis_staff_jwks() -> dict[str, int]:
         else:
             log.warning("identity_jwks_prefetch_empty", issuer=iss)
     return counts
+
+
+def start_cis_staff_jwks_prefetch() -> Optional[asyncio.Task]:
+    """Lifespan hook: run :func:`prefetch_cis_staff_jwks` in the background so a slow JWKS fetch through the NAT
+    never delays start-up. None (nothing started) when ``ENVIRONMENT == "test"``, so TestClient runs make no
+    network call."""
+    if os.environ.get("ENVIRONMENT", "").lower() == "test":
+        return None
+    return asyncio.create_task(prefetch_cis_staff_jwks(), name="aa854-identity-jwks-prefetch")
+
+
+async def stop_cis_staff_jwks_prefetch(task: Optional[asyncio.Task]) -> None:
+    """Cancel the prefetch if it is still running at shutdown; swallows whatever it raised."""
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)

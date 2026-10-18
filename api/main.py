@@ -99,6 +99,12 @@ async def lifespan(app: FastAPI):
     from api.core.ops_metrics_sampler import start_ops_metrics_sampler, stop_ops_metrics_sampler
     ops_metrics_task = start_ops_metrics_sampler(app)
 
+    # AA-854 C2 — load the WORKFORCE JWKS once in the background (log `identity_jwks_prefetched`), so the staff
+    # token verifier has keys before the first request. No route uses the verifier yet (C3). Off when
+    # ENVIRONMENT == "test", never raises, never delays start-up.
+    from api.core.identity_config import start_cis_staff_jwks_prefetch, stop_cis_staff_jwks_prefetch
+    identity_prefetch_task = start_cis_staff_jwks_prefetch()
+
     # AA-544 Stage 1 — second pool, aa_app_user (non-BYPASSRLS), lazy (min_size 0, AA-817). None
     # only when the secret or the pool object cannot be made. Used only by routes that opt in via
     # api/core/aa544_tenant_pool.py::acquire_scoped_conn(), each behind its own Redis flag; all of
@@ -129,6 +135,7 @@ async def lifespan(app: FastAPI):
             await asyncio.gather(job_worker_task, return_exceptions=True)
 
     await stop_ops_metrics_sampler(ops_metrics_task)
+    await stop_cis_staff_jwks_prefetch(identity_prefetch_task)
     await stop_main_pool_gauge(main_pool_gauge_task)
     await pool.close()
     if app.state.tenant_pool is not None:
