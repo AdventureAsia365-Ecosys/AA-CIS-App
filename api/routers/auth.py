@@ -14,6 +14,7 @@
 import hashlib
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import asyncpg
 import bcrypt
@@ -296,12 +297,28 @@ class BookingTokenResponse(BaseModel):
     expires_in: int
 
 
-def _verify_password(raw_password: str, password_hash: str) -> bool:
+# A real bcrypt hash (cost 12, like scripts/create_staff_user.py) of a random value that was thrown
+# away: comparing against it costs the same time as a real compare and never matches. Used when there is
+# no hash to compare with — unknown username, or a Cognito-only staff row whose password_hash is NULL
+# (migration 247) — so those cases look like a wrong password, in shape and in timing.
+_DUMMY_BCRYPT_HASH = b"$2b$12$SZNlHnnffvkqKqziIuXG6OfiTEgZ6j1PT8AM3vK5IzwcL3vcb4HSC"
+
+
+def _verify_password(raw_password: str, password_hash: Optional[str]) -> bool:
     """bcrypt compare. Returns False (not raise) on any malformed-hash error —
-    a corrupt/legacy hash should fail closed, not 500."""
+    a corrupt/legacy hash should fail closed, not 500.
+
+    AA-816: a NULL hash (Cognito-only staff member, 247) fails closed too: the
+    compare runs against _DUMMY_BCRYPT_HASH and the result is always False."""
+    if not isinstance(password_hash, str) or not password_hash:
+        try:
+            bcrypt.checkpw((raw_password or "").encode(), _DUMMY_BCRYPT_HASH)
+        except (ValueError, TypeError):
+            pass
+        return False
     try:
         return bcrypt.checkpw(raw_password.encode(), password_hash.encode())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return False
 
 

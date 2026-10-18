@@ -329,10 +329,12 @@ async def admin_login(
             "FROM shared.admin_users WHERE username = $1",
             body.username,
         )
-    # Always run bcrypt compare (even on no-row) to keep response timing constant.
-    dummy_hash = "$2b$12$" + "0" * 53  # valid bcrypt shape, never matches
-    password_ok = _verify_password(body.password, row["password_hash"] if row else dummy_hash)
-    if not row or not row["is_active"] or not password_ok:
+    # Always run a bcrypt compare to keep response timing constant: on no row, and on a Cognito-only row
+    # whose password_hash is NULL (migration 247, AA-816), _verify_password compares against a dummy
+    # hash and returns False, so both end in the same 401 as a wrong password (never a 500).
+    stored_hash = row["password_hash"] if row else None
+    password_ok = _verify_password(body.password, stored_hash)
+    if not row or not row["is_active"] or stored_hash is None or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = _create_admin_jwt(row["id"], row["username"], row["role"])
     return AdminLoginResponse(
