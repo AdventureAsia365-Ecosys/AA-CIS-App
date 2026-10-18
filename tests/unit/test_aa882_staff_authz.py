@@ -359,6 +359,7 @@ def test_the_machine_policy_routes_are_the_scheduler_posts_and_the_overview():
     assert _MACHINE_POLICY_ROUTES == sorted([
         ("POST", "/admin/dfs-balance/check"), ("POST", "/admin/jev-canary/check"),
         ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/job-runner/retention/schedule"),
+        ("POST", "/admin/job-runner/staff-reconcile/schedule"),
         ("POST", "/admin/waves/check"), ("GET", "/admin/overview"),
     ])
 
@@ -371,6 +372,7 @@ def test_machine_routes_cover_every_role_less_caller_and_nothing_else():
         ("POST", "/admin/dfs-balance/check"), ("POST", "/admin/jev-canary/check"),
         ("POST", "/admin/jev/402-sweep"), ("POST", "/admin/waves/check"),
         ("POST", "/admin/job-runner/retention/schedule"),
+        ("POST", "/admin/job-runner/staff-reconcile/schedule"),
     }
 
 

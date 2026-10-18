@@ -287,6 +287,10 @@
     "capability": "staff.read",
     "module": "api.routers.admin_platform"
   },
+  "GET /admin/platform/staff-directory/health": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
   "GET /admin/platform/staff/{staff_id}": {
     "capability": "staff.read",
     "module": "api.routers.admin_platform"
@@ -639,6 +643,10 @@
     "capability": "ops.write",
     "module": "api.routers.admin_job_runner"
   },
+  "POST /admin/job-runner/staff-reconcile/schedule": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_job_runner"
+  },
   "POST /admin/photos/sync": {
     "capability": "photos.write",
     "module": "api.routers.admin_photos"
@@ -653,6 +661,10 @@
   },
   "POST /admin/platform/staff": {
     "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
+  "POST /admin/platform/staff-directory/reconcile": {
+    "capability": "staff.read",
     "module": "api.routers.admin_platform"
   },
   "POST /admin/platform/staff/{staff_id}/disable": {

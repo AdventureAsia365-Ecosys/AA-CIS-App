@@ -235,3 +235,24 @@ async def sign_out_staff(staff_id: str, request: Request, cognito: CognitoDirect
 @router.post("/staff/{staff_id}/sync", summary="AA-816 C6 — retry: make Cognito match the directory row")
 async def sync_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.sync_staff)
+    return _staff_row(row)
+
+
+# ── AA-816 (S242 C7) — directory health: the latest staff_directory_reconcile report ─────────────────
+# Report only (services/staff_reconcile.py): WORKFORCE users vs these rows, group/role drift, cutover
+# readiness. A separate path segment (staff-directory), so no /staff/{staff_id} route can shadow it.
+
+@router.get("/staff-directory/health", summary="AA-816 — latest staff directory reconcile report (read-only)")
+async def staff_directory_health(request: Request):
+    from services.jobs import staff_reconcile_job
+
+    return await staff_reconcile_job.health(request.app.state.pool)
+
+
+@router.post("/staff-directory/reconcile", summary="AA-816 — run the staff directory reconcile now (report only)")
+async def staff_directory_reconcile(request: Request):
+    from services.jobs import staff_reconcile_job
+
+    requested_by = request.headers.get("x-admin-user-id") or None
+    job_id, created = await staff_reconcile_job.enqueue_manual(request.app.state.pool, requested_by=requested_by)
+    return {"kind": staff_reconcile_job.KIND, "job_id": job_id, "created": created}

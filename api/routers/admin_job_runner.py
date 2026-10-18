@@ -11,19 +11,25 @@
   POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved);
                                            with older_than: an admin-only manual override proof run
   POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
+  POST /admin/job-runner/staff-reconcile/schedule  the daily ops scheduler enqueues the staff directory
+                                           reconcile (AA-816, report only)
+
+Restricted results (AA-816 review M1): the job reads are open to every staff role, so a kind whose result
+holds data only some roles may see registers a (capability, redact) pair in _restricted_results(); callers
+without the capability get the redacted job from /jobs and /jobs/{id}.
 
 Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, A1 run-tour).
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import has_perm, staff_policy
 from api.routers.admin import verify_admin_secret
 from shared.jobs import queue
 from shared.jobs.registry import kinds, run_terminal_hook
@@ -49,6 +55,33 @@ def _iso(d: dict) -> dict:
         if d.get(k) is not None:
             d[k] = d[k].isoformat()
     return d
+
+
+def _restricted_results() -> dict[str, tuple[str, Callable[[dict], dict]]]:
+    """kind -> (capability needed for the full result, redact function). Imported lazily, like the
+    retention_job routes below, so loading this router does not import the job modules."""
+    from services.jobs import staff_reconcile_job
+
+    return {staff_reconcile_job.KIND: (staff_reconcile_job.RESULT_CAPABILITY, staff_reconcile_job.redact_job)}
+
+
+def _caller_role(request: Request) -> Optional[str]:
+    """x-admin-role as staff_policy saw it (the BFF's role, or the one staff_bearer set from Cognito groups).
+    No header = the machine, which has no capability."""
+    role = request.headers.get("x-admin-role") if hasattr(request, "headers") else None
+    return role.strip() if isinstance(role, str) else None
+
+
+def _redact_for_caller(request: Request, jobs: list[dict]) -> list[dict]:
+    rules = _restricted_results()
+    if not any(j.get("kind") in rules for j in jobs):
+        return jobs
+    role = _caller_role(request)
+    for j in jobs:
+        rule = rules.get(j.get("kind"))
+        if rule is not None and not has_perm(role, rule[0]):
+            rule[1](j)
+    return jobs
 
 
 def _parse_dt(value: Optional[str], field: str) -> Optional[datetime]:
@@ -99,7 +132,7 @@ async def list_jobs(request: Request, kind: Optional[str] = None,
                                  include_blobs=fields != "summary", **filters)
     total = await queue.count_jobs(pool, **filters)
     return {
-        "jobs": [_iso(r) for r in rows],
+        "jobs": _redact_for_caller(request, [_iso(r) for r in rows]),
         "total": total,
         "pagination": {"page": page, "page_size": size, "total": total,
                        "pages": max(1, (total + size - 1) // size)},
@@ -163,7 +196,7 @@ async def get_job(job_id: str, request: Request):
     except Exception as e:  # a missing domain table must not hide the job itself
         logger.warning("job_links_failed", job_id=job_id, error=str(e)[:200])
         row["links"] = None
-    return _iso(row)
+    return _redact_for_caller(request, [_iso(row)])[0]
 
 
 @router.get("/jobs/{job_id}/llm-calls", summary="AA-687 — LLM calls made by one job")
@@ -285,3 +318,18 @@ async def retention_schedule(request: Request, x_admin_secret: str = Header(None
     out = await retention_job.schedule_all(request.app.state.pool, day=day)
     logger.info("admin_retention_scheduled", day=day, enqueued=len(out["enqueued"]), skipped=out["skipped"])
     return {"day": day, **out}
+
+
+@router.post("/staff-reconcile/schedule", summary="AA-816 — daily: enqueue the staff directory reconcile (scheduler)")
+async def staff_reconcile_schedule(request: Request, x_admin_secret: str = Header(None)):
+    """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, one more path in
+    _PATHS). One `staff_directory_reconcile` job per UTC day (idempotency key), report only: it lists the
+    WORKFORCE pool and compares it with shared.admin_users. Not skipped during a rerun wave: it reads a few
+    directory rows and calls Cognito, nothing a wave shares."""
+    verify_admin_secret(x_admin_secret)
+    from datetime import datetime, timezone
+    from services.jobs import staff_reconcile_job
+    day = datetime.now(timezone.utc).date().isoformat()
+    job_id, created = await staff_reconcile_job.enqueue_scheduled(request.app.state.pool, day=day)
+    logger.info("admin_staff_reconcile_scheduled", day=day, job_id=job_id, created=created)
+    return {"day": day, "kind": staff_reconcile_job.KIND, "job_id": job_id, "created": created}

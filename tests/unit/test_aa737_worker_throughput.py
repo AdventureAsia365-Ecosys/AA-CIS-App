@@ -57,7 +57,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
     assert background == {"place_extract", "place_geocode", "tour_graph_build",
                           # AA-825 retention kinds (data standards C5.4d)
                           "retention_llm_call_log", "retention_tenant_api_usage", "retention_job",
-                          "retention_decision_log", "retention_cost_explorer_snapshot"}
+                          "retention_decision_log", "retention_cost_explorer_snapshot",
+                          # AA-816 C7 staff directory reconcile (report only, daily)
+                          "staff_directory_reconcile"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

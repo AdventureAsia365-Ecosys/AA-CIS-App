@@ -46,6 +46,7 @@ import {
   type Outcome,
   type StaffAccount,
 } from "./StaffManage";
+import DirectoryHealth from "./DirectoryHealth";
 
 export type { StaffAccount } from "./StaffManage";
 
@@ -210,6 +211,8 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           )}
         </div>
       )}
+
+      <DirectoryHealth />
 
       {list.isError ? (
         <ErrorState message={(list.error as Error)?.message || "Could not load staff accounts"} onRetry={() => list.refetch()} />
