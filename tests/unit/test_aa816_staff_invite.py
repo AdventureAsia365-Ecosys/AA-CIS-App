@@ -202,7 +202,11 @@ def test_template_subject_link_steps_and_roles(mail_env):
         assert "Nghiep Pham" in part and "Thu Le" in part
         assert si.CIS_ROLE_TEXT["admin"] in part and "Booking administrator" in part
         assert "There is no password" in part
-        assert "staff-auth.lumiguides.it.com" in part and "Never share it" in part
+        # The sign-in host appears as plain text in the "only enter the code on <host>" line (CodeQL
+        # py/incomplete-url-substring-sanitization: compare the whole phrase, not a bare host substring).
+        host_line = r"only enter the code on (?:<strong>)?" + re.escape(si.SIGN_IN_HOST) + r"\b"
+        assert re.search(host_line, part, re.IGNORECASE)
+        assert "Never share it" in part
         assert "will never ask you for it" in part
         assert "contact Nghiep Pham or the Adventure Asia platform owner" in part
     # Every link in the HTML is the sign-in page (no deep link, no query string, no code); the only image is the
