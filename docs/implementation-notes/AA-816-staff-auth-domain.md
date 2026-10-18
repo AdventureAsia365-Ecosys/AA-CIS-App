@@ -60,8 +60,12 @@ refresh and logout fails (`unreachable` → users bounce to /login). Rollback wi
   a user who signed in on the old domain and logs out after the switch has the cookie cleared only on the new
   domain. Harmless (the old one expires; nobody is redirected there any more).
 - If `COGNITO_WORKFORCE_DOMAIN` was ever set in Vercel to the prefix domain, it overrides this default and
-  must be removed. Not checked here (no Vercel reads in this lane) — verify in Vercel → aa-cis-frontend →
-  Environment Variables before/after merge.
+  must be removed. Review round (S242) checked Vercel → aa-cis-frontend env list: the variable is **not
+  set**, so the new default takes effect. Re-check only if someone adds it before merge.
+- Merge order: only after the Infra apply (AA-CIS-Infra `feat/aa816-staff-auth-domain`) and once
+  `curl -s -o /dev/null -w '%{http_code}' https://staff-auth.lumiguides.it.com/.well-known/openid-configuration`
+  returns 200. Merged earlier, every company-email sign-in, token refresh and logout fails. Rollback without a
+  deploy: set `COGNITO_WORKFORCE_DOMAIN=https://aa365-staff-auth-dev.auth.us-west-1.amazoncognito.com`.
 - Verification after merge + Vercel deploy: on `https://aa-cis.lumiguides.it.com/login` click
   "Sign in with company email" → the browser goes to `https://staff-auth.lumiguides.it.com/oauth2/authorize?…`
   (branded page), the code email arrives, callback lands on `/admin/...`; Logout returns to /login through
