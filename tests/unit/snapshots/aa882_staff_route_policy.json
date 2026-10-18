@@ -675,6 +675,10 @@
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
   },
+  "POST /admin/platform/staff/{staff_id}/invite": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
   "POST /admin/platform/staff/{staff_id}/sign-out": {
     "capability": "staff.write",
     "module": "api.routers.admin_platform"

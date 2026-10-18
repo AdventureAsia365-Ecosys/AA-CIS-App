@@ -143,6 +143,9 @@ def test_admin_lists_staff_with_counts(client):
         # AA-816 C6 directory fields (absent from these fake rows): falsy / None, never a KeyError
         "email": None, "display_name": None, "is_owner": False, "last_login_at": None, "linked": False,
         "booking_role": None, "breakglass": False,
+        # S242 invitation e-mail fields (from the audit log; never invited -> None)
+        "last_invited_at": None, "last_invite_requested_at": None, "last_invite_not_sent_at": None,
+        "invite_status": None,
     }
     # A legacy (secret + x-admin-role) session may read but not write (AA-816 C6).
     assert body["viewer"] == {"auth": "legacy", "is_owner": False, "can_write": False, "admin_id": None}

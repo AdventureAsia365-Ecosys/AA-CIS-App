@@ -37,6 +37,9 @@ Operations
   disabled Cognito user may be refused, and a failed sign-out must not leave the row active and the pool disabled.
 - sync (the retry): make the pool match the row (active: create if missing, enable, add the wanted groups, remove
   the other staff groups; inactive: disable + sign out).
+- invitation (S242, api/services/staff_invite.py): because AdminCreateUser is SUPPRESS, Cognito tells nobody. The
+  create (``send_invite``) and ``resend_invite`` queue one ``staff_invite_email`` job in the same transaction; the
+  worker sends the branded e-mail through SES. No Cognito call.
 
 Guards (checked in the same transaction, on rows locked ``FOR UPDATE``)
 --------------------------------------------------------------------
@@ -76,6 +79,7 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 from api.core import identity_config, staff_identity
+from api.services import staff_invite
 from services.acp_shared.audit_log import write_audit_log
 
 logger = structlog.get_logger()
@@ -108,6 +112,12 @@ COGNITO_DONE = "done"
 COGNITO_PENDING = "pending"
 COGNITO_NOT_APPLICABLE = "not_applicable"
 
+# WriteResult.invite (S242): what happened to the invitation e-mail of a create / resend.
+INVITE_QUEUED = "queued"                    # a staff_invite_email job was committed with the change
+INVITE_NOT_REQUESTED = "not_requested"      # the owner unticked "Send invitation email"
+INVITE_NOT_CONFIGURED = "not_configured"    # SES_FROM_ADDRESS unset on this task: nothing queued
+INVITE_EXISTING = "existing_account"        # re-POST of an existing create: no new invite (use Resend)
+
 
 class StaffAudit:
     """``acp_shared.audit_log.action`` values of the staff directory (resource_type ``admin_user``)."""
@@ -118,6 +128,10 @@ class StaffAudit:
     SIGNED_OUT = "staff.signed_out"
     COGNITO_SYNCED = "staff.cognito_synced"
     COGNITO_PENDING = "staff.cognito_pending"
+    # S242 invitation e-mail (api/services/staff_invite.py; sent / not_sent are written by the worker)
+    INVITE_REQUESTED = staff_invite.InviteAudit.REQUESTED
+    INVITE_SENT = staff_invite.InviteAudit.SENT
+    INVITE_NOT_SENT = staff_invite.InviteAudit.NOT_SENT
 
 
 RESOURCE_TYPE = "admin_user"
@@ -138,11 +152,12 @@ BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES)
 class StaffDirectoryError(Exception):
     """A refused write. ``status`` is the HTTP status, ``detail`` the message shown to the owner."""
 
-    def __init__(self, status: int, detail: str, code: str) -> None:
-        super().__init__(status, detail, code)
+    def __init__(self, status: int, detail: str, code: str, headers: Optional[dict[str, str]] = None) -> None:
+        super().__init__(status, detail, code, headers)
         self.status = status
         self.detail = detail
         self.code = code
+        self.headers = headers
 
 
 @dataclass
@@ -156,6 +171,8 @@ class WriteResult:
     failed_step: Optional[str] = None
     error_code: Optional[str] = None
     created: bool = False                                # create only: a new row was inserted
+    invite: Optional[str] = None                         # create / invite: INVITE_* (None for other writes)
+    invite_job_id: Optional[str] = None
 
     @property
     def pending(self) -> bool:
@@ -474,11 +491,15 @@ async def _finish(pool: Any, actor_id: str, result: WriteResult, steps: list[Ste
 # ── Operations ───────────────────────────────────────────────────────────────────────────────────
 
 async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, email: Any, display_name: Any,
-                       role: Any, booking_role: Any = None) -> WriteResult:
+                       role: Any, booking_role: Any = None, send_invite: bool = False) -> WriteResult:
     """Insert the row (and Booking grant), then create the Cognito user (SUPPRESS) and add its groups.
 
-    Re-POSTing the same address with the same roles is a retry: no new row, the Cognito steps run again.
-    The same address with different roles is 409 (use the roles route)."""
+    ``send_invite`` (S242): queue the invitation e-mail (one ``staff_invite_email`` job + its
+    ``staff.invite_requested`` row) in the same transaction as the INSERT, so a rolled-back create never mails.
+    Only a NEW row gets one; SES not configured -> the account is still created, ``invite = not_configured``.
+
+    Re-POSTing the same address with the same roles is a retry: no new row, no new invitation, the Cognito steps
+    run again. The same address with different roles is 409 (use the roles route)."""
     email = require_staff_email(email)
     display_name = require_display_name(display_name)
     role = require_cis_role(role)
@@ -487,6 +508,8 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
         raise StaffDirectoryError(403, "The break-glass address cannot be a directory account", "breakglass")
 
     created = False
+    invite = INVITE_NOT_REQUESTED
+    invite_job_id: Optional[str] = None
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -501,6 +524,8 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                         409, "A staff account with this address already exists; change it from its row",
                         "exists")
                 staff_id = existing["id"]
+                if send_invite:
+                    invite = INVITE_EXISTING
             else:
                 username = await _free_username(conn, username_base(email))
                 try:
@@ -512,11 +537,21 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                     await conn.execute(SQL_UPSERT_GRANT, staff_id, APP_BOOKING, booking_role)
                 await _audit(conn, actor_id, StaffAudit.CREATED, staff_id, {
                     "email": email, "username": username, "display_name": display_name,
-                    "role": role, "booking_role": booking_role,
+                    "role": role, "booking_role": booking_role, "send_invite": bool(send_invite),
                 })
                 created = True
+                if send_invite:
+                    if staff_invite.mail_configured():
+                        invite_job_id = await staff_invite.enqueue_invite(
+                            conn, staff_id=staff_id, actor_id=actor_id, reason=staff_invite.REASON_CREATED)
+                        invite = INVITE_QUEUED
+                    else:
+                        invite = INVITE_NOT_CONFIGURED
+                        logger.warning("staff_invite_not_configured", staff_id=staff_id,
+                                       hint="set SES_FROM_ADDRESS on the task definition")
 
-    result = WriteResult(staff_id=staff_id, operation="create", created=created)
+    result = WriteResult(staff_id=staff_id, operation="create", created=created, invite=invite,
+                         invite_job_id=invite_job_id)
     wanted = [cis_group(role)] + ([booking_group(booking_role)] if booking_role is not None else [])
     steps: list[Step] = []
 
@@ -673,6 +708,38 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
                          ("global_sign_out", lambda: cognito.global_sign_out(email))]
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="sign_out"), steps,
                          has_email=bool(email))
+
+
+async def resend_invite(pool: Any, *, actor_id: str, staff_id: str) -> WriteResult:
+    """Queue another invitation e-mail for an active account (S242 "Resend invite"). No Cognito call.
+
+    Same guards as the other writes (owner re-read, break-glass 403, 404), plus: the account must be active
+    (409) and have a work email (409), the SES sender must be configured (503), and the per-account rate limit
+    (api/services/staff_invite.py: 1 per 10 minutes, 5 per 24 h) answers 429 with ``Retry-After``. The rate
+    check and the enqueue run in one transaction on the locked row, so two clicks at once queue one job."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id)
+            staff_id = target["id"]
+            if not target["is_active"]:
+                raise StaffDirectoryError(409, "This account is disabled; enable it before sending an invitation",
+                                          "inactive")
+            if not target["email"]:
+                raise StaffDirectoryError(409, "This account has no work email, so there is nobody to invite",
+                                          "no_email")
+            if not staff_invite.mail_configured():
+                raise StaffDirectoryError(503, "Invitation e-mail is not configured on this server "
+                                               "(SES_FROM_ADDRESS is unset); nothing was sent", "not_configured")
+            limited = await staff_invite.check_rate_limit(conn, staff_id)
+            if limited is not None:
+                raise StaffDirectoryError(429, limited.message, "rate_limited",
+                                          headers={"Retry-After": str(limited.retry_after_s)})
+            job_id = await staff_invite.enqueue_invite(conn, staff_id=staff_id, actor_id=actor_id,
+                                                       reason=staff_invite.REASON_RESEND)
+    logger.info("staff_invite_queued", staff_id=staff_id, job_id=job_id, reason=staff_invite.REASON_RESEND)
+    return WriteResult(staff_id=staff_id, operation="invite", cognito=COGNITO_NOT_APPLICABLE,
+                       invite=INVITE_QUEUED, invite_job_id=job_id)
 
 
 async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str) -> WriteResult:
