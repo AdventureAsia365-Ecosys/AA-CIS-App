@@ -30,7 +30,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import write_audit_log
@@ -52,6 +52,14 @@ SUBJECT = "You've been added to Adventure Asia staff admin"
 LOGIN_PATH = "/login"
 LOGO_PATH = "/assets/adventure-asia-logo.png"   # frontend/public/assets, served without auth (not /brand)
 SIGN_IN_BUTTON = "Sign in with company email"     # the /login button label (frontend/app/login)
+# Where /login hands off and the code is typed (Cognito custom domain; frontend/lib/cognito.ts
+# DEFAULT_WORKFORCE_DOMAIN). Named in the e-mail so the reader can tell a real sign-in page from a fake one.
+SIGN_IN_HOST = "staff-auth.lumiguides.it.com"
+
+# The create's invite waits this long (run_after) so the Cognito steps that run after the commit have finished;
+# the worker also waits while the account's latest Cognito audit row is ``staff.cognito_pending`` (see
+# SQL_COGNITO_STATE). A resend is not delayed.
+CREATE_DELAY_S = 120
 
 # AA brand (frontend/app/_brand/tokens.ts): cream page, gold primary button, ink text.
 COLOR_BG = "#f4f1ec"
@@ -75,7 +83,8 @@ BOOKING_ROLE_TEXT: dict[str, str] = {
     "content_creator": "Content creator",
 }
 NO_BOOKING_TEXT = "No access to Booking"
-UNKNOWN_ACTOR = "An Adventure Asia platform owner"
+UNKNOWN_ACTOR = "An Adventure Asia platform owner"   # sentence start, when the actor's name is unknown
+OWNER_CONTACT = "the Adventure Asia platform owner"   # mid-sentence
 
 
 class InviteAudit:
@@ -103,14 +112,20 @@ def invite_key(staff_id: str, seq: int) -> str:
 
 # ── Render ───────────────────────────────────────────────────────────────────────────────────────
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
+# C0/C1 controls and the line / paragraph separators become a space.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+# Invisible format characters are dropped: zero-width (U+200B-U+200D, U+2060-U+2064, U+FEFF), the direction
+# marks, embeddings, overrides and isolates (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069) that could make a
+# name read as something else.
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
 
 
 def clean_name(value: Any, limit: int = 120) -> str:
-    """One line of visible text: control characters out, whitespace collapsed, capped."""
+    """One line of visible text: control characters out, invisible format characters dropped, whitespace
+    collapsed, capped."""
     if not isinstance(value, str):
         return ""
-    return " ".join(_CONTROL.sub(" ", value).split())[:limit]
+    return " ".join(_CONTROL.sub(" ", _INVISIBLE.sub("", value)).split())[:limit]
 
 
 def cis_role_text(role: Optional[str]) -> str:
@@ -130,7 +145,9 @@ def render_invite(*, to: str, display_name: Any, actor_name: Any, role: Optional
     login_url = f"{base}{LOGIN_PATH}"
     logo_url = f"{base}{LOGO_PATH}"
     name = clean_name(display_name)
-    actor = clean_name(actor_name) or UNKNOWN_ACTOR
+    known_actor = clean_name(actor_name)
+    actor = known_actor or UNKNOWN_ACTOR
+    contact = f"{known_actor} or {OWNER_CONTACT}" if known_actor else OWNER_CONTACT
     cis_text = cis_role_text(role)
     booking_text = booking_role_text(booking_role)
     greeting = f"Hello {name}," if name else "Hello,"
@@ -139,7 +156,8 @@ def render_invite(*, to: str, display_name: Any, actor_name: Any, role: Optional
         f"Open {login_url}",
         f'Click "{SIGN_IN_BUTTON}".',
         f"Enter this address: {to}",
-        "Enter the one-time code we email you. It is valid for a few minutes.",
+        f"Enter the one-time code we email you on the sign-in page ({SIGN_IN_HOST}). "
+        "It is valid for a few minutes.",
     ]
     text = "\n".join([
         greeting,
@@ -154,9 +172,9 @@ def render_invite(*, to: str, display_name: Any, actor_name: Any, role: Optional
         *[f"{i}. {s}" for i, s in enumerate(steps, 1)],
         "",
         "There is no password. Each sign-in uses a new code sent to this address.",
+        f"Only enter the code on {SIGN_IN_HOST}. Never share it: Adventure Asia will never ask you for it.",
         "",
-        f"If you did not expect this e-mail, contact {actor} or the Adventure Asia platform owner. "
-        "Replies to this address are not read.",
+        f"If you did not expect this e-mail, contact {contact}. Replies to this address are not read.",
         "",
         "Adventure Asia",
     ])
@@ -167,7 +185,8 @@ def render_invite(*, to: str, display_name: Any, actor_name: Any, role: Optional
             f'Open <a href="{e(login_url)}" style="color:{COLOR_GOLD};font-weight:600">{e(login_url)}</a>',
             f"Click <strong>&ldquo;{e(SIGN_IN_BUTTON)}&rdquo;</strong>.",
             f"Enter this address: <strong>{e(to)}</strong>",
-            "Enter the one-time code we email you. It is valid for a few minutes.",
+            f"Enter the one-time code we email you on the sign-in page (<strong>{e(SIGN_IN_HOST)}</strong>). "
+            "It is valid for a few minutes.",
         ))
     body = (
         f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -198,11 +217,13 @@ def render_invite(*, to: str, display_name: Any, actor_name: Any, role: Optional
         f'text-transform:uppercase;font-size:13px">Go to sign-in</a></td></tr></table>'
         f'<p style="margin:0 0 6px 0;font-weight:600;color:{COLOR_INK}">How to sign in</p>'
         f'<ol style="margin:0 0 16px 0;padding-left:20px">{step_items}</ol>'
-        '<p style="margin:0 0 20px 0">There is no password. Each sign-in uses a new code sent to this address.</p>'
+        '<p style="margin:0 0 8px 0">There is no password. Each sign-in uses a new code sent to this address.</p>'
+        f'<p style="margin:0 0 20px 0">Only enter the code on <strong>{e(SIGN_IN_HOST)}</strong>. Never share it: '
+        'Adventure Asia will never ask you for it.</p>'
         '</td></tr>'
         f'<tr><td style="padding:16px 28px 26px 28px;border-top:1px solid {COLOR_LINE};font-size:12.5px;'
-        f'color:{COLOR_MUTED}">If you did not expect this e-mail, contact {e(actor)} or the Adventure Asia platform '
-        'owner. Replies to this address are not read.</td></tr>'
+        f'color:{COLOR_MUTED}">If you did not expect this e-mail, contact {e(contact)}. Replies to this address are '
+        'not read.</td></tr>'
         '</table></td></tr></table></body></html>'
     )
     return Message(to=to, subject=SUBJECT, text=text, html=body)
@@ -218,16 +239,24 @@ SQL_MAX_SEQ = (
 
 async def enqueue_invite(conn: Any, *, staff_id: str, actor_id: str, reason: str) -> str:
     """Queue one invitation for ``staff_id`` and write its ``staff.invite_requested`` row, on ``conn`` (the
-    caller's transaction, with the target row already locked). Returns the job id."""
+    caller's transaction, with the target row already locked). Returns the job id.
+
+    A create's invite runs after :data:`CREATE_DELAY_S` (the Cognito steps run after the commit). When the key
+    already exists (a request that read a stale seq) the existing job id is returned and no audit row is written,
+    so nothing that was not queued counts against the rate limit or shows as "queued"."""
     from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
 
     seq = int(await conn.fetchval(SQL_MAX_SEQ, f"{KIND}:{staff_id}:%") or 0) + 1
     payload = {"staff_id": staff_id, "requested_by": actor_id, "reason": reason, "seq": seq}
+    run_after = (datetime.now(timezone.utc) + timedelta(seconds=CREATE_DELAY_S)
+                 if reason == REASON_CREATED else None)
     job_id, created = await queue.enqueue(conn, KIND, payload, idempotency_key=invite_key(staff_id, seq),
-                                          max_attempts=MAX_ATTEMPTS, created_by=f"admin:{actor_id}")
-    await write_audit_log(conn, tenant_id=None, actor=f"admin:{actor_id}", action=InviteAudit.REQUESTED,
-                          resource_type=RESOURCE_TYPE, resource_id=staff_id,
-                          details={"reason": reason, "job_id": job_id, "seq": seq, "new_job": created})
+                                          max_attempts=MAX_ATTEMPTS, created_by=f"admin:{actor_id}",
+                                          run_after=run_after)
+    if created:
+        await write_audit_log(conn, tenant_id=None, actor=f"admin:{actor_id}", action=InviteAudit.REQUESTED,
+                              resource_type=RESOURCE_TYPE, resource_id=staff_id,
+                              details={"reason": reason, "job_id": job_id, "seq": seq})
     return job_id
 
 
@@ -319,6 +348,12 @@ SQL_INVITE_TARGET = (
     "WHERE u.id = $1::uuid"
 )
 SQL_ACTOR_NAME = "SELECT display_name, username FROM shared.admin_users WHERE id = $1::uuid"
+# The account's latest Cognito outcome row (staff_directory.StaffAudit COGNITO_PENDING / COGNITO_SYNCED): a
+# pending one means sign-in may not work yet, so the worker retries instead of sending (no Cognito call).
+SQL_COGNITO_STATE = (
+    "SELECT action FROM acp_shared.audit_log WHERE resource_type = $1 AND resource_id = $2 "
+    "AND action = ANY($3::text[]) ORDER BY created_at DESC LIMIT 1"
+)
 SQL_ALREADY_SENT = (
     "SELECT 1 FROM acp_shared.audit_log WHERE action = $1 AND resource_type = $2 AND resource_id = $3 "
     "AND details->>'job_id' = $4 LIMIT 1"

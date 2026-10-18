@@ -9,6 +9,10 @@ Idempotency key `staff_invite_email:<staff_id>:<seq>` (one job per request).
 - SES_FROM_ADDRESS unset -> NonRetryable (the job fails; on_terminal writes `staff.invite_not_sent`).
 - Row gone, disabled, break-glass, without an email, or an address outside @adventure.asia -> succeeds as
   `skipped` with the reason, and a `staff.invite_not_sent` row (so the Staff page does not show "queued" forever).
+- The account's latest Cognito audit row is `staff.cognito_pending` (the create's Cognito steps failed and
+  "Retry Cognito" has not succeeded yet) -> retryable error: sign-in would not work, so the e-mail waits. The
+  create's job already starts CREATE_DELAY_S after the commit; with the runner's backoff the five attempts span
+  about ten minutes, then the job fails (`staff.invite_not_sent`) and the owner resends after the retry.
 - A `staff.invite_sent` row for this job already exists -> done without sending (a worker that wrote it but died
   before marking the job succeeded).
 - SES refusal a retry cannot fix (rejected address, sender not allowed, account paused, sandbox recipient) ->
@@ -24,7 +28,7 @@ from typing import Any, Optional
 import structlog
 
 from api.services import staff_invite as si
-from api.services.staff_directory import is_breakglass
+from api.services.staff_directory import StaffAudit, is_breakglass
 from services.acp_shared.audit_log import write_audit_log
 from shared.aws_client import ses_mailer
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
@@ -59,6 +63,16 @@ def _skip_reason(row: Optional[dict]) -> Optional[str]:
     if not si.is_staff_address(row.get("email")):
         return "not_a_staff_address"
     return None
+
+
+class CognitoNotReady(RuntimeError):
+    """Sign-in for the account is not set up yet (latest Cognito audit row is pending); the runner retries."""
+
+
+async def _cognito_pending(pool: Any, staff_id: str) -> bool:
+    latest = await pool.fetchval(si.SQL_COGNITO_STATE, si.RESOURCE_TYPE, staff_id,
+                                 [StaffAudit.COGNITO_PENDING, StaffAudit.COGNITO_SYNCED])
+    return latest == StaffAudit.COGNITO_PENDING
 
 
 async def _actor_name(pool: Any, actor_id: Any) -> Optional[str]:
@@ -107,6 +121,12 @@ async def run(ctx: JobContext) -> dict:
         logger.info("staff_invite_skipped", job_id=ctx.job_id, staff_id=staff_id, reason=reason)
         return {**base, "status": "skipped", "skip_reason": reason}
 
+    if await _cognito_pending(ctx.pool, staff_id):
+        logger.info("staff_invite_waiting_for_cognito", job_id=ctx.job_id, staff_id=staff_id,
+                    attempt=ctx.job.attempt)
+        raise CognitoNotReady("Company sign-in for this account is pending (Retry Cognito on the Staff page); "
+                              "the invitation waits and the runner retries")
+
     actor = await _actor_name(ctx.pool, payload.get("requested_by"))
     message = si.render_invite(to=row["email"].strip().lower(), display_name=row.get("display_name"),
                                actor_name=actor, role=row.get("role"), booking_role=row.get("booking_role"))
@@ -118,10 +138,11 @@ async def run(ctx: JobContext) -> dict:
         logger.warning("staff_invite_ses_error", job_id=ctx.job_id, staff_id=staff_id, code=e.code,
                        permanent=e.permanent)
         # The job error is shown on the job-runner API (every staff role): the SES code only, never its message,
-        # which can quote the recipient address.
+        # which can quote the recipient address. `from None` keeps that message out of the worker's exc_info log
+        # (CloudWatch, Sentry) too; the code is logged just above.
         if e.permanent:
-            raise NonRetryable(f"SES refused the invitation ({e.code})") from e
-        raise RuntimeError(f"SES send failed ({e.code}); the runner retries") from e
+            raise NonRetryable(f"SES refused the invitation ({e.code})") from None
+        raise RuntimeError(f"SES send failed ({e.code}); the runner retries") from None
     await _audit(ctx.pool, si.InviteAudit.SENT, staff_id, {
         "job_id": ctx.job_id, "message_id": message_id, "reason": payload.get("reason"), "seq": payload.get("seq"),
         "requested_by": payload.get("requested_by"), "configuration_set": cfg.configuration_set,

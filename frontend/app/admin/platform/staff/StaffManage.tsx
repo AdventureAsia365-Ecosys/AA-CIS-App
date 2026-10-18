@@ -134,7 +134,7 @@ async function staffWrite(method: "POST" | "PATCH", path: string, okMessage: str
 function createdMessage(email: string, invite: string | undefined): string {
   switch (invite) {
     case "queued":
-      return `Created ${email}. An invitation email is on its way to that address with the sign-in steps.`;
+      return `Created ${email}. An invitation email with the sign-in steps goes to that address in about 2 minutes.`;
     case "not_configured":
       return `Created ${email}. Invitation email is not set up on this server, so none was sent: tell them to sign in with "Sign in with company email" and this address.`;
     case "existing_account":
@@ -266,7 +266,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
       onDone({ ...outcome, message: createdMessage(normalized, outcome.invite) });
     } else {
       onDone(outcome.invite === "queued"
-        ? { ...outcome, message: `${outcome.message} An invitation email was queued; sign-in works once the retry succeeds.` }
+        ? { ...outcome, message: `${outcome.message} An invitation email is queued and waits until the retry succeeds; if that takes longer than about 10 minutes it is dropped, so use "Resend invite" afterwards.` }
         : outcome);
     }
   };

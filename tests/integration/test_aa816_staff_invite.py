@@ -91,6 +91,10 @@ async def test_create_queues_the_invite_and_the_worker_sends_it(env):
     assert job["idempotency_key"] == f"staff_invite_email:{res.staff_id}:1" and job["status"] == "queued"
     assert job["max_attempts"] == 5 and job["created_by"] == f"admin:{owner}" and job["id"] == res.invite_job_id
     assert json.loads(job["payload"])["seq"] == 1
+    # The create's invite waits for the Cognito steps (run_after = commit + CREATE_DELAY_S).
+    delay = await pool.fetchval("SELECT extract(epoch FROM run_after - now()) FROM shared.job WHERE id = $1::uuid",
+                                job["id"])
+    assert si.CREATE_DELAY_S - 30 < float(delay) <= si.CREATE_DELAY_S
     actions = [r["action"] for r in await pool.fetch(
         "SELECT action FROM acp_shared.audit_log WHERE resource_type = 'admin_user' AND resource_id = $1 "
         "ORDER BY created_at, action", res.staff_id)]
@@ -106,6 +110,16 @@ async def test_create_queues_the_invite_and_the_worker_sends_it(env):
     payload = json.loads(job["payload"])
     ctx = registry.JobContext(pool, Job(id=job["id"], kind=si.KIND, payload=payload, status="running", attempt=1,
                                         max_attempts=5, progress={}, cost_usd=0.0), resources={"ses": ses})
+    # A pending Cognito row (the create's Cognito half failed): the worker waits (retryable), sends nothing.
+    await pool.execute("INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
+                       "VALUES ('test', $1, 'admin_user', $2, '{}'::jsonb)", sd.StaffAudit.COGNITO_PENDING,
+                       res.staff_id)
+    with pytest.raises(job_mod.CognitoNotReady):
+        await job_mod.run(ctx)
+    assert ses.calls == []
+    await pool.execute("INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details, "
+                       "created_at) VALUES ('test', $1, 'admin_user', $2, '{}'::jsonb, now() + interval '1 second')",
+                       sd.StaffAudit.COGNITO_SYNCED, res.staff_id)
     result = await job_mod.run(ctx)
     assert result["status"] == "sent" and len(ses.calls) == 1
     assert ses.calls[0]["Destination"] == {"ToAddresses": [email]}

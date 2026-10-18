@@ -40,8 +40,18 @@ sends SUPPRESS), so CIS sends its own branded invitation through SES.
 - **Handler send-once guard**: before sending, the handler looks for a `staff.invite_sent` row with this job
   id; found -> done without sending (covers a worker that wrote the audit row but died before marking the
   job succeeded).
-- **Recipient guard**: the handler refuses (NonRetryable) any address not `@adventure.asia`, even if a row
-  somehow holds one (defence in depth; the DB CHECK already enforces it).
+- **Recipient guard**: the handler skips (no send, `staff.invite_not_sent` reason `not_a_staff_address`) any
+  address not `@adventure.asia`, even if a row somehow holds one (defence in depth; the DB CHECK already
+  enforces it).
+- **Create invite waits for Cognito** (review round): the create's job gets `run_after = now + 120 s`
+  (`CREATE_DELAY_S`) so the Cognito steps that run after the commit have finished, and the handler raises a
+  retryable `CognitoNotReady` while the account's latest Cognito audit row (`staff.cognito_pending` vs
+  `staff.cognito_synced`, `SQL_COGNITO_STATE`) is pending. DB-only, no AdminGetUser. With the runner backoff
+  (30/60/120/240 s) the 5 attempts span about 10 minutes from the create; then the job fails, `on_terminal`
+  writes `staff.invite_not_sent`, and the owner resends after "Retry Cognito". A resend is not delayed.
+- **Request row only for a new job** (review round): `enqueue_invite` writes `staff.invite_requested` only
+  when `queue.enqueue` created the job. A duplicate key (stale seq) returns the existing job id and writes
+  nothing, so it neither counts against the rate limit nor leaves `invite_status` stuck on "queued".
 
 ## Changed
 
@@ -56,15 +66,17 @@ sends SUPPRESS), so CIS sends its own branded invitation through SES.
 - Frontend: "Send invitation email" checkbox (default on) in Add staff, banner says whether an invite was
   queued, "Send invite" / "Resend invite" button in the drawer (active accounts with an email), "Last invited"
   field in the drawer + list column (table min width 860 -> 960).
-- Tests: new `tests/unit/test_aa816_staff_invite.py` (35) and `tests/integration/test_aa816_staff_invite.py` (2,
+- Tests: new `tests/unit/test_aa816_staff_invite.py` (37 after the review round) and
+  `tests/integration/test_aa816_staff_invite.py` (2,
   run against the local Postgres 16 cluster); `test_aa883_admin_platform.py` expects the four new row keys.
 
 ## Tradeoffs
 
-- **Invite vs a pending Cognito half**: the job is committed with the row, before the Cognito steps run. If
-  Cognito then fails (502 `saved_cognito_pending`), the person may get the e-mail before their sign-in
-  works; the owner sees the pending banner and retries the sync. Not worth a pending-check in the handler
-  (it may not read Cognito: AdminGetUser counts as MAU and is outside the writer allow-list).
+- **Invite vs a pending Cognito half**: first version accepted that the e-mail could arrive before sign-in
+  works. Review round: delay + audit-log check (Decisions). Residual gaps: a later `change_roles` whose
+  Cognito half failed also writes `staff.cognito_pending`, so a resend for an account that can in fact sign in
+  waits until "Retry Cognito" (safe direction); and `_audit_after` is best effort, so a lost pending row means
+  the check cannot see the failure (the 120 s delay still covers the normal case).
 - **At-least-once**: a worker that dies after SES accepted the message but before the audit row can resend
   on the reaper's retry. Accepted (same as AA-828); the send-once guard closes the later window.
 - **Audit-derived status** costs three correlated subqueries per staff row instead of a column. Fine at this
@@ -82,5 +94,16 @@ sends SUPPRESS), so CIS sends its own branded invitation through SES.
   tries `GetSecretValue`; with the dummy `AWS_ACCESS_KEY_ID=x` it was refused, nothing was read.)
 - The BFF (`app/api/admin/[...path]`) forwards status + body but not `Retry-After`; the 429 detail sentence
   already says how long to wait, which is what the UI shows.
+- Template wording (review round): the code step and a line "Only enter the code on
+  staff-auth.lumiguides.it.com. Never share it: Adventure Asia will never ask you for it." name the Cognito
+  custom domain (`SIGN_IN_HOST`, same value as `frontend/lib/cognito.ts` DEFAULT_WORKFORCE_DOMAIN; text, not a
+  link). Unknown actor -> "contact the Adventure Asia platform owner" (no "contact An … or the …").
+  `clean_name` also drops zero-width and bidi control characters (U+200B-U+200F, U+202A-U+202E,
+  U+2060-U+2069, U+FEFF); `require_display_name` (C6 input validation) is unchanged.
+- SES errors are re-raised `from None`: `worker.py` logs failures with `exc_info=True`, and a chained
+  `MailError` would put SES's message (which can quote the address) in CloudWatch / Sentry.
+- **Deploy order for the first real invite (Thu)**: the e-mail's only link is on aa-cis.lumiguides.it.com,
+  which Chrome Safe Browsing flagged (S242). Create Thu with the checkbox unticked, or wait until Search
+  Console shows the review cleared, then use "Send invite"; also confirm `ProductionAccessEnabled` first.
 - Role wording in the e-mail lives in `staff_invite.CIS_ROLE_TEXT` / `BOOKING_ROLE_TEXT`; the Booking role
   scopes are named, not described, because Booking owns what they mean.

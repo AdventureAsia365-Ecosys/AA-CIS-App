@@ -92,12 +92,12 @@ class InviteDB(c6.StaffDB):
     async def fetchrow(self, sql: str, *args: Any) -> Optional[dict[str, Any]]:
         if "INSERT INTO shared.job" in sql:
             self.sql.append(sql)
-            kind, payload, key, max_attempts, _parent, created_by, _run_after = args
+            kind, payload, key, max_attempts, _parent, created_by, run_after = args
             if key is not None and any(j["idempotency_key"] == key for j in self.jobs):
                 return None
             jid = str(uuid.uuid4())
             self.jobs.append({"id": jid, "kind": kind, "payload": json.loads(payload), "idempotency_key": key,
-                              "max_attempts": max_attempts, "created_by": created_by})
+                              "max_attempts": max_attempts, "created_by": created_by, "run_after": run_after})
             return {"id": jid}
         if sql == si.SQL_RECENT_REQUESTS:
             self.sql.append(sql)
@@ -129,6 +129,13 @@ class InviteDB(c6.StaffDB):
         if sql.startswith("SELECT id FROM shared.job WHERE idempotency_key"):
             self.sql.append(sql)
             return next((j["id"] for j in self.jobs if j["idempotency_key"] == args[0]), None)
+        if sql == si.SQL_COGNITO_STATE:
+            self.sql.append(sql)
+            rtype, rid, actions = args
+            rows = [a for a in self.audit if a["resource_type"] == rtype and a["resource_id"] == rid
+                    and a["action"] in actions]
+            # ORDER BY created_at DESC LIMIT 1 (ties: the row written last)
+            return max(enumerate(rows), key=lambda p: (p[1]["created_at"], p[0]))[1]["action"] if rows else None
         if sql == si.SQL_ALREADY_SENT:
             self.sql.append(sql)
             action, rtype, rid, job_id = args
@@ -195,6 +202,9 @@ def test_template_subject_link_steps_and_roles(mail_env):
         assert "Nghiep Pham" in part and "Thu Le" in part
         assert si.CIS_ROLE_TEXT["admin"] in part and "Booking administrator" in part
         assert "There is no password" in part
+        assert "staff-auth.lumiguides.it.com" in part and "Never share it" in part
+        assert "will never ask you for it" in part
+        assert "contact Nghiep Pham or the Adventure Asia platform owner" in part
     # Every link in the HTML is the sign-in page (no deep link, no query string, no code); the only image is the
     # public logo.
     assert set(re.findall(r'href="([^"]+)"', m.html)) == {login}
@@ -219,6 +229,15 @@ def test_template_plain_words_for_every_role(mail_env):
     assert "Booking: Content creator" in _render(booking_role="content_creator").text
 
 
+def test_template_drops_invisible_and_direction_characters(mail_env):
+    sneaky = "Th\u200bu\u202e Le\u2066x\u2069\ufeff\u2028Bcc"
+    assert si.clean_name(sneaky) == "Thu Lex Bcc"
+    m = _render(display_name=sneaky, actor_name="Ngh\u200diep\u200f Pham")
+    for part in (m.text, m.html):
+        assert "Hello Thu Lex Bcc," in part and "Nghiep Pham" in part
+        assert not any(ch in part for ch in "\u200b\u200d\u200f\u202e\u2066\u2069\ufeff\u2028")
+
+
 def test_template_escapes_and_cleans_display_names(mail_env):
     m = _render(display_name='<script>alert(1)</script> & "x"', actor_name="<b>Evil</b>\r\nBcc: x@evil.com")
     assert "<script>" not in m.html and "&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot;" in m.html
@@ -229,7 +248,11 @@ def test_template_escapes_and_cleans_display_names(mail_env):
 
 def test_template_fallbacks_and_base_url_override(monkeypatch):
     m = _render(display_name=None, actor_name="  ")
-    assert m.text.startswith("Hello,\n") and si.UNKNOWN_ACTOR in m.text
+    assert m.text.startswith("Hello,\n")
+    for part in (m.text, m.html):
+        assert "An Adventure Asia platform owner" in part
+        assert "contact the Adventure Asia platform owner." in part and "contact An " not in part
+        assert " or the Adventure Asia platform owner" not in part
     monkeypatch.setenv("ADMIN_BASE_URL", "https://admin.example.test/")
     assert "https://admin.example.test/login" in _render().text
 
@@ -272,6 +295,9 @@ async def test_create_with_invite_enqueues_exactly_one_job_in_the_same_transacti
     job = jobs[0]
     assert job["idempotency_key"] == f"staff_invite_email:{result.staff_id}:1" and job["max_attempts"] == 5
     assert job["payload"] == {"staff_id": result.staff_id, "requested_by": db.owner, "reason": "created", "seq": 1}
+    # It waits for the Cognito steps that run after the commit.
+    delay = (job["run_after"] - datetime.now(timezone.utc)).total_seconds()
+    assert si.CREATE_DELAY_S - 30 < delay <= si.CREATE_DELAY_S
     assert NEW_EMAIL not in json.dumps(job["payload"]) and job["created_by"] == f"admin:{db.owner}"
     assert result.invite_job_id == job["id"]
     assert db.actions() == [sd.StaffAudit.CREATED, sd.StaffAudit.INVITE_REQUESTED]
@@ -329,7 +355,7 @@ async def test_resend_queues_with_the_next_seq_and_is_rate_limited(db, mail_env)
     r1 = await sd.resend_invite(db, actor_id=db.owner, staff_id=uid)
     assert r1.invite == sd.INVITE_QUEUED and r1.operation == "invite" and r1.cognito == sd.COGNITO_NOT_APPLICABLE
     assert [j["idempotency_key"] for j in db.invite_jobs()] == [f"staff_invite_email:{uid}:1"]
-    assert db.invite_jobs()[0]["payload"]["reason"] == "resend"
+    assert db.invite_jobs()[0]["payload"]["reason"] == "resend" and db.invite_jobs()[0]["run_after"] is None
 
     db.now = T0 + timedelta(minutes=4)
     with pytest.raises(sd.StaffDirectoryError) as err:
@@ -384,7 +410,8 @@ async def test_the_idempotency_key_is_the_backstop_for_a_duplicate_request(db, m
     monkeypatch.setattr(db, "fetchval", stale_seq)
     second = await si.enqueue_invite(db, staff_id=uid, actor_id=db.owner, reason="resend")
     assert second == first and len(db.invite_jobs()) == 1
-    assert db.audit[-1]["details"]["new_job"] is False
+    # Nothing new was queued: no second request row (it would count against the rate limit and show "queued").
+    assert [a["details"]["job_id"] for a in db.audit if a["action"] == si.InviteAudit.REQUESTED] == [first]
 
 
 @pytest.mark.asyncio
@@ -603,6 +630,8 @@ async def test_handler_permanent_ses_error_is_non_retryable_without_the_address(
     with pytest.raises(registry.NonRetryable) as err:
         await job_mod.run(_ctx(db, uid, ses))
     assert "MessageRejected" in str(err.value) and NEW_EMAIL not in str(err.value)
+    # Not chained: the worker logs with exc_info, and SES's message quotes the address.
+    assert err.value.__cause__ is None and err.value.__suppress_context__
     assert not [a for a in db.audit if a["action"] == si.InviteAudit.SENT]
 
 
@@ -613,6 +642,31 @@ async def test_handler_transient_ses_error_is_retried(db, mail_env):
     with pytest.raises(RuntimeError) as err:
         await job_mod.run(_ctx(db, uid, ses))
     assert not isinstance(err.value, registry.NonRetryable) and NEW_EMAIL not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+
+
+def _cognito_row(db: InviteDB, uid: str, action: str) -> None:
+    db.audit.append({"tenant_id": None, "actor": "x", "action": action, "resource_type": "admin_user",
+                     "resource_id": uid, "details": {}, "created_at": db.now})
+
+
+@pytest.mark.asyncio
+async def test_handler_waits_while_cognito_is_pending_then_sends(db, mail_env):
+    uid = db.add(email=NEW_EMAIL, role="content")
+    _cognito_row(db, uid, sd.StaffAudit.COGNITO_PENDING)
+    ses = StubSes()
+    with pytest.raises(job_mod.CognitoNotReady) as err:
+        await job_mod.run(_ctx(db, uid, ses))
+    assert not isinstance(err.value, registry.NonRetryable) and ses.calls == []
+    assert not [a for a in db.audit if a["action"] in (si.InviteAudit.SENT, si.InviteAudit.NOT_SENT)]
+    db.now = T0 + timedelta(minutes=3)
+    _cognito_row(db, uid, sd.StaffAudit.COGNITO_SYNCED)   # the owner's "Retry Cognito" succeeded
+    result = await job_mod.run(_ctx(db, uid, ses))
+    assert result["status"] == "sent" and len(ses.calls) == 1
+    db.now = T0 + timedelta(minutes=5)
+    _cognito_row(db, uid, sd.StaffAudit.COGNITO_PENDING)  # a later change failed again
+    with pytest.raises(job_mod.CognitoNotReady):
+        await job_mod.run(_ctx(db, uid, ses))
 
 
 @pytest.mark.asyncio
