@@ -1,0 +1,30 @@
+# S242: Dependabot security updates arrived as one PR per transitive package (five or more a day), each
+# with a red "Vercel deploy" check because Dependabot PRs get no repository secrets. Version updates are
+# off (open-pull-requests-limit: 0); security updates are grouped into one PR per ecosystem. When a
+# group PR's secret-dependent checks fail, push the same change from a normal branch (as in S242).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    groups:
+      frontend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 0
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
