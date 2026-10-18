@@ -50,7 +50,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Admin navigation (AA-663): **Overview** (Dashboard) · **Content** (Upload, Rewrite S1,
     Review Queue, Master Content) · **Intelligence** (Social Content) · **Tenants** ·
     **Operations** (External Spend, Jobs, Jev Decisions, API Docs) · **Settings**. Admin-only items are hidden for other
-    roles (same list as `middleware.ts` PROTECTED_ROUTES). The legacy `(internal)` route group
+    roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
   - Portal pages: `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
@@ -472,9 +472,9 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
   `cognito_host` and only the password form. Domain, issuer and client ids are code constants with
   `COGNITO_*` env overrides; only the two client secrets are set in Vercel (Production).
 - Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
-  so middleware can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
+  so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
-  (single-flight; middleware redirects page navigations there, `SessionKeepAlive` POSTs before expiry).
+  (single-flight; `proxy.ts` redirects page navigations there, `SessionKeepAlive` POSTs before expiry).
   `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout revokes the refresh token
   and goes through Cognito `/logout`.
 - A sign-in completes only after `/auth/verify-admin` accepts the token; a refusal lands on
@@ -538,7 +538,8 @@ group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` use
 through the machine route `POST /admin/job-runner/staff-reconcile/schedule` once the ops-probe Lambda calls it
 (Infra follow-up). Job results reach non-admin roles redacted.
 
-The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
+The matrix lives in `frontend/lib/rbac.ts` and is read by `frontend/proxy.ts` (pages; the Next 16 Proxy on the Node.js runtime,
+`middleware.ts` until S243), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
 

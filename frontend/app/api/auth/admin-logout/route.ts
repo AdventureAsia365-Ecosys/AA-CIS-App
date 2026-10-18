@@ -3,7 +3,7 @@
 //
 // AdminSidebar.tsx's logout() used to only clear the display cookies
 // (cis_role/cis_user/cis_api_token) via `document.cookie = "...max-age=0"`.
-// cis_admin_token (the real JWT middleware.ts/verifyAdminToken() checks) has
+// cis_admin_token (the real JWT proxy.ts/verifyAdminToken() checks) has
 // been httpOnly since AA-232 — client JS can't see or overwrite it, so
 // clicking Logout redirected to /login but left the real session alive until
 // its natural 24h expiry (JWT_EXPIRY_H). This route clears cis_admin_token

@@ -168,7 +168,7 @@ async function refreshSession(request: NextRequest, skipIfFreshS: number): Promi
   return { ok: false, transient: false, reason: verified.ok ? "role" : `verify_${verified.status}` };
 }
 
-/** GET /api/auth/refresh?next=/admin/... — used by middleware.ts on a page navigation. */
+/** GET /api/auth/refresh?next=/admin/... — used by proxy.ts on a page navigation. */
 export async function handleRefreshNavigation(request: NextRequest): Promise<NextResponse> {
   const next = safeNextPath(request.nextUrl.searchParams.get("next"));
   const outcome = await refreshSession(request, REFRESH_SKEW_S);

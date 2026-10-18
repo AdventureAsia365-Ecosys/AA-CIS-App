@@ -99,7 +99,7 @@ export function visibleSections(role: string): NavSection[] {
   );
 }
 
-/** The standalone Settings entry (all staff roles, same as middleware.ts). */
+/** The standalone Settings entry (all staff roles, same as proxy.ts). */
 export const SETTINGS_ENTRY: NavEntry = {
   href: "/admin/settings", icon: <Settings size={16} />, label: "Settings",
 };

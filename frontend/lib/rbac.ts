@@ -1,5 +1,5 @@
 // frontend/lib/rbac.ts
-// AA-656 — the single staff RBAC matrix. middleware.ts (page gating), lib/auth-server.ts (BFF proxy
+// AA-656 — the single staff RBAC matrix. proxy.ts (page gating), lib/auth-server.ts (BFF proxy
 // gating) and the admin nav (app/_kit/adminNav.tsx) all read these tables; nothing else decides who
 // sees what. The role always comes from a VERIFIED JWT (/auth/verify-admin), never from the
 // client-writable `cis_role` cookie — that cookie is only a display hint for the UI.
@@ -9,7 +9,7 @@
 // staff roles map onto the same three (admin → admin, sales → reviewer tier, content_creator →
 // content) so the ecosystem keeps one staff identity model.
 //
-// Edge-safe: no React, no Node APIs (middleware.ts imports it).
+// Dependency-free: no React, no Node APIs (proxy.ts imports it).
 
 export type StaffRole = "admin" | "reviewer" | "content";
 export type Role = StaffRole | "tenant";

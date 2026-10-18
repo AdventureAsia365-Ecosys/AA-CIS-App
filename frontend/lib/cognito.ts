@@ -2,7 +2,7 @@
 // AA-816 (C4) — staff sign-in through the Cognito WORKFORCE pool (ADR 0006 Phase 1):
 // authorization code + PKCE (S256) against the confidential `cis-admin` client, plus the separate
 // `breakglass` client. Server-only: it reads the client secrets. Route handlers import it; the edge
-// middleware never does (it only redirects to /api/auth/refresh, see middleware.ts).
+// middleware never does (it only redirects to /api/auth/refresh, see proxy.ts).
 //
 // Security rules this file enforces:
 //   - The redirect URI is always taken from a FIXED allowlist (production host, plus localhost in
@@ -398,7 +398,7 @@ export interface StaffDisplay {
 
 /**
  * Writes the Cognito session. cis_admin_token holds the 15-min access token, but the COOKIE lives as
- * long as the refresh window: middleware.ts must still see an expired access token to know it should
+ * long as the refresh window: proxy.ts must still see an expired access token to know it should
  * refresh (the refresh cookie is path-scoped to /api/auth and never reaches page requests). An expired
  * token in the cookie is useless to anyone: /auth/verify-admin rejects it.
  */

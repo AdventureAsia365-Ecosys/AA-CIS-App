@@ -23,7 +23,7 @@ v1 scope, per Nghiep's 5 decisions (Linear AA-437, 23/08/2026):
 
 AA-455 bước 1 (24/08/2026) added a 3rd use case: `publish_log` list + force-unpublish. Per
 STEP0 (docs/claude_audit/AA-455-01-step0-a4-force-unpublish.md §4/§7), this stays on the SAME
-`/admin/a4-oversight` FE page (already allowlisted in middleware.ts since AA-437) and the SAME
+`/admin/a4-oversight` FE page (already allowlisted in proxy.ts since AA-437) and the SAME
 `/admin/a4` router prefix here — no new route, so no middleware change needed. Still no
 flag/suspend — that stays deferred to the Command Center backlog (AA-255->259); force-unpublish
 is the one action this issue scoped in.
