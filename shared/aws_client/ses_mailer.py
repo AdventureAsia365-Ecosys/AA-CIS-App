@@ -10,7 +10,8 @@ only as the Terraform `ses_from_address` (IAM condition `ses:FromAddress`) and o
   SES_REGION              optional, default AWS_REGION / us-west-1
 
 `ALERT_EMAIL_TO` or `SES_FROM_ADDRESS` empty -> `alert_mail_config()` returns None and callers log and
-send nothing. Used from job handlers only (services/jobs/ops_alert_email_job.py), never from a request
+send nothing. AA-816: `sender_config()` is the same sender without the operator mailbox, for the staff
+invitation (services/jobs/staff_invite_email_job.py). Used from job handlers only, never from a request
 or an LLM call path: the boto3 call blocks, so it runs in a thread.
 
 boto3 is imported lazily; tests inject a stub client (anything with
@@ -78,6 +79,28 @@ def alert_mail_config() -> Optional[AlertMailConfig]:
         return None
     return AlertMailConfig(
         to=to, sender=sender,
+        configuration_set=os.environ.get("SES_CONFIGURATION_SET", "").strip() or None,
+        region=(os.environ.get("SES_REGION") or os.environ.get("AWS_REGION")
+                or os.environ.get("AWS_DEFAULT_REGION") or "us-west-1"),
+    )
+
+
+@dataclass(frozen=True)
+class SenderConfig:
+    """AA-816: who CIS mail is sent as, for mail whose recipient is not the operator (staff invitations)."""
+    sender: str
+    configuration_set: Optional[str]
+    region: str
+
+
+def sender_config() -> Optional[SenderConfig]:
+    """The SES sender settings (SES_FROM_ADDRESS, SES_CONFIGURATION_SET, region), or None when
+    SES_FROM_ADDRESS is unset. Unlike alert_mail_config() it does not need ALERT_EMAIL_TO."""
+    sender = os.environ.get("SES_FROM_ADDRESS", "").strip()
+    if not sender:
+        return None
+    return SenderConfig(
+        sender=sender,
         configuration_set=os.environ.get("SES_CONFIGURATION_SET", "").strip() or None,
         region=(os.environ.get("SES_REGION") or os.environ.get("AWS_REGION")
                 or os.environ.get("AWS_DEFAULT_REGION") or "us-west-1"),

@@ -11,9 +11,15 @@
 //
 // Outcomes: "ok" (saved everywhere), "pending" (HTTP 502 status saved_cognito_pending: saved in CIS, a Cognito
 // step failed; the banner offers "Retry Cognito", POST …/sync), "error" (nothing changed; the backend's reason).
+//
+// S242 invitation e-mail: Cognito is told not to mail anyone (SUPPRESS: its mail carries a temporary password), so
+// CIS sends its own invitation through SES from a background job (api/services/staff_invite.py). "Add staff" has a
+// "Send invitation email" checkbox (on by default) and the banner says whether one was queued; the drawer has
+// "Resend invite" (POST …/invite: active accounts, at most 1 per 10 minutes and 5 per day, 429 otherwise) and the
+// list / drawer show "Last invited" (read from the audit log by the backend).
 
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Button, ConfirmModal, K, Modal, RADIUS, sans } from "../../../_kit";
 import { ROLE_LABEL, STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
@@ -33,6 +39,30 @@ export interface StaffAccount {
   linked: boolean;
   booking_role: string | null;
   breakglass: boolean;
+  // S242 invitation e-mail (from acp_shared.audit_log): SES accepted / requested / not sent, and the derived state.
+  last_invited_at?: string | null;
+  last_invite_requested_at?: string | null;
+  last_invite_not_sent_at?: string | null;
+  invite_status?: InviteStatus | null;
+}
+
+export type InviteStatus = "sent" | "queued" | "not_sent";
+
+/** "Last invited" in words, for the list and the drawer. */
+export function inviteLabel(s: Pick<StaffAccount, "invite_status" | "last_invited_at" | "last_invite_requested_at" | "last_invite_not_sent_at">,
+  fmt: (iso: string) => string): string {
+  switch (s.invite_status) {
+    case "sent":
+      return s.last_invited_at ? fmt(s.last_invited_at) : "Sent";
+    case "queued":
+      return s.last_invite_requested_at ? `Sending (requested ${fmt(s.last_invite_requested_at)})` : "Sending";
+    case "not_sent":
+      return s.last_invite_not_sent_at
+        ? `Not sent (${fmt(s.last_invite_not_sent_at)}); see Operations › Jobs`
+        : "Not sent; see Operations › Jobs";
+    default:
+      return "Never";
+  }
 }
 
 export const BOOKING_ROLES = ["admin", "sales", "contracting", "content_creator"] as const;
@@ -53,8 +83,8 @@ const STAFF_DOMAIN = "@adventure.asia";
 const API = "/api/admin/platform/staff";
 
 export type Outcome =
-  | { kind: "ok"; message: string }
-  | { kind: "pending"; message: string; staffId: string | null }
+  | { kind: "ok"; message: string; invite?: string }
+  | { kind: "pending"; message: string; staffId: string | null; invite?: string }
   | { kind: "error"; message: string };
 
 type WriteBody = {
@@ -62,6 +92,7 @@ type WriteBody = {
   detail?: unknown;
   staff?: StaffAccount | null;
   failed_step?: string;
+  invite?: string;
 };
 
 function detailText(detail: unknown, fallback: string, status: number): string {
@@ -91,12 +122,26 @@ async function staffWrite(method: "POST" | "PATCH", path: string, okMessage: str
   } catch {
     /* non-JSON body */
   }
-  if (res.ok) return { kind: "ok", message: okMessage };
+  if (res.ok) return { kind: "ok", message: okMessage, invite: data.invite };
   if (res.status === 502 && data.status === "saved_cognito_pending") {
     const detail = typeof data.detail === "string" ? data.detail : "Saved in CIS; the company sign-in was not updated.";
-    return { kind: "pending", message: detail, staffId: data.staff?.id ?? null };
+    return { kind: "pending", message: detail, staffId: data.staff?.id ?? null, invite: data.invite };
   }
   return { kind: "error", message: detailText(data.detail, `Request failed (${res.status})`, res.status) };
+}
+
+/** The create banner's sentence about the invitation (the backend says what happened in `invite`). */
+function createdMessage(email: string, invite: string | undefined): string {
+  switch (invite) {
+    case "queued":
+      return `Created ${email}. An invitation email with the sign-in steps goes to that address in about 2 minutes.`;
+    case "not_configured":
+      return `Created ${email}. Invitation email is not set up on this server, so none was sent: tell them to sign in with "Sign in with company email" and this address.`;
+    case "existing_account":
+      return `${email} already had this account; no new invitation was sent (use "Resend invite" on their row).`;
+    default:
+      return `Created ${email}. No invitation was sent: tell them to sign in with "Sign in with company email" and this address, or send one later from their row.`;
+  }
 }
 
 function useRefreshStaff() {
@@ -191,6 +236,7 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
   const [name, setName] = useState("");
   const [role, setRole] = useState<string>("content");
   const [booking, setBooking] = useState<string>("");
+  const [sendInvite, setSendInvite] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,16 +244,17 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
   const domainOk = normalized.endsWith(STAFF_DOMAIN) && normalized.length > STAFF_DOMAIN.length;
   const canSubmit = domainOk && name.trim().length > 0 && !busy;
 
-  const reset = () => { setEmail(""); setName(""); setRole("content"); setBooking(""); setError(null); };
+  const reset = () => {
+    setEmail(""); setName(""); setRole("content"); setBooking(""); setSendInvite(true); setError(null);
+  };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    const outcome = await staffWrite("POST", API,
-      `Created ${normalized}. They sign in with "Sign in with company email" and a code sent to that address.`,
-      { email: normalized, display_name: name.trim(), role, booking_role: booking || null });
+    const outcome = await staffWrite("POST", API, "",
+      { email: normalized, display_name: name.trim(), role, booking_role: booking || null, send_invite: sendInvite });
     setBusy(false);
     if (outcome.kind === "error") {
       setError(outcome.message);
@@ -215,7 +262,13 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
     }
     await refresh();
     reset();
-    onDone(outcome);
+    if (outcome.kind === "ok") {
+      onDone({ ...outcome, message: createdMessage(normalized, outcome.invite) });
+    } else {
+      onDone(outcome.invite === "queued"
+        ? { ...outcome, message: `${outcome.message} An invitation email is queued and waits until the retry succeeds; if that takes longer than about 10 minutes it is dropped, so use "Resend invite" afterwards.` }
+        : outcome);
+    }
   };
 
   return (
@@ -245,6 +298,16 @@ export function CreateStaffModal({ open, onClose, onDone }: { open: boolean; onC
             <BookingRoleSelect id="staff-create-booking" value={booking} onChange={setBooking} />
           </Label>
         </div>
+        <label htmlFor="staff-create-invite" style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+          <input id="staff-create-invite" type="checkbox" checked={sendInvite} data-testid="staff-create-invite"
+            onChange={(e) => setSendInvite(e.target.checked)} style={{ marginTop: 3, accentColor: K.accent }} />
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>Send invitation email</span>
+            <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+              Tells them they were added, their roles, and how to sign in with a one-time code. No password is sent.
+            </span>
+          </span>
+        </label>
         {error && <OutcomeBanner outcome={{ kind: "error", message: error }} onRetried={() => {}} />}
         <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
       </form>
@@ -333,6 +396,14 @@ export function StaffManagePanel({ staff, selfId, onOutcome }: {
           title="End every session of this account; re-enables it if it is disabled">
           Sign out everywhere
         </Button>
+        {staff.email && staff.is_active && (
+          <Button size="sm" variant="ghost" disabled={!!busy} data-testid="staff-resend-invite"
+            title="Email the sign-in invitation to this address (at most once every 10 minutes, 5 a day)"
+            onClick={() => void run("invite", "POST", `${base}/invite`,
+              `Invitation queued: an email with the sign-in steps is on its way to ${staff.email}.`)}>
+            <Mail size={12} /> {busy === "invite" ? "Sending…" : staff.invite_status ? "Resend invite" : "Send invite"}
+          </Button>
+        )}
         {staff.email && (
           <Button size="sm" variant="ghost" disabled={!!busy}
             title="Make the company sign-in match this row again (after a pending change)"

@@ -43,6 +43,7 @@ import {
   OutcomeBanner,
   StaffManagePanel,
   bookingRoleLabel,
+  inviteLabel,
   type Outcome,
   type StaffAccount,
 } from "./StaffManage";
@@ -109,6 +110,10 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
     staleTime: 60_000,
   });
   const staff = useMemo(() => list.data?.staff ?? [], [list.data]);
+  // Disabled accounts are kept (audit history, Booking references) but hidden by default (S242).
+  const [showDisabled, setShowDisabled] = useState(false);
+  const disabledCount = useMemo(() => staff.filter((s) => !s.is_active).length, [staff]);
+  const visibleStaff = useMemo(() => (showDisabled ? staff : staff.filter((s) => s.is_active)), [staff, showDisabled]);
   const viewer = list.data?.viewer;
   const canWrite = canWriteStaff(viewer);
 
@@ -139,6 +144,18 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
       accessorKey: "last_login_at",
       header: "Last sign-in",
       cell: (c) => (c.row.original.last_login_at ? formatDateTime(c.row.original.last_login_at) : <span style={{ color: K.muted }}>Never</span>),
+    },
+    {
+      id: "invited",
+      accessorFn: (r) => r.last_invited_at ?? r.last_invite_requested_at ?? "",
+      header: "Last invited",
+      cell: (c) => {
+        const s = c.row.original;
+        if (!s.invite_status) return <span style={{ color: K.muted }}>Never</span>;
+        if (s.invite_status === "queued") return <Badge tone="info" dot={false}>Sending</Badge>;
+        if (s.invite_status === "not_sent") return <Badge tone="warning" dot={false}>Not sent</Badge>;
+        return s.last_invited_at ? formatDate(s.last_invited_at) : "Sent";
+      },
     },
     { accessorKey: "created_at", header: "Created", cell: (c) => formatDate(c.row.original.created_at) },
     {
@@ -214,12 +231,20 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
 
       <DirectoryHealth />
 
+      {disabledCount > 0 && (
+        <label data-testid="staff-show-disabled"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, margin: "4px 0 10px", fontSize: 13, color: K.ink, cursor: "pointer", fontFamily: sans }}>
+          <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
+          Show disabled accounts ({disabledCount})
+        </label>
+      )}
+
       {list.isError ? (
         <ErrorState message={(list.error as Error)?.message || "Could not load staff accounts"} onRetry={() => list.refetch()} />
       ) : (
         <DataTable<StaffAccount>
           tableId="platform-staff"
-          data={staff}
+          data={visibleStaff}
           columns={columns}
           getRowId={(r) => r.id}
           loading={list.isLoading}
@@ -230,7 +255,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           emptyTitle="No staff accounts"
           emptyDescription="No account in shared.admin_users yet."
           onRowClick={(r) => open(r.id)}
-          tableMinWidth={860}
+          tableMinWidth={960}
         />
       )}
 
@@ -315,6 +340,8 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId }: {
             <Field label="Status" value={s.is_active ? "Active" : "Disabled (cannot sign in)"} />
             <Field label="Company sign-in" value={s.linked ? "Linked" : "Not linked yet (links on the first sign-in)"} />
             <Field label="Last sign-in" value={s.last_login_at ? formatDateTime(s.last_login_at) : "Never"} />
+            {/* S242: the invitation e-mail (SES), read from the audit log; "Resend invite" is in Manage access. */}
+            <Field label="Last invited" value={inviteLabel(s, formatDateTime)} />
             <Field label="Created" value={formatDateTime(s.created_at)} />
             <Field label="Updated" value={formatDateTime(s.updated_at)} />
             {/* Full width, one line, with a copy button: in the label/value grid the UUID wrapped at

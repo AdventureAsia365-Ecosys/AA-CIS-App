@@ -8,6 +8,12 @@
   POST  /admin/platform/staff/{staff_id}/enable     (C6)
   POST  /admin/platform/staff/{staff_id}/sign-out   "reset": end every session, re-enable if disabled (C6)
   POST  /admin/platform/staff/{staff_id}/sync       retry the Cognito half after a 502 saved_cognito_pending (C6)
+  POST  /admin/platform/staff/{staff_id}/invite     queue another invitation e-mail (S242; rate-limited, 429)
+
+Invitation e-mail (S242, api/services/staff_invite.py): the create queues one by default (``send_invite``), in the
+same transaction as the row; the worker sends it through SES. Every row carries ``last_invited_at`` (SES accepted),
+``last_invite_requested_at``, ``last_invite_not_sent_at`` and the derived ``invite_status`` (sent / queued /
+not_sent / null), all read from acp_shared.audit_log (no column).
 
 Reads (AA-883): admin only, staff_policy staff.read (api/core/staff_authz.py POLICY); the BFF has the same rule
 (frontend/lib/rbac.ts API_READ_RULES "platform"), the page is behind PAGE_RULES /admin/platform. password_hash and
@@ -33,7 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import STAFF_ROLES, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import staff_directory
+from api.services import staff_directory, staff_invite
 from api.services.staff_directory import CognitoDirectory, StaffDirectoryError, WriteResult, get_cognito
 
 router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
@@ -44,12 +50,17 @@ router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
 STAFF_COLUMNS: tuple[str, ...] = (
     "id", "username", "role", "is_active", "created_at", "updated_at",
     "email", "display_name", "is_owner", "last_login_at", "linked", "booking_role", "breakglass",
+    "last_invited_at", "last_invite_requested_at", "last_invite_not_sent_at", "invite_status",
+)
+_TIME_COLUMNS: tuple[str, ...] = (
+    "created_at", "updated_at", "last_login_at", "last_invited_at", "last_invite_requested_at",
+    "last_invite_not_sent_at",
 )
 
 _SELECT = (
     "SELECT u.id::text AS id, u.username, u.role::text AS role, u.is_active, u.created_at, u.updated_at, "
     "u.email, u.display_name, u.is_owner, u.last_login_at, (u.cognito_sub IS NOT NULL) AS linked, "
-    "g.role AS booking_role "
+    "g.role AS booking_role, " + staff_invite.SELECT_INVITE_COLUMNS + " "
     "FROM shared.admin_users u "
     "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking'"
 )
@@ -61,7 +72,9 @@ BookingRole = Literal["admin", "sales", "contracting", "content_creator"]
 def _staff_row(row: Any) -> dict:
     d = dict(row)
     out = {k: d.get(k) for k in STAFF_COLUMNS}
-    for key in ("created_at", "updated_at", "last_login_at"):
+    out["invite_status"] = staff_invite.invite_status(out["last_invited_at"], out["last_invite_requested_at"],
+                                                      out["last_invite_not_sent_at"])
+    for key in _TIME_COLUMNS:
         value = out[key]
         out[key] = value.isoformat() if value is not None else None
     for key in ("is_active", "is_owner", "linked"):
@@ -131,6 +144,8 @@ class CreateStaffBody(BaseModel):
     display_name: str = Field(..., max_length=staff_directory.MAX_DISPLAY_NAME_LEN)
     role: CisRole
     booking_role: Optional[BookingRole] = None
+    # S242: queue the invitation e-mail with the create (the Add staff dialog's checkbox, on by default).
+    send_invite: bool = True
 
 
 class ChangeRolesBody(BaseModel):
@@ -161,6 +176,9 @@ async def _respond(request: Request, result: WriteResult, ok_status: int = 200) 
         "steps": result.steps,
         "staff": staff,
     }
+    if result.invite is not None:
+        body["invite"] = result.invite
+        body["invite_job_id"] = result.invite_job_id
     if result.pending:
         body.update({
             "detail": _PENDING_DETAIL.format(step=result.failed_step, code=result.error_code),
@@ -173,7 +191,7 @@ async def _respond(request: Request, result: WriteResult, ok_status: int = 200) 
 
 
 def _refused(exc: StaffDirectoryError) -> HTTPException:
-    return HTTPException(status_code=exc.status, detail=exc.detail)
+    return HTTPException(status_code=exc.status, detail=exc.detail, headers=exc.headers)
 
 
 @router.post("/staff", summary="AA-816 C6 — create a staff account (DB, then Cognito)")
@@ -182,7 +200,8 @@ async def create_staff(body: CreateStaffBody, request: Request,
     try:
         result = await staff_directory.create_staff(
             request.app.state.pool, cognito, actor_id=_actor_id(request), email=body.email,
-            display_name=body.display_name, role=body.role, booking_role=body.booking_role)
+            display_name=body.display_name, role=body.role, booking_role=body.booking_role,
+            send_invite=body.send_invite)
     except StaffDirectoryError as exc:
         raise _refused(exc) from None
     return await _respond(request, result, ok_status=201 if result.created else 200)
@@ -235,7 +254,18 @@ async def sign_out_staff(staff_id: str, request: Request, cognito: CognitoDirect
 @router.post("/staff/{staff_id}/sync", summary="AA-816 C6 — retry: make Cognito match the directory row")
 async def sync_staff(staff_id: str, request: Request, cognito: CognitoDirectory = Depends(get_cognito)):
     return await _simple(request, cognito, staff_id, staff_directory.sync_staff)
-    return _staff_row(row)
+
+
+@router.post("/staff/{staff_id}/invite", status_code=202,
+             summary="S242 — queue another invitation e-mail (active rows; 1 per 10 min, 5 per day)")
+async def resend_staff_invite(staff_id: str, request: Request):
+    sid = _uuid_or_404(staff_id)
+    try:
+        result = await staff_directory.resend_invite(request.app.state.pool, actor_id=_actor_id(request),
+                                                     staff_id=str(sid))
+    except StaffDirectoryError as exc:
+        raise _refused(exc) from None
+    return await _respond(request, result, ok_status=202)
 
 
 # ── AA-816 (S242 C7) — directory health: the latest staff_directory_reconcile report ─────────────────
