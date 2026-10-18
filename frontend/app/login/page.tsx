@@ -8,7 +8,7 @@
 // The page never redirects to Cognito by itself (ADR 0006 §7): after a logout, an automatic redirect
 // would sign the user straight back in through the managed-login session cookie.
 import { headers } from "next/headers";
-import { cognitoSignInAvailable } from "@/lib/cognito";
+import { cognitoSignInAvailable, workforceSignInHost } from "@/lib/cognito";
 import { legacyAdminLoginEnabled } from "@/lib/staffSession";
 import LoginForm from "./LoginForm";
 
@@ -34,6 +34,7 @@ export default async function LoginPage({
     <LoginForm
       legacyEnabled={legacyAdminLoginEnabled()}
       cognitoAvailable={cognitoSignInAvailable(host, "cis-admin")}
+      signInHost={workforceSignInHost()}
       initialError={ERRORS[errorKey] ?? ""}
     />
   );

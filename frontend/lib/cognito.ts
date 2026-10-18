@@ -27,8 +27,23 @@ import {
 
 // ── Configuration (Dev pool; code constants with an optional env override, like the backend) ──
 // The values are public identifiers, not secrets. Only the two client SECRETS must be set in Vercel.
+// AA-816 (S242): managed login is served on our own custom domain, not the Cognito prefix domain
+// (aa365-staff-auth-dev.auth.us-west-1.amazoncognito.com). Chrome Safe Browsing flagged the redirect
+// from our site to an unbranded amazoncognito.com page as deceptive. The prefix domain still answers
+// (a pool keeps both), so COGNITO_WORKFORCE_DOMAIN can point back to it if the custom domain breaks.
+// Optional: unset or empty means the default below. Trailing slashes are dropped.
+const DEFAULT_WORKFORCE_DOMAIN = "https://staff-auth.lumiguides.it.com";
 const COGNITO_DOMAIN =
-  process.env.COGNITO_WORKFORCE_DOMAIN ?? "https://aa365-staff-auth-dev.auth.us-west-1.amazoncognito.com";
+  (process.env.COGNITO_WORKFORCE_DOMAIN ?? "").trim().replace(/\/+$/, "") || DEFAULT_WORKFORCE_DOMAIN;
+
+/** Host of the managed-login page (shown on /login so staff know where the sign-in opens). */
+export function workforceSignInHost(): string {
+  try {
+    return new URL(COGNITO_DOMAIN).host;
+  } catch {
+    return new URL(DEFAULT_WORKFORCE_DOMAIN).host;
+  }
+}
 export const WORKFORCE_ISSUER =
   process.env.COGNITO_WORKFORCE_ISSUER ?? "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_bCcFvbSOS";
 

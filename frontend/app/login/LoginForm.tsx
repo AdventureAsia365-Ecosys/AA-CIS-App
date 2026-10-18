@@ -2,6 +2,8 @@
 // app/login/LoginForm.tsx — the staff login form, rendered by app/login/page.tsx (server component).
 // AA-816 (C4): "Sign in with company email" (Cognito, cis-admin client) first; the legacy
 // username/password form only while the server flag LEGACY_ADMIN_LOGIN_ENABLED is on.
+// S242: a one-line note under the button says the code arrives by email and names the sign-in host
+// (our custom domain staff-auth.lumiguides.it.com, branded like this page).
 import { useState } from "react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { User, Lock, Mail } from "lucide-react";
@@ -9,10 +11,12 @@ import { User, Lock, Mail } from "lucide-react";
 interface LoginFormProps {
   legacyEnabled: boolean;
   cognitoAvailable: boolean;
+  /** Host of the Adventure Asia managed-login page (lib/cognito.ts), shown under the button. */
+  signInHost: string;
   initialError: string;
 }
 
-export default function LoginForm({ legacyEnabled, cognitoAvailable, initialError }: LoginFormProps) {
+export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost, initialError }: LoginFormProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
@@ -84,7 +88,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, initialErro
           <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width:52, height:"auto", display:"block" }} />
           <div>
             <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>CIS Internal</div>
-            <div style={{ fontSize:11, color:"var(--text-muted)" }}>Staff Login</div>
+            <div style={{ fontSize:11, color:"var(--text-muted)" }}>Staff sign-in</div>
           </div>
         </div>
 
@@ -103,6 +107,12 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, initialErro
             <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:6, textAlign:"center" as const }}>
               Company sign-in works on aa-cis.lumiguides.it.com only.
             </div>
+          </div>
+        )}
+        {/* AA-816 (S242): say up front what happens next, so the hand-off to the sign-in page is expected. */}
+        {cognitoAvailable && (
+          <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:8, textAlign:"center" as const, lineHeight:1.5 }}>
+            No password needed: a one-time sign-in code arrives by email. Sign-in opens on {signInHost}.
           </div>
         )}
         {initialError && !error && <div role="alert" style={{ fontSize:12, color:BRAND.danger, marginTop:10 }}>{initialError}</div>}
