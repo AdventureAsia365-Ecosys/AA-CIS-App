@@ -36,7 +36,11 @@
 --      covered whichever lands first (before 244: ON ALL TABLES; after it: 244's default privileges for
 --      the runner). A guard checks that the grant table is never MORE reachable than the directory: no
 --      non-owner grant that shared.admin_users lacks, and the same RLS / FORCE flags.
---   4. Register 247.
+--   4. Data-standards tags (DM-6.1, "tag existing columns when the owner next touches the table"): the
+--      personal-data columns of shared.admin_users carry 'pii:<class>; …' comments (email pii:contact,
+--      display_name pii:name, username / cognito_iss / cognito_sub pii:online_id) and password_hash carries
+--      'conf:credential; …'. The new table holds no personal data beyond the FK.
+--   5. Register 247.
 --
 -- Guards (RAISE on failure, nothing changes):
 --   0. before: shared.admin_users exists and the runner owns it or is a member of its owner
@@ -130,19 +134,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS admin_users_cognito_identity_key
     ON shared.admin_users (cognito_iss, cognito_sub);
 
 COMMENT ON COLUMN shared.admin_users.email IS
-    'AA-816 (247): the staff member''s @adventure.asia address, lower-cased; the WORKFORCE username and the first-sign-in link key. Unique.';
+    'pii:contact; AA-816 (247): the staff member''s @adventure.asia address, lower-cased; the WORKFORCE username and the first-sign-in link key. Unique.';
 COMMENT ON COLUMN shared.admin_users.display_name IS
-    'AA-816 (247): name shown in the admin UI and audit views.';
+    'pii:name; AA-816 (247): name shown in the admin UI and audit views.';
 COMMENT ON COLUMN shared.admin_users.cognito_iss IS
-    'AA-816 (247): issuer of the bound Cognito identity (ADR 0006 §9: the identity key is (iss, sub)). Set together with cognito_sub.';
+    'pii:online_id; AA-816 (247): issuer of the bound Cognito identity (ADR 0006 §9: the identity key is (iss, sub)). Set together with cognito_sub.';
 COMMENT ON COLUMN shared.admin_users.cognito_sub IS
-    'AA-816 (247): Cognito sub of the bound identity, filled by that person''s first successful sign-in. Unique with cognito_iss.';
+    'pii:online_id; AA-816 (247): Cognito sub of the bound identity, filled by that person''s first successful sign-in. Unique with cognito_iss.';
 COMMENT ON COLUMN shared.admin_users.last_login_at IS
     'AA-816 (247): last successful staff sign-in (Cognito path).';
 COMMENT ON COLUMN shared.admin_users.is_owner IS
     'AA-816 (247): may write the staff directory (staff.write). Set by the link script, never by a migration.';
 COMMENT ON COLUMN shared.admin_users.password_hash IS
-    'AA-232 bcrypt hash for the legacy password login; NULL for a Cognito-only staff member (247), which the legacy login refuses with 401. Dropped after the Phase 1 cutover (ADR 0006).';
+    'conf:credential; AA-232 bcrypt hash for the legacy password login; NULL for a Cognito-only staff member (247), which the legacy login refuses with 401. Dropped after the Phase 1 cutover (ADR 0006).';
+COMMENT ON COLUMN shared.admin_users.username IS
+    'pii:online_id; AA-232 login name of the legacy password login (unique); kept as the CIS display handle after the Phase 1 cutover. Tagged in 247 (data standards DM-6.1).';
 
 -- ── 2. Per-app staff grants (Booking roles) ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shared.staff_app_grant (
@@ -211,7 +217,7 @@ BEGIN
     -- Never more reachable than the directory: every non-owner grant on the grant table is also held on
     -- shared.admin_users (grantee, privilege, grant option), and the RLS flags match.
     SELECT string_agg(format('%s:%s:%s', pg_catalog.pg_get_userbyid(g.grantee), g.privilege_type, g.is_grantable),
-                      ',' ORDER BY 1)
+                      ',' ORDER BY pg_catalog.pg_get_userbyid(g.grantee), g.privilege_type)
       INTO extra_acl
       FROM (SELECT x.grantee, x.privilege_type, x.is_grantable
               FROM pg_catalog.pg_class c, LATERAL aclexplode(c.relacl) x

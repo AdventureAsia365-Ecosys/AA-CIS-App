@@ -10,8 +10,9 @@ without CREATEROLE cannot make the stand-in; the file is then applied as the tes
 role that owns the objects, which is what the stand-in models).
 
 Then: the constraints the directory relies on (email domain + lower case + unique, the (iss, sub) pair),
-the grant table's CHECKs / PK / FK, the unchanged reach (same grants and RLS flags as admin_users), and the
-legacy login on a Cognito-only row (NULL password_hash) answering 401, not 500.
+the grant table's CHECKs / PK / FK, the unchanged reach (same grants and RLS flags as admin_users) plus a
+mutation check that the in-file guard really refuses an extra grant or different RLS flags, the DM-6.1
+pii:/conf: column tags, and the legacy login on a Cognito-only row (NULL password_hash) answering 401, not 500.
 """
 import os
 import sys
@@ -286,6 +287,64 @@ def test_grant_table_is_never_more_reachable_than_the_directory(conn, rds_like_2
         if cur.fetchone():
             cur.execute("SELECT has_table_privilege(%s, 'shared.staff_app_grant', 'SELECT')", (role,))
             assert cur.fetchone()[0] is False, role
+
+
+def _apply_refused(runner, setup_sql, cleanup_sql, message):
+    """Mutation check of guard 1 (LES:126): undo 247, make the grant table come out MORE reachable than the
+    directory, apply the file as the runner and expect the guard's RAISE; nothing may change. The setup and
+    cleanup run as the runner (default privileges belong to the role that creates the table). The file is
+    re-applied at the end so later tests see the module state again."""
+    admin = _connect()
+    admin.autocommit = True
+    a = admin.cursor()
+    sql = open(MIGRATION, encoding="utf-8").read()
+    try:
+        _undo_247(a)
+        _apply(setup_sql, runner)
+        with pytest.raises(psycopg2.Error) as err:
+            _apply(sql, runner)
+        assert err.value.pgcode == "P0001", err.value
+        assert message in str(err.value), err.value
+        # The RAISE rolled the whole file back: no column, no table, no registration.
+        a.execute("SELECT to_regclass('shared.staff_app_grant'), "
+                  "(SELECT count(*) FROM pg_attribute WHERE attrelid = 'shared.admin_users'::regclass "
+                  " AND attname = 'email' AND NOT attisdropped), "
+                  "(SELECT count(*) FROM shared.schema_versions WHERE version = '247')")
+        assert a.fetchone() == (None, 0, 0)
+    finally:
+        _apply(cleanup_sql, runner)
+        _apply(sql, runner)
+        admin.close()
+
+
+def test_guard_refuses_a_grant_table_with_an_extra_grant(rds_like_247):
+    # PUBLIC needs no CREATEROLE (local test user) and holds nothing on shared.admin_users.
+    _apply_refused(
+        rds_like_247,
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA shared GRANT SELECT ON TABLES TO PUBLIC",
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA shared REVOKE SELECT ON TABLES FROM PUBLIC",
+        "has grants shared.admin_users lacks")
+
+
+def test_guard_refuses_different_rls_flags(rds_like_247):
+    _apply_refused(
+        rds_like_247,
+        "ALTER TABLE shared.admin_users ENABLE ROW LEVEL SECURITY",
+        "ALTER TABLE shared.admin_users DISABLE ROW LEVEL SECURITY",
+        "RLS/FORCE")
+
+
+def test_personal_data_columns_carry_dm61_tags(conn):
+    """Data standards DM-6.1: personal-data columns carry 'pii:<class>; …', credentials 'conf:credential; …'."""
+    want = {"email": "pii:contact; ", "display_name": "pii:name; ", "username": "pii:online_id; ",
+            "cognito_iss": "pii:online_id; ", "cognito_sub": "pii:online_id; ",
+            "password_hash": "conf:credential; "}
+    cur = conn.cursor()
+    cur.execute("SELECT a.attname, col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+                "WHERE a.attrelid = 'shared.admin_users'::regclass AND a.attname = ANY(%s)", (list(want),))
+    got = dict(cur.fetchall())
+    for col, prefix in want.items():
+        assert (got.get(col) or "").startswith(prefix), (col, got.get(col))
 
 
 # ── The legacy login on a Cognito-only row (real DB, real app) ───────────────────────────────────
