@@ -1,118 +1,40 @@
-"use client";
-import { useState } from "react";
-import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
-import { User, Lock } from "lucide-react";
+// frontend/app/login/page.tsx
+// AA-816 (C4) — staff login page. A server component so it can read two server-only facts and pass
+// them to the client form:
+//   - LEGACY_ADMIN_LOGIN_ENABLED (default on): whether the username/password form is shown at all;
+//   - whether Cognito sign-in works on THIS host: only allowlisted hosts (production, localhost in
+//     development) have registered callback URLs, and the client secret must be configured. On a
+//     Vercel preview the company-email button is shown disabled with a note.
+// The page never redirects to Cognito by itself (ADR 0006 §7): after a logout, an automatic redirect
+// would sign the user straight back in through the managed-login session cookie.
+import { headers } from "next/headers";
+import { cognitoSignInAvailable } from "@/lib/cognito";
+import { legacyAdminLoginEnabled } from "@/lib/staffSession";
+import LoginForm from "./LoginForm";
 
-export default function LoginPage() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError]       = useState("");
-  const [loading, setLoading]   = useState(false);
+const ERRORS: Record<string, string> = {
+  denied: "Sign-in was refused. Your account may have no staff access — ask an administrator.",
+  no_access: "Your company account has no access to CIS. Ask an administrator to grant a CIS role.",
+  signin_failed: "Sign-in could not be completed. Please try again.",
+  session_expired: "Your session has ended. Please sign in again.",
+  backend: "The CIS service could not be reached. Please try again in a moment.",
+  cognito_host: "Company sign-in is only available on the main CIS address.",
+  cognito_config: "Company sign-in is not configured on this deployment.",
+};
 
-  const login = async () => {
-    // AA-573: guard against a second concurrent submit (rapid double-Enter,
-    // or Enter racing the button click) — previously nothing here checked
-    // `loading`, so a second call could fire its own /api/auth/login +
-    // router.push("/admin/dashboard") while the first was still in flight.
-    // Two concurrent client-side navigations to the same route is what the
-    // bug report's Network tab captured (2x /login, a stray 307). Mirrors
-    // the guard tenant-login/page.tsx already had.
-    if (loading) return;
-    if (!username || !password) { setError("Enter username and password"); return; }
-    setLoading(true);
-    setError("");
-
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.detail || "Invalid username or password");
-        setLoading(false);
-        return;
-      }
-
-      // AA-656: no login returns a token any more (the JWT lives only in the httpOnly
-      // cis_admin_token cookie). cis_role / cis_user are display hints for the UI; access is
-      // decided from the verified token (middleware.ts, lib/rbac.ts).
-      document.cookie = `cis_role=${data.role}; path=/; max-age=86400`;
-      document.cookie = `cis_user=${encodeURIComponent(data.name)}; path=/; max-age=86400`;
-
-      // AA-573: a full browser navigation instead of router.push(). The
-      // client-side App Router transition depends on middleware.ts NOT
-      // intervening on the very next request — but middleware's own
-      // verifyAdminToken() re-checks the JWT it was just issued via an
-      // uncached /auth/verify-admin round trip (the same uncached-round-trip
-      // shape AA-551 already fixed for /api/admin/* proxy calls, just a
-      // separate instance of it here) and can race/redirect back to /login.
-      // router.push() doesn't await/settle on that outcome, so `loading`
-      // never got reset — the button was stuck on "Connecting..." forever
-      // with no recovery but a manual refresh. window.location.href makes
-      // this a real navigation: whatever the server ultimately serves is
-      // what renders, and a fresh page load always leaves the old stuck
-      // state behind either way.
-      // AA-663 — every staff role lands on the one Dashboard (the legacy /upload page is gone).
-      // AA-722 — /admin/dashboard is retired as a page but kept as the login landing target: the
-      // middleware now redirects it role-aware (admin → /admin/overview, reviewer/content →
-      // /admin/review). Keeping the single target here means the login page needs no role branch —
-      // whatever role the session has, middleware picks the right landing page on the next request.
-      window.location.href = "/admin/dashboard";
-    } catch {
-      setError("Network error — check connection");
-      setLoading(false);
-    }
-  };
-
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const host = (await headers()).get("host");
+  const params = await searchParams;
+  const errorKey = typeof params.error === "string" ? params.error : "";
   return (
-    <div data-theme="light" style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--bg-primary)", fontFamily: FONT_SANS }}>
-      <div style={{ background:"var(--bg-card)", border:"1px solid var(--border)", borderRadius:16, padding:40, width:380 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:32 }}>
-          {/* AA-605 — real Adventure Asia logo (was a gold "AA" tile). */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width:52, height:"auto", display:"block" }} />
-          <div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontWeight:600, color:"var(--text-primary)", fontSize:18 }}>CIS Internal</div>
-            <div style={{ fontSize:11, color:"var(--text-muted)" }}>Staff Login</div>
-          </div>
-        </div>
-
-        <div style={{ marginBottom:14 }}>
-          <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Username</label>
-          <div style={{ position:"relative" }}>
-            <User size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
-            <input type="text" value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
-              placeholder="Username"
-              onKeyDown={e => e.key === "Enter" && !loading && login()}
-              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
-          </div>
-        </div>
-
-        <div style={{ marginBottom:20 }}>
-          <label style={{ fontSize:11, fontWeight:600, color:"var(--text-muted)", textTransform:"uppercase" as const, letterSpacing:1, display:"block", marginBottom:8 }}>Password</label>
-          <div style={{ position:"relative" }}>
-            <Lock size={13} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--text-muted)" }} />
-            <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
-              placeholder="••••••••"
-              onKeyDown={e => e.key === "Enter" && !loading && login()}
-              style={{ width:"100%", padding:"10px 12px 10px 34px", background:"var(--bg-primary)", border:`1px solid ${error ? BRAND.danger : "var(--border)"}`, borderRadius:8, color:"var(--text-primary)", fontSize:13, outline:"none" }} />
-          </div>
-          {error && <div style={{ fontSize:12, color:BRAND.danger, marginTop:6 }}>{error}</div>}
-        </div>
-
-        <button onClick={login} disabled={loading}
-          style={{ width:"100%", padding:12, background:"var(--brand-gold)", border:"none", borderRadius:BTN_RADIUS, color:"white", fontSize:13, fontWeight:600, fontFamily: FONT_SANS, ...BTN_PRIMARY_TEXT, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
-          {loading ? "Connecting..." : "Login"}
-        </button>
-
-        <div style={{ marginTop:16, textAlign:"center" as const }}>
-          <a href="/tenant-login" style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>B2B Tenant login →</a>
-        </div>
-      </div>
-    </div>
+    <LoginForm
+      legacyEnabled={legacyAdminLoginEnabled()}
+      cognitoAvailable={cognitoSignInAvailable(host, "cis-admin")}
+      initialError={ERRORS[errorKey] ?? ""}
+    />
   );
 }

@@ -268,13 +268,19 @@ function AccountMenu() {
     return () => window.removeEventListener("mousedown", onDown);
   }, [open]);
 
+  // AA-816 (C4): a full navigation, not router.push. For a Cognito session the logout route answers
+  // with the Cognito /logout URL, which must be visited to clear the managed-login cookie (otherwise
+  // the next sign-in is silent for up to an hour); a legacy session gets "/login".
   async function logout() {
+    let target = "/login";
     try {
-      await fetch("/api/auth/admin-logout", { method: "POST" });
+      const res = await fetch("/api/auth/admin-logout", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { redirect?: unknown };
+      if (typeof data.redirect === "string" && data.redirect) target = data.redirect;
     } catch {
-      // ignore — redirect either way; middleware re-verifies on the next request.
+      // ignore — go to /login either way; middleware re-verifies on the next request.
     }
-    router.push("/login");
+    window.location.assign(target);
   }
 
   return (

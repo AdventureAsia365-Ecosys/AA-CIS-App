@@ -17,6 +17,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BottomNav } from "./BottomNav";
 import { CommandPalette } from "./CommandPalette";
+import { SessionKeepAlive } from "./SessionKeepAlive";
 import { K } from "./tokens";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -46,6 +47,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: K.bg }}>
+      {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
+      <SessionKeepAlive />
       <Sidebar drawerOpen={drawerOpen} onNavigate={() => setDrawerOpen(false)} />
 
       {/* Backdrop behind the open drawer (< 768px only; CSS shows it). */}

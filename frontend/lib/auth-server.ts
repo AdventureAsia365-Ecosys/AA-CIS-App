@@ -32,6 +32,7 @@
 // which would lower the odds without removing the cause.
 import { NextRequest, NextResponse } from "next/server";
 import { STAFF_ROLES, type StaffRole } from "./rbac";
+import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 
 //
 // S241 — TTLs (Vercel Fluid CPU: POST /auth/verify-admin was the top proxied
@@ -43,9 +44,10 @@ import { STAFF_ROLES, type StaffRole } from "./rbac";
 //     denylist). So a role change or a deactivated user already only takes
 //     effect at the next login / at token exp; this cache never made that
 //     faster and does not make it slower.
-//   - Logout (/api/auth/admin-logout) deletes the cookie; it never touched this
-//     cache and never revoked the token server-side. A browser that logged out
-//     no longer sends the token, so logout is unaffected.
+//   - Logout (/api/auth/admin-logout) deletes the cookie. AA-816: for a Cognito
+//     session it also revokes the refresh token and drops this cache entry on the
+//     instance that served the logout; other warm instances may still hold a "yes"
+//     until the entry's cap (at most the 15-min access-token exp, ADR 0006 §7).
 //   - Expiry: every entry is capped at the token's own `exp` claim (see
 //     tokenExpiryMs), so an expired JWT is never accepted from cache.
 //   - Worst-case staleness: a JWT_SECRET rotation, or a backend change that
@@ -108,6 +110,11 @@ class VerifyCache<T> {
       }
     }
   }
+
+  /** AA-816: logout drops the token's entry so a revoked session is not served from this cache. */
+  delete(token: string) {
+    this.entries.delete(token);
+  }
 }
 
 // AA-573: exported so middleware.ts's own verifyAdminToken()/verifyTenantToken()
@@ -117,7 +124,13 @@ class VerifyCache<T> {
 // but as a separate module they never benefited from it. A fresh login
 // followed immediately by a client-side navigation to a protected route is
 // exactly this shape — see docs/implementation-notes/AA-573.md.
-export const adminVerifyCache = new VerifyCache<{ adminId: string; role: string }>(ADMIN_VERIFY_CACHE_TTL_MS);
+export interface VerifiedStaff {
+  adminId: string;
+  role: string;
+  /** Display name for the UI: display_name, else email, else username (AA-816). */
+  name: string;
+}
+export const adminVerifyCache = new VerifyCache<VerifiedStaff>(ADMIN_VERIFY_CACHE_TTL_MS);
 export const tenantVerifyCache = new VerifyCache<{ tenantId: string; name: string; planTier: string }>(
   TENANT_VERIFY_CACHE_TTL_MS,
 );
@@ -133,7 +146,10 @@ function forbidden(): NextResponse {
 }
 
 export type RequireAdminResult =
-  | { ok: true; adminId: string; role: string }
+  // AA-816 (C5): `bearer` is the staff access token when the cookie holds a Cognito token (it has an
+  // `iss`), else null. Proxies forward it as Authorization: Bearer (staffBearerHeader) so the API's
+  // staff_bearer middleware takes the role and actor from the verified token instead of the headers.
+  | { ok: true; adminId: string; role: string; bearer: string | null }
   | { ok: false; response: NextResponse };
 
 // AA-656 — `roles` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
@@ -150,17 +166,29 @@ export async function requireAdmin(
   return result;
 }
 
-async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
-  const token = request.cookies.get("cis_admin_token")?.value;
-  if (!token) {
-    return { ok: false, response: unauthorized() };
-  }
+/**
+ * AA-816 (C5) — the extra header a BFF proxy adds for a Cognito session: `Authorization: Bearer
+ * <cis_admin_token>`. A legacy HS256 session gets nothing (unchanged behaviour). X-Admin-Secret is
+ * still sent alongside until the cutover (plan step C9).
+ */
+export function staffBearerHeader(auth: { bearer: string | null }): Record<string, string> {
+  return auth.bearer ? { Authorization: `Bearer ${auth.bearer}` } : {};
+}
 
+export type VerifyStaffTokenResult =
+  | ({ ok: true } & VerifiedStaff)
+  // status: the backend's answer (401 unknown/invalid, 403 e.g. a booking-only Cognito user), or 0
+  // when the backend could not be reached.
+  | { ok: false; status: number };
+
+/**
+ * POST /auth/verify-admin for one token, through the shared cache. Accepts both a legacy HS256 token
+ * and (once the API has plan step C3) a Cognito access token; the backend picks the path by `iss`.
+ * Never fails open.
+ */
+export async function verifyStaffToken(token: string): Promise<VerifyStaffTokenResult> {
   const cached = adminVerifyCache.get(token);
-  if (cached) {
-    return { ok: true, adminId: cached.adminId, role: cached.role };
-  }
-
+  if (cached) return { ok: true, ...cached };
   try {
     const res = await fetch(`${API_URL}/auth/verify-admin`, {
       method: "POST",
@@ -168,19 +196,36 @@ async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
       body: JSON.stringify({ token }),
       signal: AbortSignal.timeout(3000),
     });
-
-    if (!res.ok) {
-      return { ok: false, response: unauthorized() };
-    }
-
+    if (!res.ok) return { ok: false, status: res.status };
     const data = await res.json();
-    const result = { adminId: data.admin_id, role: data.role };
+    const result: VerifiedStaff = {
+      adminId: data.admin_id,
+      role: data.role,
+      name: data.display_name || data.email || data.username || "",
+    };
     adminVerifyCache.set(token, result);
     return { ok: true, ...result };
   } catch {
-    // Network error / timeout — fail closed, no dev carve-out (see file header).
+    return { ok: false, status: 0 };
+  }
+}
+
+async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
+  const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
+  if (!token) {
     return { ok: false, response: unauthorized() };
   }
+  // Network error / timeout fails closed too — no dev carve-out (see file header).
+  const verified = await verifyStaffToken(token);
+  if (!verified.ok) {
+    return { ok: false, response: unauthorized() };
+  }
+  return {
+    ok: true,
+    adminId: verified.adminId,
+    role: verified.role,
+    bearer: isCognitoToken(token) ? token : null,
+  };
 }
 
 export type RequireTenantResult =
