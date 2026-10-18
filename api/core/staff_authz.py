@@ -133,6 +133,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/job-runner/jobs/{job_id}/retry"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/run"): OPS_WRITE,
     ("POST", "/admin/job-runner/retention/schedule"): OPS_WRITE,
+    ("POST", "/admin/job-runner/staff-reconcile/schedule"): OPS_WRITE,   # AA-816 C7, daily (MACHINE_ROUTES)
     # ── admin_decisions — Jev question mode/floors, Jev credit ledger
     ("PUT", "/admin/decisions/questions/{question_key}"): AI_ADMIN,
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
@@ -281,6 +282,11 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
     ("PATCH", "/v1/rules/{rule_id}"): CONTENT_SETTINGS_WRITE,      # global output rules, every tenant
     ("POST", "/v1/social/batch-review"): ATOMS_WRITE,              # A3 social HITL, every tenant
+
+    # ── admin_platform (AA-816 C7) — staff directory health: the reconcile report (WORKFORCE vs the
+    # directory) and an on-demand run. Report only, so staff.read (not the owner-only staff.write).
+    ("GET", "/admin/platform/staff-directory/health"): STAFF_READ,
+    ("POST", "/admin/platform/staff-directory/reconcile"): STAFF_READ,
 }
 
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The
@@ -306,6 +312,7 @@ MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/admin/jev/402-sweep"): "Infra Lambda dfs_balance_check (daily, AA-720)",
     ("POST", "/admin/waves/check"): "Infra Lambda dfs_balance_check (AA-727)",
     ("POST", "/admin/job-runner/retention/schedule"): "Infra Lambda dfs_balance_check (daily, AA-825)",
+    ("POST", "/admin/job-runner/staff-reconcile/schedule"): "Infra Lambda dfs_balance_check (daily, AA-816 C7)",
 }
 
 

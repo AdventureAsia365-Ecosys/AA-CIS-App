@@ -11,6 +11,8 @@
   POST /admin/job-runner/retention/run     enqueue one retention kind (DRY RUN unless approved);
                                            with older_than: an admin-only manual override proof run
   POST /admin/job-runner/retention/schedule  the daily ops scheduler enqueues every retention kind
+  POST /admin/job-runner/staff-reconcile/schedule  the daily ops scheduler enqueues the staff directory
+                                           reconcile (AA-816, report only)
 
 Not under /admin/jobs: that path serves the older shared.pipeline_jobs (AA-223, A1 run-tour).
 """
@@ -285,3 +287,18 @@ async def retention_schedule(request: Request, x_admin_secret: str = Header(None
     out = await retention_job.schedule_all(request.app.state.pool, day=day)
     logger.info("admin_retention_scheduled", day=day, enqueued=len(out["enqueued"]), skipped=out["skipped"])
     return {"day": day, **out}
+
+
+@router.post("/staff-reconcile/schedule", summary="AA-816 — daily: enqueue the staff directory reconcile (scheduler)")
+async def staff_reconcile_schedule(request: Request, x_admin_secret: str = Header(None)):
+    """Driven once a day by the ops-probe Lambda (AA-CIS-Infra lambda_src/dfs_balance_check, one more path in
+    _PATHS). One `staff_directory_reconcile` job per UTC day (idempotency key), report only: it lists the
+    WORKFORCE pool and compares it with shared.admin_users. Not skipped during a rerun wave: it reads a few
+    directory rows and calls Cognito, nothing a wave shares."""
+    verify_admin_secret(x_admin_secret)
+    from datetime import datetime, timezone
+    from services.jobs import staff_reconcile_job
+    day = datetime.now(timezone.utc).date().isoformat()
+    job_id, created = await staff_reconcile_job.enqueue_scheduled(request.app.state.pool, day=day)
+    logger.info("admin_staff_reconcile_scheduled", day=day, job_id=job_id, created=created)
+    return {"day": day, "kind": staff_reconcile_job.KIND, "job_id": job_id, "created": created}
