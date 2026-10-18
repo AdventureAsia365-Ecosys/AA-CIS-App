@@ -16,13 +16,15 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
                                not in the pool, or the issuer is another pool's.
   (c) group_drift              for each active row matched to a Cognito user: the CIS role vs the highest
                                cis-* group (the C3 sign-in rule, staff_identity.role_from_groups), the Booking
-                               grant (staff_app_grant app='booking') vs the booking-* groups, and an active row
-                               whose Cognito user is disabled.
-  (d) status_findings          Cognito users (except break-glass) whose UserStatus is not CONFIRMED.
-                               FORCE_CHANGE_PASSWORD = created, never signed in (the directory's create flow
-                               leaves it there until the first email-code sign-in); RESET_REQUIRED = an admin
-                               forced a password reset, which no staff flow does: a residual-risk signal
-                               (plan I3: the task role cannot set passwords, a console admin can).
+                               grant (staff_app_grant app='booking') vs the booking-* groups, the email (row
+                               matched by sub, emails differ), and an active row whose Cognito user is disabled.
+  (d) status_findings          enabled Cognito users matched to an active row (except break-glass) whose
+                               UserStatus is not CONFIRMED and not pending: RESET_REQUIRED = an admin forced a
+                               password reset, which no staff flow does: a residual-risk signal (plan I3: the
+                               task role cannot set passwords, a console admin can); UNCONFIRMED and others.
+      pending_first_sign_in    the same users in FORCE_CHANGE_PASSWORD (created, no password: the directory's
+                               create flow leaves invitees there and staff sign in with an email code). Listed,
+                               NOT counted in drift_total. Users already in (a) are not repeated in (d).
   (e) readiness                cutover readiness (ADR 0006 cutover precondition): active rows missing an
                                email or a cognito_sub, count + usernames. `ready` only when both are empty.
   breakglass                   the break-glass user: present, CONFIRMED, disabled at rest, in cis-admin and
@@ -63,6 +65,10 @@ STAFF_GROUPS: tuple[str, ...] = CIS_GROUPS + BOOKING_GROUPS
 PAGE_LIMIT = 60          # ListUsers / ListUsersInGroup maximum page size
 MAX_PAGES = 100          # 6 000 users per listing: far above a staff pool; stops a token loop
 CONFIRMED = "CONFIRMED"
+# Created by an admin and never signed in with a password. The staff create flow (C6) leaves invitees here
+# and staff sign in with an email code, so this is the normal state, not drift (review L1): reported apart,
+# not counted in drift_total. RESET_REQUIRED, UNCONFIRMED, UNKNOWN, ... stay drift.
+PENDING_STATUSES: frozenset[str] = frozenset({"FORCE_CHANGE_PASSWORD"})
 
 ROWS_SQL = """
     SELECT id::text AS id, username, role::text AS role, is_active, email, cognito_iss, cognito_sub
@@ -73,6 +79,8 @@ GRANTS_SQL = "SELECT admin_user_id::text AS admin_user_id, app, role FROM shared
 
 NOTES = (
     "ListUsers does not say whether a user has a password; (d) flags any status other than CONFIRMED.",
+    "FORCE_CHANGE_PASSWORD (created, no password set) is listed under pending_first_sign_in and not counted "
+    "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
 
@@ -245,13 +253,11 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
     without_row: list[dict] = []
     drift: list[dict] = []
     status_findings: list[dict] = []
+    pending_first_sign_in: list[dict] = []
 
     for u in sorted(users.values(), key=lambda x: (x.email or x.username)):
         if is_breakglass(u):
             continue
-        if u.status != CONFIRMED:
-            status_findings.append({"email": u.email, "username": u.username, "status": u.status,
-                                    "enabled": u.enabled})
         row = by_identity.get((issuer, u.sub)) if u.sub else None
         reason = None
         if row is None:
@@ -269,11 +275,21 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
             else:
                 continue          # disabled in Cognito and inactive in the directory: consistent
         if reason is not None:
+            # (a) already carries the status: no second (d) entry for the same person.
             without_row.append({"email": u.email, "username": u.username, "enabled": u.enabled,
                                 "status": u.status, "groups": _sorted_groups(u.groups), "reason": reason,
                                 "row_username": row.get("username") if row else None})
             continue
         drift.extend(_row_drift(row, u, booking_grant.get(row["id"])))
+        # (d) only for an enabled user matched to an active row: a disabled one is already (c)
+        # cognito_disabled, and nobody signs in through it.
+        if u.enabled and u.status != CONFIRMED:
+            entry = {"email": u.email, "username": u.username, "status": u.status, "enabled": u.enabled,
+                     "row_username": row.get("username")}
+            if u.status in PENDING_STATUSES:
+                pending_first_sign_in.append(entry)
+            else:
+                status_findings.append(entry)
 
     unknown: list[dict] = []
     for r in active_rows:
@@ -307,6 +323,7 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         "rows_unknown_to_cognito": len(unknown),
         "group_drift": len(drift),
         "status_findings": len(status_findings),
+        "pending_first_sign_in": len(pending_first_sign_in),
         "missing_email": len(missing_email),
         "missing_cognito_sub": len(missing_sub),
         "breakglass_issues": len(bg["issues"]),
@@ -323,6 +340,7 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         "rows_unknown_to_cognito": unknown,
         "group_drift": drift,
         "status_findings": status_findings,
+        "pending_first_sign_in": pending_first_sign_in,
         "readiness": readiness,
         "breakglass": bg,
         "groups": {g: (None if members is None else len(members)) for g, members in raw_groups.items()},
@@ -345,6 +363,10 @@ def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str]) -> list[dic
         out.append({**base, "kind": "booking_role", "directory": grant_role,
                     "cognito": booking_roles[0] if len(booking_roles) == 1 else (booking_roles or None),
                     "cognito_groups": booking_groups})
+    row_email = _norm_email(row.get("email"))
+    if u.email and row_email and u.email != row_email:
+        # Matched by (iss, sub): the email was changed on one side only (e.g. in the Cognito console).
+        out.append({**base, "kind": "email", "directory": row_email, "cognito": u.email, "cognito_groups": []})
     if not u.enabled:
         out.append({**base, "kind": "cognito_disabled", "directory": "active", "cognito": "disabled",
                     "cognito_groups": _sorted_groups(u.groups)})

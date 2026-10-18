@@ -32,6 +32,9 @@ interface Report {
   rows_unknown_to_cognito: Finding[];
   group_drift: Finding[];
   status_findings: Finding[];
+  // Created, no password set (FORCE_CHANGE_PASSWORD): normal with email-code sign-in, not drift.
+  // Optional: reports stored before this field existed do not have it.
+  pending_first_sign_in?: Finding[];
   readiness: {
     ready: boolean;
     active_rows: number;
@@ -69,6 +72,7 @@ const KIND: Record<string, string> = {
   cis_role: "CIS role",
   booking_role: "Booking role",
   cognito_disabled: "sign-in disabled",
+  email: "email",
 };
 
 function who(f: Finding): string {
@@ -86,9 +90,9 @@ function findingLines(r: Report): string[] {
   for (const f of r.rows_unknown_to_cognito) lines.push(`${who(f)}: ${REASON[f.reason ?? ""] ?? f.reason}`);
   for (const f of r.group_drift) {
     const label = KIND[f.kind ?? ""] ?? f.kind;
-    lines.push(f.kind === "cognito_disabled"
-      ? `${who(f)}: active account, ${label}`
-      : `${who(f)}: ${label} is ${f.directory ?? "none"} here, ${show(f.cognito)} in sign-in groups`);
+    if (f.kind === "cognito_disabled") lines.push(`${who(f)}: active account, ${label}`);
+    else if (f.kind === "email") lines.push(`${f.username ?? who(f)}: email is ${f.directory ?? "none"} here, ${show(f.cognito)} in sign-in`);
+    else lines.push(`${who(f)}: ${label} is ${f.directory ?? "none"} here, ${show(f.cognito)} in sign-in groups`);
   }
   for (const f of r.status_findings) lines.push(`${who(f)}: sign-in status ${f.status}`);
   for (const i of r.breakglass.issues) lines.push(`Break-glass (${r.breakglass.email}): ${i}`);
@@ -114,6 +118,7 @@ export default function DirectoryHealth() {
   const report = data?.latest?.result ?? null;
   const running = !!data?.active || run.isPending;
   const lines = report ? findingLines(report) : [];
+  const pending = report?.pending_first_sign_in ?? [];
 
   let tone: Tone = "neutral";
   let label = "No report yet";
@@ -178,6 +183,11 @@ export default function DirectoryHealth() {
             {report.readiness.missing_cognito_sub.length > 0 && (
               <div style={{ color: K.muted, overflowWrap: "anywhere" }}>
                 Not signed in yet: {report.readiness.missing_cognito_sub.join(", ")}
+              </div>
+            )}
+            {pending.length > 0 && (
+              <div data-testid="directory-pending" style={{ color: K.muted, overflowWrap: "anywhere" }}>
+                No password set (fine with email-code sign-in): {pending.map(who).join(", ")}
               </div>
             )}
           </div>

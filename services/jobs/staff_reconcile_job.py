@@ -13,6 +13,11 @@ Enqueued by:
                                                       (key staff_directory_reconcile:schedule:<day>)
   - POST /admin/platform/staff-directory/reconcile    on demand from the Staff page (staff.read)
 
+Who sees the report: the full result holds staff emails, Cognito groups and status and the break-glass
+state, so only callers with staff.read get it. The job-runner API (GET /admin/job-runner/jobs[/{id}], open
+to every staff role and the machine) passes this kind through redact_job(): counts + the readiness flag,
+no findings, no requested_by (review M1).
+
 Failures: access denied / pool or client misconfigured -> NonRetryable (a retry can not fix it; the job
 fails with the reason). Throttling and network errors are retried once by the runner (max_attempts 2).
 """
@@ -23,6 +28,7 @@ from typing import Optional
 
 import structlog
 
+from api.core.staff_authz import STAFF_READ
 from services import staff_reconcile as sr
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
@@ -30,6 +36,11 @@ logger = structlog.get_logger()
 
 KIND = "staff_directory_reconcile"
 SCHEDULE_KEY_PREFIX = f"{KIND}:schedule:"
+
+# The capability a caller needs to see the full result through the job-runner API (admin_job_runner).
+RESULT_CAPABILITY = STAFF_READ
+# Result keys without PII: what a caller lacking RESULT_CAPABILITY still sees.
+_REDACTED_RESULT_KEYS = ("kind", "trigger", "checked_at", "drift_total", "counts")
 
 
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=120, background=True)
@@ -75,16 +86,41 @@ _ACTIVE_SQL = f"""
 
 
 async def enqueue_manual(pool, *, requested_by: Optional[str]) -> tuple[str, bool]:
-    """An on-demand run; a queued or running one is returned instead of adding a second."""
+    """An on-demand run; a queued or running one is returned instead of adding a second.
+
+    Check + insert run in one transaction under an advisory lock on the kind, so two clicks at once can not
+    both see "no active run" and enqueue two (review N1)."""
     from shared.jobs.registry import enqueue
 
-    active = await pool.fetchval(_ACTIVE_SQL)
-    if active:
-        return str(active), False
-    payload = {"trigger": "manual"}
-    if requested_by:
-        payload["requested_by"] = requested_by
-    return await enqueue(pool, KIND, payload, created_by=f"admin:{requested_by}" if requested_by else "admin")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"{KIND}:manual")
+            active = await conn.fetchval(_ACTIVE_SQL)
+            if active:
+                return str(active), False
+            payload = {"trigger": "manual"}
+            if requested_by:
+                payload["requested_by"] = requested_by
+            return await enqueue(conn, KIND, payload,
+                                 created_by=f"admin:{requested_by}" if requested_by else "admin")
+
+
+def redact_job(job: dict) -> dict:
+    """The job as a caller without RESULT_CAPABILITY sees it on the job-runner API (in place).
+
+    The result keeps the counts, drift_total and the readiness flag (enough for an ops glance or the CI
+    smoke); the findings, the readiness usernames, the break-glass block and payload.requested_by go."""
+    result = job.get("result")
+    if isinstance(result, dict):
+        kept = {k: result[k] for k in _REDACTED_RESULT_KEYS if k in result}
+        readiness = result.get("readiness")
+        if isinstance(readiness, dict):
+            kept["ready"] = readiness.get("ready")
+        job["result"] = {**kept, "redacted": True}
+    payload = job.get("payload")
+    if isinstance(payload, dict) and "requested_by" in payload:
+        job["payload"] = {k: v for k, v in payload.items() if k != "requested_by"}
+    return job
 
 
 _LATEST_SQL = f"""

@@ -204,6 +204,9 @@ def test_an_unlinked_row_matches_by_email_and_is_not_an_orphan():
     report = _run(users, groups, rows, grants)
     assert report["cognito_without_row"] == [] and report["group_drift"] == []
     assert report["readiness"]["missing_cognito_sub"] == ["thu"]
+    # a new invitee who has not signed in yet is the normal state, not drift (review L1)
+    assert [f["email"] for f in report["pending_first_sign_in"]] == ["thu@adventure.asia"]
+    assert report["status_findings"] == [] and report["drift_total"] == 0
 
 
 def test_an_active_row_unknown_to_cognito():
@@ -261,15 +264,50 @@ def test_status_other_than_confirmed_is_reported_except_breakglass():
     users, groups, rows, grants = _clean_world()
     pending = _user("new@adventure.asia", "s-new", status="FORCE_CHANGE_PASSWORD")
     reset = _user("reset@adventure.asia", "s-reset", status="RESET_REQUIRED")
-    users += [pending, reset]
-    groups["cis-content"] = [pending, reset]
+    unconfirmed = _user("unc@adventure.asia", "s-unc", status="UNCONFIRMED")
+    users += [pending, reset, unconfirmed]
+    groups["cis-content"] = [pending, reset, unconfirmed]
     rows += [_row("new", role="content", email="new@adventure.asia"),
-             _row("reset", role="content", email="reset@adventure.asia", sub="s-reset")]
+             _row("reset", role="content", email="reset@adventure.asia", sub="s-reset"),
+             _row("unc", role="content", email="unc@adventure.asia", sub="s-unc")]
     users[1] = _user(BG, "s-bg", status="FORCE_CHANGE_PASSWORD", enabled=False)   # break-glass: own block
     report = _run(users, groups, rows, grants)
     assert sorted((f["email"], f["status"]) for f in report["status_findings"]) == [
-        ("new@adventure.asia", "FORCE_CHANGE_PASSWORD"), ("reset@adventure.asia", "RESET_REQUIRED")]
+        ("reset@adventure.asia", "RESET_REQUIRED"), ("unc@adventure.asia", "UNCONFIRMED")]
+    # FORCE_CHANGE_PASSWORD is listed apart and not counted (review L1)
+    assert [(f["email"], f["row_username"]) for f in report["pending_first_sign_in"]] == [
+        ("new@adventure.asia", "new")]
+    assert report["counts"]["status_findings"] == 2 and report["counts"]["pending_first_sign_in"] == 1
     assert any("not CONFIRMED" in i for i in report["breakglass"]["issues"])
+    assert report["drift_total"] == 2 + len(report["breakglass"]["issues"])
+
+
+def test_status_skips_disabled_users_and_users_already_without_a_row():
+    users, groups, rows, grants = _clean_world()
+    offboarded = _user("off@adventure.asia", "s-off", status="RESET_REQUIRED", enabled=False)
+    stray = _user("stray@adventure.asia", "s-stray", status="FORCE_CHANGE_PASSWORD")       # no row
+    stuck = _user("stuck@adventure.asia", "s-stuck", status="RESET_REQUIRED")              # no row
+    users += [offboarded, stray, stuck]
+    rows.append(_row("off", role="content", active=False, email="off@adventure.asia", sub="s-off"))
+    report = _run(users, groups, rows, grants)
+    # offboarded: disabled + inactive row is consistent, never status drift
+    assert report["status_findings"] == [] and report["pending_first_sign_in"] == []
+    # no row: counted once, in (a), which carries the status
+    assert sorted((f["email"], f["status"]) for f in report["cognito_without_row"]) == [
+        ("stray@adventure.asia", "FORCE_CHANGE_PASSWORD"), ("stuck@adventure.asia", "RESET_REQUIRED")]
+    assert report["drift_total"] == 2
+
+
+def test_email_changed_on_one_side_is_drift():
+    users, groups, rows, grants = _clean_world()
+    rows[0] = _row("nghiep", email="old-nghiep@adventure.asia", sub="s-nghiep")
+    report = _run(users, groups, rows, grants)
+    assert [(d["username"], d["kind"], d["directory"], d["cognito"]) for d in report["group_drift"]] == [
+        ("nghiep", "email", "old-nghiep@adventure.asia", "nghieppham@adventure.asia")]
+    assert report["drift_total"] == 1
+    # case and spaces are not drift
+    rows[0] = _row("nghiep", email=" NghiepPham@Adventure.asia ", sub="s-nghiep")
+    assert _run(users, groups, rows, grants)["drift_total"] == 0
 
 
 def test_cutover_readiness_counts_and_usernames():
@@ -416,20 +454,81 @@ async def test_scheduled_enqueue_is_keyed_per_day(monkeypatch):
     assert kw["idempotency_key"] == "staff_directory_reconcile:schedule:2026-10-18"
 
 
+class _TxConn:
+    """asyncpg connection stand-in for enqueue_manual: records SQL, answers the active-run query."""
+
+    def __init__(self, active):
+        self.active = active
+        self.executed: list[tuple] = []
+        self.in_tx = False
+
+    def transaction(self):
+        conn = self
+
+        class _Tx:
+            async def __aenter__(self):
+                conn.in_tx = True
+
+            async def __aexit__(self, *exc):
+                conn.in_tx = False
+                return False
+
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        self.executed.append((sql, args))
+
+    async def fetchval(self, sql, *args):
+        assert self.in_tx and self.executed, "the active-run check must run under the lock"
+        return self.active
+
+
+class _TxPool:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        return _Acquire(self.conn)
+
+
 @pytest.mark.asyncio
 async def test_manual_enqueue_returns_the_active_run(monkeypatch):
     from services.jobs import staff_reconcile_job as job
 
     enq = AsyncMock(return_value=("j-new", True))
     monkeypatch.setattr(registry, "enqueue", enq)
-    pool = MagicMock()
-    pool.fetchval = AsyncMock(return_value="j-active")
-    assert await job.enqueue_manual(pool, requested_by="u1") == ("j-active", False)
+    conn = _TxConn("j-active")
+    assert await job.enqueue_manual(_TxPool(conn), requested_by="u1") == ("j-active", False)
     enq.assert_not_called()
-    pool.fetchval = AsyncMock(return_value=None)
-    assert await job.enqueue_manual(pool, requested_by="u1") == ("j-new", True)
+    assert "pg_advisory_xact_lock" in conn.executed[0][0]
+
+    conn = _TxConn(None)
+    assert await job.enqueue_manual(_TxPool(conn), requested_by="u1") == ("j-new", True)
+    # the insert goes through the locked connection, inside the transaction (review N1)
+    assert enq.call_args.args[0] is conn
     assert enq.call_args.args[2] == {"trigger": "manual", "requested_by": "u1"}
     assert enq.call_args.kwargs["created_by"] == "admin:u1"
+
+
+def _full_job():
+    users, groups, rows, grants = _clean_world()
+    users.append(_user("ghost@adventure.asia", "s-ghost"))
+    report = _run(users, groups, rows, grants)
+    report.update(kind="staff_directory_reconcile", trigger="manual", checked_at="2026-10-18T00:00:00+00:00")
+    return {"id": "j-rec", "kind": "staff_directory_reconcile", "status": "succeeded",
+            "payload": {"trigger": "manual", "requested_by": "u-admin"}, "progress": {"drift_total": 1},
+            "result": report, "error": None, "created_at": None}
+
+
+def test_redact_job_keeps_counts_only():
+    from services.jobs import staff_reconcile_job as job
+
+    out = job.redact_job(_full_job())
+    assert out["result"]["redacted"] is True and out["result"]["drift_total"] == 1
+    assert out["result"]["counts"]["cognito_without_row"] == 1 and out["result"]["ready"] is True
+    assert set(out["result"]) == {"kind", "trigger", "checked_at", "drift_total", "counts", "ready", "redacted"}
+    assert out["payload"] == {"trigger": "manual"}
+    assert "@" not in repr(out)
 
 
 @pytest.mark.asyncio
@@ -513,3 +612,35 @@ def test_schedule_is_a_machine_route_keyed_per_utc_day(client, monkeypatch):
     assert client.post("/admin/job-runner/staff-reconcile/schedule", headers=_h("reviewer")).status_code == 403
     assert client.post("/admin/job-runner/staff-reconcile/schedule",
                        headers={"x-admin-role": "admin"}).status_code == 403
+
+
+@pytest.fixture
+def job_reads(monkeypatch):
+    """The job-runner reads backed by one reconcile job and one other job (review M1)."""
+    from shared.jobs import queue
+
+    other = {"id": "j-other", "kind": "s1_rewrite", "status": "succeeded", "payload": {"tour_id": "t1"},
+             "progress": None, "result": {"ok": True}, "error": None, "created_at": None}
+    monkeypatch.setattr(queue, "get", AsyncMock(side_effect=lambda pool, jid: _full_job()))
+    monkeypatch.setattr(queue, "domain_links", AsyncMock(return_value=None))
+    monkeypatch.setattr(queue, "list_jobs", AsyncMock(side_effect=lambda *a, **k: [_full_job(), dict(other)]))
+    monkeypatch.setattr(queue, "count_jobs", AsyncMock(return_value=2))
+
+
+@pytest.mark.parametrize("role", ["reviewer", "content", None])
+def test_job_runner_reads_redact_the_report_without_staff_read(client, job_reads, role):
+    one = client.get("/admin/job-runner/jobs/j-rec", headers=_h(role))
+    assert one.status_code == 200, one.text
+    assert one.json()["result"]["redacted"] is True and "cognito_without_row" not in one.json()["result"]
+    assert "@" not in one.text and "requested_by" not in one.text
+    listed = client.get("/admin/job-runner/jobs?kind=staff_directory_reconcile", headers=_h(role)).json()["jobs"]
+    rec, other = listed
+    assert rec["result"]["redacted"] is True and "breakglass" not in rec["result"]
+    assert other["result"] == {"ok": True} and other["payload"] == {"tour_id": "t1"}   # other kinds untouched
+
+
+def test_job_runner_reads_return_the_full_report_to_admin(client, job_reads):
+    one = client.get("/admin/job-runner/jobs/j-rec", headers=_h("admin")).json()
+    assert "redacted" not in one["result"]
+    assert one["result"]["cognito_without_row"][0]["email"] == "ghost@adventure.asia"
+    assert one["payload"]["requested_by"] == "u-admin"
