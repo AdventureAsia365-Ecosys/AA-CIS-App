@@ -162,6 +162,12 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
       signal: AbortSignal.timeout(3000),
     });
 
+    if (res.status >= 500) {
+      // AA-816: a backend error is not a refusal. Fail closed, but keep the session cookies so the user
+      // can carry on once the backend is back (a Cognito refresh that just rotated the tokens lands
+      // here when verify-admin is still down; wiping would throw the new refresh token away).
+      return NextResponse.redirect(new URL("/login?error=backend", request.url));
+    }
     if (!res.ok) {
       return toStaffLogin(request);
     }

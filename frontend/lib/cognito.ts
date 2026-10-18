@@ -234,6 +234,8 @@ async function tokenRequest(client: StaffClient, body: URLSearchParams): Promise
   } catch {
     throw new CognitoAuthError("unreachable");
   }
+  // A Cognito-side error says nothing about the grant: treat it like no answer (callers keep the session).
+  if (res.status >= 500) throw new CognitoAuthError("unreachable");
   if (!res.ok) {
     // Cognito answers {"error":"invalid_grant"} for a used/expired code or a revoked refresh token.
     const err = (await res.json().catch(() => ({}))) as { error?: string };

@@ -22,7 +22,9 @@ import { isStaffRole } from "./rbac";
 import {
   POST_LOGIN_PATH,
   REFRESH_SKEW_S,
+  ROLE_COOKIE,
   STAFF_TOKEN_COOKIE,
+  USER_COOKIE,
   isCognitoToken,
   safeNextPath,
   tokenExp,
@@ -73,7 +75,8 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
   const verified = await verifyStaffToken(tokens.accessToken);
   if (!verified.ok || !isStaffRole(verified.role)) {
     console.warn(`[auth] cognito callback: verify-admin refused client=${kind} status=${verified.ok ? "role" : verified.status}`);
-    const response = toLogin(request, !verified.ok && verified.status === 0 ? "backend" : "no_access");
+    // A backend that did not answer (timeout, 5xx) is not a refusal: say so instead of "no access".
+    const response = toLogin(request, !verified.ok && isTransientStatus(verified.status) ? "backend" : "no_access");
     clearOAuthTx(response);
     clearStaffSessionCookies(response);
     return noStore(response);
@@ -85,11 +88,29 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
   return noStore(response);
 }
 
+/**
+ * A verify-admin answer that says nothing about the user: no answer at all (timeout / network, status 0)
+ * or a backend error (5xx, e.g. the C3 JWKS or directory answering 503, or ECS mid-deploy). Only a real
+ * refusal (401/403, or any other 4xx) ends a session.
+ */
+function isTransientStatus(status: number): boolean {
+  return status === 0 || status >= 500;
+}
+
+type ApplyCookies = (response: NextResponse) => void;
+
 type RefreshOutcome =
   // apply() writes the rotated session cookies onto whatever response the caller builds (a no-op when
   // the current access token was still fresh and no refresh happened).
-  | { ok: true; expiresAt: number | null; apply: (response: NextResponse) => void }
-  | { ok: false; reason: string };
+  | { ok: true; expiresAt: number | null; apply: ApplyCookies }
+  // transient: Cognito or the backend did not answer. The session is NOT over and its cookies must not be
+  // cleared. When Cognito already rotated the refresh token, `apply` writes the new tokens anyway: they
+  // come straight from Cognito, the old refresh token is about to stop working, and every later use of
+  // the access token is verified again (middleware, BFF). `rotated` says whether that happened.
+  | { ok: false; transient: true; reason: string; rotated: boolean; apply: ApplyCookies }
+  // terminal: invalid_grant (revoked / expired refresh token), a refusal from verify-admin (401/403),
+  // no CIS role, or a token that fails our own checks. The caller clears the session.
+  | { ok: false; transient: false; reason: string };
 
 /**
  * Shared refresh core. Skips the Cognito call when the current access token still has more than
@@ -98,7 +119,7 @@ type RefreshOutcome =
 async function refreshSession(request: NextRequest, skipIfFreshS: number): Promise<RefreshOutcome> {
   const current = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
   const rt = readRefreshCookie(request);
-  if (!rt) return { ok: false, reason: "no_refresh_token" };
+  if (!rt) return { ok: false, transient: false, reason: "no_refresh_token" };
   if (current && !tokenExpiresSoon(current, skipIfFreshS)) {
     return { ok: true, expiresAt: tokenExp(current), apply: () => {} };
   }
@@ -107,21 +128,44 @@ async function refreshSession(request: NextRequest, skipIfFreshS: number): Promi
   try {
     tokens = await refreshStaffTokens(rt.kind, rt.refreshToken);
   } catch (e) {
-    return { ok: false, reason: e instanceof CognitoAuthError ? e.code : "token_error" };
+    const code = e instanceof CognitoAuthError ? e.code : "token_error";
+    // Cognito not reachable (network / timeout / 5xx): the old refresh token is still valid, keep it.
+    if (code === "unreachable") {
+      return { ok: false, transient: true, reason: code, rotated: false, apply: () => {} };
+    }
+    return { ok: false, transient: false, reason: code };
   }
+
   const verified = await verifyStaffToken(tokens.accessToken);
-  if (!verified.ok || !isStaffRole(verified.role)) {
-    return { ok: false, reason: verified.ok ? "role" : `verify_${verified.status}` };
-  }
   if (current) adminVerifyCache.delete(current);
-  return {
-    ok: true,
-    expiresAt: tokenExp(tokens.accessToken),
-    apply: (response) =>
-      setStaffSessionCookies(
-        response, rt.kind, tokens, { role: verified.role, name: verified.name }, rt.sessionEnd, rt.refreshToken,
-      ),
-  };
+  if (verified.ok && isStaffRole(verified.role)) {
+    return {
+      ok: true,
+      expiresAt: tokenExp(tokens.accessToken),
+      apply: (response) =>
+        setStaffSessionCookies(
+          response, rt.kind, tokens, { role: verified.role, name: verified.name }, rt.sessionEnd, rt.refreshToken,
+        ),
+    };
+  }
+  if (!verified.ok && isTransientStatus(verified.status)) {
+    // The display cookies (cis_role / cis_user) are left as they are: only the backend can say who
+    // this is, and it did not answer. setStaffSessionCookies needs a display value, so the current
+    // cookies are written back unchanged.
+    const display = {
+      role: request.cookies.get(ROLE_COOKIE)?.value ?? "",
+      name: request.cookies.get(USER_COOKIE)?.value ?? "",
+    };
+    return {
+      ok: false,
+      transient: true,
+      reason: `verify_${verified.status}`,
+      rotated: true,
+      apply: (response) =>
+        setStaffSessionCookies(response, rt.kind, tokens, display, rt.sessionEnd, rt.refreshToken),
+    };
+  }
+  return { ok: false, transient: false, reason: verified.ok ? "role" : `verify_${verified.status}` };
 }
 
 /** GET /api/auth/refresh?next=/admin/... — used by middleware.ts on a page navigation. */
@@ -133,29 +177,52 @@ export async function handleRefreshNavigation(request: NextRequest): Promise<Nex
     outcome.apply(response);
     return noStore(response);
   }
-  console.warn(`[auth] refresh refused (navigation): reason=${outcome.reason}`);
+  console.warn(`[auth] refresh refused (navigation): reason=${outcome.reason} transient=${outcome.transient}`);
+  if (outcome.transient) {
+    // Keep the session. With rotated tokens, go back to `next`: middleware verifies the fresh token
+    // again and, if the backend is still down, fails closed to /login?error=backend without clearing
+    // anything. Without a rotation the cookie still holds the expired token, so going back to `next`
+    // would only bounce here again: show the backend error instead.
+    const response = outcome.rotated
+      ? NextResponse.redirect(new URL(next, request.url), { status: 303 })
+      : toLogin(request, "backend");
+    outcome.apply(response);
+    return noStore(response);
+  }
   const response = toLogin(request, outcome.reason === "no_refresh_token" ? undefined : "session_expired");
   clearStaffSessionCookies(response);
   return noStore(response);
 }
 
 /**
- * POST /api/auth/refresh — the admin shell's keep-alive (SessionKeepAlive). Answers
- * { mode: "cognito", expiresAt } after refreshing when the access token has under 3 min left,
- * { mode: "legacy" } when there is no Cognito session to refresh, or 401 when the session is over.
+ * POST /api/auth/refresh — the staff shells' keep-alive (SessionKeepAlive). Answers:
+ *   - { mode: "cognito", expiresAt } after refreshing when the access token has under 3 min left;
+ *   - { mode: "legacy" } for a legacy (HS256) session: nothing to keep alive;
+ *   - { mode: "none" } when there is no staff session cookie at all (a tenant on /portal, or a Cognito
+ *     session whose 12 h / 1 h window has ended: both cookies expire at the session end). The client
+ *     tells the two apart by whether it saw a Cognito session before;
+ *   - 503 { mode: "cognito", error: "unavailable" } when Cognito or the backend did not answer: the
+ *     session is kept (rotated tokens are still written) and the client retries in a minute;
+ *   - 401 when the session is over.
  */
 export async function handleRefreshKeepAlive(request: NextRequest): Promise<NextResponse> {
-  if (!isCognitoToken(request.cookies.get(STAFF_TOKEN_COOKIE)?.value) && !readRefreshCookie(request)) {
-    return noStore(NextResponse.json({ mode: "legacy" }));
+  const current = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
+  if (!isCognitoToken(current) && !readRefreshCookie(request)) {
+    return noStore(NextResponse.json({ mode: current ? "legacy" : "none" }));
   }
   const outcome = await refreshSession(request, 180);
-  if (!outcome.ok) {
-    console.warn(`[auth] refresh refused (keep-alive): reason=${outcome.reason}`);
-    const response = NextResponse.json({ mode: "cognito", error: "session_expired" }, { status: 401 });
-    clearStaffSessionCookies(response);
+  if (outcome.ok) {
+    const response = NextResponse.json({ mode: "cognito", expiresAt: outcome.expiresAt });
+    outcome.apply(response);
     return noStore(response);
   }
-  const response = NextResponse.json({ mode: "cognito", expiresAt: outcome.expiresAt });
-  outcome.apply(response);
+  console.warn(`[auth] refresh refused (keep-alive): reason=${outcome.reason} transient=${outcome.transient}`);
+  if (outcome.transient) {
+    const response = NextResponse.json({ mode: "cognito", error: "unavailable" }, { status: 503 });
+    outcome.apply(response);
+    return noStore(response);
+  }
+  const response = NextResponse.json({ mode: "cognito", error: "session_expired" }, { status: 401 });
+  clearStaffSessionCookies(response);
   return noStore(response);
 }
