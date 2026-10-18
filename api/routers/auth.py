@@ -288,6 +288,11 @@ class VerifyAdminResponse(BaseModel):
     username: str
     role: str
     valid: bool
+    # AA-816 C3: directory fields (migration 247; NULL until the row is linked) and which session kind was
+    # verified: "cognito" (WORKFORCE access token) or "legacy" (HS256 password session).
+    email: Optional[str] = None
+    display_name: Optional[str] = None
+    auth: str = "legacy"
 
 
 class BookingTokenResponse(BaseModel):

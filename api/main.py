@@ -61,6 +61,8 @@ from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-7
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
+from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
+from api.core import staff_identity  # AA-816 C3
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -262,6 +264,10 @@ app.include_router(photos_public_router)  # AA-708 — /content/photos/{id} (pub
 app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{job_id}
 
 app.middleware("http")(rate_limit_middleware)
+# AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
+# Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
+# tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched.
+app.add_middleware(StaffBearerMiddleware)
 app.middleware("http")(sentry_context_middleware)
 
 def get_pool() -> asyncpg.Pool:
@@ -356,17 +362,22 @@ async def admin_login(
 # instead of at the 24 h JWT expiry. Keyed by admin id; a miss (unknown or inactive) is cached too.
 _STAFF_STATE_TTL_S = 60.0
 _STAFF_STATE_MAX = 2048
-_staff_state_cache: dict[str, tuple[float, Optional[tuple[str, str]]]] = {}
+# Legacy (HS256) path only; the Cognito path has its own (iss, sub) cache with the same TTL in
+# api/core/staff_identity.py (shared with the staff bearer middleware, which can not import this module).
+_staff_state_cache: dict[str, tuple[float, Optional[tuple[str, str, Optional[str], Optional[str]]]]] = {}
 
 
-async def _current_staff(db: asyncpg.Pool, admin_id: str) -> Optional[tuple[str, str]]:
-    """(username, role) of an active staff account, or None; cached for _STAFF_STATE_TTL_S."""
+async def _current_staff(
+    db: asyncpg.Pool, admin_id: str,
+) -> Optional[tuple[str, str, Optional[str], Optional[str]]]:
+    """(username, role, email, display_name) of an active staff account, or None; cached for
+    _STAFF_STATE_TTL_S."""
     now = time.monotonic()
     hit = _staff_state_cache.get(admin_id)
     if hit and hit[0] > now:
         return hit[1]
     row = await _load_active_staff(db, admin_id)
-    state = (row["username"], row["role"]) if row else None
+    state = (row["username"], row["role"], row.get("email"), row.get("display_name")) if row else None
     if len(_staff_state_cache) >= _STAFF_STATE_MAX:
         _staff_state_cache.clear()
     _staff_state_cache[admin_id] = (now + _STAFF_STATE_TTL_S, state)
@@ -376,14 +387,43 @@ async def _current_staff(db: asyncpg.Pool, admin_id: str) -> Optional[tuple[str,
 @app.post("/auth/verify-admin", response_model=VerifyAdminResponse, tags=["auth"])
 async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     """
-    Verify an admin JWT (server-side, called by Next.js middleware) — mirrors
-    /auth/verify-tenant. Then re-reads shared.admin_users (cached 60 s): 401 when the account is
-    gone or inactive, and the role returned is the DB role, not the JWT claim, so the BFF forwards the
-    current role (x-admin-role) and staff_policy enforces it. The staff directory and the enforced
-    role therefore agree within the cache TTLs, not at the 24 h token expiry.
+    Verify a staff session token (server-side, called by the Next.js middleware and BFF) — mirrors
+    /auth/verify-tenant. The path is chosen by the unverified `iss` (AA-816 C3):
+
+    - Cognito access token (`iss` = the WORKFORCE issuer): WORKFORCE x {cis-admin, breakglass} verifier (C2), then
+      api/core/staff_identity.py: a `cis-*` group is required (403 otherwise), the row is found by
+      (cognito_iss, cognito_sub) or bound once by email on the first sign-in, 401 when unknown or inactive,
+      role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set
+      (best effort).
+    - Any other `iss` (EXTERNAL portal, Booking RS256): 401, never a staff session.
+    - Legacy HS256 token (no `iss`): unchanged, gated by LEGACY_ADMIN_LOGIN_ENABLED (default true). Re-reads
+      shared.admin_users (cached 60 s): 401 when the account is gone or inactive, and the role returned is the
+      DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy
+      enforces it within the cache TTLs, not at the 24 h token expiry.
     """
     body = await request.json()
-    payload = verify_jwt(body.get("token", ""))
+    token = body.get("token", "")
+    kind = staff_identity.token_kind(token)
+    if kind == staff_identity.AUTH_OTHER:
+        # A JWT from another issuer (EXTERNAL portal, CIS-minted Booking RS256): never a CIS staff session.
+        logger.warning("verify_admin_refused", auth=staff_identity.AUTH_OTHER, status=401, reason="foreign_issuer")
+        raise HTTPException(status_code=401, detail="Invalid staff token")
+    if kind == staff_identity.AUTH_COGNITO:
+        try:
+            identity = await staff_identity.authenticate(db, token, touch_login=True)
+        except staff_identity.StaffAuthError as exc:
+            logger.warning("verify_admin_refused", auth=staff_identity.AUTH_COGNITO, status=exc.status,
+                           reason=exc.reason)
+            raise HTTPException(status_code=exc.status, detail=exc.detail) from None
+        return VerifyAdminResponse(
+            admin_id=identity.admin_id, username=identity.username, role=identity.role, valid=True,
+            email=identity.email, display_name=identity.display_name, auth=staff_identity.AUTH_COGNITO,
+        )
+
+    if not staff_identity.legacy_login_enabled():
+        logger.warning("verify_admin_refused", auth=staff_identity.AUTH_LEGACY, reason="legacy_disabled")
+        raise HTTPException(status_code=401, detail="Password sessions are switched off; sign in again")
+    payload = verify_jwt(token)
     if payload.get("role") not in STAFF_ROLES:
         # Explicit whitelist — same secret/alg means a tenant JWT would decode fine here.
         raise HTTPException(status_code=401, detail="Not an admin token")
@@ -393,12 +433,15 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
                        session_role=payload.get("role"),
                        reason="inactive_or_unknown" if state is None else "role_not_staff")
         raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
-    username, role = state
+    username, role, email, display_name = state
     return VerifyAdminResponse(
         admin_id=payload["sub"],
         username=username,
         role=role,
         valid=True,
+        email=email,
+        display_name=display_name,
+        auth=staff_identity.AUTH_LEGACY,
     )
 
 # ── AA-680 — CIS as staff identity provider for AA-Booking (root ADR 0004, O1) ──────────────
@@ -426,8 +469,8 @@ async def _load_active_staff(db: asyncpg.Pool, admin_id: str):
         return None
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id::text AS id, username, role::text AS role FROM shared.admin_users "
-            "WHERE id = $1 AND is_active",
+            "SELECT id::text AS id, username, role::text AS role, email, display_name "
+            "FROM shared.admin_users WHERE id = $1 AND is_active",
             uid,
         )
     return row
