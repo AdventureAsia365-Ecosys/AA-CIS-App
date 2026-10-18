@@ -18,31 +18,45 @@ Operations
 - create: ``@adventure.asia`` only; username derived from the address's local part (unique); ``password_hash``
   NULL (Cognito-only member); optional Booking grant. Cognito: ``AdminCreateUser`` with ``MessageAction=SUPPRESS``
   (always: without it Cognito mails a temporary password and the person could set a permanent password through
-  managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``; an existing user
-  (``UsernameExistsException``) counts as created. Then ``AdminAddUserToGroup`` ``cis-<role>`` and, with a grant,
-  ``booking-<role>``.
+  managed login, bypassing email-code-only sign-in) and ``email`` + ``email_verified=true``. Then
+  ``AdminAddUserToGroup`` ``cis-<role>`` and, with a grant, ``booking-<role>``. An existing user
+  (``UsernameExistsException``: left over from the bootstrap tool, an old offboarding, or the first attempt of a
+  re-POST) counts as created, but its state is unknown (the writer may not read it), so the create then also runs
+  ``AdminEnableUser`` and removes every other CIS / Booking staff group, exactly like an active-row sync: a stale
+  ``cis-admin`` must never outrank the role the directory shows.
 - roles: the CIS role (``admin_users.role``) and/or the Booking grant (set or removed). Cognito: add the new group,
   then remove the old one (a failure in between leaves the person with MORE access for a moment, never locked out
   of both; the retry finishes it).
 - disable: ``is_active = false``, then ``AdminDisableUser``, then ``AdminUserGlobalSignOut`` (ADR 0006 §7: a disabled
   user cannot re-authenticate even with the managed-login cookie; the worst case is one live 15-minute access
-  token).
+  token). ``AdminDisableUser`` already revokes the user's tokens, so a ``NotAuthorizedException`` from the sign-out
+  that follows a successful disable counts as done (``global_sign_out(..., user_disabled=True)``).
 - enable: ``is_active = true``, then ``AdminEnableUser``.
-- sign-out ("reset", ADR 0006 amendment): ``AdminUserGlobalSignOut``, and the account is re-enabled
-  (``is_active = true`` + ``AdminEnableUser``) when it was disabled.
+- sign-out ("reset", ADR 0006 amendment): the account is re-enabled when it was disabled (``is_active = true``),
+  then ``AdminEnableUser`` (always, a no-op on an enabled user) BEFORE ``AdminUserGlobalSignOut``: sign-out on a
+  disabled Cognito user may be refused, and a failed sign-out must not leave the row active and the pool disabled.
 - sync (the retry): make the pool match the row (active: create if missing, enable, add the wanted groups, remove
   the other staff groups; inactive: disable + sign out).
 
 Guards (checked in the same transaction, on rows locked ``FOR UPDATE``)
 --------------------------------------------------------------------
-- The actor is re-read: an active row with ``is_owner`` (the route policy already required an owner on a Cognito
-  session, from a row cached up to 60 s; this closes that window).
+- The actor is re-read: an active row with ``is_owner`` AND ``role = 'admin'`` (the route policy already required
+  an owner on a Cognito session, from a row cached up to 60 s, and took the admin role from the access token's
+  groups, which lag a demotion by up to 15 minutes; the re-read closes both windows).
 - Nobody demotes (CIS role other than admin) or disables themself.
 - The last active owner (``is_owner AND is_active AND role = 'admin'``; an owner without the admin role cannot
   open the staff page) is never demoted or disabled. Every owner row is locked first, so two owners cannot remove
   each other concurrently.
 - The break-glass row (username ``admin`` / a break-glass address, :func:`is_breakglass`) is never changed here: it
   is enabled and disabled only by the break-glass runbook.
+
+Ordering: the Cognito half runs after the row locks are released, so two opposite writes on the same row a moment
+apart (disable in one tab, enable in another) can reach Cognito in reverse order. Accepted: the DB stays the source
+of truth, ``sync`` repairs it, and the C7 reconcile job reports the mismatch.
+
+Time budget: one attempt per Cognito call (connect 2 s, read 4 s) and a 20 s deadline on the step list, so the
+answer (ok or pending) always beats the API Gateway 29 s integration timeout; a step skipped by the deadline is
+reported as pending (``error_code = "DeadlineExceeded"``) and the retry finishes it.
 
 Rows without an email (legacy, unlinked) have no Cognito user: role / active changes touch the DB only and report
 ``cognito = "not_applicable"``; sync refuses them.
@@ -52,6 +66,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -206,7 +221,12 @@ def is_breakglass(username: Optional[str], email: Optional[str]) -> bool:
 
 # ── Cognito ──────────────────────────────────────────────────────────────────────────────────────
 
-_BOTO_CONFIG = BotoConfig(connect_timeout=3, read_timeout=8, retries={"max_attempts": 2, "mode": "standard"})
+# One attempt per call (the owner has a Retry button; a botocore retry would only eat the API Gateway budget).
+_BOTO_CONFIG = BotoConfig(connect_timeout=2, read_timeout=4, retries={"max_attempts": 1, "mode": "standard"})
+# Wall-clock budget for one write's Cognito steps: no step STARTS after it (worst case = budget + one call's 6 s,
+# still under the ~29 s API Gateway integration timeout).
+STEPS_DEADLINE_S = 20.0
+_monotonic = time.monotonic   # module-level so tests can drive the deadline without touching asyncio's clock
 
 
 def _snake(operation: str) -> str:
@@ -277,12 +297,20 @@ class CognitoDirectory:
     def enable(self, email: str) -> None:
         self._call("AdminEnableUser", Username=email)
 
-    def global_sign_out(self, email: str) -> None:
+    def global_sign_out(self, email: str, *, user_disabled: bool = False) -> None:
+        """AdminUserGlobalSignOut. ``user_disabled=True`` only right after a successful AdminDisableUser in the
+        same step list: Cognito may then refuse with ``NotAuthorizedException`` ("User is disabled"), which counts
+        as done because AdminDisableUser already revoked the user's tokens."""
         try:
             self._call("AdminUserGlobalSignOut", Username=email)
         except ClientError as exc:
-            if _error_code(exc) != "UserNotFoundException":   # no user: no session to end
-                raise
+            code = _error_code(exc)
+            if code == "UserNotFoundException":   # no user: no session to end
+                return
+            if user_disabled and code == "NotAuthorizedException":
+                logger.info("staff_directory_sign_out_on_disabled_user", note="tokens already revoked by disable")
+                return
+            raise
 
 
 def _error_code(exc: BaseException) -> str:
@@ -308,19 +336,29 @@ def get_cognito() -> CognitoDirectory:
 Step = tuple[str, Callable[[], Any]]
 
 
-async def _run_steps(result: WriteResult, steps: list[Step]) -> WriteResult:
-    """Run the Cognito steps in order; stop at the first failure and mark the result pending."""
+def _mark_pending(result: WriteResult, step: str, error_code: str) -> WriteResult:
+    result.status = STATUS_PENDING
+    result.cognito = COGNITO_PENDING
+    result.failed_step = step
+    result.error_code = error_code
+    logger.warning("staff_directory_cognito_failed", staff_id=result.staff_id,
+                   operation=result.operation, step=step, error=error_code)
+    return result
+
+
+async def _run_steps(result: WriteResult, steps: list[Step], deadline_s: Optional[float] = None) -> WriteResult:
+    """Run the Cognito steps in order; stop at the first failure (or when the deadline has passed before a step
+    starts) and mark the result pending. A step may append further steps to ``steps`` (create does, when the user
+    already existed); they run after the ones already listed."""
+    started = _monotonic()
+    budget = STEPS_DEADLINE_S if deadline_s is None else deadline_s
     for name, call in steps:
+        if _monotonic() - started > budget:
+            return _mark_pending(result, name, "DeadlineExceeded")
         try:
             await asyncio.to_thread(call)
         except (ClientError, BotoCoreError, Exception) as exc:  # noqa: BLE001 - any failure = pending, never a 500
-            result.status = STATUS_PENDING
-            result.cognito = COGNITO_PENDING
-            result.failed_step = name
-            result.error_code = _error_code(exc)
-            logger.warning("staff_directory_cognito_failed", staff_id=result.staff_id,
-                           operation=result.operation, step=name, error=result.error_code)
-            return result
+            return _mark_pending(result, name, _error_code(exc))
         result.steps.append(name)
     result.cognito = COGNITO_DONE
     return result
@@ -328,7 +366,9 @@ async def _run_steps(result: WriteResult, steps: list[Step]) -> WriteResult:
 
 # ── SQL (shared.admin_users / shared.staff_app_grant, migration 247) ─────────────────────────────
 
-SQL_ACTOR = "SELECT id::text AS id, is_active, is_owner FROM shared.admin_users WHERE id = $1::uuid"
+SQL_ACTOR = (
+    "SELECT id::text AS id, is_active, is_owner, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
+)
 SQL_TARGET = (
     "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner "
     "FROM shared.admin_users WHERE id = $1::uuid FOR UPDATE"
@@ -367,10 +407,12 @@ def _actor_tag(actor_id: str) -> str:
 
 async def _require_owner(conn: Any, actor_id: str) -> None:
     """Lock every owner row (always first, in id order, so concurrent writes never deadlock and two owners can not
-    remove each other at the same time), then re-read the actor: active and owner, or 403."""
+    remove each other at the same time), then re-read the actor: active, owner and CIS admin, or 403. The role is
+    re-read because the route policy took it from the access token's groups, which keep ``cis-admin`` for up to
+    15 minutes after another owner demoted this one."""
     await conn.fetch(SQL_LOCK_OWNERS)
     row = await conn.fetchrow(SQL_ACTOR, actor_id)
-    if row is None or not row["is_active"] or not row["is_owner"]:
+    if row is None or not row["is_active"] or not row["is_owner"] or row["role"] != "admin":
         raise StaffDirectoryError(403, "Only a platform owner can change staff accounts", "not_owner")
 
 
@@ -475,12 +517,32 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                 created = True
 
     result = WriteResult(staff_id=staff_id, operation="create", created=created)
-    steps: list[Step] = [("create_user", lambda: cognito.create_user(email)),
-                         (f"add_group:{cis_group(role)}", lambda: cognito.add_to_group(email, cis_group(role)))]
-    if booking_role is not None:
-        steps.append((f"add_group:{booking_group(booking_role)}",
-                      lambda: cognito.add_to_group(email, booking_group(booking_role))))
+    wanted = [cis_group(role)] + ([booking_group(booking_role)] if booking_role is not None else [])
+    steps: list[Step] = []
+
+    def _create_user() -> None:
+        if not cognito.create_user(email):
+            # The user already existed in the pool, in an unknown state: make it match the row like an
+            # active-row sync (enable, then drop every staff group the row does not grant; the wanted groups
+            # are added by the steps already listed, so add-before-remove holds).
+            steps.extend(_existing_user_steps(cognito, email, wanted))
+
+    steps.append(("create_user", _create_user))
+    steps += _add_group_steps(cognito, email, wanted)
     return await _finish(pool, actor_id, result, steps)
+
+
+def _add_group_steps(cognito: CognitoDirectory, email: str, groups: list[str]) -> list[Step]:
+    return [(f"add_group:{g}", (lambda g=g: cognito.add_to_group(email, g))) for g in groups]
+
+
+def _remove_other_groups_steps(cognito: CognitoDirectory, email: str, wanted: list[str]) -> list[Step]:
+    return [(f"remove_group:{g}", (lambda g=g: cognito.remove_from_group(email, g)))
+            for g in CIS_GROUPS + BOOKING_GROUPS if g not in wanted]
+
+
+def _existing_user_steps(cognito: CognitoDirectory, email: str, wanted: list[str]) -> list[Step]:
+    return [("enable_user", lambda: cognito.enable(email))] + _remove_other_groups_steps(cognito, email, wanted)
 
 
 async def _free_username(conn: Any, base: str) -> str:
@@ -562,10 +624,16 @@ async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, 
                 await _audit(conn, actor_id, StaffAudit.DISABLED, staff_id, {"is_active": {"before": True,
                                                                                             "after": False}})
     email = target["email"]
-    steps: list[Step] = [("disable_user", lambda: cognito.disable(email)),
-                         ("global_sign_out", lambda: cognito.global_sign_out(email))]
+    steps: list[Step] = _disable_steps(cognito, email)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="disable"), steps,
                          has_email=bool(email))
+
+
+def _disable_steps(cognito: CognitoDirectory, email: str) -> list[Step]:
+    """AdminDisableUser, then AdminUserGlobalSignOut; the sign-out only runs after the disable succeeded (the step
+    list stops at the first failure), so it may treat "User is disabled" as done."""
+    return [("disable_user", lambda: cognito.disable(email)),
+            ("global_sign_out", lambda: cognito.global_sign_out(email, user_disabled=True))]
 
 
 async def enable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str) -> WriteResult:
@@ -586,10 +654,11 @@ async def enable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
 
 
 async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str) -> WriteResult:
-    """"Reset": end every session (AdminUserGlobalSignOut) and re-enable the account when it was disabled.
+    """"Reset": re-enable the account when it was disabled, then end every session (AdminUserGlobalSignOut).
 
-    AdminEnableUser always runs after the sign-out: the writer may not read the pool's state (AdminGetUser is not
-    allowed and counts as MAU), and enabling an enabled user is a no-op."""
+    AdminEnableUser always runs, and BEFORE the sign-out: the writer may not read the pool's state (AdminGetUser is
+    not allowed and counts as MAU), enabling an enabled user is a no-op, and a sign-out on a still-disabled Cognito
+    user may be refused, which must not leave the row active and the pool disabled."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
@@ -600,8 +669,8 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
                 await conn.execute(SQL_SET_ACTIVE, staff_id, True)
             await _audit(conn, actor_id, StaffAudit.SIGNED_OUT, staff_id, {"reenabled": reenabled})
     email = target["email"]
-    steps: list[Step] = [("global_sign_out", lambda: cognito.global_sign_out(email)),
-                         ("enable_user", lambda: cognito.enable(email))]
+    steps: list[Step] = [("enable_user", lambda: cognito.enable(email)),
+                         ("global_sign_out", lambda: cognito.global_sign_out(email))]
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="sign_out"), steps,
                          has_email=bool(email))
 
@@ -623,13 +692,11 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
         raise StaffDirectoryError(400, "This account has no work email, so it has no Cognito user to sync",
                                   "no_email")
     if not target["is_active"]:
-        steps: list[Step] = [("disable_user", lambda: cognito.disable(email)),
-                             ("global_sign_out", lambda: cognito.global_sign_out(email))]
+        steps: list[Step] = _disable_steps(cognito, email)
     else:
         wanted = [cis_group(target["role"])] + ([booking_group(booking)] if booking else [])
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]
-        steps += [(f"add_group:{g}", (lambda g=g: cognito.add_to_group(email, g))) for g in wanted]
-        steps += [(f"remove_group:{g}", (lambda g=g: cognito.remove_from_group(email, g)))
-                  for g in CIS_GROUPS + BOOKING_GROUPS if g not in wanted]
+        steps += _add_group_steps(cognito, email, wanted)
+        steps += _remove_other_groups_steps(cognito, email, wanted)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="sync"), steps)

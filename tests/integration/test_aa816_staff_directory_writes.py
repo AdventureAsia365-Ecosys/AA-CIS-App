@@ -46,7 +46,7 @@ class RecordingCognito:
     def enable(self, email):
         self.calls.append(("enable", email))
 
-    def global_sign_out(self, email):
+    def global_sign_out(self, email, user_disabled=False):
         self.calls.append(("sign_out", email))
 
 

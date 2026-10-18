@@ -92,7 +92,7 @@ class StaffDB(Directory):
             self.sql.append(sql)
             r = self._find(args[0])
             return None if r is None else {"id": r["id"], "is_active": r["is_active"],
-                                           "is_owner": r.get("is_owner", False)}
+                                           "is_owner": r.get("is_owner", False), "role": r["role"]}
         if sql == sd.SQL_TARGET:
             self.sql.append(sql)
             return self._target(self._find(args[0]))
@@ -242,6 +242,34 @@ def test_missing_user_is_fine_for_disable_sign_out_and_group_removal(stubbed):
     cognito.remove_from_group(NEW_EMAIL, "cis-admin")
 
 
+def test_sign_out_after_disable_tolerates_user_is_disabled_only_when_asked(stubbed):
+    from botocore.exceptions import ClientError
+
+    cognito, stub = stubbed
+    _expect_error(stub, "admin_user_global_sign_out", "NotAuthorizedException", _user(NEW_EMAIL))
+    cognito.global_sign_out(NEW_EMAIL, user_disabled=True)   # tokens already revoked by AdminDisableUser
+    _expect_error(stub, "admin_user_global_sign_out", "NotAuthorizedException", _user(NEW_EMAIL))
+    with pytest.raises(ClientError):
+        cognito.global_sign_out(NEW_EMAIL)
+
+
+def test_one_attempt_per_cognito_call_within_the_gateway_budget():
+    cfg = sd._BOTO_CONFIG
+    assert cfg.retries["max_attempts"] == 1
+    assert sd.STEPS_DEADLINE_S + cfg.connect_timeout + cfg.read_timeout < 29
+
+
+@pytest.mark.asyncio
+async def test_no_step_starts_after_the_deadline(monkeypatch):
+    clock = iter([0.0, 0.0, 25.0])
+    monkeypatch.setattr(sd, "_monotonic", lambda: next(clock))
+    ran: list[str] = []
+    result = sd.WriteResult(staff_id="x", operation="create")
+    await sd._run_steps(result, [("first", lambda: ran.append("first")), ("second", lambda: ran.append("second"))])
+    assert ran == ["first"] and result.steps == ["first"]
+    assert result.pending and (result.failed_step, result.error_code) == ("second", "DeadlineExceeded")
+
+
 def test_pool_id_and_region_come_from_identity_config(monkeypatch):
     monkeypatch.delenv(identity_config.ENV_WORKFORCE_POOL_ID, raising=False)
     monkeypatch.delenv(identity_config.ENV_WORKFORCE_ISSUER, raising=False)
@@ -344,10 +372,30 @@ async def test_re_post_of_the_same_create_is_an_idempotent_retry(db, stubbed):
     _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-reviewer"))
     _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "booking-sales"))
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    for g in ("cis-admin", "cis-content", "booking-admin", "booking-contracting", "booking-content_creator"):
+        _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
     result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
                                    role="reviewer", booking_role="sales")
     assert result.staff_id == uid and not result.created and result.status == sd.STATUS_OK
     assert len(db.rows) == 2 and db.audit == []
+
+
+@pytest.mark.asyncio
+async def test_create_over_an_existing_cognito_user_drops_its_stale_groups_and_enables_it(db, stubbed):
+    """Review finding 1: a WORKFORCE user left with cis-admin (bootstrap / old offboarding) and possibly disabled,
+    but no directory row. Created as "content", it must end with cis-content only, enabled."""
+    cognito, stub = stubbed
+    _expect_error(stub, "admin_create_user", "UsernameExistsException", _create())
+    _expect(stub, "admin_add_user_to_group", _group(NEW_EMAIL, "cis-content"))   # add before any remove
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    for g in ("cis-admin", "cis-reviewer") + sd.BOOKING_GROUPS:
+        _expect(stub, "admin_remove_user_from_group", _group(NEW_EMAIL, g))
+    result = await sd.create_staff(db, cognito, actor_id=db.owner, email=NEW_EMAIL, display_name="N",
+                                   role="content")
+    assert result.created and result.status == sd.STATUS_OK
+    assert result.steps[:3] == ["create_user", "add_group:cis-content", "enable_user"]
+    assert "remove_group:cis-admin" in result.steps and "remove_group:cis-content" not in result.steps
 
 
 @pytest.mark.asyncio
@@ -423,14 +471,18 @@ async def test_the_last_active_owner_can_not_be_demoted_or_disabled(db, stubbed)
     _expect(stub, "admin_add_user_to_group", _group("other.owner@adventure.asia", "cis-reviewer"))
     _expect(stub, "admin_remove_user_from_group", _group("other.owner@adventure.asia", "cis-admin"))
     await sd.change_roles(db, cognito, actor_id=db.owner, staff_id=other, role="reviewer")
-    # Now db.owner is the last active admin owner. "other" is still an owner row (not an admin): even acting
-    # through the service directly it can neither demote nor disable the last one.
+    # Now db.owner is the last active admin owner. "other" is still an owner row but no longer a CIS admin, while
+    # its access token may still carry cis-admin for up to 15 minutes (review finding 3): the actor re-read
+    # refuses it before any guard runs, so it can neither demote nor disable the last owner.
     with pytest.raises(sd.StaffDirectoryError) as err:
         await sd.disable_staff(db, cognito, actor_id=other, staff_id=db.owner)
-    assert (err.value.status, err.value.code) == (409, "last_owner")
+    assert (err.value.status, err.value.code) == (403, "not_owner")
     with pytest.raises(sd.StaffDirectoryError) as err:
         await sd.change_roles(db, cognito, actor_id=other, staff_id=db.owner, role="content")
-    assert err.value.code == "last_owner"
+    assert err.value.code == "not_owner"
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sd.create_staff(db, cognito, actor_id=other, email=NEW_EMAIL, display_name="N", role="admin")
+    assert err.value.code == "not_owner" and len(db.rows) == 2
     assert db.row(db.owner)["is_active"] is True and db.row(db.owner)["role"] == "admin"
 
 
@@ -504,6 +556,26 @@ async def test_disable_pending_when_sign_out_fails(db, stubbed):
 
 
 @pytest.mark.asyncio
+async def test_disable_is_ok_when_cognito_refuses_sign_out_of_the_disabled_user(db, stubbed):
+    """Review finding 2: AdminUserGlobalSignOut on a just-disabled user may answer "User is disabled"."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content")
+    _expect(stub, "admin_disable_user", _user(NEW_EMAIL))
+    _expect_error(stub, "admin_user_global_sign_out", "NotAuthorizedException", _user(NEW_EMAIL))
+    result = await sd.disable_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.status == sd.STATUS_OK and result.steps == ["disable_user", "global_sign_out"]
+
+
+@pytest.mark.asyncio
+async def test_disable_failure_never_tolerates_the_sign_out_refusal(db, stubbed):
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content")
+    _expect_error(stub, "admin_disable_user", "InternalErrorException", _user(NEW_EMAIL))
+    result = await sd.disable_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.pending and result.failed_step == "disable_user" and result.steps == []
+
+
+@pytest.mark.asyncio
 async def test_enable_is_db_then_enable(db, stubbed):
     cognito, stub = stubbed
     uid = db.add(email=NEW_EMAIL, role="content", active=False)
@@ -517,12 +589,25 @@ async def test_enable_is_db_then_enable(db, stubbed):
 async def test_sign_out_ends_sessions_and_re_enables_a_disabled_account(db, stubbed):
     cognito, stub = stubbed
     uid = db.add(email=NEW_EMAIL, role="content", active=False)
-    _expect(stub, "admin_user_global_sign_out", _user(NEW_EMAIL))
     _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect(stub, "admin_user_global_sign_out", _user(NEW_EMAIL))
     result = await sd.sign_out_staff(db, cognito, actor_id=db.owner, staff_id=uid)
-    assert result.steps == ["global_sign_out", "enable_user"]
+    assert result.steps == ["enable_user", "global_sign_out"]
     assert db.row(uid)["is_active"] is True
     assert db.audit[0]["action"] == sd.StaffAudit.SIGNED_OUT and db.audit[0]["details"] == {"reenabled": True}
+
+
+@pytest.mark.asyncio
+async def test_reset_of_a_disabled_account_enables_it_even_when_sign_out_fails(db, stubbed):
+    """Review finding 2: enable runs first, so a failed sign-out never leaves the row active and the pool
+    disabled."""
+    cognito, stub = stubbed
+    uid = db.add(email=NEW_EMAIL, role="content", active=False)
+    _expect(stub, "admin_enable_user", _user(NEW_EMAIL))
+    _expect_error(stub, "admin_user_global_sign_out", "InternalErrorException", _user(NEW_EMAIL))
+    result = await sd.sign_out_staff(db, cognito, actor_id=db.owner, staff_id=uid)
+    assert result.pending and result.steps == ["enable_user"] and result.failed_step == "global_sign_out"
+    assert db.row(uid)["is_active"] is True
 
 
 @pytest.mark.asyncio
@@ -544,9 +629,9 @@ async def test_sync_of_an_inactive_row_disables_and_never_creates(db, stubbed):
     cognito, stub = stubbed
     uid = db.add(email=NEW_EMAIL, role="reviewer", active=False)
     _expect(stub, "admin_disable_user", _user(NEW_EMAIL))
-    _expect(stub, "admin_user_global_sign_out", _user(NEW_EMAIL))
+    _expect_error(stub, "admin_user_global_sign_out", "NotAuthorizedException", _user(NEW_EMAIL))
     result = await sd.sync_staff(db, cognito, actor_id=db.owner, staff_id=uid)
-    assert result.steps == ["disable_user", "global_sign_out"]
+    assert result.steps == ["disable_user", "global_sign_out"] and result.status == sd.STATUS_OK
 
 
 @pytest.mark.asyncio
@@ -686,6 +771,9 @@ def test_route_guards_map_to_http_statuses(api, db):
     resp = client.post("/admin/platform/staff", headers=_h(token),
                        json={"email": NEW_EMAIL, "display_name": "N", "role": "content", "is_owner": True})
     assert resp.status_code == 422   # the owner flag is never writable here
+    resp = client.post("/admin/platform/staff", headers=_h(token),
+                       json={"email": NEW_EMAIL, "display_name": "x" * 121, "role": "content"})
+    assert resp.status_code == 422   # same 120-char limit as the service
 
 
 def test_roles_route_sends_only_the_given_fields(api, db):

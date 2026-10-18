@@ -128,7 +128,7 @@ async def get_staff(staff_id: str, request: Request):
 class CreateStaffBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(..., max_length=254)
-    display_name: str = Field(..., max_length=200)
+    display_name: str = Field(..., max_length=staff_directory.MAX_DISPLAY_NAME_LEN)
     role: CisRole
     booking_role: Optional[BookingRole] = None
 
