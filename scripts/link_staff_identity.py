@@ -30,16 +30,23 @@ quotes of `ecs execute-command`, --map-b64 takes the same entries base64-encoded
   printf 'nghiep=nghieppham@adventure.asia:Nghiệp Phạm\\n' | base64 -w0
 
 Output: a JSON report on stdout; with --s3 it is also written to
-s3://aa-cis-bronze-005097885195/scripts/s242_link_report.json (long ECS exec stdout gets cut).
-Exit code 0 = no errors, 2 = validation / plan errors (nothing applied).
+s3://aa-cis-bronze-005097885195/scripts/s242_link_report_<mode>_<UTC timestamp>.json (long ECS exec stdout
+gets cut). Each run gets its own key, so a later dry run never overwrites an apply report; the key is also
+printed to stderr as `S3_REPORT s3://...`. The report holds staff emails / display names (PII): delete it
+from the bucket once read. Cognito ids are reported only as set / not set.
+Exit code 0 = no errors, 2 = validation / plan / runtime errors. Nothing is applied unless `applied` is true:
+an unexpected exception is caught and reported in `errors`, and the DB transaction rolls back.
 
 Run (each line one command; see skill/aa-cis-schema/references/ecs-exec.md):
   aws s3 cp scripts/link_staff_identity.py s3://aa-cis-bronze-005097885195/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1
   URL=$(aws s3 presign s3://aa-cis-bronze-005097885195/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1 --expires-in 300)
   TASK_ARN=$(aws ecs list-tasks --cluster aa-cis-dev-cluster --service-name aa-cis-dev-api --profile aa365-admin --region us-west-1 --query 'taskArns[0]' --output text)
   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container api --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/s.py && cd /app && python3 /tmp/s.py --dry-run --s3'" --profile aa365-admin --region us-west-1
-  aws s3 cp s3://aa-cis-bronze-005097885195/scripts/s242_link_report.json .tmp-session/s242_link_report.json --profile aa365-admin --region us-west-1
+  aws s3 ls s3://aa-cis-bronze-005097885195/scripts/s242_link_report_ --profile aa365-admin --region us-west-1
+  aws s3 cp s3://aa-cis-bronze-005097885195/scripts/<key from the listing> .tmp-session/s242_link_report.json --profile aa365-admin --region us-west-1
 Then the same with: python3 /tmp/s.py --apply --map-b64 <b64> --owner <username> --s3
+Afterwards delete the reports (PII):
+  aws s3 rm s3://aa-cis-bronze-005097885195/scripts/ --recursive --exclude "*" --include "s242_link_report_*" --profile aa365-admin --region us-west-1
 """
 from __future__ import annotations
 
@@ -58,11 +65,13 @@ from typing import Any, Optional
 SECRET_ID = "aa-cis/dev/rds"
 REGION = "us-west-1"
 S3_BUCKET = "aa-cis-bronze-005097885195"
-S3_KEY = "scripts/s242_link_report.json"
+S3_KEY_PREFIX = "scripts/s242_link_report_"
 DEFAULT_ACTOR = "script:link_staff_identity"
 
-# Same rule as the DB check admin_users_email_chk: '^[^@[:space:]]+@adventure[.]asia$' on a lower-case value.
-EMAIL_RE = re.compile(r"^[^@\s]+@adventure\.asia$")
+# Stricter than the DB check admin_users_email_chk ('^[^@[:space:]]+@adventure[.]asia$' on a lower-case
+# value): the local part is ASCII only, so Python .lower() and Postgres lower() can never disagree (e.g. 'İ').
+EMAIL_RE = re.compile(r"^[a-z0-9._%+-]+@adventure\.asia$")
+OWNER_ROLE = "admin"  # plan C7: owners are Nghiệp + break-glass, both admins
 USERNAME_MAX = 100  # shared.admin_users.username is varchar(100)
 DISPLAY_NAME_MAX = 100
 EMAIL_MAX = 254
@@ -231,8 +240,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--owner", default=None, metavar="USERNAME",
                    help="set is_owner=true for exactly this username (never clears other owners)")
     p.add_argument("--actor", default=DEFAULT_ACTOR, help=f"audit_log actor (<= {ACTOR_MAX} chars)")
-    p.add_argument("--s3", action="store_true", help=f"also write the report to s3://{S3_BUCKET}/{S3_KEY}")
-    p.add_argument("--s3-key", default=S3_KEY, help=argparse.SUPPRESS)
+    p.add_argument("--s3", action="store_true",
+                   help=f"also write the report to s3://{S3_BUCKET}/{S3_KEY_PREFIX}<mode>_<ts>.json")
+    p.add_argument("--s3-key", default=None, help=argparse.SUPPRESS)
     p.add_argument("--secret-id", default=SECRET_ID, help=argparse.SUPPRESS)
     return p
 
@@ -244,7 +254,7 @@ class Options:
     owner: Optional[str]
     actor: str
     s3: bool
-    s3_key: str
+    s3_key: Optional[str]  # None = per-run key from default_s3_key()
     secret_id: str
 
 
@@ -303,6 +313,9 @@ def compute_plan(rows: list[dict[str, Any]], entries: list[MapEntry], owner: Opt
             plan.errors.append(f"--owner {owner}: no shared.admin_users row with this username")
         elif not row.get("is_active"):
             plan.errors.append(f"--owner {owner}: row is inactive; refusing to make it an owner")
+        elif row.get("role") != OWNER_ROLE:
+            plan.errors.append(
+                f"--owner {owner}: role is {row.get('role')!r}; only an {OWNER_ROLE!r} row can be an owner")
         elif row.get("is_owner"):
             plan.warnings.append(f"--owner {owner}: already is_owner=true; no change")
         else:
@@ -320,10 +333,20 @@ def compute_plan(rows: list[dict[str, Any]], entries: list[MapEntry], owner: Opt
 
 
 def public_row(r: dict[str, Any]) -> dict[str, Any]:
-    """A row as it goes into the report (password_hash is never selected in the first place)."""
-    keys = ("id", "username", "role", "is_active", "email", "display_name", "cognito_iss", "cognito_sub",
+    """A row as it goes into the report (password_hash is never selected in the first place). The Cognito
+    issuer / subject are reported only as set / not set, to keep online ids out of the S3 report."""
+    keys = ("id", "username", "role", "is_active", "email", "display_name",
             "last_login_at", "is_owner", "created_at", "updated_at")
-    return {k: (str(r.get(k)) if k == "id" and r.get(k) is not None else r.get(k)) for k in keys}
+    out = {k: (str(r.get(k)) if k == "id" and r.get(k) is not None else r.get(k)) for k in keys}
+    out["cognito_iss_set"] = bool(r.get("cognito_iss"))
+    out["cognito_sub_set"] = bool(r.get("cognito_sub"))
+    return out
+
+
+def default_s3_key(mode: str, now: Optional[datetime.datetime] = None) -> str:
+    """One key per run: scripts/s242_link_report_<mode>_<YYYYmmddTHHMMSSZ>.json."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return f"{S3_KEY_PREFIX}{mode}_{now.strftime('%Y%m%dT%H%M%SZ')}.json"
 
 
 # ── DB / AWS (runs only inside the container) ────────────────────────────────────────────────────────
@@ -350,12 +373,24 @@ async def _connect(secret_id: str):
     )
 
 
+def _import_roots() -> list[str]:
+    """Where the app package may live: /app in the container, the repo root when run from scripts/."""
+    roots = []
+    if os.path.isdir("/app"):
+        roots.append("/app")
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.basename(here) == "scripts":
+        roots.append(os.path.dirname(here))
+    return roots
+
+
 def _audit_writer():
     """Prefer the shared helper (services.acp_shared.audit_log.write_audit_log); fall back to its exact
-    INSERT when it cannot be imported (the script was fetched to /tmp and /app is not importable)."""
-    for path in ("/app", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")):
+    INSERT when it cannot be imported (the script was fetched to /tmp and /app is not importable).
+    Import roots are appended (never prepended), so nothing next to the script shadows the app."""
+    for path in _import_roots():
         if path not in sys.path:
-            sys.path.insert(0, path)
+            sys.path.append(path)
     try:
         from services.acp_shared.audit_log import write_audit_log
     except Exception:  # noqa: BLE001 — any import failure means "use the inline INSERT"
@@ -399,22 +434,31 @@ async def run(opts: Options) -> tuple[dict[str, Any], int]:
         "secret_id": opts.secret_id,
         "requested": {"map": [asdict(e) for e in opts.entries], "owner": opts.owner, "actor": opts.actor},
         "applied": False,
+        "plan": [], "errors": [], "warnings": [],
     }
-    conn = await _connect(opts.secret_id)
+    conn = None
     try:
+        conn = await _connect(opts.secret_id)
         before = [dict(r) for r in await conn.fetch(ROWS_SQL)]
         report["usernames"] = [r["username"] for r in before]
         report["rows_before"] = [public_row(r) for r in before]
         plan = compute_plan(before, opts.entries, opts.owner)
+        report.update(plan=plan.changes, errors=plan.errors, warnings=plan.warnings)
         if opts.apply and plan.ok and plan.changes:
             plan = await _apply(conn, opts, report)
+            report.update(plan=plan.changes, errors=plan.errors, warnings=plan.warnings)
             report["applied"] = plan.ok and bool(plan.changes)
             report["rows_after"] = [public_row(dict(r)) for r in await conn.fetch(ROWS_SQL)]
-        report["plan"] = plan.changes
-        report["errors"] = plan.errors
-        report["warnings"] = plan.warnings
+    except Exception as exc:  # noqa: BLE001 — keep the report (and its S3 copy) whatever fails
+        # An exception inside _apply's transaction block rolls it back, so `applied` stays False there;
+        # it is only True when the commit already happened (e.g. the rows_after read failed).
+        report["errors"] = list(report["errors"]) + [f"{type(exc).__name__}: {exc}"]
     finally:
-        await conn.close()
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception as exc:  # noqa: BLE001
+                report["warnings"] = list(report["warnings"]) + [f"close failed: {type(exc).__name__}: {exc}"]
     return report, (0 if not report["errors"] else 2)
 
 
@@ -435,7 +479,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
     report, code = asyncio.run(run(opts))
     if opts.s3:
-        report["s3_report"] = _write_s3(report, opts.s3_key)
+        key = opts.s3_key or default_s3_key(report["mode"])
+        try:
+            report["s3_report"] = _write_s3(report, key)
+            print(f"S3_REPORT {report['s3_report']}", file=sys.stderr, flush=True)
+        except Exception as exc:  # noqa: BLE001 — stdout still carries the report
+            report["s3_error"] = f"{type(exc).__name__}: {exc}"
     print(json.dumps(report, default=str, ensure_ascii=False, indent=2))
     return code
 
