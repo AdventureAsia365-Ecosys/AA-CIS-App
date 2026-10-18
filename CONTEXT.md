@@ -454,21 +454,89 @@ waves (`/admin/waves`, AA-727).
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
-`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218) and logs in through
-`/auth/admin-login`, which returns a signed JWT kept in the httpOnly `cis_admin_token` cookie. Access
-is decided from the **verified** token role (`/auth/verify-admin`), never from the `cis_role` cookie
-(that cookie is a display hint only). `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s):
-an inactive or unknown account gets 401 and the role returned is the DB role, not the JWT claim, so a
-deactivation or demotion takes effect within ~6 min (BFF verify cache 5 min + 60 s), not at token expiry. Tenants are separate (`cis_tenant_token`, role `tenant`).
+`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218; identity columns from migration 247:
+`email` lower-case `@adventure.asia` only, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
+lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
+`contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
+(`cis_tenant_token`, role `tenant`).
 
-**Cognito staff tokens (ADR 0006 Phase 1, in progress).** `api/core/identity_verifier.py` is the multi-issuer
-RS256 access-token verifier of root ADR 0006 §8 (issuer chosen by the unverified `iss`, one JWKS cache per
-issuer, `token_use=access`, `client_id` allow-list, returns a `Principal`); it is written to be copied
-byte-identical into AA-Booking. `api/core/identity_config.py` holds the CIS staff surface: WORKFORCE ×
-{`cis-admin`, `breakglass`}, Dev pool/client ids as code constants with `COGNITO_*` env overrides, and the
-start-up prefetch (the API lifespan loads the WORKFORCE JWKS in a background task and logs
-`identity_jwks_prefetched`; off when `ENVIRONMENT=test`). No route uses the verifier yet (AA-816 C2); the routes
-above still use the HS256 session token.
+**Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
+(pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`
+(AA-branded; the prefix `amazoncognito.com` domain tripped a Safe Browsing false positive). `/login` shows
+"Sign in with company email" and never redirects by itself.
+- The BFF (`frontend/lib/cognito.ts`, `lib/cognitoRoutes.ts`, routes `app/api/auth/{signin,callback}/{cognito,
+  cognito-breakglass}`, `app/api/auth/refresh`) runs authorization code + PKCE (state + nonce in the 5-minute
+  `cis_oauth_tx` cookie) with a confidential client. Redirect URIs come from a fixed allow-list
+  (`aa-cis.lumiguides.it.com`, localhost in development); any other host (Vercel previews) gets
+  `cognito_host` and only the password form. Domain, issuer and client ids are code constants with
+  `COGNITO_*` env overrides; only the two client secrets are set in Vercel (Production).
+- Cookies: `cis_admin_token` holds the Cognito **access** token (15 min; the cookie lives for the refresh window
+  so middleware can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
+  1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
+  (single-flight; middleware redirects page navigations there, `SessionKeepAlive` POSTs before expiry).
+  `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout revokes the refresh token
+  and goes through Cognito `/logout`.
+- A sign-in completes only after `/auth/verify-admin` accepts the token; a refusal lands on
+  `/login?error=no_access` with no session cookies.
+
+**Verification (backend).** `api/core/identity_verifier.py` (app-neutral, to be copied byte-identical into
+AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
+- issuer chosen by the **unverified `iss`**; only the WORKFORCE issuer is accepted for staff (any other `iss` →
+  401, a JWT without `iss` → the legacy HS256 path); RS256 only, `client_id` ∈ {`cis-admin`, `breakglass`},
+  `token_use=access`, no `aud`, leeway ≤ 60 s; one JWKS cache per issuer, prefetched at start-up
+  (`identity_jwks_prefetched`), unknown `kid` refetched at most once a minute, last good keys kept;
+- the row is found by `(iss, sub)`; on the first sign-in it is linked **once** by `lower(email)` to an active
+  row with no Cognito identity (`email_verified` is trusted from the pre token trigger, which refuses
+  unverified or off-domain addresses; WORKFORCE access tokens do not carry the claim, ADR 0006a A7). A row
+  already bound to another `sub` is never rebound (401; rebinding is an owner action);
+- role = the highest `cis-*` group (`admin > reviewer > content`); no `cis-*` group → 403 even with `booking-*`
+  groups; a different DB role is logged as `staff_role_drift`, not denied; inactive or unknown row → 401;
+  verifier/JWKS/directory outage → 503. Lookups are cached 60 s per `(iss, sub)`.
+- `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a
+  verified Cognito Bearer **overwrites** `x-admin-role` / `x-admin-user-id` from the verified principal
+  (client copies dropped), sets the `current_staff` contextvar and strips `Authorization`; an invalid
+  WORKFORCE Bearer → 401; no Bearer or a non-WORKFORCE token → unchanged. The BFF forwards the Bearer on
+  `/api/admin/*`, `/api/pipeline/*`, `/api/tenant/pipeline/brand-identity` and the staff prefixes of
+  `/api/tenant/*`. `X-Admin-Secret` is still required on every staff call until the cutover.
+
+**Legacy password login (until the cutover).** `/auth/admin-login` (HS256 JWT signed with `JWT_SECRET`) stays.
+`LEGACY_ADMIN_LOGIN_ENABLED` (default on; only `0` / `false` / `no` / `off` switch it off, same parsing in the
+API and the BFF) gates **only** the CIS UI password form + BFF `/api/auth/login` (404 when off) and the HS256
+path of `/auth/verify-admin`. `/auth/admin-login` and `/auth/booking-token` stay on for AA-Booking until its
+Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For an HS256 session
+`/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
+~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
+`cognito_sub` from that person's own sign-in, managed-login break-glass tested; then the secret check becomes
+principal-aware, `ADMIN_SECRET` is rotated and the flag goes off.
+
+**Staff directory writes (AA-816).** `api/services/staff_directory.py`, routes in `api/routers/admin_platform.py`:
+create (`AdminCreateUser` with `MessageAction=SUPPRESS` + `email_verified=true`, `@adventure.asia` only, no
+password), roles (CIS role + Booking grant, mirrored to `cis-*` / `booking-*` groups, add before remove),
+disable (`AdminDisableUser`, then `AdminUserGlobalSignOut`), enable, sign-out ("reset" = re-enable + global
+sign-out; staff have no password) and `/sync` (retry). DB first, then Cognito; a failed Cognito step answers
+502 "saved, Cognito pending" with an idempotent retry. Every change is audited in `acp_shared.audit_log`.
+- `staff.write` = role `admin` **and** a Cognito session (`auth = cognito`; legacy password sessions only read)
+  **and** `admin_users.is_owner`. The owner flag is set out of band (`scripts/link_staff_identity.py`), never
+  through the API. Writes lock the owner rows and re-read the actor in the transaction; the last active owner
+  cannot be demoted or disabled; nobody demotes or disables themselves.
+- The break-glass row (`admin@adventure.asia`, username `admin`) is read-only in the UI (403 on every write).
+  Break-glass itself is password + TOTP through `/api/auth/signin/cognito-breakglass` (no button), disabled
+  between uses; runbook in root ADR 0006a A4.
+- The CIS task role (api and worker) may call only the directory allow-list on WORKFORCE (`identity_iam.tf`,
+  with an explicit Deny on password/attribute/MFA/auth/delete actions); the writer also refuses other
+  operations in code. Residual risk (ADR 0006a A8): IAM cannot stop `AdminCreateUser` with a temporary password
+  or `RESEND`; the reconcile job is the detective control.
+- New staff get no Cognito mail (SUPPRESS); the staff invitation email is in progress (follow-up).
+
+**Reconcile job.** `staff_directory_reconcile` on `shared.job` (`services/staff_reconcile.py`,
+`services/jobs/staff_reconcile_job.py`): report only, `ListUsers` / `ListUsersInGroup` only (no `AdminGetUser`,
+it counts as MAU). Reports drift (Cognito users missing from the directory, rows missing from Cognito,
+group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` users, break-glass state) and
+**cutover readiness** (active rows without an email or `cognito_sub`). On demand: Staff page "Check now"
+(`POST /admin/platform/staff-directory/reconcile`, read `GET …/health`, `staff.read`); the daily run goes
+through the machine route `POST /admin/job-runner/staff-reconcile/schedule` once the ops-probe Lambda calls it
+(Infra follow-up). Job results reach non-admin roles redacted.
 
 The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
@@ -487,7 +555,7 @@ token. New platform pages live under `/admin/platform/*` (backend `api/routers/a
 |---|---|---|---|---|
 | Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
 | Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| Platform pages `/admin/platform/*` (AA-883: Staff directory, read-only) | ✓ | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
 | Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
@@ -507,8 +575,9 @@ not a role permission) and `POLICY` keyed by `(method, route template)`. The rou
 `staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
 `staff_policy_if_staff` does the same only for a request carrying the valid secret, on the routers
 whose own guard also admits a tenant JWT or answers 401 (`admin_pipeline`, `admin_atoms`,
-`/v1/pipeline`, `/v1/rules`, `/v1/social`). The role is the `x-admin-role` the BFF forwards from the verified JWT (header
-trust until the staff Bearer JWT / Cognito). The secret **without** a role header is the *machine*
+`/v1/pipeline`, `/v1/rules`, `/v1/social`). The role is the `x-admin-role` the BFF forwards
+from the verified token; for a Cognito Bearer the `staff_bearer` middleware overwrites it from the
+verified principal (header trust remains only for legacy and secret-only requests until the cutover). The secret **without** a role header is the *machine*
 principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
 Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/api/tour-full/*`,
 `/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`
@@ -529,17 +598,17 @@ has a policy, every staff router runs the policy, `/admin/platform/*` has no ope
 Content lifecycle (activate/deactivate/trash/restore) and Settings brand writes are admin-only (§5.1
 of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
-`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through this
-same CIS staff login; Booking keeps a thin profile keyed by `admin_users.id` and verifies a
-CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
+`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through the CIS
+legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phase 2); Booking keeps a thin
+profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
 ### Booking staff token (AA-680)
 
 CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
 `api/main.py`, key handling in `api/core/booking_jwt.py`:
 
-- `POST /auth/booking-token` — needs a CIS staff session: the `cis_admin_token` JWT as an
-  `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
+- `POST /auth/booking-token` — needs a CIS **HS256** staff session (a Cognito session cannot mint one until
+  Booking Phase 2): the `cis_admin_token` JWT as an `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
   (must be `is_active`; the role comes from the row, not the session). Returns
   `{access_token, token_type: "Bearer", expires_in: 900}`. 401 for no/invalid/tenant session or an
   inactive user; 503 when the signing key is not configured.
@@ -548,8 +617,8 @@ CIS is the staff identity provider for AA-Booking. Two public endpoints, both on
   `Cache-Control: public, max-age=600`.
 
 Token: RS256, header `kid`. Claims `iss=https://api-cis.lumiguides.it.com`, `aud=booking`,
-`sub=<admin_users.id>`, `name` and `preferred_username` (= username; `admin_users` has no email or
-display-name column), `cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
+`sub=<admin_users.id>`, `name` and `preferred_username` (= username; the token carries no email),
+`cis_role` (`admin|reviewer|content`), `iat`, `nbf`, `exp` (+15 min), `jti`.
 Booking must verify signature via the JWKS (select by `kid`), pin `alg=RS256`, and require `iss`,
 `aud=booking` and `exp`. Booking MUST re-fetch the JWKS once when a token's `kid` is not in its
 cached copy (rate-limited, e.g. at most once per 60 s), then reject if the `kid` is still unknown.
