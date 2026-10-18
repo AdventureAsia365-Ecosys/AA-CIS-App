@@ -26,7 +26,7 @@
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth-server";
+import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -70,6 +70,9 @@ async function handler(
     "x-admin-user-id": auth.adminId,
     // AA-769 — the verified JWT role, so the backend can re-check admin-only writes.
     "x-admin-role": auth.role,
+    // AA-816 (C5): a Cognito session also forwards its access token; the API's staff_bearer
+    // middleware then takes role + actor from the verified token. Legacy sessions: nothing added.
+    ...staffBearerHeader(auth),
   };
 
   // AA-241 shim — kept for backward compat until backend reads

@@ -28,12 +28,23 @@
 // CONTENT_PASSWORD env var, no JWT) is removed. Content staff are rows in
 // shared.admin_users with role 'content' (migration 218) and log in here like
 // admin/reviewer, so every staff session carries a verifiable JWT.
+//
+// AA-816 (C4, ADR 0006 D3): this password login is the legacy path. LEGACY_ADMIN_LOGIN_ENABLED=false
+// makes it 404 (default ON when unset; the code stays 30 days as the rollback path). The display
+// cookies cis_role / cis_user are now set here by the server (they used to be written by
+// login/page.tsx with document.cookie), which also overwrites a tenant session's httpOnly cis_role.
 import { NextRequest, NextResponse } from "next/server";
+import { STAFF_REFRESH_COOKIE, STAFF_REFRESH_COOKIE_PATH, legacyAdminLoginEnabled } from "@/lib/staffSession";
+import { setDisplayCookies } from "@/lib/cognito";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
+const LEGACY_SESSION_S = 60 * 60 * 24; // 24h — matches backend JWT_EXPIRY_H
 
 export async function POST(req: NextRequest) {
-  const { username, password } = await req.json();
+  if (!legacyAdminLoginEnabled()) {
+    return NextResponse.json({ detail: "Not found" }, { status: 404 });
+  }
+  const { username, password } = await req.json().catch(() => ({}));
 
   if (!username || !password) {
     return NextResponse.json({ detail: "Missing credentials" }, { status: 400 });
@@ -77,8 +88,13 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 24, // 24h — matches backend JWT_EXPIRY_H
+      maxAge: LEGACY_SESSION_S,
     });
+    setDisplayCookies(response, { role: data.role, name: data.username ?? "" }, LEGACY_SESSION_S);
+    // AA-816: a password login replaces any earlier Cognito session on this browser. Drop its refresh
+    // cookie, or the keep-alive would later refresh that old session over this legacy token (and logout
+    // would take the Cognito path).
+    response.cookies.set(STAFF_REFRESH_COOKIE, "", { path: STAFF_REFRESH_COOKIE_PATH, maxAge: 0 });
     return response;
   } catch {
     // Network error / timeout / route unreachable — a real infra failure,

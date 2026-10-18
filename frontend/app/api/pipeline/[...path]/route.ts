@@ -2,7 +2,7 @@
 // caller check — requireAdmin() now verifies the real admin JWT before
 // any request reaches the backend.
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth-server";
+import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -40,6 +40,7 @@ async function handler(
     // staff_policy_if_staff (api/core/staff_authz.py): without a role the backend sees the machine
     // principal, which no /v1/pipeline write allows.
     "x-admin-role": auth.role,
+    ...staffBearerHeader(auth), // AA-816 (C5): Cognito sessions only
   };
 
   let body: ArrayBuffer | string | undefined;

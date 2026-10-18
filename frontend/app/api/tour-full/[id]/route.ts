@@ -31,6 +31,9 @@ export async function GET(
       "x-admin-user-id": auth.adminId,
       "x-admin-role": auth.role,
       ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+      // AA-816 (C5): no staff Bearer here on purpose. /v1/tours/{id}/full is not a staff path (the C3
+      // middleware neither uses nor strips it) and checks the admin secret first, so a Bearer would only
+      // add a rate-limiter warning per call and one more place a live token travels. Revisit in C9.
     },
     cache: "no-store",
   });

@@ -39,10 +39,24 @@
 // checked comes from the VERIFIED token, never from the `cis_role` cookie — before this, a reviewer
 // with a valid token could set `cis_role=admin` by hand and open admin-only pages, and the content
 // role had no token at all.
+//
+// AA-816 (C4): `cis_admin_token` holds either the legacy HS256 JWT or a Cognito access token (it has
+// an `iss`). A Cognito token that is expired (or about to be) is refreshed by redirecting to the
+// single-flight /api/auth/refresh route — the refresh cookie is scoped to /api/auth and never reaches
+// a page request — which rotates the tokens and sends the browser back here. The Cognito path never
+// fails open, not even in development.
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { adminVerifyCache, tenantVerifyCache } from "./lib/auth-server";
 import { isStaffRole, landingPage, pageRule } from "./lib/rbac";
+import {
+  REFRESH_PATH,
+  STAFF_REFRESH_COOKIE,
+  STAFF_REFRESH_COOKIE_PATH,
+  STAFF_TOKEN_COOKIE,
+  isCognitoToken,
+  tokenExpiresSoon,
+} from "./lib/staffSession";
 
 const PUBLIC_PATHS = ["/login", "/tenant-login"];
 
@@ -82,14 +96,19 @@ export async function middleware(request: NextRequest) {
   const allowed = route.roles as string[];
 
   // AA-656: identity comes from whichever session token is present, verified server-side.
-  if (request.cookies.get("cis_admin_token")?.value) {
+  const staffToken = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
+  if (staffToken) {
+    if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
+      // AA-816: refresh first (no verify round trip for a token that is about to die). The route
+      // validates `next` as a same-site path before redirecting back to it.
+      const refreshUrl = new URL(REFRESH_PATH, request.url);
+      refreshUrl.searchParams.set("next", pathname + request.nextUrl.search);
+      return NextResponse.redirect(refreshUrl);
+    }
     const verified = await verifyAdminToken(request);
     if (verified instanceof NextResponse) return verified; // invalid/expired token
     if (!isStaffRole(verified.role)) {
-      const response = NextResponse.redirect(new URL("/login", request.url));
-      response.cookies.delete("cis_role");
-      response.cookies.delete("cis_admin_token");
-      return response;
+      return toStaffLogin(request);
     }
     if (!allowed.includes(verified.role)) {
       // Real staff session, page not allowed for its role → its own landing page, not /login.
@@ -115,18 +134,16 @@ export async function middleware(request: NextRequest) {
 // Returns a NextResponse (redirect) if verification fails, or the verified
 // role if it passed (caller checks it against the page rule). A missing token always fails closed (AA-252
 // #1). Only the /auth/verify-admin network-failure case below keeps the
-// fail-open-in-dev / fail-closed-in-prod policy, matching the tenant helper.
+// fail-open-in-dev / fail-closed-in-prod policy, matching the tenant helper — and only for a legacy
+// HS256 token: a Cognito token (AA-816) always fails closed.
 async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { role: string }> {
-  const token = request.cookies.get("cis_admin_token")?.value;
+  const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
   if (!token) {
     // AA-252: no JWT present → fail closed. The legacy ADMIN_SECRET fallback
     // (login/route.ts) that used to leave sessions with a role cookie but no
     // JWT has been retired — cis_role alone is client-writable and proves
     // nothing. Every admin/reviewer session must carry a verified JWT now.
-    const response = NextResponse.redirect(new URL("/login", request.url));
-    response.cookies.delete("cis_role");
-    response.cookies.delete("cis_admin_token");
-    return response;
+    return toStaffLogin(request);
   }
 
   // AA-573: shares lib/auth-server.ts's cache (AA-551). Without this, the
@@ -145,23 +162,39 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
       signal: AbortSignal.timeout(3000),
     });
 
+    if (res.status >= 500) {
+      // AA-816: a backend error is not a refusal. Fail closed, but keep the session cookies so the user
+      // can carry on once the backend is back (a Cognito refresh that just rotated the tokens lands
+      // here when verify-admin is still down; wiping would throw the new refresh token away).
+      return NextResponse.redirect(new URL("/login?error=backend", request.url));
+    }
     if (!res.ok) {
-      const response = NextResponse.redirect(new URL("/login", request.url));
-      response.cookies.delete("cis_role");
-      response.cookies.delete("cis_admin_token");
-      return response;
+      return toStaffLogin(request);
     }
     const data = await res.json();
-    adminVerifyCache.set(token, { adminId: data.admin_id, role: data.role });
+    adminVerifyCache.set(token, {
+      adminId: data.admin_id,
+      role: data.role,
+      name: data.display_name || data.email || data.username || "",
+    });
     return { role: data.role };
   } catch {
     const isDev = process.env.NODE_ENV === "development";
-    if (!isDev) {
+    if (!isDev || isCognitoToken(token)) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
     console.warn("[middleware] Admin JWT verify failed — dev mode, allowing through");
     return { role: request.cookies.get("cis_role")?.value ?? "" };
   }
+}
+
+/** Redirect to /login and drop the staff session cookies (refresh cookie included, at its own path). */
+function toStaffLogin(request: NextRequest): NextResponse {
+  const response = NextResponse.redirect(new URL("/login", request.url));
+  response.cookies.delete("cis_role");
+  response.cookies.delete(STAFF_TOKEN_COOKIE);
+  response.cookies.set(STAFF_REFRESH_COOKIE, "", { path: STAFF_REFRESH_COOKIE_PATH, maxAge: 0 });
+  return response;
 }
 
 // ── Tenant helper — verify cis_tenant_token ─────────────────────────────────

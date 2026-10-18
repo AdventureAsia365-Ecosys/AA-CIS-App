@@ -32,13 +32,23 @@
 // access through this proxy, or was the old pass-through itself the bug).
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { requireAdmin, requireTenant } from "@/lib/auth-server";
+import { requireAdmin, requireTenant, staffBearerHeader } from "@/lib/auth-server";
 import { API_RULES, isApiDocsPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
+
+// AA-816 (C5): the backend paths where the API's staff_bearer middleware reads a staff Bearer
+// (api/core/staff_authz.py STAFF_PATH_PREFIXES). This proxy reaches ANY backend path, and several
+// tenant routes read `Authorization` as a TENANT token first (e.g. v1_tours get_tenant), so a staff
+// Bearer is forwarded only under these prefixes; elsewhere the staff branch stays secret-only.
+const STAFF_BEARER_PREFIXES = ["admin", "v1/pipeline", "v1/rules", "v1/social"];
+
+function isStaffBearerPath(pathStr: string): boolean {
+  return STAFF_BEARER_PREFIXES.some((p) => pathStr === p || pathStr.startsWith(p + "/"));
+}
 
 async function handler(
   req: NextRequest,
@@ -51,11 +61,13 @@ async function handler(
 
   const headers: Record<string, string> = {};
   let staffRole: string | null = null;
+  let staffBearer: Record<string, string> = {};
 
   if (isStaff) {
     const auth = await requireAdmin(req, API_RULES.tenantProxy);
     if (!auth.ok) return auth.response;
     staffRole = auth.role;
+    staffBearer = staffBearerHeader(auth);
 
     if (!ADMIN_SECRET) {
       return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
@@ -86,6 +98,9 @@ async function handler(
   }
   if (staffRole !== null && staffRole !== "admin" && isApiDocsPath(pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
+  }
+  if (staffRole !== null && isStaffBearerPath(pathStr)) {
+    Object.assign(headers, staffBearer);
   }
   const search = req.nextUrl.search;
   const url = `${API_URL}/${upstreamPath}${search}`;
