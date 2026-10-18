@@ -259,3 +259,84 @@ def test_middleware_is_registered_outside_the_rate_limiter():
     """Starlette: user_middleware[0] is the outermost layer."""
     names = [getattr(m.kwargs.get("dispatch"), "__name__", None) or m.cls.__name__ for m in real_app.user_middleware]
     assert names.index("StaffBearerMiddleware") < names.index("rate_limit_middleware")
+
+
+# ── Review fixes: other issuers pass through; the dropped Authorization reaches real guards ───────
+
+OTHER_ISS = "https://cognito-idp.us-west-1.amazonaws.com/us-west-1_EXTERNALPOOL"
+
+
+def test_non_workforce_issuer_bearer_passes_through_untouched(issuer, directory):
+    """A JWT from another issuer (future EXTERNAL cis-portal token, CIS-minted Booking RS256) is not a staff
+    token: the middleware leaves it, headers and all, to the route's own guard (review finding 2)."""
+    token = issuer.token(iss=OTHER_ISS)
+    res = TestClient(_echo_app(directory)).get(
+        "/admin/echo", headers={"Authorization": f"Bearer {token}", "x-admin-role": "content"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["authorization"] == f"Bearer {token}"
+    assert body["role"] == "content" and body["current"] is None
+    assert directory.sql == []
+
+
+class _RoutePool(Directory):
+    """Directory plus empty answers for the route's own queries (brand rules, raw_sources)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.route_args: list = []
+
+    async def fetchrow(self, sql, *args):
+        if "tenant_brand_rules" in sql:
+            self.route_args.append(args)
+            return None
+        return await super().fetchrow(sql, *args)
+
+    async def fetch(self, sql, *args):
+        if "raw_sources" in sql:
+            self.route_args.append(args)
+            return []
+        return await super().fetch(sql, *args)
+
+
+@pytest.fixture
+def route_pool(monkeypatch, issuer):
+    pool = _RoutePool()
+    monkeypatch.delenv("ADMIN_SECRET", raising=False)
+    monkeypatch.setattr(admin, "ADMIN_SECRET", SECRET)
+    monkeypatch.setattr(admin_settings, "ADMIN_SECRET", SECRET)
+    monkeypatch.setattr(real_app.state, "pool", pool, raising=False)
+    return pool
+
+
+def test_real_app_brand_identity_cognito_bearer_is_a_staff_call(route_pool, issuer):
+    """GET /admin/brand-identity reads a Bearer as a tenant JWT; with the Authorization header dropped after
+    verify, a Cognito staff call is the secret-path staff call for the AA-internal tenant (not 401)."""
+    route_pool.add(iss=ISS, sub=SUB)
+    res = TestClient(real_app).get("/admin/brand-identity", headers={
+        "Authorization": f"Bearer {issuer.token()}", "X-Admin-Secret": SECRET})
+    assert res.status_code == 200, res.text
+    assert res.json()["configured"] is False
+    assert route_pool.route_args == [("00000000-0000-0000-0000-000000000001",)]
+
+
+def test_real_app_brand_identity_other_issuer_meets_the_route_guard(route_pool, issuer):
+    """A non-WORKFORCE iss reaches the route's tenant-JWT guard (401 from the route, not the staff verifier)."""
+    route_pool.add(iss=ISS, sub=SUB)
+    res = TestClient(real_app).get("/admin/brand-identity", headers={
+        "Authorization": f"Bearer {issuer.token(iss=OTHER_ISS)}", "X-Admin-Secret": SECRET})
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Invalid token"
+    assert staff_identity.SQL_BY_IDENTITY not in route_pool.sql
+    assert route_pool.route_args == []
+
+
+def test_real_app_v1_pipeline_cognito_bearer_with_secret_is_200(route_pool, issuer, monkeypatch):
+    route_pool.add(iss=ISS, sub=SUB)
+    monkeypatch.setenv("ADMIN_SECRET", SECRET)
+    monkeypatch.setattr(rate_limit, "track_api_call", AsyncMock())
+    res = TestClient(real_app).get("/v1/pipeline/sources", headers={
+        "Authorization": f"Bearer {issuer.token()}", "X-Admin-Secret": SECRET})
+    assert res.status_code == 200, res.text
+    assert res.json()["sources"] == []
+    assert route_pool.route_args and route_pool.route_args[0][0] == "00000000-0000-0000-0000-000000000001"

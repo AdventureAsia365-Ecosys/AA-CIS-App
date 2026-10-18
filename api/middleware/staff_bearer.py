@@ -4,18 +4,19 @@ Pure ASGI middleware on the staff paths (``STAFF_PATH_PREFIXES``: /admin, /v1/pi
 /v1/social). Registered in ``api/main.py`` after the rate limiter, so it wraps it: the rate limiter's admin
 tracking and every route below see the verified identity, never the client's.
 
-- **Cognito Bearer** (a JWT with an ``iss``, ``api/core/staff_identity.token_kind``): verified by the C2
-  verifier (WORKFORCE x {cis-admin, breakglass}) and resolved to the active ``shared.admin_users`` row by
+- **Cognito Bearer** (a JWT whose ``iss`` is the WORKFORCE issuer, ``api/core/staff_identity.token_kind``): verified
+  by the C2 verifier (WORKFORCE x {cis-admin, breakglass}) and resolved to the active ``shared.admin_users`` row by
   ``(iss, sub)`` (first sign-in binds by email, once). Then ``x-admin-role`` (highest ``cis-*`` group) and
-  ``x-admin-user-id`` (``admin_users.id``) are REWRITTEN from the verified principal and whatever the client
-  sent under those names is dropped; the ``Authorization`` header is dropped too, so the routes' own guards
-  (which read a Bearer as a tenant HS256 JWT) see a plain staff request. The identity is put in the
+  ``x-admin-user-id`` (``admin_users.id``) are REWRITTEN from the verified principal and whatever the client sent
+  under those names is dropped; the ``Authorization`` header is dropped too, so the routes' own guards (which read a
+  Bearer as a tenant HS256 JWT) see a plain staff request. The identity is put in the
   ``staff_identity.current_staff`` contextvar and ``scope["state"]["staff_identity"]``; one
-  ``staff_bearer_verified`` line is logged.
-  Refused: 401 (bad token, unknown / inactive user), 403 (no ``cis-*`` group), 503 (verifier, JWKS or
-  directory unavailable). The request never reaches the route.
-- **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, or not a JWT) and **no Bearer**:
-  passed through untouched. Header trust for those stays as it was (``staff_authz.py``) until cutover (C9).
+  ``staff_bearer_verified`` line is logged. Refused: 401 (bad token, unknown / inactive user), 403 (no ``cis-*``
+  group), 503 (verifier, JWKS or directory unavailable). The request never reaches the route.
+- **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
+  future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
+  passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
+  tenant tokens). Header trust for those stays as it was (``staff_authz.py``) until cutover (C9).
 
 The secret check is not touched: the inline ``verify_admin_secret`` calls and ``staff_policy`` still require
 ``X-Admin-Secret`` (ADR 0006 phase 1: the BFF keeps sending it until cutover).

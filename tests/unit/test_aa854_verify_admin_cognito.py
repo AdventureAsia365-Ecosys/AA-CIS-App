@@ -249,8 +249,9 @@ def test_legacy_flag_off_refuses_hs256_but_not_cognito(legacy, issuer, monkeypat
     assert _verify(client, issuer.token()).status_code == 200
 
 
-@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE"])
-def test_legacy_flag_truthy_values_keep_hs256(legacy, monkeypatch, value):
+@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", "", "  ", "on", "ture", "enabled"])
+def test_legacy_flag_stays_on_unless_explicitly_off(legacy, monkeypatch, value):
+    """Only 0/false/no/off switch the rollback path off; empty or a typo keeps it (review finding 4)."""
     monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", value)
     uid = legacy.add(role="admin")
     assert _verify(TestClient(app), _create_admin_jwt(uid, "staff-1", "admin")).status_code == 200
@@ -265,5 +266,67 @@ def test_token_kind_picks_the_path_by_iss():
         assert staff_identity.token_kind("") == "malformed"
         assert staff_identity.token_kind(None) == "malformed"
         assert staff_identity.token_kind("a" * 9000) == "malformed"
+        # Another issuer (EXTERNAL portal, CIS-minted Booking RS256) is not a CIS staff token.
+        assert staff_identity.token_kind(issuer.token(iss="https://cognito-idp.us-west-1.amazonaws.com/x")) == "other"
     finally:
         identity_config.reset_cis_staff_verifier()
+
+
+def test_token_kind_fails_closed_when_the_verifier_can_not_be_built(monkeypatch):
+    """A bad issuer override must not turn WORKFORCE tokens into pass-through ones: they stay "cognito" so
+    the caller answers 503."""
+    from tests.unit.aa854_cognito_staff import StaffIssuer
+
+    identity_config.reset_cis_staff_verifier()
+    monkeypatch.setenv(identity_config.ENV_WORKFORCE_ISSUER, "http://not-https.example")
+    try:
+        assert staff_identity.token_kind(StaffIssuer(ISS).token()) == "cognito"
+    finally:
+        identity_config.reset_cis_staff_verifier()
+
+
+def test_foreign_issuer_is_refused_401_without_the_legacy_path(client, directory, issuer, monkeypatch):
+    """A JWT from another issuer never reaches the HS256 path or the directory, legacy flag on or off."""
+    directory.add(iss=ISS, sub=SUB)
+    for flag in ("true", "false"):
+        monkeypatch.setenv("LEGACY_ADMIN_LOGIN_ENABLED", flag)
+        with capture_logs() as logs:
+            res = _verify(client, issuer.token(iss="https://cognito-idp.us-west-1.amazonaws.com/us-west-1_EXT"))
+        assert res.status_code == 401
+        assert res.json()["detail"] == "Invalid staff token"
+        assert any(e.get("reason") == "foreign_issuer" for e in logs)
+    assert directory.sql == []
+
+
+def test_first_link_refused_when_email_verified_is_false(client, directory, issuer):
+    """ADR 0006 §6: link by email only on a verified address (review finding 5)."""
+    uid = directory.add()
+    with capture_logs() as logs:
+        res = _verify(client, issuer.token(email_verified="false"))
+    assert res.status_code == 401
+    assert directory.links == 0 and directory.row(uid)["cognito_sub"] is None
+    assert any(e.get("reason") == "email_not_verified" for e in logs)
+
+
+def test_first_link_allowed_when_email_verified_is_true(client, directory, issuer):
+    uid = directory.add()
+    assert _verify(client, issuer.token(email_verified=True)).status_code == 200
+    assert directory.row(uid)["cognito_sub"] == SUB
+
+
+def test_last_login_write_failure_does_not_fail_the_sign_in(client, directory, issuer):
+    """last_login_at is bookkeeping (review finding 3): first load and cache hit both still answer 200."""
+    uid = directory.add()                           # unbound: the first call links, then the touch fails
+    directory.fail_touch = True
+    with capture_logs() as logs:
+        first = _verify(client, issuer.token())
+        second = _verify(client, issuer.token())    # cache hit, touch retried, fails again
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert directory.row(uid)["cognito_sub"] == SUB
+    assert [e["event"] for e in logs].count("staff_identity_touch_failed") == 2
+    directory.fail_touch = False
+    assert _verify(client, issuer.token()).status_code == 200   # retried once it works
+    assert directory.touches == [uid]
+    assert _verify(client, issuer.token()).status_code == 200   # then at most once per cache entry
+    assert directory.touches == [uid]

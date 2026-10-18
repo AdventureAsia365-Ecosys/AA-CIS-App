@@ -53,6 +53,7 @@ class Directory:
         self.links = 0
         self.touches: list[str] = []
         self.fail = False
+        self.fail_touch = False
 
     def add(self, *, role: str = "admin", email: Optional[str] = EMAIL, active: bool = True,
             iss: Optional[str] = None, sub: Optional[str] = None, username: str = "staff-1",
@@ -95,6 +96,8 @@ class Directory:
     async def execute(self, sql: str, *args: Any) -> str:
         self.sql.append(sql)
         if sql == staff_identity.SQL_TOUCH_LOGIN:
+            if self.fail_touch:
+                raise OSError("connection reset during last_login_at write")
             self.touches.append(str(args[0]))
             self.row(str(args[0]))["last_login_at"] = "now"
             return "UPDATE 1"

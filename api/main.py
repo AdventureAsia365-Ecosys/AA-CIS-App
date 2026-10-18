@@ -390,10 +390,12 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     Verify a staff session token (server-side, called by the Next.js middleware and BFF) — mirrors
     /auth/verify-tenant. The path is chosen by the unverified `iss` (AA-816 C3):
 
-    - Cognito access token (has `iss`): WORKFORCE x {cis-admin, breakglass} verifier (C2), then
+    - Cognito access token (`iss` = the WORKFORCE issuer): WORKFORCE x {cis-admin, breakglass} verifier (C2), then
       api/core/staff_identity.py: a `cis-*` group is required (403 otherwise), the row is found by
       (cognito_iss, cognito_sub) or bound once by email on the first sign-in, 401 when unknown or inactive,
-      role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set.
+      role = highest `cis-*` group (a difference with the DB role is logged as drift), last_login_at set
+      (best effort).
+    - Any other `iss` (EXTERNAL portal, Booking RS256): 401, never a staff session.
     - Legacy HS256 token (no `iss`): unchanged, gated by LEGACY_ADMIN_LOGIN_ENABLED (default true). Re-reads
       shared.admin_users (cached 60 s): 401 when the account is gone or inactive, and the role returned is the
       DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy
@@ -401,7 +403,12 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
     """
     body = await request.json()
     token = body.get("token", "")
-    if staff_identity.token_kind(token) == staff_identity.AUTH_COGNITO:
+    kind = staff_identity.token_kind(token)
+    if kind == staff_identity.AUTH_OTHER:
+        # A JWT from another issuer (EXTERNAL portal, CIS-minted Booking RS256): never a CIS staff session.
+        logger.warning("verify_admin_refused", auth=staff_identity.AUTH_OTHER, status=401, reason="foreign_issuer")
+        raise HTTPException(status_code=401, detail="Invalid staff token")
+    if kind == staff_identity.AUTH_COGNITO:
         try:
             identity = await staff_identity.authenticate(db, token, touch_login=True)
         except staff_identity.StaffAuthError as exc:

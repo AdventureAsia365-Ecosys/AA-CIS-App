@@ -8,9 +8,13 @@ Turns a verified WORKFORCE access token into the CIS staff member behind it. Use
 
 Rules
 -----
-1. **Path by the unverified ``iss``** (:func:`token_kind`): a JWT with an ``iss`` claim is a Cognito token
-   and goes through the C2 verifier (``api/core/identity_config.py``: WORKFORCE x {cis-admin, breakglass});
-   a JWT without one is a legacy HS256 token (staff or tenant) and is left to the existing checks.
+1. **Path by the unverified ``iss``** (:func:`token_kind`): a JWT whose ``iss`` is the configured WORKFORCE
+   issuer is a Cognito staff token and goes through the C2 verifier (``api/core/identity_config.py``:
+   WORKFORCE x {cis-admin, breakglass}); a JWT without ``iss`` is a legacy HS256 token (staff or tenant) and
+   is left to the existing checks; a JWT with any OTHER ``iss`` (a future EXTERNAL ``cis-portal`` token, the
+   CIS-minted Booking RS256 token) is "other": the bearer middleware lets it through to the route's own
+   guard, and ``/auth/verify-admin`` refuses it (401). When the verifier can not be built (bad env override),
+   every ``iss``-bearing token is treated as staff so the caller answers 503 (fail closed).
 2. **A ``cis-*`` group is required.** The pre token trigger is not client-aware, so a user with only
    ``booking-*`` groups still gets a cis-admin token: no CIS group -> 403.
 3. **Role = the highest ``cis-*`` group** (:data:`GROUP_ROLES`, same order as the WORKFORCE group precedence
@@ -20,7 +24,10 @@ Rules
    the token identity to the ACTIVE row whose ``lower(email)`` equals the token's ``email`` and whose identity
    is still empty, once (``UPDATE … WHERE cognito_sub IS NULL``; a row bound to another identity is never
    re-bound). The email claim is trusted here because the WORKFORCE pre token trigger only issues tokens to
-   ``@adventure.asia`` addresses with ``email_verified`` and app clients cannot write ``email``.
+   ``@adventure.asia`` addresses with ``email_verified`` and app clients cannot write ``email``. The trigger
+   adds ``email`` but not ``email_verified`` to the access token (ADR 0006 §6 asks APIs to check it), so as
+   defence in depth the link is refused when the token says ``email_verified`` is false; absent = trusted
+   on the trigger's check.
 5. Unknown identity, an inactive row, or a row bound to another identity -> 401.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
@@ -28,8 +35,13 @@ Rules
 Errors are :class:`StaffAuthError` with the HTTP status to answer: 401 bad token / unknown or inactive user,
 403 no CIS group, 503 verifier, JWKS or directory unavailable (never a 500).
 
+``last_login_at`` is bookkeeping: a failed write is logged (``staff_identity_touch_failed``) and never turns a
+successful sign-in into an error.
+
 ``LEGACY_ADMIN_LOGIN_ENABLED`` (default true, :func:`legacy_login_enabled`) gates only the HS256 path of
 ``/auth/verify-admin`` (decision D3); ``/auth/admin-login`` and ``/auth/booking-token`` stay for Booking.
+Only an explicit ``0``/``false``/``no``/``off`` switches it off, so a typo or empty value keeps the rollback
+path open.
 """
 from __future__ import annotations
 
@@ -50,6 +62,10 @@ logger = structlog.get_logger()
 
 AUTH_COGNITO = "cognito"
 AUTH_LEGACY = "legacy"
+AUTH_OTHER = "other"          # a JWT with an iss that is not the WORKFORCE issuer (token_kind only)
+AUTH_MALFORMED = "malformed"
+
+_LEGACY_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
 # WORKFORCE group -> shared.admin_role, highest first (identity.tf group precedence cis-admin 10,
 # cis-reviewer 20, cis-content 30; ADR 0006 §3).
@@ -107,23 +123,36 @@ class StaffIdentity:
 
 def legacy_login_enabled() -> bool:
     """D3: the legacy CIS password session (HS256 path of /auth/verify-admin; the UI login reads the same
-    name in the BFF). Default true; read per call so a task-definition change needs no code change."""
-    return os.environ.get("LEGACY_ADMIN_LOGIN_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+    name in the BFF and must parse it the same way). Default true; only an explicit 0/false/no/off turns it
+    off, so unset, empty or a typo keeps the rollback path. Read per call so a task-definition change needs
+    no code change."""
+    value = os.environ.get("LEGACY_ADMIN_LOGIN_ENABLED", "").strip().lower()
+    return value not in _LEGACY_OFF_VALUES
 
 
 def token_kind(token: Any) -> str:
-    """``"cognito"`` for a JWT that carries an ``iss`` claim, ``"legacy"`` for a JWT without one (the HS256
-    staff and tenant tokens, ``api/routers/auth.py``), ``"malformed"`` for anything else. Nothing is
-    verified here; the kind only picks which verifier runs."""
+    """Which verifier runs; nothing is verified here.
+
+    - ``"cognito"``: a JWT whose ``iss`` is one of the CIS staff verifier's issuers (WORKFORCE), or any
+      ``iss``-bearing JWT when that verifier can not be built (so the caller answers 503, fail closed);
+    - ``"legacy"``: a JWT without ``iss`` (the HS256 staff and tenant tokens, ``api/routers/auth.py``);
+    - ``"other"``: a JWT with another ``iss`` (not a CIS staff token; left to the route's own guard);
+    - ``"malformed"``: anything else."""
     if not isinstance(token, str) or not token or len(token) > MAX_TOKEN_CHARS:
-        return "malformed"
+        return AUTH_MALFORMED
     try:
         claims = jwt.decode(token, options={"verify_signature": False})
     except jwt.PyJWTError:
-        return "malformed"
+        return AUTH_MALFORMED
     if not isinstance(claims, dict):
-        return "malformed"
-    return AUTH_COGNITO if "iss" in claims else AUTH_LEGACY
+        return AUTH_MALFORMED
+    if "iss" not in claims:
+        return AUTH_LEGACY
+    try:
+        staff_issuers = {cfg.issuer for cfg in identity_config.get_cis_staff_verifier().issuers}
+    except Exception:  # noqa: BLE001 - bad env override: verify_staff_token answers 503
+        return AUTH_COGNITO
+    return AUTH_COGNITO if claims["iss"] in staff_issuers else AUTH_OTHER
 
 
 def role_from_groups(groups: Iterable[str]) -> Optional[str]:
@@ -195,6 +224,10 @@ async def _load(conn: Any, principal: Principal) -> Optional[StaffRow]:
         if not email:
             logger.warning("staff_identity_refused", reason="unknown_identity_no_email", sub=principal.sub)
             return None
+        if principal.email_verified is False:
+            # ADR 0006 §6: link by email only on a verified address (defence in depth; the trigger checks too).
+            logger.warning("staff_identity_refused", reason="email_not_verified", sub=principal.sub)
+            return None
         try:
             record = await conn.fetchrow(SQL_FIRST_LINK, principal.iss, principal.sub, email)
         except asyncpg.UniqueViolationError:
@@ -229,31 +262,32 @@ async def _cached_row(db: Any, principal: Principal, *, touch_login: bool) -> tu
     hit = _cache.get(key)
     if hit and hit[0] > now:
         expires_at, row, touched = hit
-        if touch_login and row is not None and not touched:
-            await _touch(db, row)
+        if touch_login and row is not None and not touched and await _touch(db, row):
             _cache[key] = (expires_at, row, True)
         return row, False
     try:
         async with db.acquire() as conn:
             row = await _load(conn, principal)
-            if row is not None and touch_login:
-                await conn.execute(SQL_TOUCH_LOGIN, row.admin_id)
     except Exception as exc:  # noqa: BLE001 - a directory outage is 503, never a 500 or an open door
         logger.error("staff_identity_directory_unavailable", error=type(exc).__name__)
         raise StaffAuthError(503, "Staff directory is unavailable", "directory_unavailable") from exc
+    touched = bool(touch_login and row is not None and await _touch(db, row))
     if len(_cache) >= STAFF_STATE_MAX:
         _cache.clear()
-    _cache[key] = (now + STAFF_STATE_TTL_S, row, touch_login and row is not None)
+    _cache[key] = (now + STAFF_STATE_TTL_S, row, touched)
     return row, True
 
 
-async def _touch(db: Any, row: StaffRow) -> None:
+async def _touch(db: Any, row: StaffRow) -> bool:
+    """Best effort ``last_login_at = now()``: bookkeeping, not authentication. A failure is logged and the
+    sign-in still succeeds (the next verify-admin call retries)."""
     try:
         async with db.acquire() as conn:
             await conn.execute(SQL_TOUCH_LOGIN, row.admin_id)
-    except Exception as exc:  # noqa: BLE001 - same outage rule as the lookup
-        logger.error("staff_identity_directory_unavailable", error=type(exc).__name__)
-        raise StaffAuthError(503, "Staff directory is unavailable", "directory_unavailable") from exc
+        return True
+    except Exception as exc:  # noqa: BLE001 - never fail a verified sign-in over bookkeeping
+        logger.warning("staff_identity_touch_failed", admin_id=row.admin_id, error=type(exc).__name__)
+        return False
 
 
 async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = False) -> StaffIdentity:
