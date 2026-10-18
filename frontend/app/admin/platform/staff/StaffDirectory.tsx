@@ -110,6 +110,10 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
     staleTime: 60_000,
   });
   const staff = useMemo(() => list.data?.staff ?? [], [list.data]);
+  // Disabled accounts are kept (audit history, Booking references) but hidden by default (S242).
+  const [showDisabled, setShowDisabled] = useState(false);
+  const disabledCount = useMemo(() => staff.filter((s) => !s.is_active).length, [staff]);
+  const visibleStaff = useMemo(() => (showDisabled ? staff : staff.filter((s) => s.is_active)), [staff, showDisabled]);
   const viewer = list.data?.viewer;
   const canWrite = canWriteStaff(viewer);
 
@@ -227,12 +231,20 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
 
       <DirectoryHealth />
 
+      {disabledCount > 0 && (
+        <label data-testid="staff-show-disabled"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, margin: "4px 0 10px", fontSize: 13, color: K.ink, cursor: "pointer", fontFamily: sans }}>
+          <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
+          Show disabled accounts ({disabledCount})
+        </label>
+      )}
+
       {list.isError ? (
         <ErrorState message={(list.error as Error)?.message || "Could not load staff accounts"} onRetry={() => list.refetch()} />
       ) : (
         <DataTable<StaffAccount>
           tableId="platform-staff"
-          data={staff}
+          data={visibleStaff}
           columns={columns}
           getRowId={(r) => r.id}
           loading={list.isLoading}
