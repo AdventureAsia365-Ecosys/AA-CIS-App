@@ -4,7 +4,7 @@
 // an admin route, gated with requireAdmin() like the other X-Admin-Secret
 // proxies, not requireTenant().
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth-server";
+import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
 
 const API_URL      = process.env.API_URL      ?? "https://api-cis.lumiguides.it.com";
@@ -15,7 +15,7 @@ const API_KEY      = process.env.INTERNAL_API_KEY ?? "";
 // /admin/brand-identity needs content.settings.write (api/core/staff_authz.py POLICY): without
 // x-admin-role the backend sees the machine principal and refuses the write.
 function apiHeaders(
-  auth: { adminId: string; role: string },
+  auth: { adminId: string; role: string; bearer: string | null },
   extra: Record<string, string> = {},
 ): Record<string, string> {
   return {
@@ -23,6 +23,7 @@ function apiHeaders(
     "x-admin-user-id": auth.adminId,
     "x-admin-role": auth.role,
     ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+    ...staffBearerHeader(auth), // AA-816 (C5): Cognito sessions only
     ...extra,
   };
 }
