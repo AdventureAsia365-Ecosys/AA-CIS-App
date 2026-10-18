@@ -461,6 +461,14 @@ is decided from the **verified** token role (`/auth/verify-admin`), never from t
 an inactive or unknown account gets 401 and the role returned is the DB role, not the JWT claim, so a
 deactivation or demotion takes effect within ~6 min (BFF verify cache 5 min + 60 s), not at token expiry. Tenants are separate (`cis_tenant_token`, role `tenant`).
 
+**Cognito staff tokens (ADR 0006 Phase 1, in progress).** `api/core/identity_verifier.py` is the multi-issuer
+RS256 access-token verifier of root ADR 0006 §8 (issuer chosen by the unverified `iss`, one JWKS cache per
+issuer, `token_use=access`, `client_id` allow-list, returns a `Principal`); it is written to be copied
+byte-identical into AA-Booking. `api/core/identity_config.py` holds the CIS staff surface: WORKFORCE ×
+{`cis-admin`, `breakglass`}, Dev pool/client ids as code constants with `COGNITO_*` env overrides, and the
+`prefetch_cis_staff_jwks()` start-up hook. Not wired into `api/main.py` yet (AA-816 C2); the routes above still
+use the HS256 session token.
+
 The matrix lives in `frontend/lib/rbac.ts` and is read by the middleware (pages), the BFF proxies
 (`requireAdmin(req, API_RULES.x)` → 401 bad/missing token, 403 wrong role) and the admin nav (an item
 shows only when the role may open its page).
