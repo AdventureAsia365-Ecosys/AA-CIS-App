@@ -90,6 +90,10 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // (plan/status), generate-key, brand-identity, config, offboard, restore. Prefix "tenants" (no slash)
   // so the bare create path is covered; reads (GET) stay open to every staff role.
   { prefix: "tenants", roles: ["admin"] },
+  // AA-816 C6 — staff directory writes (create, roles, disable/enable, sign-out, sync). The backend narrows
+  // further: staff.write needs an owner on a Cognito session (api/core/staff_authz.py), see canWriteStaff().
+  // "platform/" (with the slash) so the write rule never matches "platform-stats".
+  { prefix: "platform/", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads
@@ -152,6 +156,22 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
 /** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */
 export function can(role: string | null | undefined, capability: Capability): boolean {
   return isStaffRole(role) && ROLE_PERMS[role].includes(capability);
+}
+
+// AA-816 C6 — staff.write is not a role capability (so it is not in Capability / ROLE_PERMS): it needs the
+// owner flag (shared.admin_users.is_owner) AND a verified Cognito session. Neither is in a cookie, so the staff
+// directory list returns who is looking (`viewer`) and the page shows the write controls from that. UI only:
+// the backend refuses every write from a legacy password session or a non-owner.
+export interface StaffViewer {
+  auth: "cognito" | "legacy";
+  is_owner: boolean;
+  can_write: boolean;
+  admin_id: string | null;
+}
+
+/** May this session change staff accounts? (owner on a Cognito session; the backend re-checks every call) */
+export function canWriteStaff(viewer: StaffViewer | null | undefined): boolean {
+  return !!viewer && viewer.auth === "cognito" && viewer.is_owner && viewer.can_write;
 }
 
 /** A readable message for a failed staff call: the backend's policy 403 reads "Role 'x' lacks …". */
