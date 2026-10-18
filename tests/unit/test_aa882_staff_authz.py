@@ -158,9 +158,45 @@ def test_content_work_routes_are_the_every_staff_pages():
     }
 
 
-@pytest.mark.parametrize("key", sorted(POLICY))
+@pytest.mark.parametrize("key", sorted(k for k in POLICY if POLICY[k] not in OWNER_PERMS))
 def test_admin_may_call_every_gd1_write(key):
     assert denial_reason(principal_from_role("admin"), *key) is None
+
+
+_OWNER_KEYS = sorted(k for k in POLICY if POLICY[k] in OWNER_PERMS)
+
+
+def _cognito_identity(is_owner):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(auth="cognito", is_owner=is_owner, admin_id="11111111-1111-1111-1111-111111111111")
+
+
+def test_owner_routes_are_the_staff_directory_writes():
+    assert _OWNER_KEYS and all(p.startswith("/admin/platform/staff") and m != "GET" for m, p in _OWNER_KEYS)
+
+
+@pytest.mark.parametrize("key", _OWNER_KEYS)
+def test_staff_write_needs_an_owner_on_a_cognito_session(key):
+    """AA-816 C6: a legacy session (x-admin-role only) is refused even as admin; a Cognito admin who is not an
+    owner is refused; a Cognito owner may write as admin only (the directory re-checks the row in its transaction)."""
+    assert denial_reason(principal_from_role("admin"), *key) == staff_authz.STAFF_WRITE_NEEDS_COGNITO
+    assert denial_reason(principal_from_role("admin", _cognito_identity(False)), *key) == \
+        staff_authz.STAFF_WRITE_NEEDS_OWNER
+    assert denial_reason(principal_from_role("admin", _cognito_identity(True)), *key) is None
+    assert denial_reason(MACHINE, *key) is not None
+    assert denial_reason(principal_from_role("tenant", _cognito_identity(True)), *key) == "Unknown staff role"
+    for role in ("reviewer", "content"):
+        assert denial_reason(principal_from_role(role, _cognito_identity(True)), *key) == \
+            f"Role '{role}' lacks the 'staff.write' permission"
+
+
+def test_owner_flag_never_comes_from_a_non_cognito_identity():
+    from types import SimpleNamespace
+
+    legacy = SimpleNamespace(auth="legacy", is_owner=True)
+    p = principal_from_role("admin", legacy)
+    assert p.auth is None and p.is_owner is False
 
 
 @pytest.mark.parametrize("key", sorted(POLICY))

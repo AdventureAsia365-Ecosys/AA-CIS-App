@@ -103,6 +103,7 @@ class StaffRow:
     db_role: str
     email: Optional[str]
     display_name: Optional[str]
+    is_owner: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,9 @@ class StaffIdentity:
     sub: str
     client_id: str
     auth: str = AUTH_COGNITO
+    # shared.admin_users.is_owner (C6: staff.write is owner-only). Cached with the row for STAFF_STATE_TTL_S; the
+    # staff directory writer re-reads it from the DB inside its own transaction before every write.
+    is_owner: bool = False
 
 
 def legacy_login_enabled() -> bool:
@@ -183,7 +187,7 @@ async def verify_staff_token(token: str) -> Principal:
 
 # ── Directory lookup (shared.admin_users, migration 247) ──────────────────────────────────────────
 
-_ROW_COLUMNS = ("id::text AS id, username, role::text AS role, email, display_name, is_active")
+_ROW_COLUMNS = ("id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner")
 
 SQL_BY_IDENTITY = (
     f"SELECT {_ROW_COLUMNS} FROM shared.admin_users WHERE cognito_iss = $1 AND cognito_sub = $2"
@@ -213,6 +217,7 @@ def _row(record: Any) -> StaffRow:
     return StaffRow(
         admin_id=record["id"], username=record["username"], db_role=record["role"],
         email=record["email"], display_name=record["display_name"],
+        is_owner=bool(record.get("is_owner") or False),
     )
 
 
@@ -310,7 +315,7 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     return StaffIdentity(
         admin_id=row.admin_id, username=row.username, role=role, db_role=row.db_role,
         email=row.email or principal.email, display_name=row.display_name,
-        iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
+        iss=principal.iss, sub=principal.sub, client_id=principal.client_id, is_owner=row.is_owner,
     )
 
 

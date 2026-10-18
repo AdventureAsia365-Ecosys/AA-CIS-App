@@ -499,6 +499,10 @@
     "capability": "master.admin",
     "module": "api.routers.admin"
   },
+  "PATCH /admin/platform/staff/{staff_id}/roles": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
   "PATCH /admin/settings/seo": {
     "capability": "content.settings.write",
     "module": "api.routers.admin_settings"
@@ -646,6 +650,26 @@
   "POST /admin/places/backfill": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
+  },
+  "POST /admin/platform/staff": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
+  "POST /admin/platform/staff/{staff_id}/disable": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
+  "POST /admin/platform/staff/{staff_id}/enable": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
+  "POST /admin/platform/staff/{staff_id}/sign-out": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
+  },
+  "POST /admin/platform/staff/{staff_id}/sync": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
   },
   "POST /admin/raw-tours/{tour_id}/set-active": {
     "capability": "content.write",

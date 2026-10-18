@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from fastapi import Header, HTTPException, Request
@@ -85,8 +85,12 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     "content": _CONTENT_WORK,
 }
 
-# staff.write is not a role capability: it needs the owner flag (Nghiệp + one break-glass account,
-# S241 Q2), which has no column yet (admin_users.is_owner arrives with GĐ5). No route uses it yet.
+# staff.write is not a role capability: it needs the owner flag (shared.admin_users.is_owner, migration 247,
+# S241 Q2) AND a verified Cognito session (AA-816 C6): the caller's identity must come from the staff bearer
+# middleware (api/middleware/staff_bearer.py), never from x-admin-role, which any secret holder can forge.
+# The caller must also hold the admin role (staff.read). A legacy password session or the machine gets 403 even
+# when the row is an owner. The staff directory writer
+# (api/services/staff_directory.py) re-reads is_owner from the DB inside its transaction before each write.
 OWNER_PERMS: frozenset[str] = frozenset({STAFF_WRITE})
 
 CAPABILITIES: frozenset[str] = frozenset().union(*ROLE_PERMS.values(), OWNER_PERMS)
@@ -262,6 +266,13 @@ POLICY: dict[tuple[str, str], str] = {
     # ── admin_platform (AA-883, GĐ2) — the staff directory; who has access is admin-only (staff.read)
     ("GET", "/admin/platform/staff"): STAFF_READ,
     ("GET", "/admin/platform/staff/{staff_id}"): STAFF_READ,
+    # admin_platform (AA-816 C6) — staff directory writes: owners on a Cognito session only (staff.write)
+    ("POST", "/admin/platform/staff"): STAFF_WRITE,
+    ("PATCH", "/admin/platform/staff/{staff_id}/roles"): STAFF_WRITE,
+    ("POST", "/admin/platform/staff/{staff_id}/disable"): STAFF_WRITE,
+    ("POST", "/admin/platform/staff/{staff_id}/enable"): STAFF_WRITE,
+    ("POST", "/admin/platform/staff/{staff_id}/sign-out"): STAFF_WRITE,
+    ("POST", "/admin/platform/staff/{staff_id}/sync"): STAFF_WRITE,
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
@@ -302,10 +313,14 @@ MACHINE_ROUTES: dict[tuple[str, str], str] = {
 
 @dataclass(frozen=True)
 class StaffPrincipal:
-    """Who is calling, as far as GĐ1 can tell: a staff role (from x-admin-role) or the machine."""
+    """Who is calling: a staff role (from x-admin-role) or the machine. ``auth`` is "cognito" only when the
+    staff bearer middleware verified a WORKFORCE token for this request (then x-admin-role was rewritten from
+    it); ``is_owner`` is that verified row's owner flag (False on every other path)."""
     kind: str                       # "staff" | "machine"
     role: Optional[str] = None
     perms: frozenset[str] = field(default_factory=frozenset)
+    auth: Optional[str] = None      # "cognito" | None (legacy session, secret-only, machine)
+    is_owner: bool = False
 
     @property
     def is_machine(self) -> bool:
@@ -315,16 +330,23 @@ class StaffPrincipal:
 MACHINE = StaffPrincipal(kind="machine")
 
 
-def principal_from_role(role_header: Optional[str]) -> StaffPrincipal:
+def principal_from_role(role_header: Optional[str], identity: Any = None) -> StaffPrincipal:
     """The principal behind a request that already passed the secret check.
 
     No header at all -> machine. A header that is not a known staff role -> a staff principal with no
     capabilities (refused on every POLICY route), so a typo can never fall back to machine rights.
+    ``identity``: the Cognito StaffIdentity the staff bearer middleware verified for this request (None
+    otherwise); it is the only source of ``auth="cognito"`` and ``is_owner``.
     """
     if role_header is None:
         return MACHINE
     role = role_header.strip()
-    return StaffPrincipal(kind="staff", role=role, perms=ROLE_PERMS.get(role, frozenset()))
+    cognito = identity is not None and getattr(identity, "auth", None) == "cognito"
+    return StaffPrincipal(
+        kind="staff", role=role, perms=ROLE_PERMS.get(role, frozenset()),
+        auth="cognito" if cognito else None,
+        is_owner=bool(cognito and getattr(identity, "is_owner", False)),
+    )
 
 
 def has_perm(role: Optional[str], capability: str) -> bool:
@@ -342,9 +364,35 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         return "This route needs a staff role (x-admin-role); machine callers are not allowed"
     if principal.role not in ROLE_PERMS:
         return "Unknown staff role"
+    if capability in OWNER_PERMS:
+        # An owner writes the directory only as an admin (the role that may read it, staff.read), from a verified
+        # Cognito session, with the owner flag of that verified row.
+        if STAFF_READ not in principal.perms:
+            return f"Role '{principal.role}' lacks the '{capability}' permission"
+        if principal.auth != "cognito":
+            return STAFF_WRITE_NEEDS_COGNITO
+        if not principal.is_owner:
+            return STAFF_WRITE_NEEDS_OWNER
+        return None
     if capability not in principal.perms:
         return f"Role '{principal.role}' lacks the '{capability}' permission"
     return None
+
+
+STAFF_WRITE_NEEDS_COGNITO = "Changing staff accounts needs a company sign-in (Cognito); password sessions cannot"
+STAFF_WRITE_NEEDS_OWNER = "Only a platform owner can change staff accounts"
+
+
+def request_staff_identity(request: Request) -> Any:
+    """The Cognito StaffIdentity the staff bearer middleware put on this request (scope state, or the contextvar
+    it also sets), or None."""
+    state = request.scope.get("state")
+    identity = state.get("staff_identity") if isinstance(state, dict) else None
+    if identity is None:
+        from api.core.staff_identity import current_staff
+
+        identity = current_staff.get()
+    return identity
 
 
 def _route_template(request: Request) -> Optional[str]:
@@ -368,7 +416,7 @@ def _check_secret(x_admin_secret: Optional[str]) -> None:
 
 
 def _enforce(request: Request, x_admin_role: Optional[str]) -> StaffPrincipal:
-    principal = principal_from_role(x_admin_role)
+    principal = principal_from_role(x_admin_role, request_staff_identity(request))
     template = _route_template(request)
     if template is None:
         logger.error("staff_policy_no_route", path=request.url.path, method=request.method)

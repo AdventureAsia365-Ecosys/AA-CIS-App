@@ -140,7 +140,12 @@ def test_admin_lists_staff_with_counts(client):
     assert first == {
         "id": _ID_A, "username": "nghiep", "role": "admin", "is_active": True,
         "created_at": _T0.isoformat(), "updated_at": _T1.isoformat(),
+        # AA-816 C6 directory fields (absent from these fake rows): falsy / None, never a KeyError
+        "email": None, "display_name": None, "is_owner": False, "last_login_at": None, "linked": False,
+        "booking_role": None, "breakglass": False,
     }
+    # A legacy (secret + x-admin-role) session may read but not write (AA-816 C6).
+    assert body["viewer"] == {"auth": "legacy", "is_owner": False, "can_write": False, "admin_id": None}
 
 
 def test_list_never_returns_or_selects_the_password_hash(monkeypatch):
