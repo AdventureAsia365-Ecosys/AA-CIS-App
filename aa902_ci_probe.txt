@@ -1,0 +1,2 @@
+# AA-902 CI probe (throwaway, will be closed)
+role = "arn:aws:iam::314159265358:role/ProbeRole"
