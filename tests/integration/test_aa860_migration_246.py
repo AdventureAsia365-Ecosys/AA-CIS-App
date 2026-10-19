@@ -283,3 +283,26 @@ def test_db_migrator_reads_the_registry_and_the_job_table():
     finally:
         c.rollback()
         c.close()
+
+
+def test_db_migrator_reference_counts_match_a_superuser():
+    """Review S244: the probe's rls.force_parity.cis_app and tenant.cis_runtime_sees_all_ttv compare the CIS runtime
+    with the catalog login's own count(*) of each FORCE table and tenant_tour_versions. From S22 that login is
+    db_migrator (not rds_superuser, so FORCE RLS applies to it): it must still see every row without a GUC (through
+    its cis_app / cis_owner memberships and their USING (true) policies), or those cells turn red after the switch."""
+    a = t245._connect()
+    c = _migrator()
+    try:
+        ka, kc = a.cursor(), c.cursor()
+        seen = {}
+        for t in t245.PARITY_TABLES:
+            ka.execute(f"SELECT count(*) FROM {t}")
+            kc.execute(f"SELECT count(*) FROM {t}")
+            seen[t] = (kc.fetchone()[0], ka.fetchone()[0])
+        assert all(m == s for m, s in seen.values()), seen
+        assert any(s > 0 for _, s in seen.values()), seen        # the fixture seeds rows: a 0 = 0 match proves nothing
+    finally:
+        a.rollback()
+        c.rollback()
+        a.close()
+        c.close()
