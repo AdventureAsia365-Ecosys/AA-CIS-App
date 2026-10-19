@@ -3,13 +3,16 @@
 // AA-858 — "Apps health — last 24 hours": one tile per app (CIS, TripPlanner, Booking) with a plain status,
 // requests, server errors, response time and a 24-bar hourly chart (requests vs errors). Numbers come from
 // AWS CloudWatch through GET /admin/overview/ops (cached 5 min server-side).
+// S243 — the pill and the reason are `overall`: the same verdict /admin/platform/apps shows (backend
+// api/services/app_health.py, worst of the app's own health check and this traffic), with the same words.
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { K } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import { CHART_TOOLTIP } from "../../_components/adminUi";
 import { BOOKING_ADMIN_URL, TRIPPLANNER_URL } from "../../../../lib/apps";
+import { basisText } from "../../../../lib/platform";
 import { SourceHint } from "./SourceHint";
-import { fmtInt, fmtMs, Kpi, OpsCard, StatePill, UnavailableNote } from "./opsUi";
+import { AppStatusPill, fmtInt, fmtMs, Kpi, OpsCard, UnavailableNote } from "./opsUi";
 import type { AlarmBucket, AppHealth, HealthData, Section } from "./opsTypes";
 
 const APP_LINK: Partial<Record<AppHealth["app"], { href: string; label: string }>> = {
@@ -101,11 +104,14 @@ function AppTile({ app }: { app: AppHealth }) {
           <div style={{ fontSize: 15, fontWeight: 600, color: K.ink }}>{app.label}</div>
           <div style={{ fontSize: 11, color: K.muted }}>{WHAT[app.app]}</div>
         </div>
-        <StatePill state={app.state} />
+        <AppStatusPill status={app.overall?.status} state={app.state} />
       </div>
       <div style={{ fontSize: 12, color: K.body }}>
-        {app.state_reason}
+        {app.overall?.reason ?? app.state_reason}
         {app.partial && " (some numbers still arriving)"}
+        {app.overall && app.overall.basis.length > 0 && (
+          <span style={{ color: K.muted }}> · {basisText(app.overall.basis)}</span>
+        )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
         <Kpi

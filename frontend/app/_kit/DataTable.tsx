@@ -12,6 +12,10 @@
 //   - saved views (localStorage, per user)
 //   - CSV export of the current (filtered) rows
 //
+// Column meta (S243): `meta: { align: "right" }` right-aligns a column's header AND cells (numbers),
+// so a header sits over its right-aligned values. `paginate={false}` shows every row and no pager,
+// for a page that loads more rows itself (keyset "load older") — one paging mechanism, not two.
+//
 // Client-side by default (filter/sort/paginate the rows it is given). AA-739: pass
 // `serverPagination` when the page holds only one server page of a larger set — the pager and the
 // page-size select then drive the server (pageIndex/pageSize/total come from the caller). Search
@@ -107,6 +111,10 @@ export type DataTableProps<T> = {
   emptyTitle?: string;
   emptyDescription?: string;
 
+  /** S243 — false: render every row, no page-size select or pager (the caller pages, e.g. keyset
+   * "load older"). Ignored with `serverPagination`. Default true. */
+  paginate?: boolean;
+
   // Extra toolbar content (filters etc.), rendered left of the built-in toolbar buttons.
   toolbarExtra?: React.ReactNode;
 
@@ -171,6 +179,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     stickyHeader = true,
     maxBodyHeight,
     tableMinWidth,
+    paginate = true,
     onRowClick,
     sorting: controlledSorting,
     onSortingChange: controlledOnSortingChange,
@@ -275,7 +284,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    ...(paginate || sp ? { getPaginationRowModel: getPaginationRowModel() } : {}),
   });
 
   // Keep the table's page size in sync with the local control (client mode only — in server mode
@@ -607,6 +616,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   {hg.headers.map((header) => {
                     const canSort = header.column.getCanSort();
                     const sorted = header.column.getIsSorted();
+                    const align = columnAlign(header.column.columnDef);
                     return (
                       <th
                         key={header.id}
@@ -618,7 +628,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           textTransform: "uppercase",
                           letterSpacing: "0.1em",
                           color: K.muted,
-                          textAlign: "left",
+                          textAlign: align,
                           background: K.bg,
                           borderBottom: `1px solid ${K.line}`,
                           cursor: canSort ? "pointer" : "default",
@@ -629,7 +639,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          flexDirection: align === "right" ? "row-reverse" : "row",
+                        }}>
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           {sorted === "asc" && <ArrowUp size={12} />}
                           {sorted === "desc" && <ArrowDown size={12} />}
@@ -659,6 +672,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         fontSize: 13,
                         color: K.body,
                         borderBottom: `1px solid ${K.line2}`,
+                        textAlign: columnAlign(cell.column.columnDef),
                       }}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -672,7 +686,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       )}
 
       {/* Footer / pagination */}
-      {!loading && !error && totalFiltered > 0 && (
+      {(paginate || sp) && !loading && !error && totalFiltered > 0 && (
         <div
           style={{
             display: "flex",
@@ -734,6 +748,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
       )}
     </div>
   );
+}
+
+/** `meta: { align: "right" }` on a column definition → "right"; anything else → "left". */
+function columnAlign(def: { meta?: unknown }): "left" | "right" {
+  const meta = def.meta as { align?: string } | undefined;
+  return meta?.align === "right" ? "right" : "left";
 }
 
 const menuBox: React.CSSProperties = {

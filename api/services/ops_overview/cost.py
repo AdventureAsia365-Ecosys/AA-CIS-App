@@ -8,6 +8,8 @@ per day, ~$0.01) is the module's own; without Redis it never calls CE and return
 
 Columns per row: ``aws_usd`` (acc2 bill by App tag), ``ai_outside_aws_usd`` (LLM spend not already on the acc2 bill:
 acc1/acc3 Bedrock, OpenAI, Jev — gateway estimates), ``total_usd`` = the two added (= ``cost_by_app`` total_usd).
+Labels, hints and ``ai_outside_aws_usd`` come from ``platform_cost`` itself (S243 finding 4: one wording, one netting
+rule on both pages); the totals also carry the gross AI estimate and the part already on the AWS bill.
 """
 from __future__ import annotations
 
@@ -22,24 +24,8 @@ logger = structlog.get_logger()
 
 TOP_SERVICES = 5
 
-LABELS = {
-    "cis": "CIS (content + catalog)",
-    "tripplanner": "TripPlanner",
-    "booking": "Booking",
-    "tag:shared": "Shared platform",
-    "tag:identity": "Staff sign-in (identity)",
-    "tag:platform": "Platform tooling",
-    "untagged": "Not assigned to an app",
-}
-HINTS = {
-    "tag:shared": "AWS resources several apps use together (App tag 'shared').",
-    "tag:identity": "The staff login service (App tag 'identity').",
-    "tag:platform": "Build and deploy tooling (App tag 'platform').",
-    "untagged": "AWS charges with no App tag: tax, support, data transfer and resources tagged before 16/10/2026. "
-                "Per-app numbers are reliable from 16/10/2026.",
-}
 NOTES = [
-    "AWS numbers come from the AWS bill and lag about one day.",
+    "AWS numbers come from the AWS bill and lag about two days.",
     "AI usage is an estimate from our own call log; most AI runs on other AWS accounts and providers, so it is not "
     "part of this AWS bill.",
 ]
@@ -51,14 +37,13 @@ def _prev_month(today: date) -> str:
 
 def _row(r: dict) -> dict:
     key = r["app"]
-    ai_outside = round(float(r.get("ai_usd") or 0.0) - float(r.get("ai_in_aws_acc2_usd") or 0.0), 4)
     out = {
         "key": key,
-        "label": LABELS.get(key) or (f"AI for {key[4:]}" if key.startswith("llm:") else r.get("label") or key),
+        "label": r.get("label") or key,
         "kind": r["kind"],
-        "hint": HINTS.get(key),
+        "hint": r.get("hint"),
         "aws_usd": round(float(r.get("aws_usd") or 0.0), 2),
-        "ai_outside_aws_usd": round(ai_outside, 2),
+        "ai_outside_aws_usd": round(float(r.get("ai_outside_aws_usd") or 0.0), 2),
         "total_usd": round(float(r.get("total_usd") or 0.0), 2),
         "prev_total_usd": None,
         "top_services": [],
@@ -102,6 +87,8 @@ async def cost_card(pool: Any, redis: Any = None, now: Optional[datetime] = None
         "totals": {
             "aws_usd": round(sum(r["aws_usd"] for r in rows), 2),
             "ai_outside_aws_usd": round(sum(r["ai_outside_aws_usd"] for r in rows), 2),
+            "ai_usd": round(float((cur.get("totals") or {}).get("ai_usd") or 0.0), 2),
+            "ai_in_aws_usd": round(float((cur.get("totals") or {}).get("ai_in_aws_acc2_usd") or 0.0), 2),
             "total_usd": round(sum(r["total_usd"] for r in rows), 2),
             "prev_total_usd": round(sum(prev_totals.values()), 2) if prev else None,
         },

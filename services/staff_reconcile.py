@@ -302,16 +302,8 @@ def reconcile(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]]]
         elif sub not in users:
             unknown.append({"username": r["username"], "email": r.get("email"), "reason": "unknown_sub"})
 
-    missing_email = sorted(r["username"] for r in active_rows if not _norm_email(r.get("email")))
-    missing_sub = sorted(r["username"] for r in active_rows if not r.get("cognito_sub"))
-    readiness = {
-        "ready": not missing_email and not missing_sub,
-        "active_rows": len(active_rows),
-        "missing_email_count": len(missing_email),
-        "missing_email": missing_email,
-        "missing_cognito_sub_count": len(missing_sub),
-        "missing_cognito_sub": missing_sub,
-    }
+    readiness = readiness_from_rows(rows)
+    missing_email, missing_sub = readiness["missing_email"], readiness["missing_cognito_sub"]
 
     bg = _breakglass_block(users, breakglass, by_email.get(breakglass), issuer)
     groups_missing = sorted(g for g, members in raw_groups.items() if members is None)
@@ -390,6 +382,23 @@ def _breakglass_block(users: dict[str, CognitoUser], email: str, row: Optional[d
     if missing:
         block["issues"].append(f"missing group(s): {', '.join(missing)}")
     return block
+
+
+def readiness_from_rows(rows: list[dict]) -> dict:
+    """Cutover readiness from the directory rows alone (no Cognito): active rows missing a work email or a linked
+    sign-in identity. Pure. The reconcile report stores it, and GET /admin/platform/staff-directory/health recomputes
+    it from the live rows (S243 finding 3), so a disable or invite after the last check shows at once."""
+    active_rows = [r for r in rows if r.get("is_active")]
+    missing_email = sorted(r["username"] for r in active_rows if not _norm_email(r.get("email")))
+    missing_sub = sorted(r["username"] for r in active_rows if not r.get("cognito_sub"))
+    return {
+        "ready": not missing_email and not missing_sub,
+        "active_rows": len(active_rows),
+        "missing_email_count": len(missing_email),
+        "missing_email": missing_email,
+        "missing_cognito_sub_count": len(missing_sub),
+        "missing_cognito_sub": missing_sub,
+    }
 
 
 def summary_fields(report: dict) -> dict:

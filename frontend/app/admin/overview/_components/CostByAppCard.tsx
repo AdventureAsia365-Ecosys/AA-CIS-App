@@ -4,17 +4,17 @@
 // last month for comparison. Numbers come from the Platform cost module (AA-884, api/services/platform_cost.py)
 // so this card and /admin/platform/cost always agree. "Not assigned to an app" is shown on purpose, with its
 // top AWS services, because it is most of the bill while the App tags are new (since 16/10/2026).
+// S243 — one presentation with /admin/platform/cost: row labels and hints come from the backend cost module, both pages
+// show AWS bill + AI outside the AWS bill = Total, and the AI already on the bill is named under the table. Every
+// column stays on a phone (the table scrolls in its own box, kit ScrollX).
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { K, useIsPhone } from "../../../_kit";
+import { AI_OUTSIDE_LABEL, AI_OUTSIDE_SRC, AWS_BILL_LABEL, AWS_BILL_SRC, aiOnBillNote } from "../../../../lib/costWording";
 import { SourceHint } from "./SourceHint";
 import { fmtUsd, OpsCard, PHONE_CELL, TableWrap, TD as TD_BASE, TH as TH_BASE, UnavailableNote } from "./opsUi";
 import type { CostData, CostRow, Section } from "./opsTypes";
 
-const AWS_SRC = "AWS Cost Explorer, account acc2, cost by the App tag (stored daily by the Platform cost module)";
-const AI_SRC =
-  "LLM gateway estimates (shared.llm_call_log / llm_call_daily) for AI billed outside this AWS account: " +
-  "other Bedrock accounts, OpenAI, Jev";
 
 function monthName(ym: string): string {
   const d = new Date(`${ym}-01T00:00:00Z`);
@@ -33,11 +33,10 @@ function ShareBar({ value, max }: { value: number; max: number }) {
 interface Cells {
   TH: React.CSSProperties;
   TD: React.CSSProperties;
-  phone: boolean;
 }
 
 function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
-  const { TD, phone } = cells;
+  const { TD } = cells;
   const [open, setOpen] = useState(false);
   const canOpen = r.top_services.length > 0;
   const isUntagged = r.kind === "untagged";
@@ -79,7 +78,7 @@ function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
           {fmtUsd(r.ai_outside_aws_usd)}
         </td>
         <td style={{ ...TD, textAlign: "right", color: K.ink, fontWeight: 600 }}>{fmtUsd(r.total_usd)}</td>
-        {!phone && <td style={{ ...TD, textAlign: "right", color: K.muted }}>{fmtUsd(r.prev_total_usd)}</td>}
+        <td style={{ ...TD, textAlign: "right", color: K.muted }}>{fmtUsd(r.prev_total_usd)}</td>
       </tr>
       {open &&
         r.top_services.map((s) => (
@@ -88,7 +87,7 @@ function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
             <td style={{ ...TD, textAlign: "right", fontSize: 12, color: K.muted }}>{fmtUsd(s.amount_usd)}</td>
             <td style={TD} />
             <td style={TD} />
-            {!phone && <td style={TD} />}
+            <td style={TD} />
           </tr>
         ))}
     </>
@@ -117,7 +116,7 @@ function CostBody({ data }: { data: CostData }) {
   const phone = useIsPhone();
   const TH: React.CSSProperties = phone ? { ...TH_BASE, ...PHONE_CELL, fontSize: 11 } : TH_BASE;
   const TD: React.CSSProperties = phone ? { ...TD_BASE, ...PHONE_CELL } : TD_BASE;
-  const cells: Cells = { TH, TD, phone };
+  const cells: Cells = { TH, TD };
   const max = Math.max(0, ...data.rows.map((r) => r.total_usd));
   return (
     <>
@@ -127,28 +126,26 @@ function CostBody({ data }: { data: CostData }) {
         </div>
       )}
       <TableWrap testId="ops-cost-table">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse" }}>
           <thead>
             <tr>
               <th style={{ ...TH, whiteSpace: "normal" }}>App</th>
               <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                AWS bill
-                <SourceHint source={AWS_SRC} size={11} />
+                {AWS_BILL_LABEL}
+                <SourceHint source={AWS_BILL_SRC} size={11} />
               </th>
               <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                AI elsewhere
-                <SourceHint source={AI_SRC} size={11} />
+                {AI_OUTSIDE_LABEL}
+                <SourceHint source={AI_OUTSIDE_SRC} size={11} />
               </th>
               <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
                 Total
-                <SourceHint source="AWS bill + AI elsewhere (AI already on this AWS bill is not counted twice)" size={11} />
+                <SourceHint source={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`} size={11} />
               </th>
-              {!phone && (
-                <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
-                  {monthName(data.prev_month).split(" ")[0]}
-                  <SourceHint source={`Same sources, whole of ${monthName(data.prev_month)}`} size={11} />
-                </th>
-              )}
+              <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
+                {monthName(data.prev_month).split(" ")[0]}
+                <SourceHint source={`Same sources, whole of ${monthName(data.prev_month)}`} size={11} />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -164,11 +161,9 @@ function CostBody({ data }: { data: CostData }) {
               <td style={{ ...TD, textAlign: "right", fontWeight: 700, color: K.ink, borderBottom: "none" }}>
                 {fmtUsd(data.totals.total_usd)}
               </td>
-              {!phone && (
-                <td style={{ ...TD, textAlign: "right", color: K.muted, borderBottom: "none" }}>
-                  {fmtUsd(data.totals.prev_total_usd)}
-                </td>
-              )}
+              <td style={{ ...TD, textAlign: "right", color: K.muted, borderBottom: "none" }}>
+                {fmtUsd(data.totals.prev_total_usd)}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -177,12 +172,10 @@ function CostBody({ data }: { data: CostData }) {
         {data.notes.map((n) => (
           <li key={n}>{n}</li>
         ))}
-        {data.aws_covered_to && <li>AWS numbers include days up to {data.aws_covered_to}.</li>}
-        {phone && data.totals.prev_total_usd != null && (
-          <li>
-            {monthName(data.prev_month)}, all apps: {fmtUsd(data.totals.prev_total_usd)} (per app on a wider screen).
-          </li>
+        {data.totals.ai_usd != null && (
+          <li data-testid="ops-cost-ai-note">{aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}</li>
         )}
+        {data.aws_covered_to && <li>AWS numbers include days up to {data.aws_covered_to}.</li>}
       </ul>
     </>
   );

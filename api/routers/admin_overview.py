@@ -8,8 +8,12 @@ this endpoint only supplies the numbers.
 Reuses existing building blocks rather than re-deriving them:
   - intelligence counts: the same SQL as admin_dashboard.dashboard_summary (platform-wide).
   - jobs: the admin_job_runner.summary SQL over shared.job + queue.worker_health.
-  - cost: shared.cost_guard.day_spend + shared.spend_budget (same as admin_budgets.list_budgets),
-    the month-to-date llm_call_log roll-up, and the stored DFS balance snapshot.
+  - cost: shared.cost_guard.day_spend + shared.spend_budget (same as admin_budgets.list_budgets), the
+    month-to-date AI spend per provider from api.services.platform_cost (raw + rolled-up days, provider families:
+    every bedrock* provider counts as "bedrock" — S243 finding 5), and the stored DFS balance snapshot.
+  - jobs: ``workers_alive`` counts only workers alive NOW (same rule as /admin/platform/apps and the deploy smoke:
+    ``shared.job_worker`` row not stopped and seen in the last 60 s — S243 finding 2); queue depth / running now are
+    job counts (they used to count job kinds).
   - alerts: unread admin-targeted rows in shared.notifications.
 Only the per-country funnel (section 1) needs new SQL, because no existing endpoint produces it.
 """
@@ -22,6 +26,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
+from api.services import platform_cost
 from api.services.ops_overview import build_ops_overview
 from shared.cost_guard import PROVIDERS, day_spend
 from shared.jobs import queue
@@ -149,16 +154,7 @@ ORDER BY greatest(coalesce(quota_tours_pct, 0), coalesce(quota_calls_pct, 0)) DE
 LIMIT 10
 """
 
-# ── Section 5: month-to-date cost per provider/account (llm_call_log + dfs_call_log) ────────
-_MTD_LLM_SQL = """
-SELECT coalesce(account, 'unknown') AS account,
-       coalesce(provider, 'unknown') AS provider,
-       coalesce(sum(cost_usd), 0)::float AS cost_usd
-FROM shared.llm_call_log
-WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
-GROUP BY account, provider
-ORDER BY cost_usd DESC
-"""
+# ── Section 5: month-to-date DataForSEO (AI per provider comes from api.services.platform_cost) ─────────
 _MTD_DFS_SQL = """
 SELECT coalesce(sum(cost_usd), 0)::float AS cost_usd
 FROM shared.dfs_call_log
@@ -179,6 +175,16 @@ def _iso(v):
     return v.isoformat() if hasattr(v, "isoformat") else v
 
 
+def worker_counts(health: dict) -> tuple[int, int, int]:
+    """(workers alive now, queued jobs, running jobs) from queue.worker_health. "Alive" is the row's own ``alive``
+    flag (not stopped, seen in the last WORKER_ALIVE_SECONDS): the rule of /admin/platform/apps and the deploy smoke.
+    ``worker_health`` lists up to 20 recent workers, dead ones included, and groups jobs by kind."""
+    alive = sum(1 for w in health.get("workers", []) if w.get("alive"))
+    queued = sum(int(q.get("n") or 0) for q in health.get("queued", []))
+    running = sum(int(r.get("n") or 0) for r in health.get("running", []))
+    return alive, queued, running
+
+
 async def _build_overview(pool) -> dict:
     async with pool.acquire() as conn:
         funnel_rows = await conn.fetch(_FUNNEL_SQL, _AA_INTERNAL)
@@ -190,7 +196,6 @@ async def _build_overview(pool) -> dict:
             "SELECT provider, scope, per_run_usd, per_day_usd, hard_stop, alert_pct "
             "FROM shared.spend_budget ORDER BY provider, scope")
         spent_today = {p: round(await day_spend(conn, p), 4) for p in PROVIDERS}
-        mtd_llm = await conn.fetch(_MTD_LLM_SQL)
         mtd_dfs = await conn.fetchval(_MTD_DFS_SQL)
         alert_rows = await conn.fetch(_ALERTS_SQL)
 
@@ -201,9 +206,7 @@ async def _build_overview(pool) -> dict:
     job_counts: dict[str, int] = {r["status"]: r["n"] for r in job_rows}
     try:
         health = await queue.worker_health(pool)
-        workers_alive = len(health.get("workers", []))
-        queue_depth = len(health.get("queued", []))
-        running_now = len(health.get("running", []))
+        workers_alive, queue_depth, running_now = worker_counts(health)
     except Exception as e:  # worker health must never sink the whole overview
         logger.warning("overview_worker_health_failed", error=str(e)[:200])
         workers_alive = queue_depth = running_now = None
@@ -216,14 +219,10 @@ async def _build_overview(pool) -> dict:
     except Exception as e:
         logger.warning("overview_dfs_balance_failed", error=str(e)[:200])
 
-    # month-to-date per provider (collapse llm accounts into provider totals + keep the split)
-    mtd_by_provider: dict[str, float] = {}
-    mtd_breakdown = []
-    for r in mtd_llm:
-        mtd_breakdown.append({"account": r["account"], "provider": r["provider"],
-                              "cost_usd": round(r["cost_usd"], 4)})
-        mtd_by_provider[r["provider"]] = round(
-            mtd_by_provider.get(r["provider"], 0.0) + r["cost_usd"], 4)
+    # month-to-date AI per provider family: the cost module's own query (raw + rolled-up days), so the sum equals
+    # the AI column of /admin/platform/cost for this month.
+    mtd = await platform_cost.ai_spend_by_provider(pool)
+    mtd_by_provider: dict[str, float] = dict(mtd["by_provider"])
     mtd_by_provider["dfs"] = round(float(mtd_dfs or 0.0), 4)
 
     budgets = []
@@ -243,7 +242,8 @@ async def _build_overview(pool) -> dict:
                  "queue_depth": queue_depth, "running_now": running_now},
         "cost": {"spent_today_usd": spent_today,
                  "month_to_date_usd": mtd_by_provider,
-                 "month_to_date_breakdown": mtd_breakdown,
+                 "month_to_date_breakdown": mtd["breakdown"],
+                 "ai_month_to_date_usd": mtd["total_usd"],
                  "budgets": budgets,
                  "dfs_balance": dfs_balance},
         "alerts": [{"event_type": r["event_type"], "entity_type": r["entity_type"],

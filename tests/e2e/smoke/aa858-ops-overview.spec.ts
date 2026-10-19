@@ -6,7 +6,8 @@
 //   (b) the four cards and the "CIS content & operations" heading render; every KPI of an "ok" section
 //       carries a source hint (title + aria-label "Source: …"); no raw JSON on the page;
 //   (c) at 390 px, with real scrollbars (headless hides them by default, lesson S239), the page has no
-//       horizontal overflow and no table wrapper of the new cards scrolls sideways.
+//       horizontal overflow; a table wrapper of the new cards may scroll sideways only inside its own box and
+//       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled").
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
 
@@ -92,13 +93,19 @@ test.describe('AA-858 — ops overview', () => {
         return {
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
-          wraps: wraps.map((w) => ({ id: w.getAttribute('data-testid'), sw: w.scrollWidth, cw: w.clientWidth })),
+          wraps: wraps.map((w) => ({
+            id: w.getAttribute('data-testid'), sw: w.scrollWidth, cw: w.clientWidth,
+            overflows: w.getAttribute('data-overflows') === 'true',
+            hint: !!document.querySelector(`[data-testid="${w.getAttribute('data-testid')}-scroll-hint"]`),
+          })),
           offenders,
         };
       });
       expect(m.scrollWidth, `page overflow at 390 px: ${m.offenders.join(', ')}`).toBeLessThanOrEqual(m.innerWidth);
       for (const w of m.wraps) {
-        expect(w.sw, `${w.id} scrolls sideways (${w.sw} > ${w.cw})`).toBeLessThanOrEqual(w.cw);
+        if (w.sw > w.cw + 1) {
+          expect(w.overflows && w.hint, `${w.id} scrolls sideways (${w.sw} > ${w.cw}) without the scroll hint`).toBe(true);
+        }
       }
     } finally {
       await context.close();

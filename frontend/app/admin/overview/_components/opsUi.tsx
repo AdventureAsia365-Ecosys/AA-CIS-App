@@ -1,8 +1,9 @@
 // app/admin/overview/_components/opsUi.tsx
 // AA-858 — small building blocks shared by the four ops-overview cards (kit tokens only, inline styles).
 import { CloudOff, ExternalLink } from "lucide-react";
-import { Badge, K, sans, useIsPhone, type Tone } from "../../../_kit";
+import { Badge, K, ScrollX, sans, useIsPhone } from "../../../_kit";
 import { SourceHint } from "./SourceHint";
+import { APP_STATUS_LABEL, type AppStatus } from "../../../../lib/platform";
 import type { HealthState, Unavailable } from "./opsTypes";
 
 export const fmtInt = (n: number | null | undefined) => (n == null ? "—" : Number(n).toLocaleString("en-US"));
@@ -23,15 +24,12 @@ export function fmtDay(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-export const STATE_LABEL: Record<HealthState, { label: string; tone: Tone }> = {
-  ok: { label: "Healthy", tone: "success" },
-  warn: { label: "Worth a look", tone: "warning" },
-  alarm: { label: "Needs attention", tone: "danger" },
-  unknown: { label: "No data", tone: "neutral" },
-};
+/** Traffic state -> app status, the backend's app_health.TRAFFIC_TO_STATUS (only used when `overall` is missing). */
+const TRAFFIC_TO_STATUS: Record<HealthState, AppStatus> = { ok: "ok", warn: "degraded", alarm: "degraded", unknown: "unknown" };
 
-export function StatePill({ state }: { state: HealthState }) {
-  const s = STATE_LABEL[state] ?? STATE_LABEL.unknown;
+/** S243 — an app's status pill, with the same words as /admin/platform/apps (lib/platform APP_STATUS_LABEL). */
+export function AppStatusPill({ status, state }: { status?: AppStatus; state: HealthState }) {
+  const s = APP_STATUS_LABEL[status ?? TRAFFIC_TO_STATUS[state] ?? "unknown"] ?? APP_STATUS_LABEL.unknown;
   return (
     <Badge tone={s.tone} dot>
       {s.label}
@@ -231,7 +229,7 @@ export const TH: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/** Tighter cells for phone width (< 768 px), so the summary tables fit a 390 px screen without scrolling. */
+/** Tighter cells for phone width (< 768 px); tables wider than that scroll in their TableWrap (with a hint). */
 export const PHONE_CELL: React.CSSProperties = { padding: "6px 4px", fontSize: 12 };
 
 export const TD: React.CSSProperties = {
@@ -242,11 +240,8 @@ export const TD: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 
-/** Horizontal-scroll wrapper for a table, so a wide table never widens the page (lesson S221/S239). */
+/** Horizontal-scroll wrapper for a table (kit ScrollX): every column stays, the table scrolls inside its own box
+ * with a visible hint when it is wider than the screen, and never widens the page (lessons S221/S239, S243). */
 export function TableWrap({ children, testId }: { children: React.ReactNode; testId?: string }) {
-  return (
-    <div data-testid={testId} style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}>
-      {children}
-    </div>
-  );
+  return <ScrollX testId={testId}>{children}</ScrollX>;
 }

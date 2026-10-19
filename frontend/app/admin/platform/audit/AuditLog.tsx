@@ -14,6 +14,9 @@
 // Rows a legacy password session wrote name the actor from the unverified x-admin-user-id header
 // (details.auth = legacy_unverified); they carry a "Legacy" badge until the AA-816 cutover.
 // Booking keeps its own trail; the header links to it (CIS never reads the booking schema).
+// S243 — one paging mechanism: the keyset "Load older" button with a count (the table itself does not page,
+// kit DataTable paginate={false}); a smaller page and compact two-line cards on a phone; the chain badge says the
+// chain covers every row while the list is filtered; short filter placeholders; no internal codes in the copy.
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
@@ -31,6 +34,7 @@ import {
   formatDateTime,
   mono,
   sans,
+  useIsPhone,
   type ColumnDef,
   type Tone,
 } from "../../../_kit";
@@ -45,7 +49,8 @@ import {
   type AuditVerifyResp,
 } from "@/lib/platform";
 
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT = 50;
+const PHONE_PAGE_LIMIT = 25;
 
 function statusTone(code: number | null): Tone {
   if (code == null) return "neutral";
@@ -71,11 +76,13 @@ export default function AuditLog() {
   const [draft, setDraft] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS);
   const [filters, setFilters] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS);
   const [openId, setOpenId] = useState<string | null>(null);
+  const phone = useIsPhone();
+  const limit = phone ? PHONE_PAGE_LIMIT : PAGE_LIMIT;
 
   const list = useInfiniteQuery({
-    queryKey: ["platform-audit", filters],
+    queryKey: ["platform-audit", filters, limit],
     queryFn: ({ pageParam }) =>
-      apiGet<AuditListResp>(`/api/admin/platform/audit?${auditQuery(filters, pageParam, PAGE_LIMIT)}`),
+      apiGet<AuditListResp>(`/api/admin/platform/audit?${auditQuery(filters, pageParam, limit)}`),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor,
     staleTime: 60_000,
@@ -88,6 +95,22 @@ export default function AuditLog() {
 
   const rows = useMemo(() => list.data?.pages.flatMap((p) => p.rows) ?? [], [list.data]);
   const open = rows.find((r) => r.id === openId) ?? null;
+
+  // Phone: two compact columns (the kit renders each row as a card: title + one line) instead of six label rows.
+  const phoneColumns = useMemo<ColumnDef<AuditRow, unknown>[]>(() => [
+    {
+      id: "summary",
+      accessorFn: (r) => `${r.action ?? ""} ${actorLabel(r)}`,
+      header: "Action",
+      cell: (c) => <PhoneSummary r={c.row.original} />,
+    },
+    {
+      id: "request",
+      accessorFn: (r) => `${r.http_method ?? ""} ${r.route ?? ""}`,
+      header: "Request",
+      cell: (c) => <RequestCell r={c.row.original} />,
+    },
+  ], []);
 
   const columns = useMemo<ColumnDef<AuditRow, unknown>[]>(() => [
     {
@@ -133,7 +156,7 @@ export default function AuditLog() {
       accessorKey: "chain_seq",
       header: "Chain #",
       cell: (c) => c.row.original.chain_seq == null
-        ? <span style={{ color: K.muted }} title="Written before CIS 248 (no hash chain)">pre-chain</span>
+        ? <span style={{ color: K.muted }} title="Written before the hash chain started">pre-chain</span>
         : <span style={{ fontFamily: mono, fontSize: 12 }}>{c.row.original.chain_seq}</span>,
     },
   ], []);
@@ -171,7 +194,7 @@ export default function AuditLog() {
       />
 
       <ChainStatus verify={verify.data} loading={verify.isLoading} error={verify.error as Error | null}
-        onRetry={() => verify.refetch()} />
+        onRetry={() => verify.refetch()} filtered={JSON.stringify(filters) !== JSON.stringify({ ...EMPTY_AUDIT_FILTERS, scope: "all" })} />
 
       <FilterForm draft={draft} setDraft={setDraft} onSubmit={apply} onReset={reset} />
 
@@ -186,10 +209,10 @@ export default function AuditLog() {
         <DataTable<AuditRow>
           tableId="platform-audit"
           data={rows}
-          columns={columns}
+          columns={phone ? phoneColumns : columns}
           getRowId={(r) => r.id}
           loading={list.isLoading}
-          pageSize={50}
+          paginate={false}
           enableCsv
           csvFilename="cis-audit-log.csv"
           emptyTitle="No audit rows"
@@ -201,11 +224,20 @@ export default function AuditLog() {
         />
       )}
 
-      {list.hasNextPage && (
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
-          <Button variant="secondary" size="sm" onClick={() => list.fetchNextPage()} disabled={list.isFetchingNextPage}>
-            {list.isFetchingNextPage ? "Loading…" : `Load ${PAGE_LIMIT} older rows`}
-          </Button>
+      {!list.isLoading && !list.isError && rows.length > 0 && (
+        <div data-testid="platform-audit-more" style={{
+          display: "flex", justifyContent: "center", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 12,
+          fontSize: 12, color: K.muted, fontFamily: sans,
+        }}>
+          <span>
+            Showing {rows.length.toLocaleString("en-US")} row{rows.length === 1 ? "" : "s"}, newest first
+            {list.hasNextPage ? "" : " — that is all of them"}.
+          </span>
+          {list.hasNextPage && (
+            <Button variant="secondary" size="sm" onClick={() => list.fetchNextPage()} disabled={list.isFetchingNextPage}>
+              {list.isFetchingNextPage ? "Loading…" : `Load ${limit} older rows`}
+            </Button>
+          )}
         </div>
       )}
 
@@ -216,11 +248,13 @@ export default function AuditLog() {
 
 // ── chain status ────────────────────────────────────────────────────────────────────────────
 
-function ChainStatus({ verify, loading, error, onRetry }: {
+function ChainStatus({ verify, loading, error, onRetry, filtered }: {
   verify: AuditVerifyResp | undefined;
   loading: boolean;
   error: Error | null;
   onRetry: () => void;
+  /** the list below shows a subset (scope or filters): say that the chain covers every row */
+  filtered: boolean;
 }) {
   let tone: Tone = "neutral";
   let label = "Checking the chain…";
@@ -241,7 +275,7 @@ function ChainStatus({ verify, loading, error, onRetry }: {
       tone = "success";
       label = "Chain verified";
       detail = verify.checked
-        ? `${verify.checked.toLocaleString("en-US")} chained row${verify.checked === 1 ? "" : "s"} recomputed, up to #${verify.last_seq}.`
+        ? `The chain covers every audit row, whatever the list below shows: ${verify.checked.toLocaleString("en-US")} chained row${verify.checked === 1 ? "" : "s"} recomputed, up to #${verify.last_seq}.${filtered ? " The list is filtered (scope or filters), so some chain numbers are not in it." : ""}`
         : "No chained row yet.";
     } else {
       tone = "danger";
@@ -272,11 +306,11 @@ function ChainStatus({ verify, loading, error, onRetry }: {
       {verify && (
         <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
           {verify.pre_chain_rows.toLocaleString("en-US")} older row{verify.pre_chain_rows === 1 ? "" : "s"} predate the chain
-          (CIS 248{verify.chain_boundary ? `, ${formatDateTime(verify.chain_boundary)}` : ""}).
+          {verify.chain_boundary ? ` (it started ${formatDateTime(verify.chain_boundary)})` : ""}.
           {verify.unchained_after_genesis > 0 &&
             ` ${verify.unchained_after_genesis} newer row(s) have no chain number: written with the chain trigger skipped.`}
-          {" "}The database administrator account can still bypass the triggers until the runtime role change (X1);
-          the chain makes such an edit visible here, not impossible.
+          {" "}The database administrator account can still bypass the protection until a planned database role
+          change; the chain makes such an edit visible here, not impossible.
         </div>
       )}
     </section>
@@ -320,7 +354,7 @@ function FilterForm({ draft, setDraft, onSubmit, onReset }: {
       </label>
       <label style={labelStyle}>
         Actor (exact)
-        <input value={draft.actor} onChange={(e) => set("actor", e.target.value)} placeholder="admin:<id> or machine"
+        <input value={draft.actor} onChange={(e) => set("actor", e.target.value)} placeholder="admin:<id>"
           maxLength={64} style={inputStyle} />
       </label>
       <label style={labelStyle}>
@@ -330,7 +364,7 @@ function FilterForm({ draft, setDraft, onSubmit, onReset }: {
       </label>
       <label style={labelStyle}>
         Route (exact template)
-        <input value={draft.route} onChange={(e) => set("route", e.target.value)} placeholder="/admin/platform/staff/{staff_id}/roles"
+        <input value={draft.route} onChange={(e) => set("route", e.target.value)} placeholder="/admin/…"
           maxLength={512} style={inputStyle} />
       </label>
       <label style={labelStyle}>
@@ -367,6 +401,22 @@ function ActorCell({ r }: { r: AuditRow }) {
   );
 }
 
+/** Phone card title: action, who and when on two short lines. */
+function PhoneSummary({ r }: { r: AuditRow }) {
+  return (
+    <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+      <span style={{ fontFamily: mono, fontSize: 12.5 }}>{r.action ?? "—"}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 12, fontWeight: 400, color: K.muted }}>
+        <span style={{ color: K.ink, fontWeight: 600 }}>{actorLabel(r)}</span>
+        {r.actor_type === "machine" && <Badge tone="info" dot={false}>Machine</Badge>}
+        {isLegacyUnverified(r.details) && <Badge tone="warning" dot={false}>Legacy</Badge>}
+        <span>{formatDateTime(r.created_at)}</span>
+        {r.chain_seq != null && <span style={{ fontFamily: mono }}>#{r.chain_seq}</span>}
+      </span>
+    </span>
+  );
+}
+
 function RequestCell({ r }: { r: AuditRow }) {
   if (!r.http_method && !r.route) return <span style={{ color: K.muted }}>—</span>;
   return (
@@ -399,7 +449,7 @@ function AuditDrawer({ row, onClose }: { row: AuditRow | null; onClose: () => vo
             <DField label="Status" value={row.status ?? "—"} />
             <DField label="Resource" value={row.resource_type ? `${row.resource_type}${row.resource_id ? ` · ${row.resource_id}` : ""}` : "—"} />
             <DField label="Tenant" value={row.tenant_id ?? "—"} />
-            <DField label="Chain #" value={row.chain_seq ?? "pre-chain (before CIS 248)"} />
+            <DField label="Chain #" value={row.chain_seq ?? "pre-chain (before the chain started)"} />
             <DField label="Row hash" value={row.row_hash ? <code style={codeStyle}>{row.row_hash}</code> : "—"} />
             <DField label="Row id" value={<code style={codeStyle}>{row.id}</code>} />
           </dl>

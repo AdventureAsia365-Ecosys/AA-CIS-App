@@ -9,11 +9,13 @@
 
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ClipboardList,
   Loader2,
   RefreshCw,
   X,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
@@ -540,6 +542,65 @@ export function Tabs({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// ── ScrollX (S243) ────────────────────────────────────────────────────────────
+// Horizontal-scroll wrapper for a plain <table> that is wider than a phone: the table keeps every
+// column (give it a `minWidth`), the wrapper scrolls on its own so the page never scrolls sideways
+// (lesson S221/S239), and a visible hint says so — but only while the content really overflows
+// (measured with a ResizeObserver; a phone's overlay scrollbar is invisible until you touch it).
+// The scroll region is keyboard-focusable while it overflows.
+export function ScrollX({
+  children,
+  testId,
+  hint = "Scroll sideways to see every column",
+}: {
+  children: React.ReactNode;
+  testId?: string;
+  hint?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setOverflows(el.scrollWidth > el.clientWidth + 1);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div style={{ minWidth: 0, maxWidth: "100%" }}>
+      <div
+        ref={ref}
+        data-testid={testId}
+        data-overflows={overflows ? "true" : "false"}
+        tabIndex={overflows ? 0 : undefined}
+        role={overflows ? "region" : undefined}
+        aria-label={overflows ? hint : undefined}
+        style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}
+      >
+        {children}
+      </div>
+      {overflows && (
+        <div
+          data-testid={testId ? `${testId}-scroll-hint` : undefined}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: 6,
+            fontSize: 11,
+            color: K.muted,
+            fontFamily: sans,
+          }}
+        >
+          <ArrowLeftRight size={12} aria-hidden /> {hint}
+        </div>
+      )}
     </div>
   );
 }

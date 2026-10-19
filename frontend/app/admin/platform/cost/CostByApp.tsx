@@ -7,9 +7,12 @@
 // services/platform_cost.py cost_by_app(), the console's ONE cost module — AA-858's overview card reads the
 // same function, so the two pages agree; spend.read = admin; BFF API_READ_RULES "platform").
 //   - AWS = acc2 Cost Explorer grouped by the App cost-allocation tag (stored snapshot). Untagged spend is its
-//     own row with a per-service breakdown (AA-828 tags it). Shared tags are their own rows, never split.
+//     own row ("Not assigned to an app") with a per-service breakdown. Shared tags are their own rows, never split.
 //   - AI = the LLM gateway's estimates by app (quality_signal.app). The part billed on acc2 (Bedrock there) is
-//     already inside AWS, so Total = AWS + AI − "AI on the acc2 bill".
+//     already inside AWS, so Total = AWS + AI − "AI on the acc2 bill" = AWS + "AI outside the AWS bill".
+// S243 — one presentation with the Overview card: backend row labels (platform_cost ROW_LABELS), the same columns
+// (lib/costWording), a KPI strip that adds up on screen (AWS + AI estimate − AI already on the bill = Total),
+// right-aligned numeric headers (kit DataTable meta.align), and data sources in a collapsed "Data sources" block.
 //   - The GET may refresh a stale month itself (one CE request, ~$0.01, at most about once a day per window,
 //     behind a Redis lock); "Refresh from AWS" is the explicit POST /api/admin/cost-explorer/check (spend.write,
 //     admin; the same call as External Spend, plus the App-tag request) for this month's window.
@@ -40,6 +43,15 @@ import {
   type Tone,
 } from "../../../_kit";
 import {
+  AI_ESTIMATE_LABEL,
+  AI_ON_BILL_LABEL,
+  AI_ON_BILL_SRC,
+  AI_OUTSIDE_LABEL,
+  AI_OUTSIDE_SRC,
+  AWS_BILL_LABEL,
+  AWS_BILL_SRC,
+} from "@/lib/costWording";
+import {
   currentUtcMonth,
   lastIncludedDay,
   usd,
@@ -55,7 +67,7 @@ const KIND_TONE: Record<CostRowKind, { tone: Tone; label: string }> = {
   llm_app: { tone: "purple", label: "LLM only" },
   shared_tag: { tone: "info", label: "Shared" },
   other_tag: { tone: "neutral", label: "Other tag" },
-  untagged: { tone: "warning", label: "Untagged" },
+  untagged: { tone: "warning", label: "No App tag" },
 };
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
@@ -99,8 +111,9 @@ export default function CostByApp() {
         title="Cost per app"
         description={
           <>
-            AWS spend on the main account (acc2) by the <code style={{ fontFamily: mono }}>App</code> tag, plus each
-            app&apos;s AI spend from the LLM gateway, per UTC month. Provider-level detail is on{" "}
+            What each app cost in one UTC month: the AWS bill of the main account split by each resource&apos;s App
+            tag, plus each app&apos;s AI spend outside that bill. The same numbers as the Overview card. Provider-level
+            detail is on{" "}
             <Link href="/admin/llm-usage" style={{ color: K.accentDeep, fontWeight: 600 }}>External Spend</Link>.
           </>
         }
@@ -145,6 +158,7 @@ export default function CostByApp() {
           <DataStatus data={data} />
           <CostTable data={data} />
           <LlmByApp data={data} />
+          <DataSources sources={data.sources} />
         </div>
       )}
     </main>
@@ -182,27 +196,47 @@ function CheckOutcome({ r }: { r: CeCheckResp }) {
   );
 }
 
-function Stat({ label, value, title, testId }: { label: string; value: string; title?: string; testId?: string }) {
+function Stat({ label, value, title, testId, op, strong }: {
+  label: string; value: string; title?: string; testId?: string; op?: string; strong?: boolean;
+}) {
   return (
-    <div data-testid={testId} title={title} style={{ ...panelStyle, display: "flex", flexDirection: "column", gap: 2, padding: "9px 12px" }}>
-      <span style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
-        {label} {title && <Info size={11} />}
-      </span>
-      <span style={{ fontSize: 18, fontWeight: 600 }}>{value}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      {op && <span aria-hidden style={{ fontSize: 18, fontWeight: 600, color: K.muted, width: 12, textAlign: "center" }}>{op}</span>}
+      <div data-testid={testId} title={title} style={{
+        ...panelStyle, display: "flex", flexDirection: "column", gap: 2, padding: "9px 12px", flex: 1,
+        background: strong ? K.bg : K.card,
+      }}>
+        <span style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          {label} {title && <Info size={11} />}
+        </span>
+        <span style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      </div>
     </div>
   );
 }
 
+/** The KPI strip adds up on screen: AWS bill + AI estimate − AI already on the AWS bill = Total. */
 function Summary({ data }: { data: CostResp }) {
   const aws = data.aws.total_usd;
   const untaggedPct = aws ? Math.round((100 * data.aws.untagged_usd) / aws) : null;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 10 }}>
-      <Stat label={`Total · ${monthLabel(data.month)}`} value={usd(data.totals.total_usd)} title={data.sources.total_usd} testId="platform-cost-total" />
-      <Stat label="AWS (acc2)" value={usd(aws)} title={data.sources.aws_usd} />
-      <Stat label="AI (LLM gateway)" value={usd(data.totals.ai_usd)} title={data.sources.ai_usd} />
-      <Stat label="Untagged AWS" value={untaggedPct == null ? "—" : `${usd(data.aws.untagged_usd)} · ${untaggedPct} %`}
-        title="AWS spend on acc2 without an App tag (tagging it is AA-828)" />
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div data-testid="platform-cost-kpis" style={{
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))", gap: 10,
+      }}>
+        <Stat label={AWS_BILL_LABEL} value={usd(aws)} title={AWS_BILL_SRC} testId="platform-cost-aws" />
+        <Stat op="+" label={AI_ESTIMATE_LABEL} value={usd(data.totals.ai_usd)}
+          title="Estimate from our AI gateway's call log, every provider and account" testId="platform-cost-ai" />
+        <Stat op="−" label={AI_ON_BILL_LABEL} value={usd(data.totals.ai_in_aws_acc2_usd ?? 0)} title={AI_ON_BILL_SRC}
+          testId="platform-cost-ai-on-bill" />
+        <Stat op="=" strong label={`Total · ${monthLabel(data.month)}`} value={usd(data.totals.total_usd)}
+          testId="platform-cost-total" />
+      </div>
+      {untaggedPct != null && (
+        <div style={noteStyle} title="AWS spend on the main account whose resources carry no App tag">
+          Not assigned to an app: {usd(data.aws.untagged_usd)} ({untaggedPct} % of the AWS bill).
+        </div>
+      )}
     </div>
   );
 }
@@ -258,7 +292,7 @@ function CostTable({ data }: { data: CostResp }) {
               <span style={{ fontWeight: 600 }}>{r.label}</span>
               {r.kind !== "app" && <Badge tone={KIND_TONE[r.kind].tone} dot={false}>{KIND_TONE[r.kind].label}</Badge>}
             </span>
-            {r.kind === "untagged" && <span style={noteStyle}>No App tag; tagging these is AA-828.</span>}
+            {r.hint && <span style={{ ...noteStyle, whiteSpace: "normal" }}>{r.hint}</span>}
             {hasBreakdown(r) && (
               <span style={{ fontSize: 11.5, color: K.accentDeep, display: "inline-flex", alignItems: "center", gap: 3 }}>
                 Breakdown <ChevronRight size={11} />
@@ -270,23 +304,22 @@ function CostTable({ data }: { data: CostResp }) {
     },
     {
       accessorKey: "aws_usd",
-      header: "AWS (App tag)",
-      cell: (c) => <span style={num} title={data.sources.aws_usd}>{usd(c.row.original.aws_usd)}</span>,
+      header: AWS_BILL_LABEL,
+      meta: { align: "right" },
+      cell: (c) => <span style={num} title={AWS_BILL_SRC}>{usd(c.row.original.aws_usd)}</span>,
     },
     {
-      accessorKey: "ai_usd",
-      header: "AI (LLM)",
-      cell: (c) => <span style={num} title={data.sources.ai_usd}>{usd(c.row.original.ai_usd)}</span>,
-    },
-    {
-      accessorKey: "ai_in_aws_acc2_usd",
-      header: "AI already in AWS",
+      accessorKey: "ai_outside_aws_usd",
+      header: AI_OUTSIDE_LABEL,
+      meta: { align: "right" },
       cell: (c) => {
-        const v = c.row.original.ai_in_aws_acc2_usd;
+        const r = c.row.original;
         return (
-          <span style={{ ...num, color: v ? K.body : K.muted }}
-            title="Part of the AI column billed by Bedrock on acc2 itself — already inside the AWS column, so it is subtracted">
-            {v ? `− ${usd(v)}` : "—"}
+          <span style={{ ...num, color: r.ai_outside_aws_usd ? K.body : K.muted }}
+            title={r.ai_in_aws_acc2_usd
+              ? `${AI_ESTIMATE_LABEL} ${usd(r.ai_usd)} − ${usd(r.ai_in_aws_acc2_usd)} already on the AWS bill`
+              : AI_OUTSIDE_SRC}>
+            {usd(r.ai_outside_aws_usd)}
           </span>
         );
       },
@@ -294,9 +327,10 @@ function CostTable({ data }: { data: CostResp }) {
     {
       accessorKey: "total_usd",
       header: "Total",
-      cell: (c) => <span style={{ ...num, fontWeight: 600 }} title={data.sources.total_usd}>{usd(c.row.original.total_usd)}</span>,
+      meta: { align: "right" },
+      cell: (c) => <span style={{ ...num, fontWeight: 600 }} title={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`}>{usd(c.row.original.total_usd)}</span>,
     },
-  ], [data.sources]);
+  ], []);
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -312,14 +346,14 @@ function CostTable({ data }: { data: CostResp }) {
         emptyTitle="No cost data"
         emptyDescription={`Nothing recorded for ${monthLabel(data.month)} yet.`}
         onRowClick={(r) => setOpenApp(hasBreakdown(r) ? r.app : null)}
-        tableMinWidth={680}
+        tableMinWidth={640}
       />
       <div data-testid="platform-cost-totals" style={{
         ...panelStyle, display: "flex", flexWrap: "wrap", gap: "4px 18px", justifyContent: "flex-end", fontSize: 12.5,
       }}>
-        <span><span style={{ color: K.muted }}>AWS</span> <strong>{usd(data.totals.aws_usd)}</strong></span>
-        <span><span style={{ color: K.muted }}>AI</span> <strong>{usd(data.totals.ai_usd)}</strong></span>
-        <span><span style={{ color: K.muted }}>Total</span> <strong>{usd(data.totals.total_usd)}</strong></span>
+        <span><span style={{ color: K.muted }}>{AWS_BILL_LABEL}</span> <strong>{usd(data.totals.aws_usd)}</strong></span>
+        <span><span style={{ color: K.muted }}>+ {AI_OUTSIDE_LABEL}</span> <strong>{usd(data.totals.ai_outside_aws_usd)}</strong></span>
+        <span><span style={{ color: K.muted }}>= Total</span> <strong>{usd(data.totals.total_usd)}</strong></span>
       </div>
       <Drawer open={!!open} onClose={() => setOpenApp(null)} title={open ? `${open.label} · ${monthLabel(data.month)}` : "Breakdown"}>
         {open && <Breakdown r={open} />}
@@ -383,8 +417,11 @@ function LlmByApp({ data }: { data: CostResp }) {
     .filter((x): x is readonly ["acc1" | "acc3", SatelliteLine] => !!x[1]);
   return (
     <section data-testid="platform-cost-llm" style={{ ...panelStyle, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>LLM spend by app</div>
-      <div style={noteStyle}>{data.sources.ai_usd}. Estimates from the gateway&apos;s price table, OpenAI and Jev included.</div>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>AI spend by app</div>
+      <div style={noteStyle}>
+        The full AI estimate per app, from our AI gateway&apos;s call log and its price table (every provider and
+        account, OpenAI and Jev included). The table above counts only the part outside the AWS bill.
+      </div>
       {rows.length === 0 ? (
         <div style={noteStyle}>No LLM call recorded for {monthLabel(data.month)}.</div>
       ) : (
@@ -408,7 +445,7 @@ function LlmByApp({ data }: { data: CostResp }) {
       {sats.length > 0 && (
         <div style={{ borderTop: `1px solid ${K.line}`, paddingTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ ...noteStyle, display: "inline-flex", alignItems: "center", gap: 4 }} title={data.sources.llm_satellites}>
-            LLM satellite accounts — Cost Explorer actual vs the gateway estimate (a cross-check; already counted above by app) <Info size={11} />
+            Other AI accounts — the AWS bill of each vs our estimate (a cross-check; already counted above by app) <Info size={11} />
           </div>
           {sats.map(([name, s]) => (
             <div key={name} style={{ ...lineStyle, fontSize: 12.5 }}>
@@ -427,5 +464,31 @@ function LlmByApp({ data }: { data: CostResp }) {
         Per provider and stage on External Spend <ArrowRight size={11} />
       </Link>
     </section>
+  );
+}
+
+// ── data sources (collapsed) ────────────────────────────────────────────────────────────────
+
+const SOURCE_LABEL: Record<string, string> = {
+  aws_usd: AWS_BILL_LABEL,
+  ai_usd: AI_ESTIMATE_LABEL,
+  ai_outside_aws_usd: AI_OUTSIDE_LABEL,
+  total_usd: "Total",
+  llm_satellites: "Other AI accounts",
+};
+
+/** Where each number comes from, for whoever needs the exact tables — out of the way of the plain copy (S243). */
+function DataSources({ sources }: { sources: Record<string, string> }) {
+  return (
+    <details data-testid="platform-cost-sources" style={{ ...noteStyle }}>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>Data sources</summary>
+      <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 }}>
+        {Object.entries(sources).map(([k, v]) => (
+          <li key={k} style={{ overflowWrap: "anywhere" }}>
+            <strong>{SOURCE_LABEL[k] ?? k}</strong>: <span style={{ fontFamily: mono, fontSize: 11.5 }}>{v}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

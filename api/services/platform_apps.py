@@ -1,7 +1,8 @@
 """AA-884 (S241 GĐ7) — health / version of each ecosystem app, for /admin/platform/apps (and, read-only, AA-858's
 /admin/overview).
 
-    collect_apps(pool, redis, refresh=False) -> {"apps": [cis, booking, tripplanner], "generated_at", "_cached"}
+    collect_apps(pool, redis, refresh=False, traffic=None) -> {"apps": [cis, booking, tripplanner], "generated_at",
+                                                               "_cached"}
     collect_app(pool, redis, app_id, refresh=False) -> one card, or None for an unknown id
 
 One payload, cached in Redis for ``CACHE_TTL_S`` (60 s) under ``CACHE_KEY``; ``refresh=True`` rebuilds it (the page's
@@ -9,12 +10,18 @@ Refresh button) and rewrites the cache. No poller: it is built only when someone
 ``status`` in ok / degraded / down / unknown and never raises: a failing probe makes its card ``unknown`` with the
 error class.
 
+One health definition (S243 finding 1): a card's ``status`` is ``overall.status`` from
+``api.services.app_health.overall_status`` — the worst of the app's own probe (``probe``) and its CloudWatch traffic
+of the last 24 h (``traffic``, the same cached section /admin/overview shows). The overview copies ``overall`` onto
+its tiles, so both pages always say the same thing about an app.
+
 What each card reads (S241 constraints: no ECS / Lambda describe calls, no new IAM, no cross-schema reads):
 - ``cis``: this API task's git SHA (APP_GIT_SHA) and ECS task revision, the live workers from ``shared.job_worker``
   (their git_sha, CIS 248), parity = every live worker runs the API's SHA, the deploy gate (the same helper as
   GET /admin/job-runner/deploy-gate) and the schema readiness of /health/ready.
 - ``booking``: GET {health_base}/booking/health and /booking/health/ready over HTTP (2 s timeout each).
-- ``tripplanner``: no health endpoint yet (GĐ9); today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
+- ``tripplanner``: no health endpoint yet, so its status comes from traffic alone (its two Lambdas: invocations,
+  errors, throttles, alarms); plus today's customer-facing LLM spend (TP ONLINE_STAGES, rows with
   ``quality_signal->>'app' = 'tripplanner'`` since UTC midnight) against the mirrored default daily cap.
 """
 from __future__ import annotations
@@ -29,10 +36,11 @@ import structlog
 
 from api.core import readiness
 from api.core.app_registry import APPS, TP_DEFAULT_DAILY_CAP_USD, TP_ONLINE_STAGES
+from api.services import app_health
 
 logger = structlog.get_logger()
 
-CACHE_KEY = "admin_platform_apps:v1"
+CACHE_KEY = "admin_platform_apps:v2"   # v2 (S243): cards carry probe / traffic / health
 CACHE_TTL_S = 60
 HTTP_TIMEOUT_S = 2.0
 TP_WARN_PCT = 80.0
@@ -105,6 +113,8 @@ async def _cis_card(pool: Any) -> dict:
         problems.append(f"schema/db not ready ({ready.get('status')})")
     card["problems"] = problems
     card["status"] = "ok" if not problems else "degraded"
+    card["probe"] = {"status": card["status"],
+                     "reason": "; ".join(problems) if problems else "Workers on the API's commit, schema ready"}
     return card
 
 
@@ -128,7 +138,8 @@ async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:
             *(_get_json(client, f"{info.health_base}{p}") for p in info.health_paths))
     except Exception as e:  # timeout, DNS, TLS: the page says unknown, never fails
         logger.warning("platform_apps_booking_probe_failed", error=repr(e)[:200])
-        card.update(status="unknown", error=type(e).__name__)
+        card.update(status="unknown", error=type(e).__name__,
+                    probe={"status": "unknown", "reason": f"health endpoint did not answer ({type(e).__name__})"})
         return card
     finally:
         if own:
@@ -147,13 +158,20 @@ async def _booking_card(client: Optional[httpx.AsyncClient] = None) -> dict:
         card["status"] = "degraded"
     else:
         card["status"] = "ok"
+    card["probe"] = {"status": card["status"], "reason": {
+        "down": f"/booking/health answered {health['http_status']}",
+        "degraded": f"/booking/health/ready answered {ready['http_status']}",
+        "ok": "Health and readiness endpoints answer 200",
+    }[card["status"]]}
     return card
 
 
 async def _tripplanner_card(pool: Any) -> dict:
     info = APPS["tripplanner"]
     card: dict[str, Any] = {"id": "tripplanner", "label": info.label, "repo_url": info.repo_url,
-                            "status": "unknown", "note": "No health endpoint yet (S241 GĐ9)."}
+                            "status": "unknown", "probe": None,
+                            "note": "TripPlanner has no health endpoint yet, so its status comes from its traffic "
+                                    "(AWS CloudWatch, last 24 hours)."}
     try:
         rows = await pool.fetch(TP_SPEND_TODAY_SQL, list(TP_ONLINE_STAGES), info.llm_app)
     except Exception as e:
@@ -175,13 +193,28 @@ async def _tripplanner_card(pool: Any) -> dict:
     return card
 
 
-async def _build(pool: Any) -> dict:
-    cis, booking, tp = await asyncio.gather(_cis_card(pool), _booking_card(), _tripplanner_card(pool))
-    return {"apps": [cis, booking, tp], "generated_at": datetime.now(timezone.utc).isoformat()}
+def apply_health(card: dict, traffic_section: Optional[dict]) -> dict:
+    """Set the card's traffic summary and its one status (app_health.overall_status). Pure; unit-tested."""
+    card["traffic"] = app_health.traffic_summary(traffic_section, card["id"])
+    card["overall"] = app_health.overall_status(card.get("probe"), app_health.traffic_for(traffic_section, card["id"]))
+    card["status"] = card["overall"]["status"]
+    return card
 
 
-async def collect_apps(pool: Any, redis: Any = None, refresh: bool = False) -> dict:
-    """Every app's card, cached CACHE_TTL_S in Redis (fail-open: no Redis = build every time)."""
+async def _build(pool: Any, redis: Any = None, traffic: Optional[dict] = None) -> dict:
+    async def no_traffic() -> Optional[dict]:
+        return traffic
+
+    traffic_call = no_traffic() if traffic is not None else app_health.traffic_section(redis)
+    cis, booking, tp, section = await asyncio.gather(_cis_card(pool), _booking_card(), _tripplanner_card(pool),
+                                                     traffic_call)
+    cards = [apply_health(c, section) for c in (cis, booking, tp)]
+    return {"apps": cards, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+async def collect_apps(pool: Any, redis: Any = None, refresh: bool = False, traffic: Optional[dict] = None) -> dict:
+    """Every app's card, cached CACHE_TTL_S in Redis (fail-open: no Redis = build every time). ``traffic``: an
+    already fetched traffic section (the overview passes its own, so one page view reads CloudWatch once)."""
     if redis is not None and not refresh:
         try:
             cached = await redis.get(CACHE_KEY)
@@ -191,7 +224,7 @@ async def collect_apps(pool: Any, redis: Any = None, refresh: bool = False) -> d
                 return data
         except Exception as e:
             logger.warning("platform_apps_cache_read_failed", error=repr(e)[:200])
-    data = await _build(pool)
+    data = await _build(pool, redis, traffic)
     if redis is not None:
         try:
             await redis.set(CACHE_KEY, json.dumps(data, default=str), ex=CACHE_TTL_S)

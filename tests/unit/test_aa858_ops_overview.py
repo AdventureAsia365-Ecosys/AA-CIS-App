@@ -342,9 +342,15 @@ def _cost(month, rows, fetched="2026-10-19T03:00:00+00:00"):
 
 
 def _app(app, kind, aws=0.0, ai=0.0, ai_acc2=0.0, services=()):
-    return {"app": app, "kind": kind, "label": app, "aws_usd": aws, "ai_usd": ai, "ai_in_aws_acc2_usd": ai_acc2,
-            "total_usd": round(aws + ai - ai_acc2, 4), "services": [{"service": s, "amount_usd": v}
-                                                                   for s, v in services]}
+    """A row as platform_cost.cost_by_app returns it (labels and hints from the cost module's own mapping)."""
+    from api.core.app_registry import APPS
+    from api.services import platform_cost
+
+    default = APPS[app].label if app in APPS else app
+    return {"app": app, "kind": kind, "label": platform_cost.row_label(app, kind, default),
+            "hint": platform_cost.ROW_HINTS.get(app), "aws_usd": aws, "ai_usd": ai, "ai_in_aws_acc2_usd": ai_acc2,
+            "ai_outside_aws_usd": round(ai - ai_acc2, 4), "total_usd": round(aws + ai - ai_acc2, 4),
+            "services": [{"service": s, "amount_usd": v} for s, v in services]}
 
 
 @pytest.mark.asyncio
