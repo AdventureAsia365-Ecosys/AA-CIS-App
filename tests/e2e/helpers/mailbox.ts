@@ -1,9 +1,10 @@
 // tests/e2e/helpers/mailbox.ts
 // AA-816 (E1) — read the Cognito sign-in code for the E2E staff user from the SES inbound mailbox.
 //
-// Mail path (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): Cognito emails the code to
-// e2e-cognito@adventure.asia → the adventure.asia mail host forwards it to e2e@e2e-mail.lumiguides.it.com →
-// SES receipt rule `e2e-cognito` → s3://aa-cis-dev-e2e-mail-005097885195/inbound/<message id> (1-day expiry).
+// Mail path (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): Cognito emails the code straight to the
+// E2E staff user's own address e2e@e2e-mail.lumiguides.it.com (S243 option B: a TEMPORARY exception to the
+// @adventure.asia-only staff rule, root ADR 0006a; no forwarder) → SES receipt rule `e2e-cognito` →
+// s3://aa-cis-dev-e2e-mail-005097885195/inbound/<message id> (1-day expiry).
 //
 // The runner's AWS CLI does the reads (no new npm dependency): `s3api list-objects-v2` + `s3api get-object`,
 // via execFile (fixed argv, no shell). In CI the credentials are the read-only role
@@ -20,7 +21,8 @@ const execFileAsync = promisify(execFile);
 export const MAILBOX_BUCKET = 'aa-cis-dev-e2e-mail-005097885195';
 export const MAILBOX_PREFIX = 'inbound/';
 export const MAILBOX_REGION = 'us-west-1';
-export const E2E_COGNITO_EMAIL = 'e2e-cognito@adventure.asia';
+// Must equal api/services/staff_directory.py E2E_TEST_STAFF_EMAIL (the only non-company staff address).
+export const E2E_COGNITO_EMAIL = 'e2e@e2e-mail.lumiguides.it.com';
 
 /** Each AWS CLI call has its own cap; the whole wait has another (lesson: every wait is bounded). */
 const CLI_TIMEOUT_MS = 20_000;
@@ -31,8 +33,8 @@ const CLOCK_SKEW_MS = 60_000;
 /** A Cognito code mail is a few KB; anything this large is not one. */
 const MAX_OBJECT_BYTES = 1_000_000;
 
-// Headers that can carry the original recipient after a forward (the forwarder may rewrite the envelope,
-// SES stores the message as received).
+// Headers that can carry the recipient (SES stores the message as received; the extra ones matter only if a
+// forwarder is ever put in front of the mailbox again).
 const RECIPIENT_HEADERS = ['to', 'cc', 'delivered-to', 'x-original-to', 'x-forwarded-to', 'envelope-to'];
 
 export type MailObject = { key: string; lastModified: Date; size: number };
@@ -259,7 +261,7 @@ export async function waitForSignInCode(opts: CodeWait): Promise<string> {
   throw new Error(
     `No sign-in code for ${recipient} in s3://${MAILBOX_BUCKET}/${MAILBOX_PREFIX} within ` +
       `${Math.round((opts.timeoutMs ?? DEFAULT_WAIT_MS) / 1000)} s (${polls} polls, ${checked.size - opts.baseline.size} ` +
-      `new message(s) checked)${lastError ? `; last error: ${lastError}` : ''}. Check the forwarder ` +
-      `${recipient} → e2e@e2e-mail.lumiguides.it.com and the SES receipt rule.`,
+      `new message(s) checked)${lastError ? `; last error: ${lastError}` : ''}. Check that the E2E staff user ` +
+      `exists with this address and the SES receipt rule e2e-cognito is active.`,
   );
 }
