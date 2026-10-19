@@ -1,7 +1,8 @@
 // tests/e2e/smoke/auth.setup.ts
 // AA-732 — smoke-only setup project (Playwright `dependencies`). It logs the admin in ONCE and
 // persists storageState to tests/e2e/.auth/admin-state.json, so every smoke page test runs
-// independently from that state. It is matched only by the `smoke-setup` project
+// independently from that state. AA-878: it also records the role the server answered
+// (tests/e2e/.auth/admin-role.json); a `viewer` account runs every smoke spec in viewer mode. It is matched only by the `smoke-setup` project
 // (testMatch /smoke\/.*\.setup\.ts/) and listed as a dependency of the `smoke` project — the
 // legacy `chromium` project never runs it, so legacy runs never log in.
 //
@@ -9,8 +10,9 @@
 // real tenant login takes an API key. The portal block logs in on demand when E2E_TENANT_API_KEY
 // is present.
 import { test as setup } from '@playwright/test';
-import { loginAsAdmin, adminUsername, adminPassword } from '../helpers/auth';
-import { ADMIN_STATE, baseUrl, ensureAuthDir, installBypassRoute } from './smoke-helpers';
+import { adminUsername, adminPassword } from '../helpers/auth';
+import fs from 'fs';
+import { ADMIN_STATE, ROLE_FILE, baseUrl, ensureAuthDir, installBypassRoute } from './smoke-helpers';
 
 setup('authenticate admin', async ({ browser }) => {
   ensureAuthDir();
@@ -25,9 +27,24 @@ setup('authenticate admin', async ({ browser }) => {
   await installBypassRoute(context);
   const page = await context.newPage();
   try {
-    await loginAsAdmin(page);
+    // AA-878 — the role comes from the server's login answer (the DB role, POST /api/auth/login → { role }),
+    // never from the display cookie: a viewer account switches the specs to viewer mode. The login is a
+    // direct request on the browser context (same cookie jar): a form submit navigates away, and the
+    // browser may drop the response body before the test can read it (S243: "no role in the answer").
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    const res = await context.request.post('/api/auth/login', {
+      data: { username: adminUsername(), password: adminPassword() },
+      headers: bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'samesitenone' } : {},
+    });
+    const body = (await res.json().catch(() => ({}))) as { role?: unknown };
+    if (!res.ok() || typeof body.role !== 'string' || !body.role) {
+      throw new Error(`smoke login failed: POST /api/auth/login → HTTP ${res.status()} (no role in the answer)`);
+    }
+    await page.goto('/admin/review');
     await page.waitForURL(/\/admin\//, { timeout: 20000 });
     await context.storageState({ path: ADMIN_STATE });
+    fs.writeFileSync(ROLE_FILE, JSON.stringify({ role: body.role }));
+    console.log(`[smoke] logged in with staff role: ${body.role}`);
   } finally {
     await context.close();
   }

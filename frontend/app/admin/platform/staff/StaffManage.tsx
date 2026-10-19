@@ -22,7 +22,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Button, ConfirmModal, K, Modal, RADIUS, sans } from "../../../_kit";
-import { ROLE_LABEL, STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
+import { ASSIGNABLE_STAFF_ROLES, ROLE_LABEL, isStaffRole, staffErrorMessage } from "@/lib/rbac";
 
 // Mirrors the backend row (api/routers/admin_platform.py STAFF_COLUMNS).
 export interface StaffAccount {
@@ -214,7 +214,11 @@ function Label({ text, htmlFor, hint, children }: { text: string; htmlFor: strin
 function CisRoleSelect({ id, value, onChange, disabled }: { id: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
-      {STAFF_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+      {/* AA-878 — the read-only viewer is never assignable here; a viewer row shows its role, not selectable. */}
+      {!(ASSIGNABLE_STAFF_ROLES as readonly string[]).includes(value) && value && (
+        <option value={value} disabled>{roleLabel(value)}</option>
+      )}
+      {ASSIGNABLE_STAFF_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
     </select>
   );
 }

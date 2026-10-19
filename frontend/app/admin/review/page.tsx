@@ -21,8 +21,10 @@ import {
   PageHeader,
   StatusBadge,
   ToastProvider,
+  useAdminIdentity,
   useToast,
 } from "../../_kit";
+import { can } from "@/lib/rbac";
 import { ReviewEditor } from "./ReviewEditor";
 import { RegenerateModal } from "./RegenerateModal";
 import {
@@ -99,6 +101,10 @@ const selectStyle: React.CSSProperties = {
 function ReviewQueueInner() {
   const toast = useToast();
   const qc = useQueryClient();
+  // AA-878 — the read-only viewer sees the queue and the editor, without the actions (the BFF and the
+  // backend refuse its writes anyway).
+  const role = useAdminIdentity().role;
+  const canAct = can(role, "review.act");
 
   const [filterStatus, setFilterStatusRaw] = useState("pending");
   const [filterCountry, setCountryRaw] = useState("all");
@@ -325,6 +331,9 @@ function ReviewQueueInner() {
           const item = c.row.original;
           const ok = canApprove(item);
           const busy = item.regenerating;
+          if (!canAct) {
+            return <span style={{ fontSize: 11.5, color: A.muted }}>View only</span>;
+          }
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }} onClick={(e) => e.stopPropagation()}>
               {/* AA-728 (feedback r1) — two-row Actions cell so it still fits 1440px with the full
@@ -367,7 +376,7 @@ function ReviewQueueInner() {
         },
       },
     ],
-    [approveM, rejectM, dismissM],
+    [approveM, rejectM, dismissM, canAct],
   );
 
   // ── Non-blocking regenerate: mark rows regenerating, close modal, let the poll refresh ──
@@ -534,7 +543,7 @@ function ReviewQueueInner() {
           </div>
         }
         onRowClick={(row) => setEditorItem(row)}
-        bulkActions={({ selectedRows, clearSelection }) => {
+        bulkActions={!canAct ? undefined : ({ selectedRows, clearSelection }) => {
           // AA-728 — Regenerate only the retryable rows; non-retryable rows (raw too thin, needs a
           // person, or Sonnet already failed) are skipped. If none are retryable the action is
           // disabled with a tooltip.
@@ -581,6 +590,7 @@ function ReviewQueueInner() {
             item={editorItem}
             onSaved={() => invalidate()}
             onRevalidated={() => invalidate()}
+            readOnly={!can(role, "content.write")}
           />
         )}
       </Drawer>

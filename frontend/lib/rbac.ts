@@ -5,16 +5,36 @@
 // client-writable `cis_role` cookie — that cookie is only a display hint for the UI.
 //
 // Staff roles live in shared.admin_users.role (enum shared.admin_role: admin, reviewer, content —
-// migration 218). The matrix is documented in CONTEXT.md ("Staff roles and permissions"); AA-Booking
+// migration 218 — and the read-only viewer, migration 249, AA-878). The matrix is documented in CONTEXT.md ("Staff roles and permissions"); AA-Booking
 // staff roles map onto the same three (admin → admin, sales → reviewer tier, content_creator →
 // content) so the ecosystem keeps one staff identity model.
 //
 // Dependency-free: no React, no Node APIs (proxy.ts imports it).
 
-export type StaffRole = "admin" | "reviewer" | "content";
+export type StaffRole = "admin" | "reviewer" | "content" | "viewer";
 
-export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content"];
-const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content"];
+export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content", "viewer"];
+const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content", "viewer"];
+// Roles that do content work (upload, S1 rewrite, review actions): every staff role but the read-only one.
+const CONTENT_WORKERS: StaffRole[] = ["admin", "reviewer", "content"];
+
+// AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
+// write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
+// attached, and the backend refuses it too (api/core/staff_authz.py READ_ONLY_ROLES).
+export const READ_ONLY_ROLES: readonly StaffRole[] = ["viewer"];
+
+export function isReadOnlyRole(role: string | null | undefined): boolean {
+  return !!role && (READ_ONLY_ROLES as readonly string[]).includes(role);
+}
+
+/** Is `method` a read (never refused for a read-only role)? */
+export function isReadMethod(method: string): boolean {
+  const m = method.toUpperCase();
+  return m === "GET" || m === "HEAD" || m === "OPTIONS";
+}
+
+// The CIS roles the Staff page may assign (api/services/staff_directory.py CIS_ROLES): never the viewer.
+export const ASSIGNABLE_STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content"];
 
 export function isStaffRole(role: string | null | undefined): role is StaffRole {
   return !!role && (STAFF_ROLES as readonly string[]).includes(role);
@@ -46,11 +66,12 @@ export const PAGE_RULES: PageRule[] = [
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never /admin/platform-stats (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
-  // Content work — every staff role.
-  { prefix: "/admin/upload", roles: ALL_STAFF },
+  // Content work — every staff role but the read-only viewer (these pages only write).
+  { prefix: "/admin/upload", roles: CONTENT_WORKERS },
+  { prefix: "/admin/s1-rewrite", roles: CONTENT_WORKERS },
+  // Content reads — every staff role, the viewer included (write controls hidden by can()).
   { prefix: "/admin/master-content", roles: ALL_STAFF },
   { prefix: "/admin/review", roles: ALL_STAFF },
-  { prefix: "/admin/s1-rewrite", roles: ALL_STAFF },
   { prefix: "/admin/settings", roles: ALL_STAFF },
 ];
 
@@ -124,6 +145,7 @@ export function isApiDocsPath(path: string): boolean {
 /** May `role` send a non-GET request to backend /admin/{path}? (path without the leading slash) */
 export function canWriteAdminPath(role: string | null | undefined, method: string, path: string): boolean {
   if (method === "GET" || method === "HEAD") return true;
+  if (isReadOnlyRole(role)) return false;   // AA-878: no default allow for the viewer
   const rule = API_WRITE_RULES.find((r) => path.startsWith(r.prefix));
   return !rule || (!!role && (rule.roles as string[]).includes(role));
 }
@@ -150,6 +172,7 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   ],
   reviewer: ["content.read", "content.write", "review.act"],
   content: ["content.read", "content.write", "review.act"],
+  viewer: ["content.read"],
 };
 
 /** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */
@@ -175,6 +198,7 @@ export function canWriteStaff(viewer: StaffViewer | null | undefined): boolean {
 
 /** A readable message for a failed staff call: the backend's policy 403 reads "Role 'x' lacks …". */
 export function staffErrorMessage(status: number, detail: unknown, fallback: string): string {
+  // The backend's capability and read-only refusals both start with "Role '" (api/core/staff_authz.py).
   if (status === 403 && typeof detail === "string" && detail.startsWith("Role '")) {
     return "Admin only: your role cannot make this change.";
   }
@@ -185,4 +209,5 @@ export const ROLE_LABEL: Record<StaffRole, string> = {
   admin: "Administrator",
   reviewer: "Reviewer",
   content: "Content Team",
+  viewer: "Viewer (read-only)",
 };

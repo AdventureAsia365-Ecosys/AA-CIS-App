@@ -1,0 +1,73 @@
+name: Cognito E2E
+
+# AA-816 (E1) — real Cognito email-code sign-in on https://aa-cis.lumiguides.it.com (production host: the
+# only registered callback of the cis-admin client, so never a preview). Playwright project `cognito`:
+#   /login → "Sign in with company email" → staff-auth.lumiguides.it.com managed login → the E2E staff user's
+#   email code, read from the SES inbound mailbox in S3 → lands under /admin → sign out, no silent re-login.
+#
+# Mailbox (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): e2e-cognito@adventure.asia forwards to
+# e2e@e2e-mail.lumiguides.it.com → SES → s3://aa-cis-dev-e2e-mail-005097885195/inbound/. The job assumes the
+# read-only role aa-cis-dev-e2e-mail-reader (List + Get, no delete) by OIDC. Its trust pins this repo, the
+# `e2e` environment and refs/heads/main — so the job runs on main only.
+#
+# Prerequisites (outside this repo): Infra I5 applied; GitHub environment `e2e` with secret E2E_MAIL_ROLE_ARN;
+# the forwarder above (adventure.asia mail host panel); staff user "E2E Cognito" (reviewer, Booking none).
+# workflow_dispatch only: nothing runs on push or PR.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Two runs at once would race for the same mailbox and the same user's codes.
+  group: e2e-cognito
+  cancel-in-progress: false
+
+jobs:
+  cognito:
+    name: Cognito email-code sign-in (Playwright)
+    runs-on: ubuntu-latest
+    # The mailbox role trusts refs/heads/main only; a branch dispatch would fail at AssumeRole.
+    if: github.ref == 'refs/heads/main'
+    environment: e2e
+    timeout-minutes: 10
+    env:
+      # Opt-in switch the sign-in spec checks (no underscore by design).
+      E2ECOGNITO: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC, read-only mailbox role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.E2E_MAIL_ROLE_ARN }}
+          aws-region: us-west-1
+          role-session-name: cis-e2e-cognito-${{ github.run_id }}
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (S220 lesson).
+      - name: Install dependencies (repo root — Playwright lives here)
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the cognito project
+        run: npx playwright test --project=cognito -c playwright.config.ts
+
+      # Screenshots only. NOT the HTML/JSON reports: their step titles carry action values (a `fill` step
+      # names the typed text), i.e. the sign-in code. The spec never screenshots a filled code field.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-cognito-${{ github.run_id }}
+          path: tests/e2e/results/cognito/*.png
+          if-no-files-found: warn
+          retention-days: 14
