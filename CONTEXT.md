@@ -486,19 +486,25 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
   (`check` → `apply`) from a byte-identical copy in `db/migrations/cis/` (S225); never by hand. A
   migration that the new code needs is applied before that code merges.
-- **`catalog.*` views are frozen from the X1 S1 merge until X1 S22** (AA-852 / AA-860, X1 plan XD9,
+- **`catalog.*` view changes use the X1 S22 catalog recipe** (AA-852 / AA-860, X1 plan S22 / XD9,
   `AA-Ecosys/docs/audits/2026-10-17-S241-x1/x1-plan.md`). The views belong to the NOLOGIN role
-  `catalog_owner`; DB Migrate logs in as the RDS master until S22, the master has not been a member of
-  `catalog_owner` since 225 and must never become one (the `catalog_owner_aa_master_read` policies
-  would reach the CIS runtime). The old 225/235 `GRANT catalog_owner TO CURRENT_USER` dance is refused
-  by the AA-CIS-Infra role lint for files ≥ 243. So no migration here may `CREATE/ALTER/DROP VIEW
-  catalog.*` until S22: the lint asks for the recipe below and DB Migrate refuses a recipe file at
-  `check` (exit 8, "login role is not a member of catalog_owner"). From S22 (`db_migrator`, a member
-  of `catalog_owner`, is the login) a catalog view change uses this recipe, never `RESET ROLE` (it
-  returns to `db_migrator` and leaves mis-owned objects):
+  `catalog_owner`; since 245 schema `catalog` belongs to `cis_owner` and `catalog_owner` only has USAGE on it, so
+  `CREATE OR REPLACE VIEW catalog.*` fails both as `cis_owner` ("must be owner") and as plain `catalog_owner`
+  ("permission denied for schema catalog"). A migration here changes a catalog view only like this, inside its one
+  `BEGIN … COMMIT` (DB Migrate already runs the file as `cis_owner`):
   `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
   VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
-  A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
+  **Never `RESET ROLE`**: it returns to the DB Migrate login `db_migrator`, which inherits CREATE on every CIS
+  schema through `cis_owner`, so what is created after it is `db_migrator`'s (outside the `FOR ROLE cis_owner`
+  default privileges: `cis_app` gets 42501); the AA-CIS-Infra role lint refuses it and DB Migrate's ownership
+  post-check rolls such a file back (exit 9). The recipe needs a DB Migrate login that is a member of
+  `catalog_owner`: `db_migrator` (from X1 S22; Infra rl-002), never the RDS master (not a member since 225 and must
+  never become one: the `catalog_owner_aa_master_read` policies would reach its members). Example and CI proof:
+  `tests/integration/test_aa860_migration_246.py`. The old 225/235 `GRANT catalog_owner TO CURRENT_USER` dance stays
+  refused by the role lint for files ≥ 243. **The XD9 freeze** (no `catalog.*` view change from the X1 S1 merge until
+  S22, because the master was the login) **ends when 246 is applied on Dev** (DB Migrate logs `ran as: cis_owner`
+  with login `db_migrator`); if the migrator task definition is ever rolled back to the master, DB Migrate refuses a
+  recipe file again at `check` (exit 8).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
@@ -526,6 +532,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   RDS-like master after 244 and undoes it. Rollback is a prepared Infra `roles/` undo (a `cis/` file runs as
   `cis_owner` and cannot give objects back). **CIS migration freeze** from the Infra copy of 245 until X1 S22's 246
   probe passes.
+- **DB Migrate logs in as `db_migrator` from X1 S22 (AA-860)**, not the RDS master: every `cis/` file runs as
+  `cis_owner` through the live-owner switch, and migration **246** (`246_x1_set_role_probe.sql`, assert-only) is the
+  permanent proof (session user `db_migrator`, current user `cis_owner`, `db_migrator` a member of `catalog_owner`).
+  The conftest replay skips 246; `test_aa860_migration_246.py` applies it as `db_migrator` under the switch, after
+  245. The master keeps only Infra `roles/` files (roles, extensions, `public.*` enums), DB Migrate `set-password` and
+  `run-script`; anything a `cis/` file cannot do as `cis_owner` goes there, never into a `cis/` file.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
