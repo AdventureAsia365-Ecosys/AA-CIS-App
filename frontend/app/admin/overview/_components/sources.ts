@@ -111,10 +111,10 @@ const LIVE = "counted live, refreshed every minute";
 export const PIPELINE_SRC = {
   card: `${CIS_DB}, every tour per country through the content pipeline, ${LIVE}`,
   raw: `${CIS_DB}, imported tours still active at the source; +n/7d = imported in the last 7 days`,
-  generated: `${CIS_DB}, tours with at least one rewritten draft; +n/7d = tours with a new draft in the last 7 days`,
-  review: `${CIS_DB}, tours waiting in the Review Queue right now`,
-  published: `${CIS_DB}, tours published to Master Content (trashed ones left out); +n/7d = published in the last 7 days`,
-  atomized: `${CIS_DB}, published tours split into active content pieces (atoms)`,
+  generated: `${CIS_DB}, active tours with at least one rewritten draft; +n/7d = tours with a new draft in the last 7 days`,
+  review: `${CIS_DB}, active tours waiting in the Review Queue right now`,
+  published: `${CIS_DB}, active tours published to Master Content (trashed ones left out); +n/7d = published in the last 7 days`,
+  atomized: `${CIS_DB}, active published tours split into active content pieces (atoms)`,
 };
 
 export const INTEL_SRC = {

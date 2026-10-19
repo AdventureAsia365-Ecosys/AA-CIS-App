@@ -47,7 +47,11 @@ _AA_INTERNAL = "00000000-0000-0000-0000-000000000001"
 # raw (active) → S1 generated → in review (pending) → published (master) → atomized, by country,
 # each with the count added in the last 7 days (delta). published_tours has no country, so it is
 # joined back to raw_tours; atoms are read through v_active_tour_atoms (migration 203).
-_FUNNEL_SQL = """
+# Every stage counts only tours whose raw row is still active (_ACTIVE_RAW), so a later stage can
+# never exceed the raw column (S244: a trashed Bhutan tour kept its S1 drafts and showed 33 vs 32).
+_ACTIVE_RAW = "rt.source_status = 'active' AND rt.deleted_at IS NULL"
+
+_FUNNEL_SQL = f"""
 WITH raw_c AS (
     SELECT country,
            count(*) AS raw_active,
@@ -62,13 +66,14 @@ gen_c AS (
            count(DISTINCT gc.tour_id) FILTER (WHERE gc.created_at >= now() - interval '7 days') AS generated_7d
     FROM silver_aa_internal.generated_content gc
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
+    WHERE {_ACTIVE_RAW}
     GROUP BY rt.country
 ),
 rev_c AS (
     SELECT rt.country, count(DISTINCT rq.tour_id) AS in_review
     FROM silver_aa_internal.review_queue rq
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
-    WHERE rq.review_status = 'pending'
+    WHERE rq.review_status = 'pending' AND {_ACTIVE_RAW}
     GROUP BY rt.country
 ),
 pub_c AS (
@@ -77,13 +82,14 @@ pub_c AS (
            count(DISTINCT pt.tour_id) FILTER (WHERE pt.published_at >= now() - interval '7 days') AS published_7d
     FROM gold_aa_internal.published_tours pt
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
-    WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed'
+    WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed' AND {_ACTIVE_RAW}
     GROUP BY rt.country
 ),
 atom_c AS (
     SELECT rt.country, count(DISTINCT ta.tour_id) AS atomized
     FROM acp_contract.v_active_tour_atoms ta
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = ta.tour_id
+    WHERE {_ACTIVE_RAW}
     GROUP BY rt.country
 )
 SELECT
