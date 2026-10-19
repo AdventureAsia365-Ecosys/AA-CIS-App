@@ -479,7 +479,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
-  no silent re-login. The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
+  no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
   are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
@@ -569,8 +569,11 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
   (single-flight; `proxy.ts` redirects page navigations there, `SessionKeepAlive` POSTs before expiry).
-  `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout revokes the refresh token
-  and goes through Cognito `/logout`.
+  `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout (`POST
+  /api/auth/admin-logout`, same-origin only — a cross-site POST gets 403, like Booking's) revokes the refresh
+  token, clears every session cookie and answers the managed-login `/logout` URL (`client_id` + `logout_uri` =
+  `<prod>/login`, registered on both staff clients); the Topbar follows only that URL or `/login`
+  (`lib/staffLogout.ts`), so the next sign-in asks for a new email code.
 - A sign-in completes only after `/auth/verify-admin` accepts the token; a refusal lands on
   `/login?error=no_access` with no session cookies.
 
