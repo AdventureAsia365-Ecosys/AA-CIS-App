@@ -6,7 +6,7 @@
 //   • a forged tenant/staff cookie is refused by pages (→ /tenant-login) and by the BFF (401);
 //   • no admin page, admin BFF or staff login exists here (404);
 //   • every response carries the security headers;
-//   • /privacy and /terms resolve;
+//   • /privacy and /terms are draft pages (AA-886: 200, draft banner, noindex);
 //   • after the tenant login, cis_tenant_token is host-only (no parent Domain), httpOnly and Secure.
 import { test, expect, request as pwRequest, type APIRequestContext } from '@playwright/test';
 import fs from 'fs';
@@ -110,15 +110,17 @@ test.describe('AA-885 — portal host', () => {
     }
   });
 
-  test('/privacy and /terms resolve', async () => {
+  // AA-886: both are portal pages now (no redirect), marked as drafts and kept out of search engines.
+  test('/privacy and /terms are draft pages (200, banner, noindex)', async () => {
     const ctx = await apiContext();
     try {
-      const privacy = await ctx.get('/privacy', { maxRedirects: 0, timeout: 15000 });
-      expect(privacy.status()).toBeGreaterThanOrEqual(300);
-      expect(privacy.status()).toBeLessThan(400);
-      expect(privacy.headers()['location']).toBe('https://adventure.asia/privacy-policy');
-      const terms = await ctx.get('/terms', { maxRedirects: 0, timeout: 15000 });
-      expect(terms.status()).toBe(200);
+      for (const p of ['/privacy', '/terms']) {
+        const res = await ctx.get(p, { maxRedirects: 0, timeout: 15000 });
+        expect(res.status(), `GET ${p}`).toBe(200);
+        const html = await res.text();
+        expect(html, `${p}: draft banner`).toContain('Draft — pending legal review');
+        expect(html, `${p}: noindex`).toMatch(/<meta name="robots" content="noindex/);
+      }
     } finally {
       await ctx.dispose();
     }
