@@ -1,7 +1,8 @@
 # S242: Dependabot security updates arrived as one PR per transitive package (five or more a day), each
 # with a red "Vercel deploy" check because Dependabot PRs get no repository secrets. Version updates are
-# off (open-pull-requests-limit: 0); security updates are grouped into one PR per ecosystem. When a
-# group PR's secret-dependent checks fail, push the same change from a normal branch (as in S242).
+# off (open-pull-requests-limit: 0); security updates are grouped into one PR per ecosystem. AA-903: the
+# Vercel deploy jobs (and the UI smoke behind them) are skipped on Dependabot runs, so those PRs are no
+# longer red; they get no preview either. To see a preview, push the same change from a normal branch.
 version: 2
 updates:
   - package-ecosystem: npm

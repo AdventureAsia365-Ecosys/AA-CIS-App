@@ -16,7 +16,8 @@ name: Vercel Deploy
 #
 # Needs the repo secret VERCEL_TOKEN (a Vercel token scoped to the team). While it is empty the job
 # FAILS (red) on every target — nothing else deploys the frontend, so a silent green skip would hide a
-# production that stopped updating. Fork PRs get no secrets and are skipped by the job `if:` instead.
+# production that stopped updating. Fork PRs and Dependabot runs (AA-903) get no secrets and are
+# skipped by the job `if:` instead.
 # The org / project ids are not secrets.
 
 on:
@@ -59,10 +60,14 @@ jobs:
   deploy:
     name: Vercel deploy
     runs-on: ubuntu-latest
-    # PRs from forks get no secrets — never try to deploy them.
+    # PRs from forks get no secrets — never try to deploy them. Neither do runs Dependabot triggers
+    # (AA-903): `github.actor` is dependabot[bot] on its PR events and on re-runs of them, i.e. exactly
+    # the runs without VERCEL_TOKEN, so the job (and the smoke that needs it) shows as skipped instead
+    # of red. A human push onto a Dependabot branch runs as that human and still deploys a preview.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       pull-requests: write

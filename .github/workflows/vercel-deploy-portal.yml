@@ -19,6 +19,7 @@ name: Vercel Deploy (portal)
 #   - optional repo secret VERCEL_PORTAL_BYPASS_SECRET (the aa-cis-portal "Protection Bypass for
 #     Automation" value) for the production check and the preview smoke.
 # portal/** is deliberately NOT in deploy-dev.yml's paths: a portal change never redeploys ECS.
+# Fork PRs and Dependabot runs get no secrets and are skipped by the job `if:` (AA-903).
 
 on:
   pull_request:
@@ -62,10 +63,14 @@ jobs:
   deploy:
     name: Vercel deploy (portal)
     runs-on: ubuntu-latest
-    # PRs from forks get no secrets — never try to deploy them.
+    # PRs from forks get no secrets — never try to deploy them. Neither do runs Dependabot triggers
+    # (AA-903): `github.actor` is dependabot[bot] on its PR events and on re-runs of them, i.e. exactly
+    # the runs without VERCEL_TOKEN, so the job (and the smoke that needs it) shows as skipped instead
+    # of red. A human push onto a Dependabot branch runs as that human and still deploys a preview.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       pull-requests: write
