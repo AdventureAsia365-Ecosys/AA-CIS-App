@@ -8,7 +8,7 @@ AA-Ecosys tools/docs/check_docs_text.py, the fourth is stricter because the root
   * VPC resource ID          sg-/subnet-/vpc-/vpce-/rtb-/igw-/nat-/eni-/acl-/eipalloc-/tgw- + 8 or 17 hex
   * API Gateway host         <10 chars>.execute-api.
   * Account ID in a name     <name>-<12 digits>  (bucket names embed the account: aa-cis-bronze-<account>)
-  * 12-digit account ID      any standalone 12-digit number, also after / . or : (UUIDs are
+  * 12-digit account ID      any 12-digit number not inside a longer word or number, also after _ - / . or : (UUIDs are
                              blanked first because their last group is 12 hex digits)
 
 AWS documentation example accounts (123456789012, 111122223333, 444455556666, 777788889999) are
@@ -48,7 +48,11 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 # A UUID's last group is 12 hex digits, often all decimal in test fixtures: not an account.
 UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-STANDALONE_ID = re.compile(r"(?<![\w-])(\d{12})(?![\w-])")
+# Letters or digits around it make it part of a longer token; "_", "-", "/", ":" and quotes do not
+# (acc_<id>, MyBucket-<id> are still accounts). After "<4 hex>-" it is a UUID tail, often written
+# truncated in docs and f-strings ("...-0000-000000000001", "00000000-...-000000000001"), so it is
+# skipped, as after an elided "...-".
+STANDALONE_ID = re.compile(r"(?<![0-9A-Za-z])(?<![0-9A-Fa-f]{4}-)(?<!\.\.\.-)(\d{12})(?![0-9A-Za-z])")
 
 
 def _mask(text: str) -> str:

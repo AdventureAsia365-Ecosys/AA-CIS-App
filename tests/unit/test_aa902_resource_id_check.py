@@ -28,6 +28,8 @@ def _kinds(line: str) -> list[str]:
     (f'ACC1_ACCOUNT_ID = "{FAKE}"', "12-digit account ID"),
     (f'  "{FAKE}": "acc3",', "12-digit account ID"),
     (f"AA-623 found acc2/{FAKE} is a member account", "12-digit account ID"),
+    (f"acc_{FAKE}", "12-digit account ID"),                 # after "_"
+    (f"MyBucket-{FAKE}", "12-digit account ID"),             # capitalised name, after "-"
     ("sg-" + "0123abcd", "VPC resource ID"),                  # split so this file passes the check
     ("https://abcde12345" + ".execute-api.us-west-1.amazonaws.com/dev", "API Gateway host"),
 ])
@@ -40,6 +42,8 @@ def test_each_pattern_is_found(line, kind):
     'BUCKET = "aa-cis-bronze-<acc2>"',
     f'role = "arn:aws:iam::{DOC_EXAMPLE}:role/doc"',          # AWS documentation example account
     f'TENANT = "a1b2c3d4-0001-4000-8000-{"0" * 11}1"',         # UUID: last group is 12 digits
+    f'tenant `a1b2c3d4-0001-...-{"0" * 11}1`',                 # elided UUID in a doc
+    f'f"/photos/{{tid[:8]}}-0000-4000-8000-{"0" * 11}1"',      # UUID built in an f-string
     'f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/x"',                # built at run time
 ])
 def test_placeholders_uuids_and_doc_examples_pass(line):
