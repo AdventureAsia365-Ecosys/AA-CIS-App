@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
+from api.services.ops_overview import build_ops_overview
 from shared.cost_guard import PROVIDERS, day_spend
 from shared.jobs import queue
 
@@ -274,3 +275,14 @@ async def get_overview(request: Request, x_admin_secret: str = Header(None)):
         except Exception as e:
             logger.warning("overview_cache_write_failed", error=str(e)[:200])
     return data
+
+
+@router.get("/ops", summary="AA-858 — ops overview: app health, TripPlanner, Booking funnel, cost per app")
+async def get_ops_overview(request: Request, x_admin_secret: str = Header(None)):
+    """The business view on top of /admin/overview (admin-only, ops.read). Four sections, each cached on its own
+    (health/TripPlanner/Booking 5 min, cost 15 min) and each degrading to ``status: unavailable`` with a plain
+    ``message`` instead of failing the call. See api/services/ops_overview/__init__.py for sources and cost.
+    Not a machine route: the CI smoke keeps using GET /admin/overview."""
+    verify_admin_secret(x_admin_secret)
+    redis = getattr(request.app.state, "redis", None)
+    return await build_ops_overview(request.app.state.pool, redis)

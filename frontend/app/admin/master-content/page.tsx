@@ -800,7 +800,10 @@ export default function MasterContentPage() {
 function MasterContentPageInner() {
   // AA-882 — the master lifecycle (activate / deactivate / trash / restore) is master.admin on the
   // backend; other roles see the catalog without those buttons.
-  const canLifecycle = can(useAdminIdentity().role, "master.admin");
+  const role = useAdminIdentity().role;
+  const canLifecycle = can(role, "master.admin");
+  // AA-878 — promoting a version is content.write: the read-only viewer sees the versions without the button.
+  const canPromote = can(role, "content.write");
   // AA-752 — deep link from the ⌘K palette: /admin/master-content?tour=<tour_id> opens that tour's
   // detail panel. Read the param once with a lazy useState initializer (no setState-in-effect).
   const searchParams = useSearchParams();
@@ -1599,7 +1602,7 @@ function MasterContentPageInner() {
                                                   style={{ padding: "2px 7px", fontSize: 11, border: `1px solid ${A.line}`, borderRadius: 4, background: A.card, cursor: "pointer", color: A.body }}
                                                 >DOCX</button>
                                               )}
-                                              {!v.is_current && (
+                                              {!v.is_current && canPromote && (
                                                 <button
                                                   onClick={() => t.tour_id && promoteVersion(t.tour_id, t.tour_name, v.version_num)}
                                                   disabled={promoting === `${t.tour_id}-${v.version_num}`}

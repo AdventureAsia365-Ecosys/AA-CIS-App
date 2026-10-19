@@ -1,0 +1,276 @@
+// frontend/lib/platform.ts
+// AA-884 (S241 GĐ7 / GĐ8 / GĐ10) — response types and small formatters for the Platform › Apps,
+// Audit log and Cost per app pages. The shapes mirror the backend exactly:
+//   GET /admin/platform/apps            api/services/platform_apps.py  collect_apps()
+//   GET /admin/platform/audit           api/services/platform_audit.py list_audit()
+//   GET /admin/platform/audit/verify    api/services/platform_audit.py verify_chain_cached()
+//   GET /admin/platform/cost            api/services/platform_cost.py  cost_by_app()
+//   POST /admin/cost-explorer/check     api/routers/admin_llm_ops.py   check_cost_explorer()
+// Browser calls go through the same-origin BFF /api/admin/[...path] (lib/rbac.ts: "platform" is
+// admin only; cost-explorer is open to staff at the BFF and re-checked by the backend, spend.*).
+
+// ── Apps ──────────────────────────────────────────────────────────────────────────────────────
+
+export type AppStatus = "ok" | "degraded" | "down" | "unknown";
+
+export interface CisWorker {
+  worker_id: string;
+  git_sha: string | null;
+  commit_url: string | null;
+  task_revision: number | null;
+  running_jobs: number | null;
+  last_seen_at: string | null;
+}
+
+export interface DeployGate {
+  active: number;
+  by_status: Record<string, number>;
+  safe_to_deploy: boolean;
+  exempt_kinds: string[];
+}
+
+export interface CisCard {
+  id: "cis";
+  label: string;
+  repo_url: string;
+  status: AppStatus;
+  api: { git_sha: string; commit_url: string | null; task_revision: number | null };
+  workers: CisWorker[] | null;
+  /** true = every live worker runs the API's commit; null = nothing to compare (local / unreadable). */
+  parity: boolean | null;
+  deploy_gate: DeployGate | null;
+  schema: { version: string | null; required: string | null; status: string | null; db: string | null };
+  problems: string[];
+}
+
+export interface BookingCard {
+  id: "booking";
+  label: string;
+  repo_url: string;
+  health_url: string;
+  status: AppStatus;
+  error?: string;
+  git_sha?: string | null;
+  commit_url?: string | null;
+  health?: { http_status: number; status: string | null };
+  ready?: { http_status: number; status: string | null; db: string | null; schema_version: string | null };
+}
+
+export interface TpSpendToday {
+  cost_usd: number;
+  calls: number;
+  by_stage: { stage: string; calls: number; cost_usd: number }[];
+  cap_usd: number;
+  pct_of_cap: number | null;
+  cap_label: string;
+  level: "ok" | "warn" | "cap_reached";
+  since: string;
+  stages: string[];
+}
+
+export interface TripPlannerCard {
+  id: "tripplanner";
+  label: string;
+  repo_url: string;
+  status: AppStatus;
+  note?: string;
+  error?: string;
+  spend_today?: TpSpendToday | null;
+}
+
+export type AppCard = CisCard | BookingCard | TripPlannerCard;
+
+export interface AppsResp {
+  apps: AppCard[];
+  generated_at: string;
+  _cached: boolean;
+}
+
+// ── Audit ─────────────────────────────────────────────────────────────────────────────────────
+
+export interface AuditRow {
+  id: string;
+  created_at: string | null;
+  tenant_id: string | null;
+  actor: string | null;
+  actor_type: string | null;
+  actor_name: string | null;
+  actor_email: string | null;
+  action: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  http_method: string | null;
+  route: string | null;
+  status: number | null;
+  details: unknown;
+  chain_seq: number | null;
+  row_hash: string | null;
+}
+
+export interface AuditListResp {
+  rows: AuditRow[];
+  next_cursor: string | null;
+  limit: number;
+}
+
+export interface AuditVerifyResp {
+  checked: number;
+  ok: boolean;
+  first_bad_seq: number | null;
+  problem: string | null;
+  last_seq: number | null;
+  from_seq: number | null;
+  pre_chain_rows: number;
+  unchained_after_genesis: number;
+  unchained_after_genesis_ids: string[];
+  chain_boundary: string | null;
+  verified_at: string;
+  _cached: boolean;
+}
+
+export interface AuditFilters {
+  scope: "staff" | "all";
+  actor: string;
+  action: string;
+  route: string;
+  /** YYYY-MM-DD (UTC day, inclusive) or "". */
+  since: string;
+  /** YYYY-MM-DD (UTC day, inclusive) or "". */
+  until: string;
+}
+
+export const EMPTY_AUDIT_FILTERS: AuditFilters = { scope: "staff", actor: "", action: "", route: "", since: "", until: "" };
+
+/** The day after a YYYY-MM-DD date, as YYYY-MM-DD (UTC; the audit `until` bound is exclusive). */
+export function nextDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Query string for GET /admin/platform/audit. Dates are whole UTC days: since 00:00Z, until the next day's 00:00Z. */
+export function auditQuery(f: AuditFilters, cursor: string | null, limit = 100): string {
+  const q = new URLSearchParams();
+  q.set("scope", f.scope);
+  q.set("limit", String(limit));
+  if (f.actor.trim()) q.set("actor", f.actor.trim());
+  if (f.action.trim()) q.set("action", f.action.trim());
+  if (f.route.trim()) q.set("route", f.route.trim());
+  if (f.since) q.set("since", `${f.since}T00:00:00Z`);
+  if (f.until) q.set("until", `${nextDay(f.until)}T00:00:00Z`);
+  if (cursor) q.set("cursor", cursor);
+  return q.toString();
+}
+
+/** details.auth of a staff.request row written for a legacy password session (actor from an unverified header). */
+export function isLegacyUnverified(details: unknown): boolean {
+  return !!details && typeof details === "object" && (details as Record<string, unknown>).auth === "legacy_unverified";
+}
+
+// ── Cost ──────────────────────────────────────────────────────────────────────────────────────
+
+export type CostRowKind = "app" | "llm_app" | "shared_tag" | "other_tag" | "untagged";
+
+export interface CostService {
+  service: string;
+  amount_usd: number;
+  is_bedrock: boolean;
+}
+
+export interface AiSource {
+  provider: string | null;
+  account: string | null;
+  calls: number;
+  cost_usd: number;
+  billed_in_aws_acc2: boolean;
+}
+
+export interface CostRow {
+  app: string;
+  kind: CostRowKind;
+  label: string;
+  aws_usd: number;
+  aws_bedrock_usd: number;
+  services: CostService[];
+  aws_tags: string[];
+  ai_usd: number;
+  ai_in_aws_acc2_usd: number;
+  ai_calls: number;
+  ai_by_source: AiSource[];
+  total_usd: number;
+}
+
+export interface CostRefresh {
+  attempted: boolean;
+  ok: boolean | null;
+  reason?: string;
+  stale?: boolean;
+  stale_reason?: string;
+  skipped?: string;
+  error?: string;
+  row_count?: number;
+  ce_requests?: number;
+  est_cost_usd?: number;
+}
+
+export interface SatelliteLine {
+  account_id: string;
+  ce_bedrock_usd: number | null;
+  llm_log_estimate_usd: number;
+}
+
+export interface CostResp {
+  month: string;
+  period_start: string;
+  period_end_exclusive: string;
+  aws: {
+    account_id: string;
+    has_data: boolean;
+    total_usd: number | null;
+    covered_from: string | null;
+    covered_to: string | null;
+    fetched_at: string | null;
+    untagged_usd: number;
+  };
+  apps: CostRow[];
+  totals: { aws_usd: number | null; ai_usd: number; total_usd: number };
+  llm_satellites: { acc1?: SatelliteLine; acc3?: SatelliteLine; ce_fetched_at?: string | null };
+  refresh: CostRefresh;
+  sources: Record<string, string>;
+}
+
+export interface CeCheckResp {
+  row_count: number;
+  app_tag_row_count: number | null;
+  errors: Record<string, string>;
+  period_start: string;
+  period_end_exclusive: string;
+}
+
+/** The current UTC month as YYYY-MM (the backend's month_window works in UTC days). */
+export function currentUtcMonth(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 7);
+}
+
+/** The last day included in [start, endExclusive), as YYYY-MM-DD (the CE check takes an inclusive `end`). */
+export function lastIncludedDay(endExclusive: string): string {
+  const d = new Date(`${endExclusive}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────────────────────
+
+export function shortSha(sha: string | null | undefined): string {
+  if (!sha) return "—";
+  if (sha === "unknown") return "unknown";
+  return sha.slice(0, 7);
+}
+
+/** USD with cents; sub-cent amounts keep 4 decimals so a few LLM calls do not show as $0.00. */
+export function usd(n: number | null | undefined): string {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  const abs = Math.abs(n);
+  const digits = abs > 0 && abs < 0.01 ? 4 : 2;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}

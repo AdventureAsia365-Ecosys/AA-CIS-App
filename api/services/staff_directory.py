@@ -92,7 +92,8 @@ MAX_DISPLAY_NAME_LEN = 120
 MAX_USERNAME_LEN = 100            # shared.admin_users.username varchar(100)
 _USERNAME_SUFFIX_TRIES = 50
 
-CIS_ROLES: tuple[str, ...] = ("admin", "reviewer", "content")                         # shared.admin_role
+# shared.admin_role minus 'viewer' (AA-878, migration 249): the read-only E2E role is never assigned from here.
+CIS_ROLES: tuple[str, ...] = ("admin", "reviewer", "content")
 BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator")  # staff_app_grant_role_chk
 APP_BOOKING = "booking"
 
@@ -630,7 +631,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role:
+        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no Cognito group
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:

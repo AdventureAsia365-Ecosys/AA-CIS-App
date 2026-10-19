@@ -487,6 +487,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
   VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
   A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
+- **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
+  DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
+  `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
+  `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
+  (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered
+  today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
+  migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
+  exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
@@ -511,6 +519,12 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
+CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v_ops_funnel_daily`,
+`booking.v_ops_case_status` (Booking bk-017) and `tripplanner.v_ops_traffic_daily` (TripPlanner tp-015) — aggregate
+views the producers own and grant to `cis_app` in their own migrations (contract `ops.overview.v1`, AA-Ecosys
+`docs/contracts/ops.overview.v1.md`; AA-CIS-Infra `db/owners.yaml` consumer_grants). CIS never reads `booking.*` /
+`tripplanner.*` tables.
+
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
 enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
@@ -519,7 +533,8 @@ waves (`/admin/waves`, AA-727).
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
-`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218; identity columns from migration 247:
+`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
+249, AA-878; identity columns from migration 247:
 `email` lower-case `@adventure.asia` only, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
@@ -648,20 +663,58 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+- **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
+  `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
+  `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
+  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and `/admin/platform/cost`
+  (AI & spend › **Cost per app**; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
+  ~$0.04). Notes: `docs/implementation-notes/AA-884-ui.md`.
 
-| Area | admin | reviewer | content | tenant |
-|---|---|---|---|---|
-| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — |
-| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
-| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
-| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | ✓ |
-| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | — |
-| `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | ✓ |
+**Ops overview (AA-858).** `GET /admin/overview/ops` (`ops.read`, not a machine route; the CI smoke keeps
+`GET /admin/overview`) feeds the business view at the top of `/admin/overview`. Package `api/services/ops_overview/`,
+four independent sections, each cached in Redis on its own key (`admin:overview:ops:<section>:v1`) and each degrading
+to `{status: "unavailable", reason, message}` instead of failing the call:
+- `health` (`cloudwatch.py`, 5 min): one `GetMetricData` call (16 metrics: API Gateway Count/5XX/4XX/Latency p95 for
+  `aa-cis-<env>-api` and `aa-booking-<env>-api` with `Stage = <env>`, Lambda Invocations/Errors/Throttles/Duration p95
+  for `aa-tripplanner-<env>-browse|assembly`) + `DescribeAlarms` mapped by name prefix (`TargetTracking-*` skipped);
+  read-only IAM on the task role (AA-CIS-Infra `ecs_task_infra_status_readonly`). Never called without Redis
+  (`cache_offline`); a `SET NX` lock lets one request compute while the others get the last good value.
+- `tripplanner` / `booking` (`activity.py`, 5 min): only the producer contract views above + `shared.llm_call_log`
+  stage `tp_search_embed` for AI searches (cache misses only). A missing view or grant → `contract_view_missing`.
+- `cost` (`cost.py`, 15 min): built only on AA-884's `platform_cost.cost_by_app` (this month + last month), relabelled
+  for a business reader; no CE code of its own.
+Cost: ≈ $0.0002 per health refresh, worst case ≈ $0.60/month; CE as AA-884. No new env var (names derive from
+`ENVIRONMENT`).
+
+| Area | admin | reviewer | content | viewer | tenant |
+|---|---|---|---|---|---|
+| Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
+| Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — | — |
+| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
+| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
+| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | — | ✓ |
+| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | GET only | — |
+| AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
+| `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
+
+**Read-only `viewer` (AA-878).** The role behind the UI-smoke E2E account (`e2e-claude-code-viewer`, a legacy
+password row; password only in Secrets Manager `aa-cis/dev/e2e-test-viewer`; created with
+`scripts/create_staff_user.py --password-from-secret`). Capabilities `content.read` only. It is refused on
+**every** non-GET twice: the BFF `requireAdmin()` answers 403 before attaching the secret (`lib/rbac.ts`
+`READ_ONLY_ROLES`), and the backend `denial_reason` refuses `READ_ONLY_ROLES` on any method but GET/HEAD/OPTIONS
+whatever the route's capability (the notification bell's PUTs need `content.read`, the viewer still cannot clear
+it). Admin-only reads stay refused by POLICY; the role-filtered open reads (search, bell, tenant details) treat
+it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
+assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
+Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
+readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the GitHub
+`E2E_ADMIN_*` secrets hold this account (the role comes from the login answer): readable pages get the full page
+check, admin-only pages must redirect to `/admin/review`, a BFF write and the staff list must answer 403.
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
-`content_creator` → content. Reviewer and content reach the backend through the same admin secret;
+`content_creator` → content (the CIS `viewer` maps to nothing: no Booking token). Reviewer and content reach the backend through the same admin secret;
 what they may call there is narrowed by the backend capabilities below (AA-882), not by the BFF yet
 (`canWriteAdminPath` still allows writes by default until GĐ4b).
 
