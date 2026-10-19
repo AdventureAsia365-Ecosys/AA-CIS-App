@@ -2,7 +2,7 @@
 // caller check — requireAdmin() now verifies the real admin JWT before
 // any request reaches the backend.
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
+import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -17,9 +17,9 @@ async function handler(
   const auth = await requireAdmin(req, API_RULES.pipeline);
   if (!auth.ok) return auth.response;
 
-  if (!ADMIN_SECRET) {
-    return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
-  }
+  // AA-816 (C9): a Cognito session sends its Bearer and no X-Admin-Secret; a legacy session the secret.
+  const credential = staffCredentialHeaders(auth, ADMIN_SECRET, "v1/pipeline");
+  if (!credential) return secretNotConfigured();
 
   const { path } = await params;
   // AA-577 follow-up — no segment may climb out of /v1/pipeline/ (lib/bffPath.ts).
@@ -34,13 +34,12 @@ async function handler(
   const isMultipart = contentType.includes("multipart/form-data");
 
   const outHeaders: Record<string, string> = {
-    "X-Admin-Secret": ADMIN_SECRET,
     "x-admin-user-id": auth.adminId,
     // AA-882 (GĐ3) — the verified JWT role, as /api/admin/[...path] sends it. /v1/pipeline runs
     // staff_policy_if_staff (api/core/staff_authz.py): without a role the backend sees the machine
     // principal, which no /v1/pipeline write allows.
     "x-admin-role": auth.role,
-    ...staffBearerHeader(auth), // AA-816 (C5): Cognito sessions only
+    ...credential, // AA-816 (C9): Cognito Bearer only, or X-Admin-Secret for a legacy session
   };
 
   let body: ArrayBuffer | string | undefined;

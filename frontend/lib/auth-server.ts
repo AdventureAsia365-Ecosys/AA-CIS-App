@@ -144,7 +144,7 @@ function forbidden(): NextResponse {
 
 export type RequireAdminResult =
   // AA-816 (C5): `bearer` is the staff access token when the cookie holds a Cognito token (it has an
-  // `iss`), else null. Proxies forward it as Authorization: Bearer (staffBearerHeader) so the API's
+  // `iss`), else null. Proxies forward it as Authorization: Bearer (staffCredentialHeaders) so the API's
   // staff_bearer middleware takes the role and actor from the verified token instead of the headers.
   | { ok: true; adminId: string; role: string; bearer: string | null }
   | { ok: false; response: NextResponse };
@@ -168,13 +168,41 @@ export async function requireAdmin(
   return result;
 }
 
+// AA-816 (C5/C9): the backend paths where the API's staff_bearer middleware reads a staff Bearer
+// (api/core/staff_authz.py STAFF_PATH_PREFIXES; a unit test keeps the two lists equal). Elsewhere
+// (e.g. /v1/tours/{id}/full) a Bearer is read as a TENANT token, so a staff call there stays secret-only.
+export const STAFF_API_PREFIXES = ["admin", "v1/pipeline", "v1/rules", "v1/social"] as const;
+
+/** True when `backendPath` (no leading slash needed, e.g. "admin/overview") is a staff API path. */
+export function isStaffApiPath(backendPath: string): boolean {
+  const p = backendPath.replace(/^\/+/, "");
+  return STAFF_API_PREFIXES.some((prefix) => p === prefix || p.startsWith(prefix + "/"));
+}
+
 /**
- * AA-816 (C5) — the extra header a BFF proxy adds for a Cognito session: `Authorization: Bearer
- * <cis_admin_token>`. A legacy HS256 session gets nothing (unchanged behaviour). X-Admin-Secret is
- * still sent alongside until the cutover (plan step C9).
+ * AA-816 (C9) — the credential a staff BFF proxy sends to `backendPath`, or null when it needs the admin
+ * secret and none is configured (the proxy answers 503).
+ *
+ * - Cognito session on a staff API path: `Authorization: Bearer <cis_admin_token>` ONLY. The API accepts
+ *   the verified principal without X-Admin-Secret, and takes role + actor from the token.
+ * - Legacy HS256 session (the BFF can only verify one while the legacy flag is on), or a path outside the
+ *   staff prefixes: `X-Admin-Secret` (on a Vercel Preview this is the Preview credential, capped at viewer
+ *   by the API). No Bearer is sent off the staff paths.
  */
-export function staffBearerHeader(auth: { bearer: string | null }): Record<string, string> {
-  return auth.bearer ? { Authorization: `Bearer ${auth.bearer}` } : {};
+export function staffCredentialHeaders(
+  auth: { bearer: string | null },
+  adminSecret: string,
+  backendPath: string,
+): Record<string, string> | null {
+  if (auth.bearer && isStaffApiPath(backendPath)) {
+    return { Authorization: `Bearer ${auth.bearer}` };
+  }
+  if (!adminSecret) return null;
+  return { "X-Admin-Secret": adminSecret };
+}
+
+export function secretNotConfigured(): NextResponse {
+  return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
 }
 
 export type VerifyStaffTokenResult =
