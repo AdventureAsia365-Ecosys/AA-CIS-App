@@ -54,7 +54,7 @@ def client(pool):
     return TestClient(app)
 
 
-@pytest.mark.parametrize("role", ["admin", "reviewer", "content"])
+@pytest.mark.parametrize("role", ["admin", "reviewer", "content", "viewer"])
 def test_verify_admin_accepts_every_staff_role(client, pool, role):
     pool.users[ADMIN_ID] = (f"u-{role}", role, True)
     token = _create_admin_jwt(ADMIN_ID, f"u-{role}", role)
@@ -116,12 +116,14 @@ def test_verify_admin_rejects_unknown_role(client):
 
 
 def test_staff_roles_match_enum_and_frontend_matrix():
-    # The backend tuple, the DB enum (migration 074 + 218) and frontend/lib/rbac.ts must agree.
-    assert STAFF_ROLES == ("admin", "reviewer", "content")
+    # The backend tuple, the DB enum (migration 074 + 218 + 249) and frontend/lib/rbac.ts must agree.
+    assert STAFF_ROLES == ("admin", "reviewer", "content", "viewer")
     mig = (REPO / "api/migrations/218_admin_role_content.sql").read_text()
     assert "ADD VALUE IF NOT EXISTS 'content'" in mig
+    mig = (REPO / "api/migrations/249_admin_role_viewer.sql").read_text()
+    assert "ADD VALUE IF NOT EXISTS 'viewer'" in mig
     rbac = (REPO / "frontend/lib/rbac.ts").read_text()
-    assert 'STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content"]' in rbac
+    assert 'STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content", "viewer"]' in rbac
 
 
 def test_content_password_login_is_gone():

@@ -10,8 +10,18 @@
 //   (e) AA-883: an admin sees the Platform and CIS Content sections with fold toggles, the Apps block
 //       links to Booking admin in a new tab (no Tenant portal link), and in the collapsed rail the
 //       section headers become plain dividers.
+// AA-878 — viewer mode (the smoke account is the read-only viewer): the shell is checked on pages the viewer
+// may open (/admin/review, /admin/master-content), the logo lands on the viewer's landing page (Overview is
+// admin-only, the proxy redirects), and (e) — the admin Platform section — is skipped.
 import { test, expect } from '@playwright/test';
-import { ADMIN_STATE, baseUrl, installBypassRoute, waitForShellHydrated } from './smoke-helpers';
+import {
+  ADMIN_STATE, baseUrl, installBypassRoute, isViewerRun, landingPathFor, smokeRole, waitForShellHydrated,
+} from './smoke-helpers';
+
+/** A page with the full shell that the smoke account may open (Jobs is admin-only). */
+function shellPath(): string {
+  return isViewerRun() ? '/admin/review' : '/admin/jobs';
+}
 
 async function adminPage(browser: import('@playwright/test').Browser) {
   const context = await browser.newContext({
@@ -27,8 +37,11 @@ async function adminPage(browser: import('@playwright/test').Browser) {
 test.describe('AA-752 — admin shell', () => {
   test('(a) sidebar logo links to /admin/overview', async ({ browser }) => {
     const { context, page } = await adminPage(browser);
+    // The logo pushes /admin/overview; a viewer is redirected to its landing page (/admin/review), so it
+    // starts elsewhere to see the move.
+    const target = landingPathFor(smokeRole());
     try {
-      await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await page.goto(isViewerRun() ? '/admin/master-content' : '/admin/jobs', { waitUntil: 'domcontentloaded' });
       const logo = page.getByTestId('sidebar-logo');
       await expect(logo).toBeVisible({ timeout: 10000 });
       // The logo is a client-component button whose onClick (router.push) only works AFTER React
@@ -42,16 +55,16 @@ test.describe('AA-752 — admin shell', () => {
       await expect
         .poll(
           async () => {
-            if (new URL(page.url()).pathname === '/admin/overview') return '/admin/overview';
+            if (new URL(page.url()).pathname === target) return target;
             await logo.click();
             // Give the client navigation a short, bounded moment to update the URL before re-reading.
-            await page.waitForURL(/\/admin\/overview\b/, { timeout: 3000 }).catch(() => {});
+            await page.waitForURL((u) => u.pathname === target, { timeout: 3000 }).catch(() => {});
             return new URL(page.url()).pathname;
           },
           { timeout: 15000, intervals: [500, 1000, 1500] },
         )
-        .toBe('/admin/overview');
-      expect(new URL(page.url()).pathname).toBe('/admin/overview');
+        .toBe(target);
+      expect(new URL(page.url()).pathname).toBe(target);
     } finally {
       await context.close();
     }
@@ -60,7 +73,7 @@ test.describe('AA-752 — admin shell', () => {
   test('(b) collapse toggles the rail and survives reload', async ({ browser }) => {
     const { context, page } = await adminPage(browser);
     try {
-      await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
       const rail = page.getByTestId('admin-sidebar');
       await expect(rail).toBeVisible({ timeout: 10000 });
       // AA-834: the rail is in the SSR HTML, so "visible" is not "interactive". Clicking before React
@@ -127,9 +140,10 @@ test.describe('AA-752 — admin shell', () => {
   });
 
   test('(e) AA-883: Platform / CIS Content sections and the Apps links', async ({ browser }) => {
+    test.skip(isViewerRun(), 'AA-878: the Platform section is admin-only');
     const { context, page } = await adminPage(browser);
     try {
-      await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
       await waitForShellHydrated(page);
       const rail = page.getByTestId('admin-sidebar');
       await expect(rail).toHaveAttribute('data-collapsed', 'false', { timeout: 5000 });
@@ -157,7 +171,7 @@ test.describe('AA-752 — admin shell', () => {
   test('(d) phone: bottom nav visible and no horizontal overflow at 390px', async ({ browser }) => {
     const { context, page } = await adminPage(browser);
     try {
-      await page.goto('/admin/jobs', { waitUntil: 'domcontentloaded' });
+      await page.goto(shellPath(), { waitUntil: 'domcontentloaded' });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.waitForTimeout(300);
 

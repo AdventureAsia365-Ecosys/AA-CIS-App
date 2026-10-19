@@ -7,7 +7,7 @@ or a Jev question by calling /api/admin/* directly: the BFF lets every staff rol
 
 Pieces
 ------
-- ROLE_PERMS: staff role -> capabilities. The three roles are the shared.admin_role enum and the
+- ROLE_PERMS: staff role -> capabilities. The four roles are the shared.admin_role enum and the
   frontend/lib/rbac.ts StaffRole union (tests/unit/test_aa882_staff_authz.py keeps them in sync).
   A new kind of staff (ops, sales, content lead) is one more row here, later one Cognito group.
 - POLICY: (method, route template) -> the capability the route needs. Keyed by method + template,
@@ -83,7 +83,20 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     },
     "reviewer": _CONTENT_WORK,
     "content": _CONTENT_WORK,
+    # AA-878 — read-only staff (the UI-smoke E2E account, migration 249). Reads the content pages; refused on
+    # every write (READ_ONLY_ROLES below, whatever the route's capability) and on every admin-only read. Not
+    # assignable from the Staff page (api/services/staff_directory.py CIS_ROLES) and no Booking token.
+    "viewer": frozenset({CONTENT_READ}),
 }
+
+# AA-878 — roles that may never write: denial_reason refuses them on every method but GET/HEAD/OPTIONS, even on
+# a write whose capability they hold (the notification bell's PUTs need content.read) and on a write with no
+# POLICY entry. The BFF refuses the same roles before it forwards (frontend/lib/auth-server.ts requireAdmin).
+READ_ONLY_ROLES: frozenset[str] = frozenset({"viewer"})
+READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# AA-878 — CIS roles that get no AA-Booking access: POST /auth/booking-token answers 403 for them.
+NO_BOOKING_ROLES: frozenset[str] = frozenset({"viewer"})
 
 # staff.write is not a role capability: it needs the owner flag (shared.admin_users.is_owner, migration 247,
 # S241 Q2) AND a verified Cognito session (AA-816 C6): the caller's identity must come from the staff bearer
@@ -372,6 +385,8 @@ def has_perm(role: Optional[str], capability: str) -> bool:
 
 def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optional[str]:
     """None when the principal may call (method, route); otherwise the 403 detail."""
+    if principal.role in READ_ONLY_ROLES and method.upper() not in READ_METHODS:
+        return READ_ONLY_DENIED.format(role=principal.role)
     capability = POLICY.get((method, route))
     if capability is None:
         return None  # a GET open to every staff role and the machine (writes all have an entry)
@@ -398,6 +413,8 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
 
 STAFF_WRITE_NEEDS_COGNITO = "Changing staff accounts needs a company sign-in (Cognito); password sessions cannot"
 STAFF_WRITE_NEEDS_OWNER = "Only a platform owner can change staff accounts"
+# Starts with "Role '" like the capability refusal, so the UI's staffErrorMessage() reads it the same way.
+READ_ONLY_DENIED = "Role '{role}' is read-only"
 
 
 def request_staff_identity(request: Request) -> Any:

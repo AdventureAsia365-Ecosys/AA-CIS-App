@@ -14,6 +14,30 @@ export const SMOKE_RESULTS_DIR = 'tests/e2e/results/smoke';
 export const AUTH_DIR = 'tests/e2e/.auth';
 export const ADMIN_STATE = path.join(AUTH_DIR, 'admin-state.json');
 export const TENANT_STATE = path.join(AUTH_DIR, 'tenant-state.json');
+// AA-878 — the staff role the smoke account logged in with, as the server answered the login (POST
+// /api/auth/login → { role }, the DB role). Written by auth.setup.ts next to the storage state (same
+// lifetime: deleted by the workflow, never uploaded). Read at RUN time (setup runs after test collection).
+export const ROLE_FILE = path.join(AUTH_DIR, 'admin-role.json');
+
+/** The smoke account's role ('admin' unless the setup recorded another). */
+export function smokeRole(): string {
+  try {
+    const role = (JSON.parse(fs.readFileSync(ROLE_FILE, 'utf8')) as { role?: unknown }).role;
+    return typeof role === 'string' && role ? role : 'admin';
+  } catch {
+    return 'admin';
+  }
+}
+
+/** AA-878 — viewer mode: the smoke account is the read-only `viewer` (GitHub E2E_ADMIN_* switched to it). */
+export function isViewerRun(): boolean {
+  return smokeRole() === 'viewer';
+}
+
+/** Where the proxy sends a staff role that may not open a page (frontend/lib/rbac.ts landingPage). */
+export function landingPathFor(role: string): string {
+  return role === 'admin' ? '/admin/overview' : '/admin/review';
+}
 
 /** Known-benign console messages. Empty by default — add a precise substring to silence real
  * third-party noise, never to hide an app error. */
@@ -26,6 +50,12 @@ export type PageSpec = {
   label: string;
   /** Route to navigate to (path only; BASE_URL is prepended by Playwright). */
   path: string;
+  /** AA-878 — the read-only viewer may not open this page (frontend/lib/rbac.ts PAGE_RULES: admin-only, or a
+   * write-only content page): in viewer mode it must be refused (the proxy redirects to the role's landing
+   * page) instead of rendering. */
+  viewerRefused?: boolean;
+  /** AA-878 — readySelector for viewer mode when the viewer sees a different first view (e.g. a hidden tab). */
+  viewerReadySelector?: string;
   /** AA-601 — optional CSS selector that marks "this page's real content has rendered". Set it for
    * pages whose loaded state is neither a kit/table row nor the kit empty state (card lists, a
    * config view, a custom empty-state). The element MUST render only after data has loaded, never
