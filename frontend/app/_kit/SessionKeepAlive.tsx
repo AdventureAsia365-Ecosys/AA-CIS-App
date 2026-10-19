@@ -3,7 +3,7 @@
 // AA-816 (C4) — keeps a Cognito staff session alive while a staff page stays open. The access token
 // in cis_admin_token lives 15 min, and the BFF proxies never refresh it themselves (refresh-token
 // rotation would race across ~8 parallel calls; plan risk 8). Page navigations are covered by
-// middleware.ts; this covers a page left open: it POSTs /api/auth/refresh shortly before the token
+// proxy.ts; this covers a page left open: it POSTs /api/auth/refresh shortly before the token
 // expires, and again when the tab becomes visible (laptop sleep, background tab). The route skips the
 // Cognito call while the token still has more than 3 min left. Renders nothing.
 // Mounted in the admin shell (AdminShell) and the portal shell ((tenant)/portal/layout.tsx), where

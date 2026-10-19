@@ -4,7 +4,7 @@
 // AA-252 (security fix): the legacy ADMIN_SECRET shared-secret fallback is
 // retired. It used to trigger on JWT infra failure (network error/timeout/
 // 500) and returned { token: password, role: "admin" } with NO cis_admin_token
-// cookie — a session shape middleware.ts had to specially allow through
+// cookie — a session shape proxy.ts had to specially allow through
 // without JWT verification. That carve-out was exploitable: cis_role is a
 // plain client-writable cookie, so anyone could set it by hand and skip auth
 // entirely, no secret required. Both real admins (nghiep, admin) already have
@@ -17,7 +17,7 @@
 // `cis_api_token` cookie for a few legacy pages that read it via
 // document.cookie and attach it as an Authorization header themselves. That
 // duplicate cookie was pure exposure — the httpOnly `cis_admin_token` cookie
-// set below already IS the real session (middleware.ts, requireAdmin() in
+// set below already IS the real session (proxy.ts, requireAdmin() in
 // lib/auth-server.ts never read cis_api_token at all), so any XSS on an
 // admin page could read the token wholesale via document.cookie or the
 // fetch() response. Fixed by dropping `token` from this response entirely —
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
       name: data.username,
       admin_id: data.admin_id,
     });
-    // Server-readable cookie for middleware verification (see middleware.ts).
+    // Server-readable cookie for middleware verification (see proxy.ts).
     // httpOnly so client JS can't read/tamper with it — the sole session
     // credential now, nothing duplicates it into the JSON body or another
     // cookie.

@@ -1,5 +1,5 @@
 // frontend/lib/staffSession.ts
-// AA-816 (C4) — staff session cookie names and token helpers shared by middleware.ts, the BFF
+// AA-816 (C4) — staff session cookie names and token helpers shared by proxy.ts, the BFF
 // (lib/auth-server.ts) and the auth routes. Edge-safe: no secrets, no Node APIs, no React.
 //
 // Two kinds of token can sit in the `cis_admin_token` cookie during the Phase 1 window:
@@ -17,7 +17,7 @@ export const STAFF_REFRESH_COOKIE_PATH = "/api/auth";
 export const ROLE_COOKIE = "cis_role";
 export const USER_COOKIE = "cis_user";
 
-/** Where the browser lands after sign-in; middleware.ts redirects it to the role's landing page. */
+/** Where the browser lands after sign-in; proxy.ts redirects it to the role's landing page. */
 export const POST_LOGIN_PATH = "/admin/dashboard";
 export const REFRESH_PATH = "/api/auth/refresh";
 

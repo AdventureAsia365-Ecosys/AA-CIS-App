@@ -1,4 +1,8 @@
-// frontend/middleware.ts
+// frontend/proxy.ts
+// S243 (AA-816 chore): Next 16 file convention — was middleware.ts (deprecated in Next 16). The function
+// is exported as `proxy`; it runs on the Node.js runtime (middleware ran on Edge), and a `runtime`
+// export is not allowed here (Next throws). `config.matcher` and the gate logic are unchanged.
+//
 // AA-232: ADMIN_PATHS/INTERNAL_PATHS verify a real JWT (cis_admin_token) via
 // /auth/verify-admin, mirroring the tenant-portal verify below. The old check
 // (cookie value === "admin"/present) is a role LABEL a client could set by
@@ -62,7 +66,7 @@ const PUBLIC_PATHS = ["/login", "/tenant-login"];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
@@ -183,7 +187,7 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
     if (!isDev || isCognitoToken(token)) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
-    console.warn("[middleware] Admin JWT verify failed — dev mode, allowing through");
+    console.warn("[proxy] Admin JWT verify failed — dev mode, allowing through");
     return { role: request.cookies.get("cis_role")?.value ?? "" };
   }
 }
@@ -237,7 +241,7 @@ async function verifyTenantToken(request: NextRequest): Promise<NextResponse | n
     if (!isDev) {
       return NextResponse.redirect(new URL("/tenant-login", request.url));
     }
-    console.warn("[middleware] Tenant JWT verify failed — dev mode, allowing through");
+    console.warn("[proxy] Tenant JWT verify failed — dev mode, allowing through");
     return null;
   }
 }

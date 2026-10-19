@@ -39,7 +39,7 @@
 //
 // Per-tenant, cross-tenant-by-default (A4 pattern, AA-437) — Tenant filter defaults to "All
 // tenants", never hard-scoped to one. Admin-only route (unchanged from AA-551,
-// middleware.ts PROTECTED_ROUTES already allowlists `/admin/tenant-activity`), genuinely a peer
+// proxy.ts PROTECTED_ROUTES already allowlists `/admin/tenant-activity`), genuinely a peer
 // of 01-05 in Social Content.
 //
 // AA-575 — this page never actually rendered that 01-06 sub-nav: it was JSX embedded directly in

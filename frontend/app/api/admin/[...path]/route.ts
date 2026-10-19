@@ -10,7 +10,7 @@
 // UUID into generated_content.reviewed_by, x-reviewer-id becomes fully
 // redundant and can be retired in a follow-up.
 //
-// AA-253: this route is NOT covered by middleware.ts's matcher, so a
+// AA-253: this route is NOT covered by proxy.ts's matcher, so a
 // request hitting /api/admin/* directly never passed through page-level
 // gating. requireAdmin() below performs real, independent verification
 // (POST /auth/verify-admin, signature-checked) before X-Admin-Secret is

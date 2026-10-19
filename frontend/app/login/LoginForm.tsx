@@ -55,7 +55,7 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
       // server (api/auth/login/route.ts); access is decided from the verified token.
 
       // AA-573: a full browser navigation instead of router.push(). The
-      // client-side App Router transition depends on middleware.ts NOT
+      // client-side App Router transition depends on proxy.ts NOT
       // intervening on the very next request — but middleware's own
       // verifyAdminToken() re-checks the JWT it was just issued via an
       // uncached /auth/verify-admin round trip (the same uncached-round-trip
