@@ -506,6 +506,25 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
   migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
   exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
+- **CIS schemas and objects belong to the NOLOGIN role `cis_owner` from migration 245 (X1 S21, AA-860).** 245 moves
+  the 12 CIS schemas and every object the RDS master owned in them (the `catalog.*` views stay `catalog_owner`'s;
+  `public.*` and the extensions stay the master's, they belong to the Infra `roles/` dir). From then on DB Migrate runs
+  every `cis/` file as `cis_owner` (it switches to the live owner of schema `shared`; from X1 S22 the login is
+  `db_migrator`), and default privileges `FOR ROLE cis_owner` give `cis_app` what a file creates. Rules for every
+  later CIS migration: never `RESET ROLE` (go back with `SET LOCAL ROLE cis_owner`), no `SECURITY DEFINER`, no
+  `CREATE/ALTER/DROP ROLE|EXTENSION` (→ Infra `roles/`). The legacy enums in `public` (`pipeline_status_enum`,
+  `content_status_enum`, `review_status_enum`, … used by `raw_tours`, `generated_content` and others) stay the
+  master's, so `ALTER TYPE public.<enum> ADD VALUE` (as in 073 / 158) fails as `cis_owner` ("must be owner of type"):
+  it needs an Infra `roles/` file (runs as the master). `cis_owner` is **filtered by FORCE RLS** (unlike the master,
+  it is not in `rds_superuser`), and every view without `security_invoker` reads its base tables as its owner, so 245
+  gives it a permissive `<table>_cis_owner_all FOR ALL TO cis_owner USING (true) WITH CHECK (true)` policy on the 8
+  FORCE tables: a migration that FORCEs RLS on another table adds both `<t>_cis_app_all` and `<t>_cis_owner_all` in
+  the same file (CI standing checks in `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
+  exact policy set must allow both. Only the master and `db_migrator` may be members of `cis_owner` (a member reads
+  every tenant of those tables). The conftest replay skips 245; `test_aa860_migration_245.py` applies it as an
+  RDS-like master after 244 and undoes it. Rollback is a prepared Infra `roles/` undo (a `cis/` file runs as
+  `cis_owner` and cannot give objects back). **CIS migration freeze** from the Infra copy of 245 until X1 S22's 246
+  probe passes.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
