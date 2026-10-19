@@ -7,10 +7,10 @@
 // overrides must be referenced literally (Next inlines NEXT_PUBLIC_* at build time).
 //
 // Deep links are built from here only: no free-form return URL (open redirect) and never a token in
-// the URL. Each app keeps its own login until Cognito SSO (ADR 0006).
+// the URL. Staff sign in once (Cognito WORKFORCE SSO, ADR 0006a); each app still checks its own role.
 
-export const DEV_BOOKING_ADMIN_URL = "https://aa-booking-admin.vercel.app";
-export const DEV_TRIPPLANNER_URL = "https://aa-tripplanner.vercel.app";
+export const DEV_BOOKING_ADMIN_URL = "https://booking.lumiguides.it.com"; // custom domain (AA-818); the Vercel alias still works
+export const DEV_TRIPPLANNER_URL = "https://tripplanner.lumiguides.it.com"; // custom domain
 
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
