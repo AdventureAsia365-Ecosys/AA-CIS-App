@@ -291,6 +291,9 @@ def _apply_schema(conn):
         # like 244's. test_aa860_migration_245 applies it in the Dev order as an RDS-like master and undoes it at
         # teardown (x1_245_undo).
         and not f.startswith('245')
+        # AA-860 (X1 S22): 246 is a probe that only passes logged in as db_migrator under DB Migrate's switch to
+        # cis_owner (after 245); this superuser replay would refuse it. test_aa860_migration_246 applies it that way.
+        and not f.startswith('246')
     ])
 
     for mf in migration_files:
