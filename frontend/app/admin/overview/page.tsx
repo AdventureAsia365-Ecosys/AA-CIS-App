@@ -3,6 +3,9 @@
 // AA-664 — Admin Overview dashboard: whole-system snapshot in one page.
 // Data: GET /api/admin/overview (BFF -> /admin/overview, cached 60s). Built on the UI kit +
 // react-query (AA-662 standard). Every widget links to its detail page.
+// AA-858 — a business view on top (apps health, TripPlanner customers, Booking funnel, cost per app) from
+// GET /api/admin/overview/ops (cached 5–15 min server-side, so no auto-refresh here); the AA-664 sections
+// follow unchanged under "CIS content & operations". Cards live in ./_components/.
 
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -14,6 +17,11 @@ import {
   Users,
 } from "lucide-react";
 import { sans } from "../_components/adminUi";
+import { AppHealthStrip } from "./_components/AppHealthStrip";
+import { BookingFunnelCard } from "./_components/BookingFunnelCard";
+import { CostByAppCard } from "./_components/CostByAppCard";
+import { TripPlannerCard } from "./_components/TripPlannerCard";
+import type { OpsOverview } from "./_components/opsTypes";
 import {
   apiGet,
   Badge,
@@ -24,6 +32,7 @@ import {
   mono,
   PageHeader,
   SkeletonStyle,
+  Spinner,
   StatusBadge,
   type Tone,
 } from "../../_kit";
@@ -240,6 +249,17 @@ export default function OverviewPage() {
     queryFn: () => apiGet<Overview>("/api/admin/overview", { admin: true }),
     refetchInterval: 60_000,
   });
+  // AA-858 — the ops view: no polling (AWS-backed, cached server-side), Refresh refetches it too.
+  const ops = useQuery({
+    queryKey: ["admin-overview-ops"],
+    queryFn: () => apiGet<OpsOverview>("/api/admin/overview/ops", { admin: true }),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+  });
+  const opsDown = ops.isError
+    ? { status: "unavailable" as const, reason: "error", message: "This section could not be loaded. Try Refresh in a minute." }
+    : undefined;
+  const opsSources = ops.data?.sources;
 
   const money = (n: number | undefined) =>
     n == null ? "—" : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -250,10 +270,13 @@ export default function OverviewPage() {
       <main className="aa-admin-main" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "28px 36px 56px" }}>
           <PageHeader
             title="Overview"
-            description="Whole-system snapshot across the content pipeline, intelligence, tenants, jobs and cost."
+            description="How the business is doing: apps health, TripPlanner customers, the Booking funnel and cost, then the content pipeline in detail."
             actions={
               <button
-                onClick={() => refetch()}
+                onClick={() => {
+                  refetch();
+                  ops.refetch();
+                }}
                 style={{
                   padding: "7px 14px",
                   borderRadius: 999,
@@ -266,10 +289,48 @@ export default function OverviewPage() {
                   fontFamily: sans,
                 }}
               >
-                {isFetching ? "Refreshing…" : "Refresh"}
+                {isFetching || ops.isFetching ? "Refreshing…" : "Refresh"}
               </button>
             }
           />
+
+          {/* ── AA-858: business view ── */}
+          <div data-testid="ops-overview" style={{ display: "flex", flexDirection: "column", gap: 18, marginBottom: 28 }}>
+            {ops.isLoading ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 120, color: K.muted, fontSize: 13 }}>
+                <Spinner size={18} /> Loading apps, customers and cost…
+              </div>
+            ) : (
+              <>
+                <AppHealthStrip section={ops.data?.health ?? opsDown} source={opsSources?.health ?? "AWS CloudWatch"} />
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))",
+                    gap: 18,
+                    alignItems: "start",
+                  }}
+                >
+                  <TripPlannerCard
+                    section={ops.data?.tripplanner ?? opsDown}
+                    source={opsSources?.tripplanner ?? "TripPlanner contract view"}
+                  />
+                  <BookingFunnelCard
+                    section={ops.data?.booking ?? opsDown}
+                    source={opsSources?.booking ?? "Booking contract views"}
+                  />
+                </div>
+                <CostByAppCard section={ops.data?.cost ?? opsDown} source={opsSources?.cost ?? "Platform cost module"} />
+              </>
+            )}
+          </div>
+
+          <h2
+            data-testid="overview-cis-heading"
+            style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 600, color: K.ink, fontFamily: sans }}
+          >
+            CIS content &amp; operations
+          </h2>
 
           {isLoading ? (
             <LoadingScreen message="Loading overview…" />
