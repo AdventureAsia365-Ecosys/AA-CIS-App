@@ -13,6 +13,12 @@ import { defineConfig, devices } from '@playwright/test';
 //     E2E_TENANT_API_KEY) once, writing tests/e2e/.auth/tenant-state.json; skips without the key.
 //   • "smoke-portal" — tests/e2e/smoke-portal/*.spec.ts against a PORTAL BASE_URL
 //     (ui-smoke-portal.yml runs `--project=smoke-portal`).
+// AA-816 (E1): one more, for the real Cognito email-code sign-in:
+//   • "cognito" — tests/e2e/cognito/*.spec.ts, always against the production admin host (the only
+//     registered callback). Out of every other project; the sign-in test itself skips unless E2ECOGNITO=1
+//     (set only by .github/workflows/e2e-cognito.yml), so a plain `playwright test` never signs in. The
+//     MIME parser unit test in the same folder needs nothing. No retries (a retry asks for another code),
+//     no automatic screenshots or traces (the code page could be captured); the spec takes its own.
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60000,
@@ -29,7 +35,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /smoke(-portal)?\//,
+      testIgnore: /(smoke(-portal)?|cognito)\//,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -53,6 +59,19 @@ export default defineConfig({
       testMatch: /smoke-portal\/.*\.spec\.ts$/,
       dependencies: ['smoke-portal-setup'],
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'cognito',
+      testMatch: /cognito\/.*\.spec\.ts$/,
+      retries: 0,
+      timeout: 180000,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: 'https://aa-cis.lumiguides.it.com',
+        screenshot: 'off',
+        trace: 'off',
+        video: 'off',
+      },
     },
   ],
 
