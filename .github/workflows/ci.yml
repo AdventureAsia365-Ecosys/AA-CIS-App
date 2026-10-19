@@ -33,6 +33,12 @@ jobs:
             --extend-ignore=E203,W503,E302,E303,E305,E221,F401,E128,E124,E401,E127,E126,B008,E701,F821,F841,W291,E272,W293,E231 \
             --exclude=__pycache__,.venv,migrations
 
+      # AA-902: this repo is public — no AWS account ID, ARN with an account, VPC resource ID or API
+      # Gateway host in any tracked file. Blocking; exceptions only in .github/resource-id-allowlist.txt
+      # with an expiry date. Standard library only.
+      - name: Resource-ID check (public repo)
+        run: python3 .github/scripts/check_resource_ids.py
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest

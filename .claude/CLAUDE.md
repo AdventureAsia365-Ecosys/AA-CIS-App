@@ -8,7 +8,7 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
 ## Where things are
 - Workspace: `~/projects/AA-Ecosys/apps/AA-CIS-App` (multi-repo; own `.git`). Org
   `AdventureAsia365-Ecosys`. Sibling repos: AA-TripPlanner-Web, AA-CIS-Infra, root AA-Ecosys.
-- Live: API `https://api-cis.lumiguides.it.com` (API GW `4ylo382khg` → ALB → ECS
+- Live: API `https://api-cis.lumiguides.it.com` (API GW → ALB → ECS
   `aa-cis-dev-cluster`: services `aa-cis-dev-api` + `aa-cis-dev-worker`), admin/portal
   `https://aa-cis.lumiguides.it.com` (Vercel). AWS acc2 (profile `aa365-admin`), us-west-1; account IDs
   live only in the private root onboarding doc.

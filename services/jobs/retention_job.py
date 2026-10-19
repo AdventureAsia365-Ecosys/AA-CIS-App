@@ -42,7 +42,8 @@ import structlog
 
 from services.retention import rollups, runner
 from services.retention.archive import S3Archiver
-from services.retention.policy import ARCHIVE_BUCKET, SPECS, TableSpec
+from services.retention.policy import SPECS, TableSpec
+from shared.aws_client.bronze import bronze_bucket
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 
 logger = structlog.get_logger()
@@ -369,6 +370,6 @@ async def status(pool) -> dict:
             "last": jobs,
         })
     return {"kinds": out, "run_max_rows": RUN_MAX_ROWS, "growth_factor": GROWTH_FACTOR,
-            "growth_floor_rows": GROWTH_FLOOR_ROWS, "archive": f"s3://{ARCHIVE_BUCKET}/archive/<table>/yyyy/mm/",
+            "growth_floor_rows": GROWTH_FLOOR_ROWS, "archive": f"s3://{bronze_bucket()}/archive/<table>/yyyy/mm/",
             "override": {"trigger": OVERRIDE_TRIGGER, "kinds": list(OVERRIDE_KINDS),
                          "min_age_days": OVERRIDE_MIN_AGE_DAYS, "max_rows": OVERRIDE_MAX_ROWS}}

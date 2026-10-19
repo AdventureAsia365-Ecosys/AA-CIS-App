@@ -248,7 +248,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     kept), `retention_cost_explorer_snapshot` (rows superseded by a newer fetch of the same day).
     Policies in `services/retention/policy.py`. Rollups are written before raw rows are deleted;
     batches of <= 5,000 rows by (ts, id) keyset, archived first to
-    `s3://aa-cis-bronze-005097885195/archive/<table>/yyyy/mm/` as gzipped JSONL (pyarrow is not a
+    `s3://<bronze bucket>/archive/<table>/yyyy/mm/` (`shared/aws_client/bronze.py`) as gzipped JSONL (pyarrow is not a
     dependency), never `VACUUM FULL`; rows referenced by a foreign key are never deleted. A manual run
     (`POST /admin/job-runner/retention/run`) is a DRY RUN unless `dry_run=false` + `max_rows` (the
     approved count). The ops-probe Lambda calls `POST /admin/job-runner/retention/schedule` once a
@@ -428,6 +428,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend (ECS)**: shipped via CI; a new task definition rolls out on the `aa-cis-dev-api`
   service. This repo has **branch protection with 5 required CI jobs** — merge PRs with
   `gh pr merge --auto` (auto-merge once checks pass). Agents must not push to `main` directly.
+- **Public repo, no resource IDs (AA-902)**: the required **Lint** job runs
+  `.github/scripts/check_resource_ids.py` over every tracked file and fails on an AWS account ID, an ARN
+  with an account, an `<name>-<account>` resource name, a VPC resource ID or an API Gateway host (AWS
+  documentation example accounts allowed for test fakes). Exceptions only in
+  `.github/resource-id-allowlist.txt`, each with a max count and an expiry date. Code gets the bronze
+  bucket from `shared/aws_client/bronze.py` (`BRONZE_BUCKET`, else `aa-cis-bronze-<caller account>`) and
+  acc2's own ID from STS; the acc1/acc3 satellite IDs are kept once, in `shared/llm_client/bedrock_satellite.py`
+  (allowlisted until the task definition carries them).
 - **Frontend (Vercel)**: deploys are created by CI, not the Vercel Git integration (S241 — Hobby
   cap ~100 deployments / 24 h for the whole team, canceled ones included).
   `frontend/vercel.json` sets `git.deploymentEnabled: false`; `.github/workflows/vercel-deploy.yml`
@@ -467,11 +475,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
-  read-only: List + Get on `s3://aa-cis-dev-e2e-mail-005097885195/inbound/`, no delete; 1-day expiry). Playwright
+  read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
-  no silent re-login. The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
+  no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
   are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
@@ -580,8 +588,11 @@ lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`,
   so `proxy.ts` can see it expired), `cis_staff_rt` the refresh token (httpOnly, `path=/api/auth`, 12 h,
   1 h for break-glass; the window is not extended by rotation). Refresh happens only in `/api/auth/refresh`
   (single-flight; `proxy.ts` redirects page navigations there, `SessionKeepAlive` POSTs before expiry).
-  `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout revokes the refresh token
-  and goes through Cognito `/logout`.
+  `cis_role` / `cis_user` are display hints set by the server, never trusted. Logout (`POST
+  /api/auth/admin-logout`, same-origin only — a cross-site POST gets 403, like Booking's) revokes the refresh
+  token, clears every session cookie and answers the managed-login `/logout` URL (`client_id` + `logout_uri` =
+  `<prod>/login`, registered on both staff clients); the Topbar follows only that URL or `/login`
+  (`lib/staffLogout.ts`), so the next sign-in asks for a new email code.
 - A sign-in completes only after `/auth/verify-admin` accepts the token; a refusal lands on
   `/login?error=no_access` with no session cookies.
 

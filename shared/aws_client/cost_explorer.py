@@ -13,7 +13,7 @@ verified in production (AA-296/AA-397): acc2's own ECS task role can call ce:Get
 directly (modules/ecs/main.tf's ecs_task_infra_status_readonly, AA-623 PR #68); acc1/acc3 need
 STS AssumeRole into their own AA-CostExplorer-Reader / AA3-CostExplorer-Reader roles (AA-CIS-Infra
 PR #69) because acc2 is a member account, not the AWS Organizations payer -- confirmed via
-`aws organizations describe-organization` (payer is 033086823579, unrelated to acc1/acc2/acc3),
+`aws organizations describe-organization` (the payer is a separate account, none of acc1/acc2/acc3),
 so there is no single consolidated CE call across all three.
 
 Distinct session cache from bedrock_satellite.py's (different role, different ExternalId) --
@@ -31,18 +31,40 @@ import boto3
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
 
+from shared.aws_client import bronze
+from shared.llm_client.bedrock_satellite import ACC1_ACCOUNT_ID, ACC3_ACCOUNT_ID
+
 logger = structlog.get_logger()
 
 # ---------------------------------------------------------------- config
-ACC1_ACCOUNT_ID = "867490540162"
+# AA-902 — account IDs are not written here (public repo): acc1/acc3 come from bedrock_satellite.py,
+# the one place they are kept until the task definition carries them; acc2 is this task's own account.
 ACC1_ROLE_ARN = f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/AA-CostExplorer-Reader"
 ACC1_EXTERNAL_ID = "aa623-satellite-cost-explorer"
 
-ACC2_ACCOUNT_ID = "005097885195"  # direct call, own ECS task role -- no AssumeRole needed
-
-ACC3_ACCOUNT_ID = "786888028788"
 ACC3_ROLE_ARN = f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/AA3-CostExplorer-Reader"
 ACC3_EXTERNAL_ID = "aa623-satellite-cost-explorer-acc3"
+
+
+
+def acc2_account_id() -> str:
+    """acc2 is the account this ECS task runs in: direct CE call, own task role, no AssumeRole."""
+    return bronze.caller_account_id()
+
+
+def account_key(account_id: str) -> Optional[str]:
+    """'acc1' | 'acc2' | 'acc3' for a stored account_id, None for any other account. The admin page
+    labels Cost Explorer rows with this key, so the frontend needs no account ID (AA-902)."""
+    if account_id == ACC1_ACCOUNT_ID:
+        return "acc1"
+    if account_id == ACC3_ACCOUNT_ID:
+        return "acc3"
+    try:
+        return "acc2" if account_id == acc2_account_id() else None
+    except (BotoCoreError, ClientError) as e:  # a label must never fail the read
+        logger.warning("cost_explorer_account_key_unresolved", error=str(e)[:200])
+        return None
+
 
 # Cost Explorer is a global (non-regional) API endpoint, but the SDK client still needs a
 # region -- us-east-1 is AWS's documented convention for CE, independent of where the app's
@@ -111,7 +133,7 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
     """One ce:GetCostAndUsage call for one account, grouped by SERVICE. Returns a list of row
     dicts ready for record_snapshot(). Raises CostExplorerUnavailable on failure -- caller in
     fetch_all_accounts_cost() decides whether to skip this account or propagate."""
-    account_id = {"acc1": ACC1_ACCOUNT_ID, "acc2": ACC2_ACCOUNT_ID, "acc3": ACC3_ACCOUNT_ID}[account]
+    account_id = acc2_account_id() if account == "acc2" else {"acc1": ACC1_ACCOUNT_ID, "acc3": ACC3_ACCOUNT_ID}[account]
     # DAILY x GroupBy SERVICE paginates on longer ranges (NextPageToken) -- without the loop a
     # 30/90-day fetch silently drops every day after the first page.
     results_by_time: list[dict[str, Any]] = []
@@ -260,11 +282,14 @@ async def read_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) 
         key = (r["account_id"], r["service"])
         services[key] = services.get(key, 0.0) + amount
 
+    keys = {a: account_key(a) for a in accounts}  # AA-902: the page labels rows by key, not by ID
     for acc in accounts.values():
         for k in ("total_usd", "bedrock_usd", "other_usd"):
             acc[k] = round(acc[k], 4)
+        acc["account_key"] = keys[acc["account_id"]]
     service_rows = sorted(
-        ({"account_id": a, "service": s, "amount_usd": round(v, 4), "is_bedrock": is_bedrock_service(s)}
+        ({"account_id": a, "account_key": keys[a], "service": s, "amount_usd": round(v, 4),
+          "is_bedrock": is_bedrock_service(s)}
          for (a, s), v in services.items()),
         key=lambda x: -x["amount_usd"],
     )
@@ -318,8 +343,9 @@ def fetch_acc2_cost_by_app(start_date: str, end_date: str) -> dict[str, Any]:
                 break
             kwargs["NextPageToken"] = token
     except (ClientError, BotoCoreError, CostExplorerUnavailable) as e:
-        raise CostExplorerUnavailable(f"GetCostAndUsage by App tag failed for acc2 ({ACC2_ACCOUNT_ID}): {e}") from e
+        raise CostExplorerUnavailable(f"GetCostAndUsage by App tag failed for acc2: {e}") from e
 
+    acc2_id = acc2_account_id()
     rows: list[dict[str, Any]] = []
     for rbt in results_by_time:
         period_start, period_end = rbt["TimePeriod"]["Start"], rbt["TimePeriod"]["End"]
@@ -331,7 +357,7 @@ def fetch_acc2_cost_by_app(start_date: str, end_date: str) -> dict[str, Any]:
             amount = metric.get("Amount")
             if amount is None:
                 continue
-            rows.append({"account_id": ACC2_ACCOUNT_ID, "app_tag": tag, "service": service,
+            rows.append({"account_id": acc2_id, "app_tag": tag, "service": service,
                          "period_start": period_start, "period_end": period_end,
                          "amount_usd": float(amount), "unit": metric.get("Unit", "USD")})
     return {"rows": rows, "requests": requests}

@@ -3,7 +3,8 @@
 //   /login → "Sign in with company email" → staff-auth.lumiguides.it.com managed login → email address →
 //   code read from the SES inbound mailbox (helpers/mailbox.ts) → back on aa-cis → admin shell under /admin;
 //   then Sign out → Cognito /logout → /login, and no silent re-login (admin pages bounce to /login, the
-//   company-email button shows the managed-login form again).
+//   company-email button shows the managed-login form again, and after the address it asks for a NEW email
+//   code — a second code mail arrives; it is never typed).
 //
 // Runs ONLY in the `cognito` project with E2ECOGNITO=1 (set by .github/workflows/e2e-cognito.yml, which also
 // assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e@e2e-mail.lumiguides.it.com — the SES
@@ -78,6 +79,8 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
   });
 
   test('email code signs in, lands under /admin, sign-out does not silently re-login', async ({ page }) => {
+    // Two code mails (up to 90 s + 60 s of mailbox polling) plus the page steps.
+    test.setTimeout(240000);
     // ── 1. CIS login page → managed login ──
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
     const companyEmail = page.getByRole('link', { name: /sign in with company email/i });
@@ -131,8 +134,26 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     await page.getByRole('link', { name: /sign in with company email/i }).click({ timeout: 10000 });
     await page.waitForURL((u) => u.host === STAFF_AUTH_HOST, { timeout: 20000 });
     // The managed-login session is gone: Cognito asks for the email again instead of redirecting back.
-    await expect(page.getByLabel(/email/i).first()).toBeVisible({ timeout: 15000 });
+    const emailAgain = page.getByLabel(/email/i).first();
+    await expect(emailAgain).toBeVisible({ timeout: 15000 });
     expect(new URL(page.url()).host).toBe(STAFF_AUTH_HOST);
     await shot(page, '06-relogin-asks-email');
+
+    // ── 7. …and a NEW email code (S244): the next sign-in is a full email-code sign-in, not a silent one ──
+    // The code is read only to prove Cognito sent a fresh one; it is never typed, logged or compared by value.
+    await emailAgain.fill(E2E_COGNITO_EMAIL);
+    const baseline2 = await mailboxBaseline();
+    const since2 = new Date();
+    await page.getByRole('button', { name: /^next$/i }).click({ timeout: 10000 });
+    await reachCodeStep(page);
+    expect(new URL(page.url()).host).toBe(STAFF_AUTH_HOST);
+    await shot(page, '07-relogin-asks-code-empty');
+    const secondCode = await waitForSignInCode({ since: since2, baseline: baseline2, timeoutMs: 60000 });
+    // Boolean assert: a failing toMatch would print the received value.
+    expect(/^\d{6,8}$/.test(secondCode), 'a second code mail arrived').toBe(true);
+    // Still on the managed-login page: nothing signed the browser back in while the code was pending.
+    expect(new URL(page.url()).host).toBe(STAFF_AUTH_HOST);
+    const stillOut = await page.context().cookies(CIS_PROD_ORIGIN);
+    expect(stillOut.some((c) => c.name === 'cis_admin_token' && c.value !== '')).toBe(false);
   });
 });

@@ -15,6 +15,10 @@
 // navigate there (Topbar uses window.location): it clears the managed-login session cookie, which
 // otherwise signs the user straight back in for up to an hour (ADR 0006 §7). Cognito then returns to
 // /login, which never auto-redirects. A legacy session gets { redirect: "/login" }.
+//
+// AA-816 (cutover prep, S244) — same-origin check first, like AA-Booking /api/auth/logout: another site must
+// not be able to sign staff out (logout CSRF). A cross-site POST gets 403 and changes nothing (no revoke, no
+// cookie cleared). The Topbar only follows a redirect of the two shapes above (lib/staffLogout.ts).
 import { NextRequest, NextResponse } from "next/server";
 import { adminVerifyCache } from "@/lib/auth-server";
 import {
@@ -25,9 +29,15 @@ import {
   revokeRefreshToken,
   sessionClientKind,
 } from "@/lib/cognito";
+import { isSameOrigin } from "@/lib/sameOrigin";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "@/lib/staffSession";
 
 export async function POST(request: NextRequest) {
+  if (!isSameOrigin(request, { strict: true })) {
+    const refused = NextResponse.json({ ok: false, message: "Cross-site sign-out refused." }, { status: 403 });
+    refused.headers.set("Cache-Control", "no-store");
+    return refused;
+  }
   const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
   const rt = readRefreshCookie(request);
   const kind = sessionClientKind(request);

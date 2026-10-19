@@ -46,7 +46,7 @@ def test_fetch_by_app_parses_paginates_and_strips(monkeypatch):
     first = stub.calls[0]
     assert first["GroupBy"] == [{"Type": "TAG", "Key": "App"}, {"Type": "DIMENSION", "Key": "SERVICE"}]
     assert first["Granularity"] == "DAILY" and stub.calls[1]["NextPageToken"] == "p2"
-    assert all(r["account_id"] == ce.ACC2_ACCOUNT_ID for r in out["rows"])
+    assert all(r["account_id"] == ce.acc2_account_id() for r in out["rows"])
 
 
 def test_fetch_by_app_wraps_aws_errors(monkeypatch):
