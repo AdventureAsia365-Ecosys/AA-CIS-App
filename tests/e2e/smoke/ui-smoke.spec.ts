@@ -36,6 +36,12 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'overview', label: 'Overview', path: '/admin/overview' },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).
   { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff' },
+  // AA-884 — Platform › Apps, Audit log, Cost per app. ADMIN-ONLY pages (PAGE_RULES /admin/platform; backend
+  // ops.read / audit.read / spend.read): a non-admin smoke account must be refused here, never pass. The
+  // Apps and Cost pages are cards / a custom table, so their ready marker renders only once data loaded.
+  { id: 'platform-apps', label: 'Apps', path: '/admin/platform/apps', readySelector: '[data-testid="platform-apps-ready"]' },
+  { id: 'platform-audit', label: 'Audit log', path: '/admin/platform/audit' },
+  { id: 'platform-cost', label: 'Cost per app', path: '/admin/platform/cost', readySelector: '[data-testid="platform-cost-ready"]' },
   { id: 'photos', label: 'Photos', path: '/admin/photos' },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]' },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).

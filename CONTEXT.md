@@ -648,6 +648,12 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+- **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
+  `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
+  `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
+  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and `/admin/platform/cost`
+  (AI & spend › **Cost per app**; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
+  ~$0.04). Notes: `docs/implementation-notes/AA-884-ui.md`.
 
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
