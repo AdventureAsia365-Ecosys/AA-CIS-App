@@ -33,9 +33,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Backend**: Python (FastAPI-style routers under `api/routers/`, services under `services/`),
   running on **ECS** (cluster `aa-cis-dev-cluster`, service `aa-cis-dev-api`) fronted by ALB +
   API Gateway. Postgres (RDS) holds the schemas; some steps use Bedrock for LLM work.
-- **Frontend**: Next.js app with an **Admin** surface (`app/admin/*`) and a **Tenant portal**
-  (`app/(tenant)/portal/*`). Deployed on **Vercel** by the `Vercel Deploy` workflow (check its
-  "Vercel deploy" job on the PR; not one of the 5 required checks — see Deploy & CI).
+- **Frontend**: two Next.js apps (AA-885, S243), each its own Vercel project, both deployed by CI
+  (not one of the 5 required checks — see Deploy & CI):
+  - `frontend/` = the **Admin** console (`app/admin/*`), Vercel `aa-cis-frontend`,
+    `https://aa-cis.lumiguides.it.com`, workflow `Vercel Deploy` (job "Vercel deploy").
+  - `portal/` = the **Tenant portal** (`portal/app/portal/*`), Vercel `aa-cis-portal` (Root Directory
+    `portal`), `https://portal.lumiguides.it.com`, workflow `Vercel Deploy (portal)`. See "Tenant portal
+    app" below.
   - Admin pages: `dashboard`, `upload` (A0), `s1-rewrite`, `review` (A2 Review Queue — table
     view with a Dismiss action, AA-626; migrated to the UI kit + react-query with multi-select
     bulk regenerate and non-blocking regenerate, AA-662 PR 2 / AA-719), `master-content` (AA-718:
@@ -53,14 +57,47 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     roles (same list as `lib/rbac.ts` PAGE_RULES, enforced by `proxy.ts`). The legacy `(internal)` route group
     (`/upload`, `/review`, `/catalog`, `/brand`) is deleted; those URLs and `/admin/brand`
     redirect in `next.config.ts`.
-  - Portal pages: `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
+  - Portal pages (`portal/app/portal/*`): `dashboard`, `t0-brand`, `t1-rewrite`, `t4-pool` ("My Catalog Tours" /
     `CatalogTab`, migrated to the UI kit + react-query, AA-662 PR 3), `t7-planning` (titled
     "Social Content", renders the Slate), `t8-angle-gate` (T8+T9 wizard), `t10-review` (My
-    Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`. The portal works
-    on phones (drawer below 900px, AA-605).
+    Content), `t11-publish`, `marketplace`, `billing`, `activity`, `settings`, `api`, `help/facebook`.
+    The portal works on phones (drawer below 900px, AA-605).
+  - **Tenant portal app (AA-885)**: `portal/` is a second Next.js app (same Next/React versions, its own
+    `package-lock.json`, dev port 3004). Paths keep the `/portal/*` prefix on the new host (`/` → `/portal/dashboard`);
+    the admin host answers `/portal`, `/portal/*` and `/tenant-login` with **308** to the same path on
+    `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL` in `frontend/lib/apps.ts`)
+    and serves no portal page or tenant BFF any more.
+    - Its own tenant-only BFF: `app/api/auth/tenant-login` + `tenant-logout` (the 5 httpOnly cookies
+      `cis_role`, `cis_tenant_token`, `cis_tenant_id`, `cis_tenant_name`, `cis_tenant_plan`, **host-only** on the
+      portal host — no `Domain`), `app/api/tenant/me`, `app/api/tenant/[...path]` (verified tenant Bearer only),
+      `app/api/playground/proxy`. **No admin secret**: the portal project has no `ADMIN_SECRET`,
+      `INTERNAL_API_KEY` or `COGNITO_*` (a test checks the source). `API_URL` defaults to the Dev API, so the
+      Vercel project needs no env var. CORS is unchanged: the browser only calls its own origin, the BFF
+      calls the API server to server.
+    - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
+      `/auth/verify-tenant` accepts (cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
+      back to `/tenant-login`; backend unreachable → fail closed outside development.
+    - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
+      `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+      object-src 'none'`), `Permissions-Policy`. `/privacy` → `https://adventure.asia/privacy-policy`
+      (307); `/terms` is a holding page (no terms document exists yet, AA-820). Links in the sidebar and
+      on `/tenant-login`.
+    - Staff have **no** access to the tenant portal (no staff session there; a support view is future
+      work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
+    - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
+      any of these admin files must be copied into `portal/` in the same PR, or the unit tests go red —
+      `portal/app/_kit/tokens.ts`, `portal/app/_kit/primitives.tsx`, `portal/app/_kit/Modal.tsx`,
+      `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
+      `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
+      `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
+      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts` (each copied from the same path under
+      `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
+      `portal/lib/auth-server.ts` are portal-owned.
+    - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
+      point at the admin host); no Sentry on the portal yet.
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
     live in `frontend/app/_brand/tokens.ts` and are used by admin, portal and login pages
-    (AA-605). New pages should reuse them.
+    (AA-605; the portal has a guarded byte copy). New pages should reuse them.
   - **UI kit (AA-662, `frontend/app/_kit/`)**: the shared component library for UI v2, built on
     TanStack Table (`@tanstack/react-table`) and brand tokens (inline styles, no Tailwind
     classNames). Exports `DataTable` (per-column filter, multi-sort, column show/hide, pagination,
@@ -397,6 +434,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   production (production only from `main`). Needs the repo secret `VERCEL_TOKEN` (team-scoped);
   without it the job fails red on every target (nothing else deploys the frontend). A PR
   that touches no frontend file gets no preview. The check to look at is "Vercel deploy".
+- **Portal (Vercel, AA-885)**: `.github/workflows/vercel-deploy-portal.yml` is the same workflow for
+  `portal/**` (project id from the repo **variable** `VERCEL_PORTAL_PROJECT_ID`, red while unset; production
+  check with the repo secret `VERCEL_PORTAL_BYPASS_SECRET`), check "Vercel deploy (portal)", then
+  `ui-smoke-portal.yml` on the preview. The path filters are disjoint: a portal-only PR deploys once, an
+  admin-only PR once, a PR touching both twice per push — count it against the Hobby cap (~100/day for
+  the team, 4 projects). `portal/**` is not in `deploy-dev.yml`, so a portal change never redeploys ECS.
+  `portal/vercel.json` also sets `git.deploymentEnabled: false`.
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `vercel-deploy.yml` after a
   successful preview deploy (`workflow_call`, inputs `base_url` + `sha`), or run by hand
   (`workflow_dispatch`); Vercel's `deployment_status` no longer arrives. A Playwright suite (`tests/e2e/smoke/ui-smoke.spec.ts`, project `smoke`)
@@ -405,9 +449,17 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   Screenshots (desktop 1440 + mobile 390, light + dark) and the HTML report upload as an artifact
   and link from one PR comment. Secrets: `VERCEL_AUTOMATION_BYPASS_SECRET` (preview SSO bypass),
   `E2E_ADMIN_USERNAME`, `E2E_ADMIN_PASSWORD`. The bypass header is sent only to the BASE_URL
-  origin (origin-scoped route), never to a third-party host. Portal pages skip until a tenant test
-  account exists (AA-741; the real tenant login takes an API key → `E2E_TENANT_API_KEY`). Not a
-  required check. e2e specs carry no hardcoded credentials (shared helper
+  origin (origin-scoped route), never to a third-party host. The admin suite also checks that the
+  old portal URLs answer 308 to the portal host (`aa885-portal-redirect.spec.ts`). Not a
+  required check.
+- **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
+  `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
+  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms`), and
+  logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
+  `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
+  `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
+  Logged-in tests skip without the key. The preview needs `VERCEL_PORTAL_BYPASS_SECRET` (passed to the
+  helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required, + `tsc`). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
@@ -427,9 +479,22 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
   VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
   A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
+- **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
+  DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
+  `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
+  `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
+  (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered
+  today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
+  migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
+  exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
+- **Health and version (AA-884)**: `GET /health` returns `git_sha` (the image's `APP_GIT_SHA`, the merge commit) and
+  `GET /health/ready` (public, 5 s in-process cache) returns 200 only when the DB answers and the newest numeric CIS
+  migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
+  code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
+  (`shared.job_worker.git_sha`, written at worker start).
 - **Definition of "done" for a backend issue** (program rule): merge + green CI is not enough.
   Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
   drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.
@@ -552,6 +617,38 @@ public site; no tenant-portal link until there is a real support view, since the
 session); deep links are built only there, never from a return URL, never with a
 token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
 
+**Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
+entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
+- `GET /admin/platform/apps[/{app_id}]` (`ops.read`) — `api/services/platform_apps.py` `collect_apps()`: one card per
+  app from the backend registry `api/core/app_registry.py` (code constants). CIS: API SHA + task revision, live
+  workers' SHA (parity), the deploy gate (`shared/jobs/worker.py` `deploy_gate_status`, same as the CI guard), schema
+  readiness. Booking: HTTP `/booking/health` + `/booking/health/ready` (2 s). TripPlanner: no health endpoint yet;
+  today's customer-facing LLM spend (TP `ONLINE_STAGES`, `quality_signal->>'app' = 'tripplanner'`) vs the mirrored
+  default cap (5 USD; the live cap is a TP env var). Cached 60 s in Redis, built only on a page view (no poller).
+  No ECS/Lambda describe calls, no cross-schema reads.
+- **Staff audit trail.** `acp_shared.audit_log` is append-only since CIS 248: UPDATE/DELETE/TRUNCATE raise 42501;
+  a BEFORE INSERT trigger chains every new row (`chain_seq`, `prev_hash`, `row_hash` = sha256 of a canonical text,
+  under `pg_advisory_xact_lock(884, 1)` — so a writer inside a transaction writes its audit row LAST; needs READ
+  COMMITTED). `api/middleware/staff_audit.py` (inside `StaffBearerMiddleware`, outside the rate limiter) adds one
+  `staff.request` / `machine.request` row per non-GET call on a staff path that carries the admin secret: actor
+  from the verified Cognito identity, else `x-admin-user-id` marked `details.auth = legacy_unverified`, method,
+  route template, status (denied calls included); never the body or query values. `GET /admin/platform/audit`
+  (`audit.read`, filters + keyset cursor, staff scope by default) and `GET /admin/platform/audit/verify`
+  (`audit.read`; Python recompute of the chain, `api/services/platform_audit.py`, must stay equal to the trigger;
+  a row without `chain_seq` created after 248 was applied — a trigger bypass — also makes it `ok: false`).
+  The RDS master can still bypass the triggers until the X1 runtime role and the 245 owner transfer; the chain
+  makes such an edit detectable, not impossible. Integration tests delete their own audit rows only through
+  `tests/integration/_audit_cleanup.py`.
+- **Cost per app** — the one cost module of the console: `api/services/platform_cost.py` `cost_by_app()` (AA-858's
+  overview card imports it; do not compute spend another way). AWS = acc2 Cost Explorer grouped by the `App` tag
+  (`shared.cost_explorer_app_snapshot`, CIS 248; untagged is its own row with services), AI = LLM gateway estimates
+  by `quality_signal->>'app'` from `shared.llm_call_log` + `shared.llm_call_daily`; acc2 Bedrock is subtracted from
+  AI so it is not counted twice; acc1/acc3 Bedrock CE actuals are a cross-check line. `GET /admin/platform/cost`
+  (`spend.read`) refreshes a month whose snapshot misses days or is > 24 h old (and may still change) with one CE
+  request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
+  or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
+  fetches the App tag (+1 request). No scheduler yet.
+
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
 | Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
@@ -559,9 +656,9 @@ token. New platform pages live under `/admin/platform/*` (backend `api/routers/a
 | Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
-| Tenant portal `/portal/*` | ✓ (support) | — | — | ✓ |
-| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` as staff | ✓ | ✓ | ✓ | — |
-| `/api/tenant/*`, `/api/playground/proxy` as tenant | — | — | — | ✓ |
+| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | ✓ |
+| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | — |
+| `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | ✓ |
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
 `content_creator` → content. Reviewer and content reach the backend through the same admin secret;

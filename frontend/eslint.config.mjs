@@ -2,8 +2,9 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-// AA-732 — UI-kit conventions enforced in admin + portal page code (no new dependency; core
-// `no-restricted-syntax` only).
+// AA-732 — UI-kit conventions enforced in admin page code (no new dependency; core
+// `no-restricted-syntax` only). AA-885: the tenant portal is its own app with the same rules in
+// portal/eslint.config.mjs.
 //
 // Rules (see CONTEXT.md "UI kit"):
 //   1. no raw <table>        → use the kit DataTable
@@ -41,8 +42,6 @@ const KIT_RESTRICTED_SYNTAX = [
 const KIT_CLEAN_FILES = [
   "app/admin/_components/SettingsKitTab.tsx",
   "app/admin/_components/AdminLiveWriter.tsx",
-  "app/(tenant)/portal/_components/ReviewList.tsx",
-  "app/(tenant)/portal/_components/CatalogTab.tsx",
   "app/admin/api-docs/page.tsx", // AA-577 follow-up — built on the kit from the start
 ];
 
@@ -58,10 +57,10 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
   ]),
 
-  // (B) Broad warn: all admin + portal page code. Legacy, not-yet-migrated files surface as
+  // (B) Broad warn: all admin page code. Legacy, not-yet-migrated files surface as
   // warnings — visible, non-blocking, and never rewritten.
   {
-    files: ["app/admin/**/*.tsx", "app/(tenant)/portal/**/*.tsx"],
+    files: ["app/admin/**/*.tsx"],
     ignores: ["app/_kit/**"],
     rules: {
       "no-restricted-syntax": ["warn", ...KIT_RESTRICTED_SYNTAX],

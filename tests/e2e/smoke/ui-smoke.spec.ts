@@ -7,25 +7,17 @@
 //   • the main content shows ≥1 kit/table row OR the kit empty state (not a blank/broken shell)
 // and screenshots are captured at desktop 1440 + mobile 390, light + dark.
 //
-// The admin login happens once in global-setup.ts (storageState). Each test opens its OWN context
+// The admin login happens once in auth.setup.ts (storageState). Each test opens its OWN context
 // from that state, so the tests are independent — one red page does not skip the others.
 // This spec is its own Playwright project ("smoke"), so legacy specs are not run by CI.
 import { test, expect } from '@playwright/test';
 import {
   ADMIN_STATE,
-  TENANT_STATE,
   baseUrl,
   installBypassRoute,
   ensureResultsDir,
-  ensureAuthDir,
-  watchPage,
-  hasContentOrEmptyState,
-  waitForSkeletonGone,
-  assertMobileLayout,
   assertNavOk,
-  describeApiFailures,
-  screenshotMatrix,
-  assertThemeSwitches,
+  runPageCheck,
   type PageSpec,
 } from './smoke-helpers';
 
@@ -59,69 +51,6 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'tenants', label: 'Tenants', path: '/admin/tenants' },
   { id: 'upload', label: 'Upload', path: '/admin/upload' },
 ];
-
-// ── Portal pages (tenant). The real tenant login takes an API key, so this is gated on
-// E2E_TENANT_API_KEY. No tenant test account exists yet (AA-741), so the block skips when absent. ──
-const PORTAL_PAGES: PageSpec[] = [
-  { id: 't7-planning', label: 'Social Content', path: '/portal/t7-planning' },
-  { id: 't10-review', label: 'My Content', path: '/portal/t10-review' },
-  { id: 't11-publish', label: 'Publish', path: '/portal/t11-publish' },
-];
-
-async function runPageCheck(
-  browser: import('@playwright/test').Browser,
-  storageStatePath: string,
-  spec: PageSpec,
-  opts: { checkMobileLayout?: boolean } = {},
-): Promise<void> {
-  const context = await browser.newContext({
-    baseURL: baseUrl(),
-    storageState: storageStatePath,
-    viewport: { width: 1440, height: 900 },
-  });
-  await installBypassRoute(context);
-  const page = await context.newPage();
-  const watcher = watchPage(page);
-  try {
-    await assertNavOk(page, spec.path);
-    await waitForSkeletonGone(page, spec.readySelector);
-
-    // Let every in-flight same-origin /api/ body read complete before asserting.
-    await watcher.settle();
-
-    expect(
-      watcher.apiFailures,
-      `${spec.label}: failing same-origin /api/ responses:\n${describeApiFailures(watcher.apiFailures)}`,
-    ).toEqual([]);
-
-    const ok = await hasContentOrEmptyState(page, spec.readySelector);
-    expect(ok, `${spec.label}: no table rows and no empty state — page looks blank/broken`).toBe(true);
-
-    expect(
-      watcher.consoleErrors,
-      `${spec.label}: console errors:\n${watcher.consoleErrors.map((e) => `  ${e.text}`).join('\n')}`,
-    ).toEqual([]);
-
-    // AA-601 — mobile layout guard (admin only): no page-level horizontal overflow at 390px and the
-    // sidebar takes no width (off-canvas drawer). Runs before the screenshot matrix so the viewport
-    // is restored to desktop first.
-    if (opts.checkMobileLayout) {
-      await assertMobileLayout(page, spec.label);
-    }
-
-    // AA-601 part B — admin dark theme: assert the page actually switches theme with
-    // prefers-color-scheme (dark background under dark, light under light). Deterministic
-    // luminance check, no screenshot diff. Admin only (the portal stays light by design).
-    if (opts.checkMobileLayout) {
-      await assertThemeSwitches(page, spec.label);
-    }
-
-    // Screenshots: desktop + mobile, light + dark (on the same, already-authenticated page).
-    await screenshotMatrix(page, spec.id);
-  } finally {
-    await context.close();
-  }
-}
 
 // AA-883 — the Staff deep link /admin/platform/staff/{id} opens the drawer. A made-up id answers
 // 404 (a real failure for this smoke), so the test reads the first account id from the list API in
@@ -192,110 +121,5 @@ test.describe('UI smoke — admin', () => {
   });
 });
 
-const hasTenantKey = Boolean(process.env.E2E_TENANT_API_KEY);
-
-test.describe('UI smoke — portal', () => {
-  // The real tenant login (frontend/app/tenant-login → /api/auth/tenant-login) takes an API key.
-  test.skip(
-    !hasTenantKey,
-    'No tenant test account yet (AA-741): set E2E_TENANT_API_KEY to enable the portal smoke.',
-  );
-
-  test.beforeAll(async ({ browser }) => {
-    // TODO(AA-741): tenant test account — once it exists, log in with the API key and persist a
-    // tenant storageState. The real form has a single API-key input (type=password).
-    ensureAuthDir();
-    const context = await browser.newContext({ baseURL: baseUrl() });
-    await installBypassRoute(context);
-    const page = await context.newPage();
-    try {
-      await page.goto('/tenant-login');
-      const apiKey = process.env.E2E_TENANT_API_KEY!;
-      await page.fill('input[type="password"]', apiKey);
-      await page.click('button:has-text("Access Portal")');
-      await page.waitForURL(/\/portal/, { timeout: 20000 });
-      await context.storageState({ path: TENANT_STATE });
-    } finally {
-      await context.close();
-    }
-  });
-
-  for (const spec of PORTAL_PAGES) {
-    test(`portal: ${spec.label} (${spec.path})`, async ({ browser }) => {
-      await runPageCheck(browser, TENANT_STATE, spec);
-    });
-  }
-
-  // AA-831 (S239 UI verify D) — at 390px the longest portal breadcrumb ("Connect your Facebook
-  // Page") was hard-clipped next to the bell. The kit Breadcrumb must end the title in an ellipsis
-  // and stay inside the top bar, with no page-level horizontal overflow. Every wait is bounded.
-  test('portal: top-bar breadcrumb truncates with an ellipsis at 390px', async ({ browser }) => {
-    const context = await browser.newContext({
-      baseURL: baseUrl(),
-      storageState: TENANT_STATE,
-      viewport: { width: 390, height: 844 },
-    });
-    await installBypassRoute(context);
-    const page = await context.newPage();
-    try {
-      await page.goto('/portal/help/facebook', { waitUntil: 'domcontentloaded' });
-      const crumb = page.getByTestId('topbar-breadcrumb');
-      const title = page.getByTestId('topbar-breadcrumb-title');
-      await expect(title).toHaveText('Connect your Facebook Page', { timeout: 15000 });
-      // The title is already in the SSR HTML, but the portal shell only switches to its mobile
-      // layout (hamburger, 16px padding, no search box) after hydration, when its matchMedia
-      // effect sets narrow=true. Wait for the hamburger so we measure the 390px layout, not the
-      // desktop one squeezed into 390px.
-      await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible({ timeout: 15000 });
-
-      const m = await page.evaluate(() => {
-        const t = document.querySelector<HTMLElement>('[data-testid="topbar-breadcrumb-title"]')!;
-        const c = document.querySelector<HTMLElement>('[data-testid="topbar-breadcrumb"]')!;
-        const header = c.closest('header')!;
-        const cs = getComputedStyle(t);
-        const cr = c.getBoundingClientRect();
-        const hr = header.getBoundingClientRect();
-        // The first header control after the crumb (search box or bell) must not be overlapped.
-        const after = Array.from(header.querySelectorAll<HTMLElement>('button'))
-          .map((b) => b.getBoundingClientRect())
-          .filter((r) => r.width > 0 && r.left >= cr.left + 1)
-          .map((r) => r.left);
-        return {
-          textOverflow: cs.textOverflow,
-          whiteSpace: cs.whiteSpace,
-          overflowX: cs.overflowX,
-          titleScroll: t.scrollWidth,
-          titleClient: t.clientWidth,
-          crumbRight: Math.round(cr.right),
-          headerRight: Math.round(hr.right),
-          nextControlLeft: after.length ? Math.round(Math.min(...after)) : null,
-          scrollWidth: document.documentElement.scrollWidth,
-          innerWidth: window.innerWidth,
-        };
-      });
-
-      await expect(crumb).toBeVisible();
-      expect(m.textOverflow, 'breadcrumb title must use text-overflow: ellipsis').toBe('ellipsis');
-      expect(m.whiteSpace).toBe('nowrap');
-      expect(m.overflowX).toBe('hidden');
-      // A crumb squeezed to almost nothing would satisfy every bound below; the title must keep
-      // usable width (at 390px the mobile bar leaves roughly 180px for it).
-      expect(m.titleClient, `breadcrumb title has no usable width (clientWidth ${m.titleClient})`).toBeGreaterThan(40);
-      expect(m.crumbRight, 'breadcrumb must stay inside the top bar').toBeLessThanOrEqual(m.headerRight);
-      if (m.nextControlLeft !== null) {
-        expect(m.crumbRight, 'breadcrumb must not run under the next top-bar control').toBeLessThanOrEqual(m.nextControlLeft);
-      }
-      expect(
-        m.scrollWidth,
-        `page-level horizontal overflow at 390px (scrollWidth ${m.scrollWidth} > innerWidth ${m.innerWidth})`,
-      ).toBeLessThanOrEqual(m.innerWidth + 1);
-      // Informational: at 390px this title is expected to be truncated (scrollWidth > clientWidth).
-      test.info().annotations.push({
-        type: 'breadcrumb',
-        description: `title scrollWidth=${m.titleScroll} clientWidth=${m.titleClient} truncated=${m.titleScroll > m.titleClient}`,
-      });
-    } finally {
-      await context.close();
-    }
-  });
-});
+// AA-885 — the tenant portal is its own app (portal/, its own host); its smoke is the
+// `smoke-portal` project (tests/e2e/smoke-portal/), run by ui-smoke-portal.yml on portal previews.

@@ -75,6 +75,7 @@ ADMIN_TENANT_OR_STAFF: dict[tuple[str, str], str] = {
 # Routes that are public by design. (METHOD, path) -> reason.
 ALLOWED_PUBLIC: dict[tuple[str, str], str] = {
     ("GET", "/health"): "ALB / deploy health check",
+    ("GET", "/health/ready"): "AA-884 readiness probe (DB + schema version; 5 s in-process cache, no data)",
     ("POST", "/auth/tenant-login"): "login: trades a tenant API key for a JWT",
     ("POST", "/auth/admin-login"): "login: staff username + password",
     ("POST", "/auth/verify-tenant"): "verifies the JWT in the request body (portal middleware)",

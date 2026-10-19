@@ -283,6 +283,26 @@
     "capability": null,
     "module": "api.routers.admin_photos"
   },
+  "GET /admin/platform/apps": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_platform_ops"
+  },
+  "GET /admin/platform/apps/{app_id}": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_platform_ops"
+  },
+  "GET /admin/platform/audit": {
+    "capability": "audit.read",
+    "module": "api.routers.admin_platform_ops"
+  },
+  "GET /admin/platform/audit/verify": {
+    "capability": "audit.read",
+    "module": "api.routers.admin_platform_ops"
+  },
+  "GET /admin/platform/cost": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_platform_ops"
+  },
   "GET /admin/platform/staff": {
     "capability": "staff.read",
     "module": "api.routers.admin_platform"

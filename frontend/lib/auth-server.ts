@@ -1,14 +1,15 @@
 // frontend/lib/auth-server.ts
 // AA-253 — shared server-side verification for BFF proxy route handlers.
 //
-// Route handlers under app/api/**/route.ts run outside middleware.ts's
-// matcher (see middleware.ts header comment) — a cookie present on the
+// Route handlers under app/api/**/route.ts run outside proxy.ts's
+// matcher (see proxy.ts header comment) — a cookie present on the
 // request is NOT proof it was already checked. These helpers call the
-// backend's real verify endpoints (same ones middleware.ts uses for page
+// backend's real verify endpoint (the same one proxy.ts uses for page
 // gating) so a route handler can independently confirm the caller's
-// identity before forwarding X-Admin-Secret or a tenant Bearer token.
+// identity before forwarding X-Admin-Secret. (AA-885: staff only; the
+// tenant helpers live in the portal app, portal/lib/auth-server.ts.)
 //
-// Deliberately no dev/prod fail-open branch here (unlike middleware.ts):
+// Deliberately no dev/prod fail-open branch here (unlike proxy.ts):
 // this is the last line of defense before the backend admin secret is
 // attached to an outbound request, and there's no page to redirect to on
 // failure — always fail closed.
@@ -37,8 +38,9 @@ import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 //
 // S241 — TTLs (Vercel Fluid CPU: POST /auth/verify-admin was the top proxied
 // backend call, 42.2k in 13 days at a 20 s TTL — S240 audit). The admin cache
-// keeps a "yes" for up to 5 min; the tenant cache keeps the old 20 s (not part
-// of that audit). What a longer admin TTL can and cannot change:
+// keeps a "yes" for up to 5 min. (AA-885: the tenant cache and requireTenant()
+// moved to the portal app, portal/lib/auth-server.ts.) What a longer admin TTL
+// can and cannot change:
 //   - Both backend verify endpoints are STATELESS (api/main.py verify_admin /
 //     verify_tenant: JWT signature + exp + role claim only — no DB read, no
 //     denylist). So a role change or a deactivated user already only takes
@@ -55,7 +57,6 @@ import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 //     to ADMIN_VERIFY_CACHE_TTL_MS on a warm instance (was 20 s). Each serverless
 //     instance has its own Map, so a redeploy clears it.
 const ADMIN_VERIFY_CACHE_TTL_MS = 300_000;
-const TENANT_VERIFY_CACHE_TTL_MS = 20_000;
 // Used when a token carries no readable `exp` (never the case for tokens the
 // backend issues today) — the pre-S241 TTL, the conservative choice.
 const NO_EXP_TTL_MS = 20_000;
@@ -117,11 +118,10 @@ class VerifyCache<T> {
   }
 }
 
-// AA-573: exported so middleware.ts's own verifyAdminToken()/verifyTenantToken()
-// can share the same cache — those run the identical uncached-round-trip
-// pattern this file already fixed for /api/admin/* proxy calls (same
-// /auth/verify-admin|verify-tenant endpoint, same token, milliseconds apart)
-// but as a separate module they never benefited from it. A fresh login
+// AA-573: exported so proxy.ts's own verifyAdminToken() can share the same
+// cache — it ran the identical uncached-round-trip pattern this file already
+// fixed for /api/admin/* proxy calls (same /auth/verify-admin endpoint, same
+// token, milliseconds apart) but as a separate module never benefited from it. A fresh login
 // followed immediately by a client-side navigation to a protected route is
 // exactly this shape — see docs/implementation-notes/AA-573.md.
 export interface VerifiedStaff {
@@ -131,9 +131,6 @@ export interface VerifiedStaff {
   name: string;
 }
 export const adminVerifyCache = new VerifyCache<VerifiedStaff>(ADMIN_VERIFY_CACHE_TTL_MS);
-export const tenantVerifyCache = new VerifyCache<{ tenantId: string; name: string; planTier: string }>(
-  TENANT_VERIFY_CACHE_TTL_MS,
-);
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 
@@ -226,46 +223,4 @@ async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
     role: verified.role,
     bearer: isCognitoToken(token) ? token : null,
   };
-}
-
-export type RequireTenantResult =
-  // AA-427: name/planTier added (backend /auth/verify-tenant already returned
-  // them; just wasn't surfaced) so /api/tenant/me can hand the FE tenant
-  // display info without a second round trip or ever exposing the token.
-  | { ok: true; tenantId: string; name: string; planTier: string }
-  | { ok: false; response: NextResponse };
-
-export async function requireTenant(request: NextRequest): Promise<RequireTenantResult> {
-  const token = request.cookies.get("cis_tenant_token")?.value;
-  if (!token) {
-    return { ok: false, response: unauthorized() };
-  }
-
-  // AA-551 — same cache/reasoning as requireAdmin() above; the tenant portal
-  // (/portal/t7-planning etc.) can fire multiple concurrent /api/tenant/*
-  // calls on one page too, same class of redundant-round-trip risk.
-  const cached = tenantVerifyCache.get(token);
-  if (cached) {
-    return { ok: true, tenantId: cached.tenantId, name: cached.name, planTier: cached.planTier };
-  }
-
-  try {
-    const res = await fetch(`${API_URL}/auth/verify-tenant`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-      signal: AbortSignal.timeout(3000),
-    });
-
-    if (!res.ok) {
-      return { ok: false, response: unauthorized() };
-    }
-
-    const data = await res.json();
-    const result = { tenantId: data.tenant_id, name: data.name, planTier: data.plan_tier };
-    tenantVerifyCache.set(token, result);
-    return { ok: true, ...result };
-  } catch {
-    return { ok: false, response: unauthorized() };
-  }
 }

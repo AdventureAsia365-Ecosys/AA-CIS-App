@@ -12,7 +12,6 @@
 // Dependency-free: no React, no Node APIs (proxy.ts imports it).
 
 export type StaffRole = "admin" | "reviewer" | "content";
-export type Role = StaffRole | "tenant";
 
 export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "content"];
 const ALL_STAFF: StaffRole[] = ["admin", "reviewer", "content"];
@@ -21,9 +20,11 @@ export function isStaffRole(role: string | null | undefined): role is StaffRole 
   return !!role && (STAFF_ROLES as readonly string[]).includes(role);
 }
 
+// AA-885: every page rule is staff-only. The tenant portal (and its `tenant` role) lives in its own app
+// (portal/, portal.lumiguides.it.com, gate portal/proxy.ts); /portal and /tenant-login here are 308s.
 export interface PageRule {
   prefix: string;
-  roles: Role[];
+  roles: StaffRole[];
 }
 
 // Allow-list (AA-252): a protected path with no entry here is denied. Prefixes are disjoint, so the
@@ -51,8 +52,6 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/review", roles: ALL_STAFF },
   { prefix: "/admin/s1-rewrite", roles: ALL_STAFF },
   { prefix: "/admin/settings", roles: ALL_STAFF },
-  // Tenant portal — tenants, plus admin for support.
-  { prefix: "/portal", roles: ["admin", "tenant"] },
 ];
 
 export function pageRule(pathname: string): PageRule | undefined {
@@ -71,7 +70,7 @@ export const API_RULES = {
   pipeline: ALL_STAFF,       // /api/pipeline/[...path] → backend /v1/pipeline/*
   tourFull: ALL_STAFF,       // /api/tour-full/[id]
   brandIdentity: ALL_STAFF,  // /api/tenant/pipeline/brand-identity
-  tenantProxy: ALL_STAFF,    // /api/tenant/[...path] called by a staff page (e.g. Master Content)
+  tenantProxy: ALL_STAFF,    // /api/tenant/[...path] — staff-only since AA-885 (e.g. Master Content)
 } satisfies Record<string, StaffRole[]>;
 
 // AA-769 (S234) — writes that change tenant content are narrower than the route's read rule: a

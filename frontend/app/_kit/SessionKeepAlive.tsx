@@ -6,11 +6,11 @@
 // proxy.ts; this covers a page left open: it POSTs /api/auth/refresh shortly before the token
 // expires, and again when the tab becomes visible (laptop sleep, background tab). The route skips the
 // Cognito call while the token still has more than 3 min left. Renders nothing.
-// Mounted in the admin shell (AdminShell) and the portal shell ((tenant)/portal/layout.tsx), where
-// admins also work. Answers from the route:
+// Mounted in the admin shell (AdminShell). (AA-885: the tenant portal is its own app with no staff
+// session, so it is no longer mounted there.) Answers from the route:
 //   - "cognito"  → schedule the next refresh;
 //   - "legacy"   → a legacy session, nothing to keep alive: stop;
-//   - "none"     → no staff session cookie. For a tenant on /portal that is normal: stop. After this
+//   - "none"     → no staff session cookie: stop. After this
 //                  page has seen a Cognito session it means the 12 h / 1 h window ended (both cookies
 //                  expire then): back to sign-in, instead of letting saves fail with 401 silently;
 //   - 503        → Cognito or the backend did not answer; the session is kept: retry in a minute;

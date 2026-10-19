@@ -239,8 +239,11 @@ jobs:
           fail=0
 
           # name|path|jq-shape-assertion (empty assertion = only check HTTP 200)
+          # AA-884: /health carries the image's git SHA (must be this run's commit) and /health/ready the DB +
+          # newest numeric CIS migration (503 when the code needs a migration that is not applied yet).
           public_checks=(
-            "health|/health|.status == \"ok\""
+            "health|/health|.status == \"ok\" and .git_sha == \"${GITHUB_SHA}\""
+            "health-ready|/health/ready|.status == \"ok\" and .db == \"ok\""
           )
           admin_checks=(
             "job-runner summary|/admin/job-runner/summary|(.kinds | length) > 0"
@@ -302,6 +305,19 @@ jobs:
                 fail=1
               else
                 echo "smoke [worker-kinds] worker alive on every registered kind -> OK"
+              fi
+              # AA-884: a live worker must run this commit (shared.job_worker.git_sha, CIS 248). Workers that
+              # registered before the git_sha code shipped report null: only a warning while NO live worker
+              # reports a SHA at all (the first deploy of that code); any live SHA that is not this one fails.
+              ON_SHA=$(echo "$WK" | jq --arg sha "$GITHUB_SHA" '[.workers[] | select(.alive and .git_sha == $sha)] | length')
+              WITH_SHA=$(echo "$WK" | jq '[.workers[] | select(.alive and .git_sha != null)] | length')
+              if [ "${ON_SHA:-0}" -ge 1 ]; then
+                echo "smoke [worker-sha] a live worker runs ${GITHUB_SHA} -> OK"
+              elif [ "${WITH_SHA:-0}" -eq 0 ]; then
+                echo "::warning::smoke [worker-sha] no live worker reports a git_sha yet (first deploy of AA-884?)"
+              else
+                echo "::error::smoke [worker-sha] no live worker runs ${GITHUB_SHA}: $(echo "$WK" | jq -c '[.workers[] | select(.alive) | .git_sha]')"
+                fail=1
               fi
             fi
           else

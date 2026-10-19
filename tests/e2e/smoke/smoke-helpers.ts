@@ -447,3 +447,76 @@ export async function waitForShellHydrated(page: Page, timeout = 15000): Promise
     'admin shell did not hydrate (no data-hydrated="true" on the sidebar)',
   ).toBeAttached({ timeout });
 }
+
+export type PageCheckOptions = {
+  /** AA-601 — admin-only checks: 390px layout (`.aa-admin-main`, off-canvas sidebar) + dark theme. */
+  checkMobileLayout?: boolean;
+  /** AA-885 — extra assertions on the loaded page (e.g. the portal's 390px overflow check). */
+  afterChecks?: (page: Page, spec: PageSpec) => Promise<void>;
+  /** Screenshot capture; default = screenshotMatrix (admin: 1440 + 390, light + dark). */
+  screenshots?: (page: Page, slug: string) => Promise<void>;
+};
+
+/**
+ * AA-732 page check (moved here from ui-smoke.spec.ts by AA-885 so the portal smoke shares it): open
+ * the page in its OWN context from `storageStatePath` (tests stay independent), then assert an OK
+ * navigation, no failing same-origin /api/ response, real content (row or empty state), no console
+ * error; then the optional extra checks and the screenshots.
+ */
+export async function runPageCheck(
+  browser: import('@playwright/test').Browser,
+  storageStatePath: string,
+  spec: PageSpec,
+  opts: PageCheckOptions = {},
+): Promise<void> {
+  const context = await browser.newContext({
+    baseURL: baseUrl(),
+    storageState: storageStatePath,
+    viewport: { width: 1440, height: 900 },
+  });
+  await installBypassRoute(context);
+  const page = await context.newPage();
+  const watcher = watchPage(page);
+  try {
+    await assertNavOk(page, spec.path);
+    await waitForSkeletonGone(page, spec.readySelector);
+
+    // Let every in-flight same-origin /api/ body read complete before asserting.
+    await watcher.settle();
+
+    expect(
+      watcher.apiFailures,
+      `${spec.label}: failing same-origin /api/ responses:\n${describeApiFailures(watcher.apiFailures)}`,
+    ).toEqual([]);
+
+    const ok = await hasContentOrEmptyState(page, spec.readySelector);
+    expect(ok, `${spec.label}: no table rows and no empty state — page looks blank/broken`).toBe(true);
+
+    expect(
+      watcher.consoleErrors,
+      `${spec.label}: console errors:\n${watcher.consoleErrors.map((e) => `  ${e.text}`).join('\n')}`,
+    ).toEqual([]);
+
+    // AA-601 — mobile layout guard (admin only): no page-level horizontal overflow at 390px and the
+    // sidebar takes no width (off-canvas drawer). Runs before the screenshot matrix so the viewport
+    // is restored to desktop first.
+    if (opts.checkMobileLayout) {
+      await assertMobileLayout(page, spec.label);
+    }
+
+    // AA-601 part B — admin dark theme: assert the page actually switches theme with
+    // prefers-color-scheme (dark background under dark, light under light). Deterministic
+    // luminance check, no screenshot diff. Admin only (the portal stays light by design).
+    if (opts.checkMobileLayout) {
+      await assertThemeSwitches(page, spec.label);
+    }
+
+    if (opts.afterChecks) {
+      await opts.afterChecks(page, spec);
+    }
+
+    await (opts.screenshots ?? screenshotMatrix)(page, spec.id);
+  } finally {
+    await context.close();
+  }
+}

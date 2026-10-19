@@ -166,11 +166,8 @@ async def deploy_gate(request: Request, x_admin_secret: str = Header(None)):
     `exempt_kinds` so the CI log says why a queued row of theirs did not block. No kind uses the flag
     since AA-751 moved the 5-minute RDS sample into the api process (api/core/ops_metrics_sampler.py)."""
     verify_admin_secret(x_admin_secret)
-    from shared.jobs.worker import load_kinds
-    load_kinds()  # the exemption is a registry flag: make sure every kind is registered here
-    exempt = sorted(k.name for k in kinds().values() if k.deploy_gate_exempt)
-    counts = await queue.active_count(request.app.state.pool, exempt_kinds=exempt)
-    return {**counts, "safe_to_deploy": counts["active"] == 0, "exempt_kinds": exempt}
+    from shared.jobs.worker import deploy_gate_status
+    return await deploy_gate_status(request.app.state.pool)
 
 
 @router.get("/workers", summary="AA-687 — worker liveness, running jobs per worker, queue depth")
