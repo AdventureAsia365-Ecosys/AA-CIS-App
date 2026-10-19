@@ -99,7 +99,7 @@ export const COST_SRC = {
     "AWS bill via Cost Explorer, split by each resource's App tag, month to date (fetched about once a day, the bill " +
     "itself lags about two days), plus the AI calls log for AI billed outside the AWS bill (updated on the server " +
     "every 15 minutes, press Refresh to load the latest); the same numbers as Cost per app",
-  total: `${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}, for the same app and month`,
+  total: `${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL}, for the same app and month`,
   prevMonth: (month: string) => `The same sources for the whole of ${month}`,
   aiNote: `AI calls log, this month: the whole AI estimate. ${AI_ON_BILL_SRC}`,
 };
