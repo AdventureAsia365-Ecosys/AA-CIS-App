@@ -1,0 +1,144 @@
+name: UI Smoke (portal)
+
+# AA-885 — the Playwright smoke for the TENANT PORTAL app (portal/, Vercel aa-cis-portal), against
+# a portal preview. Called by vercel-deploy-portal.yml after a successful preview deploy
+# (workflow_call), or run by hand (workflow_dispatch, e.g. against https://portal.lumiguides.it.com).
+# A copy of ui-smoke.yml (admin) with: project `smoke-portal`, the portal's own bypass secret
+# (VERCEL_PORTAL_BYPASS_SECRET, exported under the name the helpers read), the tenant test key
+# E2E_TENANT_API_KEY (logged-in tests SKIP, not fail, when it is absent), its own PR comment marker
+# and artifact name. No admin credentials are passed here.
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Deployment URL to run the smoke against"
+        required: true
+        type: string
+      sha:
+        description: "Commit to check out and to find the PR by (the PR head sha)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      VERCEL_PORTAL_BYPASS_SECRET:
+        required: false
+      E2E_TENANT_API_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to run the smoke against (e.g. a preview or production URL)"
+        required: true
+        type: string
+      sha:
+        description: "Optional commit sha to check out and comment on (default: the dispatched ref)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # One run per deployment URL; a re-run on the same URL cancels the in-flight one.
+  group: ui-smoke-portal-${{ inputs.base_url }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: UI smoke portal (Playwright)
+    runs-on: ubuntu-latest
+    # Both triggers carry inputs.base_url (the caller only calls after a successful preview deploy).
+    if: inputs.base_url != ''
+    env:
+      # Portal previews are behind Vercel SSO — the aa-cis-portal bypass secret lets Playwright reach
+      # them. The smoke helpers read it as VERCEL_AUTOMATION_BYPASS_SECRET and send it only to the
+      # BASE_URL origin, and only when present.
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_PORTAL_BYPASS_SECRET }}
+      # The tenant test account's API key (Secrets Manager aa-cis/dev/e2e-tenant/<slug>, copied by
+      # hand; re-copy after a key rotation). Without it the logged-in portal tests skip.
+      E2E_TENANT_API_KEY: ${{ secrets.E2E_TENANT_API_KEY }}
+      BASE_URL: ${{ inputs.base_url }}
+    steps:
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v5
+        with:
+          # The deployed commit (PR head sha from vercel-deploy.yml); the dispatched ref otherwise.
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored, so `npm ci` fails
+      # (first live dispatch, S220). The only root dependency is @playwright/test.
+      - name: Install dependencies (repo root — Playwright lives here)
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the portal UI smoke project
+        run: npx playwright test --project=smoke-portal -c playwright.config.ts
+
+      - name: Upload smoke artifacts (screenshots + HTML report only — NO auth state)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-portal-${{ github.run_id }}
+          # Only screenshots and the HTML report (the report folder is shared by every project,
+          # playwright.config.ts). Never upload tests/e2e/.auth (session cookies).
+          path: |
+            tests/e2e/results/smoke-portal/**/*.png
+            tests/e2e/results/smoke/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # ── Find the PR for the deployed sha and post/update ONE comment ──
+      # All values reach `run:` through env (never `${{ }}` interpolation inside the script).
+      - name: Find PR for the deployed sha
+        if: always()
+        id: findpr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          PR=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "Found PR: ${PR:-none}"
+
+      - name: Comment smoke result on the PR
+        if: always() && steps.findpr.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.findpr.outputs.pr }}
+          OUTCOME: ${{ job.status }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          MARKER="<!-- ui-smoke-report-portal -->"
+          RUN_URL="$SERVER_URL/$REPO/actions/runs/$RUN_ID"
+          if [ "$OUTCOME" = "success" ]; then STATUS="✅ passed"; else STATUS="❌ failed"; fi
+          BODY=$(printf '%s\n### UI smoke (portal) — %s\n\nPreview: %s\n\n[Run & artifacts (screenshots + HTML report)](%s)\n' \
+                   "$MARKER" "$STATUS" "${BASE_URL:-n/a}" "$RUN_URL")
+          # Find an existing marker comment and edit it in place; otherwise create one.
+          EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" \
+                       --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -n1 || true)
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY" >/dev/null
+            echo "Updated comment $EXISTING"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+            echo "Created a new comment"
+          fi
+
+      # Scrub the Playwright auth storage state (live session cookies) regardless of outcome, so it
+      # never lingers on the runner or leaks into any later step/artifact.
+      - name: Delete auth state
+        if: always()
+        run: rm -rf tests/e2e/.auth

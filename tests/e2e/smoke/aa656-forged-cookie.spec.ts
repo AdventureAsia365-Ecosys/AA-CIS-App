@@ -3,7 +3,8 @@
 // Runs in the "smoke" project against the Vercel preview, WITHOUT the admin storage state: each
 // request carries only hand-made cookies. The page list is lib/rbac.ts PAGE_RULES itself, so a new
 // page added to the matrix is covered automatically.
-//   • pages  → a redirect to /login (or /tenant-login for the portal), never a 200;
+//   • pages  → a redirect to /login, never a 200 (AA-885: the portal is its own app; its forged-cookie
+//     checks are in tests/e2e/smoke-portal/aa885-portal-host.spec.ts);
 //   • proxies → 401/403, never a forwarded backend answer.
 // AA-816 (C4): cis_admin_token can now hold a Cognito access token (RS256, has `iss`). The forged
 // RS256 cases below are signed with a key made up on the spot but carry every claim a real WORKFORCE
@@ -62,7 +63,7 @@ const PROXY_ROUTES: { method: 'GET' | 'POST'; path: string }[] = [
   { method: 'GET', path: '/api/tour-full/00000000-0000-0000-0000-000000000000' },
   { method: 'GET', path: '/api/tenant/pipeline/brand-identity' },
   { method: 'GET', path: '/api/tenant/admin/tenants' },
-  { method: 'POST', path: '/api/playground/proxy' },
+  // AA-885: /api/playground/proxy moved to the portal app (404 here, aa885-portal-redirect.spec.ts).
 ];
 
 async function contextWith(cookie: string): Promise<APIRequestContext> {

@@ -8,6 +8,11 @@ import { defineConfig, devices } from '@playwright/test';
 //   • "smoke" — the CI UI smoke suite (tests/e2e/smoke/*.spec.ts). It `dependencies` on
 //     "smoke-setup", so the login runs once before the page tests, which then load that
 //     storageState and each run independently. CI runs `--project=smoke` (pulls in the setup).
+// AA-885: two more, for the tenant portal app (portal/, its own host):
+//   • "smoke-portal-setup" — tests/e2e/smoke-portal/*.setup.ts: the tenant login (API key from
+//     E2E_TENANT_API_KEY) once, writing tests/e2e/.auth/tenant-state.json; skips without the key.
+//   • "smoke-portal" — tests/e2e/smoke-portal/*.spec.ts against a PORTAL BASE_URL
+//     (ui-smoke-portal.yml runs `--project=smoke-portal`).
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60000,
@@ -24,7 +29,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /smoke\//,
+      testIgnore: /smoke(-portal)?\//,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -36,6 +41,17 @@ export default defineConfig({
       name: 'smoke',
       testMatch: /smoke\/.*\.spec\.ts$/,
       dependencies: ['smoke-setup'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'smoke-portal-setup',
+      testMatch: /smoke-portal\/.*\.setup\.ts$/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'smoke-portal',
+      testMatch: /smoke-portal\/.*\.spec\.ts$/,
+      dependencies: ['smoke-portal-setup'],
       use: { ...devices['Desktop Chrome'] },
     },
   ],
