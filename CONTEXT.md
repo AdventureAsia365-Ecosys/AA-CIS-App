@@ -275,7 +275,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     so a rolling-deploy leftover neither pages as starved nor blocks the deploy gate:
     - `AA/RDS`, dimension `Role`: `RoleConnections` (Count) + `RoleConnectionLimitPct` (Percent) for
       every LOGIN role with a `CONNECTION LIMIT` (`pg_roles` LEFT JOIN `pg_stat_activity`, discovered
-      each tick; the main pool's aa_cis_admin sees every role's sessions);
+      each tick; the main pool logs in as `cis_app` since X1 S18, and `pg_stat_activity` still lists every
+      role's sessions to it, only their query/state columns are hidden);
     - `AA/Jobs/CIS`, no dimensions (`shared/jobs/backlog.py`): `OverdueRunningJobs` = running rows
       whose current attempt (`progress.attempt_started_at`, else `started_at`) is older than 2 x the
       kind's `expected_seconds` (600 if unknown); `OldestQueuedAgeSeconds` = capacity-aware age of the
@@ -507,12 +508,18 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   recipe file again at `check` (exit 8).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
-  `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
+  `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
+  `FOR ROLE cis_owner` by 245: the approved exception XD3, data standards Part A §9), read-only
   `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
   (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered
   today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
   migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
-  exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
+  exact policy set on an RLS table must allow it. This holds for an ENABLE-without-FORCE table too: `cis_app` is
+  not the owner, so without a policy `TO cis_app` it reads 0 rows and its writes are refused, with no error. The
+  isolation probe checks it nightly (cells `rls.enable_only_has_cis_app_policy`, `rls.force_parity.cis_app`). The
+  conftest replay skips 244; the X1 tests apply and undo it. Live since X1 S18 (19/10/2026): api + worker
+  `DATABASE_URL` = `aa-cis/dev/rds-cis-app`, and ECS-exec scripts run as `cis_app` too (the task role is denied the
+  master secret since S19; master work goes through Infra DB Migrate `run-script`).
 - **CIS schemas and objects belong to the NOLOGIN role `cis_owner` from migration 245 (X1 S21, AA-860).** 245 moves
   the 12 CIS schemas and every object the RDS master owned in them (the `catalog.*` views stay `catalog_owner`'s;
   `public.*` and the extensions stay the master's, they belong to the Infra `roles/` dir). From then on DB Migrate runs
@@ -530,14 +537,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   exact policy set must allow both. Only the master and `db_migrator` may be members of `cis_owner` (a member reads
   every tenant of those tables). The conftest replay skips 245; `test_aa860_migration_245.py` applies it as an
   RDS-like master after 244 and undoes it. Rollback is a prepared Infra `roles/` undo (a `cis/` file runs as
-  `cis_owner` and cannot give objects back). **CIS migration freeze** from the Infra copy of 245 until X1 S22's 246
-  probe passes.
+  `cis_owner` and cannot give objects back). The CIS migration freeze (Infra copy of 245 until X1 S22's 246 probe) is
+  **over**: 245 applied 19/10/2026 12:11 UTC, 246 applied as `cis_owner` with login `db_migrator`, probe 58/58.
 - **DB Migrate logs in as `db_migrator` from X1 S22 (AA-860)**, not the RDS master: every `cis/` file runs as
   `cis_owner` through the live-owner switch, and migration **246** (`246_x1_set_role_probe.sql`, assert-only) is the
   permanent proof (session user `db_migrator`, current user `cis_owner`, `db_migrator` a member of `catalog_owner`).
   The conftest replay skips 246; `test_aa860_migration_246.py` applies it as `db_migrator` under the switch, after
   245. The master keeps only Infra `roles/` files (roles, extensions, `public.*` enums), DB Migrate `set-password` and
-  `run-script`; anything a `cis/` file cannot do as `cis_owner` goes there, never into a `cis/` file.
+  `run-script`; anything a `cis/` file cannot do as `cis_owner` goes there, never into a `cis/` file: no
+  `CREATE/ALTER/DROP ROLE|EXTENSION` and no role attribute (`CONNECTION LIMIT`, `PASSWORD`) outside Infra `roles/`.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
@@ -726,8 +734,9 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   (`audit.read`, filters + keyset cursor, staff scope by default) and `GET /admin/platform/audit/verify`
   (`audit.read`; Python recompute of the chain, `api/services/platform_audit.py`, must stay equal to the trigger;
   a row without `chain_seq` created after 248 was applied — a trigger bypass — also makes it `ok: false`).
-  The RDS master can still bypass the triggers until the X1 runtime role and the 245 owner transfer; the chain
-  makes such an edit detectable, not impossible. Integration tests delete their own audit rows only through
+  Since X1 the runtime `cis_app` cannot touch the triggers (S18, not the owner); the owner `cis_owner` (only through a
+  reviewed DB Migrate file) and the break-glass RDS master still could, and the chain makes such an edit detectable,
+  not impossible. Integration tests delete their own audit rows only through
   `tests/integration/_audit_cleanup.py`.
 - **Cost per app** — the one cost module of the console: `api/services/platform_cost.py` `cost_by_app()` (AA-858's
   overview card imports it; do not compute spend another way). Row labels/hints (`ROW_LABELS` / `ROW_HINTS`) and
@@ -920,8 +929,8 @@ Tenant routes moved off the main pool run on the **tenant pool** (`acquire_scope
 Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`) and sets
 `app.tenant_id` for the transaction; isolation is RLS, not the query's own `WHERE tenant_id`.
 
-- **RLS template** (229): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner, i.e. the main pool and
-  the worker, stays exempt), policy `tenant_isolation` `FOR ALL TO aa_app_user`, USING and WITH CHECK on
+- **RLS template** (229): `ENABLE ROW LEVEL SECURITY` without FORCE (the owner `cis_owner` stays exempt; the
+  main pool and the worker log in as `cis_app` since X1 S18 and read through `<table>_cis_app_all`, CIS 244), policy `tenant_isolation` `FOR ALL TO aa_app_user`, USING and WITH CHECK on
   `NULLIF(current_setting('app.tenant_id', true), '')::uuid` (`''` = no rows, never an error). A table
   without a tenant column goes through its parent: `acp_shared.angle_gate_option` matches options of
   `angle_gate_request` rows of the tenant (241).
