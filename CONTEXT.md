@@ -1,3 +1,17 @@
+---
+id: ARCH-06-cis
+title: "AA-CIS-App — Repo Context"
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API, job worker, admin app and tenant portal); read it before designing or changing code in this repo.
+type: explanation
+status: active
+owner: nghiep
+audience: [engineer, agent]
+applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
+last_reviewed: 2026-10-19
+review_every_days: 90
+related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
+---
+
 # AA-CIS-App — Repo Context
 
 The core application of the Adventure Asia (AA) ecosystem: the **CIS (Content Intelligence
