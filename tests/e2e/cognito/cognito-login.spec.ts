@@ -6,8 +6,9 @@
 //   company-email button shows the managed-login form again).
 //
 // Runs ONLY in the `cognito` project with E2ECOGNITO=1 (set by .github/workflows/e2e-cognito.yml, which also
-// assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e-cognito@adventure.asia, CIS role
-// reviewer, Booking none), a forwarder to e2e@e2e-mail.lumiguides.it.com. Never the break-glass client.
+// assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e@e2e-mail.lumiguides.it.com — the SES
+// test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role reviewer,
+// Booking none). Never the break-glass client.
 // Only the production host is a registered callback, so this never runs against a preview.
 // The code is a live credential: it is never logged, and no screenshot is taken while it may be on screen.
 import { test, expect, type Page, type TestInfo } from '@playwright/test';

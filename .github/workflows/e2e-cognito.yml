@@ -5,13 +5,16 @@ name: Cognito E2E
 #   /login → "Sign in with company email" → staff-auth.lumiguides.it.com managed login → the E2E staff user's
 #   email code, read from the SES inbound mailbox in S3 → lands under /admin → sign out, no silent re-login.
 #
-# Mailbox (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): e2e-cognito@adventure.asia forwards to
-# e2e@e2e-mail.lumiguides.it.com → SES → s3://aa-cis-dev-e2e-mail-005097885195/inbound/. The job assumes the
+# Mailbox (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): the E2E staff user's address IS the test
+# mailbox e2e@e2e-mail.lumiguides.it.com (S243 option B, a TEMPORARY exception to the @adventure.asia-only rule:
+# migration 250 + staff_directory E2E_TEST_STAFF_EMAIL + the WORKFORCE triggers; root ADR 0006a) → SES →
+# s3://aa-cis-dev-e2e-mail-005097885195/inbound/. The job assumes the
 # read-only role aa-cis-dev-e2e-mail-reader (List + Get, no delete) by OIDC. Its trust pins this repo, the
 # `e2e` environment and refs/heads/main — so the job runs on main only.
 #
 # Prerequisites (outside this repo): Infra I5 applied; GitHub environment `e2e` with secret E2E_MAIL_ROLE_ARN;
-# the forwarder above (adventure.asia mail host panel); staff user "E2E Cognito" (reviewer, Booking none).
+# migration 250 applied and the Infra trigger exception live; staff user "E2E Cognito"
+# (e2e@e2e-mail.lumiguides.it.com, reviewer, Booking none) created through the staff directory.
 # workflow_dispatch only: nothing runs on push or PR.
 on:
   workflow_dispatch: {}

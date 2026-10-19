@@ -466,8 +466,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-005097885195/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
-  user "E2E Cognito" (`e2e-cognito@adventure.asia`, reviewer, forwarded to `e2e@e2e-mail.lumiguides.it.com`)
-  signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
+  user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
+  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
   no silent re-login. The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
   are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
@@ -535,7 +535,10 @@ waves (`/admin/waves`, AA-727).
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
 `shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
 249, AA-878; identity columns from migration 247:
-`email` lower-case `@adventure.asia` only, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
+`email` lower-case `@adventure.asia` only — one TEMPORARY exception until the Cognito E2E work is done (AA-816,
+S243 option B, root ADR 0006a): the exact address `e2e@e2e-mail.lumiguides.it.com` as a reviewer, not an owner,
+no password, no Booking grant (migration 250 CHECK + `staff_directory.E2E_TEST_STAFF_EMAIL` /
+`require_e2e_test_scope` + the WORKFORCE triggers) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
 `contracting` / `content_creator`). Root ADR 0006 + amendment 0006a are the design; tenants are separate
