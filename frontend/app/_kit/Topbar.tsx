@@ -21,6 +21,7 @@ import type { ThemeChoice } from "./theme";
 import { ROLE_LABEL, isReadOnlyRole, isStaffRole } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { pageSection, pageTitle } from "./adminNav";
+import { LOGIN_PATH, logoutNavigationTarget } from "@/lib/staffLogout";
 
 interface Notif {
   id: number; event_type: string; title: string; message: string;
@@ -272,13 +273,14 @@ function AccountMenu() {
 
   // AA-816 (C4): a full navigation, not router.push. For a Cognito session the logout route answers
   // with the Cognito /logout URL, which must be visited to clear the managed-login cookie (otherwise
-  // the next sign-in is silent for up to an hour); a legacy session gets "/login".
+  // the next sign-in is silent for up to an hour); a legacy session gets "/login". Only those two
+  // shapes are followed (logoutNavigationTarget); anything else goes to /login.
   async function logout() {
-    let target = "/login";
+    let target = LOGIN_PATH;
     try {
       const res = await fetch("/api/auth/admin-logout", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as { redirect?: unknown };
-      if (typeof data.redirect === "string" && data.redirect) target = data.redirect;
+      target = logoutNavigationTarget(data.redirect);
     } catch {
       // ignore — go to /login either way; middleware re-verifies on the next request.
     }
