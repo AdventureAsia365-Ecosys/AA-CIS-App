@@ -64,9 +64,11 @@ jobs:
     # (AA-903): `github.actor` is dependabot[bot] on its PR events and on re-runs of them, i.e. exactly
     # the runs without VERCEL_TOKEN, so the job (and the smoke that needs it) shows as skipped instead
     # of red. A human push onto a Dependabot branch runs as that human and still deploys a preview.
+    # Only pull_request runs are skipped: a push to main or a dispatch always deploys, so a production
+    # deploy that cannot run (even one Dependabot triggered by merging its own PR) still fails red.
     if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' ||
+      (github.actor != 'dependabot[bot]' &&
        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
