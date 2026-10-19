@@ -12,6 +12,7 @@ import uuid
 import asyncpg
 import pytest
 import pytest_asyncio
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -203,7 +204,7 @@ async def test_admin_patch_override_round_trip_and_list(monkeypatch):
         assert out["daily_publish_limit"] is None and out["daily_publish_limit_effective"] == 20
         assert await p.fetchval("SELECT daily_publish_limit FROM shared.tenants WHERE tenant_id = $1", tid) is None
     finally:
-        await p.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", str(tid))
+        await delete_audit_rows(p, "tenant_id = $1", str(tid))
         await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", tid)
         if added:
             await p.execute("ALTER TABLE shared.tenants DROP COLUMN IF EXISTS daily_publish_limit")

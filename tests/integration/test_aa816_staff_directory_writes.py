@@ -14,6 +14,7 @@ import uuid
 import asyncpg
 import pytest
 import pytest_asyncio
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
@@ -64,8 +65,8 @@ async def env():
     ids = await pool.fetch("SELECT id FROM shared.admin_users WHERE id = $1 OR lower(email) = ANY($2::text[])",
                            owner, created_emails)
     id_list = [r["id"] for r in ids]
-    await pool.execute("DELETE FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
-                       "AND resource_id = ANY($1::text[])", [str(i) for i in id_list])
+    await delete_audit_rows(pool, "resource_type = 'admin_user' AND resource_id = ANY($1::text[])",
+                            [str(i) for i in id_list])
     await pool.execute("DELETE FROM shared.admin_users WHERE id = ANY($1::uuid[])", id_list)
     await pool.close()
 

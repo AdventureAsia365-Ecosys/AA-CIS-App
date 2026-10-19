@@ -464,17 +464,18 @@ WORKER_ALIVE_SECONDS = 60  # a worker writes about every 15 s; silent for 60 s =
 
 
 async def worker_register(pool, worker_id: str, host: str, max_parallel: int, caps: dict,
-                          task_revision: Optional[int] = None) -> None:
-    """A worker's start: its row, plus pruning rows of workers stopped/silent for 7 days."""
+                          task_revision: Optional[int] = None, git_sha: Optional[str] = None) -> None:
+    """A worker's start: its row, plus pruning rows of workers stopped/silent for 7 days. AA-884: `git_sha` is the
+    image's APP_GIT_SHA (CIS 248 column), compared with the API's on /admin/platform/apps and in the deploy smoke."""
     await pool.execute(
         """
-        INSERT INTO shared.job_worker (worker_id, host, max_parallel, caps, task_revision)
-        VALUES ($1, $2, $3, $4::jsonb, $5)
+        INSERT INTO shared.job_worker (worker_id, host, max_parallel, caps, task_revision, git_sha)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6)
         ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = now(), stopped_at = NULL,
             max_parallel = excluded.max_parallel, caps = excluded.caps,
-            task_revision = excluded.task_revision
+            task_revision = excluded.task_revision, git_sha = excluded.git_sha
         """,
-        worker_id, host, max_parallel, json.dumps(caps), task_revision,
+        worker_id, host, max_parallel, json.dumps(caps), task_revision, git_sha,
     )
     await pool.execute("DELETE FROM shared.job_worker WHERE last_seen_at < now() - interval '7 days'")
 
@@ -523,7 +524,7 @@ async def worker_health(pool) -> dict:
     """Workers seen in the last 7 days, running jobs per worker and kind, and queue depth."""
     workers = await pool.fetch(
         f"""
-        SELECT worker_id, host, started_at, last_seen_at, stopped_at, max_parallel, caps, task_revision,
+        SELECT worker_id, host, started_at, last_seen_at, stopped_at, max_parallel, caps, task_revision, git_sha,
                running_jobs, reaped_requeued, reaped_failed, last_reap_at, last_reaped,
                (stopped_at IS NULL AND last_seen_at > now() - interval '{WORKER_ALIVE_SECONDS} seconds')
                    AS alive

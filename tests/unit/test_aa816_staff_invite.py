@@ -514,7 +514,8 @@ def test_route_resend_policy_refuses_legacy_non_owner_and_reviewer(api, db):
     before = len(db.sql)
     resp = client.post(f"/admin/platform/staff/{uid}/invite", headers=c6._h(None, role="admin"))
     assert resp.status_code == 403 and "Cognito" in resp.json()["detail"]
-    assert len(db.sql) == before   # refused before the DB
+    # refused before the DB (AA-884: only the staff audit middleware's own row of the refused request)
+    assert [s for s in db.sql[before:] if "acp_shared.audit_log" not in s] == []
     sub = "bbbbbbbb-0000-4000-8000-00000000000b"
     db.add(email="plain.admin@adventure.asia", role="admin", iss=ISS, sub=sub)
     token = iss.token(sub=sub, email="plain.admin@adventure.asia", **{"cognito:groups": ["cis-admin"]})

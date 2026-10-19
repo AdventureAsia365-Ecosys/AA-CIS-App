@@ -990,7 +990,8 @@ async def get_dfs_balance(request: Request):
 #       shared/aws_client/cost_explorer.py's module docstring for why there is no single
 #       consolidated call) and stores one row per (account, service, day). Secret-gated.
 #       NOTE: no scheduler calls this yet (unlike /admin/dfs-balance/check) -- today it only runs
-#       from the page's "Refresh from AWS" button. 3 CE requests (~$0.03) per call.
+#       from the page's "Refresh from AWS" button. 3 CE requests (~$0.03) per call, plus one acc2 request grouped
+#       by the App tag for Platform › Cost per app (AA-884, ~$0.01).
 #   GET  /admin/cost-explorer — reads stored days in the same window as the rest of the page
 #       (never calls CE live per request), Bedrock vs infra split per account.
 
@@ -1019,10 +1020,22 @@ async def check_cost_explorer(
     pool = request.app.state.pool
     written = await record_snapshot(pool, result["rows"])
 
-    logger.info("admin_cost_explorer_checked", row_count=written, errors=result["errors"])
+    # AA-884 — the same window from acc2 grouped by the App cost-allocation tag (Platform › Cost per app): one more
+    # CE request (~$0.01). Its failure is reported in `errors` and never fails the SERVICE check above.
+    errors = dict(result["errors"])
+    app_rows = None
+    try:
+        from api.services.platform_cost import refresh_app_snapshot
+        app_rows = (await refresh_app_snapshot(pool, start_d, end_d))["row_count"]
+    except Exception as e:
+        logger.warning("cost_explorer_check_app_tag_failed", error=str(e)[:300])
+        errors["acc2_app_tag"] = str(e)[:300]
+
+    logger.info("admin_cost_explorer_checked", row_count=written, app_tag_row_count=app_rows, errors=errors)
     return {
         "row_count": written,
-        "errors": result["errors"],
+        "app_tag_row_count": app_rows,
+        "errors": errors,
         "period_start": start_d.isoformat(),
         "period_end_exclusive": end_d.isoformat(),
     }

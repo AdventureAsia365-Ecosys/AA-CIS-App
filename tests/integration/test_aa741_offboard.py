@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import asyncpg
 import pytest
 import pytest_asyncio
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
@@ -33,7 +34,7 @@ async def pool():
         INSERT INTO shared.jev_tenant_allowlist (tenant_id, reason, added_by)
         VALUES ($1::uuid, 'test', 'test') ON CONFLICT DO NOTHING""", TENANT)
     yield p
-    await p.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", TENANT)
+    await delete_audit_rows(p, "tenant_id = $1", TENANT)
     await p.execute("DELETE FROM shared.jev_tenant_allowlist WHERE tenant_id = $1::uuid", TENANT)
     await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1::uuid", TENANT)
     await p.close()

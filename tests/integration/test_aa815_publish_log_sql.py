@@ -11,6 +11,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -36,7 +37,7 @@ async def ctx():
                     tid, f"aa815-{tid.hex[:8]}")
     yield p, tid
     await p.execute("DELETE FROM acp_shared.publish_log WHERE tenant_id = $1", tid)
-    await p.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", str(tid))
+    await delete_audit_rows(p, "tenant_id = $1", str(tid))
     await p.execute("DELETE FROM shared.tenant_integrations WHERE tenant_id = $1", tid)
     await p.execute("DELETE FROM acp_shared.angle_gate_request WHERE tenant_id = $1", tid)  # cascades pieces
     await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", tid)
