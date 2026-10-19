@@ -4,7 +4,7 @@
 // export is not allowed here (Next throws). `config.matcher` and the gate logic are unchanged.
 //
 // AA-232: ADMIN_PATHS/INTERNAL_PATHS verify a real JWT (cis_admin_token) via
-// /auth/verify-admin, mirroring the tenant-portal verify below. The old check
+// /auth/verify-admin, mirroring the tenant-portal verify (moved to portal/proxy.ts by AA-885). The old check
 // (cookie value === "admin"/present) is a role LABEL a client could set by
 // hand in devtools — it gated the page, but not the identity. This adds
 // actual signature verification on top of the same cookie-role gate (kept
@@ -49,9 +49,13 @@
 // single-flight /api/auth/refresh route — the refresh cookie is scoped to /api/auth and never reaches
 // a page request — which rotates the tokens and sends the browser back here. The Cognito path never
 // fails open, not even in development.
+//
+// AA-885: the tenant portal is its own app (portal/, host portal.lumiguides.it.com) with its own
+// portal/proxy.ts. This gate no longer matches /portal or /tenant-login: next.config.ts answers those
+// with a 308 to the portal host before this file runs, and no tenant session is checked here.
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { adminVerifyCache, tenantVerifyCache } from "./lib/auth-server";
+import { adminVerifyCache } from "./lib/auth-server";
 import { isStaffRole, landingPage, pageRule } from "./lib/rbac";
 import {
   REFRESH_PATH,
@@ -62,7 +66,7 @@ import {
   tokenExpiresSoon,
 } from "./lib/staffSession";
 
-const PUBLIC_PATHS = ["/login", "/tenant-login"];
+const PUBLIC_PATHS = ["/login"];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
 
@@ -96,7 +100,6 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const loginPath = route.prefix === "/portal" ? "/tenant-login" : "/login";
   const allowed = route.roles as string[];
 
   // AA-656: identity comes from whichever session token is present, verified server-side.
@@ -122,14 +125,8 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (request.cookies.get("cis_tenant_token")?.value && allowed.includes("tenant")) {
-    const verifyResult = await verifyTenantToken(request);
-    if (verifyResult) return verifyResult;
-    return NextResponse.next();
-  }
-
   // No token (a bare or forged cis_role cookie proves nothing) → log in.
-  const response = NextResponse.redirect(new URL(loginPath, request.url));
+  const response = NextResponse.redirect(new URL("/login", request.url));
   response.cookies.delete("cis_role");
   return response;
 }
@@ -138,7 +135,7 @@ export async function proxy(request: NextRequest) {
 // Returns a NextResponse (redirect) if verification fails, or the verified
 // role if it passed (caller checks it against the page rule). A missing token always fails closed (AA-252
 // #1). Only the /auth/verify-admin network-failure case below keeps the
-// fail-open-in-dev / fail-closed-in-prod policy, matching the tenant helper — and only for a legacy
+// fail-open-in-dev / fail-closed-in-prod policy (as the tenant gate had; now portal/proxy.ts) — and only for a legacy
 // HS256 token: a Cognito token (AA-816) always fails closed.
 async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { role: string }> {
   const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
@@ -201,56 +198,9 @@ function toStaffLogin(request: NextRequest): NextResponse {
   return response;
 }
 
-// ── Tenant helper — verify cis_tenant_token ─────────────────────────────────
-// Mirrors verifyAdminToken(). A missing token fails closed (was already the
-// case pre-AA-252 for the tenant role — unchanged here).
-async function verifyTenantToken(request: NextRequest): Promise<NextResponse | null> {
-  const token = request.cookies.get("cis_tenant_token")?.value;
-  if (!token) {
-    return NextResponse.redirect(new URL("/tenant-login", request.url));
-  }
-
-  // AA-573: same shared-cache fix as verifyAdminToken() above.
-  if (tenantVerifyCache.get(token)) return null;
-
-  try {
-    const res = await fetch(`${API_URL}/auth/verify-tenant`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-      // Short timeout — don't block page load
-      signal: AbortSignal.timeout(3000),
-    });
-
-    if (!res.ok) {
-      // JWT invalid/expired → clear cookies + redirect
-      const response = NextResponse.redirect(new URL("/tenant-login", request.url));
-      response.cookies.delete("cis_role");
-      response.cookies.delete("cis_tenant_token");
-      response.cookies.delete("cis_tenant_id");
-      response.cookies.delete("cis_tenant_name");
-      response.cookies.delete("cis_tenant_plan");
-      return response;
-    }
-    const data = await res.json();
-    tenantVerifyCache.set(token, { tenantId: data.tenant_id, name: data.name, planTier: data.plan_tier });
-    return null;
-  } catch {
-    // Verification service unreachable — fail open in dev, fail closed in prod
-    const isDev = process.env.NODE_ENV === "development";
-    if (!isDev) {
-      return NextResponse.redirect(new URL("/tenant-login", request.url));
-    }
-    console.warn("[proxy] Tenant JWT verify failed — dev mode, allowing through");
-    return null;
-  }
-}
-
 export const config = {
   matcher: [
     "/admin/:path*",
-    "/portal/:path*",
     "/login",
-    "/tenant-login",
   ],
 };

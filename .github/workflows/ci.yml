@@ -247,3 +247,43 @@ jobs:
             echo "_Non-required job; 74 pre-existing legacy errors tracked under AA-601._"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $STATUS 
+
+  # AA-885 — ESLint for the tenant portal app (portal/, same UI-kit rules as the admin). NON-required,
+  # same shape as frontend-lint. The 9 errors it starts with came over with the moved portal files
+  # (set-state-in-effect, no-explicit-any, one unescaped quote) — not new code.
+  portal-lint:
+    name: Portal Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install portal dependencies
+        working-directory: portal
+        run: npm ci
+
+      - name: Run ESLint (write summary to the job summary)
+        working-directory: portal
+        continue-on-error: true
+        run: |
+          set +e
+          npm run lint 2>&1 | tee lint-output.txt
+          STATUS=${PIPESTATUS[0]}
+          SUMMARY_LINE=$(grep -E "problems \(" lint-output.txt | tail -n1)
+          {
+            echo "### Portal ESLint"
+            echo ""
+            echo "${SUMMARY_LINE:-No summary line (lint produced no problems)}"
+            echo ""
+            echo "_Non-required job; the pre-existing errors moved here from the admin app with the portal files (AA-885)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $STATUS
+
+      # tsc catches prop/type errors eslint misses (lesson: always type-check / build the frontend).
+      - name: Type-check
+        working-directory: portal
+        run: npx tsc --noEmit -p .

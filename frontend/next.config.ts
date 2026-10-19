@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import path from "path";
 import { withSentryConfig } from "@sentry/nextjs";
+import { PORTAL_BASE_URL } from "./lib/apps";
 
 const nextConfig: NextConfig = {
   turbopack: {
@@ -16,6 +17,12 @@ const nextConfig: NextConfig = {
       { source: "/catalog", destination: "/admin/master-content", permanent: false },
       { source: "/brand", destination: "/admin/settings?tab=brand", permanent: false },
       { source: "/admin/brand", destination: "/admin/settings?tab=brand", permanent: false },
+      // AA-885 — the tenant portal moved to its own app and host (Vercel aa-cis-portal). Old portal
+      // URLs answer 308 to the same path there (the query string carries over); the admin app serves
+      // no portal page any more.
+      { source: "/portal", destination: `${PORTAL_BASE_URL}/portal`, permanent: true },
+      { source: "/portal/:path*", destination: `${PORTAL_BASE_URL}/portal/:path*`, permanent: true },
+      { source: "/tenant-login", destination: `${PORTAL_BASE_URL}/tenant-login`, permanent: true },
     ];
   },
 };
