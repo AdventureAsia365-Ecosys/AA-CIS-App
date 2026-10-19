@@ -480,7 +480,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
-  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
+  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
+  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
+  with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
+  no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
   are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
@@ -856,6 +859,12 @@ profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=bookin
 
 CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
 `api/main.py`, key handling in `api/core/booking_jwt.py`:
+
+Status (S245, owner decision): the bridge is **kept on purpose**. Booking production signs staff in through
+Cognito WORKFORCE (Booking roles from `booking-*` groups), but Vercel previews of the Booking admin have no
+registered Cognito callback, so the legacy CIS password → `/auth/booking-token` path is still their only staff
+sign-in. Removing these endpoints, the Booking bridge issuer and the signing key moves to a follow-up that first
+designs a preview sign-in. Do not delete them as dead code.
 
 - `POST /auth/booking-token` — needs a CIS **HS256** staff session (a Cognito session cannot mint one until
   Booking Phase 2): the `cis_admin_token` JWT as an `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
