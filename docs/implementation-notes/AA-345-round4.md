@@ -165,5 +165,5 @@ phạm vi 2 vấn đề trên" — Nghiep xác nhận có muốn 1 PR riêng đ�
   (global CLAUDE.md), chạy `curl` trực tiếp vào container thật thay vì chỉ
   query DB — để loại trừ khả năng lỗi nằm ở tầng FastAPI routing/serialize
   mà 1 query DB đơn thuần không phát hiện được.
-- Đã dọn sạch các script tạm trên `s3://aa-cis-bronze-005097885195/scripts/`
+- Đã dọn sạch các script tạm trên `s3://aa-cis-bronze-{acc2-id}/scripts/`
   sau khi verify xong (không để lại rác trên S3 dùng chung).

@@ -37,15 +37,15 @@ Không có `asyncio.gather`/`asyncio.create_task`/thread pool nào trong toàn b
 
 | Model | Account thực dùng | Global cross-region RPM |
 |---|---|---:|
-| Claude Sonnet 4.6 / Haiku 4.5 | **acc1** (867490540162, satellite fallback, N7 dùng qua `bedrock_satellite.py`) | **10,000** |
-| Claude Sonnet 4.6 / Haiku 4.5 | acc2 (005097885195, native — N7 KHÔNG gọi Claude qua account này) | 10 (không áp dụng cho N7) |
+| Claude Sonnet 4.6 / Haiku 4.5 | **acc1** ([acc1 id], satellite fallback, N7 dùng qua `bedrock_satellite.py`) | **10,000** |
+| Claude Sonnet 4.6 / Haiku 4.5 | acc2 ([acc2 id], native — N7 KHÔNG gọi Claude qua account này) | 10 (không áp dụng cho N7) |
 | **Amazon Nova Pro** (F8/F9 judge, `judge_client.py`, LUÔN đi qua acc2 native) | **acc2** | **25** |
 
 - **acc1** (E2-E5 writer/repair fallback): RPM=10,000 — không phải rào cản thực tế ở quy mô N7
   hiện tại (1 run/9 piece đỉnh điểm vài chục request/phút).
-- **acc3** (786888028788 — AA-397/398's satellite CHÍNH, `repair.py` gọi
+- **acc3** ([acc3 id] — AA-397/398's satellite CHÍNH, `repair.py` gọi
   `account="acc3"` trực tiếp) — **KHÔNG verify được trong session này**: không có AWS CLI
-  profile nào cấu hình sẵn trỏ tới account 786888028788 (chỉ có `pqnghiep-admin`→acc1,
+  profile nào cấu hình sẵn trỏ tới account [acc3 id] (chỉ có `pqnghiep-admin`→acc1,
   `aa365-admin`→acc2). Kiến trúc giống hệt acc1 (cùng pattern "satellite account riêng cho
   Bedrock") nên NHIỀU KHẢ NĂNG cũng có quota cao tương tự — nhưng đây là suy luận, chưa xác
   nhận số thật. **Cần verify acc3 quota trước khi commit vào bất kỳ thiết kế song song nào**

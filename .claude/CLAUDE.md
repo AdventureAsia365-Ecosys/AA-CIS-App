@@ -10,7 +10,8 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
   `AdventureAsia365-Ecosys`. Sibling repos: AA-TripPlanner-Web, AA-CIS-Infra, root AA-Ecosys.
 - Live: API `https://api-cis.lumiguides.it.com` (API GW `4ylo382khg` → ALB → ECS
   `aa-cis-dev-cluster`: services `aa-cis-dev-api` + `aa-cis-dev-worker`), admin/portal
-  `https://aa-cis.lumiguides.it.com` (Vercel). AWS acc2 `005097885195`, us-west-1.
+  `https://aa-cis.lumiguides.it.com` (Vercel). AWS acc2 (profile `aa365-admin`), us-west-1; account IDs
+  live only in the private root onboarding doc.
 - Current revisions / migration number: do not trust a number written here — check
   `aws ecs describe-services`, `shared.schema_versions`, or the latest session block in memory.
 - ECS logs: `/ecs/aa-cis-dev` (api stream prefix `api/`). `/ecs/aa-cis-dev-api` is always empty.
@@ -30,8 +31,9 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
 - Plain numbered files `api/migrations/NNN_*.sql`; each self-registers in `shared.schema_versions`
   (`ON CONFLICT DO NOTHING`) inside its own `BEGIN; … COMMIT;`.
 - The deploy does **not** apply them. Put an identical copy in
-  `AA-CIS-Infra/db/migrations/cis/`; after Nghiệp approves the Infra PR, run the **DB Migrate**
-  workflow (`check` → `apply`) and only then merge the app PR that needs it.
+  `AA-CIS-Infra/db/migrations/cis/`; merge the Infra PR (dev phase: the orchestrating agent merges after
+  green CI, S241 D-13), run the **DB Migrate** workflow (`check` → `apply`) and only then merge the app PR
+  that needs it.
 - A PR carrying a migration is never auto-merged.
 
 ## LLM, cost, decisions
@@ -61,7 +63,9 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
 - "Done" = merged + CI green + deploy rollout completed + live endpoint verified
   (`AA-Ecosys/skill/aa-ship/SKILL.md`). Commits / PRs say `Refs AA-xxx`, never `Fixes`.
 - Each issue with code keeps `docs/implementation-notes/AA-xxx.md` (Decisions / Changed /
-  Tradeoffs / Should know), written while working, force-added (`docs/` is gitignored).
+  Tradeoffs / Should know), written while working. `docs/**/*.md` is tracked (AA-889); this repo is
+  public, so no account IDs, ARNs, resource IDs, secrets or real data in docs, and security or
+  infrastructure reports go to the private AA-Ecosys root repo.
 - Hard-to-reverse architecture decisions get an ADR in `docs/adr/` (ecosystem-wide ones in
   `AA-Ecosys/docs/adr/`). Large specs: run `/grill-with-docs` before coding.
 - Language: talk to Nghiệp in Vietnamese; code, comments, commits, PRs, Linear in English.

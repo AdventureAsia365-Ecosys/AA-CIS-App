@@ -6,7 +6,7 @@ Branch `feature/aa-437-a4-step0-investigate`, committed locally, **not pushed** 
 own instruction, this stays local until a build task (AA-437-02) is ready to fold in.
 
 Investigated: 23/08/2026. Findings below are from source reads on `main` (post AA-443 merge)
-plus live read-only queries against the real dev DB (`005097885195`, `us-west-1`,
+plus live read-only queries against the real dev DB (`[acc2 id]`, `us-west-1`,
 `aa365-admin`, via SSM port-forward to the RDS instance — no ECS/app code touched, no writes).
 ADR-2026-038 fetched directly from Notion (`3c3b8a41-ec5d-8123-911f-e0c308841e79`), not assumed
 from memory. Linear AA-255→259, AA-436, AA-437, AA-434 read directly, not paraphrased from the

@@ -10,7 +10,7 @@ Investigated: 22/08/2026. All findings below are from live AWS CLI output and so
 
 ## 1. Real API Gateway ID vs. what CLAUDE.md said
 
-Confirmed via AWS CLI, account `005097885195`, region `us-west-1` (profile `aa365-admin`):
+Confirmed via AWS CLI, account `[acc2 id]`, region `us-west-1` (profile `aa365-admin`):
 
 ```
 $ aws apigateway get-rest-apis --profile aa365-admin --region us-west-1
@@ -24,7 +24,7 @@ $ aws apigateway get-rest-apis --profile aa365-admin --region us-west-1
 }
 
 $ aws apigateway get-rest-api --rest-api-id owq9as3wjl --profile aa365-admin --region us-west-1
-NotFoundException: Invalid API identifier specified 005097885195:owq9as3wjl
+NotFoundException: Invalid API identifier specified [acc2 id]:owq9as3wjl
 ```
 
 - **`owq9as3wjl` no longer exists** — not stale-but-still-there, actually deleted/gone.

@@ -22,12 +22,12 @@ như bằng 0. Chỉ cần `git pull origin main` trước khi commit báo cáo 
 thể đã merge PR trong lúc bạn khảo sát.
 
 Context — Account Map (xem đầy đủ ở skill `ai-nghiep` §4, đã cập nhật 12/08/2026):
-- **acc2** (`005097885195`, profile `aa365-admin`, region `us-west-1`) — app chính, ECS/
+- **acc2** (`[acc2 id]`, profile `aa365-admin`, region `us-west-1`) — app chính, ECS/
   RDS/S3, hầu hết việc hàng ngày. ĐÃ BIẾT chặn hoàn toàn Anthropic (channel-program,
   `ValidationException: channel program accounts`) — cần xác nhận GPT có cùng số phận không.
-- **acc3** (`786888028788`, profile `nghiep_aa365`, region `us-west-1`) — Bedrock satellite
+- **acc3** (`[acc3 id]`, profile `nghiep_aa365`, region `us-west-1`) — Bedrock satellite
   CHÍNH (mới từ 12/08, thay acc1), fund $250, real cost — ưu tiên interactive + Batch.
-- **acc1** (`867490540162`, profile `pqnghiep-admin`, region `us-west-1`) — Bedrock
+- **acc1** (`[acc1 id]`, profile `pqnghiep-admin`, region `us-west-1`) — Bedrock
   satellite FALLBACK (khi acc3 lỗi/hết fund), real cost.
 - Judge hiện tại cho N7/F8-F9 dùng Nova Pro — đang nghi bị position bias mạnh khi chấm 2
   bài "họ chất lượng cao" gần nhau (AA-339: 17/29 tour bias_flip). GPT-4.1 hiện dùng cho S1

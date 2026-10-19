@@ -38,10 +38,10 @@ exactly one pool, as `aa_cis_admin`, same as before this stage.
 
 - New `api/migrations/147_grant_aa_app_user_acp_shared_gaps.sql` — `GRANT SELECT, INSERT, UPDATE`
   (role-existence guarded, matching the 094-098 convention) on the 7 tables above. Applied live
-  on RDS dev (005097885195) via ECS exec, `schema_versions` row inserted.
+  on RDS dev ([acc2 id]) via ECS exec, `schema_versions` row inserted.
 - `api/migrations/007b_create_app_user.sql` — comment-only addition noting the password is
   rotated/stale; no SQL statement changed.
-- New Secrets Manager secret `aa-cis/dev/rds-app-user` (005097885195, us-west-1).
+- New Secrets Manager secret `aa-cis/dev/rds-app-user` ([acc2 id], us-west-1).
 - `aa_app_user`'s live RDS password rotated to the value now in that secret.
 
 ## Tradeoffs

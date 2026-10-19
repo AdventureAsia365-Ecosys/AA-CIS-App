@@ -107,7 +107,7 @@ re-investigation was done, per the task's explicit instruction. Each bug was ver
 ---
 
 ## Verify evidence, per bug (all against the real dev DB via SSM tunnel to
-`aa-cis-dev-db.ctss2iwwwzfw.us-west-1.rds.amazonaws.com`, calling the actual modified Python
+the `aa-cis-dev-db` RDS endpoint, calling the actual modified Python
 functions directly — not a re-implementation, not mocked)
 
 ### Bug #1 — Pipeline Health / admin usage tracking
@@ -155,8 +155,8 @@ functions directly — not a re-implementation, not mocked)
   (`brand-identity/6fbaf284-e3cd-4b4b-b53b-c9a04e8fae8e/...`) and reached the `s3.put_object()`
   call.
 - The final `PutObject` itself failed under my personal debugging session specifically — my local
-  script's ambient AWS credentials resolved to a **different AWS account** (867490540162,
-  `pqnghiep-admin`) than the bucket's owning account (005097885195); after forcing
+  script's ambient AWS credentials resolved to a **different AWS account** ([acc1 id],
+  `pqnghiep-admin`) than the bucket's owning account ([acc2 id]); after forcing
   `AWS_PROFILE=aa365-admin`, it failed again on an MFA-credential-refresh limitation specific to a
   long-lived boto3 session object under an MFA-sourced profile (not reproducible via the ECS
   task's own IAM role, which needs no MFA and is what actually runs this code in production).

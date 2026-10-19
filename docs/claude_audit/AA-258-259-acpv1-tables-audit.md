@@ -382,7 +382,7 @@ thật 08/08, 0 POST/mutate). **Quyết định của Nghiệp lúc đó** (comm
 **Verify lại hôm nay (không chỉ tin note cũ)** — CloudWatch Logs Insights, cửa sổ 14 ngày đầy đủ
 (xem mục 3): route `/admin/acp/runs` (do `admin_acp_proxy.py` phục vụ — **lưu ý: router này và
 `acp_health.py` dùng CHUNG prefix `/admin/acp`**, dễ nhầm) nhận đúng **4 request**, toàn bộ trong
-8 giây (`2026-08-14 03:48:34-42`), từ 2 IP nội bộ VPC (`10.2.1.191`, `10.2.2.132` — KHÔNG phải IP
+8 giây (`2026-08-14 03:48:34-42`), từ 2 IP nội bộ VPC (two private VPC addresses — KHÔNG phải IP
 public qua API Gateway) — hình dạng khớp với 1 phiên debug/verify thủ công (giống AA-385 tự làm),
 không phải traffic sản phẩm thật. Frontend caller DUY NHẤT của `/admin/acp/runs`:
 4 trang mồ côi `s2/s3/s4-blog/s4-social` (đã xác nhận mồ côi sidebar từ AA-390).
