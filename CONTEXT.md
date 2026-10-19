@@ -462,6 +462,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required, + `tsc`). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
+- **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
+  GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
+  read-only: List + Get on `s3://aa-cis-dev-e2e-mail-005097885195/inbound/`, no delete; 1-day expiry). Playwright
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
+  user "E2E Cognito" (`e2e-cognito@adventure.asia`, reviewer, forwarded to `e2e@e2e-mail.lumiguides.it.com`)
+  signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
+  no silent re-login. The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
+  are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
   (`check` → `apply`) from a byte-identical copy in `db/migrations/cis/` (S225); never by hand. A
