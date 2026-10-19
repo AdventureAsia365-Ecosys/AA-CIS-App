@@ -67,9 +67,12 @@ interface DfsBalance {  // AA-627 — latest stored DataForSEO account balance (
   below_threshold: boolean; fetched_at: string | null; has_data: boolean;
 }
 interface CostExplorerAccount {  // AA-623 — one account's stored CE spend in the window
-  account_id: string; total_usd: number; bedrock_usd: number; other_usd: number;
+  // account_key: "acc1" | "acc2" | "acc3" from the backend (AA-902), null for any other account.
+  account_id: string; account_key?: string | null; total_usd: number; bedrock_usd: number; other_usd: number;
 }
-interface CostExplorerService { account_id: string; service: string; amount_usd: number; is_bedrock: boolean; }
+interface CostExplorerService {
+  account_id: string; account_key?: string | null; service: string; amount_usd: number; is_bedrock: boolean;
+}
 interface CostExplorerData {  // AA-623 — stored CE days for the page window (never a live call on page load)
   accounts: CostExplorerAccount[]; services: CostExplorerService[];
   total_usd: number | null; bedrock_usd: number | null; fetched_at: string | null; has_data: boolean;
@@ -88,26 +91,25 @@ interface CallRow {  // AA-622 fallback drill-down — GET /admin/llm-usage/call
 const ROLE_COLOR: Record<string, "gray" | "gold" | "green"> = { writer: "gold", judge: "green", validate: "gray" };
 const ACCOUNTS = ["acc3", "acc1", "acc2", "openai", "typesafe", "unknown"] as const;
 const ACCOUNT_META: Record<string, { label: string; short: string; color: string }> = {
-  acc3:    { label: "acc3 · 786888028788 (Bedrock)", short: "acc3",   color: A.slate },
-  acc1:    { label: "acc1 · 867490540162 (Bedrock)", short: "acc1",   color: A.gold },
-  acc2:    { label: "acc2 · 005097885195 (Bedrock)", short: "acc2",   color: A.green },
+  acc3:    { label: "acc3 (Bedrock)", short: "acc3",   color: A.slate },
+  acc1:    { label: "acc1 (Bedrock)", short: "acc1",   color: A.gold },
+  acc2:    { label: "acc2 (Bedrock)", short: "acc2",   color: A.green },
   openai:  { label: "OpenAI (no AWS account)",        short: "OpenAI", color: A.ink3 },
   // AA-660 — Jev decisions (shared/llm_client/decide.py); details per stage in /admin/decisions.
   typesafe: { label: "Jev · TypeSafe (no AWS account)", short: "Jev",   color: A.accent },
   unknown: { label: "Legacy (no account logged)",     short: "legacy", color: A.muted },
 };
-// AA-623 — AWS account ID -> the same acc1/acc2/acc3 keys ACCOUNT_META uses, so Cost Explorer
-// rows (keyed by raw account_id) line up with the estimated (token) breakdown.
-const CE_ACCOUNT_ID_TO_KEY: Record<string, string> = {
-  "786888028788": "acc3", "867490540162": "acc1", "005097885195": "acc2",
-};
+// AA-623 — Cost Explorer rows carry the same acc1/acc2/acc3 key ACCOUNT_META uses (account_key, set by
+// the backend since AA-902 — this repo is public, so no account ID is mapped here), so they line up with
+// the estimated (token) breakdown. An unknown account falls back to its raw account_id.
+const ceKey = (r: { account_id: string; account_key?: string | null }) => r.account_key ?? r.account_id;
 // Cost Explorer covers WHOLE accounts, so these labels must not say "(Bedrock)": acc2 is the main
 // infra account (ECS/RDS/ELB/ElastiCache...) and native Claude is blocked there — its Bedrock
 // line is only Cohere Embed / Palmyra.
 const CE_ACCOUNT_LABEL: Record<string, string> = {
-  acc3: "acc3 · 786888028788 (LLM satellite, primary)",
-  acc1: "acc1 · 867490540162 (LLM satellite, fallback)",
-  acc2: "acc2 · 005097885195 (main infra)",
+  acc3: "acc3 (LLM satellite, primary)",
+  acc1: "acc1 (LLM satellite, fallback)",
+  acc2: "acc2 (main infra)",
 };
 
 // The `account` column is NULL for OpenAI calls (no AWS account) and for any row written before
@@ -595,8 +597,9 @@ export default function ExternalSpendPage() {
       estByAcct.set(k, (estByAcct.get(k) ?? 0) + b.total_cost_usd);
     }
     return (costExplorer?.accounts ?? []).map(a => {
-      const key = CE_ACCOUNT_ID_TO_KEY[a.account_id] ?? a.account_id;
-      return { ...a, key, label: CE_ACCOUNT_LABEL[key] ?? a.account_id, estimated: estByAcct.get(key) ?? 0 };
+      const key = ceKey(a);
+      const label = CE_ACCOUNT_LABEL[key] ? `${CE_ACCOUNT_LABEL[key]} · ${a.account_id}` : a.account_id;
+      return { ...a, key, label, estimated: estByAcct.get(key) ?? 0 };
     });
   }, [costExplorer, allBranches]);
   const bedrockEstimated = ceByAccount.reduce((s, r) => s + r.estimated, 0);
@@ -877,7 +880,7 @@ export default function ExternalSpendPage() {
                           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
                             {ceTopServices.map(s => (
                               <div key={`${s.account_id}-${s.service}`} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                                <span style={{ color: A.muted2, minWidth: 44 }}>{CE_ACCOUNT_ID_TO_KEY[s.account_id] ?? s.account_id}</span>
+                                <span style={{ color: A.muted2, minWidth: 44 }}>{ceKey(s)}</span>
                                 <span style={{ color: s.is_bedrock ? A.gold : A.ink2 }}>{s.service}</span>
                                 <span style={{ marginLeft: "auto", fontFamily: mono, color: A.ink3 }}>{fmtUsd2(s.amount_usd)}</span>
                               </div>
@@ -898,7 +901,7 @@ export default function ExternalSpendPage() {
                   <SLabel light>Reconcile note</SLabel>
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
                     Computed from per-call cost in <code style={{ fontFamily: mono }}>llm_call_log</code> + <code style={{ fontFamily: mono }}>dfs_call_log</code> — NOT the AWS invoice.
-                    Claude on Bedrock runs on the satellite accounts (acc3 = <b>786888028788</b> primary, acc1 = 867490540162 fallback); acc2 = 005097885195 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
+                    Claude on Bedrock runs on the satellite accounts (<b>acc3</b> primary, acc1 fallback); acc2 is the infra account and only calls non-Claude Bedrock models (Cohere Embed / Palmyra). DataForSEO is 3rd-party (never in Cost Explorer).
                     See the &quot;AWS actual (Cost Explorer)&quot; panel above for reconciliation against the real AWS invoice.
                   </div>
                 </Card>

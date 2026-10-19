@@ -17,6 +17,7 @@ from typing import Awaitable, Callable, Optional
 import structlog
 
 from services.photos.drive import DriveClient, walk
+from shared.aws_client.bronze import bronze_bucket
 from services.photos.match import match_destination, match_tour, place_label
 
 logger = structlog.get_logger()
@@ -46,7 +47,7 @@ def public_base() -> str:
 
 
 def photo_bucket() -> str:
-    return os.environ.get("PHOTO_BUCKET") or os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-005097885195")
+    return os.environ.get("PHOTO_BUCKET") or bronze_bucket()
 
 
 def s3_key(country: str, file_id: str, size: str, ext: str = "jpg") -> str:

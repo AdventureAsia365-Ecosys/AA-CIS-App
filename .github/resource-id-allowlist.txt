@@ -1,0 +1,3 @@
+# AA-902 — exceptions to the blocking resource-ID check (.github/scripts/check_resource_ids.py).
+# One per line: <path> <max findings> <expires YYYY-MM-DD> <reason>
+# Past the date, or with more findings than the number, the check fails. Keep this list empty.

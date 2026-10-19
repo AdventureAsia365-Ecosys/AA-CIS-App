@@ -16,7 +16,7 @@ from typing import Optional
 
 from shared.llm_client.decide import CACHE_MAX_AGE_DAYS
 
-ARCHIVE_BUCKET = "aa-cis-bronze-005097885195"
+# The archive bucket is the bronze bucket: shared.aws_client.bronze.bronze_bucket() (AA-902).
 ARCHIVE_PREFIX = "archive"
 
 ROLLUP_LLM_DAILY = "llm_call_daily"

@@ -19,12 +19,27 @@ _CI_UNIT_ENV = {
     "LANGFUSE_SECRET_KEY": "test",
     "LANGFUSE_PUBLIC_KEY": "test",
     "LANGFUSE_HOST": "http://localhost:3000",
+    # AA-902: the bronze bucket name comes from the environment (shared/aws_client/bronze.py).
+    "BRONZE_BUCKET": "aa-cis-bronze-test",
+    # AA-902: satellite account IDs come from the task environment (shared/llm_client/bedrock_satellite.py).
+    "BEDROCK_ACCT_PRIMARY": "acc3-test-account",
+    "BEDROCK_ACCT_FALLBACK": "acc1-test-account",
 }
 for _k, _v in _CI_UNIT_ENV.items():
     os.environ.setdefault(_k, _v)
 
 
 import pytest  # noqa: E402
+
+
+# AA-902: AWS's documentation example account, the only 12-digit account the resource-ID check allows.
+FAKE_ACC2_ACCOUNT_ID = "111122223333"
+
+
+@pytest.fixture(autouse=True)
+def _no_sts_caller_identity(monkeypatch):
+    """No unit test calls STS: the caller's account (acc2 on ECS) is a fixed fake."""
+    monkeypatch.setattr("shared.aws_client.bronze.caller_account_id", lambda: FAKE_ACC2_ACCOUNT_ID)
 
 
 @pytest.fixture(autouse=True)

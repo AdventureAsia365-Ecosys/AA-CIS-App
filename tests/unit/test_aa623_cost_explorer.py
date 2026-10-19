@@ -39,7 +39,7 @@ def test_fetch_one_account_cost_acc2_uses_direct_client_no_assume_role():
 
     mock_client.assert_called_once_with("ce", region_name="us-east-1")
     assert len(rows) == 1
-    assert rows[0]["account_id"] == ce_mod.ACC2_ACCOUNT_ID
+    assert rows[0]["account_id"] == ce_mod.acc2_account_id()
     assert rows[0]["service"] == "Amazon Elastic Compute Cloud"
     assert rows[0]["amount_usd"] == 1.23
     assert rows[0]["period_start"] == "2026-09-16"
@@ -138,9 +138,9 @@ async def test_record_snapshot_writes_all_rows_in_one_transaction():
     from shared.aws_client import cost_explorer as ce_mod
 
     rows = [
-        {"account_id": "005097885195", "service": "ECS", "period_start": "2026-09-16",
+        {"account_id": "111122223333", "service": "ECS", "period_start": "2026-09-16",
          "period_end": "2026-09-17", "amount_usd": 1.0, "unit": "USD", "raw": {}},
-        {"account_id": "005097885195", "service": "S3", "period_start": "2026-09-16",
+        {"account_id": "111122223333", "service": "S3", "period_start": "2026-09-16",
          "period_end": "2026-09-17", "amount_usd": 2.0, "unit": "USD", "raw": {}},
     ]
     fake_conn = AsyncMock()
@@ -248,10 +248,10 @@ async def test_read_cost_range_splits_bedrock_vs_infra_per_account():
                 "amount_usd": amount, "fetched_at": fetched}
 
     db_rows = [
-        row("005097885195", "Amazon Elastic Load Balancing", d16, 1.21, f1),
-        row("005097885195", "Amazon Relational Database Service", d17, 0.68, f2),
-        row("005097885195", "Cohere Embed 4 Model (Amazon Bedrock Edition)", d17, 0.01, f2),
-        row("786888028788", "Claude Sonnet 4.6 (Amazon Bedrock Edition)", d16, 3.0, f1),
+        row("111122223333", "Amazon Elastic Load Balancing", d16, 1.21, f1),
+        row("111122223333", "Amazon Relational Database Service", d17, 0.68, f2),
+        row("111122223333", "Cohere Embed 4 Model (Amazon Bedrock Edition)", d17, 0.01, f2),
+        row(ce_mod.ACC3_ACCOUNT_ID, "Claude Sonnet 4.6 (Amazon Bedrock Edition)", d16, 3.0, f1),
     ]
     pool, conn = _pool_with_fetch(db_rows)
     result = await ce_mod.read_cost_range(pool, d16, date_cls(2026, 9, 23))
@@ -259,10 +259,14 @@ async def test_read_cost_range_splits_bedrock_vs_infra_per_account():
     conn.fetch.assert_awaited_once()
     assert conn.fetch.call_args.args[1:] == (d16, date_cls(2026, 9, 23))  # real date objects, not strings
     acc = {a["account_id"]: a for a in result["accounts"]}
-    assert acc["005097885195"]["total_usd"] == 1.9
-    assert acc["005097885195"]["bedrock_usd"] == 0.01
-    assert acc["005097885195"]["other_usd"] == 1.89
-    assert acc["786888028788"]["bedrock_usd"] == 3.0
+    assert acc["111122223333"]["total_usd"] == 1.9
+    assert acc["111122223333"]["bedrock_usd"] == 0.01
+    assert acc["111122223333"]["other_usd"] == 1.89
+    assert acc[ce_mod.ACC3_ACCOUNT_ID]["bedrock_usd"] == 3.0
+    # AA-902: the page labels rows by key, never by a hard-coded account ID.
+    assert acc["111122223333"]["account_key"] == "acc2"
+    assert acc[ce_mod.ACC3_ACCOUNT_ID]["account_key"] == "acc3"
+    assert {s["account_key"] for s in result["services"]} == {"acc2", "acc3"}
     assert result["total_usd"] == 4.9
     assert result["bedrock_usd"] == 3.01
     assert result["covered_from"] == "2026-09-16"
@@ -336,7 +340,7 @@ def _make_request(pool):
 async def test_check_cost_explorer_endpoint_verifies_secret_and_persists():
     from api.routers import admin_llm_ops
 
-    fake_result = {"rows": [{"account_id": "005097885195", "service": "ECS",
+    fake_result = {"rows": [{"account_id": "111122223333", "service": "ECS",
                               "period_start": "2026-09-16", "period_end": "2026-09-17",
                               "amount_usd": 1.0, "unit": "USD", "raw": {}}], "errors": {}}
 
@@ -404,7 +408,7 @@ async def test_get_cost_explorer_endpoint_with_data_uses_window():
 
     from api.routers import admin_llm_ops
 
-    fake = {"accounts": [{"account_id": "005097885195"}], "services": [], "total_usd": 1.0,
+    fake = {"accounts": [{"account_id": "111122223333"}], "services": [], "total_usd": 1.0,
             "bedrock_usd": 0.0, "covered_from": "2026-09-16", "covered_to": "2026-09-22", "fetched_at": "x"}
     with patch.object(admin_llm_ops, "read_cost_range", AsyncMock(return_value=fake)) as mock_read:
         result = await admin_llm_ops.get_cost_explorer(

@@ -36,7 +36,11 @@ from typing import Optional
 
 import structlog
 
+from shared.aws_client import bronze
+
 from .bedrock_satellite import (
+    ACC1_ACCOUNT_ID,
+    ACC3_ACCOUNT_ID,
     ANTHROPIC_VERSION,
     _INFERENCE_PROFILES,
     _SATELLITE_ACCOUNTS,
@@ -46,16 +50,16 @@ from .prompt_cache import build_cached_system_prompt
 
 logger = structlog.get_logger()
 
-# Account 2 bronze bucket — Batch input/output live here; the satellite batch service role reads/
-# writes it cross-account via bucket policy (s3BucketOwner mechanism, modules/s3/main.tf).
-BRONZE_BUCKET = "aa-cis-bronze-005097885195"
+# Batch input/output live in the acc2 bronze bucket (shared/aws_client/bronze.py, AA-902); the
+# satellite batch service role reads/writes it cross-account via bucket policy (s3BucketOwner
+# mechanism, modules/s3/main.tf).
 INPUT_PREFIX = "batch-input/s1-rewrite"
 OUTPUT_PREFIX = "batch-output/s1-rewrite"
 
 # Batch service role assumed by Bedrock (PassRole'd by the invoker role) — one per account.
 _BATCH_SERVICE_ROLE_ARN = {
-    "acc1": "arn:aws:iam::867490540162:role/aa-bedrock-batch-inference-role",
-    "acc3": "arn:aws:iam::786888028788:role/aa3-bedrock-batch-inference-role",
+    "acc1": f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/aa-bedrock-batch-inference-role",
+    "acc3": f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/aa3-bedrock-batch-inference-role",
 }
 
 # Bedrock Batch minimum records per job for Claude models (AWS default is 100; a job with fewer is
@@ -118,7 +122,7 @@ def build_manifest_jsonl(records: list[tuple[str, dict]]) -> str:
 def _s3_client(account: str):
     """S3 client for manifest upload / output read.
 
-    The bronze bucket (aa-cis-bronze-005097885195) lives in acc2 — the SAME account the ECS task
+    The bronze bucket (aa-cis-bronze-<acc2>) lives in acc2 — the SAME account the ECS task
     runs in. So WE read/write it with the task's own native identity (plain boto3, no AssumeRole),
     not the satellite session: the satellite invoker roles (AA-Bedrock-Invoker / AA3-Bedrock-Invoker)
     hold NO S3 permissions, only Bedrock ones. Cross-account access is only needed by the Batch
@@ -135,11 +139,11 @@ def upload_manifest(jsonl: str, *, account: str, job_slug: str) -> str:
     key = f"{INPUT_PREFIX}/{job_slug}/input.jsonl"
     try:
         s3 = _s3_client(account)
-        s3.put_object(Bucket=BRONZE_BUCKET, Key=key,
+        s3.put_object(Bucket=bronze.bronze_bucket(), Key=key,
                       Body=jsonl.encode("utf-8"), ContentType="application/jsonl")
     except Exception as e:
         raise BatchUnavailable(f"manifest upload failed ({key}): {type(e).__name__}: {e}") from e
-    uri = f"s3://{BRONZE_BUCKET}/{key}"
+    uri = f"s3://{bronze.bronze_bucket()}/{key}"
     logger.info("s1_batch_manifest_uploaded", uri=uri, bytes=len(jsonl), account=account)
     return uri
 
@@ -164,9 +168,12 @@ def submit_batch_job(
     model_id = _INFERENCE_PROFILES[account][model]
     slug = job_slug or uuid.uuid4().hex[:12]
     name = job_name or f"s1-rewrite-{slug}"
-    output_uri = f"s3://{BRONZE_BUCKET}/{OUTPUT_PREFIX}/{slug}/"
+    output_uri = f"s3://{bronze.bronze_bucket()}/{OUTPUT_PREFIX}/{slug}/"
 
     try:
+        # The bucket lives in the account the ECS task runs in (acc2), so the native identity names
+        # its owner; the satellite session would name the satellite account instead.
+        bucket_owner = bronze.caller_account_id()
         client = get_satellite_client("bedrock", account=account)
         resp = client.create_model_invocation_job(
             jobName=name,
@@ -174,11 +181,11 @@ def submit_batch_job(
             modelId=model_id,
             inputDataConfig={"s3InputDataConfig": {
                 "s3Uri": input_uri,
-                "s3BucketOwner": "005097885195",  # acc2 owns the bronze bucket (cross-account)
+                "s3BucketOwner": bucket_owner,  # acc2 owns the bronze bucket (cross-account)
             }},
             outputDataConfig={"s3OutputDataConfig": {
                 "s3Uri": output_uri,
-                "s3BucketOwner": "005097885195",
+                "s3BucketOwner": bucket_owner,
             }},
         )
     except Exception as e:
@@ -232,9 +239,10 @@ def poll_batch_job(
 def _iter_output_keys(s3, output_uri: str):
     """List the .jsonl.out object(s) Bedrock wrote under the job's output prefix. Bedrock nests them
     under <output_uri>/<jobId>/<input-filename>.out — list the whole prefix and take .out files."""
-    prefix = output_uri.replace(f"s3://{BRONZE_BUCKET}/", "").rstrip("/") + "/"
+    bucket = bronze.bronze_bucket()
+    prefix = output_uri.replace(f"s3://{bucket}/", "").rstrip("/") + "/"
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BRONZE_BUCKET, Prefix=prefix):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if key.endswith(".jsonl.out") or key.endswith(".out"):
@@ -259,7 +267,7 @@ def read_batch_output(output_uri: str, *, account: str = "acc3") -> dict[str, Ba
     results: dict[str, BatchRecordResult] = {}
     for key in keys:
         try:
-            body = s3.get_object(Bucket=BRONZE_BUCKET, Key=key)["Body"].read().decode("utf-8")
+            body = s3.get_object(Bucket=bronze.bronze_bucket(), Key=key)["Body"].read().decode("utf-8")
         except Exception as e:
             raise BatchUnavailable(f"reading batch output {key} failed: {type(e).__name__}: {e}") from e
         for line in io.StringIO(body):

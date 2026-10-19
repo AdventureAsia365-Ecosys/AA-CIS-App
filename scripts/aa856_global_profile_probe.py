@@ -25,11 +25,12 @@ Modes (one per run; the result JSON is also written to S3, because long ECS exec
                        retried since then with an error that names Bedrock/Cohere/AccessDenied.
 
 Run (each line one command; see skill/aa-cis-schema/references/ecs-exec.md):
-  aws s3 cp scripts/aa856_global_profile_probe.py s3://aa-cis-bronze-005097885195/scripts/aa856_probe.py --profile aa365-admin --region us-west-1
-  URL=$(aws s3 presign s3://aa-cis-bronze-005097885195/scripts/aa856_probe.py --profile aa365-admin --region us-west-1 --expires-in 300)
+  BRONZE=aa-cis-bronze-$(aws sts get-caller-identity --profile aa365-admin --query Account --output text)
+  aws s3 cp scripts/aa856_global_profile_probe.py s3://$BRONZE/scripts/aa856_probe.py --profile aa365-admin --region us-west-1
+  URL=$(aws s3 presign s3://$BRONZE/scripts/aa856_probe.py --profile aa365-admin --region us-west-1 --expires-in 300)
   TASK_ARN=$(aws ecs list-tasks --cluster aa-cis-dev-cluster --service-name aa-cis-dev-api --profile aa365-admin --region us-west-1 --query 'taskArns[0]' --output text)
   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container api --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/s.py && cd /app && python3 /tmp/s.py preflight --invoke'" --profile aa365-admin --region us-west-1
-  aws s3 cp s3://aa-cis-bronze-005097885195/scripts/aa856-probe-preflight.json .tmp-session/aa856-probe-preflight.json --profile aa365-admin --region us-west-1
+  aws s3 cp s3://$BRONZE/scripts/aa856-probe-preflight.json .tmp-session/aa856-probe-preflight.json --profile aa365-admin --region us-west-1
 
 Gate: apply 238 only when preflight --invoke reports "gate": {"apply_238": true} — the global
 profile answered through the task role and shared.job has nothing queued/running. `f10_embed` is
@@ -75,7 +76,6 @@ PROBE_TEXT = "Hanoi Old Quarter street food walk"
 EMBED_STAGES = ("f10_embed", "a3_place_embed", "tp_search_embed", "tp_component_embed")
 ADHOC_STAGE = "adhoc_aa856"
 PROBE_DIMENSIONS = 1536
-S3_BUCKET = "aa-cis-bronze-005097885195"
 REGION = "us-west-1"
 
 CATALOG_SQL = """
@@ -310,6 +310,16 @@ async def post_apply(since: datetime.datetime) -> dict[str, Any]:
     return out
 
 
+def _s3_bucket() -> str:
+    """The bronze bucket: BRONZE_BUCKET of the api container this runs in, else aa-cis-bronze-<caller
+    account> (AA-902: no account ID in this public repo; same rule as shared/aws_client/bronze.py,
+    inlined because the script is fetched to /tmp and may not import the app)."""
+    import boto3
+
+    name = os.environ.get("BRONZE_BUCKET", "").strip()
+    return name or "aa-cis-bronze-" + boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
+
+
 def _write(result: dict[str, Any], name: str) -> None:
     body = json.dumps(result, indent=2, default=str)
     print(body, flush=True)
@@ -319,8 +329,9 @@ def _write(result: dict[str, Any], name: str) -> None:
     try:
         import boto3
 
-        boto3.client("s3", region_name=REGION).upload_file(path, S3_BUCKET, f"scripts/{name}")
-        print(f"uploaded s3://{S3_BUCKET}/scripts/{name}", flush=True)
+        bucket = _s3_bucket()
+        boto3.client("s3", region_name=REGION).upload_file(path, bucket, f"scripts/{name}")
+        print(f"uploaded s3://{bucket}/scripts/{name}", flush=True)
     except Exception as e:  # noqa: BLE001 — local run without S3 access still prints the result
         print(f"S3 upload skipped: {e}", flush=True)
 

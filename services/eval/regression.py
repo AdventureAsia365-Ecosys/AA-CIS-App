@@ -19,7 +19,7 @@ any push/PR trigger without AA-287 Budgets alarms in place first (Done as of thi
 
 Fixture sourcing (AA-289 STEP 0 findings):
 - S1-old: CIS_Golden_Tours_20_v1.xlsx, uploaded to
-  s3://aa-cis-bronze-005097885195/fixtures/ (the repo's data/ dir is gitignored — the file
+  s3://<bronze bucket>/fixtures/ (the repo's data/ dir is gitignored — the file
   is not committed, so a GitHub-Actions-triggered run has no local copy to read).
 """
 import argparse
@@ -34,9 +34,12 @@ import boto3
 import openpyxl
 import structlog
 
+from shared.aws_client.bronze import bronze_bucket
+
 logger = structlog.get_logger()
 
-GOLDEN_TOURS_S3_BUCKET = "aa-cis-bronze-005097885195"
+# Bucket: shared.aws_client.bronze.bronze_bucket() (AA-902) — BRONZE_BUCKET of the api container the
+# workflow runs this in (ECS exec).
 GOLDEN_TOURS_S3_KEY = "fixtures/CIS_Golden_Tours_20_v1.xlsx"
 AWS_REGION = os.environ.get("AWS_REGION", "us-west-1")
 
@@ -62,7 +65,7 @@ ITINERARY_BASELINE_PATH = os.path.join(
 
 def _download_golden_tours() -> list[dict]:
     s3 = boto3.client("s3", region_name=AWS_REGION)
-    obj = s3.get_object(Bucket=GOLDEN_TOURS_S3_BUCKET, Key=GOLDEN_TOURS_S3_KEY)
+    obj = s3.get_object(Bucket=bronze_bucket(), Key=GOLDEN_TOURS_S3_KEY)
     wb = openpyxl.load_workbook(io.BytesIO(obj["Body"].read()), data_only=True)
     ws = wb["Golden Tours"]
     header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
