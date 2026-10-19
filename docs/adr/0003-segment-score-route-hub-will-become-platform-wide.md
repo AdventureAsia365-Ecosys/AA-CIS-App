@@ -1,5 +1,8 @@
 # Segment/Score/Route/Hub will become platform-wide (decision to fix the tech debt)
 
+- **Status:** Accepted (06/09/2026, AA-542). Implemented by AA-545: Segment, Score, Route and Hub are computed
+  platform-wide (see ADR 0001 and CONTEXT.md). Status line added 19/10/2026 (AA-888) from the decision record.
+
 `docs/adr/0001-atoms-platform-wide-segments-per-tenant.md` records WHY Segment/Score/Route/Hub
 ended up per-tenant (a carried-over historical default from before Atom became platform-wide,
 plus a reverted attempt during AA-526 that hit a scope wall). That ADR does not, by itself,
