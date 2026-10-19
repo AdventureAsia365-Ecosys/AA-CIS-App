@@ -10,7 +10,7 @@
 // real tenant login takes an API key. The portal block logs in on demand when E2E_TENANT_API_KEY
 // is present.
 import { test as setup } from '@playwright/test';
-import { loginAsAdmin, adminUsername, adminPassword } from '../helpers/auth';
+import { adminUsername, adminPassword } from '../helpers/auth';
 import fs from 'fs';
 import { ADMIN_STATE, ROLE_FILE, baseUrl, ensureAuthDir, installBypassRoute } from './smoke-helpers';
 
@@ -28,17 +28,19 @@ setup('authenticate admin', async ({ browser }) => {
   const page = await context.newPage();
   try {
     // AA-878 — the role comes from the server's login answer (the DB role, POST /api/auth/login → { role }),
-    // never from the display cookie: a viewer account switches the specs to viewer mode.
-    const loginResponse = page.waitForResponse(
-      (r) => new URL(r.url()).pathname === '/api/auth/login' && r.request().method() === 'POST',
-      { timeout: 20000 },
-    );
-    await loginAsAdmin(page);
-    const res = await loginResponse;
+    // never from the display cookie: a viewer account switches the specs to viewer mode. The login is a
+    // direct request on the browser context (same cookie jar): a form submit navigates away, and the
+    // browser may drop the response body before the test can read it (S243: "no role in the answer").
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    const res = await context.request.post('/api/auth/login', {
+      data: { username: adminUsername(), password: adminPassword() },
+      headers: bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'samesitenone' } : {},
+    });
     const body = (await res.json().catch(() => ({}))) as { role?: unknown };
     if (!res.ok() || typeof body.role !== 'string' || !body.role) {
       throw new Error(`smoke login failed: POST /api/auth/login → HTTP ${res.status()} (no role in the answer)`);
     }
+    await page.goto('/admin/review');
     await page.waitForURL(/\/admin\//, { timeout: 20000 });
     await context.storageState({ path: ADMIN_STATE });
     fs.writeFileSync(ROLE_FILE, JSON.stringify({ role: body.role }));
