@@ -67,6 +67,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     the admin host answers `/portal`, `/portal/*` and `/tenant-login` with **308** to the same path on
     `https://portal.lumiguides.it.com` (`frontend/next.config.ts`, `PORTAL_BASE_URL` in `frontend/lib/apps.ts`)
     and serves no portal page or tenant BFF any more.
+    - The "My Catalog Tours" XLSX export runs in the browser with SheetJS `xlsx`, installed from the SheetJS CDN
+      tarball (`https://cdn.sheetjs.com/xlsx-<ver>/xlsx-<ver>.tgz`, pinned 0.20.3): SheetJS stopped publishing
+      to npm at 0.18.5, which carries open advisories. Dependabot cannot bump a tarball dep — upgrade by hand.
+      The admin app (`frontend/`) has no `xlsx` dependency: its XLSX exports are built server-side.
     - Its own tenant-only BFF: `app/api/auth/tenant-login` + `tenant-logout` (the 5 httpOnly cookies
       `cis_role`, `cis_tenant_token`, `cis_tenant_id`, `cis_tenant_name`, `cis_tenant_plan`, **host-only** on the
       portal host — no `Domain`), `app/api/tenant/me`, `app/api/tenant/[...path]` (verified tenant Bearer only),
