@@ -503,6 +503,12 @@ write CIS schemas. Owners per schema: `AA-Ecosys/docs/database/schema-ownership.
 | AA-Booking, AA-TripPlanner-Web | **Catalog read model**, schema `catalog` (AA-679): `v_tour` (live AA tours, key `(source_system, source_id)` = `('cis', raw_tours.source_group_id)`, `content_hash`), `v_tour_day` (parsed canonical itinerary), `v_tour_place` (active-atom places + place card + destination lat/lng), `v_tour_photo`, `v_destination`, `v_destination_photo`. **Coordinates carry an attribution duty**: wherever a consumer shows `lat`/`lng` from these views (map pins, area circles), it must show "Powered by Geoapify" (link) + "© OpenStreetMap contributors" (AA-712, Geoapify Free-plan + ODbL terms); the place views of migration 228 expose `located_by` / `geo_precision` so a consumer draws `area` points as areas, not pins. Contract `AA-Ecosys/docs/contracts/catalog.tour.v1.json`. New consumers read only `catalog.*`; TripPlanner's older grants above migrate to it. Events `catalog.tour.published/updated/trashed` (outbox) are the next AA-679 slice | its own `booking.*` | CIS 225 to roles `aa_app_user`, `tripplanner`, `booking` (unguarded). Views owned by NOLOGIN role `catalog_owner` (no BYPASSRLS, no members), which reads `published_tours` / `raw_tours` through RLS policy `catalog_owner_aa_master_read` (AA master tenant only); consumers need not set `app.tenant_id`. 225 also makes `tenant_isolation` on those two tables treat `app.tenant_id = ''` as no tenant (NULLIF) instead of raising |
 | Ops-probe Lambda (AA-CIS-Infra) | `POST /admin/dfs-balance/check`, `/admin/jev-canary/check`, `/admin/jev/402-sweep`, `/admin/waves/check` daily | — | admin secret |
 
+CIS as a consumer (AA-858): the `/admin/overview` business view reads `booking.v_ops_funnel_daily`,
+`booking.v_ops_case_status` (Booking bk-017) and `tripplanner.v_ops_traffic_daily` (TripPlanner tp-015) — aggregate
+views the producers own and grant to `cis_app` in their own migrations (contract `ops.overview.v1`, AA-Ecosys
+`docs/contracts/ops.overview.v1.md`; AA-CIS-Infra `db/owners.yaml` consumer_grants). CIS never reads `booking.*` /
+`tripplanner.*` tables.
+
 Platform services other apps may reuse (already used by TripPlanner where noted): the Model Gateway
 and `llm_call_log` (TripPlanner), the durable job runner `shared.job` (CIS only for now — a second
 enqueuing repo is AA-751), the cost guard `shared.spend_budget`, the Jev decision layer, and rerun
@@ -640,6 +646,22 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+
+**Ops overview (AA-858).** `GET /admin/overview/ops` (`ops.read`, not a machine route; the CI smoke keeps
+`GET /admin/overview`) feeds the business view at the top of `/admin/overview`. Package `api/services/ops_overview/`,
+four independent sections, each cached in Redis on its own key (`admin:overview:ops:<section>:v1`) and each degrading
+to `{status: "unavailable", reason, message}` instead of failing the call:
+- `health` (`cloudwatch.py`, 5 min): one `GetMetricData` call (16 metrics: API Gateway Count/5XX/4XX/Latency p95 for
+  `aa-cis-<env>-api` and `aa-booking-<env>-api` with `Stage = <env>`, Lambda Invocations/Errors/Throttles/Duration p95
+  for `aa-tripplanner-<env>-browse|assembly`) + `DescribeAlarms` mapped by name prefix (`TargetTracking-*` skipped);
+  read-only IAM on the task role (AA-CIS-Infra `ecs_task_infra_status_readonly`). Never called without Redis
+  (`cache_offline`); a `SET NX` lock lets one request compute while the others get the last good value.
+- `tripplanner` / `booking` (`activity.py`, 5 min): only the producer contract views above + `shared.llm_call_log`
+  stage `tp_search_embed` for AI searches (cache misses only). A missing view or grant → `contract_view_missing`.
+- `cost` (`cost.py`, 15 min): built only on AA-884's `platform_cost.cost_by_app` (this month + last month), relabelled
+  for a business reader; no CE code of its own.
+Cost: ≈ $0.0002 per health refresh, worst case ≈ $0.60/month; CE as AA-884. No new env var (names derive from
+`ENVIRONMENT`).
 
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|
