@@ -7,7 +7,7 @@
 // AA-883 (S241 admin console, design §4) — groups belong to one of two sections, named after who the
 // page serves (not how it runs):
 //   - Platform: people, tenants (accounts), machines and money — Overview · People & access ·
-//     Tenants · Jobs · AI & spend · Developer;
+//     Apps · Tenants · Jobs · AI & spend · Developer (AA-884 added Audit log, Apps, Cost per app);
 //   - CIS Content: what CIS produces, including the QA of tenant output — Pipeline · Assets ·
 //     Intelligence · Tenant output.
 // No URL changed. Settings stays the standalone footer entry until it is split (design GĐ6). The
@@ -16,6 +16,7 @@
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
+  Boxes, ScrollText, ChartPie,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -52,6 +53,11 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "People & access", section: "platform", items: [
     { href: "/admin/platform/staff", icon: <UserCog size={16} />, label: "Staff" },  // AA-883
+    { href: "/admin/platform/audit", icon: <ScrollText size={16} />, label: "Audit log" },  // AA-884
+  ] },
+  // AA-884 — health and running commit of each ecosystem app (CIS api/worker, Booking, TripPlanner).
+  { label: "Apps", section: "platform", items: [
+    { href: "/admin/platform/apps", icon: <Boxes size={16} />, label: "Apps" },
   ] },
   { label: "Tenants", section: "platform", items: [
     { href: "/admin/tenants", icon: <Users size={16} />, label: "Tenants" },
@@ -61,6 +67,7 @@ export const NAV_GROUPS: NavGroup[] = [
   ] },
   { label: "AI & spend", section: "platform", items: [
     { href: "/admin/llm-usage", icon: <Wallet size={16} />, label: "External Spend" },
+    { href: "/admin/platform/cost", icon: <ChartPie size={16} />, label: "Cost per app" },  // AA-884
     { href: "/admin/decisions", icon: <Scale size={16} />,  label: "Jev Decisions" },
   ] },
   { label: "Developer", section: "platform", items: [
