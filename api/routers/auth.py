@@ -302,7 +302,7 @@ class BookingTokenResponse(BaseModel):
     expires_in: int
 
 
-# A real bcrypt hash (cost 12, like scripts/create_staff_user.py) of a random value that was thrown
+# A real bcrypt hash (cost 12, like the legacy staff password hashes) of a random value that was thrown
 # away: comparing against it costs the same time as a real compare and never matches. Used when there is
 # no hash to compare with — unknown username, or a Cognito-only staff row whose password_hash is NULL
 # (migration 247) — so those cases look like a wrong password, in shape and in timing.

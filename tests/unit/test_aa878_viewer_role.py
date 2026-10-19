@@ -13,7 +13,7 @@ Covers:
 - role-filtered open reads: the notification bell and the ⌘K search treat viewer like reviewer/content;
 - the staff directory: viewer is not assignable (service + request models), a viewer row is listed and counted,
   a role change away from viewer never touches a cis-viewer Cognito group, the reconcile report serialises it;
-- scripts/create_staff_user.py: the non-interactive --password-from-secret mode;
+- scripts/create_staff_user.py is retired (AA-816 D1: the Staff page replaced it);
 - frontend/lib/rbac.ts + lib/auth-server.ts: the BFF refuses viewer writes centrally;
 - migration 249: one transaction, ADD VALUE only, the new value never used in it.
 """
@@ -306,42 +306,9 @@ def test_reconcile_serialises_a_viewer_row():
     assert report["counts"]["group_drift"] == 0 and report["counts"]["rows_unknown_to_cognito"] == 0
 
 
-# ── scripts/create_staff_user.py ─────────────────────────────────────────────────────────────────
-
-def _script():
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("aa878_create_staff_user", REPO / "scripts" / "create_staff_user.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_script_accepts_viewer_and_the_secret_mode():
-    mod = _script()
-    assert VIEWER in mod.VALID_ROLES
-    assert set(mod.VALID_ROLES) == set(ROLE_PERMS)
-    args = mod.parse_args(["--password-from-secret", "aa-cis/dev/e2e-test-viewer", "e2e-claude-code-viewer",
-                           VIEWER])
-    assert (args.secret_id, args.username, args.role, args.reset) == (
-        "aa-cis/dev/e2e-test-viewer", "e2e-claude-code-viewer", VIEWER, False)
-    with pytest.raises(SystemExit):
-        mod.parse_args(["--reset", "u", VIEWER])        # --reset needs the secret mode
-    with pytest.raises(SystemExit):
-        mod.parse_args(["u", "owner"])                  # not a role
-
-
-def test_script_reads_the_password_from_the_secret_shape(capsys):
-    mod = _script()
-    pw = "x" * 24
-    assert mod.password_from_secret_string(json.dumps({"username": "u", "password": pw}), "u") == pw
-    for bad in ("not json", json.dumps(["u", pw]), json.dumps({"username": "other", "password": pw}),
-                json.dumps({"username": "u", "password": "short"}), None):
-        with pytest.raises(SystemExit) as exc:
-            mod.password_from_secret_string(bad, "u")
-        assert pw not in str(exc.value)
-    out = capsys.readouterr()
-    assert pw not in out.out and pw not in out.err
+def test_create_staff_user_script_is_retired():
+    """AA-816 D1: the Staff page creates staff (Cognito); the legacy password-row script is gone for good."""
+    assert not (REPO / "scripts" / "create_staff_user.py").exists()
 
 
 # ── Frontend: rbac.ts + the BFF ──────────────────────────────────────────────────────────────────
