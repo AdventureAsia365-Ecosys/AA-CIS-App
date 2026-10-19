@@ -50,6 +50,89 @@ TTV_STANDIN_DDL = """
 """
 
 
+# AA-860 (X1 S16): a CI-only password for the CIS runtime role, so tests can log in AS cis_app (the
+# isolation the runtime gets after X1 S18). Never a Dev secret: Dev's comes from aa-cis/dev/rds-cis-app.
+CIS_APP_CI_PASSWORD = "cis-app-ci-only-not-a-secret"
+
+# AA-860 (X1 S16): the RLS tables of the 11 CIS runtime schemas on Dev (schema reference 18/10), which CIS
+# 244's guards require exactly. The CI DB differs: 008 (FORCE on content_exports / webhook_deliveries) is
+# skipped, tenant_tour_versions and acp_output_rules do not exist (001 / 020 are skipped or fail here), and a
+# few legacy tables dropped on Dev keep RLS. x1_244_ci_shape() brings the CI DB to the Dev shape around 244
+# (the replay skips 244; the X1 tests apply it after the full replay, the Dev order, and x1_244_undo it).
+X1_CIS_SCHEMAS = ("acp_contract", "acp_deliver", "acp_gold_output", "acp_shared", "acp_silver_s2",
+                  "acp_silver_s3", "acp_silver_s4", "geo", "gold_aa_internal", "shared", "silver_aa_internal")
+X1_ENABLE_ONLY_RLS = ("acp_shared.acp_output_rules", "acp_shared.angle_gate_option", "acp_shared.angle_gate_request",
+                      "acp_shared.content_piece", "acp_shared.facts", "acp_shared.publish_log",
+                      "gold_aa_internal.tenant_tour_versions", "shared.tenant_integrations")
+X1_FORCE_RLS = ("gold_aa_internal.content_exports", "gold_aa_internal.published_tours",
+                "gold_aa_internal.webhook_deliveries", "shared.pipeline_runs", "silver_aa_internal.generated_content",
+                "silver_aa_internal.quality_scores", "silver_aa_internal.raw_tours", "silver_aa_internal.seo_context")
+# Legacy tables the CI DB still has with RLS on; none of them exists on Dev (dropped there). Explicit on purpose:
+# any other RLS table must meet 244's guard and the standing check in test_x1_cis_app_privileges.
+X1_CI_ONLY_LEGACY_RLS = ("acp_deliver.packets", "acp_deliver.pieces", "acp_shared.acp_v2_runs",
+                         "acp_shared.acp_v2_slots", "acp_shared.content_metric_snapshot", "acp_shared.unknown_ledger")
+_X1_STANDIN_MARK = "zz-ci-standin (AA-860, conftest x1_244_ci_shape)"
+
+
+def x1_244_ci_shape(cur):
+    """Make the CI DB look like Dev where CIS 244's guards look. Idempotent. Kept after 244 (Dev shape):
+    the four empty CIS schemas and FORCE on content_exports / webhook_deliveries (008). Undone by
+    x1_244_ci_unshape (lesson S237: a global stand-in changes other code): RLS off on the CI-only legacy
+    tables X1_CI_ONLY_LEGACY_RLS (absent on Dev; 241's tests need their RLS back), the tenant_tour_versions
+    stand-in and an acp_output_rules stand-in, both with RLS on and no FORCE, as on Dev."""
+    for schema in ("acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4"):
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    cur.execute("ALTER TABLE gold_aa_internal.content_exports FORCE ROW LEVEL SECURITY; "
+                "ALTER TABLE gold_aa_internal.webhook_deliveries FORCE ROW LEVEL SECURITY")
+    for table in X1_CI_ONLY_LEGACY_RLS:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
+        if cur.fetchone()[0]:
+            cur.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    cur.execute(TTV_STANDIN_DDL)
+    cur.execute("ALTER TABLE gold_aa_internal.tenant_tour_versions ENABLE ROW LEVEL SECURITY")
+    cur.execute("SELECT to_regclass('acp_shared.acp_output_rules') IS NULL")
+    if cur.fetchone()[0]:
+        cur.execute("CREATE TABLE acp_shared.acp_output_rules (id uuid PRIMARY KEY DEFAULT gen_random_uuid())")
+        cur.execute(f"COMMENT ON TABLE acp_shared.acp_output_rules IS '{_X1_STANDIN_MARK}'")
+    cur.execute("ALTER TABLE acp_shared.acp_output_rules ENABLE ROW LEVEL SECURITY")
+
+
+def x1_244_ci_unshape(cur):
+    """Undo the temporary part of x1_244_ci_shape: RLS back on the CI-only legacy tables (without a cis_app
+    policy: the standing check skips them), the two stand-ins dropped (only a stand-in this helper created)."""
+    for table in X1_CI_ONLY_LEGACY_RLS:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
+        if cur.fetchone()[0]:
+            cur.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+    cur.execute("DROP TABLE IF EXISTS gold_aa_internal.tenant_tour_versions")
+    cur.execute("SELECT obj_description('acp_shared.acp_output_rules'::regclass, 'pg_class') = %s "
+                "WHERE to_regclass('acp_shared.acp_output_rules') IS NOT NULL", (_X1_STANDIN_MARK,))
+    row = cur.fetchone()
+    if row and row[0]:
+        cur.execute("DROP TABLE acp_shared.acp_output_rules")
+
+
+def x1_244_undo(cur):
+    """Remove everything CIS 244 gives cis_app (policies, grants, default privileges, registry row), so the
+    shared test DB is back to the replay state (conftest skips 244) for the modules that run after."""
+    for table in X1_ENABLE_ONLY_RLS + X1_FORCE_RLS:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (table,))
+        if cur.fetchone()[0]:
+            cur.execute(f"DROP POLICY IF EXISTS {table.split('.')[1]}_cis_app_all ON {table}")
+    for s in X1_CIS_SCHEMAS:
+        cur.execute("SELECT to_regnamespace(%s) IS NOT NULL", (s,))
+        if not cur.fetchone()[0]:
+            continue
+        cur.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA {s} FROM cis_app; "
+                    f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA {s} FROM cis_app; "
+                    f"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA {s} FROM cis_app; "
+                    f"REVOKE ALL ON SCHEMA {s} FROM cis_app")
+        for kind in ("TABLES", "SEQUENCES", "FUNCTIONS"):
+            cur.execute(f"ALTER DEFAULT PRIVILEGES FOR ROLE aa_cis_admin IN SCHEMA {s} "
+                        f"REVOKE ALL ON {kind} FROM cis_app")
+    cur.execute("DELETE FROM shared.schema_versions WHERE version = '244'")
+
+
 def _get_conn():
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT,
@@ -122,10 +205,19 @@ def _apply_schema(conn):
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cis_app') THEN
                 CREATE ROLE cis_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS CONNECTION LIMIT 90;
             END IF;
+            -- AA-860 (X1 S16): the RDS master's name. CIS 244 sets ALTER DEFAULT PRIVILEGES FOR ROLE
+            -- aa_cis_admin; test_aa860_migration_244 turns this role into the RDS-like runner.
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'aa_cis_admin') THEN
+                CREATE ROLE aa_cis_admin NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
     """)
+    try:  # AA-860: tests log in AS cis_app with a CI-only password (rl-001 leaves it without one on Dev)
+        cur.execute("ALTER ROLE cis_app PASSWORD %s", (CIS_APP_CI_PASSWORD,))
+    except psycopg2.Error as e:
+        print(f"Warning: could not set the cis_app CI password: {e}")
     # AA-412: pre-create acp_deliver/acp_contract (real owner: migration 078) so migrations that
     # depend on them (094/096/102/105 — acp_deliver.packets/pieces + this issue's review columns)
     # can apply even though 078 itself fails locally (its v_trip_registry view selects
@@ -158,6 +250,10 @@ def _apply_schema(conn):
         and not f.startswith('007_seed')
         and not f.startswith('007b')
         and not f.startswith('008')
+        # AA-860 (X1 S16): 244 is applied on Dev AFTER 247-249, and its parity policies TO cis_app make the
+        # exact-policy guards of 229/237/239/241 (which their tests re-apply) refuse. The X1 tests apply it in
+        # the Dev order themselves (x1_244_ci_shape + the file) and undo it at teardown (x1_244_undo).
+        and not f.startswith('244')
     ])
 
     for mf in migration_files:

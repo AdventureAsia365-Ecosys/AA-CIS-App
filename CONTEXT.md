@@ -479,6 +479,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
   VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
   A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
+- **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
+  DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
+  `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
+  `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
+  (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered
+  today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
+  migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
+  exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
