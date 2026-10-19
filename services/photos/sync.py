@@ -93,17 +93,35 @@ def make_sizes(data: bytes) -> tuple[dict[str, bytes], int, int]:
 
 
 async def itinerary_places(conn, country: str) -> dict[str, list[tuple[str, str]]]:
-    """tour_id → [(destination id, name)] of the places on that tour's itinerary, from the
-    TripPlanner extraction. Empty when the extraction tables are missing or not yet rebuilt."""
+    """tour_id → [(destination id, name)] of the places on that tour's itinerary, from the CIS place
+    pipeline (schema geo, migration 226): geo.tour_place (the extracted places, keyed by the live tour)
+    UNION geo.tour_stop of the CURRENT graph build (keyed by source_id, mapped to every live tour of
+    that source by the catalog liveness rule of services.places.store). Empty when nothing is
+    extracted yet.
+
+    AA-860 (X1 S15): this replaced the read of the frozen tripplanner.itinerary_components /
+    tripplanner.tour_stop (ADR 0007). That read was the last CIS query on the TripPlanner schema;
+    once the CIS runtime runs as cis_app (X1 S18) it would get 42501 there and the fail-open path
+    below would silently return {}. The read runs with app.tenant_id pinned to the AA master tenant
+    (published_tours / raw_tours are FORCE-RLS)."""
+    from services.places.store import _LIVE_SQL, _catalog_fetch
+    sql = f"""
+        WITH live AS ({_LIVE_SQL})
+        SELECT DISTINCT x.tour_id, d.id, d.name
+          FROM (SELECT tp.tour_id::text AS tour_id, tp.destination_id
+                  FROM geo.tour_place tp
+                 WHERE tp.destination_id IS NOT NULL
+                UNION
+                SELECT l.tour_id, ts.destination_id
+                  FROM geo.tour_stop ts
+                  JOIN geo.graph_build gb ON gb.build_id = ts.build_id AND gb.is_current
+                  JOIN live l ON l.source_id = ts.source_id) x
+          JOIN shared.destinations d ON d.id = x.destination_id
+         WHERE d.country = $1"""
     try:
-        rows = await conn.fetch(
-            """SELECT DISTINCT x.source_tour_id AS tour_id, d.id, d.name
-                 FROM (SELECT source_tour_id, destination_id FROM tripplanner.itinerary_components
-                       UNION SELECT source_tour_id, destination_id FROM tripplanner.tour_stop) x
-                 JOIN shared.destinations d ON d.id = x.destination_id
-                WHERE d.country = $1""", country)
-    except Exception as e:  # TripPlanner schema absent (local/test DB)
-        logger.warning("photo_sync_itinerary_places_unavailable", error=str(e)[:200])
+        rows = await _catalog_fetch(conn, sql, country)
+    except Exception as e:  # fail open (destinations are matched on request only), but loudly
+        logger.error("photo_sync_itinerary_places_unavailable", country=country, error=str(e)[:200])
         return {}
     out: dict[str, list[tuple[str, str]]] = {}
     for r in rows:
@@ -132,8 +150,8 @@ async def sync_folder(conn, client: DriveClient, s3, *, country: str, root_id: s
     # Destinations are matched only on request: on 01/10/2026 shared.destinations still held the
     # places extracted from the tours published BEFORE the S207 reset. Match again (no re-download)
     # once the rerun tours are rewritten, atomized and re-extracted (Nghiệp, S207).
-    # A photo is compared only with the places on ITS tour's itinerary (TripPlanner extraction:
-    # tripplanner.itinerary_components / tour_stop) — never with every place in the country.
+    # A photo is compared only with the places on ITS tour's itinerary (CIS place pipeline:
+    # geo.tour_place / geo.tour_stop, AA-860) — never with every place in the country.
     tour_places = await itinerary_places(conn, country) if match_destinations else {}
     existing = {r["drive_file_id"]: r for r in await conn.fetch(
         """SELECT drive_file_id, drive_modified_at, s3_key_small, s3_key_original, match_source, status

@@ -64,3 +64,49 @@ export const APP_LINKS: AppLink[] = [
 export function bookingStaffUrl(cisUserId: string): string {
   return `${BOOKING_ADMIN_URL}/staff/${encodeURIComponent(cisUserId)}`;
 }
+
+// ── AA-884 (S241 GĐ7) — Platform › Apps: one entry per ecosystem app, for the Apps / Cost pages ──
+// Dev constants (no NEXT_PUBLIC env, APP_LINKS above unchanged). The backend has its own registry for
+// what it probes (api/core/app_registry.py); this one only builds links. The ids match the backend's
+// card ids (GET /admin/platform/apps → apps[].id).
+
+const GITHUB_ORG_URL = "https://github.com/AdventureAsia365-Ecosys";
+
+/** The CIS admin console itself (this app, Vercel aa-cis-frontend). */
+export const CIS_ADMIN_URL = "https://aa-cis.lumiguides.it.com";
+
+export type PlatformAppId = "cis" | AppId;
+
+export interface PlatformApp {
+  id: PlatformAppId;
+  label: string;
+  /** The app's staff-facing frontend (CIS admin, Booking admin, TripPlanner public site). */
+  adminUrl: string;
+  adminLabel: string;
+  repoUrl: string;
+  /** GitHub commit page of `sha`, or null when the SHA is missing / "unknown" (local or CI process). */
+  commitUrl: (sha: string | null | undefined) => string | null;
+}
+
+function platformApp(id: PlatformAppId, label: string, adminUrl: string, adminLabel: string, repo: string): PlatformApp {
+  const repoUrl = `${GITHUB_ORG_URL}/${repo}`;
+  return {
+    id, label, adminUrl, adminLabel, repoUrl,
+    commitUrl: (sha) => (sha && sha !== "unknown" && /^[0-9a-f]{7,40}$/i.test(sha) ? `${repoUrl}/commit/${sha}` : null),
+  };
+}
+
+export const APP_REGISTRY: Record<PlatformAppId, PlatformApp> = {
+  cis: platformApp("cis", "CIS (content + catalog)", CIS_ADMIN_URL, "CIS admin", "AA-CIS-App"),
+  booking: platformApp("booking", "Booking", BOOKING_ADMIN_URL, "Booking admin", "AA-Booking"),
+  tripplanner: platformApp("tripplanner", "TripPlanner", TRIPPLANNER_URL, "TripPlanner site", "AA-TripPlanner-Web"),
+};
+
+export const PLATFORM_APP_IDS: PlatformAppId[] = ["cis", "booking", "tripplanner"];
+
+export function isPlatformAppId(id: string): id is PlatformAppId {
+  return (PLATFORM_APP_IDS as string[]).includes(id);
+}
+
+/** Booking admin's own audit log (Booking writes its own trail; CIS never reads the booking schema). */
+export const BOOKING_AUDIT_LOG_URL = `${BOOKING_ADMIN_URL}/audit-log`;

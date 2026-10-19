@@ -479,6 +479,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; CREATE OR REPLACE
   VIEW catalog.v_… AS …; SET LOCAL ROLE cis_owner; REVOKE CREATE ON SCHEMA catalog FROM catalog_owner;`
   A catalog change that cannot wait for S22 is Nghiệp's call (plan XD9 alternatives).
+- **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
+  DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
+  `tripplanner`, `public`), default privileges `FOR ROLE aa_cis_admin` for later objects, read-only
+  `shared.schema_versions`, and a permissive `<table>_cis_app_all FOR ALL TO cis_app USING (true) WITH CHECK
+  (true)` policy on every RLS table, ENABLE-only **and** FORCE (the master reads FORCE tables unfiltered
+  today; most code sets no GUC). **Every new RLS table in those schemas needs that policy in the same
+  migration** (CI standing check `tests/integration/test_x1_cis_app_privileges.py`), and a guard asserting an
+  exact policy set on an RLS table must allow it. The conftest replay skips 244; the X1 tests apply and undo it.
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
@@ -646,6 +654,12 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+- **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
+  `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
+  `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
+  badge, Legacy badge for `legacy_unverified` rows, link to Booking's own audit log) and `/admin/platform/cost`
+  (AI & spend › **Cost per app**; month picker, "Refresh from AWS" = `POST /admin/cost-explorer/check` for the month,
+  ~$0.04). Notes: `docs/implementation-notes/AA-884-ui.md`.
 
 **Ops overview (AA-858).** `GET /admin/overview/ops` (`ops.read`, not a machine route; the CI smoke keeps
 `GET /admin/overview`) feeds the business view at the top of `/admin/overview`. Package `api/services/ops_overview/`,
