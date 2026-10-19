@@ -21,6 +21,9 @@ _CI_UNIT_ENV = {
     "LANGFUSE_HOST": "http://localhost:3000",
     # AA-902: the bronze bucket name comes from the environment (shared/aws_client/bronze.py).
     "BRONZE_BUCKET": "aa-cis-bronze-test",
+    # AA-902: satellite account IDs come from the task environment (shared/llm_client/bedrock_satellite.py).
+    "BEDROCK_ACCT_PRIMARY": "acc3-test-account",
+    "BEDROCK_ACCT_FALLBACK": "acc1-test-account",
 }
 for _k, _v in _CI_UNIT_ENV.items():
     os.environ.setdefault(_k, _v)

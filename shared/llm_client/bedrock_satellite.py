@@ -90,6 +90,7 @@ xuống fallback (2026-08-12):
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -101,11 +102,13 @@ from botocore.exceptions import ClientError
 logger = structlog.get_logger()
 
 # ---------------------------------------------------------------- config
-# AA-902 — the satellite account IDs are written ONCE here (this repo is public; the other modules
-# build ARNs from these names, cost_explorer.py and bedrock_batch.py import them). They still are
-# literals until the task definition carries them; see docs/implementation-notes/AA-902.md.
-ACC1_ACCOUNT_ID = "867490540162"
-ACC3_ACCOUNT_ID = "786888028788"
+# AA-902 — the satellite account IDs come from the task environment (AA-CIS-Infra sets them on the api and
+# worker task definitions; this repo is public and carries no account ID). Same names as TripPlanner:
+# BEDROCK_ACCT_PRIMARY = acc3, BEDROCK_ACCT_FALLBACK = acc1. Every other module builds its ARNs from these
+# two names (cost_explorer.py, bedrock_batch.py import them). Unset → "" and the satellite path fails
+# loudly at call time (AccessDenied on a malformed ARN) instead of silently using a stale account.
+ACC1_ACCOUNT_ID = os.environ.get("BEDROCK_ACCT_FALLBACK", "")
+ACC3_ACCOUNT_ID = os.environ.get("BEDROCK_ACCT_PRIMARY", "")
 
 ACC1_ROLE_ARN = f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/AA-Bedrock-Invoker"
 ACC1_EXTERNAL_ID = "aa296-satellite-bedrock"
