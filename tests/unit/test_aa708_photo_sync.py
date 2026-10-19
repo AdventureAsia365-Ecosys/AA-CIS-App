@@ -88,8 +88,11 @@ class _Conn:
     def __init__(self, existing=()):
         self.existing, self.writes = list(existing), []
 
+    def transaction(self):          # itinerary_places pins app.tenant_id in its own transaction (AA-860)
+        return _Tx()
+
     async def fetch(self, sql, *a):
-        if "tripplanner" in sql:
+        if "geo.tour_place" in sql:     # AA-860: itinerary from the CIS place pipeline (was tripplanner.*)
             return [{"tour_id": "11111111-1111-1111-1111-111111111111",
                      "id": "22222222-2222-2222-2222-222222222222", "name": "Tango Monastery"}]
         if "raw_tours" in sql:
@@ -101,7 +104,17 @@ class _Conn:
         return []
 
     async def execute(self, sql, *a):
+        if "set_config('app.tenant_id'" in sql:      # the itinerary read's tenant pin, not a write
+            return
         self.writes.append(a)
+
+
+class _Tx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 class _S3:
