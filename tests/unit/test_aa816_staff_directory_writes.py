@@ -715,7 +715,8 @@ def test_legacy_session_is_refused_before_the_db(api, db):
     resp = client.post("/admin/platform/staff", headers=_h(None, role="admin"),
                        json={"email": NEW_EMAIL, "display_name": "N", "role": "content"})
     assert resp.status_code == 403 and "Cognito" in resp.json()["detail"]
-    assert len(db.sql) == before and len(db.rows) == 1
+    # AA-884: the staff audit middleware logs the refused request itself; nothing else reaches the DB.
+    assert [s for s in db.sql[before:] if "acp_shared.audit_log" not in s] == [] and len(db.rows) == 1
 
 
 def test_non_owner_cognito_admin_is_refused(api, db, issuer):

@@ -27,6 +27,7 @@ import structlog
 
 from shared.cost_guard import BudgetExceeded
 from shared.llm_client import call_log
+from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import queue
 from .registry import JobContext, NonRetryable, kinds, run_terminal_hook
@@ -109,7 +110,7 @@ class Worker:
     async def run(self) -> None:
         logger.info("job_worker_started", worker_id=self.worker_id, kinds=sorted(self.caps()))
         await self._liveness(queue.worker_register, self.pool, self.worker_id, socket.gethostname(),
-                             self.max_parallel, self.caps(), self.task_revision)
+                             self.max_parallel, self.caps(), self.task_revision, release())
         last_reap = last_beat = 0.0
         loop = asyncio.get_running_loop()
         while not self._stopping.is_set():
@@ -322,6 +323,16 @@ def in_api_enabled() -> bool:
 def load_kinds() -> None:
     """Importing the package registers every job kind."""
     import services.jobs  # noqa: F401
+
+
+async def deploy_gate_status(pool) -> dict:
+    """AA-725 / AA-832 — the jobs a deploy would interrupt: queued + running rows, not counting kinds registered with
+    `deploy_gate_exempt` (listed in `exempt_kinds`). Shared by GET /admin/job-runner/deploy-gate (the CI pre-deploy
+    guard) and the Platform Apps page (AA-884), so both answer the same question the same way."""
+    load_kinds()  # the exemption is a registry flag: make sure every kind is registered here
+    exempt = sorted(k.name for k in kinds().values() if k.deploy_gate_exempt)
+    counts = await queue.active_count(pool, exempt_kinds=exempt)
+    return {**counts, "safe_to_deploy": counts["active"] == 0, "exempt_kinds": exempt}
 
 
 async def _main() -> None:
