@@ -36,7 +36,7 @@ Urgent security fix, independent of AA-432's architecture decision. 22/08/2026.
      migration 008, already stale — stops at 008 while the real repo is past 100). Fixed with
      the identical placeholder swap for consistency, even though it's dead weight either way.
   2. `frontend/app/(tenant)/portal/page.tsx.bak` — a committed backup of the pre-AA-430
-     `page.tsx`, hardcoding `"wl_live_sk_test_wanderlux_2026"` as a fallback default in an
+     `page.tsx`, hardcoding `"<old seed key, already rejected>"` as a fallback default in an
      `ApiKeyTab` component. Confirmed unreferenced anywhere (`.bak` extension, no imports found,
      not part of the Next.js build) — genuinely dead code, not just dead-with-respect-to-this-
      bug. Deleted outright rather than editing, since it serves no purpose.
@@ -105,10 +105,10 @@ scope, not security-critical for this task).
 
 **Baseline (before rotation)** — confirms the old key's actual state going in:
 ```
-POST /auth/tenant-login {"api_key":"wl_live_sk_test_wanderlux_2026"}
+POST /auth/tenant-login {"api_key":"<old seed key, already rejected>"}
 → 401 {"detail":"Invalid API key"}
 
-X-API-Key: wl_live_sk_test_wanderlux_2026  →  GET /v1/tours/pool
+X-API-Key: <old seed key, already rejected>  →  GET /v1/tours/pool
 → 403 x-amzn-errortype: AccessDeniedException
   {"Message":"User is not authorized to access this resource with an explicit deny in an
   identity-based policy"}
@@ -125,7 +125,7 @@ X-Admin-Secret: <from Secrets Manager aa-cis/dev/admin-secret>
 
 **Post-rotation — old key, re-tested (still/again rejected, as expected):**
 ```
-POST /auth/tenant-login {"api_key":"wl_live_sk_test_wanderlux_2026"}
+POST /auth/tenant-login {"api_key":"<old seed key, already rejected>"}
 → 401 {"detail":"Invalid API key"}
 ```
 
@@ -145,7 +145,7 @@ X-API-Key: <new key>  →  GET /v1/tours/pool
   itself denying.)
 ```
 
-**Grep sweep** (after all fixes): `grep -rn "wl_live_sk_test_wanderlux_2026\|
+**Grep sweep** (after all fixes): `grep -rn "<old seed key, already rejected>\|
 ea_live_sk_test_exploreasia_2026" ~/projects/aa-cis/` → zero hits across both repos.
 
 **Live tenant state, confirmed structurally (no hash values logged)**, before and after:

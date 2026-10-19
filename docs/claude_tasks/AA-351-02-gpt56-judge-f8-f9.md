@@ -34,7 +34,7 @@ Files cần đọc trước:
 - Node judge F8/F9 trong graph N7 (`services/acp_produce/`).
 
 Context — QUYẾT ĐỊNH ĐÃ CHỐT (không cần hỏi lại):
-- Account dùng để accept EULA: **acc3** (`786888028788`, profile `nghiep_aa365`) — satellite
+- Account dùng để accept EULA: **acc3** (`[acc3 id]`, profile `nghiep_aa365`) — satellite
   chính hiện tại, có fund $250 riêng, không đụng production acc2. ĐÂY LÀ HÀNH ĐỘNG KHÓ ĐẢO
   NGƯỢC (accept model agreement) — làm đúng 1 lần trên acc3, xác nhận qua
   `aws bedrock list-foundation-model-agreement-offers` trước và sau để chắc chắn chỉ tác

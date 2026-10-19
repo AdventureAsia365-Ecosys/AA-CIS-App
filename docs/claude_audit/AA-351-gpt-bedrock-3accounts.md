@@ -7,9 +7,9 @@ Phương pháp: `list-foundation-models` + `bedrock-runtime converse` (invoke th
 
 | Account | Profile | Account ID | Region | Kết quả `sts get-caller-identity` |
 |---|---|---|---|---|
-| acc2 | `aa365-admin` | 005097885195 | us-west-1 | ✅ OK, không cần MFA tương tác |
-| acc3 | `nghiep_aa365` | 786888028788 | us-west-1 | ✅ OK, không cần MFA tương tác |
-| acc1 | `pqnghiep-admin` | 867490540162 | us-west-1 | ✅ OK, không cần MFA tương tác |
+| acc2 | `aa365-admin` | [acc2 id] | us-west-1 | ✅ OK, không cần MFA tương tác |
+| acc3 | `nghiep_aa365` | [acc3 id] | us-west-1 | ✅ OK, không cần MFA tương tác |
+| acc1 | `pqnghiep-admin` | [acc1 id] | us-west-1 | ✅ OK, không cần MFA tương tác |
 
 Cả 3 profile dùng được ngay, không có profile nào bị chặn/cần hỗ trợ từ Nghiệp.
 

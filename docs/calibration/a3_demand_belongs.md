@@ -41,4 +41,4 @@ Known accept-side misses (irrelevant to a reject-only gate): #130 Dochu La ↔ "
 
 reject_ceiling 0.40 → **0.70**. Sample (200, 30/09): precision 100% → 98%, negatives caught 64% → 85%. Live act rate (30 days, latest per subject): 63.2% → 77.9%.
 
-Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.
+Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-{acc2-id}/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.

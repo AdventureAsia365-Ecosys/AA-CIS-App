@@ -6,7 +6,7 @@ Status: **investigate-only, no product code changed.** Only files touched: this 
 Investigated: 22/08/2026. All findings below are from source reads on `main` (working tree had
 pre-existing unrelated uncommitted changes — see "Repo state" note at the bottom — none of them
 touched by this session) plus live queries/calls against the real dev DB and the real running ECS
-task, account `005097885195`, region `us-west-1`, profile `aa365-admin`.
+task, account `[acc2 id]`, region `us-west-1`, profile `aa365-admin`.
 
 ---
 

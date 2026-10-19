@@ -1,3 +1,5 @@
+> **Archived (AA-889, 19/10/2026) — not current truth.** Session hand-off of 23/05/2026, moved from the repo root. Session state now lives in the AA-Ecosys session logs (`docs/sessions/`), the Notion memory and Linear; the current system is described in [`../../CONTEXT.md`](../../CONTEXT.md).
+
 # HANDOFF.md — AA-CIS-App
 Last updated: 23/05/2026 | Session 31
 
@@ -30,7 +32,7 @@ Last updated: 23/05/2026 | Session 31
 - Commit: `5b6face` on feature/aa-103-e2e-ui
 
 ### ALB_INTERNAL_URL status
-- Lambda `aa-cis-dev-acp-s4-trigger`: ALB_INTERNAL_URL = `http://aa-cis-dev-alb-1114303360.us-west-1.elb.amazonaws.com` ✅ FIXED
+- Lambda `aa-cis-dev-acp-s4-trigger`: ALB_INTERNAL_URL = `http://aa-cis-dev-alb-<id>.us-west-1.elb.amazonaws.com` ✅ FIXED
 - Code correctly reads from env var — no placeholder in source code
 
 ## CIS Pages — Production URLs

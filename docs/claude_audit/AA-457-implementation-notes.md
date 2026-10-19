@@ -117,7 +117,7 @@ tenant, deployed and confirmed live.** Root cause, confirmed via CloudWatch
 (`/ecs/aa-cis-dev`):
 
 ```
-AccessDeniedException: User: arn:aws:sts::005097885195:assumed-role/aa-cis-dev-ecs-task-role/...
+AccessDeniedException: User: (assumed-role session of aa-cis-dev-ecs-task-role)
 is not authorized to perform: secretsmanager:CreateSecret on resource: acp/cms/{tenant_id}
 ```
 
@@ -133,8 +133,7 @@ a `ResourceExistsException` — was exercised for real once the secret existed, 
 **Fix needed (out of scope for this PR — this repo, `AA-CIS-App`, doesn't own IAM policy;
 that's Terraform in `AA-CIS-Infra`)**: add `secretsmanager:CreateSecret`,
 `secretsmanager:PutSecretValue`, and likely `secretsmanager:TagResource` to
-`aa-cis-dev-ecs-task-policy`, ideally scoped to `arn:aws:secretsmanager:us-west-1:005097885195:
-secret:acp/cms/*` (tighter than the existing `Resource: "*"` on the read permission — a fresh
+`aa-cis-dev-ecs-task-policy`, ideally scoped to the secrets named `acp/cms/*` (tighter than the existing `Resource: "*"` on the read permission — a fresh
 addition is a reasonable place to start least-privilege rather than copying the looser existing
 pattern). **This must be applied and re-verified before AA-458 (T11 PR2) can do anything useful**
 — PR2's whole premise is publishing against a tenant's saved credentials, and no tenant can save

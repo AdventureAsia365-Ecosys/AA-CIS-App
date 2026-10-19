@@ -85,7 +85,7 @@ optionally do the judging.
 ## AWS actions taken (irreversible, real-money implications — logged for audit)
 
 - **`aws bedrock create-foundation-model-agreement --model-id openai.gpt-5.6-sol` on acc3
-  (`786888028788`, profile `nghiep_aa365`) ONLY**, 16/08/2026. Verified scope via
+  (`[acc3 id]`, profile `nghiep_aa365`) ONLY**, 16/08/2026. Verified scope via
   `list-foundation-model-agreement-offers --model-id openai.gpt-5.6-sol` on all 3 accounts
   immediately after: acc1/acc2 unaffected (offer still listed as un-accepted; no agreement created
   there). Terra/Luna were never accepted on any account.
@@ -151,7 +151,7 @@ indefinitely.
 **Comparison against GPT-5.6 is not done and this report does NOT contain GPT-5.6 numbers.**
 Filling those in requires either (a) more elapsed time and a retry, or (b) contacting AWS Sales
 per the error message, then re-running `aa351_compare.py` (already uploaded to
-`s3://aa-cis-bronze-005097885195/scripts/aa351_compare.py`, already proven correct end-to-end
+`s3://aa-cis-bronze-{acc2-id}/scripts/aa351_compare.py`, already proven correct end-to-end
 against Nova Pro) without `DRY_RUN=1`. See "Next steps" below.
 
 ### Recheck 16/08/2026 ~23:30 UTC+7 (task AA-351-04) — subscription confirmed ACTIVE in console, invoke STILL denied
@@ -174,12 +174,12 @@ state AWS shows the human is different from what the runtime API enforces. Retri
   querying again as evidence.
 - `service-quotas list-service-quotas --service-code bedrock` on acc3: still 0 GPT/OpenAI quota
   entries.
-- Identity re-verified: `sts get-caller-identity` → account `786888028788` (acc3), user
+- Identity re-verified: `sts get-caller-identity` → account `[acc3 id]` (acc3), user
   `nghiep_aa365_admin_acc3` — same account the subscription confirmation applies to, no mix-up.
 
 **Evidence for an AWS Support ticket, if Nghiep wants to file one:**
 - Agreement ID: `agmt-c7xh4ar8elze4dp2pbq9z4hpj`
-- Account: `786888028788` (acc3)
+- Account: `[acc3 id]` (acc3)
 - Model: `openai.gpt-5.6-sol` (tried both `us.` and `global.` inference-profile prefixes)
 - Request ID (most recent failed Converse call): `55efe945-3b44-408f-b234-79470e4fae15`
 - Timestamp: 2026-08-16 16:30:27 UTC (2026-08-16 23:30:27 UTC+7)

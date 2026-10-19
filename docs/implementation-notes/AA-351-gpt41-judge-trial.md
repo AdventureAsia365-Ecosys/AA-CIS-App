@@ -151,7 +151,7 @@ question.
    pattern for.
 3. `docs/claude_tasks/AA-351-03-gpt41-judge-f8-f9.md` (new) — task prompt, committed
    first per the Implementation Notes Pattern.
-4. `s3://aa-cis-bronze-005097885195/scripts/aa351_compare.py` — extended with
+4. `s3://aa-cis-bronze-{acc2-id}/scripts/aa351_compare.py` — extended with
    `COMPARE_MODELS` (see Decisions above). Not part of this repo's git history (same as
    AA-351-02's original upload) — a throwaway ops harness, not a deployed app module.
 

@@ -120,7 +120,7 @@ history/reasoning, not because it's still true.
   ```
   cd accounts/aa365
   export TF_VAR_db_password=$(aws secretsmanager get-secret-value --secret-id aa-cis/dev/rds --profile aa365-admin --region us-west-1 --query SecretString --output text | python3 -c "import sys,urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).password)")
-  terraform init -backend-config="bucket=aa-cis-tfstate-005097885195" -backend-config="key=dev/terraform.tfstate" -backend-config="region=us-west-1"
+  terraform init -backend-config="bucket=aa-cis-tfstate-{acc2-id}" -backend-config="key=dev/terraform.tfstate" -backend-config="region=us-west-1"
   terraform plan
   ```
   Review the plan — it should show exactly ONE change (`aws_api_gateway_method.v1_any` in-place
@@ -132,11 +132,11 @@ history/reasoning, not because it's still true.
   applying, don't assume it's expected.
 - **A second, separate Terraform config-drift bug was found (not fixed) while locating the real
   root module:** the repo ROOT `versions.tf`/`main.tf` (not `accounts/aa365/`) still points its S3
-  backend at `aa-cis-tfstate-867490540162` — **a bucket that no longer exists** (confirmed:
+  backend at `aa-cis-tfstate-{acc1-id}` — **a bucket that no longer exists** (confirmed:
   `aws s3 ls` 404s under both `aa365-admin` and `pqnghiep-admin` profiles). This root config is
   almost certainly the pre-"AA-246 Track B" single-account setup, now orphaned dead code — the
   real, live config is `accounts/aa365/` (own `versions.tf`, correctly points at
-  `aa-cis-tfstate-005097885195`, created 2026-07-07, same day as the real API Gateway). CI is
+  `aa-cis-tfstate-{acc2-id}`, created 2026-07-07, same day as the real API Gateway). CI is
   unaffected (`terraform-plan.yml`/`terraform-apply.yml` override the bucket via
   `-backend-config` from a GitHub secret, never read the root `versions.tf`'s hardcoded value) —
   this only bites a human running `terraform init` from the repo root without realizing

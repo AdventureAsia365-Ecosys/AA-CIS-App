@@ -41,8 +41,8 @@ explicitly runs it.
 `raw-inbox/*.xlsx` in the Bronze bucket — the exact same bucket+prefix the Upload (S0) page's
 presigned PUT writes to (confirmed live:
 `aws lambda get-function --function-name aa-cis-dev-ingestion` → env
-`BRONZE_BUCKET=aa-cis-bronze-005097885195`, matching the ECS task def's `BRONZE_BUCKET` env
-var, also `aa-cis-bronze-005097885195`). This means **every Upload (S0) file upload likely
+`BRONZE_BUCKET=aa-cis-bronze-{acc2-id}`, matching the ECS task def's `BRONZE_BUCKET` env
+var, also `aa-cis-bronze-{acc2-id}`). This means **every Upload (S0) file upload likely
 double-fires ingestion**: once via the real S3-triggered Lambda, and once when the admin
 clicks "Commit" and the FastAPI backend calls `services.ingestion.handler.process_file()`
 **in-process, directly, not by invoking the Lambda** (`api/routers/admin_pipeline.py:1204-1206`

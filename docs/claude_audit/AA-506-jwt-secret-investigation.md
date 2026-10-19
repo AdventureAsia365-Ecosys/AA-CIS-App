@@ -62,16 +62,14 @@ ADMIN_SECRET's own fallback in this task — out of scope, flagged as a separate
   — Terraform in this account does not own `aws_secretsmanager_secret` for these three (openai/
   admin/anthropic); it only receives their ARNs as tfvars and wires them into the ECS task
   definition's `secrets` block. Same precedent as the OpenAI key rotation (S153).
-- `accounts/aa365/terraform.tfvars:38`: `secret_admin_arn = "arn:aws:secretsmanager:us-west-1:
-  005097885195:secret:aa-cis/dev/admin-secret-gudNmP"` — naming convention `aa-cis/dev/<name>`.
+- `accounts/aa365/terraform.tfvars:38`: `secret_admin_arn` = the ARN of secret `aa-cis/dev/admin-secret` — naming convention `aa-cis/dev/<name>`.
 - `accounts/aa365/main.tf:146`: passed straight through into the `ecs` module call as
   `secret_admin_arn = var.secret_admin_arn`.
 - `modules/ecs/main.tf:210`: `{ name = "ADMIN_SECRET", valueFrom = var.secret_admin_arn }` inside
   the container definition's `secrets` list — a real Secrets Manager reference, injected by ECS at
   container start, never plaintext in the task definition or Terraform state.
 - Execution role already covers any `aa-cis/dev/*` secret: `accounts/aa365/main.tf:156` sets
-  `execution_role_secrets_arn_pattern = "arn:aws:secretsmanager:${region}:${account_id}:secret:
-  aa-cis/dev/*"` → `modules/ecs/main.tf`'s `aws_iam_role_policy.ecs_execution_secrets` grants
+  `execution_role_secrets_arn_pattern` = every Secrets Manager secret named `aa-cis/dev/*` in the account → `modules/ecs/main.tf`'s `aws_iam_role_policy.ecs_execution_secrets` grants
   `secretsmanager:GetSecretValue` on that whole prefix. **A new secret named
   `aa-cis/dev/jwt-secret` needs no new IAM policy** — it's already covered.
 
@@ -87,12 +85,12 @@ like `secret_admin_arn`, add the tfvars line, add the `secrets` list entry
 
 ```json
 [
-  {"name": "DATABASE_URL",       "valueFrom": ".../secret:aa-cis/dev/rds-7K4JX3"},
-  {"name": "OPENAI_API_KEY",     "valueFrom": ".../secret:aa-cis/dev/openai-key-Wcxuae"},
-  {"name": "ADMIN_SECRET",       "valueFrom": ".../secret:aa-cis/dev/admin-secret-gudNmP"},
-  {"name": "ANTHROPIC_API_KEY",  "valueFrom": ".../secret:aa-cis/dev/anthropic-key-jML2d7"},
-  {"name": "DATAFORSEO_LOGIN",   "valueFrom": ".../secret:aa-cis/dev/dataforseo-tGjzh7:login::"},
-  {"name": "DATAFORSEO_PASSWORD","valueFrom": ".../secret:aa-cis/dev/dataforseo-tGjzh7:password::"}
+  {"name": "DATABASE_URL",       "valueFrom": ".../secret:aa-cis/dev/rds-XXXXXX"},
+  {"name": "OPENAI_API_KEY",     "valueFrom": ".../secret:aa-cis/dev/openai-key-XXXXXX"},
+  {"name": "ADMIN_SECRET",       "valueFrom": ".../secret:aa-cis/dev/admin-secret-XXXXXX"},
+  {"name": "ANTHROPIC_API_KEY",  "valueFrom": ".../secret:aa-cis/dev/anthropic-key-XXXXXX"},
+  {"name": "DATAFORSEO_LOGIN",   "valueFrom": ".../secret:aa-cis/dev/dataforseo-XXXXXX:login::"},
+  {"name": "DATAFORSEO_PASSWORD","valueFrom": ".../secret:aa-cis/dev/dataforseo-XXXXXX:password::"}
 ]
 ```
 

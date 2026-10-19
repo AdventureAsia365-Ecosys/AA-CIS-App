@@ -42,5 +42,17 @@ scripts/
 .env*.local
 SESSION_START_*.md
 *_Implementation_v1.md
-docs/
+# AA-889: docs/ is tracked for Markdown (no more `git add -f`). This repo is PUBLIC: binaries, data
+# exports, screenshots and local experiment trees stay local, and no page may hold account IDs, ARNs,
+# resource IDs, secrets or real data (data standards DM-6.10). Security and infrastructure reports go
+# to the private AA-Ecosys root repo, not here. Calibration samples are the one tracked data type.
+/docs/**
+!/docs/**/
+!/docs/**/*.md
+!/docs/calibration/data/*.json
+/docs/AI-gent-for automation works/
+/docs/aa-soscial-media-*/
+/docs/AA339_compare_llm/
+/docs/AA353_compare/
+/docs/AI_content_AWS_Arc_test_playground.md
 *:Zone.Identifier
