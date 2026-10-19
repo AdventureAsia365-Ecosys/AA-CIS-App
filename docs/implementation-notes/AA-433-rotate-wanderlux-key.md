@@ -146,7 +146,7 @@ X-API-Key: <new key>  →  GET /v1/tours/pool
 ```
 
 **Grep sweep** (after all fixes): `grep -rn "<old seed key, already rejected>\|
-ea_live_sk_test_exploreasia_2026" ~/projects/aa-cis/` → zero hits across both repos.
+<second old seed key, already rejected>" ~/projects/aa-cis/` → zero hits across both repos.
 
 **Live tenant state, confirmed structurally (no hash values logged)**, before and after:
 

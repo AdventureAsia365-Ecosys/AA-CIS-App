@@ -50,6 +50,13 @@ SESSION_START_*.md
 !/docs/**/
 !/docs/**/*.md
 !/docs/calibration/data/*.json
+# K-16 / DM-6.10: security investigations kept in the private root repo (docs/archive/cis-investigations/).
+# Local copies may still exist in older checkouts; never let `git add docs/` publish them.
+/docs/claude_audit/AA-432-per-tenant-api-key-feasibility.md
+/docs/investigation/AA-543-platform-wide-design-investigation.md
+/docs/investigation/AA-544-seo-context-rls-gap-investigation.md
+/docs/investigation/aa-social-media-audit.md
+/docs/investigations/llm-otel-tracing.md
 /docs/AI-gent-for automation works/
 /docs/aa-soscial-media-*/
 /docs/AA339_compare_llm/

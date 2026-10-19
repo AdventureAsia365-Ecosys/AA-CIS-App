@@ -10,7 +10,8 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
   `AdventureAsia365-Ecosys`. Sibling repos: AA-TripPlanner-Web, AA-CIS-Infra, root AA-Ecosys.
 - Live: API `https://api-cis.lumiguides.it.com` (API GW `4ylo382khg` → ALB → ECS
   `aa-cis-dev-cluster`: services `aa-cis-dev-api` + `aa-cis-dev-worker`), admin/portal
-  `https://aa-cis.lumiguides.it.com` (Vercel). AWS acc2 `005097885195`, us-west-1.
+  `https://aa-cis.lumiguides.it.com` (Vercel). AWS acc2 (profile `aa365-admin`), us-west-1; account IDs
+  live only in the private root onboarding doc.
 - Current revisions / migration number: do not trust a number written here — check
   `aws ecs describe-services`, `shared.schema_versions`, or the latest session block in memory.
 - ECS logs: `/ecs/aa-cis-dev` (api stream prefix `api/`). `/ecs/aa-cis-dev-api` is always empty.
