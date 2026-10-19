@@ -229,11 +229,12 @@ def test_real_app_invalid_bearer_401_even_with_the_secret(real, directory, issue
     assert directory.sql == []
 
 
-def test_real_app_cognito_bearer_still_needs_the_secret(real, directory, issuer):
+def test_real_app_cognito_bearer_needs_no_secret_since_c9(real, directory, issuer):
+    """AA-816 C9 (was "still needs the secret" until C9): a verified Cognito principal is enough."""
     directory.add(iss=ISS, sub=SUB)
     res = real.get("/admin/platform/staff", headers={"Authorization": f"Bearer {issuer.token()}"})
-    assert res.status_code == 403
-    assert res.json()["detail"] == "Invalid admin secret"
+    assert res.status_code == 200, res.text
+    assert res.json()["total"] == 1
 
 
 def test_real_app_secret_only_and_legacy_bearer_unchanged(real, directory, issuer):

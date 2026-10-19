@@ -28,6 +28,9 @@ Principal (GĐ1, until the staff JWT of GĐ4)
   Cognito (ADR 0006): whoever holds the secret can still claim any role until then.
 - secret, no x-admin-role -> machine principal: allowed only on MACHINE_ROUTES.
 - a role header that is not a staff role (empty, "tenant", typo) -> 403, never a machine.
+- AA-816 C9 (api/core/staff_credential.py): a verified Cognito Bearer needs no secret (role from its groups);
+  the Preview credential is always the viewer (x-admin-role rewritten by the staff bearer middleware), never
+  the machine. The main secret keeps every rule above.
 
 Coverage (GĐ3)
 --------------
@@ -485,7 +488,9 @@ def staff_policy_if_staff(
     x_admin_secret: Optional[str] = Header(None),
     x_admin_role: Optional[str] = Header(None),
 ) -> Optional[StaffPrincipal]:
-    """POLICY for a request that carries the valid admin secret; a no-op for any other request.
+    """POLICY for a request that carries a staff credential (the main admin secret, or a principal the staff
+    bearer middleware verified: Cognito Bearer or the Preview credential, AA-816 C9); a no-op for any other
+    request.
 
     For routers whose own guard decides who else gets in and how it refuses: admin_pipeline (the
     brand-identity routes also take a tenant JWT, AA-424), admin_atoms (logs a refused tenant Bearer,
@@ -493,19 +498,32 @@ def staff_policy_if_staff(
     from the environment per call). A missing or wrong secret is left to that guard, so its status,
     detail and logging stay exactly as they were. This is NOT an auth check by itself: every route of
     such a router keeps its own (the S241 route-auth test proves it), and every staff call — the only
-    kind that carries the valid secret — goes through POLICY.
+    kind that carries a staff credential — goes through POLICY.
     """
-    if not _is_valid_secret(x_admin_secret):
+    if not has_staff_credential(x_admin_secret):
         return None
     return _enforce(request, x_admin_role)
 
 
-def _is_valid_secret(x_admin_secret: Optional[str]) -> bool:
-    """The admin secret as admin.verify_admin_secret knows it (read at import) or as the /v1 guards
+def main_secrets() -> list[str]:
+    """The main admin secret as admin.verify_admin_secret knows it (read at import) and as the /v1 guards
     read it (os.environ per call). Both are the ECS ADMIN_SECRET; tests set one or the other."""
-    if not x_admin_secret:
-        return False
     from api.routers import admin
 
-    known = [s for s in (admin.ADMIN_SECRET, os.environ.get("ADMIN_SECRET", "")) if s]
-    return any(secrets_equal(x_admin_secret, s) for s in known)
+    return [s for s in (admin.ADMIN_SECRET, os.environ.get("ADMIN_SECRET", "")) if s]
+
+
+def _is_valid_secret(x_admin_secret: Optional[str]) -> bool:
+    """True when the header is the MAIN admin secret (constant time). Not the Preview credential."""
+    if not x_admin_secret:
+        return False
+    return any(secrets_equal(x_admin_secret, s) for s in main_secrets())
+
+
+def has_staff_credential(x_admin_secret: Optional[str]) -> bool:
+    """AA-816 C9: the request is a staff (or machine) call — the staff bearer middleware verified its principal
+    (a Cognito Bearer, or the Preview credential capped at viewer: api/core/staff_credential.py), or it carries
+    the main admin secret."""
+    from api.core.staff_credential import principal_verified
+
+    return principal_verified() or _is_valid_secret(x_admin_secret)

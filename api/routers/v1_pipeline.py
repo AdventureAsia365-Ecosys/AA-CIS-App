@@ -5,14 +5,15 @@ Chạy trực tiếp trong ECS, không cần Lambda/Step Functions.
 """
 import os
 import json
-import hmac
 import uuid
 import asyncio
 import tempfile
 import structlog
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from api.core.secret_compare import secrets_equal
 from api.core.staff_authz import staff_policy_if_staff
+from api.core.staff_credential import principal_verified
 from fastapi.responses import JSONResponse
 from typing import Optional
 
@@ -44,12 +45,16 @@ def _require_admin(
     request: Request,
     credentials: Optional[_Creds] = Depends(_HTTPBearer(auto_error=False)),
 ) -> dict:
+    # AA-816 C9: a principal the staff bearer middleware verified (Cognito Bearer, or the Preview credential
+    # capped at viewer) needs no secret; staff_policy_if_staff then applies POLICY to its role.
+    if principal_verified():
+        return dict(_MASTER_PRINCIPAL)
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin = request.headers.get("x-admin-secret")
     if x_admin:
         if not admin_secret:
             raise HTTPException(status_code=503, detail="Admin secret not configured")
-        if hmac.compare_digest(x_admin.encode(), admin_secret.encode()):
+        if secrets_equal(x_admin, admin_secret):
             return dict(_MASTER_PRINCIPAL)
         raise HTTPException(status_code=403, detail="Invalid admin secret")
     if credentials:

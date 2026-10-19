@@ -33,7 +33,7 @@
 // around, since it needs a product decision (does content need write
 // access through this proxy, or was the old pass-through itself the bug).
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
+import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, isApiDocsPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -41,16 +41,10 @@ import { streamUpstream } from "@/lib/proxyResponse";
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
 
-// AA-816 (C5): the backend paths where the API's staff_bearer middleware reads a staff Bearer
-// (api/core/staff_authz.py STAFF_PATH_PREFIXES). This proxy reaches ANY backend path, and several
-// tenant routes read `Authorization` as a TENANT token first (e.g. v1_tours get_tenant), so a staff
-// Bearer is forwarded only under these prefixes; elsewhere the staff branch stays secret-only.
-const STAFF_BEARER_PREFIXES = ["admin", "v1/pipeline", "v1/rules", "v1/social"];
-
-function isStaffBearerPath(pathStr: string): boolean {
-  return STAFF_BEARER_PREFIXES.some((p) => pathStr === p || pathStr.startsWith(p + "/"));
-}
-
+// AA-816 (C5/C9): this proxy reaches ANY backend path, and several tenant routes read `Authorization` as
+// a TENANT token first (e.g. v1_tours get_tenant), so a Cognito session's Bearer is forwarded only under
+// the staff API prefixes (lib/auth-server.ts isStaffApiPath), and there WITHOUT X-Admin-Secret; elsewhere,
+// and for a legacy session, the staff branch stays secret-only.
 async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -58,13 +52,8 @@ async function handler(
   // AA-885: staff only. requireAdmin() answers 401 without a verified staff token.
   const auth = await requireAdmin(req, API_RULES.tenantProxy);
   if (!auth.ok) return auth.response;
-  const staffBearer = staffBearerHeader(auth);
 
-  if (!ADMIN_SECRET) {
-    return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
-  }
   const headers: Record<string, string> = {
-    "x-admin-secret": ADMIN_SECRET,
     "x-admin-user-id": auth.adminId,
   };
   // AA-882 — the verified JWT role, as /api/admin/[...path] sends it. Without it the backend
@@ -85,9 +74,11 @@ async function handler(
   if (auth.role !== "admin" && isApiDocsPath(pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
   }
-  if (isStaffBearerPath(pathStr)) {
-    Object.assign(headers, staffBearer);
-  }
+  // AA-816 (C9) — decided on the path the backend will route (proxyPath above): Cognito Bearer only on a
+  // staff API path, else X-Admin-Secret (503 when a secret is needed and none is configured).
+  const credential = staffCredentialHeaders(auth, ADMIN_SECRET, upstreamPath);
+  if (!credential) return secretNotConfigured();
+  Object.assign(headers, credential);
   const search = req.nextUrl.search;
   const url = `${API_URL}/${upstreamPath}${search}`;
 

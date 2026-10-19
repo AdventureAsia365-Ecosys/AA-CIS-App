@@ -355,8 +355,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   months and raw rows for the rest.
   No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
-- **Pipeline routes are admin-only (AA-799)**: every `/v1/pipeline/*` route requires the admin secret
-  (`_require_admin`, a router-wide dependency in `api/routers/v1_pipeline.py`); a tenant JWT gets 403,
+- **Pipeline routes are admin-only (AA-799)**: every `/v1/pipeline/*` route requires the admin secret or (AA-816
+  C9) a verified staff principal (`_require_admin`, a router-wide dependency in `api/routers/v1_pipeline.py`); a
+  tenant JWT gets 403,
   no auth 401. The edge (API Gateway / ALB) does not route `/v1/pipeline` today. `/run` has no caller
   (deletion candidate).
 - **Live writing progress (AA-637, `docs/adr/0004-*.md`)**:
@@ -614,7 +615,21 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   (client copies dropped), sets the `current_staff` contextvar and strips `Authorization`; an invalid
   WORKFORCE Bearer → 401; no Bearer or a non-WORKFORCE token → unchanged. The BFF forwards the Bearer on
   `/api/admin/*`, `/api/pipeline/*`, `/api/tenant/pipeline/brand-identity` and the staff prefixes of
-  `/api/tenant/*`. `X-Admin-Secret` is still required on every staff call until the cutover.
+  `/api/tenant/*`.
+- **Principal-aware secret check (AA-816 C9, `api/core/staff_credential.py`).** On a staff path every admin-secret
+  guard (`admin.verify_admin_secret`, `admin_settings.verify_admin`, `v1_pipeline._require_admin`,
+  `core/staff_secret.py`, `staff_policy_if_staff`, the staff audit and the rate limiter's admin tracking) accepts a
+  request whose Cognito Bearer the middleware verified, **without** `X-Admin-Secret`; POLICY still applies to the
+  token's role. The BFF (`lib/auth-server.ts` `staffCredentialHeaders`) sends a Cognito session's Bearer **and no
+  secret** on the staff prefixes (`STAFF_API_PREFIXES`, kept equal to `STAFF_PATH_PREFIXES` by a test); a legacy
+  HS256 session, and any path outside them (`/api/tour-full` → `/v1/tours/{id}/full`), still sends the secret.
+  **Preview credential:** a second secret read from Secrets Manager by the code constant
+  `PREVIEW_SECRET_NAME` (no env var; only on the deployed API, `AWS_EXECUTION_ENV`; cached 5 min, a miss 1 min;
+  missing, unreadable or equal to the main secret = feature off, never an error). Sent as `X-Admin-Secret` on a
+  staff path, it makes the middleware replace `x-admin-role` with `viewer` (no role header → viewer, never the
+  machine), so it reads content and is refused on every write and admin-only read; audited as
+  `details.auth = preview`. The Vercel Preview BFF holds this value; the main `ADMIN_SECRET` stays with the
+  Production BFF (legacy sessions), the CI deploy gate/smoke and the ops-probe Lambda.
 
 **Legacy password login (until the cutover).** `/auth/admin-login` (HS256 JWT signed with `JWT_SECRET`) stays.
 `LEGACY_ADMIN_LOGIN_ENABLED` (default on; only `0` / `false` / `no` / `off` switch it off, same parsing in the
@@ -623,8 +638,9 @@ path of `/auth/verify-admin`. `/auth/admin-login` and `/auth/booking-token` stay
 Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For an HS256 session
 `/auth/verify-admin` re-reads `shared.admin_users` (cached 60 s), so a deactivation or demotion lands within
 ~6 min (BFF verify cache 5 min + 60 s). Cutover preconditions (ADR 0006): every active row has an email and a
-`cognito_sub` from that person's own sign-in, managed-login break-glass tested; then the secret check becomes
-principal-aware, `ADMIN_SECRET` is rotated and the flag goes off.
+`cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
+principal-aware since C9 (above); then `ADMIN_SECRET` is rotated (I6) and the flag goes off. New staff are created on
+the Staff page only (the legacy password-row script is retired, AA-816 D1).
 
 **Staff directory writes (AA-816).** `api/services/staff_directory.py`, routes in `api/routers/admin_platform.py`:
 create (`AdminCreateUser` with `MessageAction=SUPPRESS` + `email_verified=true`, `@adventure.asia` only, no
@@ -691,7 +707,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   a BEFORE INSERT trigger chains every new row (`chain_seq`, `prev_hash`, `row_hash` = sha256 of a canonical text,
   under `pg_advisory_xact_lock(884, 1)` — so a writer inside a transaction writes its audit row LAST; needs READ
   COMMITTED). `api/middleware/staff_audit.py` (inside `StaffBearerMiddleware`, outside the rate limiter) adds one
-  `staff.request` / `machine.request` row per non-GET call on a staff path that carries the admin secret: actor
+  `staff.request` / `machine.request` row per non-GET call on a staff path that carries a staff credential (the admin
+  secret, a verified Cognito Bearer, or the Preview credential, AA-816 C9): actor
   from the verified Cognito identity, else `x-admin-user-id` marked `details.auth = legacy_unverified`, method,
   route template, status (denied calls included); never the body or query values. `GET /admin/platform/audit`
   (`audit.read`, filters + keyset cursor, staff scope by default) and `GET /admin/platform/audit/verify`
@@ -758,8 +775,9 @@ fetched about once a day.
 | `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
 
 **Read-only `viewer` (AA-878).** The role behind the UI-smoke E2E account (`e2e-claude-code-viewer`, a legacy
-password row; password only in Secrets Manager `aa-cis/dev/e2e-test-viewer`; created with
-`scripts/create_staff_user.py --password-from-secret`). Capabilities `content.read` only. It is refused on
+password row; password only in Secrets Manager `aa-cis/dev/e2e-test-viewer`; created in S242 with the legacy
+row script, retired at AA-816 D1 — a password change for a legacy test row is now a reviewed DB Migrate
+`run-script`). Capabilities `content.read` only. It is refused on
 **every** non-GET twice: the BFF `requireAdmin()` answers 403 before attaching the secret (`lib/rbac.ts`
 `READ_ONLY_ROLES`), and the backend `denial_reason` refuses `READ_ONLY_ROLES` on any method but GET/HEAD/OPTIONS
 whatever the route's capability (the notification bell's PUTs need `content.read`, the viewer still cannot clear
@@ -782,11 +800,13 @@ capabilities: `content.read/write` and `review.act` for every staff role; `maste
 `ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read` for admin; `staff.write` is an owner flag,
 not a role permission) and `POLICY` keyed by `(method, route template)`. The router-level dependency
 `staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
-`staff_policy_if_staff` does the same only for a request carrying the valid secret, on the routers
+`staff_policy_if_staff` does the same only for a request carrying a staff credential (the valid secret, or since
+AA-816 C9 a verified Cognito Bearer or the Preview credential), on the routers
 whose own guard also admits a tenant JWT or answers 401 (`admin_pipeline`, `admin_atoms`,
 `/v1/pipeline`, `/v1/rules`, `/v1/social`). The role is the `x-admin-role` the BFF forwards
 from the verified token; for a Cognito Bearer the `staff_bearer` middleware overwrites it from the
-verified principal (header trust remains only for legacy and secret-only requests until the cutover). The secret **without** a role header is the *machine*
+verified principal (header trust remains only for legacy and secret-only requests until the cutover; the Preview
+credential is always `viewer`). The main secret **without** a role header is the *machine*
 principal (CI deploy preflight/smoke, the ops-probe Lambda), allowed only on `MACHINE_ROUTES`.
 Every staff proxy that carries the secret (`/api/admin/*`, `/api/pipeline/*`, `/api/tour-full/*`,
 `/api/tenant/pipeline/brand-identity` and the staff branch of `/api/tenant/*`) forwards `x-admin-role`

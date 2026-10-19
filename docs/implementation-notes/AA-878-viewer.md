@@ -31,6 +31,7 @@ Session S243 (19/10/2026), Claude Code builder lane. Branch `feat/aa878-viewer-r
   Save / Re-validate; Master Content hides Promote; Topbar hides "Mark all read".
 - **create_staff_user.py** gains `--password-from-secret <name>` (JSON `{username,password}`, the username must
   match the CLI argument, value never printed) and `--reset` (update an existing row; refused without it).
+  (The script was retired at AA-816 D1, S244; see `AA-816-c9.md`.)
 - **Smoke viewer mode** is decided at run time from the role the server answered at login (`auth.setup.ts` writes
   `tests/e2e/.auth/admin-role.json`; deleted with the auth dir by the workflow). No new env var.
 

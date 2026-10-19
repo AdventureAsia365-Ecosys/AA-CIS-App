@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import OPS_READ, TENANT_READ, has_perm, staff_policy
 from pydantic import BaseModel, Field
 from api.core.secret_compare import secrets_equal
+from api.core.staff_credential import principal_verified
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
@@ -111,6 +112,12 @@ RATE_LIMIT_RPM_MAX = 10000
 
 
 def verify_admin_secret(x_admin_secret: str = Header(None)):
+    """Staff access to an /admin route: the main admin secret, or (AA-816 C9) a principal the staff bearer
+    middleware verified for this request — a Cognito Bearer, or the Preview credential capped at viewer
+    (api/core/staff_credential.py). 503 when neither applies and the secret is not configured; 403 on a
+    missing or wrong secret."""
+    if principal_verified():
+        return
     if not ADMIN_SECRET:
         raise HTTPException(status_code=503, detail="Admin secret not configured")
     if not secrets_equal(x_admin_secret, ADMIN_SECRET):

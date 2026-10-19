@@ -6,6 +6,8 @@ tenant could list every tenant's social posts, approve/reject them, and switch o
 rules. AA-799 fixed the same pattern in v1_pipeline._require_admin; this is that guard, shared.
 
 Rules (same as v1_pipeline._require_admin):
+- AA-816 C9: a principal the staff bearer middleware verified for this request (a Cognito Bearer, or the
+  Preview credential capped at viewer, api/core/staff_credential.py) -> the master principal, no secret needed.
 - X-Admin-Secret present: 503 if the server secret is not configured, 403 if it does not match
   (constant-time compare), else the master principal.
 - No secret but a Bearer token: the token is verified (401 if bad/expired) and then refused with 403 —
@@ -23,6 +25,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from api.core.secret_compare import secrets_equal
+from api.core.staff_credential import principal_verified
 from api.routers.auth import verify_jwt
 
 MASTER_PRINCIPAL = {"sub": "00000000-0000-0000-0000-000000000001", "role": "admin"}
@@ -34,6 +37,10 @@ def require_staff_secret(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> dict:
+    # AA-816 C9: a principal the staff bearer middleware verified (Cognito Bearer, or the Preview credential
+    # capped at viewer) needs no secret; the routers' staff_policy_if_staff applies POLICY to its role.
+    if principal_verified():
+        return dict(MASTER_PRINCIPAL)
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin = request.headers.get("x-admin-secret")
     if x_admin:

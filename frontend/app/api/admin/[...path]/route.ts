@@ -1,7 +1,7 @@
 // frontend/app/api/admin/[...path]/route.ts
 // AA-232: forward verified admin identity (JWT sub claim) to the backend
-// as x-admin-user-id, alongside the existing X-Admin-Secret (unchanged —
-// still the service-to-service auth between Vercel and ECS).
+// as x-admin-user-id. AA-816 (C9): the upstream credential is the Cognito Bearer for a Cognito
+// session and X-Admin-Secret only for a legacy session (lib/auth-server.ts staffCredentialHeaders).
 //
 // x-reviewer-id (AA-241 shim) is kept as-is for backward compatibility
 // with the current FE (frontend/app/admin/review/page.tsx still sends it
@@ -26,7 +26,7 @@
 // Quality sentence cut / rewrite) need the admin role, and the verified role
 // is forwarded as x-admin-role for the backend's own check.
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin, staffBearerHeader } from "@/lib/auth-server";
+import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, canReadAdminPath, canWriteAdminPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -41,9 +41,9 @@ async function handler(
   const auth = await requireAdmin(req, API_RULES.admin);
   if (!auth.ok) return auth.response;
 
-  if (!ADMIN_SECRET) {
-    return NextResponse.json({ detail: "Admin secret not configured" }, { status: 503 });
-  }
+  // AA-816 (C9): a Cognito session sends its Bearer and no X-Admin-Secret; a legacy session the secret.
+  const credential = staffCredentialHeaders(auth, ADMIN_SECRET, "admin");
+  if (!credential) return secretNotConfigured();
 
   const { path } = await params;
   const pathStr = path.join("/");
@@ -66,13 +66,12 @@ async function handler(
   const isMultipart = contentType.includes("multipart/form-data");
 
   const outHeaders: Record<string, string> = {
-    "X-Admin-Secret": ADMIN_SECRET,
     "x-admin-user-id": auth.adminId,
     // AA-769 — the verified JWT role, so the backend can re-check admin-only writes.
     "x-admin-role": auth.role,
-    // AA-816 (C5): a Cognito session also forwards its access token; the API's staff_bearer
-    // middleware then takes role + actor from the verified token. Legacy sessions: nothing added.
-    ...staffBearerHeader(auth),
+    // AA-816 (C5/C9): Cognito session → its access token only (the API's staff_bearer middleware takes
+    // role + actor from it, no secret needed); legacy session → X-Admin-Secret.
+    ...credential,
   };
 
   // AA-241 shim — kept for backward compat until backend reads

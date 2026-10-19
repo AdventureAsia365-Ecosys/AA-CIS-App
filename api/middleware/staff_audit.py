@@ -4,12 +4,14 @@ Pure ASGI middleware, registered in ``api/main.py`` INSIDE ``StaffBearerMiddlewa
 identity on the scope StaffBearer passes down) and outside the rate limiter (a 429 is logged too).
 
 Logged: a request whose method is not GET / HEAD / OPTIONS, on a staff path (``staff_authz.STAFF_PATH_PREFIXES``),
-carrying the valid admin secret (``staff_authz._is_valid_secret``). Tenant JWT calls never carry the secret, so they
-are never logged here (their own domain rows stay as they are). Refused calls (403 from the route policy, 4xx/5xx)
+carrying a staff credential (``staff_authz.has_staff_credential``: the main admin secret, or since AA-816 C9 a
+verified Cognito Bearer without the secret, or the Preview credential). Tenant JWT calls carry none, so they are
+never logged here (their own domain rows stay as they are). Refused calls (403 from the route policy, 4xx/5xx)
 are logged with their status; a request StaffBearer refuses never reaches this middleware.
 
 Row: ``actor`` ``admin:<admin_users.id>`` from the verified Cognito identity (details.auth ``cognito``), else
-``admin:<x-admin-user-id>`` (details.auth ``legacy_unverified``: the header is forgeable until the AA-816 cutover),
+``admin:<x-admin-user-id>`` (details.auth ``legacy_unverified``: the header is forgeable until the AA-816 cutover;
+``preview`` when the request came with the Preview credential, role always ``viewer``),
 else ``staff:unknown`` when only a role header came, else ``machine``; ``actor_type`` staff / machine;
 ``action`` ``staff.request`` / ``machine.request``; ``resource_type`` ``http_route``; ``resource_id`` the concrete
 path (≤ 512 chars); ``route`` the FastAPI route template (None when nothing matched); ``http_method``; ``status``;
@@ -27,7 +29,9 @@ from typing import Any, Optional
 import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from api.core.staff_authz import STAFF_PATH_PREFIXES, _is_valid_secret
+from api.core.staff_credential import CRED_PREVIEW, current_credential
+
+from api.core.staff_authz import STAFF_PATH_PREFIXES, has_staff_credential
 
 logger = structlog.get_logger()
 
@@ -56,7 +60,7 @@ def should_log(scope: Scope) -> bool:
         return False
     if not _is_staff_path(scope.get("path", "")):
         return False
-    return _is_valid_secret(_header(scope, b"x-admin-secret"))
+    return has_staff_credential(_header(scope, b"x-admin-secret"))
 
 
 def _identity(scope: Scope) -> Any:
@@ -68,16 +72,24 @@ def _identity(scope: Scope) -> Any:
     return identity
 
 
+def _is_preview(scope: Scope) -> bool:
+    state = scope.get("state")
+    if isinstance(state, dict) and state.get("staff_credential") == CRED_PREVIEW:
+        return True
+    return current_credential.get() == CRED_PREVIEW
+
+
 def build_row(scope: Scope, status: int) -> dict:
     """The audit row for one finished request (pure; the middleware inserts it)."""
     role = _header(scope, b"x-admin-role")
     identity = _identity(scope)
+    unverified = "preview" if _is_preview(scope) else "legacy_unverified"
     if identity is not None and getattr(identity, "auth", None) == "cognito":
         actor, actor_type, auth = f"admin:{identity.admin_id}", "staff", "cognito"
     elif _header(scope, b"x-admin-user-id"):
-        actor, actor_type, auth = f"admin:{_header(scope, b'x-admin-user-id')}", "staff", "legacy_unverified"
+        actor, actor_type, auth = f"admin:{_header(scope, b'x-admin-user-id')}", "staff", unverified
     elif role is not None:
-        actor, actor_type, auth = "staff:unknown", "staff", "legacy_unverified"
+        actor, actor_type, auth = "staff:unknown", "staff", unverified
     else:
         actor, actor_type, auth = "machine", "machine", "secret"
     route = getattr(scope.get("route"), "path", None)
