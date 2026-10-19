@@ -13,7 +13,9 @@
 //   (e) every number tile ([data-kpi]) and every number column ([data-num-col]) on the page, business view and CIS
 //       sections alike, names its source; at least one per card; every source text is plain words (no table or
 //       metric names); a hint opens with the keyboard (Enter) and closes with Escape, and is tied to its button
-//       with aria-describedby (AA-858 Done-when, S243);
+//       with aria-describedby (AA-858 Done-when, S243); the AI note under the cost table has a hint too; a hint
+//       opened by hover stays open while the pointer moves onto it (WCAG 1.4.13), a press inside a pinned hint keeps
+//       it open, and the button's hit area is at least 24 px (WCAG 2.5.8);
 //   (f) 390 px with touch: a tap opens a hint inside the screen, a tap elsewhere closes it.
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
@@ -191,6 +193,31 @@ test.describe('AA-858 — ops overview', () => {
       await page.keyboard.press('Enter');
       await expect(tip).toBeVisible();
       await expect(tip).toHaveText(/^Source: /);
+      await page.keyboard.press('Escape');
+      await expect(tip).toBeHidden();
+
+      // The AI note under the cost table (a number in a sentence) names its source too.
+      const aiNote = page.getByTestId('ops-cost-ai-note');
+      if (await aiNote.count()) await expect(aiNote.getByTestId('source-hint')).toHaveCount(1);
+
+      // Hit area >= 24 px; hover, then move onto the bubble: it stays open; a press inside a pinned bubble too.
+      const box = await btn.boundingBox();
+      expect(box).not.toBeNull();
+      expect(Math.min(box!.width, box!.height)).toBeGreaterThanOrEqual(24);
+      await btn.scrollIntoViewIfNeeded();
+      await btn.hover();
+      await expect(tip).toBeVisible();
+      const tb = (await btn.boundingBox())!;
+      const tt = (await tip.boundingBox())!;
+      await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
+      await page.mouse.move(tt.x + tt.width / 2, tt.y + tt.height / 2, { steps: 4 });
+      await page.waitForTimeout(400);
+      await expect(tip, 'a hover tip must stay open while the pointer is on it').toBeVisible();
+      await btn.click();
+      await page.mouse.move(tt.x + tt.width / 2, tt.y + tt.height / 2);
+      await page.mouse.down();
+      await page.mouse.up();
+      await expect(tip, 'a press inside a pinned tip must keep it open').toBeVisible();
       await page.keyboard.press('Escape');
       await expect(tip).toBeHidden();
     } finally {

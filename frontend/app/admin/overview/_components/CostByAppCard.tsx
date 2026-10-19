@@ -190,7 +190,10 @@ function CostBody({ data }: { data: CostData }) {
           <li key={n}>{n}</li>
         ))}
         {data.totals.ai_usd != null && (
-          <li data-testid="ops-cost-ai-note">{aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}</li>
+          <li data-testid="ops-cost-ai-note">
+            {aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}
+            <SourceHint source={COST_SRC.aiNote} size={11} />
+          </li>
         )}
         {data.aws_covered_to && <li>AWS numbers include days up to {data.aws_covered_to}.</li>}
       </ul>

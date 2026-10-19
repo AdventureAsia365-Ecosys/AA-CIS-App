@@ -94,3 +94,31 @@ source at all.
 - The UI Kit tab in admin Settings shows an `InfoTip` example. Frontend only (+ tests); no backend change, so no deploy order. The e2e smoke (a)–(f) passed against a local
   production build signed in to Dev as the E2E admin with no mocks; screenshots 1440 + 390 light, tooltips open by
   hover/click, tap and keyboard.
+
+### S243 review fixes (same branch, second commit)
+An independent review of the first commit found wording that did not match the backend and gaps in the tooltip:
+- **Cost card refresh** (major): the card said "refreshed every 15 minutes" for the whole card, but only the server
+  cache is 15 min; the AWS bill part comes from Cost Explorer about once a day and lags about two days
+  (`platform_cost` 24 h stale window). The card text now says both, matching the AWS bill column hint.
+- **TripPlanner health** reads Lambda runs, not HTTP requests: its tooltips now say "runs", "runs that failed",
+  "failed runs in red" and "runs refused because too many ran at once" instead of "requests" / "server errors (5xx)".
+- **"Refreshed every 5 minutes"** was wrong for an open page: the ops query is deliberately not polled
+  (AWS-backed, cached server-side; `refetchOnWindowFocus: false`). Kept no polling and changed the words to
+  "updated on the server every 5 minutes (press Refresh to load the latest)". The CIS sections keep "refreshed every
+  minute" (that query polls every 60 s).
+- **Research "stale"**: the backend counts a place as stale when any of its markets is older than 30 days; the text
+  says "at least one market last researched more than 30 days ago".
+- **Booking chips** list only statuses that have cases; the text says so.
+- **AI note under the cost table** ("AI estimate $X in all; $Y of it …") had no hint: `COST_SRC.aiNote` (AI calls
+  log + the existing `AI_ON_BILL_SRC` wording). Smoke (e) checks it.
+- **InfoTip a11y**: a hover-opened bubble now waits 150 ms before closing and stays open while the pointer is on it
+  (WCAG 1.4.13 hoverable); a press inside a pinned bubble no longer blurs-and-closes it (text can be selected); the
+  hit area is 24 px (padding 6, margin `-6px -6px -6px -2px`, WCAG 2.5.8) with the same visual footprint and gap,
+  the wrapper's 4 px left margin moved into the button so its focus ring does not cover the label; `aria-expanded`
+  dropped (not a tooltip-trigger attribute). Re-copied byte-identically to `portal/app/_kit/`. Smoke (e) checks the
+  24 px hit area, hover-onto-bubble and press-inside-bubble; the unit guard checks the markers and the absence of
+  `aria-expanded`.
+- Not done: marking the remaining inline numbers (open cases, stuck line, AI this month, DataForSEO balance, alarm
+  counts, 4xx / throttled) with `data-kpi` for the automatic count. They all have hints today (seen in the run);
+  `data-kpi` means "a number tile" in the spec, so it stays on tiles and column headers; a follow-up can add a
+  separate marker if these lines grow.

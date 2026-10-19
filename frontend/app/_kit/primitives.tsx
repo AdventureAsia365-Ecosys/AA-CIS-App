@@ -609,11 +609,12 @@ export function ScrollX({
 // ── InfoTip (S243, AA-858) ────────────────────────────────────────────────────
 // A small (i) button that explains something in a short tooltip — e.g. where a number comes from.
 // One pattern for mouse, keyboard and touch:
-//   - mouse: hover shows it, a click keeps it open, a second click (or Escape / a click elsewhere) closes it;
+//   - mouse: hover shows it (the pointer can move onto the bubble, WCAG 1.4.13), a click keeps it open, a second
+//     click (or Escape / a click elsewhere) closes it; a press inside the bubble keeps it open (text can be selected);
 //   - keyboard: Tab to the button shows it (focus-visible), Enter/Space keeps it open, Escape closes it;
 //   - touch: a tap opens it, a second tap or a tap elsewhere closes it.
 // The text is always in the DOM (hidden while closed) and tied to the button with aria-describedby, so a
-// screen reader reads it with the button. The bubble is `position: fixed`, clamped to the viewport, so it is
+// screen reader reads it with the button. The hit area is 24 px (WCAG 2.5.8) for a 12 px icon. The bubble is `position: fixed`, clamped to the viewport, so it is
 // never clipped by a scrolling table and never widens the page (lesson S221/S239); it follows its button on scroll.
 export function InfoTip({
   text,
@@ -633,10 +634,28 @@ export function InfoTip({
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
 
+  // A hover close waits a moment so the pointer can cross from the button onto the bubble.
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set while the pointer is pressed inside the bubble: that press blurs the button but must not close the tip.
+  const pressInTip = useRef(false);
+  const cancelHoverClose = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  }, []);
+
   const close = useCallback(() => {
+    cancelHoverClose();
     setOpen(false);
     setPinned(false);
-  }, []);
+  }, [cancelHoverClose]);
+
+  const hoverLeave = (e: React.PointerEvent) => {
+    if (e.pointerType !== "mouse" || pinned) return;
+    cancelHoverClose();
+    hoverTimer.current = setTimeout(() => setOpen(false), 150);
+  };
+
+  useEffect(() => cancelHoverClose, [cancelHoverClose]);
 
   // Place the bubble under the button (above it when there is no room), inside the viewport. Written straight to
   // the bubble's style (measured after it is shown, before paint), so no extra render; redone on scroll / resize
@@ -688,21 +707,20 @@ export function InfoTip({
   return (
     <span
       data-testid={testId}
-      style={{ display: "inline-flex", alignItems: "center", marginLeft: 4, verticalAlign: "middle", flexShrink: 0 }}
+      style={{ display: "inline-flex", alignItems: "center", verticalAlign: "middle", flexShrink: 0 }}
     >
       <button
         ref={btnRef}
         type="button"
         aria-label={label}
         aria-describedby={tipId}
-        aria-expanded={open}
         data-testid={`${testId}-button`}
         onPointerEnter={(e) => {
-          if (e.pointerType === "mouse") setOpen(true);
+          if (e.pointerType !== "mouse") return;
+          cancelHoverClose();
+          setOpen(true);
         }}
-        onPointerLeave={(e) => {
-          if (e.pointerType === "mouse" && !pinned) setOpen(false);
-        }}
+        onPointerLeave={hoverLeave}
         onFocus={(e) => {
           let keyboard = false;
           try {
@@ -712,7 +730,15 @@ export function InfoTip({
           }
           if (keyboard) setOpen(true);
         }}
-        onBlur={close}
+        onBlur={(e) => {
+          const to = e.relatedTarget as Node | null;
+          if (pressInTip.current || (to && tipRef.current?.contains(to))) {
+            pressInTip.current = false;
+            setPinned(true);
+            return;
+          }
+          close();
+        }}
         onClick={() => {
           if (pinned) {
             close();
@@ -725,8 +751,10 @@ export function InfoTip({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: 2,
-          margin: -2,
+          // 24 px hit area, same footprint as the 12 px icon: the 4 px gap to the label is kept and the hit area
+          // reaches only 2 px into the label, so a focus ring does not cover its last letter.
+          padding: 6,
+          margin: "-6px -6px -6px -2px",
           border: "none",
           borderRadius: 999,
           background: "transparent",
@@ -744,6 +772,16 @@ export function InfoTip({
         role="tooltip"
         data-testid={`${testId}-text`}
         hidden={!open}
+        onPointerEnter={(e) => {
+          if (e.pointerType === "mouse") cancelHoverClose();
+        }}
+        onPointerLeave={hoverLeave}
+        onPointerDown={() => {
+          pressInTip.current = true;
+        }}
+        onPointerUp={() => {
+          pressInTip.current = false;
+        }}
         style={{
           position: "fixed",
           top: 0,

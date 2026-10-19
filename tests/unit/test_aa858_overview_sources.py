@@ -76,5 +76,8 @@ def test_info_tip_is_accessible():
     start = src.index("export function InfoTip(")
     body = src[start:src.index("\nexport ", start + 1)]
     for needle in ('type="button"', "aria-describedby={tipId}", 'role="tooltip"', "useId()", '"Escape"',
-                   ":focus-visible", "onClick", 'pointerType === "mouse"', 'position: "fixed"'):
+                   ":focus-visible", "onClick", 'pointerType === "mouse"', 'position: "fixed"',
+                   # S243 review: hoverable bubble (WCAG 1.4.13), a press inside keeps it, 24 px hit area (WCAG 2.5.8)
+                   "onPointerLeave={hoverLeave}", "pressInTip", "padding: 6", 'margin: "-6px -6px -6px -2px"'):
         assert needle in body, f"InfoTip lost {needle}"
+    assert "aria-expanded" not in body, "a tooltip trigger does not use aria-expanded"
