@@ -3,6 +3,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from api.routers.auth import verify_jwt
 from api.core.secret_compare import secrets_equal
+from api.core.staff_credential import principal_verified
 from shared.services.billing_service import track_api_call
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,8 @@ async def _track_admin_call(request: Request, call_next):
     migration 110) so the Dashboard's Pipeline Health panel reflects real admin usage instead of
     reading permanently idle.
 
-    Only tracks requests that actually authenticate as admin (X-Admin-Secret match) — an
+    Only tracks requests that actually authenticate as staff (X-Admin-Secret match, or since AA-816 C9 a
+    principal the staff bearer middleware verified: Cognito Bearer or the Preview credential) — an
     unauthenticated/invalid request is passed through untracked, same permissive pattern the
     /v1/* branch above uses for a missing/invalid Bearer token, and still gets its real 401/403
     from the route's own auth dependency. Not rate-limited: staff aren't subject to a tenant RPM
@@ -162,7 +164,8 @@ async def _track_admin_call(request: Request, call_next):
     """
     admin_secret = os.environ.get("ADMIN_SECRET", "")
     x_admin_secret = request.headers.get("X-Admin-Secret", "")
-    if not admin_secret or not secrets_equal(x_admin_secret, admin_secret):
+    is_secret = bool(admin_secret) and secrets_equal(x_admin_secret, admin_secret)
+    if not is_secret and not principal_verified():
         return await call_next(request)
 
     # AA-232: verified admin identity, forwarded by the admin BFF proxy

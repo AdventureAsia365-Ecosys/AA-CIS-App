@@ -16,10 +16,19 @@ tracking and every route below see the verified identity, never the client's.
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
-  tenant tokens). Header trust for those stays as it was (``staff_authz.py``) until cutover (C9).
+  tenant tokens). Header trust for main-secret requests stays as it was (``staff_authz.py``) until the API legacy
+  flag goes off (S2); C9 caps only the Preview credential (below).
 
-The secret check is not touched: the inline ``verify_admin_secret`` calls and ``staff_policy`` still require
-``X-Admin-Secret`` (ADR 0006 phase 1: the BFF keeps sending it until cutover).
+AA-816 C9 (``api/core/staff_credential.py``): every admin-secret check on a staff path accepts a request whose
+Cognito Bearer was verified here, without ``X-Admin-Secret``.
+
+- **Preview credential** (no Cognito Bearer, ``X-Admin-Secret`` is not the main secret but equals the Preview
+  secret read from Secrets Manager): ``x-admin-role`` is replaced by ``viewer`` whatever the client sent, or added
+  when absent (never the machine principal), ``staff_credential.current_credential`` and
+  ``scope["state"]["staff_credential"]`` are set to ``"preview"``, and the admin-secret checks accept it. The
+  ``x-admin-user-id`` header is kept (legacy header trust, audited as such). One ``staff_preview_credential``
+  line is logged per request.
+- Anything else (main secret, wrong secret, no secret): untouched; the route's checks answer as before.
 """
 from __future__ import annotations
 
@@ -29,12 +38,13 @@ import structlog
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from api.core import staff_identity
-from api.core.staff_authz import STAFF_PATH_PREFIXES
+from api.core import staff_credential, staff_identity
+from api.core.staff_authz import STAFF_PATH_PREFIXES, _is_valid_secret, main_secrets
 
 logger = structlog.get_logger()
 
 _DROPPED = frozenset({b"authorization", b"x-admin-role", b"x-admin-user-id"})
+_ROLE = b"x-admin-role"
 
 
 def is_staff_path(path: str) -> bool:
@@ -49,6 +59,29 @@ def _bearer(headers: list[tuple[bytes, bytes]]) -> str | None:
                 return text[7:].strip()
             return None
     return None
+
+
+def _header(headers: list[tuple[bytes, bytes]], name: bytes) -> str | None:
+    for key, value in headers:
+        if key == name:
+            return value.decode("latin-1")
+    return None
+
+
+async def _is_preview_credential(headers: list[tuple[bytes, bytes]]) -> bool:
+    """C9: ``X-Admin-Secret`` is the Preview credential (and not the main secret). A request without the header,
+    or with the main secret, never triggers a Secrets Manager read."""
+    provided = _header(headers, b"x-admin-secret")
+    if not provided or _is_valid_secret(provided):
+        return False
+    preview = await staff_credential.preview_secret_async()
+    return staff_credential.is_preview_secret(provided, preview, main_secrets())
+
+
+def _capped(headers: list[tuple[bytes, bytes]]) -> list:
+    kept = [(n, v) for n, v in headers if n != _ROLE]
+    kept.append((_ROLE, staff_credential.PREVIEW_ROLE.encode()))
+    return kept
 
 
 def _rewritten(headers: list[tuple[bytes, bytes]], identity: staff_identity.StaffIdentity) -> list:
@@ -69,6 +102,9 @@ class StaffBearerMiddleware:
         headers = list(scope.get("headers") or [])
         token = _bearer(headers)
         if token is None or staff_identity.token_kind(token) != staff_identity.AUTH_COGNITO:
+            if await _is_preview_credential(headers):
+                await self._preview(scope, receive, send, headers)
+                return
             await self.app(scope, receive, send)
             return
 
@@ -91,6 +127,19 @@ class StaffBearerMiddleware:
             await self.app(inner, receive, send)
         finally:
             staff_identity.current_staff.reset(reset)
+
+    async def _preview(self, scope: Scope, receive: Receive, send: Send, headers: list) -> None:
+        """C9: the Preview credential is always the viewer."""
+        logger.info("staff_preview_credential", method=scope.get("method", ""), path=scope.get("path", ""),
+                    requested_role=_header(headers, _ROLE), role=staff_credential.PREVIEW_ROLE)
+        state = dict(scope.get("state") or {})
+        state["staff_credential"] = staff_credential.CRED_PREVIEW
+        inner = dict(scope, headers=_capped(headers), state=state)
+        reset = staff_credential.current_credential.set(staff_credential.CRED_PREVIEW)
+        try:
+            await self.app(inner, receive, send)
+        finally:
+            staff_credential.current_credential.reset(reset)
 
 
 def _pool(scope: Scope) -> Any:

@@ -271,7 +271,8 @@ app.include_router(v1_progress_router)  # AA-637 — GET /v1/progress/{kind}/{jo
 app.middleware("http")(rate_limit_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
 # Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
-# tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched.
+# tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched, except the
+# AA-816 C9 Preview credential, whose x-admin-role it caps at viewer (api/core/staff_credential.py).
 # AA-884 — one acp_shared.audit_log row per non-GET staff call (secret-bearing request on a staff path). Registered
 # before StaffBearerMiddleware so it sits INSIDE it: it sees the verified Cognito identity StaffBearer puts on the
 # (copied) scope it passes down, and the route template the router writes into that scope. A request StaffBearer

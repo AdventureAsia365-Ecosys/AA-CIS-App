@@ -7,6 +7,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from api.core.secret_compare import secrets_equal
+from api.core.staff_credential import principal_verified
 from api.core.staff_authz import staff_policy
 
 # AA-882 (GĐ1): PATCH /admin/settings/seo needs content.settings.write (api/core/staff_authz.py POLICY).
@@ -27,6 +28,9 @@ PIPELINE_GATES = {
 
 
 def verify_admin(x_admin_secret: str = Header(None)):
+    """Same rule as admin.verify_admin_secret (AA-816 C9: a verified Cognito / Preview principal needs no secret)."""
+    if principal_verified():
+        return
     if not ADMIN_SECRET:
         raise HTTPException(status_code=503, detail="Admin secret not configured")
     if not secrets_equal(x_admin_secret, ADMIN_SECRET):
