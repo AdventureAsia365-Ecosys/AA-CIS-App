@@ -139,6 +139,19 @@ async def test_list_audit_filters_joins_and_pages(env):
 
 
 @pytest.mark.asyncio
+async def test_list_audit_tolerates_non_uuid_admin_actors(env):
+    # Live S243: rows written before AA-884 carry actors like 'admin:claude-code-s222'; the staff-name join must
+    # not cast them to uuid (500 "invalid input syntax for type uuid").
+    p, tag = env.pool, env.tag
+    async with p.acquire() as c:
+        await c.execute("INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, created_at) "
+                        "VALUES ($1, 'staff.legacy', 'admin_user', $2, now())", f"admin:claude-code-{tag}", tag)
+    rows = (await platform_audit.list_audit(p, scope="staff", limit=50))["rows"]
+    legacy = [r for r in rows if r["actor"] == f"admin:claude-code-{tag}"]
+    assert len(legacy) == 1 and legacy[0]["actor_name"] is None
+
+
+@pytest.mark.asyncio
 async def test_ai_spend_sql_rolled_and_raw_days_never_both(env):
     p = env.pool
     marker = f"aa884-{env.tag}"
