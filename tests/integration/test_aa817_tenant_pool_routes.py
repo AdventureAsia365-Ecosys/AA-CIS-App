@@ -31,6 +31,7 @@ import pytest_asyncio
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from structlog.testing import capture_logs
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
@@ -325,7 +326,7 @@ async def test_disconnect_double_click_on_two_connections_is_one_true_one_false(
         assert await seed.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE tenant_id = $1 "
                                    "AND action = 'integration.disconnected'", str(tid)) == 1
     finally:
-        await seed.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", str(tid))
+        await delete_audit_rows(seed, "tenant_id = $1", str(tid))
         await seed.execute("DELETE FROM shared.tenant_integrations WHERE tenant_id = $1", tid)
         await seed.execute("DELETE FROM shared.tenants WHERE tenant_id = $1", tid)
         for conn in conns + [seed]:

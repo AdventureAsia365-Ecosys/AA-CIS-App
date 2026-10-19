@@ -22,6 +22,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
+from _audit_cleanup import delete_audit_rows  # AA-884: audit_log is append-only (CIS 248)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
@@ -73,7 +74,7 @@ async def ctx(monkeypatch):
     yield SimpleNamespace(admin=admin, pool=p, request=request, plans=plans, state=state)
     tid = state["tenant"]
     if tid:
-        await p.execute("DELETE FROM acp_shared.audit_log WHERE tenant_id = $1", tid)
+        await delete_audit_rows(p, "tenant_id = $1", tid)
         await p.execute("DELETE FROM shared.job WHERE payload->>'tenant_id' = $1", tid)
         await p.execute("DELETE FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid", tid)
         await p.execute("DELETE FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid", tid)
