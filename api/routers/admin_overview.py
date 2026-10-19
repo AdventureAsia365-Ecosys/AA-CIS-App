@@ -10,7 +10,8 @@ Reuses existing building blocks rather than re-deriving them:
   - jobs: the admin_job_runner.summary SQL over shared.job + queue.worker_health.
   - cost: shared.cost_guard.day_spend + shared.spend_budget (same as admin_budgets.list_budgets), the
     month-to-date AI spend per provider from api.services.platform_cost (raw + rolled-up days, provider families:
-    every bedrock* provider counts as "bedrock" — S243 finding 5), and the stored DFS balance snapshot.
+    every bedrock* provider counts as "bedrock", ``typesafe`` counts as "jev" — S243 finding 5; today's Jev spend
+    is read here from llm_call_log, display only), and the stored DFS balance snapshot.
   - jobs: ``workers_alive`` counts only workers alive NOW (same rule as /admin/platform/apps and the deploy smoke:
     ``shared.job_worker`` row not stopped and seen in the last 60 s — S243 finding 2); queue depth / running now are
     job counts (they used to count job kinds).
@@ -155,6 +156,16 @@ LIMIT 10
 """
 
 # ── Section 5: month-to-date DataForSEO (AI per provider comes from api.services.platform_cost) ─────────
+# Today's Jev spend for the provider table only. Jev decisions are logged as provider "typesafe"
+# (shared/llm_client/decide.py) and shared.cost_guard has no Jev day-spend query (AA-660: it reports 0 and does not
+# enforce a Jev daily cap). Display only: the budget enforcement in cost_guard is unchanged.
+_JEV_DAY_SPEND_SQL = """
+SELECT coalesce(sum(cost_usd), 0)::float AS cost_usd
+FROM shared.llm_call_log
+WHERE lower(provider) IN ('typesafe', 'jev')
+  AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+"""
+
 _MTD_DFS_SQL = """
 SELECT coalesce(sum(cost_usd), 0)::float AS cost_usd
 FROM shared.dfs_call_log
@@ -196,6 +207,7 @@ async def _build_overview(pool) -> dict:
             "SELECT provider, scope, per_run_usd, per_day_usd, hard_stop, alert_pct "
             "FROM shared.spend_budget ORDER BY provider, scope")
         spent_today = {p: round(await day_spend(conn, p), 4) for p in PROVIDERS}
+        spent_today["jev"] = round(float(await conn.fetchval(_JEV_DAY_SPEND_SQL) or 0.0), 4)
         mtd_dfs = await conn.fetchval(_MTD_DFS_SQL)
         alert_rows = await conn.fetch(_ALERTS_SQL)
 

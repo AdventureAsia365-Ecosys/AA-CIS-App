@@ -10,7 +10,14 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { K, useIsPhone } from "../../../_kit";
-import { AI_OUTSIDE_LABEL, AI_OUTSIDE_SRC, AWS_BILL_LABEL, AWS_BILL_SRC, aiOnBillNote } from "../../../../lib/costWording";
+import {
+  AI_OUTSIDE_LABEL,
+  AI_OUTSIDE_SRC,
+  AWS_BILL_LABEL,
+  AWS_BILL_SRC,
+  aiOnBillNote,
+  shownSum,
+} from "../../../../lib/costWording";
 import { SourceHint } from "./SourceHint";
 import { fmtUsd, OpsCard, PHONE_CELL, TableWrap, TD as TD_BASE, TH as TH_BASE, UnavailableNote } from "./opsUi";
 import type { CostData, CostRow, Section } from "./opsTypes";
@@ -73,11 +80,13 @@ function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
           </span>
           <ShareBar value={r.total_usd} max={max} />
         </td>
-        <td style={{ ...TD, textAlign: "right" }}>{fmtUsd(r.aws_usd)}</td>
+        <td style={{ ...TD, textAlign: "right" }}>{fmtUsd(shownSum(r.aws_usd))}</td>
         <td style={{ ...TD, textAlign: "right", color: r.ai_outside_aws_usd ? K.body : K.muted2 }}>
-          {fmtUsd(r.ai_outside_aws_usd)}
+          {fmtUsd(shownSum(r.ai_outside_aws_usd))}
         </td>
-        <td style={{ ...TD, textAlign: "right", color: K.ink, fontWeight: 600 }}>{fmtUsd(r.total_usd)}</td>
+        <td style={{ ...TD, textAlign: "right", color: K.ink, fontWeight: 600 }}>
+          {fmtUsd(shownSum(r.aws_usd, r.ai_outside_aws_usd))}
+        </td>
         <td style={{ ...TD, textAlign: "right", color: K.muted }}>{fmtUsd(r.prev_total_usd)}</td>
       </tr>
       {open &&
@@ -118,6 +127,11 @@ function CostBody({ data }: { data: CostData }) {
   const TD: React.CSSProperties = phone ? { ...TD_BASE, ...PHONE_CELL } : TD_BASE;
   const cells: Cells = { TH, TD };
   const max = Math.max(0, ...data.rows.map((r) => r.total_usd));
+  // The totals add up on screen and match the Cost page: AI outside = AI estimate − AI on the AWS bill, from cents.
+  const totalsAiOutside =
+    data.totals.ai_usd != null
+      ? shownSum(data.totals.ai_usd, -(data.totals.ai_in_aws_usd ?? 0))
+      : shownSum(data.totals.ai_outside_aws_usd);
   return (
     <>
       {!data.has_aws_data && (
@@ -154,12 +168,14 @@ function CostBody({ data }: { data: CostData }) {
             ))}
             <tr data-testid="ops-cost-total">
               <td style={{ ...TD, fontWeight: 700, color: K.ink, borderBottom: "none" }}>All apps</td>
-              <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>{fmtUsd(data.totals.aws_usd)}</td>
               <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>
-                {fmtUsd(data.totals.ai_outside_aws_usd)}
+                {fmtUsd(shownSum(data.totals.aws_usd))}
+              </td>
+              <td style={{ ...TD, textAlign: "right", fontWeight: 600, borderBottom: "none" }}>
+                {fmtUsd(totalsAiOutside)}
               </td>
               <td style={{ ...TD, textAlign: "right", fontWeight: 700, color: K.ink, borderBottom: "none" }}>
-                {fmtUsd(data.totals.total_usd)}
+                {fmtUsd(shownSum(data.totals.aws_usd, totalsAiOutside))}
               </td>
               <td style={{ ...TD, textAlign: "right", color: K.muted, borderBottom: "none" }}>
                 {fmtUsd(data.totals.prev_total_usd)}

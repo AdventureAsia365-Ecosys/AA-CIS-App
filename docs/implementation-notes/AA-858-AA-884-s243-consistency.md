@@ -48,8 +48,12 @@ Branch `fix/admin-overview-platform-consistency`. The S243 production UI check o
 ## Tradeoffs
 - `/admin/overview/ops` now also builds (or reads the 60 s cache of) the Apps cards: on a miss that adds the Booking
   HTTP probe (2 s timeout) and two small DB reads. Accepted for one status per app.
-- The KPI strip shows backend-rounded values; AWS + AI − deduction can differ from Total by one cent of rounding.
-- On a phone the audit CSV exports the compact columns (the visible ones).
+- Money on screen is summed from cent-rounded parts (`costWording.shownSum`), so every "A + B = Total" line adds up
+  on screen; the backend keeps 4 decimals (CSV export too). A column of rounded rows can still differ from the
+  totals row by a cent. (Review fix: live October showed $101.24 + $144.35 − $0.42 = $245.16.)
+- On a phone the audit log offers no CSV (the kit exports the visible columns, which are the two summary cards there);
+  CSV stays on desktop with the full column set. The page size is read when a page is fetched, not kept in the query
+  key, so crossing the 768 px breakpoint keeps the loaded older pages.
 
 ## Should know
 - Not deployed: the local UI check used a production build with every `/api/admin/*` answer mocked from fixtures
@@ -57,3 +61,16 @@ Branch `fix/admin-overview-platform-consistency`. The S243 production UI check o
 - Local integration DB lacks migration 248 (local role is not SUPERUSER), so the `cost_by_app` half of
   `tests/integration/test_s243_admin_consistency.py` runs only in CI; the provider and readiness parts passed locally.
 - `staff_authz` POLICY unchanged (no new route).
+
+## Review fixes (S243, second commit)
+- **Jev = `typesafe`** (major): Jev decisions are logged with provider `typesafe` (`shared/llm_client/decide.py`), so
+  `provider_family("typesafe")` is now "jev" (live Dev: $15.56 MTD was landing on "Other AI providers" with Jev at
+  $0.00). The tests that locked `typesafe` -> "other" are fixed. Today's Jev spend on the provider table is read in
+  `admin_overview` from `llm_call_log` (`provider IN ('typesafe','jev')`), display only: `shared.cost_guard` still
+  has no Jev day-spend query and does not enforce a Jev daily cap (AA-660) — unchanged on purpose, enforcement is
+  out of scope here.
+- **Unanswered health check**: Booking's probe timing out now reads "Needs a look" with "its health check did not
+  answer", instead of "Healthy … it has no health check". Firing alarms stay "degraded" on purpose (module docstring).
+- **KPI strip adds up**: see Tradeoffs; e2e smoke (d) checks the four values to the cent.
+- **Audit CSV / page size on a phone**: see Tradeoffs.
+

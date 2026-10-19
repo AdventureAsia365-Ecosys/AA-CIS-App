@@ -29,9 +29,13 @@ export interface AppHealthVerdict {
 }
 
 /** "based on its health check and its traffic …" — one phrasing of `overall.basis` for both pages. */
+// basis strings: api/services/app_health.py PROBE_BASIS / PROBE_NO_ANSWER_BASIS / TRAFFIC_BASIS.
 export function basisText(basis: string[]): string {
-  const probe = basis.some((b) => b.startsWith("Health check"));
+  const noAnswer = basis.includes("Health check (did not answer)");
+  const probe = basis.includes("Health check");
   const traffic = basis.some((b) => b.startsWith("Traffic"));
+  if (noAnswer && traffic) return "its health check did not answer; its traffic of the last 24 hours is shown too";
+  if (noAnswer) return "its health check did not answer (no traffic numbers right now)";
   if (probe && traffic) return "based on its health check and its traffic of the last 24 hours";
   if (traffic) return "based on its traffic of the last 24 hours (AWS CloudWatch); it has no health check";
   if (probe) return "based on its health check (no traffic numbers right now)";

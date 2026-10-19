@@ -26,3 +26,18 @@ export function aiOnBillNote(aiUsd: number, aiOnBillUsd: number, fmt: (n: number
     "already in the AWS bill, so it is counted once."
   );
 }
+
+/**
+ * Sum of money parts as it is shown, so the numbers on screen add up (S243 review: live October showed
+ * $101.24 + $144.35 − $0.42 = $245.16 because the backend total was rounded once, from 4-decimal parts).
+ * Each part is rounded to cents first (half away from zero), then summed; pass a subtracted part as a negative
+ * number. A null/undefined part counts as 0. The backend keeps 4 decimals; only the display rounds.
+ */
+export function shownSum(...parts: (number | null | undefined)[]): number {
+  let cents = 0;
+  for (const p of parts) {
+    if (p == null || Number.isNaN(p)) continue;
+    cents += Math.sign(p) * Math.round(Math.abs(p) * 100);
+  }
+  return cents / 100;
+}

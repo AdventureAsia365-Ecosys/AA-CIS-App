@@ -7,7 +7,9 @@
 //       carries a source hint (title + aria-label "Source: …"); no raw JSON on the page;
 //   (c) at 390 px, with real scrollbars (headless hides them by default, lesson S239), the page has no
 //       horizontal overflow; a table wrapper of the new cards may scroll sideways only inside its own box and
-//       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled").
+//       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled");
+//   (d) /admin/platform/cost (also admin-only): the four KPI values on screen add up,
+//       AWS bill + AI estimate − AI already on the AWS bill = Total, to the cent (S243 review).
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
 
@@ -110,6 +112,32 @@ test.describe('AA-858 — ops overview', () => {
     } finally {
       await context.close();
       await real.close();
+    }
+  });
+
+  test('(d) the Cost per app KPI strip adds up on screen', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: baseUrl(),
+      storageState: ADMIN_STATE,
+      viewport: { width: 1440, height: 900 },
+    });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/admin/platform/cost', { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('platform-cost-kpis')).toBeVisible({ timeout: 30000 });
+      const cents = async (id: string) => {
+        const t = (await page.getByTestId(`${id}-value`).innerText()).trim();
+        return t === '—' ? null : Math.round(Number(t.replace(/[$,]/g, '')) * 100);
+      };
+      const [aws, ai, onBill, total] = await Promise.all(
+        ['platform-cost-aws', 'platform-cost-ai', 'platform-cost-ai-on-bill', 'platform-cost-total'].map(cents),
+      );
+      expect(ai, 'AI estimate').not.toBeNull();
+      expect(onBill, 'AI already on the AWS bill').not.toBeNull();
+      expect(total, 'Total').toBe((aws ?? 0) + (ai as number) - (onBill as number));
+    } finally {
+      await context.close();
     }
   });
 });

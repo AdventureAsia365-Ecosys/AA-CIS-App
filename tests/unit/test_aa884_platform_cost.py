@@ -217,15 +217,17 @@ async def test_cost_by_app_aggregates_without_double_counting(monkeypatch):
 async def test_ai_spend_by_provider_groups_families_and_matches_the_ai_total():
     pool = _pool()
     out = await pc.ai_spend_by_provider(pool, now=NOW)
-    assert out["by_provider"] == {"bedrock": 4.8, "other": 0.2}
+    assert out["by_provider"] == {"bedrock": 4.8, "jev": 0.2}     # typesafe = Jev
     assert out["total_usd"] == 5.0 and out["month"] == "2026-10" and len(out["breakdown"]) == 4
     sql, start, end = pool.fetch.await_args.args
     assert sql == pc.AI_SPEND_SQL and (start, end) == (date(2026, 10, 1), date(2026, 10, 20))
 
 
 def test_provider_family():
-    assert [pc.provider_family(p) for p in ("bedrock", "bedrock-satellite", "openai", "jev", None, "typesafe")] == \
-        ["bedrock", "bedrock", "openai", "jev", "other", "other"]
+    # Jev is logged as provider "typesafe" (shared/llm_client/decide.py): it must land on the Jev row, not "other".
+    assert [pc.provider_family(p) for p in ("bedrock", "bedrock-satellite", "openai", "jev", None, "typesafe",
+                                            "TypeSafe", "anthropic")] == \
+        ["bedrock", "bedrock", "openai", "jev", "other", "jev", "jev", "other"]
 
 
 @pytest.mark.asyncio

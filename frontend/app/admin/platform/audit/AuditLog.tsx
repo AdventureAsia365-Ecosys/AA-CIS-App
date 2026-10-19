@@ -32,6 +32,7 @@ import {
   RADIUS,
   apiGet,
   formatDateTime,
+  PHONE_QUERY,
   mono,
   sans,
   useIsPhone,
@@ -51,6 +52,12 @@ import {
 
 const PAGE_LIMIT = 50;
 const PHONE_PAGE_LIMIT = 25;
+
+// Read when a page is fetched, not from the query key: crossing the 768 px breakpoint (rotation, or the first
+// render before useIsPhone settles after hydration) must not drop the older pages already loaded.
+function pageLimitNow(): number {
+  return typeof window !== "undefined" && window.matchMedia?.(PHONE_QUERY).matches ? PHONE_PAGE_LIMIT : PAGE_LIMIT;
+}
 
 function statusTone(code: number | null): Tone {
   if (code == null) return "neutral";
@@ -80,9 +87,9 @@ export default function AuditLog() {
   const limit = phone ? PHONE_PAGE_LIMIT : PAGE_LIMIT;
 
   const list = useInfiniteQuery({
-    queryKey: ["platform-audit", filters, limit],
+    queryKey: ["platform-audit", filters],
     queryFn: ({ pageParam }) =>
-      apiGet<AuditListResp>(`/api/admin/platform/audit?${auditQuery(filters, pageParam, limit)}`),
+      apiGet<AuditListResp>(`/api/admin/platform/audit?${auditQuery(filters, pageParam, pageLimitNow())}`),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor,
     staleTime: 60_000,
@@ -213,7 +220,9 @@ export default function AuditLog() {
           getRowId={(r) => r.id}
           loading={list.isLoading}
           paginate={false}
-          enableCsv
+          // The kit exports the visible columns; on a phone those are the two summary cards (actor, time and chain
+          // number live inside a cell), so the CSV is offered on the desktop column set only.
+          enableCsv={!phone}
           csvFilename="cis-audit-log.csv"
           emptyTitle="No audit rows"
           emptyDescription={JSON.stringify(filters) === JSON.stringify(EMPTY_AUDIT_FILTERS)

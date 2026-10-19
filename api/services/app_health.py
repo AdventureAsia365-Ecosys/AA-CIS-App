@@ -10,9 +10,16 @@ from CloudWatch traffic (AA-858) and /admin/platform/apps from its own probes (A
 - **probe** — an app's own check where it has one: CIS (live workers on the API's commit, schema ready) and Booking
   (``/booking/health`` + ``/health/ready``). TripPlanner has no health endpoint, so traffic alone decides.
 
-Rule: each known signal maps to ok / degraded / down; the app's status is the worst of them. A signal with no data
-(CloudWatch saw no metric, a probe timed out) is not a problem by itself; the status is ``unknown`` only when no
-signal is known.
+Rule: each known signal maps to ok / degraded / down; the app's status is the worst of them. CloudWatch with no data
+is not a problem by itself; the status is ``unknown`` only when no signal is known.
+
+Two choices made on purpose (S243 review):
+- A health check that did NOT answer (timeout, DNS, TLS: probe status ``unknown``) is its own signal, "degraded"
+  with basis ``PROBE_NO_ANSWER_BASIS``. An app that has a health check which stays silent needs a look even when its
+  traffic looks normal, and the page must not say "it has no health check" for it.
+- Firing CloudWatch alarms map to "degraded" (Needs a look), not "down". The alarms on these apps include latency and
+  throttle alarms, which fire while the app still answers; "down" is kept for a health endpoint that answers with an
+  error, the one signal that says the app itself is failing. The reason line names the firing alarms.
 """
 from __future__ import annotations
 
@@ -29,6 +36,7 @@ _RANK = {"ok": 0, "degraded": 1, "down": 2}
 
 TRAFFIC_BASIS = "Traffic, last 24 hours (AWS CloudWatch)"
 PROBE_BASIS = "Health check"
+PROBE_NO_ANSWER_BASIS = "Health check (did not answer)"
 
 
 async def traffic_section(redis: Any, now: Optional[datetime] = None) -> dict:
@@ -68,11 +76,14 @@ def traffic_summary(section: Optional[dict], app_id: str) -> Optional[dict]:
 def overall_status(probe: Optional[dict], traffic: Optional[dict]) -> dict:
     """{status: ok|degraded|down|unknown, reason, basis[]} from an app's probe and its traffic entry.
 
-    ``probe``: ``{"status": ok|degraded|down|unknown, "reason": str}`` or None (the app has no probe).
+    ``probe``: ``{"status": ok|degraded|down|unknown, "reason": str}`` or None (the app has no probe); ``unknown``
+    means the app has a health check that did not answer, which counts as "degraded" (module docstring).
     ``traffic``: one app of the traffic section (``state``, ``state_reason``) or None (section unavailable)."""
     signals: list[tuple[str, str, str]] = []           # (status, reason, basis)
     if probe and probe.get("status") in _RANK:
         signals.append((probe["status"], probe.get("reason") or "", PROBE_BASIS))
+    elif probe and probe.get("status") == "unknown":
+        signals.append(("degraded", probe.get("reason") or "Health check did not answer", PROBE_NO_ANSWER_BASIS))
     if traffic and traffic.get("state") in TRAFFIC_TO_STATUS:
         signals.append((TRAFFIC_TO_STATUS[traffic["state"]], traffic.get("state_reason") or "", TRAFFIC_BASIS))
     if not signals:

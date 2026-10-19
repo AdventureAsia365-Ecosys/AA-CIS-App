@@ -50,6 +50,7 @@ import {
   AI_OUTSIDE_SRC,
   AWS_BILL_LABEL,
   AWS_BILL_SRC,
+  shownSum,
 } from "@/lib/costWording";
 import {
   currentUtcMonth,
@@ -209,7 +210,8 @@ function Stat({ label, value, title, testId, op, strong }: {
         <span style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center", gap: 4 }}>
           {label} {title && <Info size={11} />}
         </span>
-        <span style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+        <span data-testid={testId ? `${testId}-value` : undefined}
+          style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
       </div>
     </div>
   );
@@ -224,12 +226,13 @@ function Summary({ data }: { data: CostResp }) {
       <div data-testid="platform-cost-kpis" style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))", gap: 10,
       }}>
-        <Stat label={AWS_BILL_LABEL} value={usd(aws)} title={AWS_BILL_SRC} testId="platform-cost-aws" />
-        <Stat op="+" label={AI_ESTIMATE_LABEL} value={usd(data.totals.ai_usd)}
+        <Stat label={AWS_BILL_LABEL} value={aws == null ? "—" : usd(shownSum(aws))} title={AWS_BILL_SRC} testId="platform-cost-aws" />
+        <Stat op="+" label={AI_ESTIMATE_LABEL} value={usd(shownSum(data.totals.ai_usd))}
           title="Estimate from our AI gateway's call log, every provider and account" testId="platform-cost-ai" />
-        <Stat op="−" label={AI_ON_BILL_LABEL} value={usd(data.totals.ai_in_aws_acc2_usd ?? 0)} title={AI_ON_BILL_SRC}
+        <Stat op="−" label={AI_ON_BILL_LABEL} value={usd(shownSum(data.totals.ai_in_aws_acc2_usd))} title={AI_ON_BILL_SRC}
           testId="platform-cost-ai-on-bill" />
-        <Stat op="=" strong label={`Total · ${monthLabel(data.month)}`} value={usd(data.totals.total_usd)}
+        <Stat op="=" strong label={`Total · ${monthLabel(data.month)}`}
+          value={usd(shownSum(data.aws.total_usd, data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}
           testId="platform-cost-total" />
       </div>
       {untaggedPct != null && (
@@ -306,7 +309,7 @@ function CostTable({ data }: { data: CostResp }) {
       accessorKey: "aws_usd",
       header: AWS_BILL_LABEL,
       meta: { align: "right" },
-      cell: (c) => <span style={num} title={AWS_BILL_SRC}>{usd(c.row.original.aws_usd)}</span>,
+      cell: (c) => <span style={num} title={AWS_BILL_SRC}>{usd(shownSum(c.row.original.aws_usd))}</span>,
     },
     {
       accessorKey: "ai_outside_aws_usd",
@@ -319,7 +322,7 @@ function CostTable({ data }: { data: CostResp }) {
             title={r.ai_in_aws_acc2_usd
               ? `${AI_ESTIMATE_LABEL} ${usd(r.ai_usd)} − ${usd(r.ai_in_aws_acc2_usd)} already on the AWS bill`
               : AI_OUTSIDE_SRC}>
-            {usd(r.ai_outside_aws_usd)}
+            {usd(shownSum(r.ai_usd, -r.ai_in_aws_acc2_usd))}
           </span>
         );
       },
@@ -328,7 +331,14 @@ function CostTable({ data }: { data: CostResp }) {
       accessorKey: "total_usd",
       header: "Total",
       meta: { align: "right" },
-      cell: (c) => <span style={{ ...num, fontWeight: 600 }} title={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`}>{usd(c.row.original.total_usd)}</span>,
+      cell: (c) => {
+        const r = c.row.original;
+        return (
+          <span style={{ ...num, fontWeight: 600 }} title={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`}>
+            {usd(shownSum(r.aws_usd, r.ai_usd, -r.ai_in_aws_acc2_usd))}
+          </span>
+        );
+      },
     },
   ], []);
 
@@ -351,9 +361,9 @@ function CostTable({ data }: { data: CostResp }) {
       <div data-testid="platform-cost-totals" style={{
         ...panelStyle, display: "flex", flexWrap: "wrap", gap: "4px 18px", justifyContent: "flex-end", fontSize: 12.5,
       }}>
-        <span><span style={{ color: K.muted }}>{AWS_BILL_LABEL}</span> <strong>{usd(data.totals.aws_usd)}</strong></span>
-        <span><span style={{ color: K.muted }}>+ {AI_OUTSIDE_LABEL}</span> <strong>{usd(data.totals.ai_outside_aws_usd)}</strong></span>
-        <span><span style={{ color: K.muted }}>= Total</span> <strong>{usd(data.totals.total_usd)}</strong></span>
+        <span><span style={{ color: K.muted }}>{AWS_BILL_LABEL}</span> <strong>{data.totals.aws_usd == null ? "—" : usd(shownSum(data.totals.aws_usd))}</strong></span>
+        <span><span style={{ color: K.muted }}>+ {AI_OUTSIDE_LABEL}</span> <strong>{usd(shownSum(data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
+        <span><span style={{ color: K.muted }}>= Total</span> <strong>{usd(shownSum(data.totals.aws_usd, data.totals.ai_usd, -(data.totals.ai_in_aws_acc2_usd ?? 0)))}</strong></span>
       </div>
       <Drawer open={!!open} onClose={() => setOpenApp(null)} title={open ? `${open.label} · ${monthLabel(data.month)}` : "Breakdown"}>
         {open && <Breakdown r={open} />}

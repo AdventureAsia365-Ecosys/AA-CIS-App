@@ -35,7 +35,9 @@ def _section(*apps):
     (None, None, "unknown"),
     ({"status": "ok", "reason": "fine"}, _traffic("alarm", "1 alarm firing"), "degraded"),
     ({"status": "down", "reason": "/booking/health answered 502"}, _traffic("ok"), "down"),
-    ({"status": "unknown", "reason": "timeout"}, _traffic("ok"), "ok"),   # no data is not a problem by itself
+    ({"status": "unknown", "reason": "timeout"}, _traffic("ok"), "degraded"),   # a silent health check
+    ({"status": "unknown", "reason": "timeout"}, None, "degraded"),
+    ({"status": "ok", "reason": "fine"}, _traffic("unknown", "No metrics available"), "ok"),  # no CW data: fine
     ({"status": "degraded", "reason": "no live worker"}, None, "degraded"),
 ])
 def test_overall_status_is_the_worst_known_signal(probe, traffic, expected):
@@ -49,6 +51,33 @@ def test_overall_status_reason_and_basis():
     assert out["basis"] == [app_health.PROBE_BASIS, app_health.TRAFFIC_BASIS]
     both_ok = app_health.overall_status({"status": "ok", "reason": "x"}, _traffic("ok"))
     assert both_ok["reason"] == "Health check passes and traffic looks normal"
+
+
+def test_unanswered_health_check_stays_visible():
+    out = app_health.overall_status(
+        {"status": "unknown", "reason": "health endpoint did not answer (ReadTimeout)"}, _traffic("ok"))
+    assert out["status"] == "degraded" and "did not answer" in out["reason"]
+    assert out["basis"] == [app_health.PROBE_NO_ANSWER_BASIS, app_health.TRAFFIC_BASIS]
+    # no probe at all (TripPlanner): traffic alone, and no "did not answer" basis
+    assert app_health.overall_status(None, _traffic("ok"))["basis"] == [app_health.TRAFFIC_BASIS]
+
+
+@pytest.mark.asyncio
+async def test_booking_probe_timeout_is_not_healthy():
+    import httpx
+
+    def handler(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+        card = await pa._booking_card(c)
+    pa.apply_health(card, _section(_traffic("ok", app="booking")))
+    assert card["status"] == "degraded" and "did not answer" in card["overall"]["reason"]
+    assert app_health.PROBE_NO_ANSWER_BASIS in card["overall"]["basis"]
+
+
+def test_firing_alarms_mean_needs_a_look_on_purpose():
+    assert app_health.TRAFFIC_TO_STATUS["alarm"] == "degraded"
 
 
 def test_apply_health_tripplanner_takes_the_overview_signal():

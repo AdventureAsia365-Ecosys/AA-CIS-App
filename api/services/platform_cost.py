@@ -110,14 +110,16 @@ ROW_HINTS = {
 
 
 # Provider families of the AI spend (the provider column of llm_call_log / llm_call_daily -> the spend_budget
-# provider the legacy overview cost table shows). Anything else is "other".
+# provider the legacy overview cost table shows). Jev decisions are logged with provider "typesafe" (the vendor,
+# shared/llm_client/decide.py), so "typesafe" is the Jev family. Anything else is "other".
+PROVIDER_FAMILY_ALIASES = {"openai": "openai", "jev": "jev", "typesafe": "jev"}
+
+
 def provider_family(provider: Optional[str]) -> str:
     p = (provider or "").lower()
     if p.startswith("bedrock"):
         return "bedrock"
-    if p in ("openai", "jev"):
-        return p
-    return "other"
+    return PROVIDER_FAMILY_ALIASES.get(p, "other")
 
 
 def row_label(key: str, kind: str, default: str) -> str:

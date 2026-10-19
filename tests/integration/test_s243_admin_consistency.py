@@ -1,8 +1,8 @@
 """S243 (AA-858 / AA-884) against real Postgres.
 
 - ``platform_cost.ai_spend_by_provider`` (the legacy overview's month-to-date AI per provider) groups every bedrock*
-  provider as "bedrock" and its total equals ``cost_by_app(...)["totals"]["ai_usd"]`` for the same month — the two
-  pages show one AI number (finding 5);
+  provider as "bedrock" and ``typesafe`` (how Jev is logged) as "jev", and its total equals
+  ``cost_by_app(...)["totals"]["ai_usd"]`` for the same month — the two pages show one AI number (finding 5);
 - ``staff_reconcile.load_directory`` + ``readiness_from_rows`` (the live readiness of the Staff page) counts only
   active rows, so a disabled account drops out at once (finding 3).
 Rows are tagged and deleted afterwards; no Redis, so no Cost Explorer call.
@@ -47,8 +47,9 @@ async def test_ai_spend_by_provider_matches_cost_by_app(pool):
                 provider, account, cost, f'{{"app": "cis", "test": "{tag}"}}')
         after = await platform_cost.ai_spend_by_provider(pool, now=NOW)
         delta = {k: round(after["by_provider"].get(k, 0) - before["by_provider"].get(k, 0), 4)
-                 for k in ("bedrock", "openai", "other")}
-        assert delta == {"bedrock": 1.75, "openai": 0.25, "other": 0.125}
+                 for k in ("bedrock", "openai", "jev", "other")}
+        # Jev is logged as provider "typesafe": it is the Jev row, not "other".
+        assert delta == {"bedrock": 1.75, "openai": 0.25, "jev": 0.125, "other": 0.0}
         full = await platform_cost.cost_by_app(pool, None, redis=None, now=NOW)
         assert abs(full["totals"]["ai_usd"] - after["total_usd"]) <= 0.001     # rounding per row vs per family
         cis = next(r for r in full["apps"] if r["app"] == "cis")

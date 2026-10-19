@@ -7,8 +7,8 @@
 
 One payload, cached in Redis for ``CACHE_TTL_S`` (60 s) under ``CACHE_KEY``; ``refresh=True`` rebuilds it (the page's
 Refresh button) and rewrites the cache. No poller: it is built only when someone opens a page. Every card has
-``status`` in ok / degraded / down / unknown and never raises: a failing probe makes its card ``unknown`` with the
-error class.
+``status`` in ok / degraded / down / unknown and never raises: a probe that does not answer keeps the error class
+on the card and counts as "degraded" in the overall status ("health check did not answer", app_health).
 
 One health definition (S243 finding 1): a card's ``status`` is ``overall.status`` from
 ``api.services.app_health.overall_status`` — the worst of the app's own probe (``probe``) and its CloudWatch traffic
