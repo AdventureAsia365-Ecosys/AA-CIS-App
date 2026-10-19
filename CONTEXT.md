@@ -504,7 +504,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   every `cis/` file as `cis_owner` (it switches to the live owner of schema `shared`; from X1 S22 the login is
   `db_migrator`), and default privileges `FOR ROLE cis_owner` give `cis_app` what a file creates. Rules for every
   later CIS migration: never `RESET ROLE` (go back with `SET LOCAL ROLE cis_owner`), no `SECURITY DEFINER`, no
-  `CREATE/ALTER/DROP ROLE|EXTENSION` (→ Infra `roles/`). `cis_owner` is **filtered by FORCE RLS** (unlike the master,
+  `CREATE/ALTER/DROP ROLE|EXTENSION` (→ Infra `roles/`). The legacy enums in `public` (`pipeline_status_enum`,
+  `content_status_enum`, `review_status_enum`, … used by `raw_tours`, `generated_content` and others) stay the
+  master's, so `ALTER TYPE public.<enum> ADD VALUE` (as in 073 / 158) fails as `cis_owner` ("must be owner of type"):
+  it needs an Infra `roles/` file (runs as the master). `cis_owner` is **filtered by FORCE RLS** (unlike the master,
   it is not in `rds_superuser`), and every view without `security_invoker` reads its base tables as its owner, so 245
   gives it a permissive `<table>_cis_owner_all FOR ALL TO cis_owner USING (true) WITH CHECK (true)` policy on the 8
   FORCE tables: a migration that FORCEs RLS on another table adds both `<t>_cis_app_all` and `<t>_cis_owner_all` in
