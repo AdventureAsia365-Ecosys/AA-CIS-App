@@ -37,7 +37,7 @@ from tests.unit.test_s241_admin_routes_require_auth import _served_routes, _walk
 
 REPO = Path(__file__).resolve().parents[2]
 _SECRET = "aa882-test-admin-secret"
-_STAFF_ROLES = ("admin", "reviewer", "content")
+_STAFF_ROLES = ("admin", "reviewer", "content")   # the content-work roles; AA-878's read-only viewer: test_aa878
 
 
 # ── The capability map ───────────────────────────────────────────────────────────────────────────
@@ -45,7 +45,8 @@ _STAFF_ROLES = ("admin", "reviewer", "content")
 def test_role_perms_match_the_s241_matrix():
     """§5.1 of the S241 admin-console design: content work for every staff role, the rest admin."""
     content_work = {"content.read", "content.write", "review.act"}
-    assert set(ROLE_PERMS) == set(_STAFF_ROLES)
+    assert set(ROLE_PERMS) == set(_STAFF_ROLES) | {"viewer"}
+    assert ROLE_PERMS["viewer"] == {"content.read"}   # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py)
     assert ROLE_PERMS["reviewer"] == content_work
     assert ROLE_PERMS["content"] == content_work
     assert ROLE_PERMS["admin"] == content_work | {

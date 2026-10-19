@@ -142,10 +142,13 @@ export function ReviewEditor({
   item,
   onSaved,
   onRevalidated,
+  readOnly = false,
 }: {
   item: ReviewItem;
   onSaved: (id: string) => void;
   onRevalidated: (id: string, passed: boolean | null) => void;
+  /** AA-878 — the read-only viewer: no Save / Re-validate (the BFF and the backend refuse them anyway). */
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>(() => toDraft(item.raw));
   const [dirty, setDirty] = useState<Set<string>>(new Set());
@@ -234,13 +237,19 @@ export function ReviewEditor({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <Btn variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
-          {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Save edits
-          {dirty.size ? ` (${dirty.size})` : ""}
-        </Btn>
-        <Btn variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
-          {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} Re-validate
-        </Btn>
+        {readOnly ? (
+          <span style={{ fontSize: 11.5, color: A.muted }}>View only</span>
+        ) : (
+          <>
+            <Btn variant="ghost" size="sm" disabled={saving || dirty.size === 0} onClick={save}>
+              {saving ? <Loader2 size={12} className="spin" /> : <Save size={12} />} Save edits
+              {dirty.size ? ` (${dirty.size})` : ""}
+            </Btn>
+            <Btn variant="primary" size="sm" disabled={revalidating || dirty.size > 0} onClick={revalidate}>
+              {revalidating ? <Loader2 size={12} className="spin" /> : <ShieldCheck size={12} />} Re-validate
+            </Btn>
+          </>
+        )}
       </div>
 
       {msg && (
@@ -262,7 +271,7 @@ export function ReviewEditor({
         {TEXT_FIELDS.map((f) => (
           <div key={f} style={{ gridColumn: f === "seo_title" ? "1 / -1" : "auto" }}>
             <FieldLabel field={f} fails={fails[f]} />
-            <input value={draft[f]} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
+            <input value={draft[f]} readOnly={readOnly} onChange={(e) => set(f, e.target.value)} style={fieldBoxStyle(!!fails[f])} />
           </div>
         ))}
 
@@ -271,6 +280,7 @@ export function ReviewEditor({
             <FieldLabel field={f} fails={fails[f]} />
             <textarea
               value={draft[f]}
+              readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
               rows={f === "aa_summary" || f === "aa_description" ? 4 : 2}
               style={fieldBoxStyle(!!fails[f])}
@@ -293,6 +303,7 @@ export function ReviewEditor({
             <FieldLabel field={f} fails={fails[f]} />
             <textarea
               value={draft[f]}
+              readOnly={readOnly}
               onChange={(e) => set(f, e.target.value)}
               rows={5}
               placeholder="One item per line"
@@ -307,6 +318,7 @@ export function ReviewEditor({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <textarea
               value={draft.aa_itineraries}
+              readOnly={readOnly}
               onChange={(e) => set("aa_itineraries", e.target.value)}
               rows={14}
               style={{ ...fieldBoxStyle(!!fails.aa_itineraries), fontFamily: mono, fontSize: 12 }}

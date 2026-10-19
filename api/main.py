@@ -66,6 +66,7 @@ from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.core import staff_identity  # AA-816 C3
+from api.core.staff_authz import NO_BOOKING_ROLES  # AA-878
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 
@@ -500,6 +501,10 @@ async def booking_token(request: Request, db: asyncpg.Pool = Depends(get_pool)):
                        session_role=payload.get("role"),
                        reason="inactive_or_unknown" if not row else "role_not_staff")
         raise HTTPException(status_code=401, detail="Staff user is inactive or unknown")
+    if row["role"] in NO_BOOKING_ROLES:
+        # AA-878: a read-only CIS role has no Booking access; Booking has no mapping for it, so never mint one.
+        logger.warning("booking_token_refused", admin_id=row["id"], cis_role=row["role"], reason="role_no_booking")
+        raise HTTPException(status_code=403, detail="This staff role has no access to Booking")
     try:
         # Off the event loop: a cache refresh is a blocking Secrets Manager call.
         keys = await booking_jwt.get_signing_keys_async()

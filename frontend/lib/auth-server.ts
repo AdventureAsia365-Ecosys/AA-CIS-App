@@ -32,7 +32,7 @@
 // mechanism (redundant round trips) rather than only widening the timeout,
 // which would lower the odds without removing the cause.
 import { NextRequest, NextResponse } from "next/server";
-import { STAFF_ROLES, type StaffRole } from "./rbac";
+import { STAFF_ROLES, isReadMethod, isReadOnlyRole, type StaffRole } from "./rbac";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 
 //
@@ -152,12 +152,17 @@ export type RequireAdminResult =
 // AA-656 — `roles` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
 // the verified JWT; the `cis_role` cookie is never consulted. A valid staff token with a role not in
 // `roles` gets 403 (not 401) so the UI can tell "log in again" from "not allowed".
+// AA-878: a read-only role (the viewer) gets 403 on every method but GET/HEAD/OPTIONS here, in the one place
+// every secret-attaching proxy goes through, so no BFF route can forward a write for it by default.
 export async function requireAdmin(
   request: NextRequest,
   roles: readonly StaffRole[] = STAFF_ROLES,
 ): Promise<RequireAdminResult> {
   const result = await verifyStaff(request);
   if (result.ok && !(roles as readonly string[]).includes(result.role)) {
+    return { ok: false, response: forbidden() };
+  }
+  if (result.ok && isReadOnlyRole(result.role) && !isReadMethod(request.method)) {
     return { ok: false, response: forbidden() };
   }
   return result;
