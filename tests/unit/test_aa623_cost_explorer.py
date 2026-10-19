@@ -342,9 +342,13 @@ async def test_check_cost_explorer_endpoint_verifies_secret_and_persists():
 
     from datetime import date as date_cls
 
+    from api.services import platform_cost
+
+    app_refresh = AsyncMock(return_value={"row_count": 5, "ce_requests": 1, "est_cost_usd": 0.01})
     with patch.object(admin_llm_ops, "verify_admin_secret") as mock_verify, \
          patch.object(admin_llm_ops, "fetch_all_accounts_cost", return_value=fake_result) as mock_fetch, \
-         patch.object(admin_llm_ops, "record_snapshot", AsyncMock(return_value=1)) as mock_record:
+         patch.object(admin_llm_ops, "record_snapshot", AsyncMock(return_value=1)) as mock_record, \
+         patch.object(platform_cost, "refresh_app_snapshot", app_refresh):
         result = await admin_llm_ops.check_cost_explorer(
             _make_request(_make_pool(AsyncMock())), x_admin_secret="s3cr3t",
             days=7, start=date_cls(2026, 9, 1), end=date_cls(2026, 9, 22),
@@ -355,6 +359,32 @@ async def test_check_cost_explorer_endpoint_verifies_secret_and_persists():
     mock_record.assert_awaited_once()
     assert result["row_count"] == 1
     assert result["errors"] == {}
+    # AA-884: the same window, grouped by the App tag (one more CE request)
+    assert app_refresh.await_args.args[1:] == (date_cls(2026, 9, 1), date_cls(2026, 9, 23))
+    assert result["app_tag_row_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_check_cost_explorer_app_tag_failure_is_reported_not_raised():
+    """AA-884: a failing App-tag fetch lands in `errors`; the SERVICE check still succeeds."""
+    from datetime import date as date_cls
+
+    from api.routers import admin_llm_ops
+    from api.services import platform_cost
+    from shared.aws_client.cost_explorer import CostExplorerUnavailable
+
+    fake_result = {"rows": [], "errors": {}}
+    failing = AsyncMock(side_effect=CostExplorerUnavailable("AccessDenied"))
+    with patch.object(admin_llm_ops, "verify_admin_secret"), \
+         patch.object(admin_llm_ops, "fetch_all_accounts_cost", return_value=fake_result), \
+         patch.object(admin_llm_ops, "record_snapshot", AsyncMock(return_value=0)), \
+         patch.object(platform_cost, "refresh_app_snapshot", failing):
+        result = await admin_llm_ops.check_cost_explorer(
+            _make_request(_make_pool(AsyncMock())), x_admin_secret="s3cr3t",
+            days=7, start=date_cls(2026, 9, 1), end=date_cls(2026, 9, 22),
+        )
+    assert result["app_tag_row_count"] is None
+    assert "AccessDenied" in result["errors"]["acc2_app_tag"]
 
 
 @pytest.mark.asyncio

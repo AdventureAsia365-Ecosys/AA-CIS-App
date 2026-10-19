@@ -100,6 +100,8 @@ class AdminTenantAuditAction:
 async def write_audit_log(
     conn, *, tenant_id: Optional[str], actor: str, action: str,
     resource_type: str, resource_id: str, details: Optional[dict[str, Any]] = None,
+    actor_type: Optional[str] = None, http_method: Optional[str] = None, route: Optional[str] = None,
+    status: Optional[int] = None,
 ) -> None:
     """INSERT one `acp_shared.audit_log` row. `tenant_id=None` (platform data, e.g. place cards)
     is stored as NULL.
@@ -118,13 +120,30 @@ async def write_audit_log(
     an audit-log failure break its primary action (this issue's tenant-login call site is the
     one case — see api/routers/auth.py) wraps this call in its own try/except instead of relying
     on this function to swallow errors silently for every caller.
+
+    AA-884 (CIS 248): `actor_type` ('staff' / 'machine' for the request audit; the 021 values stay unused here),
+    `http_method`, `route` and `status` describe a staff HTTP request (api/middleware/staff_audit.py); every other
+    caller leaves them NULL. The chain columns are set by the table's BEFORE INSERT trigger, never by a caller; the
+    trigger holds a transaction-scoped lock, so a caller inside a transaction writes its audit row last (QRY-4).
     """
+    if actor_type is None and http_method is None and route is None and status is None:
+        await conn.execute(
+            """
+            INSERT INTO acp_shared.audit_log
+                (tenant_id, actor, action, resource_type, resource_id, details)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+            """,
+            str(tenant_id) if tenant_id is not None else None, actor, action, resource_type, str(resource_id),
+            json.dumps(details or {}),
+        )
+        return
     await conn.execute(
         """
         INSERT INTO acp_shared.audit_log
-            (tenant_id, actor, action, resource_type, resource_id, details)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+            (tenant_id, actor, action, resource_type, resource_id, details,
+             actor_type, http_method, route, status)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::acp_shared.audit_actor_type, $8, $9, $10)
         """,
         str(tenant_id) if tenant_id is not None else None, actor, action, resource_type, str(resource_id),
-        json.dumps(details or {}),
+        json.dumps(details or {}), actor_type, http_method, route, status,
     )

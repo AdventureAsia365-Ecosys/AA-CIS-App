@@ -482,6 +482,11 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
 - **Verify the frontend with a full `next build`**: `tsc --noEmit` and eslint miss some type
   errors that break the Vercel build. The CI Lint job only runs flake8 on Python
   (`--max-line-length=120`).
+- **Health and version (AA-884)**: `GET /health` returns `git_sha` (the image's `APP_GIT_SHA`, the merge commit) and
+  `GET /health/ready` (public, 5 s in-process cache) returns 200 only when the DB answers and the newest numeric CIS
+  migration in `shared.schema_versions` is ≥ `api/core/readiness.py` `REQUIRED_CIS_SCHEMA` (bump it in the PR whose
+  code needs a newer migration). Deploy Dev's smoke asserts both, and that a live worker reports the same SHA
+  (`shared.job_worker.git_sha`, written at worker start).
 - **Definition of "done" for a backend issue** (program rule): merge + green CI is not enough.
   Also verify (a) Dev deploy **rollout COMPLETED** (ECS running the new taskDef, old deployment
   drained) and (b) the **live endpoint** (curl → HTTP 200 + correct shape). Only then is it Done.
@@ -603,6 +608,38 @@ The other apps are links from the typed registry `frontend/lib/apps.ts` (Booking
 public site; no tenant-portal link until there is a real support view, since the portal needs a tenant
 session); deep links are built only there, never from a return URL, never with a
 token. New platform pages live under `/admin/platform/*` (backend `api/routers/admin_platform.py`).
+
+**Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
+entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
+- `GET /admin/platform/apps[/{app_id}]` (`ops.read`) — `api/services/platform_apps.py` `collect_apps()`: one card per
+  app from the backend registry `api/core/app_registry.py` (code constants). CIS: API SHA + task revision, live
+  workers' SHA (parity), the deploy gate (`shared/jobs/worker.py` `deploy_gate_status`, same as the CI guard), schema
+  readiness. Booking: HTTP `/booking/health` + `/booking/health/ready` (2 s). TripPlanner: no health endpoint yet;
+  today's customer-facing LLM spend (TP `ONLINE_STAGES`, `quality_signal->>'app' = 'tripplanner'`) vs the mirrored
+  default cap (5 USD; the live cap is a TP env var). Cached 60 s in Redis, built only on a page view (no poller).
+  No ECS/Lambda describe calls, no cross-schema reads.
+- **Staff audit trail.** `acp_shared.audit_log` is append-only since CIS 248: UPDATE/DELETE/TRUNCATE raise 42501;
+  a BEFORE INSERT trigger chains every new row (`chain_seq`, `prev_hash`, `row_hash` = sha256 of a canonical text,
+  under `pg_advisory_xact_lock(884, 1)` — so a writer inside a transaction writes its audit row LAST; needs READ
+  COMMITTED). `api/middleware/staff_audit.py` (inside `StaffBearerMiddleware`, outside the rate limiter) adds one
+  `staff.request` / `machine.request` row per non-GET call on a staff path that carries the admin secret: actor
+  from the verified Cognito identity, else `x-admin-user-id` marked `details.auth = legacy_unverified`, method,
+  route template, status (denied calls included); never the body or query values. `GET /admin/platform/audit`
+  (`audit.read`, filters + keyset cursor, staff scope by default) and `GET /admin/platform/audit/verify`
+  (`audit.read`; Python recompute of the chain, `api/services/platform_audit.py`, must stay equal to the trigger;
+  a row without `chain_seq` created after 248 was applied — a trigger bypass — also makes it `ok: false`).
+  The RDS master can still bypass the triggers until the X1 runtime role and the 245 owner transfer; the chain
+  makes such an edit detectable, not impossible. Integration tests delete their own audit rows only through
+  `tests/integration/_audit_cleanup.py`.
+- **Cost per app** — the one cost module of the console: `api/services/platform_cost.py` `cost_by_app()` (AA-858's
+  overview card imports it; do not compute spend another way). AWS = acc2 Cost Explorer grouped by the `App` tag
+  (`shared.cost_explorer_app_snapshot`, CIS 248; untagged is its own row with services), AI = LLM gateway estimates
+  by `quality_signal->>'app'` from `shared.llm_call_log` + `shared.llm_call_daily`; acc2 Bedrock is subtracted from
+  AI so it is not counted twice; acc1/acc3 Bedrock CE actuals are a cross-check line. `GET /admin/platform/cost`
+  (`spend.read`) refreshes a month whose snapshot misses days or is > 24 h old (and may still change) with one CE
+  request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
+  or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
+  fetches the App tag (+1 request). No scheduler yet.
 
 | Area | admin | reviewer | content | tenant |
 |---|---|---|---|---|

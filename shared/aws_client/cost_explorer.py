@@ -29,7 +29,7 @@ from typing import Any, Optional
 import asyncpg
 import boto3
 import structlog
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 logger = structlog.get_logger()
 
@@ -276,4 +276,131 @@ async def read_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) 
         "covered_from": min(r["period_start"] for r in db_rows).isoformat(),
         "covered_to": max(r["period_start"] for r in db_rows).isoformat(),
         "fetched_at": max(r["fetched_at"] for r in db_rows).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------- AA-884: acc2 cost by App tag
+# One GetCostAndUsage call on acc2 (the only account whose resources carry the App cost-allocation tag; acc1/acc3
+# are LLM satellites, attributed from shared.llm_call_log instead), DAILY, grouped by TAG App and SERVICE. CE returns
+# the tag group key as "App$<value>"; "App$" (empty value) is untagged spend. Same ~$0.01 per request as above
+# (pagination pages are further requests). Stored in shared.cost_explorer_app_snapshot (CIS 248).
+APP_TAG_KEY = "App"
+CE_REQUEST_COST_USD = 0.01
+
+
+def strip_app_tag(key: str) -> str:
+    """'App$cis' -> 'cis'; 'App$' -> '' (untagged). A key without the prefix is returned unchanged."""
+    prefix = f"{APP_TAG_KEY}$"
+    return key[len(prefix):] if key.startswith(prefix) else key
+
+
+def fetch_acc2_cost_by_app(start_date: str, end_date: str) -> dict[str, Any]:
+    """acc2 UnblendedCost per (day, App tag, service) for [start_date, end_date) ('YYYY-MM-DD', End exclusive).
+
+    Returns {"rows": [...], "requests": n}; rows are ready for record_app_snapshot(). Raises CostExplorerUnavailable
+    on any AWS error (the caller keeps its stored data)."""
+    results_by_time: list[dict[str, Any]] = []
+    requests = 0
+    try:
+        client = _get_ce_client("acc2")
+        kwargs: dict[str, Any] = {
+            "TimePeriod": {"Start": start_date, "End": end_date},
+            "Granularity": "DAILY",
+            "Metrics": ["UnblendedCost"],
+            "GroupBy": [{"Type": "TAG", "Key": APP_TAG_KEY}, {"Type": "DIMENSION", "Key": "SERVICE"}],
+        }
+        while True:
+            resp = client.get_cost_and_usage(**kwargs)
+            requests += 1
+            results_by_time.extend(resp.get("ResultsByTime", []))
+            token = resp.get("NextPageToken")
+            if not token:
+                break
+            kwargs["NextPageToken"] = token
+    except (ClientError, BotoCoreError, CostExplorerUnavailable) as e:
+        raise CostExplorerUnavailable(f"GetCostAndUsage by App tag failed for acc2 ({ACC2_ACCOUNT_ID}): {e}") from e
+
+    rows: list[dict[str, Any]] = []
+    for rbt in results_by_time:
+        period_start, period_end = rbt["TimePeriod"]["Start"], rbt["TimePeriod"]["End"]
+        for group in rbt.get("Groups", []):
+            keys = group.get("Keys") or []
+            tag = strip_app_tag(keys[0]) if keys else ""
+            service = keys[1] if len(keys) > 1 else "Unknown"
+            metric = group.get("Metrics", {}).get("UnblendedCost", {})
+            amount = metric.get("Amount")
+            if amount is None:
+                continue
+            rows.append({"account_id": ACC2_ACCOUNT_ID, "app_tag": tag, "service": service,
+                         "period_start": period_start, "period_end": period_end,
+                         "amount_usd": float(amount), "unit": metric.get("Unit", "USD")})
+    return {"rows": rows, "requests": requests}
+
+
+_APP_INSERT_SQL = """
+    INSERT INTO shared.cost_explorer_app_snapshot
+        (account_id, app_tag, service, period_start, period_end, amount_usd, unit)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+"""
+
+# Newest fetch per (account, tag, service, day): CE revises the last ~24-48 h upward, like the SERVICE snapshot.
+_APP_RANGE_ROWS_SQL = """
+    SELECT DISTINCT ON (account_id, app_tag, service, period_start)
+           account_id, app_tag, service, period_start, amount_usd, fetched_at
+      FROM shared.cost_explorer_app_snapshot
+     WHERE period_start >= $1 AND period_start < $2
+     ORDER BY account_id, app_tag, service, period_start, fetched_at DESC
+"""
+
+
+async def record_app_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) -> int:
+    """Insert one batch (one transaction, one fetched_at via now()). Empty rows: 0, no-op."""
+    if not rows:
+        return 0
+    args = [(r["account_id"], r["app_tag"], r["service"], _to_date(r["period_start"]), _to_date(r["period_end"]),
+             r["amount_usd"], r["unit"]) for r in rows]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.executemany(_APP_INSERT_SQL, args)
+    logger.info("cost_explorer_app_snapshot_written", row_count=len(rows))
+    return len(rows)
+
+
+async def read_app_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) -> Optional[dict[str, Any]]:
+    """Stored acc2 cost per App tag for days in [start, end_exclusive): {"tags": {tag: {"total_usd", "bedrock_usd",
+    "services": [{"service", "amount_usd", "is_bedrock"}]}}, "total_usd", "covered_from", "covered_to",
+    "fetched_at" (newest), "oldest_fetched_at", "day_fetched_at": {day ISO: newest fetched_at ISO of that day}}.
+    None when no stored day falls in the range."""
+    async with pool.acquire() as conn:
+        db_rows = await conn.fetch(_APP_RANGE_ROWS_SQL, start, end_exclusive)
+    if not db_rows:
+        return None
+    tags: dict[str, dict[str, Any]] = {}
+    per_service: dict[tuple[str, str], float] = {}
+    day_fetched: dict[date, datetime] = {}
+    for r in db_rows:
+        d = r["period_start"]
+        if d not in day_fetched or r["fetched_at"] > day_fetched[d]:
+            day_fetched[d] = r["fetched_at"]
+        amount = float(r["amount_usd"])
+        t = tags.setdefault(r["app_tag"], {"total_usd": 0.0, "bedrock_usd": 0.0})
+        t["total_usd"] += amount
+        if is_bedrock_service(r["service"]):
+            t["bedrock_usd"] += amount
+        per_service[(r["app_tag"], r["service"])] = per_service.get((r["app_tag"], r["service"]), 0.0) + amount
+    for tag, t in tags.items():
+        t["total_usd"] = round(t["total_usd"], 4)
+        t["bedrock_usd"] = round(t["bedrock_usd"], 4)
+        t["services"] = sorted(
+            ({"service": s, "amount_usd": round(v, 4), "is_bedrock": is_bedrock_service(s)}
+             for (tg, s), v in per_service.items() if tg == tag),
+            key=lambda x: -x["amount_usd"])
+    return {
+        "tags": tags,
+        "total_usd": round(sum(t["total_usd"] for t in tags.values()), 4),
+        "covered_from": min(r["period_start"] for r in db_rows).isoformat(),
+        "covered_to": max(r["period_start"] for r in db_rows).isoformat(),
+        "fetched_at": max(r["fetched_at"] for r in db_rows).isoformat(),
+        "oldest_fetched_at": min(r["fetched_at"] for r in db_rows).isoformat(),
+        "day_fetched_at": {d.isoformat(): f.isoformat() for d, f in sorted(day_fetched.items())},
     }

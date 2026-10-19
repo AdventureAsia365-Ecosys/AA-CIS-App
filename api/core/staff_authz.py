@@ -289,6 +289,13 @@ POLICY: dict[tuple[str, str], str] = {
     # directory) and an on-demand run. Report only, so staff.read (not the owner-only staff.write).
     ("GET", "/admin/platform/staff-directory/health"): STAFF_READ,
     ("POST", "/admin/platform/staff-directory/reconcile"): STAFF_READ,
+
+    # ── admin_platform_ops (AA-884, GĐ7/8/10) — Apps (health/version), the staff audit trail, cost per app.
+    ("GET", "/admin/platform/apps"): OPS_READ,
+    ("GET", "/admin/platform/apps/{app_id}"): OPS_READ,
+    ("GET", "/admin/platform/audit"): AUDIT_READ,
+    ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
+    ("GET", "/admin/platform/cost"): SPEND_READ,
 }
 
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The

@@ -58,10 +58,13 @@ from api.routers.admin_search import router as admin_search_router  # AA-752 —
 from api.routers.admin_waves import router as admin_waves_router  # AA-727 — rerun waves as objects
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
+from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
+from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
+from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.core import staff_identity  # AA-816 C3
 from api.core.sentry import init_sentry
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -254,6 +257,7 @@ app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
+app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)
@@ -267,6 +271,11 @@ app.middleware("http")(rate_limit_middleware)
 # AA-816 C3 — registered after the rate limiter so it wraps it (Starlette: last registered = outermost): a
 # Cognito Bearer on a staff path rewrites x-admin-role / x-admin-user-id before the rate limiter's admin
 # tracking and the routes read them. Legacy HS256 Bearer and secret-only requests pass through untouched.
+# AA-884 — one acp_shared.audit_log row per non-GET staff call (secret-bearing request on a staff path). Registered
+# before StaffBearerMiddleware so it sits INSIDE it: it sees the verified Cognito identity StaffBearer puts on the
+# (copied) scope it passes down, and the route template the router writes into that scope. A request StaffBearer
+# refuses (401/403/503 on a bad Cognito token) never reaches it; those are logged as staff_bearer_refused.
+app.add_middleware(StaffAuditMiddleware)
 app.add_middleware(StaffBearerMiddleware)
 app.middleware("http")(sentry_context_middleware)
 
@@ -517,4 +526,14 @@ async def booking_jwks():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "aa-cis-api", "version": "0.3.0"}
+    # AA-884: git_sha = the commit the image was built from (deploy smoke asserts it equals the deployed SHA).
+    # `status` stays the first field and "ok" (ALB health check and CI smoke read it).
+    return {"status": "ok", "service": "aa-cis-api", "version": "0.3.0", "git_sha": readiness.git_sha()}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """AA-884 — DB answers and the newest numeric CIS migration is at least readiness.REQUIRED_CIS_SCHEMA. 200 or 503,
+    cached 5 s in-process (public route)."""
+    status, body = await readiness.readiness(pool)
+    return JSONResponse(body, status_code=status)
