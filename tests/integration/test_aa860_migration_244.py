@@ -247,7 +247,8 @@ def test_default_acl_rows_match_owners_yaml(cur):
     for s in sorted(X1_CIS_SCHEMAS):
         expected += [(s, "S", ["SELECT", "UPDATE", "USAGE"]), (s, "f", ["EXECUTE"]),
                      (s, "r", ["DELETE", "INSERT", "SELECT", "UPDATE"])]
-    assert cur.fetchall() == expected
+    # Compare order-free: the server collation decides how "S" sorts against "f"/"r" (CI runs postgres:15).
+    assert sorted(cur.fetchall()) == sorted(expected)
 
 
 # ── behaviour as cis_app ────────────────────────────────────────────────────────────────────────────
