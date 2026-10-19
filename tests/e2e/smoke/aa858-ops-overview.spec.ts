@@ -18,12 +18,17 @@
 //       it open, and the button's hit area is at least 24 px (WCAG 2.5.8);
 //   (f) 390 px with touch: a tap opens a hint inside the screen, a tap elsewhere closes it.
 import { test, expect, chromium } from '@playwright/test';
-import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
+import { ADMIN_STATE, baseUrl, installBypassRoute, isViewerRun } from './smoke-helpers';
 
 const CARDS = ['ops-health', 'ops-tripplanner', 'ops-booking', 'ops-cost'] as const;
 const SECTIONS = ['health', 'tripplanner', 'booking', 'cost'] as const;
 
 test.describe('AA-858 — ops overview', () => {
+  // AA-816 C9 / AA-878: ops.read is admin-only; a viewer run (the Preview credential is capped at viewer) skips it.
+  // Read at run time (the role file is written by the setup project, after collection).
+  test.beforeEach(() => {
+    test.skip(isViewerRun(), 'admin-only (ops.read): skipped in a viewer run');
+  });
   test('(a)+(b) endpoint shape, cards, source hints', async ({ browser }) => {
     const context = await browser.newContext({
       baseURL: baseUrl(),
