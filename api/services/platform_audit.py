@@ -111,7 +111,9 @@ def build_list_query(*, scope: str = "staff", actor: Optional[str] = None, actio
                u.username AS actor_username, u.display_name AS actor_display_name, u.email AS actor_email
           FROM acp_shared.audit_log a
           LEFT JOIN shared.admin_users u
-            ON a.actor ~ '^admin:[0-9a-fA-F-]{{36}}$' AND u.id = substr(a.actor, 7)::uuid
+            -- CASE, not AND: Postgres may evaluate the cast before the regex (hash join keys), and older rows
+            -- carry actors like 'admin:claude-code-s222' (S243 live 500).
+            ON u.id = CASE WHEN a.actor ~ '^admin:[0-9a-fA-F-]{{36}}$' THEN substr(a.actor, 7)::uuid END
          {"WHERE " + " AND ".join(where) if where else ""}
          ORDER BY a.created_at DESC NULLS LAST, a.id DESC
          LIMIT {p(limit + 1)}
