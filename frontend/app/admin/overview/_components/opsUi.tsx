@@ -83,8 +83,6 @@ export function OpsCard({
               fontWeight: 600,
               color: K.ink,
               fontFamily: sans,
-              display: "flex",
-              alignItems: "center",
             }}
           >
             {title}
@@ -142,7 +140,8 @@ export function UnavailableNote({ section }: { section: Unavailable }) {
   );
 }
 
-/** A KPI tile: label (+ source hint), big value, optional small line under it. */
+/** A KPI tile: label (+ source hint), big value, optional small line under it. `data-kpi` marks it for the e2e
+ * check that every number tile names its source. */
 export function Kpi({
   label,
   value,
@@ -167,6 +166,7 @@ export function Kpi({
   return (
     <div
       data-testid={testId}
+      data-kpi=""
       style={{
         background: K.bg,
         border: `1px solid ${K.line}`,
@@ -180,12 +180,10 @@ export function Kpi({
           fontSize: 11,
           fontWeight: 600,
           color: K.muted,
-          display: "flex",
-          alignItems: "center",
           minWidth: 0,
         }}
       >
-        <span style={{ minWidth: 0 }}>{label}</span>
+        {label}
         <SourceHint source={source} />
       </div>
       <div

@@ -74,3 +74,5 @@ Branch `fix/admin-overview-platform-consistency`. The S243 production UI check o
 - **KPI strip adds up**: see Tradeoffs; e2e smoke (d) checks the four values to the cent.
 - **Audit CSV / page size on a phone**: see Tradeoffs.
 
+- Follow-up (same session): every number on `/admin/overview` names its source in plain words (kit `InfoTip`,
+  `overview/_components/sources.ts`); see `AA-858-ui.md`, section "S243 — the source of every number".

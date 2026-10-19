@@ -11,11 +11,12 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   ClipboardList,
+  Info,
   Loader2,
   RefreshCw,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { K, RADIUS, sans, BTN_RADIUS, BTN_PRIMARY_TEXT } from "./tokens";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
@@ -602,6 +603,175 @@ export function ScrollX({
         </div>
       )}
     </div>
+  );
+}
+
+// ── InfoTip (S243, AA-858) ────────────────────────────────────────────────────
+// A small (i) button that explains something in a short tooltip — e.g. where a number comes from.
+// One pattern for mouse, keyboard and touch:
+//   - mouse: hover shows it, a click keeps it open, a second click (or Escape / a click elsewhere) closes it;
+//   - keyboard: Tab to the button shows it (focus-visible), Enter/Space keeps it open, Escape closes it;
+//   - touch: a tap opens it, a second tap or a tap elsewhere closes it.
+// The text is always in the DOM (hidden while closed) and tied to the button with aria-describedby, so a
+// screen reader reads it with the button. The bubble is `position: fixed`, clamped to the viewport, so it is
+// never clipped by a scrolling table and never widens the page (lesson S221/S239); it follows its button on scroll.
+export function InfoTip({
+  text,
+  label = "More information",
+  size = 12,
+  testId = "info-tip",
+}: {
+  text: string;
+  /** Accessible name of the button (the text itself is its description). */
+  label?: string;
+  size?: number;
+  testId?: string;
+}) {
+  const tipId = useId();
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setPinned(false);
+  }, []);
+
+  // Place the bubble under the button (above it when there is no room), inside the viewport. Written straight to
+  // the bubble's style (measured after it is shown, before paint), so no extra render; redone on scroll / resize
+  // so it follows its button (a keyboard focus that scrolls the page must not close it).
+  const place = useCallback(() => {
+    const btn = btnRef.current;
+    const tip = tipRef.current;
+    if (!btn || !tip || tip.hidden) return;
+    const r = btn.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = window.innerHeight;
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), Math.max(8, vw - w - 8));
+    const below = r.bottom + 6;
+    const top = below + h > vh - 8 && r.top - 6 - h >= 8 ? r.top - 6 - h : below;
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+    tip.style.visibility = "visible";
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open, text, place]);
+
+  // While open: Escape or a press outside closes it; a scroll or a resize moves it with its button.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node | null;
+      if (t && (btnRef.current?.contains(t) || tipRef.current?.contains(t))) return;
+      close();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, close, place]);
+
+  return (
+    <span
+      data-testid={testId}
+      style={{ display: "inline-flex", alignItems: "center", marginLeft: 4, verticalAlign: "middle", flexShrink: 0 }}
+    >
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={label}
+        aria-describedby={tipId}
+        aria-expanded={open}
+        data-testid={`${testId}-button`}
+        onPointerEnter={(e) => {
+          if (e.pointerType === "mouse") setOpen(true);
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType === "mouse" && !pinned) setOpen(false);
+        }}
+        onFocus={(e) => {
+          let keyboard = false;
+          try {
+            keyboard = e.currentTarget.matches(":focus-visible");
+          } catch {
+            keyboard = false;
+          }
+          if (keyboard) setOpen(true);
+        }}
+        onBlur={close}
+        onClick={() => {
+          if (pinned) {
+            close();
+          } else {
+            setOpen(true);
+            setPinned(true);
+          }
+        }}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 2,
+          margin: -2,
+          border: "none",
+          borderRadius: 999,
+          background: "transparent",
+          color: open ? K.ink : K.muted2,
+          cursor: "help",
+          lineHeight: 0,
+          font: "inherit",
+        }}
+      >
+        <Info size={size} aria-hidden />
+      </button>
+      <span
+        ref={tipRef}
+        id={tipId}
+        role="tooltip"
+        data-testid={`${testId}-text`}
+        hidden={!open}
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          visibility: "hidden",
+          zIndex: 1000,
+          width: "max-content",
+          maxWidth: "min(300px, calc(100vw - 16px))",
+          padding: "8px 10px",
+          borderRadius: 8,
+          background: K.ink,
+          color: K.card,
+          fontFamily: sans,
+          fontSize: 12,
+          fontWeight: 400,
+          lineHeight: 1.45,
+          letterSpacing: "normal",
+          textTransform: "none",
+          textAlign: "left",
+          whiteSpace: "normal",
+          overflowWrap: "anywhere",
+          boxShadow: "0 6px 20px rgba(0, 0, 0, 0.18)",
+          pointerEvents: "auto",
+        }}
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 

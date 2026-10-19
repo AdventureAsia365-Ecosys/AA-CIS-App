@@ -119,6 +119,8 @@ export interface OpsOverview {
   tripplanner: Section<TripPlannerData>;
   booking: Section<BookingData>;
   cost: Section<CostData>;
+  /** Engineering detail of each section's source (tables, metrics). Not shown: the page names sources in plain
+   * words from ./sources.ts (AA-858, S243). */
   sources: Record<"health" | "tripplanner" | "booking" | "cost", string>;
   _cached?: boolean;
 }

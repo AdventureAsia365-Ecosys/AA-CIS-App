@@ -9,6 +9,8 @@
 // S243 — Jobs: "Workers alive now" counts only live workers (the Apps page / deploy-gate rule); the provider cost
 // table reads month-to-date AI from the cost module (all bedrock* providers, rolled-up days included), so its AI
 // total equals the AI estimate on Cost per app; the per-country table keeps every column and scrolls on a phone.
+// AA-858 (S243) — every number on the page names its source in a SourceHint (kit InfoTip); the wording, in plain
+// business words, is in ./_components/sources.ts.
 
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -26,6 +28,14 @@ import { BookingFunnelCard } from "./_components/BookingFunnelCard";
 import { CostByAppCard } from "./_components/CostByAppCard";
 import { TripPlannerCard } from "./_components/TripPlannerCard";
 import type { OpsOverview } from "./_components/opsTypes";
+import { SourceHint } from "./_components/SourceHint";
+import {
+  INTEL_SRC,
+  JOBS_SRC,
+  PIPELINE_SRC,
+  PROVIDER_COST_SRC,
+  TENANT_SRC,
+} from "./_components/sources";
 import {
   apiGet,
   Badge,
@@ -119,11 +129,14 @@ function Section({
   icon,
   title,
   href,
+  source,
   children,
 }: {
   icon: React.ReactNode;
   title: string;
   href?: string;
+  /** Where the section's numbers come from, shown next to the title. */
+  source?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -156,6 +169,7 @@ function Section({
             }}
           >
             {title}
+            {source && <SourceHint source={source} />}
           </h2>
         </div>
         {href && (
@@ -175,16 +189,20 @@ function Section({
 function Stat({
   label,
   value,
+  source,
   sub,
   color = K.ink,
 }: {
   label: string;
   value: React.ReactNode;
+  /** Where the number comes from (SourceHint next to the label). */
+  source: string;
   sub?: string;
   color?: string;
 }) {
   return (
     <div
+      data-kpi=""
       style={{
         background: K.bg,
         border: `1px solid ${K.line}`,
@@ -203,6 +221,7 @@ function Stat({
         }}
       >
         {label}
+        <SourceHint source={source} size={11} />
       </div>
       <div
         style={{
@@ -249,6 +268,15 @@ function delta(n: number) {
 
 const JOB_FAIL = new Set(["failed", "stopped_budget"]);
 
+// Number columns of the per-country pipeline table, with where each comes from.
+const PIPELINE_COLS: { label: string; source: string }[] = [
+  { label: "Raw (active)", source: PIPELINE_SRC.raw },
+  { label: "S1 generated", source: PIPELINE_SRC.generated },
+  { label: "In review", source: PIPELINE_SRC.review },
+  { label: "Published", source: PIPELINE_SRC.published },
+  { label: "Atomized", source: PIPELINE_SRC.atomized },
+];
+
 // Rows of the provider cost table: the spend_budget providers, in plain words. "other" shows only when it has spend.
 const COST_PROVIDERS: { key: string; label: string; ai: boolean }[] = [
   { key: "bedrock", label: "AWS Bedrock (all accounts)", ai: true },
@@ -274,7 +302,6 @@ export default function OverviewPage() {
   const opsDown = ops.isError
     ? { status: "unavailable" as const, reason: "error", message: "This section could not be loaded. Try Refresh in a minute." }
     : undefined;
-  const opsSources = ops.data?.sources;
 
   const money = (n: number | undefined) =>
     n == null ? "—" : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -317,7 +344,7 @@ export default function OverviewPage() {
               </div>
             ) : (
               <>
-                <AppHealthStrip section={ops.data?.health ?? opsDown} source={opsSources?.health ?? "AWS CloudWatch"} />
+                <AppHealthStrip section={ops.data?.health ?? opsDown} />
                 <div
                   style={{
                     display: "grid",
@@ -326,16 +353,10 @@ export default function OverviewPage() {
                     alignItems: "start",
                   }}
                 >
-                  <TripPlannerCard
-                    section={ops.data?.tripplanner ?? opsDown}
-                    source={opsSources?.tripplanner ?? "TripPlanner contract view"}
-                  />
-                  <BookingFunnelCard
-                    section={ops.data?.booking ?? opsDown}
-                    source={opsSources?.booking ?? "Booking contract views"}
-                  />
+                  <TripPlannerCard section={ops.data?.tripplanner ?? opsDown} />
+                  <BookingFunnelCard section={ops.data?.booking ?? opsDown} />
                 </div>
-                <CostByAppCard section={ops.data?.cost ?? opsDown} source={opsSources?.cost ?? "Platform cost module"} />
+                <CostByAppCard section={ops.data?.cost ?? opsDown} />
               </>
             )}
           </div>
@@ -361,19 +382,19 @@ export default function OverviewPage() {
                 icon={<Activity size={16} />}
                 title="Pipeline funnel — per country"
                 href="/admin/master-content"
+                source={PIPELINE_SRC.card}
               >
                 <ScrollX testId="overview-pipeline-table">
                   <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
                         <th style={TH}>Country</th>
-                        {["Raw (active)", "S1 generated", "In review", "Published", "Atomized"].map(
-                          (h) => (
-                            <th key={h} style={{ ...TH, textAlign: "right" }}>
-                              {h}
-                            </th>
-                          ),
-                        )}
+                        {PIPELINE_COLS.map((c) => (
+                          <th key={c.label} data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "nowrap" }}>
+                            {c.label}
+                            <SourceHint source={c.source} size={11} />
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -422,13 +443,19 @@ export default function OverviewPage() {
                     gap: 12,
                   }}
                 >
-                  <Stat label="Atoms" value={data.intelligence.atom_count.toLocaleString()} color={K.accentDeep} />
-                  <Stat label="Segments" value={data.intelligence.segment_count.toLocaleString()} />
-                  <Stat label="Routes" value={data.intelligence.route_count.toLocaleString()} />
-                  <Stat label="Hubs" value={data.intelligence.hub_count.toLocaleString()} />
-                  <Stat label="Score rows" value={data.intelligence.score_count.toLocaleString()} />
+                  <Stat
+                    label="Atoms"
+                    value={data.intelligence.atom_count.toLocaleString()}
+                    source={INTEL_SRC.atoms}
+                    color={K.accentDeep}
+                  />
+                  <Stat label="Segments" value={data.intelligence.segment_count.toLocaleString()} source={INTEL_SRC.segments} />
+                  <Stat label="Routes" value={data.intelligence.route_count.toLocaleString()} source={INTEL_SRC.routes} />
+                  <Stat label="Hubs" value={data.intelligence.hub_count.toLocaleString()} source={INTEL_SRC.hubs} />
+                  <Stat label="Score rows" value={data.intelligence.score_count.toLocaleString()} source={INTEL_SRC.scores} />
                   <Stat
                     label="Research places"
+                    source={INTEL_SRC.research}
                     value={data.intelligence.research.places_researched.toLocaleString()}
                     sub={
                       data.intelligence.research.places_stale > 0
@@ -450,10 +477,10 @@ export default function OverviewPage() {
                     marginBottom: data.tenants.quota_outliers.length > 0 ? 14 : 0,
                   }}
                 >
-                  <Stat label="Active tenants" value={data.tenants.active_tenants} />
-                  <Stat label="Rewrites (7d)" value={data.tenants.rewrites_7d} />
-                  <Stat label="Pieces (7d)" value={data.tenants.pieces_7d} />
-                  <Stat label="Published (7d)" value={data.tenants.published_pieces_7d} />
+                  <Stat label="Active tenants" value={data.tenants.active_tenants} source={TENANT_SRC.active} />
+                  <Stat label="Rewrites (7d)" value={data.tenants.rewrites_7d} source={TENANT_SRC.rewrites} />
+                  <Stat label="Pieces (7d)" value={data.tenants.pieces_7d} source={TENANT_SRC.pieces} />
+                  <Stat label="Published (7d)" value={data.tenants.published_pieces_7d} source={TENANT_SRC.published} />
                 </div>
                 {data.tenants.quota_outliers.length > 0 && (
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -461,8 +488,14 @@ export default function OverviewPage() {
                       <tr>
                         <th style={TH}>Quota outlier</th>
                         <th style={TH}>Plan</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Tours %</th>
-                        <th style={{ ...TH, textAlign: "right" }}>API %</th>
+                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
+                          Tours %
+                          <SourceHint source={TENANT_SRC.quotaTours} size={11} />
+                        </th>
+                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
+                          API %
+                          <SourceHint source={TENANT_SRC.quotaCalls} size={11} />
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -484,8 +517,8 @@ export default function OverviewPage() {
               </Section>
 
               {/* ── Section 4: Jobs ── */}
-              <Section icon={<ListChecks size={16} />} title="Jobs (30d)" href="/admin/jobs">
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <Section icon={<ListChecks size={16} />} title="Jobs (30d)" href="/admin/jobs" source={JOBS_SRC.counts}>
+                <div data-testid="overview-job-counts" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                   {Object.entries(data.jobs.counts).map(([status, n]) => (
                     <div
                       key={status}
@@ -502,20 +535,20 @@ export default function OverviewPage() {
                   )}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", marginTop: 12, fontSize: 12, color: K.muted }}>
-                  <span
-                    data-testid="overview-workers-alive"
-                    title="Workers seen in the last 60 seconds and not stopped — the same rule as Apps and the deploy check"
-                  >
+                  <span data-testid="overview-workers-alive" data-kpi="">
                     Workers alive now:{" "}
                     <b style={{ color: data.jobs.workers_alive ? K.success : K.danger }}>
                       {data.jobs.workers_alive ?? "—"}
                     </b>
+                    <SourceHint source={JOBS_SRC.workers} size={11} />
                   </span>
-                  <span>
+                  <span data-kpi="">
                     Jobs waiting: <b style={{ color: K.ink }}>{data.jobs.queue_depth ?? "—"}</b>
+                    <SourceHint source={JOBS_SRC.waiting} size={11} />
                   </span>
-                  <span>
+                  <span data-kpi="">
                     Jobs running now: <b style={{ color: K.ink }}>{data.jobs.running_now ?? "—"}</b>
+                    <SourceHint source={JOBS_SRC.running} size={11} />
                   </span>
                 </div>
               </Section>
@@ -531,9 +564,18 @@ export default function OverviewPage() {
                     <thead>
                       <tr>
                         <th style={TH}>Provider</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Today</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Month-to-date</th>
-                        <th style={{ ...TH, textAlign: "right" }}>Daily budget</th>
+                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
+                          Today
+                          <SourceHint source={PROVIDER_COST_SRC.today} size={11} />
+                        </th>
+                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
+                          Month-to-date
+                          <SourceHint source={PROVIDER_COST_SRC.month} size={11} />
+                        </th>
+                        <th data-num-col="" style={{ ...TH, textAlign: "right" }}>
+                          Daily budget
+                          <SourceHint source={PROVIDER_COST_SRC.budget} size={11} />
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -575,15 +617,22 @@ export default function OverviewPage() {
                 </ScrollX>
                 {data.cost.ai_month_to_date_usd != null && (
                   <div data-testid="overview-ai-mtd-note" style={{ marginTop: 10, fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
-                    AI this month, all providers: <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>{" "}
+                    AI this month, all providers: <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>
+                    <SourceHint source={PROVIDER_COST_SRC.aiMonth} size={11} />{" "}
                     — the same as the AI estimate on{" "}
                     <Link href="/admin/platform/cost" style={{ color: K.accentDeep, fontWeight: 600 }}>Cost per app</Link>.
                     Today&apos;s numbers start at midnight UTC.
                   </div>
                 )}
                 {data.cost.dfs_balance?.has_data && (
-                  <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, color: K.muted }}>DataForSEO balance:</span>
+                  <div
+                    data-testid="overview-dfs-balance"
+                    style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+                  >
+                    <span style={{ fontSize: 12, color: K.muted, display: "inline-flex", alignItems: "center" }}>
+                      DataForSEO balance
+                      <SourceHint source={PROVIDER_COST_SRC.dfsBalance} size={11} />
+                    </span>
                     <Badge tone={data.cost.dfs_balance.below_threshold ? "danger" : "success"}>
                       {money(data.cost.dfs_balance.balance_usd)}
                     </Badge>

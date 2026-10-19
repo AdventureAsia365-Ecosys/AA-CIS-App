@@ -4,12 +4,17 @@
 // Runs in the "smoke" project (admin storageState from smoke-setup). Every wait is bounded. Checks:
 //   (a) GET /api/admin/overview/ops answers 200 with the four sections, each "ok" or a plain "unavailable";
 //   (b) the four cards and the "CIS content & operations" heading render; every KPI of an "ok" section
-//       carries a source hint (title + aria-label "Source: …"); no raw JSON on the page;
+//       carries a source hint (kit InfoTip, its text "Source: …"); no raw JSON on the page;
 //   (c) at 390 px, with real scrollbars (headless hides them by default, lesson S239), the page has no
 //       horizontal overflow; a table wrapper of the new cards may scroll sideways only inside its own box and
 //       then shows the kit ScrollX hint (S243: every column stays, e.g. Booking "Cancelled");
 //   (d) /admin/platform/cost (also admin-only): the four KPI values on screen add up,
-//       AWS bill + AI estimate − AI already on the AWS bill = Total, to the cent (S243 review).
+//       AWS bill + AI estimate − AI already on the AWS bill = Total, to the cent (S243 review);
+//   (e) every number tile ([data-kpi]) and every number column ([data-num-col]) on the page, business view and CIS
+//       sections alike, names its source; at least one per card; every source text is plain words (no table or
+//       metric names); a hint opens with the keyboard (Enter) and closes with Escape, and is tied to its button
+//       with aria-describedby (AA-858 Done-when, S243);
+//   (f) 390 px with touch: a tap opens a hint inside the screen, a tap elsewhere closes it.
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute } from './smoke-helpers';
 
@@ -48,8 +53,8 @@ test.describe('AA-858 — ops overview', () => {
       // Every KPI tile in an "ok" section names its source.
       if (body.tripplanner.status === 'ok') {
         for (const k of ['planner_session_started', 'trip_started', 'inquiry_sent', 'ai_search']) {
-          const hint = page.getByTestId(`ops-tp-${k}`).getByTestId('source-hint');
-          await expect(hint).toHaveAttribute('aria-label', /^Source: /);
+          const hint = page.getByTestId(`ops-tp-${k}`).getByTestId('source-hint-text');
+          await expect(hint).toHaveText(/^Source: /);
         }
       }
       if (body.health.status === 'ok') {
@@ -60,8 +65,7 @@ test.describe('AA-858 — ops overview', () => {
       }
       if (body.cost.status === 'ok') {
         await expect(page.getByTestId('ops-cost-total')).toBeVisible();
-        await expect(page.getByTestId('ops-cost-table').getByTestId('source-hint').first()).toHaveAttribute(
-          'title',
+        await expect(page.getByTestId('ops-cost-table').getByTestId('source-hint-text').first()).toHaveText(
           /^Source: /,
         );
       }
@@ -136,6 +140,90 @@ test.describe('AA-858 — ops overview', () => {
       expect(ai, 'AI estimate').not.toBeNull();
       expect(onBill, 'AI already on the AWS bill').not.toBeNull();
       expect(total, 'Total').toBe((aws ?? 0) + (ai as number) - (onBill as number));
+    } finally {
+      await context.close();
+    }
+  });
+  test('(e) every number names its source; keyboard opens and Escape closes a hint', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: baseUrl(),
+      storageState: ADMIN_STATE,
+      viewport: { width: 1440, height: 900 },
+    });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/admin/overview', { waitUntil: 'domcontentloaded' });
+      for (const id of CARDS) await expect(page.getByTestId(id)).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId('overview-cis-heading')).toBeVisible();
+      await expect(page.locator('[data-testid="overview-job-counts"]')).toBeVisible({ timeout: 30000 });
+
+      const m = await page.evaluate(() => {
+        const numbered = Array.from(document.querySelectorAll('main [data-kpi], main [data-num-col]'));
+        const missing = numbered
+          .filter((el) => !el.querySelector('[data-testid="source-hint"]'))
+          .map((el) => (el as HTMLElement).innerText.replace(/\s+/g, ' ').slice(0, 40));
+        const perCard: Record<string, number> = {};
+        for (const id of ['ops-health', 'ops-tripplanner', 'ops-booking', 'ops-cost']) {
+          perCard[id] = document.querySelectorAll(`[data-testid="${id}"] [data-testid="source-hint"]`).length;
+        }
+        const texts = Array.from(document.querySelectorAll('main [data-testid="source-hint-text"]')).map(
+          (el) => el.textContent ?? '',
+        );
+        return { numbered: numbered.length, missing, perCard, texts };
+      });
+      expect(m.missing, `numbers without a source: ${m.missing.join(' | ')}`).toEqual([]);
+      // CIS sections alone: 6 intelligence + 4 tenant tiles, 3 job numbers, 5 pipeline + 3 provider-cost columns.
+      expect(m.numbered).toBeGreaterThanOrEqual(21);
+      for (const [id, n] of Object.entries(m.perCard)) expect(n, `${id} has no source hint`).toBeGreaterThanOrEqual(1);
+      for (const t of m.texts) {
+        expect(t).toMatch(/^Source: /);
+        expect(t, `source text names a table or code: ${t}`).not.toMatch(/\b[a-z]+_[a-z0-9_]+\b|\b[a-z_]+\.[a-z_]+\b/);
+      }
+
+      // Keyboard: focus the first hint button, Enter keeps it open, Escape closes it.
+      const btn = page.getByTestId('source-hint-button').first();
+      const describedBy = await btn.getAttribute('aria-describedby');
+      expect(describedBy).toBeTruthy();
+      const tip = page.locator(`[id="${describedBy}"]`);
+      await expect(tip).toHaveAttribute('role', 'tooltip');
+      await btn.focus();
+      await page.keyboard.press('Enter');
+      await expect(tip).toBeVisible();
+      await expect(tip).toHaveText(/^Source: /);
+      await page.keyboard.press('Escape');
+      await expect(tip).toBeHidden();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(f) 390 px touch: a tap opens a hint inside the screen, a tap elsewhere closes it', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: baseUrl(),
+      storageState: ADMIN_STATE,
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/admin/overview', { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('ops-tripplanner')).toBeVisible({ timeout: 30000 });
+      const btn = page.getByTestId('ops-tripplanner').getByTestId('source-hint-button').last();
+      await btn.scrollIntoViewIfNeeded();
+      await btn.tap();
+      const tip = page.getByTestId('ops-tripplanner').getByTestId('source-hint-text').last();
+      await expect(tip).toBeVisible();
+      const box = await tip.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+      const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+      expect(sw, 'an open hint must not widen the page').toBeLessThanOrEqual(390);
+      await page.getByTestId('ops-tripplanner').locator('h2').tap();
+      await expect(tip).toBeHidden();
     } finally {
       await context.close();
     }
