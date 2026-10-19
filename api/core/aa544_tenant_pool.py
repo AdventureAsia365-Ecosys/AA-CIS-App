@@ -22,8 +22,11 @@ since AA-817 PR-A, S239; each logs `used_tenant_pool` per request):
     /v1/tours/versions/{id} (T2_VERSION_WRITE_FLAG); W9 GET/POST /v1/integrations/{wordpress,facebook}
     and POST .../test (INTEGRATION_CONNECT_FLAG, needs 241).
 
-Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool
-(aa_cis_admin, BYPASSRLS) unchanged, always. This module adds a SECOND pool, aa_app_user
+Design (matches AA-544's approved 2-pool split): Admin (/admin/*) keeps app.state.pool unchanged,
+always. That pool logs in as the CIS runtime role: aa_cis_admin today (owner, so exempt on the ENABLE-only
+RLS tables, and a member of rds_superuser, which FORCE RLS does not filter on RDS: AA-817 probe), cis_app
+from X1 S18 (AA-860; CIS 244 gives it a permissive USING (true) policy on every RLS table, ENABLE-only and
+FORCE alike, for platform parity). Neither has BYPASSRLS. This module adds a SECOND pool, aa_app_user
 (non-BYPASSRLS, real RLS applies), used ONLY by routes that explicitly opt in via
 acquire_scoped_conn() below, and only when that route's OWN flag is on.
 
