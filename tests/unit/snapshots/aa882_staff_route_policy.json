@@ -259,6 +259,10 @@
     "capability": "ops.read",
     "module": "api.routers.admin_overview"
   },
+  "GET /admin/overview/ops": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_overview"
+  },
   "GET /admin/photos": {
     "capability": null,
     "module": "api.routers.admin_photos"

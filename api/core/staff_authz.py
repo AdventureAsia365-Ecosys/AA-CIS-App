@@ -261,6 +261,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/waves/{wave_id}/report"): OPS_READ,   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
     ("GET", "/admin/overview"): OPS_READ,
+    ("GET", "/admin/overview/ops"): OPS_READ,   # AA-858 business view incl. cost per app (admin-only page)
     # ── v1_trip_page admin_router — public trip pages of AA content
     ("POST", "/admin/trip-pages/{tour_id}/publish"): MASTER_ADMIN,
     ("POST", "/admin/trip-pages/recheck"): OPS_WRITE,
