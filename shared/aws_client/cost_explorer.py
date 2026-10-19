@@ -369,14 +369,19 @@ async def record_app_snapshot(pool: asyncpg.Pool, rows: list[dict[str, Any]]) ->
 async def read_app_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: date) -> Optional[dict[str, Any]]:
     """Stored acc2 cost per App tag for days in [start, end_exclusive): {"tags": {tag: {"total_usd", "bedrock_usd",
     "services": [{"service", "amount_usd", "is_bedrock"}]}}, "total_usd", "covered_from", "covered_to",
-    "fetched_at" (newest), "oldest_fetched_at"}. None when no stored day falls in the range."""
+    "fetched_at" (newest), "oldest_fetched_at", "day_fetched_at": {day ISO: newest fetched_at ISO of that day}}.
+    None when no stored day falls in the range."""
     async with pool.acquire() as conn:
         db_rows = await conn.fetch(_APP_RANGE_ROWS_SQL, start, end_exclusive)
     if not db_rows:
         return None
     tags: dict[str, dict[str, Any]] = {}
     per_service: dict[tuple[str, str], float] = {}
+    day_fetched: dict[date, datetime] = {}
     for r in db_rows:
+        d = r["period_start"]
+        if d not in day_fetched or r["fetched_at"] > day_fetched[d]:
+            day_fetched[d] = r["fetched_at"]
         amount = float(r["amount_usd"])
         t = tags.setdefault(r["app_tag"], {"total_usd": 0.0, "bedrock_usd": 0.0})
         t["total_usd"] += amount
@@ -397,4 +402,5 @@ async def read_app_cost_range(pool: asyncpg.Pool, start: date, end_exclusive: da
         "covered_to": max(r["period_start"] for r in db_rows).isoformat(),
         "fetched_at": max(r["fetched_at"] for r in db_rows).isoformat(),
         "oldest_fetched_at": min(r["fetched_at"] for r in db_rows).isoformat(),
+        "day_fetched_at": {d.isoformat(): f.isoformat() for d, f in sorted(day_fetched.items())},
     }

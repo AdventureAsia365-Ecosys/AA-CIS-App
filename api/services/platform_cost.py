@@ -26,10 +26,15 @@ Sources, per app row:
   any app (those calls are already in ``ai_usd`` by app).
 
 Lazy refresh (critic resolution, S243): with ``refresh_if_stale`` and a Redis client, a window whose stored data is
-missing, or older than ``STALE_AFTER`` (24 h) while it may still change (fetched before the window's end + 3 days),
+missing, covers only part of the window (``POST /admin/cost-explorer/check`` stores its own, by default 7-day,
+window), or is older than ``STALE_AFTER`` (24 h) while it may still change (fetched before the window's end + 3 days),
 is fetched again — one CE request (~$0.01, ``CE_REQUEST_COST_USD``) — behind a Redis ``SET NX`` lock so concurrent
-page views make one call. Without Redis, or when the lock is taken, the stored data is returned as is. Worst case
-one call a day per open month: about $0.30/month.
+page views make one call. Every attempt, whatever its outcome (rows, no rows, AWS error), leaves a per-window Redis
+marker (``ATTEMPT_MARKER_TTL_S`` = 24 h after a success, ``ATTEMPT_MARKER_ERROR_TTL_S`` = 6 h after an error); no CE
+call is made for that window while it is set, so an empty CE answer (early on the 1st, a month outside CE retention)
+is not re-fetched on every page view. Without Redis, or when the lock is taken, the stored data is returned as is.
+Worst case: one call per viewed month window per day (the current month's window end moves daily) — about
+$0.30/month for the current month — and at most 4 a day per window while CE keeps failing.
 """
 from __future__ import annotations
 
@@ -48,6 +53,10 @@ STALE_AFTER = timedelta(hours=24)
 FINAL_AFTER = timedelta(days=3)          # CE stops revising a day ~48 h after it ends
 REFRESH_LOCK_KEY = "platform_cost:refresh_lock:v1"
 REFRESH_LOCK_TTL_S = 120
+ATTEMPT_MARKER_PREFIX = "platform_cost:attempted:v1"
+ATTEMPT_MARKER_TTL_S = int(STALE_AFTER.total_seconds())   # after a success (rows or none): once a day per window
+ATTEMPT_MARKER_ERROR_TTL_S = 6 * 3600                       # after an AWS error: retry in 6 h
+CE_LAG = timedelta(days=2)               # CE may lack the last ~2 days of a window: not a coverage gap
 CE_REQUEST_COST_USD = ce.CE_REQUEST_COST_USD
 DEFAULT_LLM_APP = "cis"
 
@@ -94,16 +103,35 @@ def month_window(month: Optional[str], today: date) -> tuple[date, date]:
     return start, min(next_month, today + timedelta(days=1))
 
 
-def _is_stale(stored: Optional[dict], end_exclusive: date, now: datetime) -> tuple[bool, str]:
+def _is_stale(stored: Optional[dict], start: date, end_exclusive: date, now: datetime) -> tuple[bool, str]:
+    """Per day of [start, end_exclusive): stale when a day before the CE lag (the window's last ``CE_LAG``) has no
+    stored row — the stored data covers only part of the window, e.g. after ``POST /admin/cost-explorer/check``
+    stored its own 7-day window — or when a stored day that CE may still revise (fetched less than
+    ``FINAL_AFTER`` after the day ended) was fetched more than ``STALE_AFTER`` ago."""
     if not stored:
         return True, "no stored data for this window"
-    fetched = datetime.fromisoformat(stored["fetched_at"])
+    day_fetched = {date.fromisoformat(d): datetime.fromisoformat(f)
+                   for d, f in (stored.get("day_fetched_at") or {}).items()}
+    must_have_until = end_exclusive - CE_LAG
+    missing = [start + timedelta(days=i) for i in range((must_have_until - start).days)
+               if start + timedelta(days=i) not in day_fetched]
+    if missing:
+        return True, (f"stored data covers only part of the window: {len(missing)} day(s) missing "
+                      f"({missing[0].isoformat()}..{missing[-1].isoformat()})")
+    old = [d for d, f in day_fetched.items()
+           if f < datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc) + FINAL_AFTER
+           and now - f > STALE_AFTER]
+    if old:
+        return True, f"older than {int(STALE_AFTER.total_seconds() // 3600)} h ({len(old)} day(s) not final yet)"
+    newest = datetime.fromisoformat(stored["fetched_at"])
     window_end = datetime.combine(end_exclusive, datetime.min.time(), tzinfo=timezone.utc)
-    if fetched >= window_end + FINAL_AFTER:
+    if newest >= window_end + FINAL_AFTER:
         return False, "final (fetched after the window closed)"
-    if now - fetched > STALE_AFTER:
-        return True, f"older than {int(STALE_AFTER.total_seconds() // 3600)} h"
     return False, "fresh"
+
+
+def _attempt_key(start: date, end_exclusive: date) -> str:
+    return f"{ATTEMPT_MARKER_PREFIX}:{start.isoformat()}:{end_exclusive.isoformat()}"
 
 
 async def refresh_app_snapshot(pool: Any, start: date, end_exclusive: date) -> dict:
@@ -117,7 +145,19 @@ async def refresh_app_snapshot(pool: Any, start: date, end_exclusive: date) -> d
             "est_cost_usd": round(result["requests"] * CE_REQUEST_COST_USD, 2)}
 
 
-async def _lazy_refresh(pool: Any, redis: Any, start: date, end_exclusive: date) -> dict:
+async def _lazy_refresh(pool: Any, redis: Any, start: date, end_exclusive: date, now: datetime) -> dict:
+    marker_key = _attempt_key(start, end_exclusive)
+    try:
+        marker = await redis.get(marker_key)
+    except Exception as e:
+        logger.warning("platform_cost_marker_read_failed", error=repr(e)[:200])
+        return {"attempted": False, "ok": None, "reason": "attempt marker unavailable (Redis error), not refreshed"}
+    if marker:
+        if isinstance(marker, bytes):
+            marker = marker.decode("utf-8", "replace")
+        return {"attempted": False, "ok": None, "skipped": "recent_attempt",
+                "reason": f"this window was already fetched from Cost Explorer recently ({marker}); "
+                          "no new CE call until the marker expires"}
     try:
         got = await redis.set(REFRESH_LOCK_KEY, "1", nx=True, ex=REFRESH_LOCK_TTL_S)
     except Exception as e:
@@ -127,15 +167,22 @@ async def _lazy_refresh(pool: Any, redis: Any, start: date, end_exclusive: date)
         return {"attempted": False, "ok": None, "reason": "another refresh is running"}
     try:
         out = await refresh_app_snapshot(pool, start, end_exclusive)
-        return {"attempted": True, "ok": True, **out}
+        result = {"attempted": True, "ok": True, **out}
+        marker_value, marker_ttl = f"{now.isoformat()} ok, {out['row_count']} rows", ATTEMPT_MARKER_TTL_S
     except Exception as e:
         logger.warning("platform_cost_lazy_refresh_failed", error=repr(e)[:300])
-        return {"attempted": True, "ok": False, "error": str(e)[:300]}
+        result = {"attempted": True, "ok": False, "error": str(e)[:300]}
+        marker_value, marker_ttl = f"{now.isoformat()} error", ATTEMPT_MARKER_ERROR_TTL_S
     finally:
         try:
             await redis.delete(REFRESH_LOCK_KEY)
         except Exception:
             pass
+    try:
+        await redis.set(marker_key, marker_value, ex=marker_ttl)
+    except Exception as e:
+        logger.warning("platform_cost_marker_write_failed", error=repr(e)[:200])
+    return result
 
 
 def _row(app: str, kind: str, label: str) -> dict:
@@ -149,13 +196,13 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
     now = now or datetime.now(timezone.utc)
     start, end = month_window(month, now.date())
     stored = await ce.read_app_cost_range(pool, start, end)
-    stale, why = _is_stale(stored, end, now)
+    stale, why = _is_stale(stored, start, end, now)
     refresh: dict[str, Any] = {"attempted": False, "ok": None, "reason": why, "stale": stale}
     if stale and refresh_if_stale:
         if redis is None:
             refresh["reason"] = f"{why}; no Redis lock, not refreshed"
         else:
-            refresh.update(await _lazy_refresh(pool, redis, start, end))
+            refresh.update(await _lazy_refresh(pool, redis, start, end, now))
             refresh["stale_reason"] = why
             if refresh.get("ok"):
                 stored = await ce.read_app_cost_range(pool, start, end)

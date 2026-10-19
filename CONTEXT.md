@@ -626,7 +626,8 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   from the verified Cognito identity, else `x-admin-user-id` marked `details.auth = legacy_unverified`, method,
   route template, status (denied calls included); never the body or query values. `GET /admin/platform/audit`
   (`audit.read`, filters + keyset cursor, staff scope by default) and `GET /admin/platform/audit/verify`
-  (`audit.read`; Python recompute of the chain, `api/services/platform_audit.py`, must stay equal to the trigger).
+  (`audit.read`; Python recompute of the chain, `api/services/platform_audit.py`, must stay equal to the trigger;
+  a row without `chain_seq` created after 248 was applied — a trigger bypass — also makes it `ok: false`).
   The RDS master can still bypass the triggers until the X1 runtime role and the 245 owner transfer; the chain
   makes such an edit detectable, not impossible. Integration tests delete their own audit rows only through
   `tests/integration/_audit_cleanup.py`.
@@ -635,8 +636,9 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   (`shared.cost_explorer_app_snapshot`, CIS 248; untagged is its own row with services), AI = LLM gateway estimates
   by `quality_signal->>'app'` from `shared.llm_call_log` + `shared.llm_call_daily`; acc2 Bedrock is subtracted from
   AI so it is not counted twice; acc1/acc3 Bedrock CE actuals are a cross-check line. `GET /admin/platform/cost`
-  (`spend.read`) refreshes a month whose snapshot is missing or > 24 h old (and may still change) with one CE
-  request (~$0.01) behind a Redis lock; `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
+  (`spend.read`) refreshes a month whose snapshot misses days or is > 24 h old (and may still change) with one CE
+  request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
+  or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
 
 | Area | admin | reviewer | content | tenant |

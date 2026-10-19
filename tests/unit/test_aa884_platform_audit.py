@@ -31,7 +31,7 @@ def _pool(rows):
         return [r for r in rows if r["chain_seq"] > after][:limit]
 
     pool.fetch = AsyncMock(side_effect=fetch)
-    pool.fetchval = AsyncMock(return_value=3)
+    pool.fetchrow = AsyncMock(return_value={"boundary": T0, "pre_chain": 3, "after_boundary": 0, "after_ids": None})
     return pool
 
 
@@ -101,7 +101,24 @@ async def test_verify_cached_counts_pre_chain_rows():
     first = await pa.verify_chain_cached(pool, redis)
     second = await pa.verify_chain_cached(pool, redis)
     assert first["pre_chain_rows"] == 3 and first["_cached"] is False and second["_cached"] is True
+    assert first["ok"] is True and first["unchained_after_genesis"] == 0 and first["chain_boundary"] == T0.isoformat()
     assert (await pa.verify_chain_cached(pool, redis, from_seq=2))["_cached"] is False  # partial: never cached
+
+
+@pytest.mark.asyncio
+async def test_verify_cached_flags_unchained_rows_after_the_boundary():
+    # A row inserted after 248 with the trigger skipped (replica mode) has no chain_seq: the chain itself still
+    # verifies, so only the unchained count can catch it — and it must turn ok false.
+    pool = _pool(_chain(3))
+    pool.fetchrow = AsyncMock(return_value={"boundary": T0, "pre_chain": 2, "after_boundary": 1,
+                                            "after_ids": [str(uuid.UUID(int=99))]})
+    out = await pa.verify_chain_cached(pool, None)
+    assert out["checked"] == 3 and out["first_bad_seq"] is None
+    assert out["ok"] is False and out["unchained_after_genesis"] == 1 and out["pre_chain_rows"] == 2
+    assert out["unchained_after_genesis_ids"] == [str(uuid.UUID(int=99))]
+    assert "trigger skipped" in out["problem"]
+    sql = pool.fetchrow.await_args.args[0]
+    assert "chain_seq IS NULL" in sql and "version = '248'" in sql and "chain_seq = 1" in sql
 
 
 def test_list_query_binds_every_filter_and_escapes_the_prefix():

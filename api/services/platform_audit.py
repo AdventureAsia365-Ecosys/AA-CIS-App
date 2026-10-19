@@ -7,6 +7,12 @@
   canonical text of ``acp_shared.audit_log_chain()`` (migration 248) and checks each ``prev_hash`` against the row
   before it. A missing ``chain_seq`` (a deleted row) or a changed column breaks it. The recompute is independent of
   the trigger function on purpose: replacing the function does not make old rows verify.
+- ``verify_chain_cached`` also counts rows WITHOUT a chain_seq. Rows older than the chain boundary (``applied_at`` of
+  CIS 248 in ``shared.schema_versions``, else the genesis row's ``created_at``) are ``pre_chain_rows`` (written
+  before 248, expected). A row without a chain_seq created AFTER the boundary can only come from an insert that
+  skipped the trigger (``session_replication_role = replica`` or a disabled trigger — the bypass the 248 header
+  names): it is counted in ``unchained_after_genesis`` (ids sampled) and makes ``ok`` false. Limit: an inserter who
+  bypasses the trigger can also backdate ``created_at`` before the boundary; that row then counts as pre-chain.
 
 The canonical text (change it only together with a new migration that changes the trigger, never alone):
   prev_hash | id | chain_seq | tenant_id | actor | actor_type | action | resource_type | resource_id | details::text |
@@ -28,6 +34,7 @@ MAX_LIMIT = 200
 VERIFY_CACHE_KEY = "admin_platform_audit_verify:v1"
 VERIFY_CACHE_TTL_S = 60
 VERIFY_BATCH = 2000
+UNCHAINED_SAMPLE = 10
 
 _COLS = """a.id, a.tenant_id, a.actor, a.actor_type::text AS actor_type, a.action, a.resource_type, a.resource_id,
            a.details::text AS details_text, a.created_at, a.http_method, a.route, a.status, a.chain_seq,
@@ -191,8 +198,40 @@ def _verdict(checked: int, ok: bool, bad: Optional[int], problem: Optional[str],
             "from_seq": from_seq}
 
 
+# Rows without chain_seq, split at the chain boundary: 248's applied_at (the moment every later insert is chained),
+# else the genesis row's created_at. Strict ">" so a row written in the same transaction as 248 (a test DB that
+# applies migrations together) is pre-chain. A NULL created_at (nullable since 030) predates 248: 248's trigger
+# fills it.
+_UNCHAINED_SQL = f"""
+    WITH b AS (
+        SELECT coalesce((SELECT max(v.applied_at) FROM shared.schema_versions v WHERE v.version = '248'),
+                        (SELECT g.created_at FROM acp_shared.audit_log g WHERE g.chain_seq = 1)) AS boundary
+    )
+    SELECT b.boundary,
+           count(a.id) FILTER (WHERE b.boundary IS NULL OR a.created_at IS NULL
+                                  OR a.created_at <= b.boundary) AS pre_chain,
+           count(a.id) FILTER (WHERE a.created_at > b.boundary) AS after_boundary,
+           (array_agg(a.id::text ORDER BY a.created_at DESC) FILTER (WHERE a.created_at > b.boundary))
+               [1:{UNCHAINED_SAMPLE}] AS after_ids
+      FROM b
+      LEFT JOIN acp_shared.audit_log a ON a.chain_seq IS NULL
+     GROUP BY b.boundary
+"""
+
+
+async def unchained_rows(pool: Any) -> dict:
+    """{pre_chain_rows, unchained_after_genesis, unchained_after_genesis_ids, chain_boundary}."""
+    r = await pool.fetchrow(_UNCHAINED_SQL)
+    boundary = r["boundary"] if r else None
+    return {"pre_chain_rows": int(r["pre_chain"] or 0) if r else 0,
+            "unchained_after_genesis": int(r["after_boundary"] or 0) if r else 0,
+            "unchained_after_genesis_ids": list((r["after_ids"] if r else None) or []),
+            "chain_boundary": boundary.isoformat() if boundary else None}
+
+
 async def verify_chain_cached(pool: Any, redis: Any = None, from_seq: Optional[int] = None) -> dict:
-    """verify_chain + the count of pre-248 rows, cached VERIFY_CACHE_TTL_S in Redis (full-chain checks only)."""
+    """verify_chain + the unchained-row counts (``unchained_rows``), cached VERIFY_CACHE_TTL_S in Redis (full-chain
+    checks only). Any unchained row after the boundary makes ``ok`` false even when the chain itself verifies."""
     key = VERIFY_CACHE_KEY if from_seq is None else None
     if redis is not None and key:
         try:
@@ -202,12 +241,15 @@ async def verify_chain_cached(pool: Any, redis: Any = None, from_seq: Optional[i
         except Exception as e:
             logger.warning("platform_audit_verify_cache_read_failed", error=repr(e)[:200])
     result = await verify_chain(pool, from_seq)
-    result["pre_chain_rows"] = int(await pool.fetchval(
-        "SELECT count(*) FROM acp_shared.audit_log WHERE chain_seq IS NULL") or 0)
+    result.update(await unchained_rows(pool))
+    if result["unchained_after_genesis"] and result["ok"]:
+        result["ok"] = False
+        result["problem"] = (f"{result['unchained_after_genesis']} row(s) without chain_seq created after the chain "
+                             "boundary: inserted with the chain trigger skipped")
     result["verified_at"] = datetime.now(timezone.utc).isoformat()
     if not result["ok"]:
         logger.warning("platform_audit_chain_broken", first_bad_seq=result["first_bad_seq"],
-                       problem=result["problem"])
+                       problem=result["problem"], unchained_after_genesis=result["unchained_after_genesis"])
     if redis is not None and key:
         try:
             await redis.set(key, json.dumps(result, default=str), ex=VERIFY_CACHE_TTL_S)

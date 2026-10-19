@@ -83,6 +83,33 @@ async def test_middleware_rows_are_chained_and_verify(env):
 
 
 @pytest.mark.asyncio
+async def test_unchained_row_after_248_is_flagged(env):
+    """Review finding (S243): a row inserted with the chain trigger skipped (replica mode) has chain_seq NULL; the
+    chain still verifies, so verify_chain_cached must flag it as unchained after the boundary, not as pre-248."""
+    p, tag = env.pool, env.tag
+    before = await platform_audit.unchained_rows(p)
+    assert before["chain_boundary"] is not None  # 248's applied_at in shared.schema_versions
+    path = f"/admin/aa884-{tag}/bypass"
+    async with p.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL session_replication_role = replica")
+            await conn.execute(
+                "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, created_at) "
+                "VALUES ('admin:x', 'staff.request', 'http_route', $1, now())", path)
+    row = await p.fetchrow("SELECT id::text AS id, chain_seq FROM acp_shared.audit_log WHERE resource_id = $1", path)
+    assert row["chain_seq"] is None
+    after = await platform_audit.unchained_rows(p)
+    assert after["unchained_after_genesis"] == before["unchained_after_genesis"] + 1
+    assert after["pre_chain_rows"] == before["pre_chain_rows"] and row["id"] in after["unchained_after_genesis_ids"]
+    # Full check: ok must be false. (On this shared test DB other teardowns leave chain gaps, which may be reported
+    # first — so assert the count, not the problem text; the unit test pins the text.)
+    result = await platform_audit.verify_chain_cached(p, None)
+    assert result["ok"] is False and result["unchained_after_genesis"] >= 1
+    await delete_audit_rows(p, "resource_id = $1", path)
+    assert (await platform_audit.unchained_rows(p))["unchained_after_genesis"] == before["unchained_after_genesis"]
+
+
+@pytest.mark.asyncio
 async def test_machine_row(env):
     p, tag = env.pool, env.tag
     await staff_audit._write(_scope(p, f"/admin/aa884-{tag}/m", route="/admin/x"), 200)
@@ -187,6 +214,9 @@ async def test_app_snapshot_newest_fetch_wins(env):
         out = await ce.read_app_cost_range(p, date(2026, 8, 1), date(2026, 8, 2))
         assert out["tags"][""]["total_usd"] == 1.5 and out["tags"]["cis"]["total_usd"] == 2.0
         assert out["total_usd"] == 3.5 and out["covered_from"] == "2026-08-01"
+        # Per-day newest fetch (the lazy refresh's coverage / age check reads it).
+        assert list(out["day_fetched_at"]) == ["2026-08-01"]
+        assert out["day_fetched_at"]["2026-08-01"] == out["fetched_at"]
     finally:
         await p.execute("DELETE FROM shared.cost_explorer_app_snapshot WHERE account_id = $1", acct)
 

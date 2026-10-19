@@ -72,25 +72,70 @@ def test_month_window():
         pc.month_window("2026/10", today)
 
 
+def _stored_days(start, end_exclusive, fetched):
+    """A read_app_cost_range-shaped dict with every day of [start, end_exclusive) fetched at ``fetched``."""
+    days = {(start + timedelta(days=i)).isoformat(): fetched.isoformat()
+            for i in range((end_exclusive - start).days)}
+    return {"fetched_at": fetched.isoformat(), "day_fetched_at": days}
+
+
 def test_staleness_rules():
-    end = date(2026, 10, 20)
-    assert pc._is_stale(None, end, NOW)[0] is True
-    fresh = {"fetched_at": (NOW - timedelta(hours=2)).isoformat()}
-    assert pc._is_stale(fresh, end, NOW)[0] is False
-    old = {"fetched_at": (NOW - timedelta(hours=30)).isoformat()}
-    assert pc._is_stale(old, end, NOW)[0] is True
+    start, end = date(2026, 10, 1), date(2026, 10, 20)
+    assert pc._is_stale(None, start, end, NOW)[0] is True
+    assert pc._is_stale(_stored_days(start, end, NOW - timedelta(hours=2)), start, end, NOW) == (False, "fresh")
+    stale, why = pc._is_stale(_stored_days(start, end, NOW - timedelta(hours=30)), start, end, NOW)
+    assert stale is True and "older than 24 h" in why
+    # The last CE_LAG days of the window may be missing (CE lag): not a coverage gap.
+    assert pc._is_stale(_stored_days(start, date(2026, 10, 18), NOW - timedelta(hours=2)), start, end, NOW)[0] is False
     # A closed month fetched 3+ days after it ended is final, however old the fetch.
-    final = {"fetched_at": datetime(2026, 9, 5, tzinfo=timezone.utc).isoformat()}
-    assert pc._is_stale(final, date(2026, 9, 1), NOW)[0] is False
+    sep = _stored_days(date(2026, 9, 1), date(2026, 10, 1), datetime(2026, 10, 5, tzinfo=timezone.utc))
+    final = (False, "final (fetched after the window closed)")
+    assert pc._is_stale(sep, date(2026, 9, 1), date(2026, 10, 1), NOW) == final
+
+
+def test_partial_coverage_is_stale_even_when_freshly_fetched():
+    # Review finding (S243): POST /admin/cost-explorer/check stores its own 7-day window. Right after 248 (empty
+    # table) those rows are all the month has and they are fresh — the month total must still count as stale.
+    start, end = date(2026, 10, 1), date(2026, 10, 20)
+    last7 = _stored_days(date(2026, 10, 12), date(2026, 10, 19), NOW - timedelta(minutes=5))
+    stale, why = pc._is_stale(last7, start, end, NOW)
+    assert stale is True and "11 day(s) missing (2026-10-01..2026-10-11)" in why
+    # A gap in the middle (month fetched on the 5th, a 7-day check on the 19th) is caught too.
+    gap = _stored_days(start, date(2026, 10, 6), NOW - timedelta(hours=1))
+    gap["day_fetched_at"].update(last7["day_fetched_at"])
+    stale, why = pc._is_stale(gap, start, end, NOW)
+    assert stale is True and "6 day(s) missing (2026-10-06..2026-10-11)" in why
+    # A 7-day check across a month boundary leaves the closed month partial as well.
+    sep_tail = _stored_days(date(2026, 9, 26), date(2026, 10, 1), NOW - timedelta(hours=1))
+    assert pc._is_stale(sep_tail, date(2026, 9, 1), date(2026, 10, 1), NOW)[0] is True
+
+
+def test_only_not_final_days_age():
+    # Days CE no longer revises keep their old fetch; only the recent, revisable days must be < 24 h old.
+    start, end = date(2026, 10, 1), date(2026, 10, 20)
+    stored = _stored_days(start, end, NOW - timedelta(hours=2))
+    stored["day_fetched_at"]["2026-10-01"] = datetime(2026, 10, 6, tzinfo=timezone.utc).isoformat()   # final
+    assert pc._is_stale(stored, start, end, NOW)[0] is False
+    stored["day_fetched_at"]["2026-10-15"] = datetime(2026, 10, 16, tzinfo=timezone.utc).isoformat()  # not final
+    stale, why = pc._is_stale(stored, start, end, NOW)
+    assert stale is True and "1 day(s) not final" in why
 
 
 class FakeRedis:
     def __init__(self, locked=False):
         self.locked = locked
         self.deleted = []
+        self.data = {}
+        self.ttl = {}
+
+    async def get(self, key):
+        return self.data.get(key)
 
     async def set(self, key, value, nx=False, ex=None):
-        return not self.locked
+        if key == pc.REFRESH_LOCK_KEY:
+            return not self.locked
+        self.data[key], self.ttl[key] = value, ex
+        return True
 
     async def delete(self, key):
         self.deleted.append(key)
@@ -109,7 +154,12 @@ STORED = {
     },
     "total_usd": 101.06, "covered_from": "2026-10-01", "covered_to": "2026-10-19",
     "fetched_at": (NOW - timedelta(hours=1)).isoformat(), "oldest_fetched_at": (NOW - timedelta(hours=1)).isoformat(),
+    "day_fetched_at": _stored_days(date(2026, 10, 1), date(2026, 10, 20), NOW - timedelta(hours=1))["day_fetched_at"],
 }
+
+
+def _aged(hours):
+    return {**STORED, **_stored_days(date(2026, 10, 1), date(2026, 10, 20), NOW - timedelta(hours=hours))}
 
 AI_ROWS = [
     {"app": "cis", "provider": "bedrock-satellite", "account": "acc3", "calls": 100, "cost_usd": 4.0,
@@ -157,7 +207,7 @@ async def test_cost_by_app_aggregates_without_double_counting(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stale_month_refreshes_once_behind_the_lock(monkeypatch):
-    stale = {**STORED, "fetched_at": (NOW - timedelta(hours=30)).isoformat()}
+    stale = _aged(30)
     reads = AsyncMock(side_effect=[stale, STORED])
     monkeypatch.setattr(ce, "read_app_cost_range", reads)
     monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
@@ -169,11 +219,47 @@ async def test_stale_month_refreshes_once_behind_the_lock(monkeypatch):
     assert out["refresh"]["est_cost_usd"] == 0.01 and reads.await_count == 2
     assert refresh.await_args.args[1:] == (date(2026, 10, 1), date(2026, 10, 20))
     assert redis.deleted == [pc.REFRESH_LOCK_KEY]
+    marker = pc._attempt_key(date(2026, 10, 1), date(2026, 10, 20))
+    assert redis.ttl[marker] == pc.ATTEMPT_MARKER_TTL_S and "40 rows" in redis.data[marker]
+
+
+@pytest.mark.asyncio
+async def test_empty_refresh_is_remembered_and_not_repeated(monkeypatch):
+    # Review finding (S243): CE answers with no rows (early on the 1st, a month outside CE retention). Nothing gets
+    # stored, so the next view is "no stored data" again — the attempt marker must stop a CE call on every view.
+    monkeypatch.setattr(ce, "read_app_cost_range", AsyncMock(return_value=None))
+    monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
+    refresh = AsyncMock(return_value={"row_count": 0, "ce_requests": 1, "est_cost_usd": 0.01})
+    monkeypatch.setattr(pc, "refresh_app_snapshot", refresh)
+    redis = FakeRedis()
+    first = await pc.cost_by_app(_pool([]), "2026-09", redis=redis, now=NOW)
+    assert first["refresh"]["attempted"] is True and first["refresh"]["row_count"] == 0
+    for _ in range(3):
+        again = await pc.cost_by_app(_pool([]), "2026-09", redis=redis, now=NOW)
+        assert again["refresh"]["attempted"] is False and again["refresh"]["skipped"] == "recent_attempt"
+        assert "already fetched" in again["refresh"]["reason"] and again["refresh"]["stale"] is True
+    assert refresh.await_count == 1
+    # Another window has its own marker.
+    await pc.cost_by_app(_pool([]), "2026-08", redis=redis, now=NOW)
+    assert refresh.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_window_after_a_check_triggers_one_full_month_refresh(monkeypatch):
+    last7 = {**STORED, **_stored_days(date(2026, 10, 12), date(2026, 10, 19), NOW - timedelta(minutes=5))}
+    reads = AsyncMock(side_effect=[last7, STORED])
+    monkeypatch.setattr(ce, "read_app_cost_range", reads)
+    monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
+    refresh = AsyncMock(return_value={"row_count": 90, "ce_requests": 1, "est_cost_usd": 0.01})
+    monkeypatch.setattr(pc, "refresh_app_snapshot", refresh)
+    out = await pc.cost_by_app(_pool([]), None, redis=FakeRedis(), now=NOW)
+    assert out["refresh"]["ok"] is True and "covers only part" in out["refresh"]["stale_reason"]
+    assert refresh.await_args.args[1:] == (date(2026, 10, 1), date(2026, 10, 20))
 
 
 @pytest.mark.asyncio
 async def test_lock_taken_or_no_redis_or_disabled_means_no_ce_call(monkeypatch):
-    stale = {**STORED, "fetched_at": (NOW - timedelta(hours=30)).isoformat()}
+    stale = _aged(30)
     monkeypatch.setattr(ce, "read_app_cost_range", AsyncMock(return_value=stale))
     monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
     refresh = AsyncMock()
@@ -189,7 +275,7 @@ async def test_lock_taken_or_no_redis_or_disabled_means_no_ce_call(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_failed_refresh_keeps_stored_data(monkeypatch):
-    stale = {**STORED, "fetched_at": (NOW - timedelta(hours=30)).isoformat()}
+    stale = _aged(30)
     monkeypatch.setattr(ce, "read_app_cost_range", AsyncMock(return_value=stale))
     monkeypatch.setattr(ce, "read_cost_range", AsyncMock(return_value=None))
     monkeypatch.setattr(pc, "refresh_app_snapshot", AsyncMock(side_effect=ce.CostExplorerUnavailable("throttled")))
@@ -197,6 +283,8 @@ async def test_failed_refresh_keeps_stored_data(monkeypatch):
     out = await pc.cost_by_app(_pool([]), None, redis=redis, now=NOW)
     assert out["refresh"]["ok"] is False and "throttled" in out["refresh"]["error"]
     assert out["aws"]["total_usd"] == 101.06 and redis.deleted == [pc.REFRESH_LOCK_KEY]
+    marker = pc._attempt_key(date(2026, 10, 1), date(2026, 10, 20))
+    assert redis.ttl[marker] == pc.ATTEMPT_MARKER_ERROR_TTL_S and "error" in redis.data[marker]
 
 
 @pytest.mark.asyncio
