@@ -18,7 +18,7 @@ import { Search, Bell, Sun, Moon, Monitor, Settings, LogOut, ChevronDown, Menu a
 import { K, sans, serif, alpha, formatDateTime } from "./tokens";
 import { useThemeChoice } from "./useTheme";
 import type { ThemeChoice } from "./theme";
-import { ROLE_LABEL, isStaffRole } from "@/lib/rbac";
+import { ROLE_LABEL, isReadOnlyRole, isStaffRole } from "@/lib/rbac";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { pageSection, pageTitle } from "./adminNav";
 
@@ -154,6 +154,8 @@ async function fetchUnreadCount(): Promise<number> {
 
 function Notifications() {
   const qc = useQueryClient();
+  // AA-878 — the read-only viewer reads the bell but never clears it (the BFF and the backend refuse the PUT).
+  const canMarkRead = !isReadOnlyRole(useAdminIdentity().role);
   const [open, setOpen] = useState(false);
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const ref = useRef<HTMLDivElement>(null);
@@ -231,7 +233,7 @@ function Notifications() {
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: `1px solid ${K.line}` }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>Notifications</span>
-            {unread > 0 && (
+            {unread > 0 && canMarkRead && (
               <button onClick={markAllRead} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: K.accent, fontWeight: 600 }}>
                 Mark all read
               </button>

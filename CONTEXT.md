@@ -462,6 +462,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   helpers as `VERCEL_AUTOMATION_BYPASS_SECRET`). Lint: `portal-lint` CI job (non-required, + `tsc`). e2e specs carry no hardcoded credentials (shared helper
   `tests/e2e/helpers/auth.ts` reads the env). ESLint enforces UI-kit conventions in
   `frontend/eslint.config.mjs` (`frontend-lint` CI job, non-required).
+- **Cognito E2E (AA-816 E1, `.github/workflows/e2e-cognito.yml`)**: `workflow_dispatch` on `main` only,
+  GitHub environment `e2e`, OIDC role from secret `E2E_MAIL_ROLE_ARN` (Infra `aa-cis-dev-e2e-mail-reader`,
+  read-only: List + Get on `s3://aa-cis-dev-e2e-mail-005097885195/inbound/`, no delete; 1-day expiry). Playwright
+  project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
+  user "E2E Cognito" (`e2e-cognito@adventure.asia`, reviewer, forwarded to `e2e@e2e-mail.lumiguides.it.com`)
+  signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
+  no silent re-login. The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
+  are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
   task definitions. Migrations are applied only through the AA-CIS-Infra **DB Migrate** workflow
   (`check` → `apply`) from a byte-identical copy in `db/migrations/cis/` (S225); never by hand. A
@@ -525,7 +533,8 @@ waves (`/admin/waves`, AA-727).
 ## Staff roles and permissions (AA-656)
 
 One staff identity model. Every staff user is a row in `shared.admin_users` (role enum
-`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218; identity columns from migration 247:
+`shared.admin_role`: `admin`, `reviewer`, `content` — migration 218 — and the read-only `viewer` — migration
+249, AA-878; identity columns from migration 247:
 `email` lower-case `@adventure.asia` only, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
@@ -677,19 +686,35 @@ to `{status: "unavailable", reason, message}` instead of failing the call:
 Cost: ≈ $0.0002 per health refresh, worst case ≈ $0.60/month; CE as AA-884. No new env var (names derive from
 `ENVIRONMENT`).
 
-| Area | admin | reviewer | content | tenant |
-|---|---|---|---|---|
-| Content work: Upload, Rewrite (S1), Review Queue, Master Content, Settings | ✓ | ✓ | ✓ | — |
-| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — |
-| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — |
-| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — |
-| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — |
-| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | ✓ |
-| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | — |
-| `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | ✓ |
+| Area | admin | reviewer | content | viewer | tenant |
+|---|---|---|---|---|---|
+| Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
+| Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
+| Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — | — |
+| BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
+| Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
+| Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | — | ✓ |
+| BFF proxies `/api/admin`, `/api/pipeline`, `/api/tour-full`, `/api/tenant/pipeline/brand-identity`, `/api/tenant/*` (admin app; `/api/tenant/*` is staff-only since AA-885) | ✓ | ✓ | ✓ | GET only | — |
+| AA-Booking token `POST /auth/booking-token` | ✓ | ✓ | ✓ | 403 | — |
+| `/api/tenant/*`, `/api/tenant/me`, `/api/playground/proxy` — **portal app** BFF, tenant JWT only | — | — | — | — | ✓ |
+
+**Read-only `viewer` (AA-878).** The role behind the UI-smoke E2E account (`e2e-claude-code-viewer`, a legacy
+password row; password only in Secrets Manager `aa-cis/dev/e2e-test-viewer`; created with
+`scripts/create_staff_user.py --password-from-secret`). Capabilities `content.read` only. It is refused on
+**every** non-GET twice: the BFF `requireAdmin()` answers 403 before attaching the secret (`lib/rbac.ts`
+`READ_ONLY_ROLES`), and the backend `denial_reason` refuses `READ_ONLY_ROLES` on any method but GET/HEAD/OPTIONS
+whatever the route's capability (the notification bell's PUTs need `content.read`, the viewer still cannot clear
+it). Admin-only reads stay refused by POLICY; the role-filtered open reads (search, bell, tenant details) treat
+it like reviewer/content. No Booking access (`/auth/booking-token` → 403, `staff_authz.NO_BOOKING_ROLES`). Not
+assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
+Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
+readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the GitHub
+`E2E_ADMIN_*` secrets hold this account (the role comes from the login answer): readable pages get the full page
+check, admin-only pages must redirect to `/admin/review`, a BFF write and the staff list must answer 403.
 
 AA-Booking staff roles map onto the same three: `admin` → admin, `sales` → reviewer tier,
-`content_creator` → content. Reviewer and content reach the backend through the same admin secret;
+`content_creator` → content (the CIS `viewer` maps to nothing: no Booking token). Reviewer and content reach the backend through the same admin secret;
 what they may call there is narrowed by the backend capabilities below (AA-882), not by the BFF yet
 (`canWriteAdminPath` still allows writes by default until GĐ4b).
 
