@@ -8,7 +8,7 @@
 -- same job-then-read split as shared.dfs_balance_snapshot, AA-627/migration 159) rather than
 -- called live per page view.
 --
--- acc2 (005097885195) is a member account, not the AWS Organizations payer, so there is no
+-- acc2 is a member account, not the AWS Organizations payer, so there is no
 -- single consolidated CE call — the app fetches each account's own costs separately (acc2
 -- direct, acc1/acc3 via STS AssumeRole into their satellite CostExplorer-Reader roles — mirrors
 -- shared/llm_client/bedrock_satellite.py's AssumeRole pattern, see AA-CIS-Infra PR #69). One
@@ -18,7 +18,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS shared.cost_explorer_snapshot (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id     TEXT NOT NULL,          -- AWS account ID (e.g. '005097885195')
+    account_id     TEXT NOT NULL,          -- AWS account ID (12 digits)
     service        TEXT NOT NULL,          -- CE SERVICE dimension (e.g. 'Amazon Elastic Compute Cloud')
     period_start   DATE NOT NULL,          -- CE UsageStartDate for this row's period
     period_end     DATE NOT NULL,          -- CE UsageEndDate for this row's period
@@ -38,7 +38,7 @@ COMMENT ON TABLE shared.cost_explorer_snapshot IS
     'reads the latest fetch via GET /admin/cost-explorer (fetched_at DESC, most recent batch).';
 COMMENT ON COLUMN shared.cost_explorer_snapshot.account_id IS
     'AWS account ID this row''s cost was fetched from directly (not necessarily the payer -- '
-    'AA-623 found acc2/005097885195 is a member account, so each of acc1/acc2/acc3 is fetched '
+    'AA-623 found acc2 is a member account, so each of acc1/acc2/acc3 is fetched '
     'separately, acc1/acc3 via STS AssumeRole satellite roles).';
 
 INSERT INTO shared.schema_versions (version, applied_at, description)

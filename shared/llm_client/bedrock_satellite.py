@@ -36,8 +36,8 @@ invoke mới thành công nhất quán.
 ═══════════════════════════════════════════════════════════════════════════
 
 STEP 0 verified (16/07/2026):
-- Role acc1: arn:aws:iam::867490540162:role/AA-Bedrock-Invoker
-  trust: CHỈ arn:aws:iam::005097885195:role/aa-cis-dev-ecs-task-role,
+- Role acc1: AA-Bedrock-Invoker (ARN built from ACC1_ACCOUNT_ID below)
+  trust: CHỈ acc2's role aa-cis-dev-ecs-task-role,
          Condition StringEquals sts:ExternalId=aa296-satellite-bedrock
   permission (policy InvokeApprovedClaudeModelsOnly): bedrock:InvokeModel +
   InvokeModelWithResponseStream, scoped 6 Resource ARN (2 model × 3 dạng:
@@ -63,7 +63,7 @@ TODO còn lại trước khi coi AA-296 hoàn tất production-ready:
 [ ] Update skill aa-ecosys-repos / ai-nghiep với bài học "2-dạng ARN" này
 
 ═══════════════════════════════════════════════════════════════════════════
-AA-397/AA-398 — acc3 (786888028788) thêm vào làm satellite chính, acc1 lùi
+AA-397/AA-398 — acc3 thêm vào làm satellite chính, acc1 lùi
 xuống fallback (2026-08-12):
 
 - Cả session cache VÀ hàm public đều nhận tham số `account: str` ("acc1" |
@@ -101,11 +101,17 @@ from botocore.exceptions import ClientError
 logger = structlog.get_logger()
 
 # ---------------------------------------------------------------- config
-ACC1_ROLE_ARN = "arn:aws:iam::867490540162:role/AA-Bedrock-Invoker"
+# AA-902 — the satellite account IDs are written ONCE here (this repo is public; the other modules
+# build ARNs from these names, cost_explorer.py and bedrock_batch.py import them). They still are
+# literals until the task definition carries them; see docs/implementation-notes/AA-902.md.
+ACC1_ACCOUNT_ID = "867490540162"
+ACC3_ACCOUNT_ID = "786888028788"
+
+ACC1_ROLE_ARN = f"arn:aws:iam::{ACC1_ACCOUNT_ID}:role/AA-Bedrock-Invoker"
 ACC1_EXTERNAL_ID = "aa296-satellite-bedrock"
 ACC1_REGION = "us-west-1"
 
-ACC3_ROLE_ARN = "arn:aws:iam::786888028788:role/AA3-Bedrock-Invoker"
+ACC3_ROLE_ARN = f"arn:aws:iam::{ACC3_ACCOUNT_ID}:role/AA3-Bedrock-Invoker"
 ACC3_EXTERNAL_ID = "aa296-satellite-bedrock-acc3"
 ACC3_REGION = "us-west-1"
 
@@ -126,20 +132,22 @@ _SATELLITE_ACCOUNTS = {
 # qua investigation của AA-348. Đừng "sửa cho khớp" version ở đây nếu chỉ dựa vào tên hằng số ở
 # pricing.py — đổi model thật invoke ở đây là một thay đổi hành vi/infra thật (IAM ARN scoping +
 # availability check trên cả 2 satellite account), ngoài phạm vi 1 việc đổi tên/comment.
-INFERENCE_PROFILE_SONNET = "arn:aws:bedrock:us-west-1:867490540162:inference-profile/global.anthropic.claude-sonnet-4-6"
-INFERENCE_PROFILE_HAIKU = (
-    "arn:aws:bedrock:us-west-1:867490540162:inference-profile/"
-    "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-)
+_PROFILE_ID_SONNET = "global.anthropic.claude-sonnet-4-6"
+_PROFILE_ID_HAIKU = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+def _inference_profile_arn(account_id: str, region: str, profile_id: str) -> str:
+    return f"arn:aws:bedrock:{region}:{account_id}:inference-profile/{profile_id}"
+
+
+INFERENCE_PROFILE_SONNET = _inference_profile_arn(ACC1_ACCOUNT_ID, ACC1_REGION, _PROFILE_ID_SONNET)
+INFERENCE_PROFILE_HAIKU = _inference_profile_arn(ACC1_ACCOUNT_ID, ACC1_REGION, _PROFILE_ID_HAIKU)
 
 _INFERENCE_PROFILES = {
     "acc1": {"sonnet": INFERENCE_PROFILE_SONNET, "haiku": INFERENCE_PROFILE_HAIKU},
     "acc3": {
-        "sonnet": "arn:aws:bedrock:us-west-1:786888028788:inference-profile/global.anthropic.claude-sonnet-4-6",
-        "haiku": (
-            "arn:aws:bedrock:us-west-1:786888028788:inference-profile/"
-            "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-        ),
+        "sonnet": _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_SONNET),
+        "haiku": _inference_profile_arn(ACC3_ACCOUNT_ID, ACC3_REGION, _PROFILE_ID_HAIKU),
     },
 }
 

@@ -32,6 +32,10 @@ DB_NAME = os.environ.get("CIS_TEST_DB_NAME", "cis_integration_test")
 DB_USER = os.environ.get("CIS_TEST_DB_USER", "cistest")
 DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 
+# AA-902: the bronze bucket name comes from the environment (shared/aws_client/bronze.py); a fixed
+# test name keeps S3Archiver & co. from asking STS for the account.
+os.environ.setdefault("BRONZE_BUCKET", "aa-cis-bronze-test")
+
 _SCHEMA_APPLIED = False
 
 # AA-817: stand-in for gold_aa_internal.tenant_tour_versions (live table created by migration 001, which
@@ -483,6 +487,12 @@ def _apply_schema(conn):
 
     cur.close()
     _SCHEMA_APPLIED = True
+
+
+@pytest.fixture(autouse=True)
+def _no_sts_caller_identity(monkeypatch):
+    """AA-902: no integration test calls STS; the caller's account (acc2 on ECS) is AWS's doc example."""
+    monkeypatch.setattr("shared.aws_client.bronze.caller_account_id", lambda: "111122223333")
 
 
 @pytest.fixture(scope="session", autouse=True)

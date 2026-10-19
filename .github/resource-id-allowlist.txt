@@ -1,0 +1,4 @@
+# AA-902 — exceptions to the blocking resource-ID check (.github/scripts/check_resource_ids.py).
+# One per line: <path> <max findings> <expires YYYY-MM-DD> <reason>
+# Past the date, or with more findings than the number, the check fails. Keep this list empty.
+shared/llm_client/bedrock_satellite.py 2 2026-11-30 AA-902 follow-up: the acc1/acc3 satellite account IDs move to the task definition (needs a new env var in AA-CIS-Infra)

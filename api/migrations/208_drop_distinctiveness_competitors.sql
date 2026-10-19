@@ -5,7 +5,7 @@
 -- acp_contract.v_active_tour_atoms (migration 203, `SELECT ta.*` — Postgres expands * at creation, so
 -- the column cannot be dropped under it); one index idx_tour_atoms_distinctiveness; no FK points at
 -- either competitor table (competitor_index_cache 4 rows, competitor_inputs 0 rows).
--- Restore snapshot: s3://aa-cis-bronze-005097885195/scripts/restore/s223_aa754_distinctiveness_competitors.json
+-- Restore snapshot: s3://<bronze bucket>/scripts/restore/s223_aa754_distinctiveness_competitors.json
 --
 -- The view is dropped and recreated with the identical definition (no CASCADE: if anything new
 -- depends on it, the migration fails loudly instead of silently dropping it).

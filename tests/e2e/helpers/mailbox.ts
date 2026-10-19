@@ -4,7 +4,7 @@
 // Mail path (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): Cognito emails the code straight to the
 // E2E staff user's own address e2e@e2e-mail.lumiguides.it.com (S243 option B: a TEMPORARY exception to the
 // @adventure.asia-only staff rule, root ADR 0006a; no forwarder) → SES receipt rule `e2e-cognito` →
-// s3://aa-cis-dev-e2e-mail-005097885195/inbound/<message id> (1-day expiry).
+// s3://aa-cis-dev-e2e-mail-<acc2>/inbound/<message id> (1-day expiry).
 //
 // The runner's AWS CLI does the reads (no new npm dependency): `s3api list-objects-v2` + `s3api get-object`,
 // via execFile (fixed argv, no shell). In CI the credentials are the read-only role
@@ -18,7 +18,9 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-export const MAILBOX_BUCKET = 'aa-cis-dev-e2e-mail-005097885195';
+// The bucket name embeds the account ID; it is read from the runner's credentials (STS GetCallerIdentity,
+// no permission needed) instead of being written here — this repo is public (AA-902).
+export const MAILBOX_BUCKET_PREFIX = 'aa-cis-dev-e2e-mail-';
 export const MAILBOX_PREFIX = 'inbound/';
 export const MAILBOX_REGION = 'us-west-1';
 // Must equal api/services/staff_directory.py E2E_TEST_STAFF_EMAIL (the only non-company staff address).
@@ -55,9 +57,25 @@ async function aws(args: string[]): Promise<string> {
   }
 }
 
+let mailboxBucketName: Promise<string> | undefined;
+
+/** aa-cis-dev-e2e-mail-<account of the credentials in use> (the mailbox role lives in that account). */
+export function mailboxBucket(): Promise<string> {
+  mailboxBucketName ??= aws(['sts', 'get-caller-identity']).then((out) => {
+    const account = String((JSON.parse(out) as { Account?: string }).Account ?? '');
+    if (!/^\d{12}$/.test(account)) throw new Error('sts get-caller-identity returned no account');
+    return `${MAILBOX_BUCKET_PREFIX}${account}`;
+  }).catch((err: unknown) => {
+    mailboxBucketName = undefined; // a failed lookup is retried on the next poll
+    throw err;
+  });
+  return mailboxBucketName;
+}
+
 /** Every object under inbound/ (the CLI paginates). */
 export async function listMailObjects(): Promise<MailObject[]> {
-  const out = await aws(['s3api', 'list-objects-v2', '--bucket', MAILBOX_BUCKET, '--prefix', MAILBOX_PREFIX]);
+  const bucket = await mailboxBucket();
+  const out = await aws(['s3api', 'list-objects-v2', '--bucket', bucket, '--prefix', MAILBOX_PREFIX]);
   const parsed = (out.trim() ? JSON.parse(out) : {}) as {
     Contents?: { Key: string; LastModified: string; Size: number }[];
   };
@@ -69,7 +87,7 @@ export async function readMailObject(key: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aa816-mail-'));
   const file = path.join(dir, 'message.eml');
   try {
-    await aws(['s3api', 'get-object', '--bucket', MAILBOX_BUCKET, '--key', key, file]);
+    await aws(['s3api', 'get-object', '--bucket', await mailboxBucket(), '--key', key, file]);
     return await readFile(file, 'utf8');
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -259,7 +277,7 @@ export async function waitForSignInCode(opts: CodeWait): Promise<string> {
     await new Promise((r) => setTimeout(r, Math.min(POLL_INTERVAL_MS, left)));
   }
   throw new Error(
-    `No sign-in code for ${recipient} in s3://${MAILBOX_BUCKET}/${MAILBOX_PREFIX} within ` +
+    `No sign-in code for ${recipient} in s3://${MAILBOX_BUCKET_PREFIX}<account>/${MAILBOX_PREFIX} within ` +
       `${Math.round((opts.timeoutMs ?? DEFAULT_WAIT_MS) / 1000)} s (${polls} polls, ${checked.size - opts.baseline.size} ` +
       `new message(s) checked)${lastError ? `; last error: ${lastError}` : ''}. Check that the E2E staff user ` +
       `exists with this address and the SES receipt rule e2e-cognito is active.`,

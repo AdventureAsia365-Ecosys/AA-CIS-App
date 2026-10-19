@@ -302,7 +302,7 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
     return {
         "month": start.strftime("%Y-%m"),
         "period_start": start.isoformat(), "period_end_exclusive": end.isoformat(),
-        "aws": {"account_id": ce.ACC2_ACCOUNT_ID, "has_data": bool(stored), "total_usd": aws_total,
+        "aws": {"account_id": _acc2_account_id(), "has_data": bool(stored), "total_usd": aws_total,
                 "covered_from": (stored or {}).get("covered_from"), "covered_to": (stored or {}).get("covered_to"),
                 "fetched_at": (stored or {}).get("fetched_at"),
                 "untagged_usd": next((r["aws_usd"] for r in out_rows if r["kind"] == "untagged"), 0.0)},
@@ -341,6 +341,16 @@ async def ai_spend_by_provider(pool: Any, month: Optional[str] = None, now: Opti
             "by_provider": {k: round(v, 4) for k, v in by_family.items()},
             "total_usd": round(sum(by_family.values()), 4),
             "breakdown": breakdown}
+
+
+def _acc2_account_id() -> Optional[str]:
+    """acc2's ID from the task's own identity (AA-902: no account ID in this public repo); None if STS
+    cannot answer, so the report still renders."""
+    try:
+        return ce.acc2_account_id()
+    except Exception as e:  # noqa: BLE001 — a label must not fail the report
+        logger.warning("platform_cost_acc2_id_unresolved", error=repr(e)[:200])
+        return None
 
 
 async def _satellites(pool: Any, start: date, end: date, estimate: dict[str, float]) -> dict:

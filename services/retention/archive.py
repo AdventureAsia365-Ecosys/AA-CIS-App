@@ -23,7 +23,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
-from services.retention.policy import ARCHIVE_BUCKET, ARCHIVE_PREFIX
+from services.retention.policy import ARCHIVE_PREFIX
+from shared.aws_client.bronze import bronze_bucket
 
 
 def object_key(archive_name: str, month_of: datetime, job_id: str, run: str, part: str, batch_no: int) -> str:
@@ -47,10 +48,10 @@ class ArchiveNotVerified(Exception):
 class S3Archiver:
     """Writes one object per batch. `s3` is a boto3 S3 client (or a test double with put_object)."""
 
-    def __init__(self, s3, job_id: str, bucket: str = ARCHIVE_BUCKET, run: Optional[str] = None):
+    def __init__(self, s3, job_id: str, bucket: Optional[str] = None, run: Optional[str] = None):
         self.s3 = s3
         self.job_id = job_id
-        self.bucket = bucket
+        self.bucket = bucket or bronze_bucket()
         self.run = run or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
     async def put(self, archive_name: str, part: str, batch_no: int, month_of: datetime,

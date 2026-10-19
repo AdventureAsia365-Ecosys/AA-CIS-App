@@ -213,13 +213,14 @@ class _S3:
 
 
 @pytest.mark.asyncio
-async def test_archiver_writes_gzipped_json_lines_with_sse():
+async def test_archiver_writes_gzipped_json_lines_with_sse(monkeypatch):
+    monkeypatch.setenv("BRONZE_BUCKET", "aa-cis-bronze-test")  # AA-902: bucket from the environment
     s3 = _S3()
     a = archive.S3Archiver(s3, "job1", run="run1")
     key = await a.put("job", "failed", 1, datetime(2026, 1, 9, tzinfo=timezone.utc), ['{"a": 1}', '{"a": 2}'])
     [kw] = s3.calls
     assert kw["Key"] == key == "archive/job/2026/01/job1-run1-failed-b00001.jsonl.gz"
-    assert kw["Bucket"] == "aa-cis-bronze-005097885195" and kw["ServerSideEncryption"] == "AES256"
+    assert kw["Bucket"] == "aa-cis-bronze-test" and kw["ServerSideEncryption"] == "AES256"
     assert gzip.decompress(kw["Body"]).decode().splitlines() == ['{"a": 1}', '{"a": 2}']
     assert kw["Metadata"]["rows"] == "2"
     # S3 checks the body against Content-MD5; the object is HEAD-verified before the caller deletes

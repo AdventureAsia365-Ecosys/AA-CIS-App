@@ -11,8 +11,8 @@
 -- no backfill: we cannot reconstruct which account a historical call used, only structured
 -- CloudWatch logs had it). New writes populate them (see call_log.py in the same PR).
 --
---   account       — "acc1" (867490540162) | "acc2" (005097885195, native) | "acc3"
---                   (786888028788, satellite primary) | NULL for OpenAI / unknown-legacy rows.
+--   account       — "acc1" | "acc2" (native) | "acc3" (satellite primary) | NULL for OpenAI /
+--                   unknown-legacy rows.
 --   fallback_used — the LLMResponse.fallback_used flag: TRUE only when a Sonnet-intended call was
 --                   downgraded to Haiku, OR the final GPT-4.1 last-resort fired. A satellite
 --                   acc3→acc1 hop is NOT a fallback (same model/tier) — it shows via `account`,
@@ -33,8 +33,8 @@ ALTER TABLE shared.llm_call_log
     ADD COLUMN IF NOT EXISTS provider       TEXT;
 
 COMMENT ON COLUMN shared.llm_call_log.account IS
-    'AA-617 — AWS account the LLM call actually ran on: acc1 (867490540162) | acc2 (005097885195, '
-    'native) | acc3 (786888028788, satellite primary). NULL for OpenAI or pre-AA-617 rows.';
+    'AA-617 — AWS account the LLM call actually ran on: acc1 | acc2 (native) | acc3 '
+    '(satellite primary). NULL for OpenAI or pre-AA-617 rows.';
 COMMENT ON COLUMN shared.llm_call_log.fallback_used IS
     'AA-617 — LLMResponse.fallback_used: TRUE only on Sonnet->Haiku downgrade or GPT-4.1 '
     'last-resort. An acc3->acc1 satellite hop is NOT a fallback (see `account`). NULL for legacy.';

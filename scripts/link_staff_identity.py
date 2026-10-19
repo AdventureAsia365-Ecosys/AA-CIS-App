@@ -30,7 +30,7 @@ quotes of `ecs execute-command`, --map-b64 takes the same entries base64-encoded
   printf 'nghiep=nghieppham@adventure.asia:Nghiệp Phạm\\n' | base64 -w0
 
 Output: a JSON report on stdout; with --s3 it is also written to
-s3://aa-cis-bronze-005097885195/scripts/s242_link_report_<mode>_<UTC timestamp>.json (long ECS exec stdout
+s3://<bronze bucket>/scripts/s242_link_report_<mode>_<UTC timestamp>.json (long ECS exec stdout
 gets cut). Each run gets its own key, so a later dry run never overwrites an apply report; the key is also
 printed to stderr as `S3_REPORT s3://...`. The report holds staff emails / display names (PII): delete it
 from the bucket once read. Cognito ids are reported only as set / not set.
@@ -38,15 +38,16 @@ Exit code 0 = no errors, 2 = validation / plan / runtime errors. Nothing is appl
 an unexpected exception is caught and reported in `errors`, and the DB transaction rolls back.
 
 Run (each line one command; see skill/aa-cis-schema/references/ecs-exec.md):
-  aws s3 cp scripts/link_staff_identity.py s3://aa-cis-bronze-005097885195/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1
-  URL=$(aws s3 presign s3://aa-cis-bronze-005097885195/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1 --expires-in 300)
+  BRONZE=aa-cis-bronze-$(aws sts get-caller-identity --profile aa365-admin --query Account --output text)
+  aws s3 cp scripts/link_staff_identity.py s3://$BRONZE/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1
+  URL=$(aws s3 presign s3://$BRONZE/scripts/link_staff_identity.py --profile aa365-admin --region us-west-1 --expires-in 300)
   TASK_ARN=$(aws ecs list-tasks --cluster aa-cis-dev-cluster --service-name aa-cis-dev-api --profile aa365-admin --region us-west-1 --query 'taskArns[0]' --output text)
   aws ecs execute-command --cluster aa-cis-dev-cluster --task $TASK_ARN --container api --interactive --command "sh -c 'curl -s \"$URL\" -o /tmp/s.py && cd /app && python3 /tmp/s.py --dry-run --s3'" --profile aa365-admin --region us-west-1
-  aws s3 ls s3://aa-cis-bronze-005097885195/scripts/s242_link_report_ --profile aa365-admin --region us-west-1
-  aws s3 cp s3://aa-cis-bronze-005097885195/scripts/<key from the listing> .tmp-session/s242_link_report.json --profile aa365-admin --region us-west-1
+  aws s3 ls s3://$BRONZE/scripts/s242_link_report_ --profile aa365-admin --region us-west-1
+  aws s3 cp s3://$BRONZE/scripts/<key from the listing> .tmp-session/s242_link_report.json --profile aa365-admin --region us-west-1
 Then the same with: python3 /tmp/s.py --apply --map-b64 <b64> --owner <username> --s3
 Afterwards delete the reports (PII):
-  aws s3 rm s3://aa-cis-bronze-005097885195/scripts/ --recursive --exclude "*" --include "s242_link_report_*" --profile aa365-admin --region us-west-1
+  aws s3 rm s3://$BRONZE/scripts/ --recursive --exclude "*" --include "s242_link_report_*" --profile aa365-admin --region us-west-1
 """
 from __future__ import annotations
 
@@ -64,7 +65,6 @@ from typing import Any, Optional
 
 SECRET_ID = "aa-cis/dev/rds"
 REGION = "us-west-1"
-S3_BUCKET = "aa-cis-bronze-005097885195"
 S3_KEY_PREFIX = "scripts/s242_link_report_"
 DEFAULT_ACTOR = "script:link_staff_identity"
 
@@ -241,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="set is_owner=true for exactly this username (never clears other owners)")
     p.add_argument("--actor", default=DEFAULT_ACTOR, help=f"audit_log actor (<= {ACTOR_MAX} chars)")
     p.add_argument("--s3", action="store_true",
-                   help=f"also write the report to s3://{S3_BUCKET}/{S3_KEY_PREFIX}<mode>_<ts>.json")
+                   help=f"also write the report to s3://<bronze bucket>/{S3_KEY_PREFIX}<mode>_<ts>.json")
     p.add_argument("--s3-key", default=None, help=argparse.SUPPRESS)
     p.add_argument("--secret-id", default=SECRET_ID, help=argparse.SUPPRESS)
     return p
@@ -466,9 +466,20 @@ def _write_s3(report: dict[str, Any], key: str) -> str:
     import boto3
 
     body = json.dumps(report, default=str, ensure_ascii=False, indent=2).encode("utf-8")
+    bucket = _s3_bucket()
     boto3.client("s3", region_name=REGION).put_object(
-        Bucket=S3_BUCKET, Key=key, Body=body, ContentType="application/json")
-    return f"s3://{S3_BUCKET}/{key}"
+        Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+    return f"s3://{bucket}/{key}"
+
+
+def _s3_bucket() -> str:
+    """The bronze bucket: BRONZE_BUCKET of the api container this runs in, else aa-cis-bronze-<caller
+    account> (AA-902: no account ID in this public repo; same rule as shared/aws_client/bronze.py,
+    inlined because the script is fetched to /tmp and may not import the app)."""
+    import boto3
+
+    name = os.environ.get("BRONZE_BUCKET", "").strip()
+    return name or "aa-cis-bronze-" + boto3.client("sts", region_name=REGION).get_caller_identity()["Account"]
 
 
 def main(argv: Optional[list[str]] = None) -> int:

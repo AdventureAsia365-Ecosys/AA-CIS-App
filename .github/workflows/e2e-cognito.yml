@@ -8,7 +8,7 @@ name: Cognito E2E
 # Mailbox (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): the E2E staff user's address IS the test
 # mailbox e2e@e2e-mail.lumiguides.it.com (S243 option B, a TEMPORARY exception to the @adventure.asia-only rule:
 # migration 250 + staff_directory E2E_TEST_STAFF_EMAIL + the WORKFORCE triggers; root ADR 0006a) → SES →
-# s3://aa-cis-dev-e2e-mail-005097885195/inbound/. The job assumes the
+# s3://aa-cis-dev-e2e-mail-<acc2>/inbound/ (bucket name derived at run time, AA-902). The job assumes the
 # read-only role aa-cis-dev-e2e-mail-reader (List + Get, no delete) by OIDC. Its trust pins this repo, the
 # `e2e` environment and refs/heads/main — so the job runs on main only.
 #

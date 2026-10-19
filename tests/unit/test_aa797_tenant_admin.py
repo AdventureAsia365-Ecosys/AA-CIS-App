@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from api.routers import admin
 from services.acp_shared.audit_log import AdminTenantAuditAction
+from shared.llm_client.bedrock_satellite import ACC1_ACCOUNT_ID
 
 _SECRET = "test-admin-secret"
 TENANT_ID = uuid.uuid4()
@@ -248,12 +249,12 @@ class TestOffboard:
                                           _request(conn), x_admin_secret=_SECRET,
                                           x_admin_user_id="u-2", x_admin_role="admin")
         assert out["cancelled_jobs"] == 1
-        assert "867490540162" not in json.dumps(out) and "acp-cis" not in json.dumps(out)
+        assert ACC1_ACCOUNT_ID not in json.dumps(out) and "acp-cis" not in json.dumps(out)
         cancel_sql = conn.fetch.call_args.args[0]
         assert "WHERE status = 'queued'" in cancel_sql and "running" not in cancel_sql
         [(action, actor, details)] = _audit_rows(conn)
         assert action == AdminTenantAuditAction.OFFBOARD and actor == "admin:u-2"
-        assert "867490540162" not in json.dumps(details)
+        assert ACC1_ACCOUNT_ID not in json.dumps(details)
         assert details["cancelled_jobs"] == [{"id": "j1", "kind": "t2_rewrite"}]
         assert details["jev_allowlist"] == {"reason": "AA test tenant", "added_at": CANCELLED.isoformat(),
                                             "added_by": "migration-181"}

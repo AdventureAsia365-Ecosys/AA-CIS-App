@@ -24,6 +24,7 @@ from api.routers._billing import usage_row_to_dict
 from api.routers.admin import verify_admin_secret
 from api.routers.auth import verify_tenant_jwt
 from api.routers.v1_pipeline import _rewrite_tour
+from shared.aws_client.bronze import bronze_bucket
 from shared.validators.prompt_sanitize import (
     sanitize_text, sanitize_list, MAX_LONG_FIELD_LEN, MAX_SHORT_FIELD_LEN, MAX_SYSTEM_PROMPT_LEN,
     MAX_BRAND_LONG_LEN, MAX_BRAND_MEDIUM_LEN, brand_length_errors,
@@ -1377,7 +1378,7 @@ async def get_upload_url(body: UploadUrlRequest, x_admin_secret: str = Header(No
     import uuid as _uuid
     import re as _re
     tenant_id = "00000000-0000-0000-0000-000000000001"
-    bucket    = os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-867490540162")
+    bucket    = bronze_bucket()
     safe_filename = _re.sub(r'[^a-zA-Z0-9._-]', '_', body.filename)
     s3_key    = f"raw-inbox/{tenant_id}/{_uuid.uuid4()}_{safe_filename}"
     s3 = _boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1"))
@@ -1400,7 +1401,7 @@ async def ingest_s3(
 ):
     verify_admin_secret(x_admin_secret)
 
-    _bucket = req.bucket or os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-867490540162")
+    _bucket = req.bucket or bronze_bucket()
 
     # ── dry_run=True: parse-only preview, no DB write ─────────────────────────
     if req.dry_run:
@@ -4915,7 +4916,7 @@ async def upload_brand_file(
 
     safe_name = _re2.sub(r'[^a-zA-Z0-9._-]', '_', body.filename or "brand.pdf")
     s3_key    = f"brand-identity/{tenant_id}/{_uuid2.uuid4()}_{safe_name}"
-    bucket    = os.environ.get("BRONZE_BUCKET", "aa-cis-bronze-867490540162")
+    bucket    = bronze_bucket()
 
     s3 = _boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-1"))
     try:
