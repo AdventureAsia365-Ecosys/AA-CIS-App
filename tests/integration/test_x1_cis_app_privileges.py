@@ -8,7 +8,7 @@ at teardown. It runs the file up to its registration (grants, default privileges
 244's exact RLS-set guard is a one-time check at apply time (tested in test_aa860_migration_244) and would refuse
 any later, correctly-policied RLS table here.
 
-Standing check (plan S15): every RLS table (ENABLE-only or FORCE) in the 11 CIS runtime schemas has a
+Standing checks. (plan S15) every RLS table (ENABLE-only or FORCE) in the 11 CIS runtime schemas has a
 permissive FOR ALL policy TO cis_app with USING (true) WITH CHECK (true). A later migration that adds an RLS
 table must add that policy in the same file (or a decided, tenant-aware one), or the runtime reads 0 rows from
 it after S18. owners.yaml rls_enable_only_allowlist is empty: no exception.
@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import (  # noqa: E402
     CIS_APP_CI_PASSWORD, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID, X1_CI_ONLY_LEGACY_RLS,
-    X1_CIS_SCHEMAS, x1_244_ci_shape, x1_244_ci_unshape, x1_244_undo,
+    X1_CIS_SCHEMAS, X1_FORCE_RLS, x1_244_ci_shape, x1_244_ci_unshape, x1_244_undo,
 )
 
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "244_x1_cis_app_runtime.sql")
@@ -144,6 +144,26 @@ def test_standing_every_rls_table_has_a_cis_app_parity_policy(su):
     missing = [r[0] for r in su.fetchall() if r[0] not in X1_CI_ONLY_LEGACY_RLS]   # CI-only, absent on Dev
     assert missing == [], ("RLS table(s) without a permissive FOR ALL USING (true) WITH CHECK (true) policy TO "
                            f"cis_app: {missing}. After X1 S18 the CIS runtime reads 0 rows there.")
+
+
+def test_standing_a_new_force_table_has_a_cis_owner_policy(su):
+    """X1 S21 (CIS 245): the owner cis_owner is filtered by FORCE RLS (it is not in rds_superuser, unlike the master),
+    and every later cis/ file and every CIS view runs with its rights. 245 gives the 8 FORCE tables of today a
+    permissive <table>_cis_owner_all policy; a later migration that FORCEs RLS on another table must add the same
+    policy in that file, or DB Migrate files and owner-rights views read 0 rows of it. The conftest replay skips 245,
+    so the 8 are exempt here (test_aa860_migration_245 checks them)."""
+    su.execute("""SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = ANY(%s) AND c.relrowsecurity AND c.relforcerowsecurity
+                     AND NOT EXISTS (SELECT 1 FROM pg_policy p
+                                      WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd = '*'
+                                        AND p.polroles = ARRAY['cis_owner'::regrole::oid]
+                                        AND pg_get_expr(p.polqual, p.polrelid) = 'true'
+                                        AND pg_get_expr(p.polwithcheck, p.polrelid) = 'true')
+                   ORDER BY 1""", (list(X1_CIS_SCHEMAS) + ["catalog"],))
+    missing = [r[0] for r in su.fetchall() if r[0] not in X1_FORCE_RLS and r[0] not in X1_CI_ONLY_LEGACY_RLS]
+    assert missing == [], ("FORCE RLS table(s) without a permissive FOR ALL USING (true) WITH CHECK (true) policy TO "
+                           f"cis_owner: {missing}. After X1 S21 every cis/ migration runs as cis_owner and reads "
+                           "0 rows there.")
 
 
 def _count(cur, table, guc):

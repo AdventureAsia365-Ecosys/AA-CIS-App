@@ -133,6 +133,16 @@ def x1_244_undo(cur):
     cur.execute("DELETE FROM shared.schema_versions WHERE version = '244'")
 
 
+def x1_245_undo(cur):
+    """Remove everything CIS 245 does, so the shared test DB is back to the replay state (conftest skips 245):
+    every object cis_owner owns goes to the test user (REASSIGN OWNED), then DROP OWNED BY cis_owner removes what
+    is left of it in this database: the <table>_cis_owner_all policies (cis_owner is their only role), the default
+    privileges FOR ROLE cis_owner and the privileges granted to it (CREATE on the database). Then the registry row."""
+    cur.execute("REASSIGN OWNED BY cis_owner TO CURRENT_USER")
+    cur.execute("DROP OWNED BY cis_owner")
+    cur.execute("DELETE FROM shared.schema_versions WHERE version = '245'")
+
+
 def _get_conn():
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT,
@@ -162,7 +172,11 @@ def _apply_schema(conn):
     # A persisted acp_shared kept angle_gate_option under 241's RLS, which 239's guard refuses on the next
     # session (and 241's then fails on 147's re-grant): both errors are swallowed below. One statement
     # per schema, tolerant: a non-superuser local runner may not own every object in them.
-    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo"):
+    # AA-860 (X1 S21): also the four schemas x1_244_ci_shape creates and keeps (empty on Dev). Left over, they let
+    # 019 create acp_silver_s4.social_content (RLS on) on the next session's replay, which CI's fresh DB never has
+    # and the 244 / 245 exact RLS-set guards refuse.
+    for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo",
+                   "acp_gold_output", "acp_silver_s2", "acp_silver_s3", "acp_silver_s4"):
         try:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         except psycopg2.Error as e:
@@ -210,6 +224,18 @@ def _apply_schema(conn):
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'aa_cis_admin') THEN
                 CREATE ROLE aa_cis_admin NOLOGIN NOSUPERUSER NOBYPASSRLS;
             END IF;
+            -- AA-860 (X1 S20/S21): the roles of the Infra role bootstrap rl-002, with its attributes: cis_owner
+            -- NOLOGIN (CIS 245 moves every CIS schema and object to it), db_migrator LOGIN CONNECTION LIMIT 5,
+            -- NOCREATEROLE, no password (the DB Migrate login from X1 S22). Like rl-001's roles above, the
+            -- memberships and grants rl-002 adds (master in cis_owner, CREATE on the database for cis_owner;
+            -- db_migrator in the owner roles, catalog_owner, cis_app, pg_read_all_stats) are set up by the tests
+            -- that need them: catalog_owner only exists once the replay has run 225.
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cis_owner') THEN
+                CREATE ROLE cis_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'db_migrator') THEN
+                CREATE ROLE db_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS CONNECTION LIMIT 5;
+            END IF;
         EXCEPTION WHEN insufficient_privilege THEN
             NULL;  -- a local non-superuser test DB; CI's postgres service user is a superuser
         END $$;
@@ -254,6 +280,11 @@ def _apply_schema(conn):
         # exact-policy guards of 229/237/239/241 (which their tests re-apply) refuse. The X1 tests apply it in
         # the Dev order themselves (x1_244_ci_shape + the file) and undo it at teardown (x1_244_undo).
         and not f.startswith('244')
+        # AA-860 (X1 S21): 245 (CIS objects to cis_owner) runs only as the RDS master (its guard 0 refuses this
+        # superuser), after 244, and its policies TO cis_owner would trip the exact-policy guards of 229/237/239/241
+        # like 244's. test_aa860_migration_245 applies it in the Dev order as an RDS-like master and undoes it at
+        # teardown (x1_245_undo).
+        and not f.startswith('245')
     ])
 
     for mf in migration_files:
