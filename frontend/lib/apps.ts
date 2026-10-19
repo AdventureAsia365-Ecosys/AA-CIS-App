@@ -22,9 +22,14 @@ export const BOOKING_ADMIN_URL = trimSlash(process.env.NEXT_PUBLIC_BOOKING_ADMIN
 /** TripPlanner public site (no admin of its own, design §6.4). */
 export const TRIPPLANNER_URL = trimSlash(process.env.NEXT_PUBLIC_TRIPPLANNER_URL || DEV_TRIPPLANNER_URL);
 
-// No "Tenant portal" entry: the portal needs a tenant session (cis_tenant_token), so an admin opening
-// it sees an empty shell. It comes back with a real support view (tenant picker / impersonation);
-// until then tenant support is Tenant 360 (/admin/tenants).
+/** AA-885 — the tenant portal, its own Next.js app (portal/) and Vercel project (aa-cis-portal). Code
+ * constant, no env var. Used by next.config.ts (308 from the old /portal URLs) and the /login page's
+ * "B2B Tenant login" link. */
+export const PORTAL_BASE_URL = "https://portal.lumiguides.it.com";
+
+// No "Tenant portal" entry: the portal needs a tenant session (cis_tenant_token, host-only on the
+// portal host since AA-885), so a staff member cannot open it. It comes back with a real support view
+// (tenant picker / impersonation); until then tenant support is Tenant 360 (/admin/tenants).
 
 export type AppId = "booking" | "tripplanner";
 
