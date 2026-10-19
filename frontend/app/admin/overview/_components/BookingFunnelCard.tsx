@@ -5,41 +5,23 @@
 // S243 — counts only, no "% of the step before": the steps are counted on their own in the window, not as one cohort
 // (staff can open a case without an inquiry; a case opened before the window can get its proposal inside it), so
 // 8 cases after 5 inquiries read as "160%". The weekly table keeps every column and scrolls on a phone (kit ScrollX).
-// Data: booking.v_ops_funnel_daily + booking.v_ops_case_status (Booking's own aggregate views, no customer data).
+// Data: booking.v_ops_funnel_daily + booking.v_ops_case_status (Booking's own aggregate views, no customer data);
+// the on-screen source texts (plain words) are in ./sources.ts.
 import { K, useIsPhone } from "../../../_kit";
 import { BOOKING_ADMIN_URL } from "../../../../lib/apps";
 import { SourceHint } from "./SourceHint";
+import { BOOKING_SRC } from "./sources";
 import { fmtDay, fmtInt, OpsCard, PHONE_CELL, TableWrap, TD, TH, UnavailableNote } from "./opsUi";
 import type { BkMetric, BookingData, Section } from "./opsTypes";
 
-const FUNNEL_VIEW = "booking.v_ops_funnel_daily (Booking)";
-const STATUS_VIEW = "booking.v_ops_case_status (Booking)";
+/** The four counted steps (Cancelled is a table column only). */
+type StepKey = Exclude<BkMetric, "cancelled">;
 
-const STEPS: { key: BkMetric; label: string; short: string; source: string }[] = [
-  {
-    key: "inquiry_received",
-    label: "Inquiries received",
-    short: "Inquiries",
-    source: `${FUNNEL_VIEW}, metric inquiry_received — inquiries from TripPlanner and the website arriving in Booking`,
-  },
-  {
-    key: "trip_case_created",
-    label: "Trip cases opened",
-    short: "Cases",
-    source: `${FUNNEL_VIEW}, metric trip_case_created — new trip cases (not deleted)`,
-  },
-  {
-    key: "proposal_sent",
-    label: "Proposals sent",
-    short: "Proposals",
-    source: `${FUNNEL_VIEW}, metric proposal_sent — first time a case reached "proposal sent"`,
-  },
-  {
-    key: "confirmed",
-    label: "Confirmed",
-    short: "Confirmed",
-    source: `${FUNNEL_VIEW}, metric confirmed — first time a case reached "confirmed"`,
-  },
+const STEPS: { key: StepKey; label: string; short: string }[] = [
+  { key: "inquiry_received", label: "Inquiries received", short: "Inquiries" },
+  { key: "trip_case_created", label: "Trip cases opened", short: "Cases" },
+  { key: "proposal_sent", label: "Proposals sent", short: "Proposals" },
+  { key: "confirmed", label: "Confirmed", short: "Confirmed" },
 ];
 
 /** Plain labels for booking.trip_cases statuses (Booking trip_cases_status_chk). */
@@ -59,13 +41,13 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-export function BookingFunnelCard({ section, source }: { section: Section<BookingData> | undefined; source: string }) {
+export function BookingFunnelCard({ section }: { section: Section<BookingData> | undefined }) {
   return (
     <OpsCard
       testId="ops-booking"
       title="Booking activity — last 8 weeks"
       subtitle="Inquiries, trip cases, proposals and confirmations (weeks start on Monday, UTC)"
-      source={source}
+      source={BOOKING_SRC.card}
       link={{ href: BOOKING_ADMIN_URL, label: "Open Booking admin", external: true, hint: "AA-Booking staff admin" }}
     >
       {!section ? null : section.status !== "ok" ? (
@@ -101,7 +83,7 @@ function BookingBody({ data }: { data: BookingData }) {
         >
           {stuck > 1 ? `${stuck} inquiries are stuck in the Booking inbox and need a look` : "1 inquiry is stuck in the Booking inbox and needs a look"}
           ({data.inbox_attention.parked} waiting, {data.inbox_attention.failed} failed).
-          <SourceHint source={`${FUNNEL_VIEW}, metrics inquiry_parked / inquiry_failed — current inbox status`} />
+          <SourceHint source={BOOKING_SRC.attention} />
         </div>
       )}
 
@@ -118,6 +100,7 @@ function BookingBody({ data }: { data: BookingData }) {
           return (
             <div
               key={s.key}
+              data-kpi=""
               style={{
                 minWidth: 0,
                 background: K.bg,
@@ -126,11 +109,9 @@ function BookingBody({ data }: { data: BookingData }) {
                 padding: "10px 12px",
               }}
             >
-              <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, display: "flex", alignItems: "center" }}>
-                <span style={{ minWidth: 0 }}>
-                  {i + 1}. {s.label}
-                </span>
-                <SourceHint source={`${s.source}; total of the 8 weeks`} />
+              <div style={{ fontSize: 11, fontWeight: 600, color: K.muted }}>
+                {i + 1}. {s.label}
+                <SourceHint source={BOOKING_SRC.steps[s.key]} />
               </div>
               <div style={{ fontSize: 22, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
                 {fmtInt(data.totals[s.key])}
@@ -151,13 +132,14 @@ function BookingBody({ data }: { data: BookingData }) {
             <tr>
               <th style={th}>{phone ? "Week" : "Week of"}</th>
               {STEPS.map((s) => (
-                <th key={s.key} style={{ ...th, textAlign: "right" }} title={s.label}>
+                <th key={s.key} data-num-col="" style={{ ...th, textAlign: "right" }}>
                   {s.short}
+                  <SourceHint source={BOOKING_SRC.weeks[s.key]} size={11} />
                 </th>
               ))}
-              <th style={{ ...th, textAlign: "right" }}>
+              <th data-num-col="" style={{ ...th, textAlign: "right" }}>
                 Cancelled
-                <SourceHint source={`${FUNNEL_VIEW}, metric cancelled — first time a case was cancelled`} size={11} />
+                <SourceHint source={BOOKING_SRC.cancelled} size={11} />
               </th>
             </tr>
           </thead>
@@ -180,7 +162,7 @@ function BookingBody({ data }: { data: BookingData }) {
       <div style={{ marginTop: 14 }}>
         <div style={{ fontSize: 12, color: K.muted, marginBottom: 6, display: "flex", alignItems: "center" }}>
           Open trip cases right now: <b style={{ color: K.ink, marginLeft: 4 }}>{fmtInt(data.open_cases)}</b>
-          <SourceHint source={`${STATUS_VIEW} — cases not deleted, by current status (completed and cancelled are closed)`} />
+          <SourceHint source={BOOKING_SRC.openCases} />
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }} data-testid="ops-booking-status">
           {openStatuses.length === 0 && <span style={{ fontSize: 12, color: K.muted }}>No open cases.</span>}

@@ -104,7 +104,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     sticky header, row selection + bulk actions, saved views in localStorage per user, CSV export),
     `Drawer`, `Modal`/`ConfirmModal`, `PageHeader`, `Tabs`, `Badge`/`StatusBadge` (one `tone`
     vocabulary; `StatusBadge` is driven by job-runner status strings), `EmptyState`, `ErrorState`,
-    `Skeleton`, `ToastProvider`/`useToast`, and `apiGet`/`apiSend` fetch helpers. New pages import
+    `Skeleton`, `ToastProvider`/`useToast`, `ScrollX` (S243), `InfoTip` (S243: (i) button + tooltip, hover / focus /
+    tap to open, Escape or a tap elsewhere to close, text tied by `aria-describedby`, hoverable bubble, 24 px hit
+    area), and `apiGet`/`apiSend` fetch
+    helpers. New pages import
     from `app/_kit`. The legacy primitives (`admin/_components/adminUi.tsx`,
     `auditPanels.tsx`, `FilterBar.tsx`, `Pagination.tsx`, portal `_components/ui.tsx`,
     `Skeleton.tsx`) still stand — pages are migrated to the kit one at a time (Review Queue and My
@@ -703,6 +706,13 @@ to `{status: "unavailable", reason, message}` instead of failing the call:
   for a business reader; no CE code of its own.
 Cost: ≈ $0.0002 per health refresh, worst case ≈ $0.60/month; CE as AA-884. No new env var (names derive from
 `ENVIRONMENT`).
+Every number on `/admin/overview` (business view and the CIS sections) names its source in a `SourceHint` (kit
+`InfoTip`); the texts, in plain business words with no table or metric names, live only in
+`frontend/app/admin/overview/_components/sources.ts` (guard `tests/unit/test_aa858_overview_sources.py`; e2e smoke
+`aa858-ops-overview.spec.ts` (e)/(f) checks every `[data-kpi]` tile and `[data-num-col]` column has one). The API's
+`sources` field keeps the engineering detail and is not shown. The ops cards are not polled: their texts say
+"updated on the server every 5 minutes (press Refresh to load the latest)"; the AWS bill part of Cost per app is
+fetched about once a day.
 
 | Area | admin | reviewer | content | viewer | tenant |
 |---|---|---|---|---|---|

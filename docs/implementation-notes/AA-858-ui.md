@@ -13,7 +13,7 @@ Frontend only, plus one smoke spec.
 - **Plain wording for Ms. Thư:** status pills Healthy / Worth a look / Needs attention / No data; KPI labels
   "Requests", "Errors", "Speed" (p95, "95% answered within"); Booking statuses mapped to plain names; AWS / Lambda /
   view names only inside the source hints.
-- **Every number names its source** (`SourceHint`: info icon, `title` + `aria-label` "Source: …", focusable).
+- **Every number names its source** (`SourceHint`; since S243 built on the kit `InfoTip`, see the last section).
 - **An unavailable section** (no IAM yet, view not applied, Redis down, request failed) shows a calm dashed note with
   the backend's plain `message`, never raw JSON or reason codes.
 - **Charts:** recharts (already a dependency) with theme colours resolved by `useChartColors` (SVG attributes):
@@ -46,3 +46,79 @@ Frontend only, plus one smoke spec.
 - Local check was a throwaway page rendering the cards from `opsFixture.ts` (not committed). It logs a hydration
   warning because that page server-renders the charts; the real page renders the cards only after the client query
   resolves, so it should not — confirm with the smoke's console-error check on the preview.
+
+## S243 — the source of every number (Done-when: "each number traceable to its source in a tooltip")
+Branch `feat/aa858-number-source-tooltips`. An audit of `/admin/overview` listed every number on the page: the four
+business cards had hints, but several named tables, views, metric names and migration codes (finding 11 rule:
+no table names or internal codes on screen), the Booking weekly columns used a native `title` only (no touch, no
+keyboard), and none of the six CIS sections (pipeline, intelligence, tenants, jobs, AI and data providers) named a
+source at all.
+
+### Decisions
+- **One kit primitive, `InfoTip`** (`app/_kit/primitives.tsx`, copied byte-identically to `portal/app/_kit/`, guard
+  `test_aa885_portal_split.py`): a real `<button>` (accessible name from `label`) with the text in a
+  `role="tooltip"` span tied by `aria-describedby` (always in the DOM, `hidden` while closed, so screen readers
+  read it). Mouse: hover shows, click pins, second click / Escape / click elsewhere closes. Keyboard: Tab shows it
+  (`:focus-visible` only, so a tap does not double-toggle), Enter/Space pins, Escape closes. Touch: tap toggles, tap
+  elsewhere closes (hover handlers ignore non-mouse pointers). The bubble is `position: fixed`, clamped to the
+  viewport and placed below (or above) its button, written straight to the element's style in a layout effect (no
+  extra render, no set-state-in-effect); it follows its button on scroll / resize instead of closing (a keyboard
+  focus that scrolls the page closed it in the first version). Fixed positioning means it is never clipped by a
+  ScrollX table and never widens the page.
+- `SourceHint` stays the page-level wrapper ("Source: …", label "Where this number comes from", test id
+  `source-hint`), now on `InfoTip`; the native `title` is gone (it doubled the tooltip on hover).
+- **All texts in `overview/_components/sources.ts`**: business words + the system + window + refresh, e.g.
+  "AWS CloudWatch, CIS API requests, last 24 hours, refreshed every 5 minutes", "Booking database, trip cases
+  opened …, total of the last 8 weeks", "AI calls log, all AI providers, this month (UTC)". The backend `sources`
+  field (tables, metrics, migration codes) is no longer shown; it stays in the API as engineering detail.
+- **CIS sections** got the same hints: each Stat tile, each number column header (pipeline 5, provider cost 3,
+  quota 2), the three job numbers, the job status row (section title), AI this month, DataForSEO balance. The
+  pipeline column hint explains the "+n/7d" delta.
+- New small hints where a number had none: "Requests per hour" label above each sparkline, the alarm count line of
+  each app tile ("N automatic checks …", plus "x of y firing" when some fire), the TripPlanner 14-day chart label.
+- Labels with a hint are inline text (no flex row), so the (i) follows the last word when a label wraps at 390 px.
+- Markers for the count check: `data-kpi` on every number tile (Kpi, Stat, Booking step tiles, job numbers) and
+  `data-num-col` on every number column header.
+
+### Changed (vs the issue)
+- No frontend unit-test runner exists (no Jest/Vitest); the "component test" is a Python guard over the source
+  file (`tests/unit/test_aa858_overview_sources.py`: plain-words regexes, no inline `SourceHint` text, InfoTip
+  a11y markers) plus the e2e smoke (e) and (f).
+
+### Tradeoffs
+- Fixed positioning + reposition on every scroll event (capture) while one tooltip is open: cheap (one rect read),
+  and only the open tooltip listens.
+- The hidden tooltip text is part of the DOM, so `textContent` of a header includes it; `innerText` does not.
+
+### Should know
+- The UI Kit tab in admin Settings shows an `InfoTip` example. Frontend only (+ tests); no backend change, so no deploy order. The e2e smoke (a)–(f) passed against a local
+  production build signed in to Dev as the E2E admin with no mocks; screenshots 1440 + 390 light, tooltips open by
+  hover/click, tap and keyboard.
+
+### S243 review fixes (same branch, second commit)
+An independent review of the first commit found wording that did not match the backend and gaps in the tooltip:
+- **Cost card refresh** (major): the card said "refreshed every 15 minutes" for the whole card, but only the server
+  cache is 15 min; the AWS bill part comes from Cost Explorer about once a day and lags about two days
+  (`platform_cost` 24 h stale window). The card text now says both, matching the AWS bill column hint.
+- **TripPlanner health** reads Lambda runs, not HTTP requests: its tooltips now say "runs", "runs that failed",
+  "failed runs in red" and "runs refused because too many ran at once" instead of "requests" / "server errors (5xx)".
+- **"Refreshed every 5 minutes"** was wrong for an open page: the ops query is deliberately not polled
+  (AWS-backed, cached server-side; `refetchOnWindowFocus: false`). Kept no polling and changed the words to
+  "updated on the server every 5 minutes (press Refresh to load the latest)". The CIS sections keep "refreshed every
+  minute" (that query polls every 60 s).
+- **Research "stale"**: the backend counts a place as stale when any of its markets is older than 30 days; the text
+  says "at least one market last researched more than 30 days ago".
+- **Booking chips** list only statuses that have cases; the text says so.
+- **AI note under the cost table** ("AI estimate $X in all; $Y of it …") had no hint: `COST_SRC.aiNote` (AI calls
+  log + the existing `AI_ON_BILL_SRC` wording). Smoke (e) checks it.
+- **InfoTip a11y**: a hover-opened bubble now waits 150 ms before closing and stays open while the pointer is on it
+  (WCAG 1.4.13 hoverable); a press inside a pinned bubble no longer blurs-and-closes it (text can be selected); the
+  hit area is 24 px (padding 6, margin `-6px -6px -6px -2px`, WCAG 2.5.8) with the same visual footprint and gap,
+  the wrapper's 4 px left margin moved into the button so its focus ring does not cover the label; `aria-expanded`
+  dropped (not a tooltip-trigger attribute). Re-copied byte-identically to `portal/app/_kit/`. Smoke (e) checks the
+  24 px hit area, hover-onto-bubble and press-inside-bubble; the unit guard checks the markers and the absence of
+  `aria-expanded`.
+- Not done: marking the remaining inline numbers (open cases, stuck line, AI this month, DataForSEO balance, alarm
+  counts, 4xx / throttled) with `data-kpi` for the automatic count. They all have hints today (seen in the run);
+  `data-kpi` means "a number tile" in the spec, so it stays on tiles and column headers; a follow-up can add a
+  separate marker if these lines grow.

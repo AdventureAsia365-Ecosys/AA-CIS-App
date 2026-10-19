@@ -17,6 +17,7 @@ import {
   Drawer,
   EmptyState,
   ErrorState,
+  InfoTip,
   Modal,
   SkeletonBar,
   SkeletonStyle,
@@ -167,6 +168,16 @@ function KitTabInner() {
 
           <Section title="ErrorState">
             <ErrorState message="Could not reach the backend (503)." onRetry={() => toast.info("retrying")} />
+          </Section>
+
+          <Section title="InfoTip (hover, focus or tap to open; Escape or a tap elsewhere closes)">
+            <div style={{ fontSize: 13, color: A.body, fontFamily: sans }}>
+              Tours published this week: <b>12</b>
+              <InfoTip
+                text="Source: CIS database, tours published to Master Content in the last 7 days"
+                label="Where this number comes from"
+              />
+            </div>
           </Section>
         </>
       )}

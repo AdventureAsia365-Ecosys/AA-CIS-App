@@ -1,30 +1,10 @@
 // app/admin/overview/_components/SourceHint.tsx
-// AA-858 — the small info icon next to every number of the ops overview. It names where the number comes
-// from (AA-858 Done-when: "every number names its source in a tooltip"). Native `title` (hover) +
-// `aria-label` (screen readers); focusable so a keyboard or touch user can reach it too.
-import { Info } from "lucide-react";
-import { K } from "../../../_kit";
+// AA-858 — the small (i) next to every number of /admin/overview. It names where the number comes from (AA-858
+// Done-when: "each number traceable to its source in a tooltip"). Built on the kit InfoTip (S243): a real button,
+// keyboard and touch accessible (focus or tap opens it, Escape or a tap elsewhere closes it), the text tied to the
+// button with aria-describedby. The wording lives in ./sources.ts (plain business words, no table names or codes).
+import { InfoTip } from "../../../_kit";
 
 export function SourceHint({ source, size = 12 }: { source: string; size?: number }) {
-  const text = `Source: ${source}`;
-  return (
-    <span
-      role="img"
-      tabIndex={0}
-      title={text}
-      aria-label={text}
-      data-testid="source-hint"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        color: K.muted2,
-        cursor: "help",
-        marginLeft: 4,
-        verticalAlign: "middle",
-        flexShrink: 0,
-      }}
-    >
-      <Info size={size} aria-hidden />
-    </span>
-  );
+  return <InfoTip text={`Source: ${source}`} label="Where this number comes from" size={size} testId="source-hint" />;
 }

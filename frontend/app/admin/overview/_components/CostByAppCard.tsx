@@ -19,6 +19,7 @@ import {
   shownSum,
 } from "../../../../lib/costWording";
 import { SourceHint } from "./SourceHint";
+import { COST_SRC } from "./sources";
 import { fmtUsd, OpsCard, PHONE_CELL, TableWrap, TD as TD_BASE, TH as TH_BASE, UnavailableNote } from "./opsUi";
 import type { CostData, CostRow, Section } from "./opsTypes";
 
@@ -103,13 +104,13 @@ function Row({ r, max, cells }: { r: CostRow; max: number; cells: Cells }) {
   );
 }
 
-export function CostByAppCard({ section, source }: { section: Section<CostData> | undefined; source: string }) {
+export function CostByAppCard({ section }: { section: Section<CostData> | undefined }) {
   return (
     <OpsCard
       testId="ops-cost"
       title={section && section.status === "ok" ? `Cost per app — ${monthName(section.month)} so far` : "Cost per app"}
       subtitle="What each app costs to run this month, with last month for comparison (US dollars)"
-      source={source}
+      source={COST_SRC.card}
       link={{ href: "/admin/llm-usage", label: "External Spend detail" }}
     >
       {!section ? null : section.status !== "ok" ? (
@@ -144,21 +145,21 @@ function CostBody({ data }: { data: CostData }) {
           <thead>
             <tr>
               <th style={{ ...TH, whiteSpace: "normal" }}>App</th>
-              <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
+              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
                 {AWS_BILL_LABEL}
                 <SourceHint source={AWS_BILL_SRC} size={11} />
               </th>
-              <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
+              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
                 {AI_OUTSIDE_LABEL}
                 <SourceHint source={AI_OUTSIDE_SRC} size={11} />
               </th>
-              <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
+              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
                 Total
-                <SourceHint source={`${AWS_BILL_LABEL} + ${AI_OUTSIDE_LABEL.toLowerCase()}`} size={11} />
+                <SourceHint source={COST_SRC.total} size={11} />
               </th>
-              <th style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
+              <th data-num-col="" style={{ ...TH, textAlign: "right", whiteSpace: "normal" }}>
                 {monthName(data.prev_month).split(" ")[0]}
-                <SourceHint source={`Same sources, whole of ${monthName(data.prev_month)}`} size={11} />
+                <SourceHint source={COST_SRC.prevMonth(monthName(data.prev_month))} size={11} />
               </th>
             </tr>
           </thead>
@@ -189,7 +190,10 @@ function CostBody({ data }: { data: CostData }) {
           <li key={n}>{n}</li>
         ))}
         {data.totals.ai_usd != null && (
-          <li data-testid="ops-cost-ai-note">{aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}</li>
+          <li data-testid="ops-cost-ai-note">
+            {aiOnBillNote(data.totals.ai_usd, data.totals.ai_in_aws_usd ?? 0, fmtUsd)}
+            <SourceHint source={COST_SRC.aiNote} size={11} />
+          </li>
         )}
         {data.aws_covered_to && <li>AWS numbers include days up to {data.aws_covered_to}.</li>}
       </ul>
