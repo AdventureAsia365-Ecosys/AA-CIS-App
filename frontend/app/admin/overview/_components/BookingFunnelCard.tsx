@@ -1,7 +1,10 @@
 "use client";
 // app/admin/overview/_components/BookingFunnelCard.tsx
-// AA-858 — "Booking funnel — last 8 weeks": inquiries → trip cases → proposals sent → confirmed, the step
-// conversion, a per-week table, open cases by status and an attention line for stuck inquiries.
+// AA-858 — "Booking activity — last 8 weeks": inquiries, trip cases, proposals sent and confirmations, a per-week
+// table, open cases by status and an attention line for stuck inquiries.
+// S243 — counts only, no "% of the step before": the steps are counted on their own in the window, not as one cohort
+// (staff can open a case without an inquiry; a case opened before the window can get its proposal inside it), so
+// 8 cases after 5 inquiries read as "160%". The weekly table keeps every column and scrolls on a phone (kit ScrollX).
 // Data: booking.v_ops_funnel_daily + booking.v_ops_case_status (Booking's own aggregate views, no customer data).
 import { K, useIsPhone } from "../../../_kit";
 import { BOOKING_ADMIN_URL } from "../../../../lib/apps";
@@ -39,8 +42,6 @@ const STEPS: { key: BkMetric; label: string; short: string; source: string }[] =
   },
 ];
 
-const RATE_KEYS = ["inquiry_to_case", "case_to_proposal", "proposal_to_confirmed"] as const;
-
 /** Plain labels for booking.trip_cases statuses (Booking trip_cases_status_chk). */
 const STATUS_LABEL: Record<string, string> = {
   new_inquiry: "New inquiry",
@@ -62,8 +63,8 @@ export function BookingFunnelCard({ section, source }: { section: Section<Bookin
   return (
     <OpsCard
       testId="ops-booking"
-      title="Booking funnel — last 8 weeks"
-      subtitle="From a traveller's inquiry to a confirmed trip (weeks start on Monday, UTC)"
+      title="Booking activity — last 8 weeks"
+      subtitle="Inquiries, trip cases, proposals and confirmations (weeks start on Monday, UTC)"
       source={source}
       link={{ href: BOOKING_ADMIN_URL, label: "Open Booking admin", external: true, hint: "AA-Booking staff admin" }}
     >
@@ -114,7 +115,6 @@ function BookingBody({ data }: { data: BookingData }) {
         }}
       >
         {STEPS.map((s, i) => {
-          const rate = i > 0 ? data.conversion_pct[RATE_KEYS[i - 1]] : null;
           return (
             <div
               key={s.key}
@@ -135,16 +135,18 @@ function BookingBody({ data }: { data: BookingData }) {
               <div style={{ fontSize: 22, fontWeight: 600, color: K.ink, fontVariantNumeric: "tabular-nums" }}>
                 {fmtInt(data.totals[s.key])}
               </div>
-              <div style={{ fontSize: 11, color: K.muted }}>
-                {i === 0 ? "start of the funnel" : rate == null ? "— of the step before" : `${rate}% of the step before`}
-              </div>
+              <div style={{ fontSize: 11, color: K.muted }}>in the 8 weeks</div>
             </div>
           );
         })}
       </div>
+      <div data-testid="ops-booking-count-note" style={{ fontSize: 11, color: K.muted, margin: "-6px 0 12px", lineHeight: 1.5 }}>
+        Each step is counted on its own, so they are not percentages of each other: staff can open a trip case without
+        an inquiry, and a case opened before these 8 weeks can get its proposal inside them.
+      </div>
 
       <TableWrap testId="ops-booking-weeks">
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", minWidth: 440, borderCollapse: "collapse" }}>
           <thead>
             <tr>
               <th style={th}>{phone ? "Week" : "Week of"}</th>
@@ -153,12 +155,10 @@ function BookingBody({ data }: { data: BookingData }) {
                   {s.short}
                 </th>
               ))}
-              {!phone && (
-                <th style={{ ...th, textAlign: "right" }}>
-                  Cancelled
-                  <SourceHint source={`${FUNNEL_VIEW}, metric cancelled — first time a case was cancelled`} size={11} />
-                </th>
-              )}
+              <th style={{ ...th, textAlign: "right" }}>
+                Cancelled
+                <SourceHint source={`${FUNNEL_VIEW}, metric cancelled — first time a case was cancelled`} size={11} />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -170,9 +170,7 @@ function BookingBody({ data }: { data: BookingData }) {
                     {fmtInt(w[s.key])}
                   </td>
                 ))}
-                {!phone && (
-                  <td style={{ ...td, textAlign: "right", color: w.cancelled ? K.ink : K.muted2 }}>{fmtInt(w.cancelled)}</td>
-                )}
+                <td style={{ ...td, textAlign: "right", color: w.cancelled ? K.ink : K.muted2 }}>{fmtInt(w.cancelled)}</td>
               </tr>
             ))}
           </tbody>

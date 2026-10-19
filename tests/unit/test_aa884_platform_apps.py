@@ -134,7 +134,7 @@ async def test_tripplanner_query_failure_is_contained():
 async def test_collect_apps_cache_hit_miss_and_refresh(monkeypatch):
     calls = []
 
-    async def fake_build(pool):
+    async def fake_build(pool, redis=None, traffic=None):
         calls.append(1)
         return {"apps": [{"id": "cis"}, {"id": "booking"}, {"id": "tripplanner"}], "generated_at": "t"}
 

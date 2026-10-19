@@ -7,6 +7,8 @@
 //
 // API: GET /api/admin/platform/staff-directory/health and POST …/reconcile (backend
 // api/routers/admin_platform.py, staff.read = admin; BFF API_READ_RULES "platform").
+// S243 — readiness is recomputed from the staff rows on every load (`readiness_now`), so it agrees with the
+// page header right after a disable or invite; only the sign-in comparison (Cognito drift) is "as of" the last check.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
@@ -52,13 +54,19 @@ interface JobRef {
   finished_at: string | null;
 }
 
+type Readiness = Report["readiness"];
+
 interface HealthResp {
+  /** readiness from the staff rows right now (null when it could not be read: fall back to the report's) */
+  readiness_now?: (Readiness & { as_of: string }) | null;
   latest: (JobRef & { result: Report }) | null;
   active: JobRef | null;
   last_failed: (JobRef & { error: string | null }) | null;
 }
 
-const HEALTH_KEY = ["platform-staff-directory-health"] as const;
+// Under the "platform-staff" prefix: every staff write (StaffManage invalidates ["platform-staff"]) refetches this
+// panel too, so the live readiness follows a disable or invite at once (S243).
+const HEALTH_KEY = ["platform-staff", "directory-health"] as const;
 
 const REASON: Record<string, string> = {
   no_row: "no staff account",
@@ -119,6 +127,8 @@ export default function DirectoryHealth() {
   const running = !!data?.active || run.isPending;
   const lines = report ? findingLines(report) : [];
   const pending = report?.pending_first_sign_in ?? [];
+  const live = data?.readiness_now ?? null;
+  const readiness: Readiness | null = live ?? report?.readiness ?? null;
 
   let tone: Tone = "neutral";
   let label = "No report yet";
@@ -135,9 +145,9 @@ export default function DirectoryHealth() {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>Directory health</span>
         <Badge tone={tone}>{label}</Badge>
-        {report && (
-          <Badge tone={report.readiness.ready ? "success" : "info"} dot={false}>
-            {report.readiness.ready ? "Ready for single sign-on" : "Not ready for single sign-on"}
+        {readiness && (
+          <Badge tone={readiness.ready ? "success" : "info"} dot={false}>
+            {readiness.ready ? "Ready for single sign-on" : "Not ready for single sign-on"}
           </Badge>
         )}
         <span style={{ flex: 1 }} />
@@ -149,7 +159,7 @@ export default function DirectoryHealth() {
 
       <div style={{ color: K.muted, fontSize: 12, marginTop: 6 }}>
         {data?.latest
-          ? `Last checked ${formatDateTime(data.latest.finished_at)}${report?.trigger === "schedule" ? " (daily check)" : ""}.`
+          ? `Sign-in accounts last compared ${formatDateTime(data.latest.finished_at)}${report?.trigger === "schedule" ? " (daily check)" : ""}; the findings below are as of then.`
           : "Compares sign-in accounts with this list once a day. Read-only."}
       </div>
 
@@ -169,20 +179,24 @@ export default function DirectoryHealth() {
         </div>
       )}
 
-      {report && (
+      {(report || readiness) && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          {readiness && (
           <div data-testid="directory-readiness" style={{ lineHeight: 1.5 }}>
             <span style={{ fontWeight: 500 }}>Single sign-on readiness: </span>
-            {report.readiness.active_rows - report.readiness.missing_cognito_sub.length} of{" "}
-            {report.readiness.active_rows} active accounts have signed in with their work email.
-            {report.readiness.missing_email.length > 0 && (
+            {readiness.active_rows - readiness.missing_cognito_sub.length} of{" "}
+            {readiness.active_rows} active accounts have signed in with their work email
+            <span style={{ color: K.muted }}>
+              {live ? ` (as of ${formatDateTime(live.as_of)}, from the staff list).` : " (as of the last check)."}
+            </span>
+            {readiness.missing_email.length > 0 && (
               <div style={{ color: K.muted, overflowWrap: "anywhere" }}>
-                No work email: {report.readiness.missing_email.join(", ")}
+                No work email: {readiness.missing_email.join(", ")}
               </div>
             )}
-            {report.readiness.missing_cognito_sub.length > 0 && (
+            {readiness.missing_cognito_sub.length > 0 && (
               <div style={{ color: K.muted, overflowWrap: "anywhere" }}>
-                Not signed in yet: {report.readiness.missing_cognito_sub.join(", ")}
+                Not signed in yet: {readiness.missing_cognito_sub.join(", ")}
               </div>
             )}
             {pending.length > 0 && (
@@ -191,6 +205,7 @@ export default function DirectoryHealth() {
               </div>
             )}
           </div>
+          )}
           {lines.length > 0 && (
             <details data-testid="directory-findings">
               <summary style={{ cursor: "pointer", fontWeight: 500 }}>

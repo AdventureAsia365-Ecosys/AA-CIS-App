@@ -12,9 +12,12 @@
 //   - CIS: the API's commit + ECS task revision, the live workers' commits (SHA parity = every live worker
 //     runs the API's commit), the deploy gate (same answer as the CI guard), schema readiness (/health/ready).
 //   - Booking: its public /booking/health and /booking/health/ready over HTTP (commit, DB, schema version).
-//   - TripPlanner: no health endpoint yet (GĐ9); today's customer-facing LLM spend vs the DEFAULT daily cap
+//   - TripPlanner: no health endpoint yet; today's customer-facing LLM spend vs the DEFAULT daily cap
 //     (the live cap is a TripPlanner env var CIS cannot see).
-// Frontends report no version yet (GĐ9, deferred): the row only links them.
+// Frontends report no version yet (deferred): the row only links them.
+// S243 — one health definition: the badge is `overall.status` (backend api/services/app_health.py: the worst of the
+// app's own check and its CloudWatch traffic of the last 24 h), the same verdict the Overview tiles show, with the
+// same words (lib/platform APP_STATUS_LABEL). Each card shows the traffic numbers it is based on.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ExternalLink, GitCommitHorizontal, RefreshCw } from "lucide-react";
@@ -37,8 +40,10 @@ import { APP_REGISTRY, PLATFORM_APP_IDS, isPlatformAppId } from "@/lib/apps";
 import {
   shortSha,
   usd,
+  APP_STATUS_LABEL,
+  basisText,
   type AppCard,
-  type AppStatus,
+  type AppTraffic,
   type AppsResp,
   type BookingCard,
   type CisCard,
@@ -48,12 +53,6 @@ import {
 const APPS_KEY = ["platform-apps"] as const;
 const APPS_PATH = "/api/admin/platform/apps";
 
-const STATUS: Record<AppStatus, { tone: Tone; label: string }> = {
-  ok: { tone: "success", label: "OK" },
-  degraded: { tone: "warning", label: "Degraded" },
-  down: { tone: "danger", label: "Down" },
-  unknown: { tone: "neutral", label: "Unknown" },
-};
 
 export default function AppsBoard() {
   const qc = useQueryClient();
@@ -77,7 +76,7 @@ export default function AppsBoard() {
       <SkeletonStyle />
       <PageHeader
         title="Apps"
-        description="Health and the running commit of each app in the ecosystem, read only. Built when you open the page (cached 60 s); nothing polls in the background."
+        description="Health and the running commit of each app in the ecosystem, read only. An app's status is the worse of its own health check and its traffic over the last 24 hours — the same rule as the Overview page. Built when you open the page (cached 60 s); nothing polls in the background."
         actions={
           <Button variant="secondary" size="sm" onClick={() => refresh.mutate()} disabled={busy}
             title="Ask every app again now (skips the 60 s cache)">
@@ -206,13 +205,22 @@ function Problems({ items }: { items: string[] }) {
 
 function AppCardView({ card }: { card: AppCard }) {
   const reg = isPlatformAppId(card.id) ? APP_REGISTRY[card.id] : null;
-  const st = STATUS[card.status] ?? STATUS.unknown;
+  const st = APP_STATUS_LABEL[card.status] ?? APP_STATUS_LABEL.unknown;
   return (
     <section data-testid={`platform-app-${card.id}`} style={cardStyle}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, fontSize: 15 }}>{card.label}</span>
         <Badge tone={st.tone}>{st.label}</Badge>
       </div>
+      {card.overall && (
+        <div data-testid={`platform-app-${card.id}-health`} style={{ fontSize: 12.5, color: K.body, lineHeight: 1.45 }}>
+          {card.overall.reason}
+          {card.overall.basis.length > 0 && (
+            <span style={{ color: K.muted }}> · {basisText(card.overall.basis)}</span>
+          )}
+        </div>
+      )}
+      <TrafficLine traffic={card.traffic ?? null} />
       {card.id === "cis" && <CisBody card={card} />}
       {card.id === "booking" && <BookingBody card={card} />}
       {card.id === "tripplanner" && <TripPlannerBody card={card} />}
@@ -282,9 +290,10 @@ function CisBody({ card }: { card: CisCard }) {
               display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center", fontSize: 12,
               padding: "6px 8px", borderRadius: RADIUS.md, background: K.bg, minWidth: 0,
             }}>
+              {/* S243 — the full worker id (host:pid:suffix) wraps instead of being cut off. */}
               <span title={w.worker_id} style={{
-                fontFamily: mono, color: K.ink2, minWidth: 0, maxWidth: "100%", overflow: "hidden",
-                textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 140px",
+                fontFamily: mono, color: K.ink2, minWidth: 0, maxWidth: "100%", overflowWrap: "anywhere",
+                wordBreak: "break-all", flex: "1 1 100%",
               }}>{w.worker_id}</span>
               <ShaLink appId="cis" sha={w.git_sha} commitUrl={w.commit_url} />
               {w.git_sha && card.api.git_sha !== "unknown" && w.git_sha !== card.api.git_sha && (
@@ -298,6 +307,37 @@ function CisBody({ card }: { card: CisCard }) {
       )}
       <Problems items={card.problems ?? []} />
     </>
+  );
+}
+
+function fmtMs(ms: number | null): string {
+  if (ms == null) return "—";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+}
+
+/** The CloudWatch traffic the status is partly based on — the same numbers as the Overview tile. */
+function TrafficLine({ traffic }: { traffic: AppTraffic | null }) {
+  if (!traffic) {
+    return <div style={noteStyle}>Traffic numbers (AWS CloudWatch) are not available right now.</div>;
+  }
+  const src = traffic.kind === "lambda" ? "Lambda" : "API Gateway";
+  return (
+    <div data-testid="platform-app-traffic" style={{
+      display: "flex", flexWrap: "wrap", gap: "2px 12px", fontSize: 12, color: K.muted, padding: "6px 8px",
+      borderRadius: RADIUS.md, background: K.bg, minWidth: 0,
+    }} title={`AWS CloudWatch, ${src} ${(traffic.resources ?? []).join(" + ")}, last ${traffic.window_hours ?? 24} hours`}>
+      <span style={{ color: K.body, fontWeight: 600 }}>Last {traffic.window_hours ?? 24} h</span>
+      <span>{(traffic.requests ?? 0).toLocaleString("en-US")} requests</span>
+      <span style={{ color: traffic.errors ? K.danger : K.muted }}>
+        {(traffic.errors ?? 0).toLocaleString("en-US")} server errors
+      </span>
+      <span>95% within {fmtMs(traffic.p95_ms)}</span>
+      {traffic.alarms_total != null && (
+        <span style={{ color: traffic.alarms_firing ? K.danger : K.muted }}>
+          {traffic.alarms_firing ? `${traffic.alarms_firing} alarm${traffic.alarms_firing > 1 ? "s" : ""} firing` : `${traffic.alarms_total} alarms quiet`}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -355,7 +395,7 @@ function TripPlannerBody({ card }: { card: TripPlannerCard }) {
   const s = card.spend_today;
   return (
     <>
-      {card.note && <div style={noteStyle}>{card.note} The card shows today&apos;s spend instead.</div>}
+      {card.note && <div style={noteStyle}>{card.note}</div>}
       {!s ? (
         <div style={{ ...noteStyle, color: K.danger }}>
           Spend unreadable{card.error ? ` (${card.error})` : ""}.

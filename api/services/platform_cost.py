@@ -9,6 +9,7 @@ Public API (AA-858 imports these, read-only; do not fork the logic):
                           now: datetime | None = None) -> dict
     async def refresh_app_snapshot(pool, start: date, end_exclusive: date) -> dict
     def month_window(month: str | None, today: date) -> tuple[date, date]
+    async def ai_spend_by_provider(pool, month: str | None = None, now=None) -> dict
 
 Sources, per app row:
 - ``aws_usd``: acc2 Cost Explorer UnblendedCost grouped by TAG App (+ SERVICE), stored in
@@ -24,6 +25,11 @@ Sources, per app row:
 - ``llm_satellites``: the acc1 / acc3 Bedrock line from the SERVICE snapshot (``shared.cost_explorer_snapshot``, the
   External Spend page's data) next to the llm_call_log estimate for the same accounts — a cross-check, not added to
   any app (those calls are already in ``ai_usd`` by app).
+
+One presentation (S243 UI verify, finding 4): row labels and hints come from ``ROW_LABELS`` / ``ROW_HINTS`` here (the
+plain wording of the overview card), every row and the totals carry ``ai_outside_aws_usd`` (= ``ai_usd`` -
+``ai_in_aws_acc2_usd``), so both pages show AWS + AI outside the AWS bill = Total, and the KPI strip can show the
+deduction. ``ai_spend_by_provider`` gives the same AI spend per provider family for the legacy overview cost table.
 
 Lazy refresh (critic resolution, S243): with ``refresh_if_stale`` and a Redis client, a window whose stored data is
 missing, covers only part of the window (``POST /admin/cost-explorer/check`` stores its own, by default 7-day,
@@ -85,6 +91,45 @@ AI_SPEND_SQL = """
      GROUP BY app, provider, account
      ORDER BY app, cost_usd DESC
 """
+
+
+# One wording for every cost row on every page (the overview card and /admin/platform/cost both read these).
+ROW_LABELS = {
+    "untagged": "Not assigned to an app",
+    "tag:shared": "Shared platform",
+    "tag:identity": "Staff sign-in (identity)",
+    "tag:platform": "Platform tooling",
+}
+ROW_HINTS = {
+    "tag:shared": "AWS resources several apps use together (App tag 'shared').",
+    "tag:identity": "The staff login service (App tag 'identity').",
+    "tag:platform": "Build and deploy tooling (App tag 'platform').",
+    "untagged": "AWS charges with no App tag: tax, support, data transfer and resources tagged before 16/10/2026. "
+                "Per-app numbers are reliable from 16/10/2026.",
+}
+
+
+# Provider families of the AI spend (the provider column of llm_call_log / llm_call_daily -> the spend_budget
+# provider the legacy overview cost table shows). Jev decisions are logged with provider "typesafe" (the vendor,
+# shared/llm_client/decide.py), so "typesafe" is the Jev family. Anything else is "other".
+PROVIDER_FAMILY_ALIASES = {"openai": "openai", "jev": "jev", "typesafe": "jev"}
+
+
+def provider_family(provider: Optional[str]) -> str:
+    p = (provider or "").lower()
+    if p.startswith("bedrock"):
+        return "bedrock"
+    return PROVIDER_FAMILY_ALIASES.get(p, "other")
+
+
+def row_label(key: str, kind: str, default: str) -> str:
+    if key in ROW_LABELS:
+        return ROW_LABELS[key]
+    if kind == "llm_app":
+        return f"AI for {key[4:]}"
+    if kind == "other_tag":
+        return f"Other App tag: {key[4:]}"
+    return default
 
 
 def month_window(month: Optional[str], today: date) -> tuple[date, date]:
@@ -186,8 +231,9 @@ async def _lazy_refresh(pool: Any, redis: Any, start: date, end_exclusive: date,
 
 
 def _row(app: str, kind: str, label: str) -> dict:
-    return {"app": app, "kind": kind, "label": label, "aws_usd": 0.0, "aws_bedrock_usd": 0.0, "services": [],
-            "aws_tags": [], "ai_usd": 0.0, "ai_in_aws_acc2_usd": 0.0, "ai_calls": 0, "ai_by_source": []}
+    return {"app": app, "kind": kind, "label": row_label(app, kind, label), "hint": ROW_HINTS.get(app),
+            "aws_usd": 0.0, "aws_bedrock_usd": 0.0, "services": [], "aws_tags": [], "ai_usd": 0.0,
+            "ai_in_aws_acc2_usd": 0.0, "ai_outside_aws_usd": 0.0, "ai_calls": 0, "ai_by_source": []}
 
 
 async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = None, refresh_if_stale: bool = True,
@@ -244,7 +290,8 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
     for r in rows.values():
         for k in ("aws_usd", "aws_bedrock_usd", "ai_usd", "ai_in_aws_acc2_usd"):
             r[k] = round(r[k], 4)
-        r["total_usd"] = round(r["aws_usd"] + r["ai_usd"] - r["ai_in_aws_acc2_usd"], 4)
+        r["ai_outside_aws_usd"] = round(r["ai_usd"] - r["ai_in_aws_acc2_usd"], 4)
+        r["total_usd"] = round(r["aws_usd"] + r["ai_outside_aws_usd"], 4)
         r["services"].sort(key=lambda s: -s["amount_usd"])
         out_rows.append(r)
     order = {"app": 0, "llm_app": 1, "shared_tag": 2, "other_tag": 3, "untagged": 4}
@@ -261,16 +308,39 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
                 "untagged_usd": next((r["aws_usd"] for r in out_rows if r["kind"] == "untagged"), 0.0)},
         "apps": out_rows,
         "totals": {"aws_usd": aws_total, "ai_usd": round(sum(r["ai_usd"] for r in out_rows), 4),
+                   "ai_in_aws_acc2_usd": round(sum(r["ai_in_aws_acc2_usd"] for r in out_rows), 4),
+                   "ai_outside_aws_usd": round(sum(r["ai_outside_aws_usd"] for r in out_rows), 4),
                    "total_usd": round(sum(r["total_usd"] for r in out_rows), 4)},
         "llm_satellites": satellites,
         "refresh": refresh,
         "sources": {
             "aws_usd": "AWS Cost Explorer, acc2, UnblendedCost grouped by tag App (shared.cost_explorer_app_snapshot)",
             "ai_usd": "LLM gateway estimates by app (shared.llm_call_log / shared.llm_call_daily)",
-            "total_usd": "aws_usd + ai_usd - ai_in_aws_acc2_usd (acc2 Bedrock is already in aws_usd)",
+            "ai_outside_aws_usd": "ai_usd - ai_in_aws_acc2_usd (Bedrock on acc2 is already in aws_usd)",
+            "total_usd": "aws_usd + ai_outside_aws_usd",
             "llm_satellites": "acc1/acc3 Bedrock from Cost Explorer (shared.cost_explorer_snapshot) vs the estimate",
         },
     }
+
+
+async def ai_spend_by_provider(pool: Any, month: Optional[str] = None, now: Optional[datetime] = None) -> dict:
+    """This month's AI spend per provider family ({bedrock, openai, jev, other}) with the cost module's own query
+    (raw + rolled-up days, every app), so its total equals ``cost_by_app(...)["totals"]["ai_usd"]``. DB only."""
+    now = now or datetime.now(timezone.utc)
+    start, end = month_window(month, now.date())
+    rows = await pool.fetch(AI_SPEND_SQL, start, end)
+    by_family: dict[str, float] = {}
+    breakdown = []
+    for r in rows:
+        cost = float(r["cost_usd"] or 0.0)
+        fam = provider_family(r["provider"])
+        by_family[fam] = by_family.get(fam, 0.0) + cost
+        breakdown.append({"app": r["app"], "provider": r["provider"], "account": r["account"],
+                          "calls": int(r["calls"] or 0), "cost_usd": round(cost, 4)})
+    return {"month": start.strftime("%Y-%m"),
+            "by_provider": {k: round(v, 4) for k, v in by_family.items()},
+            "total_usd": round(sum(by_family.values()), 4),
+            "breakdown": breakdown}
 
 
 async def _satellites(pool: Any, start: date, end: date, estimate: dict[str, float]) -> dict:

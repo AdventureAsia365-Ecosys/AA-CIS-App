@@ -1,6 +1,7 @@
 // app/admin/overview/_components/opsTypes.ts
 // AA-858 — response of GET /api/admin/overview/ops (backend api/services/ops_overview/). Every section is
 // either { status: "ok", ... } or { status: "unavailable", reason, message } — the card then shows `message`.
+import type { AppHealthVerdict } from "../../../../lib/platform";
 
 export interface Unavailable {
   status: "unavailable";
@@ -36,6 +37,8 @@ export interface AppHealth {
   alarms: AlarmBucket | null;
   state: HealthState;
   state_reason: string;
+  /** S243 — the app's one status, the same verdict /admin/platform/apps shows (backend app_health). */
+  overall?: AppHealthVerdict;
 }
 
 export interface HealthData {
@@ -97,7 +100,15 @@ export interface CostData {
   aws_fetched_at: string | null;
   aws_covered_to: string | null;
   rows: CostRow[];
-  totals: { aws_usd: number; ai_outside_aws_usd: number; total_usd: number; prev_total_usd: number | null };
+  totals: {
+    aws_usd: number;
+    ai_outside_aws_usd: number;
+    /** gross AI estimate and the part of it already on the AWS bill (S243: shown so the numbers add up) */
+    ai_usd?: number;
+    ai_in_aws_usd?: number;
+    total_usd: number;
+    prev_total_usd: number | null;
+  };
   refresh: { attempted: boolean | null; ok: boolean | null; stale: boolean | null; reason: string | null };
   notes: string[];
 }

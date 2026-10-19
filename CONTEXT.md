@@ -616,7 +616,10 @@ group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` use
 **cutover readiness** (active rows without an email or `cognito_sub`). On demand: Staff page "Check now"
 (`POST /admin/platform/staff-directory/reconcile`, read `GET …/health`, `staff.read`); the daily run goes
 through the machine route `POST /admin/job-runner/staff-reconcile/schedule` once the ops-probe Lambda calls it
-(Infra follow-up). Job results reach non-admin roles redacted.
+(Infra follow-up). Job results reach non-admin roles redacted. `GET …/health` also returns `readiness_now`:
+the readiness recomputed from the directory rows on every read (`staff_reconcile.readiness_from_rows`, no Cognito
+call), so it matches the Staff header right after a disable or invite; only the Cognito drift is "as of" the last
+run (S243).
 
 The matrix lives in `frontend/lib/rbac.ts` and is read by `frontend/proxy.ts` (pages; the Next 16 Proxy on the Node.js runtime,
 `middleware.ts` until S243), the BFF proxies
@@ -641,6 +644,13 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   today's customer-facing LLM spend (TP `ONLINE_STAGES`, `quality_signal->>'app' = 'tripplanner'`) vs the mirrored
   default cap (5 USD; the live cap is a TP env var). Cached 60 s in Redis, built only on a page view (no poller).
   No ECS/Lambda describe calls, no cross-schema reads.
+  **One health definition (S243):** a card's `status` is `overall.status` from `api/services/app_health.py`
+  `overall_status(probe, traffic)` — the worst known signal of the app's own check (`probe`; none for TripPlanner) and
+  its CloudWatch traffic of the last 24 h (`traffic_section`, the AA-858 health section and its Redis key, shared by
+  both pages). A health check that does not answer counts as "degraded" (basis "Health check (did not answer)");
+  firing CloudWatch alarms are "degraded", not "down" ("down" = a health endpoint answering with an error). `/admin/overview/ops` copies each card's `overall` onto its health tile, so Overview and Apps always
+  show the same status, in the same words (`frontend/lib/platform.ts` `APP_STATUS_LABEL`). Do not judge app health
+  another way on a new page.
 - **Staff audit trail.** `acp_shared.audit_log` is append-only since CIS 248: UPDATE/DELETE/TRUNCATE raise 42501;
   a BEFORE INSERT trigger chains every new row (`chain_seq`, `prev_hash`, `row_hash` = sha256 of a canonical text,
   under `pg_advisory_xact_lock(884, 1)` — so a writer inside a transaction writes its audit row LAST; needs READ
@@ -655,7 +665,12 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   makes such an edit detectable, not impossible. Integration tests delete their own audit rows only through
   `tests/integration/_audit_cleanup.py`.
 - **Cost per app** — the one cost module of the console: `api/services/platform_cost.py` `cost_by_app()` (AA-858's
-  overview card imports it; do not compute spend another way). AWS = acc2 Cost Explorer grouped by the `App` tag
+  overview card imports it; do not compute spend another way). Row labels/hints (`ROW_LABELS` / `ROW_HINTS`) and
+  `ai_outside_aws_usd` (= AI − AI already on the acc2 bill) come from this module, so both pages show AWS bill + AI
+  outside the AWS bill = Total with one wording (`frontend/lib/costWording.ts`); the Cost page's KPI strip shows the
+  deduction (S243). `ai_spend_by_provider()` gives the same month's AI per provider family (all `bedrock*` = bedrock;
+  `typesafe`, how Jev decisions are logged, = jev)
+  for the legacy `/admin/overview` provider table. AWS = acc2 Cost Explorer grouped by the `App` tag
   (`shared.cost_explorer_app_snapshot`, CIS 248; untagged is its own row with services), AI = LLM gateway estimates
   by `quality_signal->>'app'` from `shared.llm_call_log` + `shared.llm_call_daily`; acc2 Bedrock is subtracted from
   AI so it is not counted twice; acc1/acc3 Bedrock CE actuals are a cross-check line. `GET /admin/platform/cost`

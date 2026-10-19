@@ -5,7 +5,10 @@
 // react-query (AA-662 standard). Every widget links to its detail page.
 // AA-858 — a business view on top (apps health, TripPlanner customers, Booking funnel, cost per app) from
 // GET /api/admin/overview/ops (cached 5–15 min server-side, so no auto-refresh here); the AA-664 sections
-// follow unchanged under "CIS content & operations". Cards live in ./_components/.
+// follow under "CIS content & operations". Cards live in ./_components/.
+// S243 — Jobs: "Workers alive now" counts only live workers (the Apps page / deploy-gate rule); the provider cost
+// table reads month-to-date AI from the cost module (all bedrock* providers, rolled-up days included), so its AI
+// total equals the AI estimate on Cost per app; the per-country table keeps every column and scrolls on a phone.
 
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -16,6 +19,7 @@ import {
   TriangleAlert,
   Users,
 } from "lucide-react";
+import Link from "next/link";
 import { sans } from "../_components/adminUi";
 import { AppHealthStrip } from "./_components/AppHealthStrip";
 import { BookingFunnelCard } from "./_components/BookingFunnelCard";
@@ -29,8 +33,8 @@ import {
   formatDateTime,
   K,
   LoadingScreen,
-  mono,
   PageHeader,
+  ScrollX,
   SkeletonStyle,
   Spinner,
   StatusBadge,
@@ -85,6 +89,8 @@ interface Overview {
   cost: {
     spent_today_usd: Record<string, number>;
     month_to_date_usd: Record<string, number>;
+    /** AI month to date, every provider (= the AI estimate of /admin/platform/cost) */
+    ai_month_to_date_usd?: number;
     budgets: {
       provider: string;
       scope: string;
@@ -243,6 +249,15 @@ function delta(n: number) {
 
 const JOB_FAIL = new Set(["failed", "stopped_budget"]);
 
+// Rows of the provider cost table: the spend_budget providers, in plain words. "other" shows only when it has spend.
+const COST_PROVIDERS: { key: string; label: string; ai: boolean }[] = [
+  { key: "bedrock", label: "AWS Bedrock (all accounts)", ai: true },
+  { key: "openai", label: "OpenAI", ai: true },
+  { key: "jev", label: "Jev", ai: true },
+  { key: "other", label: "Other AI providers", ai: true },
+  { key: "dfs", label: "DataForSEO", ai: false },
+];
+
 export default function OverviewPage() {
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["admin-overview"],
@@ -347,8 +362,8 @@ export default function OverviewPage() {
                 title="Pipeline funnel — per country"
                 href="/admin/master-content"
               >
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <ScrollX testId="overview-pipeline-table">
+                  <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
                         <th style={TH}>Country</th>
@@ -391,7 +406,7 @@ export default function OverviewPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </ScrollX>
               </Section>
 
               {/* ── Section 2: Intelligence ── */}
@@ -486,18 +501,21 @@ export default function OverviewPage() {
                     <span style={{ fontSize: 13, color: K.muted }}>No jobs in the last 30 days.</span>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: 18, marginTop: 12, fontSize: 12, color: K.muted }}>
-                  <span>
-                    Workers alive:{" "}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", marginTop: 12, fontSize: 12, color: K.muted }}>
+                  <span
+                    data-testid="overview-workers-alive"
+                    title="Workers seen in the last 60 seconds and not stopped — the same rule as Apps and the deploy check"
+                  >
+                    Workers alive now:{" "}
                     <b style={{ color: data.jobs.workers_alive ? K.success : K.danger }}>
                       {data.jobs.workers_alive ?? "—"}
                     </b>
                   </span>
                   <span>
-                    Queue depth: <b style={{ color: K.ink }}>{data.jobs.queue_depth ?? "—"}</b>
+                    Jobs waiting: <b style={{ color: K.ink }}>{data.jobs.queue_depth ?? "—"}</b>
                   </span>
                   <span>
-                    Running now: <b style={{ color: K.ink }}>{data.jobs.running_now ?? "—"}</b>
+                    Jobs running now: <b style={{ color: K.ink }}>{data.jobs.running_now ?? "—"}</b>
                   </span>
                 </div>
               </Section>
@@ -505,11 +523,11 @@ export default function OverviewPage() {
               {/* ── Section 5: Cost ── */}
               <Section
                 icon={<CircleDollarSign size={16} />}
-                title="Cost — today & month-to-date vs budget"
+                title="AI and data providers — today and this month vs daily budget"
                 href="/admin/llm-usage"
               >
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <ScrollX testId="overview-provider-cost-table">
+                  <table style={{ width: "100%", minWidth: 480, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
                         <th style={TH}>Provider</th>
@@ -519,7 +537,9 @@ export default function OverviewPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {["bedrock", "openai", "dfs", "jev"].map((p) => {
+                      {COST_PROVIDERS.filter(
+                        (c) => c.key !== "other" || (data.cost.month_to_date_usd.other ?? 0) > 0,
+                      ).map(({ key: p, label }) => {
                         const budget = data.cost.budgets.find(
                           (b) => b.provider === p && b.scope === "global",
                         );
@@ -530,7 +550,7 @@ export default function OverviewPage() {
                           today >= budget.per_day_usd * (budget.alert_pct / 100);
                         return (
                           <tr key={p}>
-                            <td style={{ ...TD, fontFamily: mono, fontSize: 12 }}>{p}</td>
+                            <td style={TD}>{label}</td>
                             <td
                               style={{
                                 ...TD,
@@ -542,7 +562,7 @@ export default function OverviewPage() {
                               {money(today)}
                             </td>
                             <td style={{ ...TD, textAlign: "right" }}>
-                              {money(data.cost.month_to_date_usd[p])}
+                              {money(data.cost.month_to_date_usd[p] ?? 0)}
                             </td>
                             <td style={{ ...TD, textAlign: "right", color: K.muted }}>
                               {budget?.per_day_usd != null ? money(budget.per_day_usd) : "—"}
@@ -552,7 +572,15 @@ export default function OverviewPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </ScrollX>
+                {data.cost.ai_month_to_date_usd != null && (
+                  <div data-testid="overview-ai-mtd-note" style={{ marginTop: 10, fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
+                    AI this month, all providers: <b style={{ color: K.ink }}>{money(data.cost.ai_month_to_date_usd)}</b>{" "}
+                    — the same as the AI estimate on{" "}
+                    <Link href="/admin/platform/cost" style={{ color: K.accentDeep, fontWeight: 600 }}>Cost per app</Link>.
+                    Today&apos;s numbers start at midnight UTC.
+                  </div>
+                )}
                 {data.cost.dfs_balance?.has_data && (
                   <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 12, color: K.muted }}>DataForSEO balance:</span>

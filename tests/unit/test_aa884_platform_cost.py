@@ -203,6 +203,31 @@ async def test_cost_by_app_aggregates_without_double_counting(monkeypatch):
     sql, start, end = pool.fetch.await_args.args
     assert (start, end) == (date(2026, 10, 1), date(2026, 10, 20))
     assert "shared.llm_call_daily" in sql and "NOT EXISTS" in sql and "quality_signal ->> 'app'" in sql
+    # S243 finding 4: one wording and one netting rule for every page.
+    assert rows["untagged"]["label"] == "Not assigned to an app" and rows["untagged"]["hint"]
+    assert rows["tag:shared"]["label"] == "Shared platform" and rows["tag:weird"]["label"] == "Other App tag: weird"
+    assert rows["cis"]["label"] == "CIS (content + catalog)" and rows["cis"]["hint"] is None
+    assert rows["cis"]["ai_outside_aws_usd"] == round(4.7 - 0.5, 4)
+    t = out["totals"]
+    assert t["ai_in_aws_acc2_usd"] == 0.5 and t["ai_outside_aws_usd"] == round(t["ai_usd"] - 0.5, 4)
+    assert t["total_usd"] == round(101.06 + t["ai_outside_aws_usd"], 4)
+
+
+@pytest.mark.asyncio
+async def test_ai_spend_by_provider_groups_families_and_matches_the_ai_total():
+    pool = _pool()
+    out = await pc.ai_spend_by_provider(pool, now=NOW)
+    assert out["by_provider"] == {"bedrock": 4.8, "jev": 0.2}     # typesafe = Jev
+    assert out["total_usd"] == 5.0 and out["month"] == "2026-10" and len(out["breakdown"]) == 4
+    sql, start, end = pool.fetch.await_args.args
+    assert sql == pc.AI_SPEND_SQL and (start, end) == (date(2026, 10, 1), date(2026, 10, 20))
+
+
+def test_provider_family():
+    # Jev is logged as provider "typesafe" (shared/llm_client/decide.py): it must land on the Jev row, not "other".
+    assert [pc.provider_family(p) for p in ("bedrock", "bedrock-satellite", "openai", "jev", None, "typesafe",
+                                            "TypeSafe", "anthropic")] == \
+        ["bedrock", "bedrock", "openai", "jev", "other", "jev", "jev", "other"]
 
 
 @pytest.mark.asyncio

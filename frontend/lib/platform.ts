@@ -13,6 +13,61 @@
 
 export type AppStatus = "ok" | "degraded" | "down" | "unknown";
 
+/** S243 — the ONE wording of an app status, used by /admin/platform/apps and the /admin/overview tiles alike. */
+export const APP_STATUS_LABEL: Record<AppStatus, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
+  ok: { label: "Healthy", tone: "success" },
+  degraded: { label: "Needs a look", tone: "warning" },
+  down: { label: "Down", tone: "danger" },
+  unknown: { label: "Unknown", tone: "neutral" },
+};
+
+/** api/services/app_health.py overall_status(): the status both pages show, and what it is based on. */
+export interface AppHealthVerdict {
+  status: AppStatus;
+  reason: string;
+  basis: string[];
+}
+
+/** "based on its health check and its traffic …" — one phrasing of `overall.basis` for both pages. */
+// basis strings: api/services/app_health.py PROBE_BASIS / PROBE_NO_ANSWER_BASIS / TRAFFIC_BASIS.
+export function basisText(basis: string[]): string {
+  const noAnswer = basis.includes("Health check (did not answer)");
+  const probe = basis.includes("Health check");
+  const traffic = basis.some((b) => b.startsWith("Traffic"));
+  if (noAnswer && traffic) return "its health check did not answer; its traffic of the last 24 hours is shown too";
+  if (noAnswer) return "its health check did not answer (no traffic numbers right now)";
+  if (probe && traffic) return "based on its health check and its traffic of the last 24 hours";
+  if (traffic) return "based on its traffic of the last 24 hours (AWS CloudWatch); it has no health check";
+  if (probe) return "based on its health check (no traffic numbers right now)";
+  return "";
+}
+
+/** api/services/app_health.py traffic_summary(): CloudWatch traffic of the last 24 h (the overview's numbers). */
+export interface AppTraffic {
+  state: "ok" | "warn" | "alarm" | "unknown" | null;
+  reason: string | null;
+  has_data: boolean | null;
+  requests: number | null;
+  errors: number | null;
+  error_rate_pct: number | null;
+  throttles: number | null;
+  p95_ms: number | null;
+  alarms_total: number | null;
+  alarms_firing: number;
+  kind: "apigw" | "lambda" | null;
+  resources: string[] | null;
+  window_hours: number | null;
+  as_of: string | null;
+}
+
+interface CardHealth {
+  /** the app's own check (null: TripPlanner has none) */
+  probe?: { status: AppStatus; reason: string } | null;
+  traffic?: AppTraffic | null;
+  /** the one status of the app (also on the Overview tile) */
+  overall?: AppHealthVerdict;
+}
+
 export interface CisWorker {
   worker_id: string;
   git_sha: string | null;
@@ -29,7 +84,7 @@ export interface DeployGate {
   exempt_kinds: string[];
 }
 
-export interface CisCard {
+export interface CisCard extends CardHealth {
   id: "cis";
   label: string;
   repo_url: string;
@@ -43,7 +98,7 @@ export interface CisCard {
   problems: string[];
 }
 
-export interface BookingCard {
+export interface BookingCard extends CardHealth {
   id: "booking";
   label: string;
   repo_url: string;
@@ -68,7 +123,7 @@ export interface TpSpendToday {
   stages: string[];
 }
 
-export interface TripPlannerCard {
+export interface TripPlannerCard extends CardHealth {
   id: "tripplanner";
   label: string;
   repo_url: string;
@@ -188,13 +243,17 @@ export interface AiSource {
 export interface CostRow {
   app: string;
   kind: CostRowKind;
+  /** plain label from the backend cost module (the same on every page) */
   label: string;
+  hint: string | null;
   aws_usd: number;
   aws_bedrock_usd: number;
   services: CostService[];
   aws_tags: string[];
   ai_usd: number;
   ai_in_aws_acc2_usd: number;
+  /** ai_usd − ai_in_aws_acc2_usd: AI not already on the acc2 AWS bill */
+  ai_outside_aws_usd: number;
   ai_calls: number;
   ai_by_source: AiSource[];
   total_usd: number;
@@ -233,7 +292,13 @@ export interface CostResp {
     untagged_usd: number;
   };
   apps: CostRow[];
-  totals: { aws_usd: number | null; ai_usd: number; total_usd: number };
+  totals: {
+    aws_usd: number | null;
+    ai_usd: number;
+    ai_in_aws_acc2_usd: number;
+    ai_outside_aws_usd: number;
+    total_usd: number;
+  };
   llm_satellites: { acc1?: SatelliteLine; acc3?: SatelliteLine; ce_fetched_at?: string | null };
   refresh: CostRefresh;
   sources: Record<string, string>;

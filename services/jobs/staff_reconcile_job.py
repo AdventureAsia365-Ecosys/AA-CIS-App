@@ -139,7 +139,8 @@ def _iso(v):
 
 
 async def health(pool) -> dict:
-    """The latest succeeded report, plus the latest active and failed run (if any) for the Staff page."""
+    """The latest succeeded report, plus the latest active and failed run (if any) for the Staff page, and
+    ``readiness_now``: the cutover readiness recomputed from the directory rows right now (no Cognito call)."""
     import json
 
     rows = await pool.fetch(_LATEST_SQL)
@@ -158,4 +159,12 @@ async def health(pool) -> dict:
     lf, latest = out["last_failed"], out["latest"]
     if lf and latest and (lf["created_at"] or "") < (latest["created_at"] or ""):
         out["last_failed"] = None
+    # S243 finding 3: readiness depends on the directory rows only, so it is recomputed live; the Cognito drift stays
+    # "as of" the report. Without this the panel kept counting an account disabled after the last check.
+    try:
+        rows, _ = await sr.load_directory(pool)
+        out["readiness_now"] = {**sr.readiness_from_rows(rows), "as_of": sr.now_iso()}
+    except Exception as e:  # noqa: BLE001 — the stored report still renders
+        logger.warning("staff_reconcile_readiness_now_failed", error=repr(e)[:200])
+        out["readiness_now"] = None
     return out
