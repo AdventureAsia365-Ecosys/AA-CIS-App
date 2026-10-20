@@ -160,11 +160,15 @@ def test_paa_filter_keeps_in_scope_answerable_questions():
     paa = ["how deep is lake khovsgol", "How deep is lake Khövsgöl?",  # duplicate after folding and '?'
            "What is the best way to get from Khatgal to the Gobi desert?",  # out of scope
            "How much does a Khövsgöl lake tour cost?",  # price: the seed cannot answer
-           "Is Mongolia safe for tourists?",  # the country only
+           "Who is the president of Mongolia?",  # the country only, not a travel question
+           # S245 20/10 — a travel question about the scope's country is in scope now
+           # (real_questions.country_travel_question; test_aa779_scope_variants.py)
+           "Is Mongolia safe for tourists?",
            "Why is the freshwater of the lake frozen in winter?",  # 2 seed content words, no name
            "Hi?", 42, None]
     out = qg.paa_for_scope(paa, PAA_SEED, None, out_of_scope=("gobi", "khatgal"))
-    assert out == ["How deep is lake khovsgol?", "Why is the freshwater of the lake frozen in winter?"]
+    assert out == ["How deep is lake khovsgol?", "Is Mongolia safe for tourists?",
+                   "Why is the freshwater of the lake frozen in winter?"]
 
 
 def test_paa_filter_lets_facts_answer_a_topic_and_caps():

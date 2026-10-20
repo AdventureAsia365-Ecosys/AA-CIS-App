@@ -1356,6 +1356,13 @@ text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_ser
 questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
 `US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
 question) and read back as the `serp_topup` tier.
+S245 (AA-779, 20/10) — **scope filter: spelling variants + country-level travel questions.** `paa_for_scope`
+also keeps a question naming an own place in another spelling ('Lake Khuvsgul' / 'Hovsgol' for Khövsgöl:
+folded skeleton kh→h, u→o, doubled letters once; else skeleton edit distance ≤ 1 / ≤ 2 from 8 letters, same
+first letter, capitalised word, names ≥ 6 letters only) and a travel question about the scope's country or its
+demonym ('What is the most famous lake in Mongolia?', 'Do Mongolian gers have toilets?') that names no other
+place, is no comparison / world superlative, and has a travel word or a word of the moment's source
+(`real_questions.names_own_place`, `country_travel_question`). The off-meaning test reads a variant as the name.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a

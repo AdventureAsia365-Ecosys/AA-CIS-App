@@ -13,7 +13,9 @@ were already in the DB. This module reads them, in a fixed order, at $0 (DB read
      '<place> <country>' (`search_demand`, keyword `topup_keyword`, its own market `TOPUP_MARKET`
      that no other reader uses, so it never mixes with the Segment research cache).
   Off-meaning questions (about a place name as a word: 'What is a moron?' for Mörön) are dropped
-  from every tier, using the piece's own place words.
+  from every tier, using the piece's own place words (and their spelling variants: 'Khuvsgul').
+  The FAQ's scope filter (quality_gates.paa_for_scope) reads `names_own_place` (spelling variants)
+  and `country_travel_question` (travel questions about the scope's country) from here.
   3. `tour_paa`      — the tour-level PAA the request snapshot holds (the only source before).
 
 Later sources plug in as more `QuestionSource` objects in `DB_SOURCES` (before the tour tier):
@@ -205,6 +207,10 @@ def is_off_meaning(question: str, names: Iterable[str] = (), lowercase_names: It
     q_words = set(_TOKEN_RE.findall(q))
     names = {n for n in names if n and n not in _COMMON_ENGLISH}
     lower_ok = {n for n in lowercase_names if n and _single_word(n)}
+    # S245 (20/10) — a spelling variant of an own name ('Khuvsgul' for Khövsgöl) is that name here
+    # too, so 'Is Khuvsgul a British word?' is caught like the exact spelling.
+    names |= {v for v in name_variants_in(question, names) if v not in _COMMON_ENGLISH}
+    lower_ok |= {v for v in name_variants_in(question, lower_ok) if _single_word(v)}
     country_words = {w for c in countries for w in _TOKEN_RE.findall(fold(c))}
     for name in lower_ok:
         if (_lowercase_only_use(question, name)
@@ -223,6 +229,167 @@ def is_off_meaning(question: str, names: Iterable[str] = (), lowercase_names: It
                 or _name_word_cue(q, n)):
             return True
     return False
+
+
+# ---------------------------------------------------------------- spelling variants + country level (S245, 20/10)
+# Live 20/10: the SERP top-up stored good questions for 'khovsgol lake mongolia' ('Can you swim in Lake
+# Khuvsgul?', 'What is the most famous lake in Mongolia?') and the scope filter kept 0 of 12: Google
+# spells the lake Khuvsgul / Hovsgol, and the country-level ones name no place of the moment.
+
+# A fuzzy place match needs a name (and the question word) of at least this many folded letters:
+# short names ('Hue', 'Paro', 'Mörön') match only exactly.
+VARIANT_MIN_LEN = 6
+
+
+def name_skeleton(word: str) -> str:
+    """The spelling-variant key of a place word: folded ('Khövsgöl' → 'khovsgol'), 'kh' → 'h'
+    (romanisations drop it: Hovsgol), u → o (ö / ü / o / u are one Mongolian vowel pair in Latin
+    letters: Khuvsgul), doubled letters once ('Ulaanbaatar' → 'olanbatar')."""
+    w = fold(word).replace("kh", "h").replace("u", "o")
+    return re.sub(r"(.)\1+", r"\1", w)
+
+
+def _edit_distance(a: str, b: str, cap: int) -> int:
+    """Levenshtein distance, stopped at `cap` + 1."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        if min(cur) > cap:
+            return cap + 1
+        prev = cur
+    return prev[-1]
+
+
+def place_variant_match(word: str, name: str, *, capitalised: bool = True) -> bool:
+    """Is `word` (a question word) a spelling of the place word `name`? Conservative: equal after
+    folding; or both ≥ VARIANT_MIN_LEN letters and the same skeleton (`name_skeleton`: Khuvsgul,
+    Hovsgol, Khovsgol, Khövsgöl are one); or — only for a `capitalised` question word (Google
+    capitalises a place) — the same first letter and a skeleton edit distance ≤ 1 (skeletons under
+    8 letters) / ≤ 2 (8 and more): 'Khuvsugul'."""
+    w, n = fold(word), fold(name)
+    if w == n:
+        return True
+    if len(w) < VARIANT_MIN_LEN or len(n) < VARIANT_MIN_LEN:
+        return False
+    sw, sn = name_skeleton(w), name_skeleton(n)
+    if sw == sn:
+        return True
+    if not capitalised or sw[0] != sn[0]:
+        return False
+    cap = 2 if min(len(sw), len(sn)) >= 8 else 1
+    return _edit_distance(sw, sn, cap) <= cap
+
+
+def name_variants_in(question: str, names: Iterable[str]) -> set[str]:
+    """Folded words of `question` that are a spelling variant (not the exact form) of one of the
+    folded place words `names` ('khuvsgul' for 'khovsgol'). Never a word of < VARIANT_MIN_LEN letters."""
+    long_names = {n for n in names if n and len(n) >= VARIANT_MIN_LEN}
+    if not long_names:
+        return set()
+    out: set[str] = set()
+    for tok in _NAME_TOKEN_RE.findall(question or ""):
+        w = fold(tok)
+        if len(w) < VARIANT_MIN_LEN or w in long_names:
+            continue
+        if any(place_variant_match(tok, n, capitalised=tok[0].isupper()) for n in long_names):
+            out.add(w)
+    return out
+
+
+def names_own_place(question: str, names: Iterable[str]) -> bool:
+    """Does `question` name one of the folded place words `names`, exactly or as a spelling
+    variant (`name_variants_in`)?"""
+    names = {n for n in names if n}
+    return bool(set(_TOKEN_RE.findall(fold(question))) & names) or bool(name_variants_in(question, names))
+
+
+# Folded country word (as `_seed_countries` / a Location line gives it) → its folded demonyms: a
+# question about 'Mongolian gers' or 'Lao food' is about the country too.
+DEMONYMS: dict[str, tuple[str, ...]] = {
+    "mongolia": ("mongolian", "mongolians"), "laos": ("lao", "laotian", "laotians"), "lao": ("laotian",),
+    "bhutan": ("bhutanese",), "vietnam": ("vietnamese",), "cambodia": ("cambodian", "cambodians", "khmer"),
+    "thailand": ("thai",), "myanmar": ("burmese",), "burma": ("burmese",), "nepal": ("nepali", "nepalese"),
+    "tibet": ("tibetan", "tibetans"), "china": ("chinese",), "india": ("indian", "indians"),
+    "japan": ("japanese",), "korea": ("korean", "koreans"), "indonesia": ("indonesian", "indonesians"),
+    "malaysia": ("malaysian", "malaysians"), "philippines": ("filipino", "filipinos", "philippine"),
+    "lanka": ("lankan", "lankans"), "uzbekistan": ("uzbek", "uzbeks"), "kazakhstan": ("kazakh", "kazakhs"),
+    "kyrgyzstan": ("kyrgyz",),
+}
+# Nationalities a traveller question may name about itself ('Is Mongolia friendly to American
+# tourists?'): never read as another place.
+_TRAVELLER_NATIONALITIES = frozenset("""
+american americans british english european europeans australian australians canadian canadians western
+westerners foreign foreigners
+""".split()) | {d for ds in DEMONYMS.values() for d in ds}
+
+
+def country_terms(countries: Iterable[str]) -> set[str]:
+    """Folded words of the scope's countries plus their demonyms ('mongolia', 'mongolian', …)."""
+    words = {w for c in countries for w in _TOKEN_RE.findall(fold(c))}
+    return words | {d for w in words for d in DEMONYMS.get(w, ())}
+
+
+# A country-level question is in scope only when it asks something a traveller to that country asks
+# (content_words stems: a trailing 's' is cut from words over 4 letters).
+_COUNTRY_TRAVEL = frozenset("""
+visit visiting visited travel traveling travelling traveler travelers traveller travellers trip tour tourist
+tourism holiday vacation safe safety dangerou friendly welcoming weather climate warm cold hot winter summer
+spring autumn season month snow rain temperature food dish dishe cuisine eat eating drink drinking restaurant
+cafe meal breakfast lake river mountain park desert steppe forest wildlife animal horse camel riding ride hike
+hiking trek trekking camp camping ger gers yurt hotel stay toilet bathroom shower wifi internet airport flight fly
+flying drive driving road train bus currency money cash tip tipping language speak english festival monastery
+temple museum market shopping souvenir nomad nomadic famou beautiful scenery landscape culture custom etiquette
+""".split())
+# Words a country-level question shares with a seed without being about it.
+_COUNTRY_GENERIC = frozenset("""
+country countrie nation national world people person live living life thing place many much most best good
+great way know get make have year day time like
+""".split())
+# Off-topic shapes for a country-level question: comparisons with somewhere else ('What US state is most
+# like Mongolia?'), world superlatives ('… the most famous in the world?').
+_COUNTRY_OFF_TOPIC_RE = re.compile(
+    r"\b(?:(?:most|more|least)\s+(?:like|similar)|similar\s+to|compar\w*|versus|vs|equivalent|resembl\w*"
+    r"|(?:us|u\s+s|american|which|what)\s+states?|in\s+the\s+world|world\s+s|worlds)\b")
+_QUESTION_CAPS_RE = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ’'-]+")
+
+
+def is_world_question(question: str) -> bool:
+    """'Which restaurant is the most famous in the world?' — about the world, not a scope."""
+    q = " ".join(_TOKEN_RE.findall(fold(question)))
+    return bool(re.search(r"\b(?:in\s+the\s+world|world\s+s|worlds)\b", q))
+
+
+def country_travel_question(question: str, countries: Iterable[str], seed_words: Iterable[str] = (),
+                            allowed_names: Iterable[str] = ()) -> bool:
+    """AA-779 (S245, 20/10) — a question about the scope's country as a travel destination: it
+    names a scope country or its demonym ('… in Mongolia?', 'Do Mongolian gers have toilets?'), is
+    not an off-topic comparison / world superlative ('What US state is most like Mongolia?'), names
+    no other capitalised place (allowed: the country terms, `allowed_names` — the moment's own
+    place words — and traveller nationalities: 'Is Mongolia friendly to American tourists?'), and
+    is travel-relevant: a travel word (`_COUNTRY_TRAVEL`: weather, food, tourists, lake, toilets…) or
+    a non-generic content word shared with the moment's source (`seed_words`, content_words stems;
+    'Is there a water shortage in Mongolia?' stays only when the source speaks of water — whether a
+    fact answers it is the FAQ step's job)."""
+    terms = country_terms(countries)
+    q_fold = fold(question)
+    tokens = _TOKEN_RE.findall(q_fold)
+    if not terms or not set(tokens) & terms:
+        return False
+    if _COUNTRY_OFF_TOPIC_RE.search(" ".join(tokens)):
+        return False
+    allowed = terms | _TRAVELLER_NATIONALITIES | {fold(n) for n in allowed_names} | _PLACE_GENERIC
+    for m in _QUESTION_CAPS_RE.finditer(question or ""):
+        word = fold(m.group(0)).strip("'’-")
+        if word and word not in allowed:
+            return False
+    words = set(content_words(question)) - terms
+    if words & _COUNTRY_TRAVEL:
+        return True
+    return bool((words & set(seed_words)) - _COUNTRY_GENERIC - _TRAVELLER_NATIONALITIES)
 
 
 # ---------------------------------------------------------------- the chain
@@ -623,7 +790,8 @@ __all__ = [
     "SOURCE_WRITER", "REAL_SOURCES", "RealQuestion", "QuestionScope", "QuestionSource", "DB_SOURCES",
     "SegmentMatchSource", "PlacePaaSource", "SerpTopupSource", "TOPUP_MARKET", "topup_keyword", "topup_keywords",
     "ENGLISH_ONLY_SOURCES", "merge", "looks_english", "is_off_meaning", "single_word_places",
-    "chain_filter_names",
+    "chain_filter_names", "name_skeleton", "place_variant_match", "name_variants_in", "names_own_place",
+    "DEMONYMS", "country_terms", "country_travel_question", "is_world_question",
     "question_key",
     "place_words", "rank_place_rows", "resolve_scope", "collect_real_questions", "label_questions", "source_counts",
     "faq_sources", "missing_real_questions", "real_first_pairs", "count_real", "piece_question_stats",

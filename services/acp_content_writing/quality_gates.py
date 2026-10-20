@@ -58,7 +58,8 @@ from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
-from services.acp_shared.real_questions import is_off_meaning, single_word_places
+from services.acp_shared.real_questions import (country_travel_question, is_off_meaning, is_world_question,
+                                                 names_own_place, single_word_places)
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -1717,14 +1718,16 @@ def drop_subjectless_faq(content_text: str, source_text: str = "",
 # AA-779 — real search questions (services/acp_shared/real_questions.py: the piece's Segment / place
 # questions first, then the tour's People Also Ask; not scoped to the piece) the writer may answer in the
 # FAQ. Kept only when they name no place outside the piece's scope, ask nothing the source cannot
-# answer, are about the place rather than its name as a word (S245), and name one of the moment's own
-# places or share ≥ 2 non-generic content words with its seed.
+# answer, are about the place rather than its name as a word (S245), and either name one of the
+# moment's own places — exactly or as a spelling variant ('Lake Khuvsgul' for Khövsgöl, S245 20/10) —
+# or share ≥ 2 non-generic content words with its seed, or are a travel question about the scope's
+# country ('What is the most famous lake in Mongolia?', real_questions.country_travel_question).
 PAA_MAX_QUESTIONS = 6
 # Words a seed and a search question share without being about the same thing (content_words stems:
 # a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
 _PAA_GENERIC = frozenset("""
 visit visiting tour trip travel best time worth famou know thing place people much many long far going see
-get day year good great way top most does have about like near from area region
+get day year good great way top most does have about like near from area region world
 """.split())
 
 
@@ -1762,6 +1765,9 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
     # today?') reads only single-word names capitalised mid-sentence (seed_place_names).
     seed_names, mid_names, countries = seed_place_names(own_seed)
     seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
+    # S245 (20/10) — spelling variants match only real names (capitalised mid-sentence), never a
+    # line opener the keep_initial name set also holds ('Source', 'Trek').
+    variant_names = {t for p in proper_nouns(own_seed) for t in phrase_tokens(p)} - countries
     out: list[str] = []
     seen: set[str] = set()
     for raw in questions or []:
@@ -1783,9 +1789,13 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
         if is_off_meaning(q, seed_names, lowercase_names=mid_names, countries=countries):
             continue
         q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
-        shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
-        if not (q_tokens & seed_names) and len(shared) < 2:
-            continue
+        own_place = bool(q_tokens & seed_names) or names_own_place(q, variant_names)
+        if not own_place:
+            shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
+            if is_world_question(q):  # 'Which restaurant is the most famous in the world?'
+                continue
+            if len(shared) < 2 and not country_travel_question(q, countries, seed_words, seed_names):
+                continue
         seen.add(key)
         out.append(q)
         if len(out) >= limit:
