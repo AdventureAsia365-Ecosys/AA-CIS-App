@@ -257,7 +257,7 @@ async def test_label_refuses_a_foreign_sentence_and_one_without_a_verdict(_no_se
     keys = _keys()
     pool = _Pool(verdict_keys=keys[:1])
     with pytest.raises(HTTPException) as e:
-        await ap.admin_label_review_claim(REVIEW_ID, ap.ClaimLabelBody(subject_key="claim:0000000000:000000000000"),
+        await ap.admin_label_review_claim(REVIEW_ID, ap.ClaimLabelBody(subject_key="claim:not-in-this-review:sentence-x"),
                                           _req(pool), x_admin_secret="x", x_admin_user_id=None)
     assert e.value.status_code == 404
     with pytest.raises(HTTPException) as e:
