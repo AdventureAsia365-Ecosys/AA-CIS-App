@@ -53,12 +53,13 @@ from services.acp_content_writing.facts import fetch_facts_for_writing, format_f
 from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
-from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
-                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES, F9PassMemory,
+from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
+                                                          FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
-                                                          hold_failure, merge_faq_pairs, paa_for_scope,
+                                                          hold_failure, merge_faq_pairs, never_holds,
+                                                          paa_for_scope,
                                                           replace_faq_section,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
@@ -378,11 +379,14 @@ def _held_reason_from(first_failure: dict) -> str:
 def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
     """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
     product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
-    (F15_voice) is left — it is added to the flags so the admin still sees it."""
+    (F15_voice) or an under-floor F14_social_shape (AA-780) is left — it is added to the flags so the
+    admin still sees it (quality_gates.never_holds)."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
         return "held", _held_reason_from(hold), flags
-    style = [g for g in gate_ledger if not g["passed"] and g["gate"] in STYLE_ONLY_GATES]
+    # Only the BLOCKING entries being waived here (mirrors _waive_style_only): a non-blocking warn —
+    # e.g. a post-cut F14 under-floor warn — is already in `flags` from run_quality_gates or the cut.
+    style = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True) and never_holds(g)]
     return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
 
 
@@ -508,6 +512,29 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
                        "cut_gates": sorted({g for it in cut_items for g in (it.get("gates") or [it.get("gate")])})}
 
 
+def _is_floor_block(g: dict) -> bool:
+    """AA-780 — a failed, blocking F14_social_shape that never holds: the attempt-1 under-floor block."""
+    return g["gate"] == F14_GATE and not g["passed"] and g.get("blocking", True) and never_holds(g)
+
+
+def _floor_only_failure(blocking_fails: list) -> bool:
+    """AA-780 review — the attempt's blocking failures are all gates that never hold, one of them the
+    under-floor F14 block (the AA-528 guard does not revert a rewrite of such an attempt that is repairable)."""
+    return (bool(blocking_fails) and all(never_holds(g) for g in blocking_fails)
+            and any(_is_floor_block(g) for g in blocking_fails))
+
+
+def _waive_floor_block(gate_ledger: list, flags: list) -> tuple[list, list]:
+    """AA-780 review — (ledger, flags) with the under-floor F14 block of a reverted-to attempt 1 stored
+    `blocking: false, waived: true` and shown as the F14 flag (replacing an F14 flag of the discarded
+    rewrite). A no-op for any other ledger."""
+    if not any(_is_floor_block(g) for g in gate_ledger):
+        return gate_ledger, flags
+    ledger = [{**g, "blocking": False, "waived": True} if _is_floor_block(g) else g for g in gate_ledger]
+    waived = [g for g in ledger if g["gate"] == F14_GATE and g.get("waived")]
+    return ledger, [f for f in flags if f.get("gate") != F14_GATE] + waived
+
+
 def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
                      ignore: frozenset = frozenset(), cta: Optional[str] = None,
                      moments: Optional[list] = None, spec=None) -> tuple[str, list, list, Optional[dict]]:
@@ -564,7 +591,16 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     ledger = [fresh.get(g["gate"], new_f9 if g is f9 else g) for g in gate_ledger]
     entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_cut_refused",
              **marks, "violations": [reason], "repairable": False}
-    return content_text, ledger, list(flags) + ([new_f9] if all_cut else []), entry
+    return content_text, ledger, _refresh_flags(flags, fresh) + ([new_f9] if all_cut else []), entry
+
+
+def _refresh_flags(flags: list, fresh: dict) -> list:
+    """AA-780 review — after a cut re-runs the length/shape gates (`fresh`, gate name → result), their
+    warn flags from before the cut (e.g. an F14 under-floor warn with the pre-cut word count) are
+    replaced by the post-cut warns, so the admin drawer never shows a stale and a fresh entry side by side.
+    A fresh BLOCKING failure stays only in the ledger (it holds the piece)."""
+    kept = [f for f in flags if f.get("gate") not in fresh]
+    return kept + [r for r in fresh.values() if not r["passed"] and not r.get("blocking", True)]
 
 
 def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, status: str,
@@ -605,7 +641,7 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     else:
         new_f19 = {**f19, **marks, "blocking": False, "waived": True, "waived_reason": reason}
     ledger = [fresh.get(g["gate"], new_f19 if g is f19 else g) for g in gate_ledger]
-    flags = list(flags) + ([] if left else [new_f19])
+    flags = _refresh_flags(flags, fresh) + ([] if left else [new_f19])
     status, held_reason, flags = _hold_or_ship(ledger, flags)
     entry = {"gate_targeted": F19_GATE, "repair_mode": "aup_cut", **marks, "violations": [reason],
              "repairable": False}
@@ -852,8 +888,9 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     (CONTEXT.md), and "failed blocking yet approved" read as a gate bug."""
     if status != "approved":
         return gate_ledger
+    # AA-780 — an under-floor F14_social_shape kept from attempt 1 the same way (never_holds).
     return [{**g, "blocking": False, "waived": True}
-            if not g["passed"] and g.get("blocking", True) and g["gate"] in STYLE_ONLY_GATES else g
+            if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
             for g in gate_ledger]
 
 
@@ -1793,6 +1830,19 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 prev_blocking_fail = {g["gate"] for g in prev_ledger if g.get("blocking", True) and not g["passed"]}
                 cur_blocking_fail = {g["gate"] for g in gate_ledger if g.get("blocking", True) and not g["passed"]}
                 new_regressions = cur_blocking_fail - prev_blocking_fail
+                # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
+                # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
+                # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
+                # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
+                # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
+                # text is the full-length, truth-clean one.)
+                prev_fail = [g for g in prev_ledger if g.get("blocking", True) and not g["passed"]]
+                if (new_regressions and attempt < MAX_ATTEMPTS and _floor_only_failure(prev_fail)
+                        and first_failure["repairable"]
+                        and sentence_repair.plan(content_text, gate_ledger) is not None):
+                    logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
+                                attempt=attempt, regressed_gates=sorted(new_regressions))
+                    new_regressions = set()
                 if new_regressions and len(cur_blocking_fail) >= len(prev_blocking_fail):
                     logger.info(
                         "t9_gate_regression_reverted", request_id=str(request_id), attempt=attempt,
@@ -1810,6 +1860,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         "gate_ledger": gate_ledger,
                     }
                     content_text = prev_snapshot["content_text"]
+                    # AA-780 review — attempt 1's under-floor F14 block asked for the rewrite just discarded;
+                    # it never holds, so it is waived now (and shown as a flag) instead of blocking the next
+                    # step: a remaining F1/F9 still gets its attempt-3 sentence repair (sentence_repair.plan
+                    # returns None while an F14 block is in the ledger), and nothing else → the piece ships.
+                    prev_ledger, flags = _waive_floor_block(prev_ledger, flags)
                     gate_ledger = prev_ledger
                     seo_meta = prev_snapshot["seo_meta"]
                     summary = prev_snapshot["summary"]
@@ -1830,7 +1885,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
             last_try = attempt >= MAX_ATTEMPTS or (
                 attempt == MAX_ATTEMPTS - 1 and sentence_repair.plan(content_text, gate_ledger) is None)
-            if not first_failure["repairable"] or last_try:
+            if first_failure is None or not first_failure["repairable"] or last_try:
                 # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
                 # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/
                 # SEO/structure. Brand-voice/framework failures are non-blocking warns (they never

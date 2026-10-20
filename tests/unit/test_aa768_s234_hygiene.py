@@ -453,7 +453,10 @@ def test_run_quality_gates_with_hygiene_context_never_holds_on_f12():
                                    hygiene_ctx=_ctx(cta="Book now"))
     f12 = next(g for g in out["gate_ledger"] if g["gate"] == "F12_scope")
     assert not f12["passed"] and f12 in out["flags"]
-    assert out["passed"] is True and out["first_failure"] is None
+    # AA-780 — the 7-word LinkedIn post is under the 120-word floor: F14 blocks on attempt 1 (one rewrite,
+    # never a hold); F12 is still only a flag
+    assert out["first_failure"]["gate"] == "F14_social_shape"
+    assert qg.hold_failure(out["gate_ledger"]) is None
 
 
 def test_lexicon_regexes_are_public():
