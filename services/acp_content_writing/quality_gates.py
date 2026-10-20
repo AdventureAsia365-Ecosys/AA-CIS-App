@@ -54,8 +54,9 @@ import structlog
 from services.acp_content_writing import authenticity
 from services.acp_content_writing.framework_rubrics import get_framework_rubric
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
-                                                  contrast_excess, copies, dangling_opener, find_issues,
-                                                  near_verbatim, sentence_spans, sibling_templates, template_lines)
+                                                  contrast_excess, copies, dangling_opener, find_issues, fold,
+                                                  names_place, near_verbatim, phrase_tokens, proper_nouns,
+                                                  sentence_spans, sibling_templates, template_lines)
 from services.acp_content_writing.trip_facts import (TripFactContext, find_trip_fact_issues, mentions_activity,
                                                      optional_activities, parse_moments)
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
@@ -1807,6 +1808,264 @@ def merge_faq_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return out
 
 
+# ---------------------------------------------------------------- FAQ subject check + PAA (AA-779, S245)
+
+# r4/r5 panels: FAQ answers that never name what the question asks about — 'Who are the Tsaatan, and
+# where do they live?' → 'Their seasonal camps…' (r4 #5), 'What can we do at Lake Khövsgöl beyond
+# trekking?' → 'These activities are available…' (r5 #5), 'What is the role of Mörön on this route?' →
+# 'The route stops here for lunch…' (r5 #15), 'What animals do the Tsaatan use their reindeer for?' →
+# '…meat production is not the primary purpose.' (r5 #18) — and a negation-only answer that names the
+# subject but still dodges the question ('What do the Tsaatan use their reindeer for?' → '…the Tsaatan
+# do not primarily raise them for meat.', r4 #19). Deterministic: no model call.
+_SUBJ_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_WH_WORDS = frozenset("what which who whom whose where when why how".split())
+_WH_QUESTION_RE = re.compile(r"^\W*(?:what|which|who|whom|whose|where|when|why|how)\b", re.I)
+# 'What animals…', 'Which months…', and its 'of' phrase: 'What kind of dwellings…' → dwellings,
+# 'What share of fresh water…' → share, fresh, water.
+_WH_NOUN_RE = re.compile(r"^\W*(?:what|which)\s+([A-Za-zÀ-ÖØ-öø-ÿ’'-]+)"
+                         r"(?:\s+of\s+((?:[A-Za-zÀ-ÖØ-öø-ÿ’'-]+\s*){1,3}))?", re.I)
+_Q_WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ’'-]*|[^\sA-Za-zÀ-ÖØ-öø-ÿ]")
+# Words that end a "the <noun phrase>" run: prepositions, conjunctions, auxiliaries and the verbs FAQ
+# questions use ('What makes the lake distinctive', 'How long ago did the volcano last erupt').
+_NP_STOP = frozenset("""
+the a an and or but nor of in on at to for with from by as into onto over under about after before during
+between near beyond through across along around than then so if is are was were be been being do does did
+can could will would may might should must has have had it its this that these those their his her our your
+you we they he she them us there here what which who whom whose where when why how not no
+make makes made happen happens happened use used uses need needs needed get gets reach reached last erupt
+erupted live lives lived see seen visit visited expect expected sit sits differ differs mean means play plays
+""".split())
+# Abstract nouns a question wraps its real subject in ('the role of Mörön', 'the significance of
+# Uran Togoo') — never enough on their own for an answer to count as naming the subject.
+_ABSTRACT_NOUNS = frozenset("""
+role significance importance purpose reason reasons way ways kind kinds sort type types part parts thing
+things best main history story difference differences point use uses time times ecological cultural
+""".split())
+# A definite description of these never stands for a named subject ('The route stops here for lunch').
+_TRIP_WORDS = frozenset("""
+route trip journey tour itinerary day days stop stops group family families traveller travellers traveler
+travelers visitor visitors guest guests answer question piece post
+""".split())
+# 'Who lives near the lake?' asks for the people: the answer names them, not the lake — no subject test.
+_WHO_SUBJECT_RE = re.compile(r"^\W*who\s+(?!(?:is|are|was|were|do|does|did|can|could|will|would|should|has|have|had"
+                             r"|may|might|must)\b)[a-z]", re.I)
+_NEGATION_RE = re.compile(r"\b(?:not|never|no|none|neither|nor|nothing)\b|n['’]t\b", re.I)
+# 'not just / not only' adds, and a negation followed by what IS the case ('…not for meat — instead,
+# the animals are used for riding') answers: neither makes a sentence negative-only.
+_ADDITIVE_NOT_RE = re.compile(r"\bnot\s+(?:just|only|merely|simply)\b", re.I)
+_POSITIVE_TURN_RE = re.compile(r"\b(?:instead|rather|but)\b", re.I)
+
+
+def _negative_sentence(sentence: str) -> bool:
+    s = _ADDITIVE_NOT_RE.sub(" ", sentence)
+    return bool(_NEGATION_RE.search(s)) and not _POSITIVE_TURN_RE.search(s)
+_YES_NO_OPENING_RE = re.compile(r"^\W*(?:yes|no)\b", re.I)
+
+
+def _subject_stems(text: str) -> set[str]:
+    """Folded content tokens of `text` with a plural / possessive cut ('Khövsgöl's' → 'khovsgol',
+    'animals' → 'animal'), ≥ 3 letters, stop words dropped."""
+    out = set()
+    for t in _SUBJ_TOKEN_RE.findall(fold(strip_citation_tags(text))):
+        if len(t) < 3 or t in _NP_STOP or t in _WH_WORDS:
+            continue
+        out.add(_stem(t))
+    return out
+
+
+def _stem(t: str) -> str:
+    """'volcanoes' → 'volcano', 'valleys' → 'valley', 'communities' → 'community', 'animals' → 'animal'."""
+    if len(t) > 4 and t.endswith("ies"):
+        return t[:-3] + "y"
+    if len(t) > 4 and t.endswith(("oes", "ches", "shes", "xes", "sses")):
+        return t[:-2]
+    if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
+        return t[:-1]
+    return t
+
+
+def faq_subject_tokens(question: str) -> tuple[set[str], set[str]]:
+    """(subject tokens, name tokens) of a FAQ question. Subject tokens: every word of its capitalised
+    names ('Lake Khövsgöl' → lake, khovsgol), the nouns after 'the/a/an' (up to 4 words, stopping at a
+    preposition, verb or punctuation; abstract wrappers like 'role' or 'significance' skipped) and the
+    noun after 'What/Which' ('What animals…'). Name tokens: only the capitalised names' tokens (what a
+    seed sentence must contain for a class noun to stand for the name — `_alias_ok`)."""
+    q = strip_citation_tags(question or "")
+    names: set[str] = set()
+    for phrase in proper_nouns(q):
+        names |= _subject_stems(phrase)
+    subject = set(names)
+    words = _Q_WORD_RE.findall(q)
+    for i, w in enumerate(words):
+        if w.lower() not in ("the", "a", "an"):
+            continue
+        for nxt in words[i + 1:i + 5]:
+            if not nxt[0].isalpha() or nxt.lower() in _NP_STOP:
+                break
+            subject |= {s for s in _subject_stems(nxt) if s not in _ABSTRACT_NOUNS}
+    wh = _WH_NOUN_RE.match(q)
+    if wh and wh.group(1).lower() not in _NP_STOP:
+        subject |= {s for s in _subject_stems(wh.group(1)) if s not in _ABSTRACT_NOUNS}
+        for nxt in (wh.group(2) or "").split():
+            if nxt.lower() in _NP_STOP:
+                break
+            subject |= {s for s in _subject_stems(nxt) if s not in _ABSTRACT_NOUNS}
+    return subject, names
+
+
+def _answer_lead(answer: str) -> str:
+    """The answer's first sentence; with a bare 'Yes.' / 'No.' first, the next sentence too."""
+    spans = [s["clean"] for s in sentence_spans(strip_citation_tags(answer or "")) if s["clean"].strip()]
+    if not spans:
+        return ""
+    if len(spans) > 1 and len(spans[0].split()) <= 3 and _YES_NO_OPENING_RE.match(spans[0]):
+        return f"{spans[0]} {spans[1]}"
+    return spans[0]
+
+
+def _alias_ok(lead: str, names: set[str], context_text: str) -> bool:
+    """'The volcano last erupted…' names 'Uran Togoo' when the post or the seed has a sentence with
+    both the name and 'volcano' ('Uran Togoo is a dormant volcano…'). Only a definite description
+    ('The <noun>', one optional adjective) counts, never a trip word ('The route stops here…')."""
+    if not names or not context_text:
+        return False
+    m = re.match(r"^\W*the\s+([A-Za-zÀ-ÖØ-öø-ÿ’'-]+)(?:\s+([A-Za-zÀ-ÖØ-öø-ÿ’'-]+))?", lead, re.I)
+    if not m:
+        return False
+    heads = {s for g in m.groups() if g for s in _subject_stems(g)} - _TRIP_WORDS - _ABSTRACT_NOUNS
+    if not heads:
+        return False
+    for sent in sentence_spans(strip_citation_tags(context_text)):
+        stems = _subject_stems(sent["clean"])
+        if stems & names and stems & heads:
+            return True
+    return False
+
+
+def faq_answer_problem(question: str, answer: str, context_text: str = "") -> Optional[str]:
+    """AA-779 — why a FAQ answer does not answer its question, or None:
+    'no_subject'    — the answer's first sentence (after a bare 'Yes.'/'No.') names none of the
+                      question's subject tokens (`faq_subject_tokens`) and is not a definite
+                      description the post / seed ties to the question's name (`_alias_ok`;
+                      `context_text` = body + the moment's own seed + Facts). A pronoun or
+                      demonstrative opening ('Their seasonal camps…', 'These activities…') fails.
+                      A 'Who <verb>…' question ('Who lives near the lake?') asks for the people
+                      and is not checked.
+    'negative_only' — a what/which/who/where/when/why/how question answered only by negated
+                      sentences ('…meat production is not the primary purpose.'). A yes/no
+                      question may be answered 'No, …' and is never checked for this.
+    A question with no subject tokens ('Can you swim?') passes the subject test."""
+    if not (answer or "").strip():
+        return None
+    subject, names = faq_subject_tokens(question)
+    if _WHO_SUBJECT_RE.match(strip_citation_tags(question or "")):
+        subject = set()
+    lead = _answer_lead(answer)
+    if subject and not (_subject_stems(lead) & subject) and not _alias_ok(lead, names, context_text):
+        return "no_subject"
+    if _WH_QUESTION_RE.match(strip_citation_tags(question or "")):
+        sents = [s["clean"] for s in sentence_spans(strip_citation_tags(answer)) if s["clean"].strip()]
+        if sents and all(_negative_sentence(s) for s in sents):
+            return "negative_only"
+    return None
+
+
+_FAQ_PROBLEM_TEXT = {"no_subject": "the answer does not name what the question asks about",
+                     "negative_only": "the answer only says what is not the case"}
+
+
+def drop_subjectless_faq(content_text: str, source_text: str = "",
+                         floor: int = FAQ_MIN_PAIRS) -> tuple[str, list[str], int]:
+    """AA-779 — drop FAQ pairs whose answer does not answer the question (`faq_answer_problem`), in
+    reading order, only while more than `floor` pairs remain: F16_faq stays the only FAQ hold, and a
+    short FAQ is the contract step's job (one write_faq regeneration). `source_text` = the moment's
+    own seed + Facts; the body before "## FAQ" is added to it for the alias test. Returns (text, one
+    log line per dropped or kept failing pair, failing pairs kept because of the floor)."""
+    body = content_text or ""
+    if "## FAQ" not in body:
+        return body, [], 0
+    pairs = faq_pairs(body)
+    context = f"{body.partition('## FAQ')[0]}\n{source_text or ''}"
+    problems = [faq_answer_problem(q, a, context) for q, a in pairs]
+    room = max(0, len(pairs) - floor)
+    kept, log, short = [], [], 0
+    for (q, a), why in zip(pairs, problems):
+        if why and room:
+            room -= 1
+            log.append(f"dropped FAQ pair ({_FAQ_PROBLEM_TEXT[why]}): '{q[:160]}'")
+            continue
+        if why:
+            short += 1
+            log.append(f"kept FAQ pair at the {floor}-pair minimum ({_FAQ_PROBLEM_TEXT[why]}): '{q[:160]}'")
+        kept.append((q, a))
+    if len(kept) == len(pairs):
+        return body, log, short
+    return replace_faq_section(body, kept), log, short
+
+
+# AA-779 — People Also Ask questions (the request's dfs_paa_snapshot, fetched per TOUR, so they are
+# not scoped to the piece) the writer may answer in the FAQ. Kept only when they name no place outside
+# the piece's scope, ask nothing the source cannot answer, and name one of the moment's own places or
+# share ≥ 2 non-generic content words with its seed.
+PAA_MAX_QUESTIONS = 6
+# Words a seed and a search question share without being about the same thing (content_words stems:
+# a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
+_PAA_GENERIC = frozenset("""
+visit visiting tour trip travel best time worth famou know thing place people much many long far going see
+get day year good great way top most does have about like near from area region
+""".split())
+
+
+def _seed_countries(own_seed: str) -> set[str]:
+    """Folded country words of the seed's 'Location:' lines (after the last comma), so a PAA question
+    sharing only the country ('Is Mongolia safe?') is not taken as being about this moment."""
+    out: set[str] = set()
+    for line in (own_seed or "").splitlines():
+        if line.startswith("Location:"):
+            tail = re.sub(r"\(.*?\)", " ", line.split(":", 1)[1]).rsplit(",", 1)[-1]
+            out |= set(_SUBJ_TOKEN_RE.findall(fold(tail)))
+    return out
+
+
+def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
+                  out_of_scope=(), limit: int = PAA_MAX_QUESTIONS) -> list[str]:
+    """AA-779 — the PAA questions a piece's FAQ may use (see the comment above). `own_seed` = the
+    moment's own lines (hygiene.split_seed), `out_of_scope` = folded gazetteer keys
+    (hygiene.build_scope_lexicon(...).gazetteer). Order kept, duplicates dropped, at most `limit`."""
+    countries = _seed_countries(own_seed)
+    seed_names: set[str] = set()
+    for phrase in proper_nouns(own_seed, keep_initial=True):
+        seed_names |= set(phrase_tokens(phrase))
+    seed_names -= countries
+    seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in questions or []:
+        if not isinstance(raw, str):
+            continue
+        q = " ".join(strip_citation_tags(raw).split()).strip()
+        if not 10 <= len(q) <= 160:
+            continue
+        q = q[0].upper() + q[1:]
+        if not q.endswith("?"):
+            q = q.rstrip(".!") + "?"
+        key = fold(q)
+        if key in seen or any(names_place(q, g) for g in out_of_scope):
+            continue
+        if unanswerable_faq_topics(q, own_seed, facts_text):
+            continue
+        q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
+        shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
+        if not (q_tokens & seed_names) and len(shared) < 2:
+            continue
+        seen.add(key)
+        out.append(q)
+        if len(out) >= limit:
+            break
+    return out
+
+
+
 # AA-768 (S234 round 2 fix) — the seed facts the post has not used yet, so the FAQ regeneration
 # answers from them first instead of re-telling the body. A line from the moment's own seed / Facts
 # is split into sentences (≥ 6 content words); it counts as unused when less than
@@ -2345,6 +2604,7 @@ __all__ = [
     "drop_unanswerable_faq", "unanswerable_faq_topics", "answer_copies_body", "strip_copied_sentences",
     "unused_source_facts",
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
+    "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
     "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",

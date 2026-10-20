@@ -165,6 +165,7 @@ def write_content(
     facts_text: str | None = None,  # AA-529, optional
     scope: str | None = None,  # S233 — which part of the trip the piece covers
     sibling_openers: list[str] | None = None,  # S234 (AA-771) — non-blog channels only
+    search_questions: list[str] | None = None,  # AA-779 — blog only, People Also Ask in scope
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 1 — SKILL_v2.md workflow step 9, fresh write. Returns (content_text, cost_usd,
     seo_meta, summary) — `seo_meta` is `{"seo_title": None, "meta_description": None, "slug":
@@ -194,7 +195,7 @@ def write_content(
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, atom_id=atom_id,
         route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
-        sibling_openers=sibling_openers,
+        sibling_openers=sibling_openers, search_questions=search_questions,
     )
     channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
@@ -239,6 +240,7 @@ def rewrite_with_feedback(
     facts_text: str | None = None,  # AA-529, optional
     scope: str | None = None,  # S233 — which part of the trip the piece covers
     sibling_openers: list[str] | None = None,  # S234 (AA-771) — non-blog channels only
+    search_questions: list[str] | None = None,  # AA-779 — blog only, People Also Ask in scope
 ) -> tuple[str, float, dict, str | None]:
     """Attempt 2 (the only retry — Phase 1's confirmed cap of 2 total attempts) — the SAME
     write call, with `revision_feedback` (the specific gate/violation strings T10 failed on,
@@ -256,7 +258,7 @@ def rewrite_with_feedback(
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
-        sibling_openers=sibling_openers,
+        sibling_openers=sibling_openers, search_questions=search_questions,
     )
     channel = channel_style["channel"]
     request = LLMRequest(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt,
@@ -441,14 +443,17 @@ def fit_seo_fields(
 _FAQ_SYSTEM = """You write the FAQ section that ends a finished travel blog post.
 Rules:
 - Write exactly 4 question/answer pairs.
-- Each question is one a reader of this post would ask about the places in it, and its answer is a
-  fact stated in the SOURCE. Never answer from general knowledge or add a fact the SOURCE lacks.
+- When SEARCH QUESTIONS are given, prefer them: take one only if a SOURCE fact answers it, and never
+  invent a question that sounds like one. Otherwise write the answer's SOURCE fact first, then the
+  question that fact answers. Never answer from general knowledge or add a fact the SOURCE lacks.
+- Every answer names the subject of its question (the place, people or thing asked about) and
+  answers it in its first sentence.
 - Answer first from the UNUSED FACTS (SOURCE facts the POST does not tell yet), when given. A
   question may also cover a fact the POST already tells, answered directly in new words.
 - Never copy or closely paraphrase a sentence of the POST; write each answer in your own words.
 - Never ask about age suitability, fitness or difficulty, price or what is included, booking,
   permits, accommodation or weather unless a SOURCE line states the answer.
-- One or two sentences per answer, in the brand's plain voice. No places outside the SOURCE, no
+- 40-60 words per answer, in the brand's plain voice. No places outside the SOURCE, no
   promises about the trip, no social proof.
 - Never mention the source, the notes, the seed or the itinerary as such.
 Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
@@ -457,6 +462,7 @@ Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
 def write_faq(
     *, source: str, body: str, brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, unused_facts: list[str] | None = None,
+    paa_questions: list[str] | None = None,
 ) -> tuple[list[tuple[str, str]], float]:
     """AA-768 (S234 round 2) — the blog FAQ contract's one regeneration: 4 Q/A pairs answered from
     `source` (the moment's own seed lines + Facts — never the AUDIENCE / BRAND lines or another
@@ -466,7 +472,10 @@ def write_faq(
 
     `unused_facts` (S234 round 2 fix): SOURCE fact sentences the post does not tell yet
     (quality_gates.unused_source_facts) — the answers start from them, so the pairs survive
-    drop_restated_faq and add something the post lacks."""
+    drop_restated_faq and add something the post lacks.
+
+    `paa_questions` (AA-779): People Also Ask questions for the piece's own places
+    (quality_gates.paa_for_scope) — preferred when a SOURCE fact answers one."""
     parts = []
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
@@ -474,6 +483,9 @@ def write_faq(
     if unused_facts:
         parts.append("UNUSED FACTS (from the SOURCE; the POST does not tell these yet):\n"
                      + "\n".join(f"- {f}" for f in unused_facts))
+    if paa_questions:
+        parts.append("SEARCH QUESTIONS (what readers search for; use one only when a SOURCE fact answers it):\n"
+                     + "\n".join(f"- {q}" for q in paa_questions))
     parts.append(f"POST (do not repeat what it says):\n{strip_citation_tags(body)[:6000]}")
     request = LLMRequest(system_prompt=_FAQ_SYSTEM, user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
@@ -483,7 +495,7 @@ def write_faq(
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
         quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
-                        "unused_facts": len(unused_facts or [])},
+                        "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or [])},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),
