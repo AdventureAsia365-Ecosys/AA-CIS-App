@@ -220,8 +220,6 @@ def test_fixed_text_passes_f2():
 
 
 def test_run_quality_gates_treats_cta_and_trip_name_as_source():
-    rubric = qg.get_framework_rubric("promotion")
-    f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
     f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
           "failure_codes": [], "flagged_phrases": [], "notes": ""}
     cta = f"Ask us {EM} we plan it with you."
@@ -230,8 +228,8 @@ def test_run_quality_gates_treats_cta_and_trip_name_as_source():
         return {"text": json.dumps(d)}
 
     text = f"The {TRIP} is a fine trip. {cta}"
-    with patch.object(qg, "invoke_judge", side_effect=[raw(**f8), raw(**f9)]):
-        out = qg.run_quality_gates(content_text=text, atom_text=SEED, cta=cta, goal_key="promotion",
+    with patch.object(qg, "invoke_judge", side_effect=[raw(**f9)]):
+        out = qg.run_quality_gates(content_text=text, atom_text=SEED, cta=cta,
                                    brand_rubric_text="r", channel="linkedin", hygiene_ctx=_ctx(cta=cta))
     f2 = next(g for g in out["gate_ledger"] if g["gate"] == "F2_banned_patterns")
     assert f2["passed"], f2

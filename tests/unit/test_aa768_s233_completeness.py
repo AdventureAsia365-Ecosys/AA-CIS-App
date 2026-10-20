@@ -91,13 +91,11 @@ class TestCompleteGate:
     def test_runs_for_every_channel(self):
         f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
               "failure_codes": [], "flagged_phrases": [], "notes": ""}
-        rubric = qg.get_framework_rubric("promotion")
-        f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
         import json
-        raw = [{"content": json.dumps(f8)}, {"content": json.dumps(f9)}]
+        raw = [{"content": json.dumps(f9)}]
         with patch.object(qg, "invoke_judge", side_effect=raw):
             out = qg.run_quality_gates(content_text="The trail climbs to the monastery and", atom_text="the trail",
-                                       cta="Ask us", goal_key="promotion", brand_rubric_text="r", channel="linkedin")
+                                       cta="Ask us", brand_rubric_text="r", channel="linkedin")
         assert out["first_failure"]["gate"] == "F0_complete"
 
 

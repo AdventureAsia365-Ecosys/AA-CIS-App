@@ -1,5 +1,5 @@
-"""AA-452 — services/acp_content_writing/quality_gates.py's 3 new blog-only gates
-(F5_atom_density/F3_structural_variance/F7_faq_dedup) + the tag strip/leak-prevention mechanism
+"""AA-452 — services/acp_content_writing/quality_gates.py's blog-only gates (F5/F3/F7 were dropped or
+folded into F16 by AA-787; the F7 check lives on as restated_faq_answers) + the tag strip/leak-prevention mechanism
 (strip_citation_tags/deep_strip_citation_tags) + service.write_and_check()'s mandatory
 strip-before-persist step. Same conventions test_aa450_quality_gates.py already uses (pure
 functions tested directly, judge gates mocked via patch.object(qg, "invoke_judge", ...))."""
@@ -26,67 +26,11 @@ def _no_cta_insert():
         yield
 
 
-# ---------------------------------------------------------------- gate_atom_density (F5)
+# ---------------------------------------------------------------- restated_faq_answers (was F7, AA-787)
 
-class TestGateAtomDensity:
-    def test_short_body_with_no_tags_passes_window_floor(self):
-        # under ATOM_DENSITY_WORDS//2 (150 words) — same exemption N7's own short-form channels
-        # get, confirmed by test in this file's N7 counterpart (gates.py test suite).
-        result = qg.gate_atom_density("word " * 50)
-        assert result["passed"] is True
-
-    def test_300_word_window_with_zero_citations_fails(self):
-        body = "word " * 300
-        result = qg.gate_atom_density(body)
-        assert result["passed"] is False
-        assert "zero atom citations" in result["violations"][0]
-
-    def test_300_word_window_with_one_citation_passes(self):
-        words = ["word"] * 299 + ["[R:atom_abc123]"]
-        result = qg.gate_atom_density(" ".join(words))
-        assert result["passed"] is True
-
-    def test_trailing_short_chunk_skipped_not_flagged(self):
-        # 300 clean words (tagged, passes) + a 100-word trailing fragment (< window//2=150) —
-        # the trailing fragment must NOT be independently flagged.
-        first_window = ["word"] * 299 + ["[R:atom_abc123]"]
-        trailing = ["word"] * 100
-        result = qg.gate_atom_density(" ".join(first_window + trailing))
-        assert result["passed"] is True
-
-
-# ---------------------------------------------------------------- gate_structural_variance (F3)
-
-class TestGateStructuralVariance:
-    def test_no_one_sentence_paragraph_fails(self):
-        body = "This is a long paragraph with several sentences. It keeps going. And going more."
-        result = qg.gate_structural_variance(body)
-        assert result["passed"] is False
-        assert "one-sentence paragraph" in result["violations"][0]
-
-    def test_one_sentence_paragraph_present_passes_that_check(self):
-        body = "A short one.\n\nA longer paragraph that has multiple sentences. Here is another."
-        result = qg.gate_structural_variance(body)
-        assert result["passed"] is True
-
-    def test_uniform_h2_section_lengths_fail_with_3_plus_sections(self):
-        section = "word " * 50
-        body = f"## One\n{section}\n\n## Two\n{section}\n\n## Three\n{section}"
-        result = qg.gate_structural_variance(body)
-        assert any("notably longer" in v for v in result["violations"])
-
-    def test_multiple_bulleted_lists_fail(self):
-        body = "One sentence.\n\n- item\n- item2\n\n- item3\n- item4"
-        result = qg.gate_structural_variance(body)
-        assert any("bulleted lists" in v for v in result["violations"])
-
-
-# ---------------------------------------------------------------- gate_faq_dedup (F7)
-
-class TestGateFaqDedup:
+class TestRestatedFaqAnswers:
     def test_no_faq_section_passes_as_noop(self):
-        result = qg.gate_faq_dedup("A body with no FAQ section at all.")
-        assert result["passed"] is True
+        assert qg.restated_faq_answers("A body with no FAQ section at all.") == []
 
     def test_faq_answer_restating_body_fails(self):
         body = (
@@ -97,9 +41,10 @@ class TestGateFaqDedup:
             "A: The waterfall trail winds through dense highland forest reaching remote plateau "
             "villages before dawn."
         )
-        result = qg.gate_faq_dedup(body)
-        assert result["passed"] is False
-        assert "copies a body sentence" in result["violations"][0]
+        assert qg.restated_faq_answers(body) == [1]
+        # the fixer the pipeline runs before the gates removes it; F16 then counts what is left
+        fixed, removed = qg.drop_restated_faq(body)
+        assert removed == 1 and qg.restated_faq_answers(fixed) == []
 
     def test_faq_answer_with_new_detail_passes(self):
         body = (
@@ -108,8 +53,7 @@ class TestGateFaqDedup:
             "**Q: How long does the visit take?**\n"
             "A: Most travelers spend around ninety minutes at the third tier."
         )
-        result = qg.gate_faq_dedup(body)
-        assert result["passed"] is True
+        assert qg.restated_faq_answers(body) == []
 
 
 # ---------------------------------------------------------------- strip_citation_tags
@@ -148,42 +92,39 @@ def _judge_raw(**fields) -> dict:
 
 
 class TestRunQualityGatesChannelDispatch:
-    def test_non_blog_channel_still_runs_exactly_8_gates(self):
-        rubric = qg.get_framework_rubric("promotion")
-        f8_data = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
+    def test_non_blog_channel_gate_order(self):
         f9_data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                    "failure_codes": [], "flagged_phrases": [], "notes": ""}
-        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f8_data), _judge_raw(**f9_data)]):
+        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f9_data)]):
             outcome = qg.run_quality_gates(
                 content_text="A clean piece about the trail.", atom_text="the trail",
-                cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="tiktok",
+                cta="Book now", brand_rubric_text="rubric", channel="tiktok",
             )
         gates = [g["gate"] for g in outcome["gate_ledger"]]
         # AA-514: promises_an_option now runs for every channel (origin's own channels=None).
         # AA-484: F10_cannibalization_cross_tenant runs for every channel too, right after F2 —
         # a `None` cannibalization_match (this test's default) always passes with 0 violations.
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
+        # AA-787: promises_an_option and F8_framework dropped (23 results for a non-blog channel).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
             "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
             "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
+            "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
             "F14_social_shape", "F15_voice", "F15_voice_warn",  # AA-771 (S234) — pass without a channel spec
-            "F8_framework", "F9_cta_fact", "F9_brand_style",
+            "F9_cta_fact", "F9_brand_style",
         ]
 
-    def test_blog_channel_runs_all_12_gates(self):
-        rubric = qg.get_framework_rubric("promotion")
-        f8_data = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
+    def test_blog_channel_gate_order(self):
         f9_data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                    "failure_codes": [], "flagged_phrases": [], "notes": ""}
         body = "## Intro\n" + ("word " * 300) + "[R:atom_abc123]"
-        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f8_data), _judge_raw(**f9_data)]):
+        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f9_data)]):
             outcome = qg.run_quality_gates(
-                content_text=body, atom_text="the trail", cta="Book now", goal_key="promotion",
+                content_text=body, atom_text="the trail", cta="Book now",
                 brand_rubric_text="rubric", channel="blog",
                 seo_title="Trail Guide", meta_description="x" * 130 + ".", slug="trail-guide",
             )
@@ -191,17 +132,17 @@ class TestRunQualityGatesChannelDispatch:
         # AA-514: + promises_an_option (after F2) and F4_seo_surface (after F4, blog-only).
         # AA-484: + F10_cannibalization_cross_tenant, right after F2 (before promises_an_option).
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
+        # AA-787: promises_an_option, F5, F3, F8 dropped; F7 folded into F16 (25 results for a blog).
         assert gates == [
             "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
             "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
             "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
-            "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
+            "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
             "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3 — pass without contexts
             "F14_social_shape", "F15_voice", "F15_voice_warn", "F4_seo_surface",
-            "F5_atom_density", "F3_structural_variance", "F7_faq_dedup",
-            "F8_framework", "F9_cta_fact", "F9_brand_style",
+            "F9_cta_fact", "F9_brand_style",
             "F16_faq",  # S234 round 2 — the blog FAQ contract, last (owned by the FAQ step)
         ]
 
@@ -300,8 +241,8 @@ class TestWriteAndCheckStripsTagsBeforeOutput:
         finalized: dict = {}
         failing_ledger = [
             {"gate": "F6_cta_present", "passed": True, "violations": [], "repairable": True},
-            {"gate": "F5_atom_density", "passed": False,
-             "violations": ["words 0-300: zero atom citations — first 80 chars: '[R:atom_abc123] stray'"],
+            {"gate": "F1_grounding", "passed": False,
+             "violations": ["'1637' not present in the atom: '[R:atom_abc123] stray'"],
              "repairable": True},
         ]
         held_first_failure = failing_ledger[1]

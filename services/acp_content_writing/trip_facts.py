@@ -281,11 +281,6 @@ def _mentions_activity(clause: str, act: OptionalActivity) -> bool:
     return (len(hits) >= min(2, len(act.words)) and bool(specific)) or bool(hits & single)
 
 
-def mentions_activity(clause: str, act: OptionalActivity) -> bool:
-    """Public name of `_mentions_activity` (quality_gates.promises_an_option reads it, AA-773)."""
-    return _mentions_activity(clause, act)
-
-
 def optional_as_fixed(text: str, moments: list[Moment], cta: Optional[str] = None) -> list[str]:
     """Sentences that state an optional activity as part of the plan: a clause mentions it, and
     neither that clause nor the sentence before it in the paragraph (or a list's lead-in line)
@@ -1534,6 +1529,6 @@ __all__ = [
     "add_family_caveats", "caveat_sentence", "date_authority_claims", "date_span_lines", "ended_roles",
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
-    "mentions_activity", "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
+    "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
     "pace_claims", "parse_moments", "rarity_claims", "timing_claims", "with_date_spans", "service_claims",
 ]

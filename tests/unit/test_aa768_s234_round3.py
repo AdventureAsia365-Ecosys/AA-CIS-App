@@ -558,13 +558,12 @@ class TestRouting:
         assert sr.delete_flagged(POST, add) is None
 
     def test_run_quality_gates_reports_the_round3_gates(self):
-        f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in qg.get_framework_rubric("promotion")]}
         f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1", "failure_codes": [],
               "flagged_phrases": [], "notes": ""}
-        raw = [{"text": __import__("json").dumps(d)} for d in (f8, f9)]
+        raw = [{"text": __import__("json").dumps(f9)}]
         text = "The Tsaatan herd reindeer. It is a place to spend the first night. " + TERRA_CTA + "."
         with patch.object(qg, "invoke_judge", side_effect=raw), patch.object(qg, "_log_t10_judge_call"):
-            out = qg.run_quality_gates(content_text=text, atom_text=ROUTE_SEED, cta=TERRA_CTA, goal_key="promotion",
+            out = qg.run_quality_gates(content_text=text, atom_text=ROUTE_SEED, cta=TERRA_CTA,
                                        brand_rubric_text="r", channel="facebook", hygiene_ctx=_hctx(),
                                        trip_ctx=_tctx())
         by = {g["gate"]: g for g in out["gate_ledger"]}

@@ -14,8 +14,8 @@ The included line is written only on a day (route) or in an evidence (single mom
 an offered item: the contrast is what the writer gets wrong.
 
 This module is the ONE place that decides it (lesson S218: a value computed in two code paths must
-use one function). `atom_seed` writes the Status line, and `quality_gates._is_offered`
-(promises_an_option) and `trip_facts.optional_activities` (F17) read it back. It is light on purpose:
+use one function). `atom_seed` writes the Status line, and `trip_facts.optional_activities` (F17)
+reads it back (`quality_gates.promises_an_option` did too until AA-787). It is light on purpose:
 `atom_seed` must not import `quality_gates` (judge_client / llm_client).
 
 The Status text itself contains 'optional' and 'not included': every reader of a seed either reads it
@@ -31,7 +31,7 @@ from typing import Optional
 from services.acp_content_writing.hygiene import content_words
 
 # AA-514 — ported verbatim from the origin's `reference/offered-phrases.toml` (moved here from
-# quality_gates, which re-exports it as `_OFFERED_PHRASES`). Said of something the traveller has
+# quality_gates). Said of something the traveller has
 # not bought (at_a_price) or something included but not compulsory (offered).
 OFFERED_PHRASES = frozenset({
     "additional cost", "at own expense", "at your own expense", "extra charge",
@@ -83,12 +83,6 @@ _LIST_INTRO_RE = re.compile(r"\b(?:include|includes|including|such as|activities
 _STRONG_SPLIT_RE = re.compile(r"\s*[;()]\s*|\s+[—–]\s+")
 _CLAUSE_SPLIT_RE = re.compile(r"(\s*[,:]\s*)")
 _INCLUDED_RE = re.compile(r"\bincluded\b", re.I)
-
-
-def has_offered_phrase(text: Optional[str]) -> bool:
-    """The origin's rule: one of `OFFERED_PHRASES` anywhere in `text` (lower case, substring)."""
-    plain = (text or "").lower()
-    return any(phrase in plain for phrase in OFFERED_PHRASES)
 
 
 def offered_clause(text: Optional[str]) -> bool:
@@ -306,18 +300,3 @@ def status_of_line(line: Optional[str]) -> Optional[str]:
 
 def strip_status_lines(text: Optional[str]) -> str:
     return "\n".join(ln for ln in (text or "").split("\n") if not is_status_line(ln))
-
-
-def has_status_lines(text: Optional[str]) -> bool:
-    return any(status_of_line(ln) for ln in (text or "").splitlines())
-
-
-def is_offered_seed(text: Optional[str]) -> bool:
-    """promises_an_option's test for one seed block. A block that carries Status lines is offered
-    only if one of them says OFFERED: the included line's 'Never call it optional' and the offered
-    line's own 'NOT INCLUDED' must not count as offered phrases (an included-only block would then
-    warn on every sentence). A block without Status lines (pre-AA-773 seed, or a sentence the seed
-    builder could not place) keeps the origin's phrase rule."""
-    if has_status_lines(text):
-        return any(status_of_line(ln) == OFFERED for ln in (text or "").splitlines())
-    return has_offered_phrase(text)

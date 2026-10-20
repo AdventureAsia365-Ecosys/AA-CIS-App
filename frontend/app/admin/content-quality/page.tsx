@@ -32,7 +32,7 @@ import { LabelBadge } from "./PieceLabel";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import TourVersionDrawer from "./TourVersionDrawer";
 import {
-  DUPLICATE_REASON_LABELS, GATE_LABELS, LABEL_NAMES, fmtTime, gateLabel, usd,
+  DUPLICATE_REASON_LABELS, GATE_LABELS, LABEL_NAMES, RETIRED_GATES, fmtTime, gateLabel, usd,
   type DuplicateCluster, type GateStat, type Paged, type PieceLabelValue, type PieceRow, type PiecesPage, type PlaceCard, type TenantStat,
   type VersionRow,
 } from "./shared";
@@ -184,7 +184,12 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
           </select>
           <select value={view.gate} onChange={(e) => update({ gate: e.target.value, page: 0 })} aria-label="Gate" style={{ ...inputStyle, maxWidth: 220 }}>
             <option value="">Any gate</option>
-            {Object.keys(GATE_LABELS).map((g) => <option key={g} value={g}>{GATE_LABELS[g]} ({g})</option>)}
+            {Object.keys(GATE_LABELS).filter((g) => !RETIRED_GATES.has(g))
+              .map((g) => <option key={g} value={g}>{GATE_LABELS[g]} ({g})</option>)}
+            <optgroup label="Retired (older pieces only)">
+              {Object.keys(GATE_LABELS).filter((g) => RETIRED_GATES.has(g))
+                .map((g) => <option key={g} value={g}>{GATE_LABELS[g]} ({g})</option>)}
+            </optgroup>
           </select>
           {labelsEnabled && (
             <select value={view.label} onChange={(e) => update({ label: e.target.value, page: 0 })} aria-label="Label" style={inputStyle}>
