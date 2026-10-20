@@ -145,7 +145,10 @@ def _strip_fences(raw: str) -> str:
 
 _MD_BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1", re.DOTALL)
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+# AA-912: the link text may not contain "[" and the URL only as an empty "[]" (a query array, "country[]=bt"),
+# so a failed attempt stops at the next link's "[" (was O(n^2) on "[[\\[\\…" / "[!](http://[!](http://…").
+# A URL with "[0]" inside is left as raw markdown (accepted; pinned in tests/unit/test_aa912_codeql.py).
+_MD_LINK_RE = re.compile(r"\[([^\[\]]+)\]\((https?://(?:[^\[)\s]|\[\])+)\)")
 
 
 def strip_markdown(text: str) -> str:
@@ -523,7 +526,8 @@ def write_faq(
             continue
         q, a = row.get("q"), row.get("a")
         if isinstance(q, str) and isinstance(a, str) and q.strip() and a.strip():
-            q = re.sub(r"^\**\s*Q:\s*|\*+$", "", strip_citation_tags(q)).strip()
+            # AA-912: (?<!\*) — the trailing star run is tried from its first '*' only (linear)
+            q = re.sub(r"^\**\s*Q:\s*|(?<!\*)\*+$", "", strip_citation_tags(q)).strip()
             a = re.sub(r"^A:\s*", "", strip_citation_tags(a)).strip()
             out.append((" ".join(q.split()), " ".join(a.split())))
     return out, resp.cost_usd

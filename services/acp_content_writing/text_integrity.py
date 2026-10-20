@@ -25,6 +25,7 @@ from services.acp_content_writing.hygiene import (
     CTA_WINDOW, _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
     brand_words, cta_norm, dedupe, has_cta_literal, sentence_spans, tidy_after_cut,
 )
+from services.acp_shared.citation_tags import strip_citation_tags
 
 _HEADING_LINE_RE = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]")
 
@@ -202,7 +203,14 @@ def cta_findings(text: str, cta: Optional[str]) -> list[str]:
 # ---------------------------------------------------------------- broken fragments
 
 _OPEN_CLOSE = (("(", ")"), ("[", "]"), ("“", "”"))
-_TAG_RE = re.compile(r"\[(?:R|F):[^\]]+\]")
+
+
+def _drop_tags(text: str) -> str:
+    """The paragraph without its citation tags — the shared AA-912 definition, linear time (the old
+    body "anything but ']'" was O(n^2) on '[R:[F:[F:…' with no ']'). A dangling '[R:id' opener is dropped too:
+    quality_gates.strip_citation_tags removes it before the tenant sees the piece, so it is not an
+    unbalanced bracket of the prose."""
+    return strip_citation_tags(text)
 
 
 # not brackets or quotes of the prose (S234 round 4 review): an emoticon (':)', ';-('), an inline
@@ -214,7 +222,7 @@ _INCH_RE = re.compile(r"(?<=\d)[\"″]")
 
 
 def _unbalanced(paragraph: str) -> bool:
-    p = _EMOTICON_RE.sub(" ", _TAG_RE.sub("", paragraph))
+    p = _EMOTICON_RE.sub(" ", _drop_tags(paragraph))
     enum = len(_ENUMERATOR_RE.findall(p))
     if enum >= 2:
         p = _ENUMERATOR_RE.sub(" ", p)

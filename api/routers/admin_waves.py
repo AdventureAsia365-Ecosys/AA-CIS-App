@@ -17,6 +17,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from api.core.error_ref import log_exception_ref, public_error
 from api.core.staff_authz import staff_policy
 from pydantic import BaseModel, Field
 
@@ -98,9 +99,10 @@ async def check_waves(request: Request, x_admin_secret: str = Header(None)):
         try:
             async with pool.acquire() as conn:
                 out.append({"wave_id": wave_id, **(await wave_report.check(conn, wave_id) or {})})
-        except Exception as exc:      # one bad wave must not hide the others
-            logger.warning("rerun_wave_check_failed", wave_id=wave_id, error=str(exc)[:300])
-            out.append({"wave_id": wave_id, "error": str(exc)[:300]})
+        except Exception:      # one bad wave must not hide the others
+            # AA-912: DB error text (SQL, schema names) stays in the server log under the ref
+            ref = log_exception_ref("rerun_wave_check_failed", wave_id=wave_id)
+            out.append({"wave_id": wave_id, "error": public_error("Wave check", ref)})
     return {"checked": len(out), "waves": out}
 
 

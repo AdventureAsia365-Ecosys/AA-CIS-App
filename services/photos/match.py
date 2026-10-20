@@ -11,7 +11,10 @@ from difflib import SequenceMatcher
 from typing import Iterable, Optional
 
 _EXT = re.compile(r"\.[a-z0-9]{2,5}$", re.IGNORECASE)
-_TRAILING = re.compile(r"(?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$", re.IGNORECASE)
+# A trailing run of copy markers (" (2)", "copy", "_3", "-12"), matched REVERSED at the start of the reversed
+# name (AA-912: the forward form (?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$ backtracked exponentially on "000…0x";
+# reversed + re.match has one start and one parse). Same result (fuzzed, a final '\n' included).
+_TRAILING_REV = re.compile(r"(?:(?:\)\d+\(|ypoc|\d+(?!\d))[\s_\-]*)+", re.IGNORECASE)
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 TOUR_RATIO = 0.85
 TOKEN_SHARE = 0.9
@@ -28,10 +31,17 @@ def norm(text: str) -> str:
     return _NON_WORD.sub(" ", (text or "").lower()).strip()
 
 
+def _strip_trailing_counter(base: str) -> str:
+    """Drop a trailing run of copy markers: " (2)", "copy", "_3", "-12" (any mix, any order)."""
+    end = len(base) - 1 if base.endswith("\n") else len(base)  # the old '$' also matched before a final '\n'
+    m = _TRAILING_REV.match(base[:end][::-1])
+    return base[: end - m.end()] + base[end:] if m else base
+
+
 def place_label(file_name: str) -> str:
     """"Olkhon Island1.jpeg" -> "Olkhon Island"; "Bukchon_Hanok-Village (2).JPG" -> "Bukchon Hanok Village"."""
     base = _EXT.sub("", (file_name or "").strip())
-    base = _TRAILING.sub("", base)
+    base = _strip_trailing_counter(base)
     return " ".join(re.sub(r"[_\-]+", " ", base).split())
 
 

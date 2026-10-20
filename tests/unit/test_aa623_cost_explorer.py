@@ -388,7 +388,9 @@ async def test_check_cost_explorer_app_tag_failure_is_reported_not_raised():
             days=7, start=date_cls(2026, 9, 1), end=date_cls(2026, 9, 22),
         )
     assert result["app_tag_row_count"] is None
-    assert "AccessDenied" in result["errors"]["acc2_app_tag"]
+    # AA-912: the exception text stays in the server log; the client sees a generic message + ref
+    assert "AccessDenied" not in result["errors"]["acc2_app_tag"]
+    assert "App-tag cost read failed (ref " in result["errors"]["acc2_app_tag"]
 
 
 @pytest.mark.asyncio

@@ -29,12 +29,14 @@ from services.acp_content_writing.hygiene import (
     tidy_after_cut,
 )
 from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
+from services.acp_shared.citation_tags import TAG as _TAG
+from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
 
-_TAG = r"\[(?:R|F):[^\]]+\]"
+# AA-912: one shared tag definition (services/acp_shared/citation_tags.py) — linear, and a dangling
+# '[R:id' opener is dropped like a whole tag
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
-_TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_TAG})+\s*$")
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
@@ -61,7 +63,7 @@ _INTEGRITY_PROBLEM = ("is broken or garbled as text (bad grammar, a doubled call
 
 
 def _clean_quote(q: str) -> str:
-    q = re.sub(_TAG, " ", q).strip().strip('"“”').strip()
+    q = strip_citation_tags(q, " ").strip().strip('"“”').strip()
     return " ".join(q.split())
 
 
@@ -163,7 +165,7 @@ def truth_items(content_text: str, g: dict) -> tuple[list[dict], list[str]]:
             continue
         if any(not (span[1] <= o["start"] or span[0] >= o["end"]) for o in out):
             continue
-        sentence = " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
+        sentence = " ".join(strip_citation_tags(content_text[span[0]:span[1]], " ").split())
         out.append({"start": span[0], "end": span[1], "sentence": sentence, "problem": problem})
     return out, unlocated
 
@@ -240,7 +242,7 @@ TRUTH_GATES = ("F1_grounding", "F9_cta_fact")
 
 
 def _span_text(content_text: str, span: tuple[int, int]) -> str:
-    return " ".join(re.sub(_TAG, " ", content_text[span[0]:span[1]]).split())
+    return " ".join(strip_citation_tags(content_text[span[0]:span[1]], " ").split())
 
 
 def _merge_item(content_text: str, out: list[dict], hit: dict, span: tuple[int, int], problem: str, gate: str) -> None:
@@ -329,7 +331,7 @@ def _hook_span(content_text: str) -> Optional[tuple[int, int]]:
 
 def _added_part(original: str, replacement: str) -> str:
     """The sentences of `replacement` that are not the original sentence kept (copied either way)."""
-    orig = " ".join(re.sub(_TAG, " ", original or "").split())
+    orig = " ".join(strip_citation_tags(original, " ").split())
     spans = [s["clean"] for s in sentence_spans(replacement) if s["kind"] not in ("heading", "hashtags")]
     return " ".join(s for s in spans if not (s == orig or copies(s, orig) or copies(orig, s)))
 
@@ -345,7 +347,7 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
     text = content_text
     for item, new in sorted(zip(items, replacements), key=lambda p: p[0]["start"], reverse=True):
         original = text[item["start"]:item["end"]]
-        tags = _TRAILING_TAGS_RE.search(original)
+        tags = trailing_tags(original)  # AA-912: one backward pass (the regex search was O(n^2))
         new = (new or "").strip()
         if new and guard_repeats and _adds_sentence(item):
             # 'keep this sentence and add ONE' (the family caveat): only the ADDED part is tested, and
@@ -362,7 +364,7 @@ def splice(content_text: str, items: list[dict], replacements: list[str], *,
             item["guard"] = "repeat"
             new = ""
         if new:
-            new = new + (tags.group(0).rstrip() if tags else "")
+            new = new + tags.rstrip()
             text = text[:item["start"]] + new + text[item["end"]:]
         else:
             after = item["end"] + 1 if text[item["end"]:item["end"] + 1] == " " else item["end"]
@@ -422,10 +424,10 @@ def new_specifics(original: str, replacement: str, *, trip_ctx=None, source: Opt
     (trip_facts.new_specific_claims). [] for a cut (empty replacement). r6: 4 of 26 retries added a
     blocking fail; R1 and R2 were exactly this (a repair of an F9 / F15 sentence wrote 'the afternoon')."""
     from services.acp_shared.grounding import find_novel_numeric_claims
-    rep = re.sub(_TAG, " ", replacement or "").strip()
+    rep = strip_citation_tags(replacement, " ").strip()
     if not rep:
         return []
-    orig = re.sub(_TAG, " ", original or "")
+    orig = strip_citation_tags(original, " ")
     out = [f"adds {n}, which neither the sentence nor the source gives"
            for n in find_novel_numeric_claims(rep, [source or "", orig], year_forms=True)]
     if trip_ctx is not None:
@@ -631,9 +633,12 @@ def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
 
 
 # "**Q: " / "Q: " / "**" an admin may type around a rewritten FAQ question (the line keeps its own)
-_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|\*+$")
+# AA-912: the trailing run is tried only from its first '*' (was O(n^2) on a long star run; same matches)
+_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|(?<!\*)\*+$")
 
-_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
+# AA-912: same rules as a citation tag (services/acp_shared/citation_tags.py): the id body never holds a
+# bracket or a newline (linear), and a dangling '[Fact id=f1' opener is dropped with its id, never the prose after it
+_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=(?:[^\[\]\n]*\]|[\w-]*)")
 
 
 def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
@@ -646,8 +651,7 @@ def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
     from services.acp_content_writing.generate import strip_markdown
     from services.acp_content_writing.hygiene import fix_dashes
     from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS
-    from services.acp_content_writing.quality_gates import strip_citation_tags
-    text = _SOURCE_LABEL_RE.sub("", strip_citation_tags(replacement or ""))
+    text = _SOURCE_LABEL_RE.sub("", strip_citation_tags(replacement))
     if channel in PLAIN_TEXT_CHANNELS:
         text = strip_markdown(text)
     return fix_dashes(" ".join(text.split()))[0]

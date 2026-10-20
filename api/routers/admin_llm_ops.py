@@ -23,6 +23,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from api.core.error_ref import log_exception_ref, new_error_ref, public_error
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from shared.aws_client.cost_explorer import (
@@ -1013,23 +1014,30 @@ async def check_cost_explorer(
     start_d, end_d = _ce_days(*_resolve_window(days, start, end))
     try:
         result = fetch_all_accounts_cost(start_d.isoformat(), end_d.isoformat())
-    except CostExplorerUnavailable as e:
-        logger.error("cost_explorer_check_fetch_failed", error=str(e))
-        raise HTTPException(status_code=502, detail=f"Cost Explorer read failed: {e}")
+    except CostExplorerUnavailable:
+        # AA-912: the exception text names every account's error (role ARN, account id) — server log only
+        ref = log_exception_ref("cost_explorer_check_fetch_failed")
+        raise HTTPException(status_code=502, detail=public_error("Cost Explorer read", ref))
 
     pool = request.app.state.pool
     written = await record_snapshot(pool, result["rows"])
 
     # AA-884 — the same window from acc2 grouped by the App cost-allocation tag (Platform › Cost per app): one more
     # CE request (~$0.01). Its failure is reported in `errors` and never fails the SERVICE check above.
-    errors = dict(result["errors"])
+    # AA-912: the per-account error text stays in the server log; the client gets a generic value per
+    # key (same keys: acc1/acc2/acc3/acc2_app_tag) with a ref to find it.
+    errors: dict[str, str] = {}
+    if result["errors"]:
+        ref = new_error_ref()
+        logger.error("cost_explorer_check_account_errors", error_ref=ref, errors=result["errors"])
+        errors = {acct: public_error("Cost Explorer read", ref) for acct in result["errors"]}
     app_rows = None
     try:
         from api.services.platform_cost import refresh_app_snapshot
         app_rows = (await refresh_app_snapshot(pool, start_d, end_d))["row_count"]
-    except Exception as e:
-        logger.warning("cost_explorer_check_app_tag_failed", error=str(e)[:300])
-        errors["acc2_app_tag"] = str(e)[:300]
+    except Exception:
+        ref = log_exception_ref("cost_explorer_check_app_tag_failed")
+        errors["acc2_app_tag"] = public_error("App-tag cost read", ref)
 
     logger.info("admin_cost_explorer_checked", row_count=written, app_tag_row_count=app_rows, errors=errors)
     return {
@@ -1112,10 +1120,11 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     except decide_mod.JevBillingError:
         ok, billing_error = False, True
         decide_mod._trip_jev_breaker()
-    except Exception as exc:
+    except Exception:
         # Any other error (schema/timeout) still means the call was BILLABLE (it passed billing),
-        # so credit is present — the canary only fails on billing_error.
-        detail = str(exc)[:200]
+        # so credit is present — the canary only fails on billing_error. AA-912: the upstream text
+        # stays in the server log.
+        detail = public_error("Jev canary probe", log_exception_ref("admin_jev_canary_probe_error"))
     alerted = False
     if billing_error:
         async with pool.acquire() as conn:
