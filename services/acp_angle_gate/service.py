@@ -38,7 +38,8 @@ from services.acp_angle_gate.route_digest import render_digest, route_moments
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_shared.atom_seed import atom_seed_text
-from services.acp_shared.dfs_relevance import fetch_search_demand_signal
+from services.acp_shared.dfs_relevance import SearchDemandSignal, fetch_search_demand_signal, score_dfs_relevance
+from services.acp_shared.real_questions import collect_real_questions
 from services.acp_shared.piece_history import fetch_piece_history
 
 logger = structlog.get_logger()
@@ -166,6 +167,11 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     search_demand = None
     if req["trip_id"]:
         search_demand = await fetch_search_demand_signal(req["trip_id"], pool)
+    # S245 (AA-779 item 2A) — a blog's angles see the real questions of its own Segments and places
+    # first (atom_matches, search_demand; $0 DB reads), the tour's PAA after them.
+    tour_paa = None
+    if req["channel"] == "blog":
+        search_demand, tour_paa = await _blog_search_demand(req, search_demand, pool)
 
     # AA-498 (Decision 4) — real prior pieces for this exact atom (this tenant), so a rewrite
     # doesn't converge on the same angle again. Empty for the common case today (first time this
@@ -218,7 +224,12 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     # can never silently change what the review screen shows for an already-generated angle. None
     # (no trip_id, or no seo_context row) stays NULL, not an empty object — same "absent means no
     # signal" convention fetch_search_demand_signal() itself uses.
-    dfs_paa_snapshot = json.dumps(asdict(search_demand)) if search_demand else None
+    # S245 (AA-779) — a blog snapshot also keeps the tour-level list on its own, so T9 can tell the
+    # tour's questions from the Segment/place ones it reads again (texts only: the tenant sees this).
+    snapshot = asdict(search_demand) if search_demand else None
+    if snapshot is not None and tour_paa is not None:
+        snapshot["tour_people_also_ask"] = tour_paa
+    dfs_paa_snapshot = json.dumps(snapshot) if snapshot is not None else None
 
     # AA-771 (S234, C7) — the brief may not set a voice against the brand's, prescribe the opening,
     # or (non-editorial brands) address travel professionals. Stripped in code, never retried, so
@@ -259,6 +270,31 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
         recommended_index=recommended_index, recommendation_reason=reason, cost_usd=cost_usd,
     )
     return await fetch_request(tenant_id, request_id, pool)
+
+
+# S245 (AA-779) — how many questions a blog's angle prompt / ranking reads (real ones first).
+T8_QUESTIONS_MAX = 12
+
+
+async def _blog_search_demand(req, search_demand: SearchDemandSignal | None, pool):
+    """(signal for the angle prompt and ranking, tour-level PAA list or None). The signal's
+    `people_also_ask` is the real-question chain (services/acp_shared/real_questions.py) for the
+    request atom and its Route Segments; None tour list = chain not applied (nothing found)."""
+    tour_paa = list(search_demand.people_also_ask) if search_demand else []
+    segment_ids = req["route_segment_ids"]
+    if isinstance(segment_ids, str):
+        segment_ids = json.loads(segment_ids)
+    chain = await collect_real_questions(pool, atom_ids=[req["atom_id"]], segment_ids=segment_ids or [],
+                                         tour_paa=tour_paa)
+    if not chain:
+        return search_demand, None
+    merged = [r.question for r in chain][:T8_QUESTIONS_MAX]
+    signal = SearchDemandSignal(
+        relevance=search_demand.relevance if search_demand else score_dfs_relevance([]),
+        people_also_ask=merged,
+        related_keywords=search_demand.related_keywords if search_demand else [],
+    )
+    return signal, tour_paa
 
 
 async def _route_moments(tenant_id: UUID, req, pool) -> list[dict] | None:

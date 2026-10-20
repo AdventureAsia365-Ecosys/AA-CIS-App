@@ -1322,6 +1322,20 @@ as SEARCH QUESTIONS (used only when a seed fact answers one). After the other FA
 demonstrative opening, wrong subject) or only says what is not the case, while more than 3 pairs remain;
 pairs it had to keep make the writer text's one FAQ regeneration rewrite them. Logged in `F7_faq_autofix`;
 F16_faq stays the only FAQ hold.
+S245 (AA-779 2A + 3) — **real-question source chain for blogs** (`services/acp_shared/real_questions.py`,
+$0 DB reads, never a DataForSEO call): a blog's questions come first from its own Segments
+(`atom_matches` kind `question` on the Segments' atoms — per Segment only the `questions_count` newest rows,
+the table is upsert-only), then from `search_demand.people_also_ask` of keywords naming one of its places
+(Segment and place questions English only — those can come from DE/FR/NL markets), then the tour-level PAA
+of the request snapshot (a US/English SERP: not language-checked). T8 angles of a blog request read
+the merged list (snapshot keeps the tour list as `tour_people_also_ask`); T9 `start_write` re-reads it live
+with the piece's kept moments as scope. Off-meaning PAA (the place name used as a word — 'Is moron a bad
+word?', or as a common noun — 'What is a moron?' — matched against the piece's own place words) is dropped in
+the chain (every tier, so it never reaches the T8 prompt, ranking or the tenant-visible snapshot) and in
+`paa_for_scope`. Each piece's `writer_input` (admin-only)
+records `search_questions` (with source), `question_sources` (per-source counts) and `faq_questions` (each
+final FAQ question's real source, or `writer`); the admin Content Quality drawer shows them. AA-779 (B) SERP
+top-up and (C) Autocomplete are admin jobs that will add sources to `DB_SOURCES`.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
@@ -1510,6 +1524,11 @@ _Avoid_: block (alone), delete, filter.
   rewritten sentence by sentence against the source (one `s1_flag_fix` call); what is still
   unsupported after revalidate → `manual_check` (A2). Master content is the one place this check
   exists — T3 grounds tenant rewrites against master content, not the raw source.
+  Ground truth for the Jev Question (AA-845): in the Review Queue drawer ("Source check") a reviewer
+  marks single sentences unsupported (`decision_log.outcome` truth=false for that sentence only); a
+  Review approve stamps truth=true on the rest, a Review reject stamps nothing (it judges the whole
+  version). `GET /admin/decisions/claim-sample` rebuilds a stratified sentence sample (+ the source
+  Jev read) for panel labelling ($0).
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
@@ -1572,7 +1591,10 @@ _Avoid_: block (alone), delete, filter.
     `tenant_brand_rules.custom_validators.signature_words`. T2 prompt rule 1, validate, the strip, flag_fix,
     T3 and the admin T2 drawer all read the same layered list (`forbidden_words.state_forbidden`); A1 keeps
     `VALIDATE_FORBIDDEN`. Evidence rule: a service-level claim ("a luxury lodge", "a tailored itinerary")
-    the source does not support is a T3 grounding finding (sentence repair), for every tenant.
+    the source does not support is a T3 grounding finding (sentence repair), for every tenant. Rule 1
+    nudges the writer to use a signature word where the source states that level (it names the source
+    wording per word, the same roots the evidence rule accepts) and to leave it out everywhere else:
+    source fidelity first.
   - **Brand loading.** The brand is loaded once, through `brand_pack.fetch_brand_pack_conn` (AA-771).
   - **Itinerary nudge.** The length nudge keeps the draft's tenant voice. T2 flag-fix repairs speak as
     the tenant's editorial fixer.

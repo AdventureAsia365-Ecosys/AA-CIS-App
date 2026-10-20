@@ -58,6 +58,7 @@ from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
+from services.acp_shared.real_questions import is_off_meaning
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -1713,10 +1714,11 @@ def drop_subjectless_faq(content_text: str, source_text: str = "",
     return replace_faq_section(body, kept), log, short
 
 
-# AA-779 — People Also Ask questions (the request's dfs_paa_snapshot, fetched per TOUR, so they are
-# not scoped to the piece) the writer may answer in the FAQ. Kept only when they name no place outside
-# the piece's scope, ask nothing the source cannot answer, and name one of the moment's own places or
-# share ≥ 2 non-generic content words with its seed.
+# AA-779 — real search questions (services/acp_shared/real_questions.py: the piece's Segment / place
+# questions first, then the tour's People Also Ask; not scoped to the piece) the writer may answer in the
+# FAQ. Kept only when they name no place outside the piece's scope, ask nothing the source cannot
+# answer, are about the place rather than its name as a word (S245), and name one of the moment's own
+# places or share ≥ 2 non-generic content words with its seed.
 PAA_MAX_QUESTIONS = 6
 # Words a seed and a search question share without being about the same thing (content_words stems:
 # a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
@@ -1763,6 +1765,10 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
         if key in seen or any(names_place(q, g) for g in out_of_scope):
             continue
         if unanswerable_faq_topics(q, own_seed, facts_text):
+            continue
+        # S245 (AA-779 item 3) — a question about the name as a word, not the place ('Is moron a bad
+        # word?' for the town Mörön) names an own place only by spelling.
+        if is_off_meaning(q, seed_names):
             continue
         q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
         shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC

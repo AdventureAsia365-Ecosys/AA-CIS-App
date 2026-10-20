@@ -7,6 +7,8 @@
 // AA-791: a "Label" section (PieceLabel.tsx) and, per failed attempt, the gates that failed in it
 // (repair_log[].gate_ledger, kept for pieces written after AA-791).
 // AA-863: a "Slate seed" line — the frozen seed atom's place · country and a mismatch badge.
+// AA-779 (S245): "Search questions" — the real questions the blog writer got and where each final FAQ
+// question came from (Segment match / place PAA / tour PAA, or `writer` = made up). Admin only.
 
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
@@ -15,13 +17,58 @@ import { Badge, Drawer, StatusBadge, apiGet } from "../../_kit";
 import { SeedLine, seedSkipText } from "../_components/SeedLine";
 import { PieceLabelSection } from "./PieceLabel";
 import { AdminEdits, FlaggedSentences, TenantCopyNotice } from "./SentenceActions";
-import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail } from "./shared";
+import { codePointIndex, fmtTime, gateLabel, usd, type Gate, type Highlight, type PieceDetail, type QuestionWithSource, type WriterInput } from "./shared";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginTop: 18 }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: A.muted, marginBottom: 6 }}>{title}</div>
       {children}
+    </div>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  segment_match: "Segment match", place_paa: "Place PAA", tour_paa: "Tour PAA",
+  serp_topup: "SERP top-up", autocomplete: "Autocomplete", writer: "Writer (not real)",
+};
+
+function counts(c?: Record<string, number>) {
+  const parts = Object.entries(c || {}).map(([k, n]) => `${SOURCE_LABEL[k] ?? k} ${n}`);
+  return parts.length ? parts.join(" · ") : "none";
+}
+
+function QuestionList({ title, rows }: { title: string; rows: QuestionWithSource[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ fontSize: 11, color: A.muted, marginBottom: 2 }}>{title}</div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 12, color: A.body }}>
+          <span style={{ flexShrink: 0, display: "inline-flex" }}>
+            <Badge tone={r.source === "writer" ? "warning" : "neutral"} dot={false}>{SOURCE_LABEL[r.source] ?? r.source}</Badge>
+          </span>
+          <span>{r.question}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SearchQuestions({ wi }: { wi: WriterInput }) {
+  if (!wi.question_sources) return null;
+  const faq = wi.faq_questions || [];
+  const real = faq.filter((f) => f.source !== "writer").length;
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>Search questions</div>
+      <div style={{ fontSize: 12, color: A.body, marginBottom: 6 }}>
+        <b>Candidates:</b> {counts(wi.question_sources.candidates)}<br />
+        <b>In scope, given to the writer:</b> {counts(wi.question_sources.kept)}<br />
+        <b>FAQ questions from a real source:</b> {real} of {faq.length}
+      </div>
+      <QuestionList title="Given to the writer" rows={wi.search_questions || []} />
+      <QuestionList title="Final FAQ" rows={faq} />
     </div>
   );
 }
@@ -188,6 +235,7 @@ export default function PieceDrawer({ pieceId, onClose }: { pieceId: string; onC
                 </div>
                 <div><div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>Seed ({(wi.seed || "").length} chars)</div><Pre text={wi.seed || ""} /></div>
                 {wi.facts && <div><div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>Facts</div><Pre text={wi.facts} /></div>}
+                <SearchQuestions wi={wi} />
                 <div><div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>Brand pack</div><Pre text={JSON.stringify(wi.brand_pack, null, 2)} /></div>
               </div>
             )}

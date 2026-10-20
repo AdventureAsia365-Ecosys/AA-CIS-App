@@ -591,6 +591,7 @@ function ReviewQueueInner() {
             onSaved={() => invalidate()}
             onRevalidated={() => invalidate()}
             readOnly={!can(role, "content.write")}
+            canLabel={canAct}
           />
         )}
       </Drawer>

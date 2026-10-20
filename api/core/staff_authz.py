@@ -209,6 +209,8 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/review-queue/{review_id}/reject"): REVIEW_ACT,
     ("POST", "/admin/review-queue/{review_id}/dismiss"): REVIEW_ACT,
     ("POST", "/admin/review-queue/{review_id}/supersede"): REVIEW_ACT,
+    # AA-845 — a reviewer marks one sentence "unsupported" (a1_claim_supported truth=False)
+    ("POST", "/admin/review-queue/{review_id}/claims/label"): REVIEW_ACT,
     ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/generated/{content_id}"): CONTENT_WRITE,
