@@ -171,14 +171,13 @@ def test_gate_is_blocking_and_sentence_repairable():
 
 
 def test_f19_is_first_failure_ahead_of_style_gates_in_the_stack():
-    f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in qg.get_framework_rubric("promotion")]}
     f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
           "failure_codes": [], "flagged_phrases": [], "notes": ""}
-    with patch.object(qg, "invoke_judge", side_effect=[{"text": json.dumps(f8)}, {"text": json.dumps(f9)}]), \
+    with patch.object(qg, "invoke_judge", side_effect=[{"text": json.dumps(f9)}]), \
          patch.object(qg, "_log_t10_judge_call"):
         out = qg.run_quality_gates(
             content_text="The trail runs past the falls. I booked this trip last spring and loved it. Book now.",
-            atom_text="the trail runs past the falls", cta="Book now", goal_key="promotion",
+            atom_text="the trail runs past the falls", cta="Book now",
             brand_rubric_text="rubric", channel="tiktok")
     assert out["first_failure"]["gate"] == "F19_authenticity"
     assert qg.hold_failure(out["gate_ledger"])["gate"] == "F19_authenticity"
@@ -323,8 +322,7 @@ def _context():
 def _real_gates_with_passing_judges(**kw):
     """The real T10 stack, with the two LLM judges (F8 framework, F9 brand voice) passing."""
     passing = {"passed": True, "violations": [], "repairable": False, "blocking": False}
-    with patch.object(qg, "gate_framework", return_value={"gate": "F8_framework", **passing}), \
-         patch.object(qg, "gate_brand_voice", return_value=[{"gate": "F9_cta_fact", **passing, "blocking": True},
+    with patch.object(qg, "gate_brand_voice", return_value=[{"gate": "F9_cta_fact", **passing, "blocking": True},
                                                             {"gate": "F9_brand_style", **passing}]):
         return qg.run_quality_gates(**kw)
 

@@ -180,42 +180,49 @@ def test_trip_facts_status_included_overrides_loose_marks():
     assert tf.optional_activities(tf.parse_moments(legacy))  # pre-AA-773 seed: unchanged rule
 
 
-# ---------------------------------------------------------------- promises_an_option (Status-aware)
+# ---------------------------------------------------------------- F17 owns "optional stated as planned"
+# AA-787 dropped promises_an_option (CIS ADR 0009). These are its AA-773 cases, now asserted on F17_trip_fact:
+# the same sentences must still be caught (blocking, sentence-repairable), and the hedged / included ones not.
 
-def test_is_offered_ignores_status_text():
+def _f17(text: str, seed: str) -> dict:
+    return qg.gate_trip_facts(text, tf.TripFactContext(seed=seed))[0]
+
+
+def test_f17_ignores_an_included_only_block():
     included_only = ("Khövsgöl Lake — walk\nSource itinerary: Walk by the lake.\n" + off.INCLUDED_LINE)
-    assert not qg._is_offered(included_only)
-    assert qg.promised_sentences("You will walk by the lake. You will see the shore.", included_only) == []
-    offered = compose_seed("Khövsgöl Lake — take boat rides on the water", OPT, None, None, [])
-    assert qg._is_offered(offered)
-    assert qg._is_offered("Lake — boat\nSource itinerary: Optional boat rides.")  # legacy seed, origin rule
+    assert _f17("You will walk by the lake. You will see the shore.", included_only)["passed"]
 
 
-def test_single_atom_flags_only_the_offered_activity():
+def test_f17_flags_only_the_offered_activity_single_atom():
     seed = compose_seed("Khövsgöl Lake — take boat rides on the water", OPT, None, None, [])
     text = "You take boat rides on the water every morning. The lake is very large. You can take a boat ride."
-    flagged = [s for s, _, _ in qg.promised_sentences(text, seed)]
-    assert flagged == ["You take boat rides on the water every morning."]
+    gate = _f17(text, seed)
+    assert gate["gate"] == "F17_trip_fact" and gate["blocking"] and gate["repairable"]
+    optional = [v for v in gate["violations"] if v.startswith("presents 'boat rides on the water' as part of the plan")]
+    assert len(optional) == 1 and optional[0].endswith("'You take boat rides on the water every morning.'")
+    assert not any("You can take a boat ride." in v for v in gate["violations"])  # hedged: never flagged
 
 
-def test_route_block_flags_offered_activity_not_the_included_boundary():
+def test_f17_flags_the_offered_activity_in_a_route_block_not_the_included_boundary():
     blocks = _route_blocks(_r4_parts())
-    segs = [(f"r{i}", b) for i, b in enumerate(blocks)]
-    kid = next(a for a, b in segs if b.startswith("Lake Khövsgöl"))
-    text = (f"The lake sits where steppe meets taiga [R:{kid}]. "
-            f"Families ride horseback across the terrain and take boat rides on the water [R:{kid}]. "
-            f"There is time to take boat rides on the water [R:{kid}].")
-    flagged = qg.promised_sentences(text, "\n\n".join(blocks), segs)
-    assert len(flagged) == 1 and flagged[0][0].startswith("Families ride horseback")
-    gate = qg.gate_promises_an_option(text, "\n\n".join(blocks), segs)
-    assert len(gate["violations"]) == 1
+    text = ("The lake sits where steppe meets taiga. "
+            "Families ride horseback across the terrain and take boat rides on the water. "
+            "There is time to take boat rides on the water.")
+    gate = _f17(text, "\n\n".join(blocks))
+    flagged = [v.rsplit(": '", 1)[-1] for v in gate["violations"]]
+    assert flagged[0].startswith("Families ride horseback")
+    assert not any(f.startswith("The lake sits") for f in flagged)  # the included steppe/taiga moment
+    # Known difference (AA-787 notes): F17's hedge list has no 'there is time to', which the retired gate
+    # accepted, so F17 also flags this hedged sentence. Stricter, not a recall loss; F17 tuning owns it.
+    assert flagged[1:] == ["There is time to take boat rides on the water.'"]
 
 
-# ---------------------------------------------------------------- one list, light module, prompt
+def test_promises_an_option_is_gone():
+    for name in ("gate_promises_an_option", "promised_sentences", "_is_offered", "_OFFERED_PHRASES"):
+        assert not hasattr(qg, name)
 
-def test_offered_phrases_single_source():
-    assert qg._OFFERED_PHRASES is off.OFFERED_PHRASES
 
+# ---------------------------------------------------------------- light module, prompt
 
 def test_atom_seed_does_not_import_quality_gates():
     code = ("import sys; import services.acp_shared.atom_seed; "
@@ -317,10 +324,6 @@ def test_continuation_needs_a_shared_place_card():
     ])
     assert parts[1]["status"] == off.INCLUDED
 
-
-def test_names_offered_falls_back_when_no_activity_parsed():
-    assert qg._names_offered("any sentence at all", None)
-    assert qg._names_offered("any sentence at all", [])
 
 
 def test_status_words_never_become_allowed_scope_words():

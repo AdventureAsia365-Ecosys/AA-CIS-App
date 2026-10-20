@@ -23,12 +23,12 @@ F8/F9. `_BLOG_FORMAT_INSTRUCTIONS` below is appended ONLY when `channel_style['c
 'blog'` — the other 7 channels' prompts are byte-for-byte unchanged. Two requirements, both new
 markup the writer wasn't asked for before:
   1. Real markdown `## ` H2 headers per section (+ `## FAQ` with `**Q: ...**`/`A: ...` pairs if
-     the piece includes one) — so `quality_gates.gate_structural_variance()`/`gate_faq_dedup()`
-     (ported from `acp_produce/gates.py`, same regexes) have real structure to check.
+     the piece includes one) — so the gates had real structure to check (F3/F7 then; AA-787
+     removed F3 and folded F7 into F16_faq, which still reads the `## FAQ` pairs).
   2. A `[R:{atom_id}]` tag after every sentence built from a seed fact — same tag shape N7 uses,
      but T9 has exactly one atom per piece so there's only ever one id (no closed-world check
      needed, same simplification `gate_grounding()` already made in AA-450). This is INTERNAL
-     provenance markup only, for `gate_atom_density()`/`gate_grounding()` to see — it is never
+     provenance markup only, for `gate_grounding()` to see (F5 read it too until AA-787) — it is never
      shown to the tenant: `quality_gates.strip_citation_tags()` removes every tag from
      `content_text` (and from every gate_ledger/repair_log violation string) before
      `service.write_and_check()` ever persists or returns a piece, for every channel, blog

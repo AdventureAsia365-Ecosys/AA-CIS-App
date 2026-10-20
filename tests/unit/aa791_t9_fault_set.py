@@ -1,8 +1,8 @@
 """AA-791 — T9 fault-injection set: 30 synthetic pieces, each with ONE planted fault for a gate that
 fired 0 times on S234's 80 real pieces (report 12 §1.5), plus a clean twin per gate.
 
-Deterministic, no LLM and no DB: every case runs through the real `run_quality_gates()` with the two
-judge gates (F8 framework, F9 brand voice) stubbed to pass, so the set measures the deterministic
+Deterministic, no LLM and no DB: every case runs through the real `run_quality_gates()` with the
+judge gate (F9 brand voice; F8 was dropped by AA-787) stubbed to pass, so the set measures the deterministic
 gates and their wiring for the case's channel. CI runs it via test_aa791_fault_injection.py; the
 recall / precision table can also be printed by hand:
 
@@ -171,13 +171,12 @@ def _hygiene_ctx() -> hygiene.HygieneContext:
 
 @contextmanager
 def judges_pass():
-    """F8 (framework) and F9 (brand voice) are LLM judges — stubbed to pass so the set stays free and
-    deterministic. Their own behaviour is covered by test_aa450_quality_gates.py."""
+    """F9 (brand voice) is the one LLM judge left (AA-787 dropped F8) — stubbed to pass so the set stays
+    free and deterministic. Its own behaviour is covered by test_aa450_quality_gates.py."""
     def _voice(*_a, **_k):
         return [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]
 
-    with patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])), \
-            patch.object(qg, "gate_brand_voice", side_effect=_voice):
+    with patch.object(qg, "gate_brand_voice", side_effect=_voice):
         yield
 
 
@@ -185,7 +184,7 @@ def run_case(case: FaultCase) -> dict:
     """run_quality_gates() on one case (call inside judges_pass()). Returns the outcome plus the
     target gate's ledger entry (None when the gate did not run)."""
     outcome = qg.run_quality_gates(
-        content_text=case.content_text, atom_text=case.atom_text, cta=case.cta, goal_key="promotion",
+        content_text=case.content_text, atom_text=case.atom_text, cta=case.cta,
         brand_rubric_text="rubric", channel=case.channel, brand_pack=case.brand_pack,
         hygiene_ctx=_hygiene_ctx() if case.with_hygiene else None,
         cannibalization_match=case.cannibalization_match,

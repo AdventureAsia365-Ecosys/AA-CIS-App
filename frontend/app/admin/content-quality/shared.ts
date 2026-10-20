@@ -301,7 +301,16 @@ export const GATE_LABELS: Record<string, string> = {
   FORBIDDEN_WORD: "Forbidden word",
 };
 
-export const gateLabel = (g: string) => GATE_LABELS[g] ?? g;
+/** AA-787 — gates the T10 stack no longer runs. Older pieces still carry them in their ledger, so the
+ *  labels stay; the UI marks them retired and keeps them out of the main gate filter. */
+export const RETIRED_GATES: ReadonlySet<string> = new Set([
+  "promises_an_option", "F8_framework", "F3_structural_variance", "F5_atom_density", "F7_faq_dedup",
+]);
+
+export const gateLabel = (g: string) => {
+  const label = GATE_LABELS[g] ?? g;
+  return RETIRED_GATES.has(g) ? `${label} (retired)` : label;
+};
 
 /** Backend offsets are Python code-point indices; JS strings index UTF-16 units. Returns a mapper
  *  from code-point index to JS index (the identity when the text has no astral chars, e.g. emoji). */

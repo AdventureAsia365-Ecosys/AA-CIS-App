@@ -117,11 +117,10 @@ class TestF9SeesSource:
         assert cta_fact["violations"] == ["audit flagged: CTA_NOT_REFLECTED"]
 
     def test_run_quality_gates_passes_source_to_f9(self):
-        with patch.object(qg, "gate_brand_voice", return_value=[
-            qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]) as mock_bv, \
-             patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
+        voice = [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]
+        with patch.object(qg, "gate_brand_voice", return_value=voice) as mock_bv:
             qg.run_quality_gates(content_text="A short piece.", atom_text="SEED TEXT", cta="Book",
-                                 goal_key="promotion", brand_rubric_text="r", channel="linkedin")
+                                 brand_rubric_text="r", channel="linkedin")
         assert mock_bv.call_args.kwargs["source_text"] == "SEED TEXT"
 
 
@@ -130,7 +129,7 @@ class TestRepairFeedback:
         ledger = [
             {"gate": "F1_grounding", "passed": False, "blocking": True, "violations": ["a", "b"]},
             {"gate": "F4_seo_surface", "passed": False, "blocking": True, "violations": ["c"]},
-            {"gate": "F8_framework", "passed": False, "blocking": False, "violations": ["warn"]},
+            {"gate": "F15_voice_warn", "passed": False, "blocking": False, "violations": ["warn"]},
             {"gate": "F2_banned_patterns", "passed": True, "blocking": True, "violations": []},
         ]
         assert service._repair_feedback(ledger) == [

@@ -1241,13 +1241,15 @@ per (Subject, Channel, Goal) — the tenant picks one before Write runs.
 _Avoid_: approach, take, framing (used loosely elsewhere; Angle is the specific picked object).
 
 **Gate**:
-An automated check run inline right after Write (T9/T10) — up to 9 for `channel='blog'`, 6 for
-the other 7 channels. Since AA-613 each failure has a **severity**: `block` (product truth —
+An automated check run inline right after Write (T9/T10). Since AA-787 (S245) a blog gets 25 gate
+results, LinkedIn 24 and the other channels 23 (count them in `run_quality_gates`). Since AA-613 each failure has a **severity**: `block` (product truth —
 facts, grounding, CTA), `warn` (brand/style, e.g. generic AI wording, brand-fit) or `note`. Only
 `block` triggers a rewrite (max 2 retries). Never assume "failed a gate" means "held" — check
 the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FAQ pairs that
-restate the body); new blocking gates F0_complete (cut-off text), F2_brand_forbidden (the
-tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
+restate the body). AA-787 (S245) removed `promises_an_option` (F17_trip_fact owns offered moments, ADR
+0009), F8_framework (its LLM call), F3 and F5; F7 folded into F16_faq (the restate fixer runs before
+the gates, logged as `F7_faq_autofix`). Old ledgers keep those names. S233 also added the blocking
+gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
 judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
 (it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
 S235 (AA-785): T9/T10 F1 (`quality_gates.gate_grounding`) calls
