@@ -33,6 +33,8 @@ export interface AlertRecipientsPage {
   ops_mail_configured: boolean;
   recipients: AlertRecipient[];
   unmanaged: { email: string; state: SnsState }[];
+  /** Removed on this page while unconfirmed: AWS still lists the pending subscription until it expires (3 days). */
+  leaving?: { email: string; state: SnsState }[];
   history: AlertRecipient[];
   limits: { max_active: number; active: number; adds_left_today: number; max_note: number };
   reconciled_at: string | null;
@@ -86,6 +88,16 @@ export const COMPANY_DOMAIN = "adventure.asia";
 export function isCompanyDomain(raw: string): boolean {
   const v = raw.trim().toLowerCase();
   return v.endsWith(`@${COMPANY_DOMAIN}`);
+}
+
+/** Seconds to wait from a refused (429) change. The body's `retry_after_s` comes first: the admin BFF proxy forwards
+ *  only Content-Type, so the Retry-After header normally never reaches the browser. */
+export function retryAfterSeconds(body: { retry_after_s?: unknown } | null | undefined, header: string | null): number | undefined {
+  for (const raw of [body?.retry_after_s, header]) {
+    const n = typeof raw === "number" ? raw : Number(raw ?? "");
+    if (raw !== null && raw !== undefined && raw !== "" && Number.isFinite(n) && n > 0) return Math.ceil(n);
+  }
+  return undefined;
 }
 
 /** Seconds until `iso` (0 when past or unknown). For the Resend countdown. */

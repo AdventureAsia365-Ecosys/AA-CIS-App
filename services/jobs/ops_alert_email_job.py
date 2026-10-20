@@ -6,9 +6,10 @@ row (shared.cost_guard.maybe_alert). Payload: {"template": "spend_budget", "peri
 "requested_by"} from "Send test e-mail" on Platform › Alert recipients (api/services/alert_recipients.py).
 
 Recipients (AA-913, shared/alert_recipients.ops_recipients): the confirmed rows of shared.alert_recipient plus
-ALERT_EMAIL_TO, lower case, deduplicated; all in the To of one message (internal staff). When ALERTS_TOPIC_ARN is
-set the job first reconciles the table with SNS (one ListSubscriptionsByTopic; a failure is logged and noted in the
-result, never fatal), so an address that unsubscribed through an alert's link stops getting this mail too.
+ALERT_EMAIL_TO, lower case, deduplicated; all in the To of one message (internal staff). When the alerts topic is
+configured (ALERTS_TOPIC_ARN and ALERT_BOOTSTRAP_EMAIL set) the job first reconciles the table with SNS (one
+ListSubscriptionsByTopic; a failure is logged and noted in the result, never fatal), so an address that unsubscribed
+through an alert's link stops getting this mail too.
 
 - SES_FROM_ADDRESS empty, or nobody to mail (no confirmed row and ALERT_EMAIL_TO empty) when the job runs ->
   succeeds as `skipped` with the reason.

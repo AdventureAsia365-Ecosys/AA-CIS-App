@@ -293,7 +293,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     before it closes, off when `ENVIRONMENT=test`, never raises. Every 300 s (first tick 30 s after
     start) it makes one PutMetricData per namespace (boto3 in a thread, connect 3 s / read 5 s, one
     attempt) and logs one `ops_metrics_sampled` line with the values (`rds_error` / `retired_error` /
-    `jobs_error` when a part fails; the other parts still run). Each part runs under
+    `jobs_error` / `alert_recipients_error` when a part fails; the other parts still run). AA-913: one part
+    reconciles the platform alert recipients with SNS (`shared.alert_recipients.periodic_reconcile`, no-op when
+    the alerts topic is not configured). Each part runs under
     `asyncio.wait_for(PART_TIMEOUT_S = 60)` (the main pool has no `command_timeout`), so a hung query
     is a `TimeoutError` in the line and the next tick retries. Before the backlog sample it cancels
     queued/running rows of `shared.jobs.registry.RETIRED_KINDS` (kinds whose handler was removed;
@@ -787,10 +789,11 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   AWS Budgets, which notify the topic since the AA-913 Infra change), and `ops_alert_email` mails the confirmed
   rows. Table `shared.alert_recipient` (CIS 251: e-mail, note, `pending`/`confirmed`/`removed` +
   `removed_reason` `admin`/`unsubscribed`/`expired`, the subscription ARN — never returned to the browser —, who /
-  when; rows are history, `cis_app` has no DELETE). Env from Terraform on api + worker: `ALERTS_TOPIC_ARN` (unset =
-  page read-only "not configured", writes 503) and `ALERT_BOOTSTRAP_EMAIL` (the one Terraform-managed subscription,
-  `var.alert_email`: shown **locked**, never stored or changed by the app, so alarms still reach someone if the app
-  or the DB is down). Code: `shared/alert_recipients.py` (e-mail rule, SNS calls in a thread with 3 s/8 s timeouts,
+  when; rows are history, `cis_app` has no DELETE). Env from Terraform on api + worker: `ALERTS_TOPIC_ARN` and
+  `ALERT_BOOTSTRAP_EMAIL` (the one Terraform-managed subscription, `var.alert_email`: shown **locked**, never stored
+  or changed by the app, so alarms still reach someone if the app or the DB is down); either unset = page read-only
+  "not configured", writes 503 (fail closed: no unsubscribe path can then tell the bootstrap apart). Every
+  unsubscribe checks the SNS endpoint against the bootstrap, and the Infra grant denies `sns:Unsubscribe` on its ARN. Code: `shared/alert_recipients.py` (e-mail rule, SNS calls in a thread with 3 s/8 s timeouts,
   pure `plan_reconcile` + `reconcile`, `ops_recipients`), `api/services/alert_recipients.py` (page, add, remove,
   resend, test e-mail, rate limits from `acp_shared.audit_log`), router `api/routers/admin_alert_recipients.py`:
   `GET /admin/platform/alert-recipients[?refresh=true]` (`ops.read`; reconciles with SNS first, throttled 60 s in
@@ -799,7 +802,10 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   router; the topic carries security alerts), refresh does not. AWS sends and validates the confirmation e-mail
   (no token handled here). Reconcile: SNS confirmed -> `confirmed`; gone after confirmation -> `unsubscribed`;
   never confirmed (AWS drops it after 3 days) -> `expired`; an address removed by an admin whose confirmation was
-  clicked later is unsubscribed again; other topic subscriptions are listed read-only ("unmanaged"). Limits: 10
+  clicked later is unsubscribed again — the api's ops metrics sampler reconciles every 5 minutes, so that happens
+  without a page view; an address removed while still pending is listed as "leaving" until AWS drops it; other topic
+  subscriptions are listed read-only ("unmanaged"). A 429 carries `retry_after_s` in the body (the BFF forwards only
+  Content-Type). Limits: 10
   active, 10 adds / 24 h, resend 1 per 10 min and 3 per 24 h per row, test e-mail 1 per 5 min (429 + Retry-After).
   IAM (AA-CIS-Infra): Subscribe (e-mail protocol), ListSubscriptionsByTopic, Unsubscribe, GetSubscriptionAttributes
   on that topic only; no `sns:Publish`, so the test e-mail tests the SES path and SNS delivery is checked with

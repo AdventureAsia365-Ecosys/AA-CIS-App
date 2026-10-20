@@ -11,8 +11,10 @@ The router (api/routers/admin_alert_recipients.py) checks who may call; this mod
   502 ``{detail, code}`` and no row.
 - **Remove**: the row is locked FOR UPDATE; when it has a subscription ARN, SNS is asked whether it still exists
   and the subscription is removed (``NotFound`` = already gone; a pending one SNS refuses to delete is left to
-  expire after 3 days, and reconcile unsubscribes it if it is confirmed later). Any other SNS error: 502, row
-  unchanged. The row becomes ``removed``/``admin``; audit ``removed`` says what SNS did.
+  expire after 3 days, and reconcile — the api's 5-minute ops sampler tick at the latest — unsubscribes it if it
+  is confirmed first). A subscription whose SNS endpoint (or row e-mail) is the bootstrap address is never
+  unsubscribed (``sns = bootstrap_kept``). Any other SNS error: 502, row unchanged. The row becomes
+  ``removed``/``admin``; audit ``removed`` says what SNS did.
 - **Resend**: pending rows only (409); at most once per RESEND_MIN_INTERVAL_S and RESEND_MAX_PER_DAY per row,
   counted from the ``confirmation_sent`` audit rows (the add's own confirmation counts), 429 + Retry-After. It
   calls ``Subscribe`` again for the address (SNS re-sends the confirmation of a pending subscription).
@@ -53,7 +55,8 @@ class AlertRecipientError(Exception):
 
 
 NOT_CONFIGURED = AlertRecipientError(
-    503, "Alert recipients are not set up on this environment (ALERTS_TOPIC_ARN is not set)", "not_configured")
+    503, "Alert recipients are not set up on this environment (ALERTS_TOPIC_ARN or ALERT_BOOTSTRAP_EMAIL is not set)",
+    "not_configured")
 
 
 def _sns_failed(exc: ar.SnsError, doing: str) -> AlertRecipientError:
@@ -200,6 +203,7 @@ async def page(pool: Any, client: Any, *, redis: Any = None, refresh: bool = Fal
         "ops_mail_configured": sender_config() is not None,
         "recipients": active,
         "unmanaged": (reconciled.unmanaged if reconciled is not None else []),
+        "leaving": (reconciled.leaving if reconciled is not None else []),
         "history": history,
         "limits": {
             "max_active": ar.MAX_ACTIVE,
@@ -219,7 +223,7 @@ async def read_one(pool: Any, recipient_id: str) -> Optional[dict]:
 
 # ── Add ──────────────────────────────────────────────────────────────────────────────────────────
 
-async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any) -> dict:
+async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redis: Any = None) -> dict:
     cfg = ar.topic_config()
     if cfg is None:
         raise NOT_CONFIGURED
@@ -266,14 +270,14 @@ async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any) -> d
                                       resource_type=ar.RESOURCE_TYPE, resource_id=rid,
                                       details={"email": address, "reason": "added"})
     logger.info("alert_recipient_added", topic=cfg.topic_name, recipient_id=rid, sns_state=sns_state)
-    ar.clear_cache()
+    await ar.invalidate_cache(redis)
     row = await read_one(pool, rid)
     return {"recipient": row, "sns_state": sns_state}
 
 
 # ── Remove ───────────────────────────────────────────────────────────────────────────────────────
 
-async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str) -> dict:
+async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str, redis: Any = None) -> dict:
     cfg = ar.topic_config()
     if cfg is None:
         raise NOT_CONFIGURED
@@ -284,11 +288,16 @@ async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str) -> di
                 raise AlertRecipientError(404, "Recipient not found (or already removed)", "not_found")
             arn = row["subscription_arn"]
             sns = "no_subscription"
-            if arn:
+            if arn and str(row["email"]).lower() == cfg.bootstrap_email:
+                sns = "bootstrap_kept"
+            elif arn:
                 try:
-                    pending = await ar.subscription_pending(client, arn)
-                    if pending is None:
+                    info = await ar.subscription_info(client, arn)
+                    pending = info.pending if info is not None else None
+                    if info is None:
                         sns = "not_found"
+                    elif await _is_bootstrap_subscription(client, cfg, arn, info):
+                        sns = "bootstrap_kept"
                     else:
                         try:
                             await ar.unsubscribe(client, arn)
@@ -307,9 +316,20 @@ async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str) -> di
                                   resource_type=ar.RESOURCE_TYPE, resource_id=recipient_id,
                                   details={"email": row["email"], "was": row["status"], "sns": sns,
                                            "topic": cfg.topic_name})
-    logger.info("alert_recipient_removed", topic=cfg.topic_name, recipient_id=recipient_id, sns=sns)
-    ar.clear_cache()
+    log = logger.warning if sns == "bootstrap_kept" else logger.info
+    log("alert_recipient_removed", topic=cfg.topic_name, recipient_id=recipient_id, sns=sns)
+    await ar.invalidate_cache(redis)
     return {"recipient": await read_one(pool, recipient_id), "sns": sns}
+
+
+async def _is_bootstrap_subscription(client: Any, cfg: ar.TopicConfig, arn: str, info: ar.SubInfo) -> bool:
+    """Is this ARN the locked Terraform subscription? GetSubscriptionAttributes normally names the endpoint; when it
+    does not, the topic listing does (confirmed subscriptions are listed with their ARN). Fail closed: an SNS error
+    here propagates (502, nothing changed)."""
+    if info.endpoint is not None:
+        return info.endpoint == cfg.bootstrap_email
+    subs = await ar.list_email_subscriptions(client, cfg.topic_arn)
+    return any(s.arn == arn and s.endpoint == cfg.bootstrap_email for s in subs)
 
 
 # ── Resend ───────────────────────────────────────────────────────────────────────────────────────

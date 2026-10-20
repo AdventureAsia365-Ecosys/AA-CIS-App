@@ -102,7 +102,8 @@ async def lifespan(app: FastAPI):
 
     # AA-751 / AA-832 — every 300 s publish AA/RDS per-role connections and AA/Jobs/CIS backlog metrics
     # (one PutMetricData per namespace, line `ops_metrics_sampled`). Replaces the Lambda -> endpoint ->
-    # job chain. api only, off when ENVIRONMENT == "test", never raises; cancelled before the pool closes.
+    # job chain. AA-913: the same tick reconciles the platform alert recipients with SNS. api only, off when
+    # ENVIRONMENT == "test", never raises; cancelled before the pool closes.
     from api.core.ops_metrics_sampler import start_ops_metrics_sampler, stop_ops_metrics_sampler
     ops_metrics_task = start_ops_metrics_sampler(app)
 

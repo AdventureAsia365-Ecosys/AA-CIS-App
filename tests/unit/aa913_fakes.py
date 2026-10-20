@@ -226,11 +226,12 @@ class StubSns:
 
     def __init__(self, subs: Optional[dict[str, str]] = None, *, list_error: Optional[str] = None,
                  subscribe_error: Optional[str] = None, unsubscribe_error: Optional[str] = None,
-                 attributes_error: Optional[str] = None) -> None:
+                 attributes_error: Optional[str] = None, attributes_endpoint: bool = True) -> None:
         self.subs: dict[str, str] = dict(subs or {})
         self.pending_arns: dict[str, str] = {}   # ARN returned for a pending subscription -> endpoint
         self.list_error, self.subscribe_error = list_error, subscribe_error
         self.unsubscribe_error, self.attributes_error = unsubscribe_error, attributes_error
+        self.attributes_endpoint = attributes_endpoint   # False: GetSubscriptionAttributes without "Endpoint"
         self.list_calls = 0
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
@@ -274,8 +275,11 @@ class StubSns:
         email = self._endpoint(SubscriptionArn)
         if email is None:
             raise SnsClientError("NotFound")
-        return {"Attributes": {"PendingConfirmation": "true" if self.subs[email] == "PendingConfirmation"
-                               else "false"}}
+        attrs = {"PendingConfirmation": "true" if self.subs[email] == "PendingConfirmation" else "false",
+                 "Protocol": "email"}
+        if self.attributes_endpoint:
+            attrs["Endpoint"] = email
+        return {"Attributes": attrs}
 
     def unsubscribe(self, SubscriptionArn: str) -> dict:
         if self.unsubscribe_error:

@@ -85,6 +85,16 @@ def test_topic_config_none_when_unset(monkeypatch):
     assert ar.topic_config() is None
 
 
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_topic_config_fails_closed_without_the_bootstrap(monkeypatch, value):
+    """Review finding: without ALERT_BOOTSTRAP_EMAIL nothing could keep the locked subscription out of reach."""
+    if value is None:
+        monkeypatch.delenv("ALERT_BOOTSTRAP_EMAIL")
+    else:
+        monkeypatch.setenv("ALERT_BOOTSTRAP_EMAIL", value)
+    assert ar.topic_config() is None
+
+
 def test_no_arn_or_account_id_in_the_source():
     """Public repo rule: the topic ARN comes from the environment only."""
     import inspect
@@ -141,6 +151,19 @@ async def test_subscription_pending_and_not_found(stub):
     s.add_client_error("get_subscription_attributes", service_error_code="NotFound", http_status_code=404)
     assert await ar.subscription_pending(client, sub_arn("p")) is True
     assert await ar.subscription_pending(client, sub_arn("gone")) is None
+
+
+@pytest.mark.asyncio
+async def test_subscription_info_reads_the_endpoint(stub):
+    client, s = stub
+    s.add_response("get_subscription_attributes",
+                   {"Attributes": {"PendingConfirmation": "false", "Endpoint": "Boot@Adventure.Asia",
+                                   "Protocol": "email"}}, {"SubscriptionArn": sub_arn("b")})
+    s.add_response("get_subscription_attributes", {"Attributes": {"PendingConfirmation": "true"}},
+                   {"SubscriptionArn": sub_arn("p")})
+    assert await ar.subscription_info(client, sub_arn("b")) == ar.SubInfo(pending=False,
+                                                                           endpoint="boot@adventure.asia")
+    assert await ar.subscription_info(client, sub_arn("p")) == ar.SubInfo(pending=True, endpoint=None)
 
 
 @pytest.mark.asyncio
@@ -231,9 +254,25 @@ def test_plan_removed_but_active_again_is_not_unsubscribed():
 
 
 def test_plan_removed_still_pending_in_sns_is_left_to_expire():
+    """Removed here while unconfirmed: shown as leaving, not as a mailbox added outside the page."""
     rows = [_row("old", "p@x.com", "removed", reason="admin")]
     plan = ar.plan_reconcile(rows, [_sub("p@x.com", "PendingConfirmation")], BOOTSTRAP, NOW)
-    assert plan.unsubscribe == [] and plan.unmanaged == [{"email": "p@x.com", "state": "pending"}]
+    assert plan.unsubscribe == [] and plan.unmanaged == []
+    assert plan.leaving == [{"email": "p@x.com", "state": "pending"}]
+
+
+def test_plan_expired_then_pending_again_is_unmanaged():
+    """Only an admin removal makes an address 'leaving'; a pending subscription after an expiry came from outside."""
+    rows = [_row("old", "p@x.com", "removed", reason="expired")]
+    plan = ar.plan_reconcile(rows, [_sub("p@x.com", "PendingConfirmation")], BOOTSTRAP, NOW)
+    assert plan.leaving == [] and plan.unmanaged == [{"email": "p@x.com", "state": "pending"}]
+
+
+def test_plan_without_a_bootstrap_never_unsubscribes():
+    rows = [_row("old", "late@x.com", "removed", reason="admin")]
+    plan = ar.plan_reconcile(rows, [_sub("late@x.com", sub_arn("late"))], None, NOW)
+    assert plan.unsubscribe == [] and plan.locked is None
+    assert plan.unmanaged == [{"email": "late@x.com", "state": "confirmed"}]
 
 
 def test_plan_bootstrap_is_locked_and_never_unsubscribed():
@@ -279,6 +318,39 @@ async def test_reconcile_applies_and_audits_changes():
 
 
 @pytest.mark.asyncio
+async def test_reconcile_never_unsubscribes_the_bootstrap_endpoint(monkeypatch):
+    """A removed/admin row for the bootstrap (left by an older bug or a hand edit) never unsubscribes the Terraform
+    subscription: the plan skips the listed endpoint, and the apply loop re-checks even a forged plan."""
+    db = AlertDB()
+    db.insert(BOOTSTRAP, "removed", reason="admin")
+    sns = StubSns(subs={BOOTSTRAP: sub_arn("boot")})
+    result = await ar.reconcile(db, sns, ar.topic_config(), now=NOW)
+    assert sns.unsubscribed == [] and result.unsubscribed == [] and BOOTSTRAP in sns.subs
+
+    real_plan = ar.plan_reconcile
+
+    def forged(*args, **kw):
+        plan = real_plan(*args, **kw)
+        plan.unsubscribe.append(ar.Unsubscribe("x", BOOTSTRAP, sub_arn("boot")))
+        return plan
+
+    monkeypatch.setattr(ar, "plan_reconcile", forged)
+    await ar.reconcile(db, sns, ar.topic_config(), now=NOW)
+    assert sns.unsubscribed == [] and BOOTSTRAP in sns.subs
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reports_leaving_in_the_summary():
+    db = AlertDB()
+    db.insert("p@x.com", "removed", reason="admin")
+    sns = StubSns(subs={BOOTSTRAP: sub_arn("boot"), "p@x.com": "PendingConfirmation"})
+    result = await ar.reconcile_throttled(db, sns, ar.topic_config())
+    assert result.leaving == [{"email": "p@x.com", "state": "pending"}] and result.unmanaged == []
+    cached = await ar.reconcile_throttled(db, sns, ar.topic_config())
+    assert cached.cached and cached.leaving == result.leaving
+
+
+@pytest.mark.asyncio
 async def test_reconcile_throttled_uses_the_cache_and_force_skips_it():
     db = AlertDB()
     sns = StubSns(subs={BOOTSTRAP: sub_arn("boot")})
@@ -312,6 +384,11 @@ class _Redis:
             raise ConnectionError("redis down")
         self.data[key] = value
 
+    async def delete(self, key):
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.data.pop(key, None)
+
 
 @pytest.mark.asyncio
 async def test_reconcile_cache_in_redis_and_survives_redis_down():
@@ -323,6 +400,69 @@ async def test_reconcile_cache_in_redis_and_survives_redis_down():
     assert (await ar.reconcile_throttled(db, sns, cfg, redis=redis)).cached and sns.list_calls == 1
     out = await ar.reconcile_throttled(db, sns, cfg, redis=_Redis(fail=True), force=True)
     assert out.error is None and sns.list_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_cache_drops_the_redis_copy_too():
+    """Review finding: after an add / remove the next page view must reconcile, not read a stale Redis summary."""
+    db, sns, cfg = AlertDB(), StubSns(subs={}), ar.topic_config()
+    redis = _Redis()
+    await ar.reconcile_throttled(db, sns, cfg, redis=redis)
+    await ar.invalidate_cache(redis)
+    assert ar.RECONCILE_CACHE_KEY not in redis.data
+    assert not (await ar.reconcile_throttled(db, sns, cfg, redis=redis)).cached and sns.list_calls == 2
+    await ar.invalidate_cache(_Redis(fail=True))   # Redis down: logged, never raised
+
+
+# ── periodic reconcile (the api's ops sampler tick) ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_periodic_reconcile_is_a_no_op_when_not_configured(monkeypatch):
+    monkeypatch.delenv("ALERTS_TOPIC_ARN")
+    sns = StubSns(subs={})
+    assert await ar.periodic_reconcile(AlertDB(), client=sns) is None and sns.list_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_periodic_reconcile_unsubscribes_a_late_confirmation_without_a_page_view():
+    """Review finding: removed while pending, confirmed later -> unsubscribed by the scheduled tick."""
+    db = AlertDB()
+    old = db.insert("late@x.com", "removed", reason="admin")
+    sns = StubSns(subs={BOOTSTRAP: sub_arn("boot"), "late@x.com": sub_arn("late")})
+    result = await ar.periodic_reconcile(db, client=sns)
+    assert result.unsubscribed == ["late@x.com"] and "late@x.com" not in sns.subs
+    audit = next(a for a in db.audit if a["resource_id"] == old)
+    assert audit["actor"] == ar.ACTOR_PERIODIC and audit["details"]["reason"] == "confirmed_after_removal"
+
+
+@pytest.mark.asyncio
+async def test_sampler_tick_runs_the_alert_reconcile(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from api.core import ops_metrics_sampler as sampler
+    from shared.jobs import backlog
+
+    db = AlertDB()
+    db.insert("late@x.com", "removed", reason="admin")
+    sns = StubSns(subs={BOOTSTRAP: sub_arn("boot"), "late@x.com": sub_arn("late")})
+    monkeypatch.setattr(ar, "sns_client", lambda region: sns)
+    monkeypatch.setattr(backlog, "sample", AsyncMock(side_effect=RuntimeError("not under test")))
+    db_fetch = db.fetch
+
+    async def fetch(sql, *args):
+        if "pg_roles" in sql:
+            return []
+        return await db_fetch(sql, *args)
+
+    db.fetch = fetch
+    out = await sampler.sample_once(db, MagicMock(), kinds={})
+    assert out["alert_recipients"] == {"cached": False, "changes": 0, "unsubscribed": 1}
+    assert "late@x.com" not in sns.subs and "alert_recipients_error" not in out
+
+    sns.list_error = "AuthorizationError"
+    ar.clear_cache()
+    out = await sampler.sample_once(db, MagicMock(), kinds={})
+    assert out["alert_recipients_error"] == "SnsError: AuthorizationError"
 
 
 # ── ops recipients ───────────────────────────────────────────────────────────────────────────────

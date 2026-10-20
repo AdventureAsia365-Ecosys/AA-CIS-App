@@ -20,7 +20,8 @@ HTTP row lacks (e-mail, SNS outcome).
 
 Errors: ``{detail, code}`` with the HTTP status of api/services/alert_recipients.AlertRecipientError (422 invalid
 address, 409 bootstrap / duplicate / full / not pending, 404, 429 + Retry-After, 502 SNS refused, 503 not
-configured). Nothing returns the topic or subscription ARN; the page gets the topic name.
+configured). A 429 also carries ``retry_after_s`` in the body: the admin BFF proxy forwards only Content-Type, so the
+browser never sees the Retry-After header. Nothing returns the topic or subscription ARN; the page gets the topic name.
 
 The router is included without an include prefix (staff_policy reads the route template from scope["route"].path).
 """
@@ -89,7 +90,15 @@ def _viewer(request: Request) -> dict:
 
 
 def _refused(exc: svc.AlertRecipientError) -> JSONResponse:
-    return JSONResponse({"detail": exc.detail, "code": exc.code}, status_code=exc.status, headers=exc.headers)
+    body: dict[str, Any] = {"detail": exc.detail, "code": exc.code}
+    retry_after = (exc.headers or {}).get("Retry-After")
+    if retry_after is not None:
+        body["retry_after_s"] = int(retry_after)
+    return JSONResponse(body, status_code=exc.status, headers=exc.headers)
+
+
+def _redis(request: Request) -> Any:
+    return getattr(request.app.state, "redis", None)
 
 
 def _uuid_or_404(recipient_id: str) -> str:
@@ -100,8 +109,7 @@ def _uuid_or_404(recipient_id: str) -> str:
 
 
 async def _page(request: Request, sns: Any, *, refresh: bool, actor: str) -> dict:
-    body = await svc.page(request.app.state.pool, sns, redis=getattr(request.app.state, "redis", None),
-                          refresh=refresh, actor=actor)
+    body = await svc.page(request.app.state.pool, sns, redis=_redis(request), refresh=refresh, actor=actor)
     body["viewer"] = _viewer(request)
     return body
 
@@ -135,7 +143,8 @@ async def queue_test_alert_email(request: Request):
 async def add_alert_recipient(body: AddRecipientBody, request: Request, sns: Any = Depends(get_sns)):
     actor = _actor(request)
     try:
-        return await svc.add(request.app.state.pool, sns, actor=actor, email=body.email, note=body.note)
+        return await svc.add(request.app.state.pool, sns, actor=actor, email=body.email, note=body.note,
+                             redis=_redis(request))
     except svc.AlertRecipientError as exc:
         return _refused(exc)
 
@@ -145,7 +154,7 @@ async def remove_alert_recipient(recipient_id: str, request: Request, sns: Any =
     actor = _actor(request)
     rid = _uuid_or_404(recipient_id)
     try:
-        return await svc.remove(request.app.state.pool, sns, actor=actor, recipient_id=rid)
+        return await svc.remove(request.app.state.pool, sns, actor=actor, recipient_id=rid, redis=_redis(request))
     except svc.AlertRecipientError as exc:
         return _refused(exc)
 

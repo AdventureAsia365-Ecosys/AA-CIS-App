@@ -42,6 +42,7 @@ import {
   emailLooksValid,
   formatWait,
   isCompanyDomain,
+  retryAfterSeconds,
   secondsUntil,
   snsStateLabel,
   statusLabel,
@@ -75,14 +76,13 @@ async function send(method: "POST" | "DELETE", path: string, body?: unknown): Pr
     /* non-JSON body */
   }
   if (res.ok) return { ok: true, data };
-  const retry = Number(res.headers.get("Retry-After") || "");
   let message: string;
   if (Array.isArray(data.detail)) {
     message = "Check the address and the note (the server refused the form).";
   } else {
     message = staffErrorMessage(res.status, data.detail, `Request failed (${res.status})`);
   }
-  return { ok: false, message, retryAfter: Number.isFinite(retry) && retry > 0 ? retry : undefined };
+  return { ok: false, message, retryAfter: retryAfterSeconds(data, res.headers.get("Retry-After")) };
 }
 
 function Notice({ tone, children }: { tone: "warning" | "info" | "danger"; children: React.ReactNode }) {
@@ -312,7 +312,7 @@ export default function AlertRecipients() {
       return;
     }
     toast.success(out.data.sns === "pending_left_to_expire"
-      ? `Removed ${r.email}. Its unconfirmed AWS subscription expires on its own; if the link is clicked later, the next status check removes it again.`
+      ? `Removed ${r.email}. Its unconfirmed AWS subscription expires on its own within 3 days; if the link is clicked first, the automatic status check (every 5 minutes) unsubscribes it again.`
       : `Removed ${r.email}. It gets no more alerts.`, 7000);
     void reload();
   };
@@ -453,7 +453,8 @@ export default function AlertRecipients() {
         <div data-testid="alert-recipients-ready" style={{ minWidth: 0 }}>
           {!data.configured && (
             <Notice tone="info">
-              Alert recipients are not set up on this environment (ALERTS_TOPIC_ARN is not set). The list is read-only.
+              Alert recipients are not set up on this environment (ALERTS_TOPIC_ARN or ALERT_BOOTSTRAP_EMAIL is not set).
+              The list is read-only.
             </Notice>
           )}
           {data.reconcile_error && (
@@ -487,6 +488,20 @@ export default function AlertRecipients() {
               />
             </div>
           </Section>
+
+          {(data.leaving ?? []).length > 0 && (
+            <details style={{ marginBottom: 16 }}>
+              <summary style={summaryStyle}>Removed, waiting for AWS to drop the unconfirmed subscription ({(data.leaving ?? []).length})</summary>
+              <p style={{ fontSize: 12.5, color: K.muted, margin: "8px 0" }}>
+                Removed on this page before the confirmation link was clicked. AWS deletes the unconfirmed subscription within
+                3 days; if the link is clicked first, the automatic status check (every 5 minutes) unsubscribes it again.
+                Nothing to do here.
+              </p>
+              {(data.leaving ?? []).map((u) => (
+                <LockedRow key={u.email} email={u.email} state={u.state} label="Removed here, unconfirmed" />
+              ))}
+            </details>
+          )}
 
           {data.unmanaged.length > 0 && (
             <details style={{ marginBottom: 16 }}>

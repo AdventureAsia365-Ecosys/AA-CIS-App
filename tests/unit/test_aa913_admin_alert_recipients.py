@@ -157,6 +157,21 @@ def test_not_configured(client, token, monkeypatch):
     assert resp.status_code == 503 and resp.json()["code"] == "not_configured"
 
 
+def test_bootstrap_env_unset_fails_closed(client, token, db, sns, monkeypatch):
+    """Review finding: with ALERT_BOOTSTRAP_EMAIL unset the bootstrap address could be added (SNS returns the
+    Terraform subscription's ARN) and then removed, unsubscribing the locked fallback. Now every write is 503."""
+    monkeypatch.delenv("ALERT_BOOTSTRAP_EMAIL")
+    rid = db.insert("c@adventure.asia", "confirmed", arn=sub_arn("c"))
+    body = client.get(BASE, headers=_h(token)).json()
+    assert body["configured"] is False and sns.list_calls == 0
+    resp = _add(client, token, BOOTSTRAP)
+    assert resp.status_code == 503 and resp.json()["code"] == "not_configured" and sns.subscribed == []
+    for resp in (client.delete(f"{BASE}/{rid}", headers=_h(token)),
+                 client.post(f"{BASE}/{rid}/resend", headers=_h(token))):
+        assert resp.status_code == 503 and resp.json()["code"] == "not_configured"
+    assert sns.unsubscribed == [] and BOOTSTRAP in sns.subs and db.row(rid)["status"] == "confirmed"
+
+
 # ── who may call ─────────────────────────────────────────────────────────────────────────────────
 
 WRITES = [("post", BASE, {"email": "x@adventure.asia"}), ("post", BASE + "/test-email", None),
@@ -305,6 +320,27 @@ def test_remove_pending_that_sns_refuses_to_delete_is_left_to_expire(client, tok
     assert db.row(rid)["status"] == "removed"
 
 
+@pytest.mark.parametrize("endpoint_in_attributes", [True, False])
+def test_remove_never_unsubscribes_the_bootstrap_subscription(client, token, db, sns, endpoint_in_attributes):
+    """A row (whatever its e-mail) holding the Terraform subscription's ARN: the row goes, the subscription stays.
+    The endpoint comes from GetSubscriptionAttributes, else from the topic listing."""
+    sns.attributes_endpoint = endpoint_in_attributes
+    rid = db.insert("other@adventure.asia", "confirmed", arn=sub_arn("boot"))
+    resp = client.delete(f"{BASE}/{rid}", headers=_h(token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["sns"] == "bootstrap_kept" and sns.unsubscribed == [] and BOOTSTRAP in sns.subs
+    assert db.row(rid)["status"] == "removed"
+
+
+def test_remove_a_row_for_the_bootstrap_address_keeps_the_subscription(client, token, db, sns):
+    rid = db.insert(BOOTSTRAP, "confirmed", arn=sub_arn("boot"))
+    resp = client.delete(f"{BASE}/{rid}", headers=_h(token))
+    assert resp.status_code == 200 and resp.json()["sns"] == "bootstrap_kept"
+    assert sns.unsubscribed == [] and BOOTSTRAP in sns.subs
+    client.post(BASE + "/refresh", headers=_h(token))          # and reconcile never removes it afterwards
+    assert sns.unsubscribed == [] and BOOTSTRAP in sns.subs
+
+
 def test_remove_other_sns_error_changes_nothing(client, token, db, sns):
     rid = db.insert("c@adventure.asia", "confirmed", arn=sub_arn("c"))
     sns.subs["c@adventure.asia"] = sub_arn("c")
@@ -337,6 +373,8 @@ def test_resend_right_after_the_add_is_429(client, token, db, sns):
     rid = db.recipients[0]["id"]
     resp = client.post(f"{BASE}/{rid}/resend", headers=_h(token))
     assert resp.status_code == 429 and 0 < int(resp.headers["Retry-After"]) <= ar.RESEND_MIN_INTERVAL_S
+    # the BFF proxy forwards only Content-Type: the wait is in the body too (review finding)
+    assert resp.json()["retry_after_s"] == int(resp.headers["Retry-After"])
     assert sns.subscribed == ["p@adventure.asia"]
 
 
@@ -406,6 +444,45 @@ def test_confirmation_clicked_after_removal_is_unsubscribed_again(client, token,
     body = client.post(BASE + "/refresh", headers=_h(token)).json()
     assert "late@adventure.asia" not in sns.subs
     assert body["unmanaged"] == [] and body["recipients"] == []
+
+
+def test_removed_while_pending_is_listed_as_leaving_not_unmanaged(client, token, db, sns):
+    _add(client, token, "p@adventure.asia")
+    rid = db.recipients[0]["id"]
+    sns.unsubscribe_error = "InvalidParameter"
+    client.delete(f"{BASE}/{rid}", headers=_h(token))
+    body = client.get(BASE, headers=_h(token)).json()
+    assert body["unmanaged"] == [] and body["leaving"] == [{"email": "p@adventure.asia", "state": "pending"}]
+
+
+class _Redis:
+    def __init__(self):
+        self.data = {}
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def set(self, key, value, ex=None):
+        self.data[key] = value
+
+    async def delete(self, key):
+        self.data.pop(key, None)
+
+
+def test_add_and_remove_drop_the_redis_summary(client, token, db, sns, monkeypatch):
+    """Review finding: the next GET after a change reconciles instead of serving a stale Redis summary."""
+    monkeypatch.setattr(app.state, "redis", _Redis(), raising=False)
+    sns.subs["already@adventure.asia"] = sub_arn("already")       # confirmed in the console
+    body = client.get(BASE, headers=_h(token)).json()
+    assert body["unmanaged"] == [{"email": "already@adventure.asia", "state": "confirmed"}] and sns.list_calls == 1
+    assert client.get(BASE, headers=_h(token)).json()["unmanaged"] and sns.list_calls == 1    # cached
+    assert _add(client, token, "already@adventure.asia").status_code == 201                   # lists once more
+    body = client.get(BASE, headers=_h(token)).json()
+    assert sns.list_calls == 3 and body["unmanaged"] == []
+    assert body["recipients"][0]["email"] == "already@adventure.asia"
+    client.delete(f"{BASE}/{body['recipients'][0]['id']}", headers=_h(token))
+    client.get(BASE, headers=_h(token))
+    assert sns.list_calls == 4
 
 
 def test_unsubscribed_through_the_link_shows_as_removed(client, token, db, sns):

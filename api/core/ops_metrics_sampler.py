@@ -30,6 +30,11 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   row left over from a rolling deploy (the old api enqueueing during the roll) would otherwise page
   `*-jobs-queue-age` as starved `unregistered` and block every later Deploy Dev. A kind is swept only
   while it is NOT registered.
+- AA-913: each tick also reconciles the platform alert recipients with SNS
+  (shared/alert_recipients.periodic_reconcile: one ListSubscriptionsByTopic, throttled like a page view; a no-op
+  when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
+  confirmation was pending, and confirmed afterwards, is unsubscribed again within one tick, not only when an admin
+  opens the page. Its fields: `alert_recipients` (counts) or `alert_recipients_error`.
 - api only (not the worker service); started from api/main.py's lifespan after the main pool,
   cancelled before the pool closes. Off when ENVIRONMENT == "test". Never raises: a failing part is
   logged in the tick's line (`*_error`) and the loop goes on. With two api tasks (rolling deploy)
@@ -48,7 +53,7 @@ logger = structlog.get_logger()
 
 OPS_METRICS_INTERVAL_S = 300.0
 OPS_METRICS_FIRST_DELAY_S = 30.0   # let the app finish starting before the first sample
-PART_TIMEOUT_S = 60.0              # bound on each part of a tick (3 parts -> < 300 s interval)
+PART_TIMEOUT_S = 60.0              # bound on each part of a tick (4 parts -> < 300 s interval)
 
 NAMESPACE_RDS = "AA/RDS"
 METRIC_CONNECTIONS = "RoleConnections"
@@ -166,15 +171,28 @@ async def _jobs_part(pool, client, kinds: dict, ts: datetime, out: dict) -> None
     out["jobs_published"] = 2
 
 
+async def _alert_recipients_part(pool, redis, out: dict) -> None:
+    from shared import alert_recipients
+
+    result = await alert_recipients.periodic_reconcile(pool, redis=redis)
+    if result is None:   # not configured on this environment
+        return
+    if result.error:
+        out["alert_recipients_error"] = f"SnsError: {result.error}"
+        return
+    out["alert_recipients"] = {"cached": result.cached, "changes": len(result.changes),
+                               "unsubscribed": len(result.unsubscribed)}
+
+
 def _err(e: BaseException) -> str:
     return f"{type(e).__name__}: {str(e)[:300]}"
 
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
-                      part_timeout_s: float = PART_TIMEOUT_S) -> dict:
-    """One tick: AA/RDS, the retired-kind sweep, then AA/Jobs/CIS, each part on its own and under
-    part_timeout_s (one failing or hanging never blocks the others). Returns the fields of the
-    `ops_metrics_sampled` line. Never raises (except CancelledError)."""
+                      part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None) -> dict:
+    """One tick: AA/RDS, the alert-recipient reconcile (AA-913), the retired-kind sweep, then AA/Jobs/CIS, each
+    part on its own and under part_timeout_s (one failing or hanging never blocks the others). Returns the fields
+    of the `ops_metrics_sampled` line. Never raises (except CancelledError)."""
     ts = datetime.now(timezone.utc)
     out: dict[str, Any] = {"sampled_at": ts.isoformat()}
 
@@ -182,6 +200,11 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_rds_part(pool, client, ts, out), timeout=part_timeout_s)
     except Exception as e:   # asyncio.TimeoutError included
         out["rds_error"] = _err(e)
+
+    try:
+        await asyncio.wait_for(_alert_recipients_part(pool, redis, out), timeout=part_timeout_s)
+    except Exception as e:
+        out["alert_recipients_error"] = _err(e)
 
     try:
         if kinds is None:
@@ -203,7 +226,7 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
 
 
 def _log(out: dict) -> None:
-    if any(k in out for k in ("rds_error", "retired_error", "jobs_error")):
+    if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error")):
         logger.warning("ops_metrics_sampled", **out)
     else:
         logger.info("ops_metrics_sampled", **out)
@@ -223,7 +246,8 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
             if pool is not None:
                 if client is None:
                     client = await asyncio.to_thread(client_factory)
-                _log(await sample_once(pool, client, part_timeout_s=part_timeout_s))
+                _log(await sample_once(pool, client, part_timeout_s=part_timeout_s,
+                                       redis=getattr(app.state, "redis", None)))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
             logger.warning("ops_metrics_sampled", error=_err(e))
         await asyncio.sleep(interval_s)

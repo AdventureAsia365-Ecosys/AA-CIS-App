@@ -11,7 +11,9 @@ Pieces (pure first, I/O thin):
 - :class:`TopicConfig` / :func:`topic_config` — the alerts topic and the Terraform bootstrap address, from the
   environment the task definition sets (``ALERTS_TOPIC_ARN``, ``ALERT_BOOTSTRAP_EMAIL``, ``AWS_REGION``). The topic
   ARN is never written in this public repo, never logged and never returned to the browser (the UI gets the topic
-  *name*). ``ALERTS_TOPIC_ARN`` empty -> None: the page is read-only "not configured".
+  *name*). ``ALERTS_TOPIC_ARN`` or ``ALERT_BOOTSTRAP_EMAIL`` empty -> None: the page is read-only "not configured"
+  (fail closed: without the bootstrap address the app could not tell the locked Terraform subscription apart, and an
+  add + remove of that address would unsubscribe it).
 - SNS calls (:func:`list_email_subscriptions`, :func:`subscribe`, :func:`unsubscribe`, :func:`subscription_pending`)
   — boto3 in a thread (``asyncio.to_thread``), short timeouts; tests inject a stub client. The task role may call
   only Subscribe (e-mail protocol), ListSubscriptionsByTopic, Unsubscribe and GetSubscriptionAttributes, on this one
@@ -20,12 +22,16 @@ Pieces (pure first, I/O thin):
   -> ``confirmed``; never confirmed within AWS's 3 days -> ``removed``/``expired``; unsubscribed through the link in
   an alert (or removed in the console) -> ``removed``/``unsubscribed``; an address the admin removed whose pending
   confirmation was clicked afterwards -> unsubscribed again. Throttled to once per :data:`RECONCILE_TTL_S`.
+  :func:`periodic_reconcile` runs it from the api's 5-minute ops sampler (api/core/ops_metrics_sampler.py), so a
+  removed address that confirms late is unsubscribed within one tick even when nobody opens the page.
 - :func:`ops_recipients` — who the ``ops_alert_email`` job mails: the confirmed rows plus ``ALERT_EMAIL_TO`` (the
   Terraform fallback, always included, so the locked row on the page is true for both paths). Pending rows get
   nothing (no confirmation = no consent).
 
 The Terraform bootstrap subscription (``ALERT_BOOTSTRAP_EMAIL``) is never stored in the table and never touched
-here; it keeps receiving every alert if the app, the DB or this code is down.
+here; it keeps receiving every alert if the app, the DB or this code is down. Every unsubscribe path checks the
+subscription's SNS endpoint against it (remove: GetSubscriptionAttributes ``Endpoint``; reconcile: the listed
+endpoint), and AA-CIS-Infra denies ``sns:Unsubscribe`` on that subscription ARN to the task role as well.
 """
 from __future__ import annotations
 
@@ -61,6 +67,7 @@ RECONCILE_CACHE_KEY = "alert_recipients:reconcile"
 
 RESOURCE_TYPE = "alert_recipient"
 ACTOR_RECONCILE = "reconcile"
+ACTOR_PERIODIC = "job:alert_recipients_reconcile"   # the api's ops sampler tick (removed_by / audit actor)
 
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
@@ -156,11 +163,14 @@ def ops_fallback_email() -> Optional[str]:
 
 
 def topic_config() -> Optional[TopicConfig]:
-    """The alerts topic from ALERTS_TOPIC_ARN, or None when it is unset (page read-only, writes 503)."""
+    """The alerts topic from ALERTS_TOPIC_ARN, or None when it or ALERT_BOOTSTRAP_EMAIL is unset (page read-only,
+    writes 503, no reconcile). Fail closed on a missing bootstrap: every guard that keeps the Terraform subscription
+    out of reach compares against that address."""
     arn = (os.environ.get("ALERTS_TOPIC_ARN") or "").strip()
-    if not arn:
+    bootstrap = bootstrap_email()
+    if not arn or not bootstrap:
         return None
-    return TopicConfig(topic_arn=arn, topic_name=arn.rsplit(":", 1)[-1], bootstrap_email=bootstrap_email(),
+    return TopicConfig(topic_arn=arn, topic_name=arn.rsplit(":", 1)[-1], bootstrap_email=bootstrap,
                        region=_region())
 
 
@@ -255,15 +265,31 @@ async def unsubscribe(client: Any, subscription_arn: str) -> None:
     await _call(client, "unsubscribe", SubscriptionArn=subscription_arn)
 
 
-async def subscription_pending(client: Any, subscription_arn: str) -> Optional[bool]:
-    """True / False from GetSubscriptionAttributes ``PendingConfirmation``; None when SNS no longer has it."""
+@dataclass(frozen=True)
+class SubInfo:
+    """GetSubscriptionAttributes of one subscription: pending or not, and its endpoint (lower case; None when SNS
+    did not return it)."""
+    pending: bool
+    endpoint: Optional[str]
+
+
+async def subscription_info(client: Any, subscription_arn: str) -> Optional[SubInfo]:
+    """GetSubscriptionAttributes ``PendingConfirmation`` + ``Endpoint``; None when SNS no longer has it."""
     try:
         out = await _call(client, "get_subscription_attributes", SubscriptionArn=subscription_arn)
     except SnsError as exc:
         if exc.code == "NotFound":
             return None
         raise
-    return str((out.get("Attributes") or {}).get("PendingConfirmation", "false")).lower() == "true"
+    attrs = out.get("Attributes") or {}
+    return SubInfo(pending=str(attrs.get("PendingConfirmation", "false")).lower() == "true",
+                   endpoint=_lower_or_none(attrs.get("Endpoint")))
+
+
+async def subscription_pending(client: Any, subscription_arn: str) -> Optional[bool]:
+    """True / False from GetSubscriptionAttributes ``PendingConfirmation``; None when SNS no longer has it."""
+    info = await subscription_info(client, subscription_arn)
+    return None if info is None else info.pending
 
 
 # ── Reconcile: plan (pure) ───────────────────────────────────────────────────────────────────────
@@ -298,6 +324,9 @@ class ReconcilePlan:
     unsubscribe: list[Unsubscribe] = field(default_factory=list)
     locked: Optional[dict] = None              # the bootstrap subscription: {email, state}
     unmanaged: list[dict] = field(default_factory=list)   # [{email, state}] added outside the page
+    # [{email, state: pending}] removed on the page while unconfirmed: SNS still lists the pending subscription until
+    # it expires (3 days); if it is confirmed first, the next reconcile unsubscribes it (``unsubscribe`` above).
+    leaving: list[dict] = field(default_factory=list)
 
     @property
     def changes(self) -> list[RowUpdate]:
@@ -331,7 +360,8 @@ def plan_reconcile(rows: Sequence[Mapping[str, Any]], subs: Sequence[SnsSub], bo
 
     ``rows``: every active row (pending / confirmed) plus, per address, the latest removed row (the caller may pass
     more removed rows; only those without an active row for the same address count). ``subs``: the topic's e-mail
-    subscriptions. ``bootstrap``: ALERT_BOOTSTRAP_EMAIL (lower case) or None.
+    subscriptions. ``bootstrap``: ALERT_BOOTSTRAP_EMAIL (lower case) or None. Without a bootstrap address nothing
+    is planned for unsubscribe (fail closed: the locked subscription could not be told apart).
     """
     bootstrap = _lower_or_none(bootstrap)
     best = _best_subs(subs)
@@ -368,12 +398,15 @@ def plan_reconcile(rows: Sequence[Mapping[str, Any]], subs: Sequence[SnsSub], bo
         if bootstrap and email == bootstrap:
             continue
         removed = removed_by_email.get(email)
-        if (removed is not None and removed.get("removed_reason") == REASON_ADMIN
-                and sub.state == SEEN_CONFIRMED):
+        removed_here = removed is not None and removed.get("removed_reason") == REASON_ADMIN
+        if removed_here and sub.state == SEEN_CONFIRMED and bootstrap:
             plan.unsubscribe.append(Unsubscribe(str(removed["id"]), email, sub.arn))
+        elif removed_here and sub.state == SEEN_PENDING:
+            plan.leaving.append({"email": email, "state": sub.state})
         else:
             plan.unmanaged.append({"email": email, "state": sub.state})
     plan.unmanaged.sort(key=lambda u: u["email"])
+    plan.leaving.sort(key=lambda u: u["email"])
 
     if bootstrap:
         sub = best.get(bootstrap)
@@ -432,11 +465,13 @@ class ReconcileResult:
     unsubscribed: list[str] = field(default_factory=list)
     locked: Optional[dict] = None
     unmanaged: list[dict] = field(default_factory=list)
+    leaving: list[dict] = field(default_factory=list)
     cached: bool = False
 
     def summary(self) -> dict:
         """What the page shows; cached between reconciles (no ARN in it)."""
-        return {"reconciled_at": self.reconciled_at, "locked": self.locked, "unmanaged": self.unmanaged}
+        return {"reconciled_at": self.reconciled_at, "locked": self.locked, "unmanaged": self.unmanaged,
+                "leaving": self.leaving}
 
 
 async def reconcile(pool: Any, client: Any, cfg: TopicConfig, *, actor: str = ACTOR_RECONCILE,
@@ -471,9 +506,12 @@ async def reconcile(pool: Any, client: Any, cfg: TopicConfig, *, actor: str = AC
                                                "reason": u.removed_reason})
     result = ReconcileResult(
         reconciled_at=when.isoformat(), locked=plan.locked, unmanaged=list(plan.unmanaged),
+        leaving=list(plan.leaving),
         changes=[{"id": u.id, "email": u.email, "from": u.from_status, "to": u.to_status,
                   "reason": u.removed_reason} for u in plan.changes])
     for un in plan.unsubscribe:
+        if not cfg.bootstrap_email or un.email == cfg.bootstrap_email:   # belt and braces: never the locked one
+            continue
         try:
             await unsubscribe(client, un.arn)
             outcome = "unsubscribed"
@@ -519,7 +557,19 @@ async def _cache_set(redis: Any, summary: dict) -> None:
 
 
 def clear_cache() -> None:
+    """This process's copy only (tests). After a change use :func:`invalidate_cache`, which also drops Redis."""
     _local_cache.clear()
+
+
+async def invalidate_cache(redis: Any = None) -> None:
+    """Drop the cached summary everywhere, so the next page view reconciles (an add or remove changes what the
+    ``unmanaged`` / ``leaving`` lists should say). A Redis error is logged; the key expires within the TTL anyway."""
+    _local_cache.clear()
+    if redis is not None:
+        try:
+            await redis.delete(RECONCILE_CACHE_KEY)
+        except Exception as exc:  # noqa: BLE001 — the cache is an optimisation
+            logger.warning("alert_recipients_cache_unavailable", error=type(exc).__name__)
 
 
 async def reconcile_throttled(pool: Any, client: Any, cfg: TopicConfig, *, redis: Any = None, force: bool = False,
@@ -530,13 +580,26 @@ async def reconcile_throttled(pool: Any, client: Any, cfg: TopicConfig, *, redis
         cached = await _cache_get(redis)
         if cached is not None:
             return ReconcileResult(reconciled_at=cached.get("reconciled_at"), locked=cached.get("locked"),
-                                   unmanaged=list(cached.get("unmanaged") or []), cached=True)
+                                   unmanaged=list(cached.get("unmanaged") or []),
+                                   leaving=list(cached.get("leaving") or []), cached=True)
     try:
         result = await reconcile(pool, client, cfg, actor=actor)
     except SnsError as exc:
         return ReconcileResult(error=exc.code)
     await _cache_set(redis, result.summary())
     return result
+
+
+async def periodic_reconcile(pool: Any, *, redis: Any = None, client: Any = None) -> Optional[ReconcileResult]:
+    """One scheduled reconcile (the api's ops sampler, every OPS_METRICS_INTERVAL_S): None when the topic is not
+    configured. Throttled like a page view, so a tick right after a page view costs nothing. Without it, an address
+    removed while pending that confirms later would keep getting alerts until someone opened the page."""
+    cfg = topic_config()
+    if cfg is None:
+        return None
+    if client is None:
+        client = await asyncio.to_thread(sns_client, cfg.region)
+    return await reconcile_throttled(pool, client, cfg, redis=redis, actor=ACTOR_PERIODIC)
 
 
 # ── Ops e-mail recipients ────────────────────────────────────────────────────────────────────────
