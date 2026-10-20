@@ -4,9 +4,9 @@
 import type { NextConfig } from "next";
 import path from "path";
 
-// AA-885 — the only legal page that exists on adventure.asia today (curl -sI → 200, 19/10/2026).
-// adventure.asia has no terms page, so /terms is a portal page (app/terms/page.tsx) until AA-820.
-const PRIVACY_POLICY_URL = "https://adventure.asia/privacy-policy";
+// AA-886 — /privacy and /terms are portal pages (app/privacy, app/terms): drafts with a "pending legal
+// review" banner. The /privacy redirect to adventure.asia/privacy-policy (AA-885) is gone; that policy
+// does not describe portal data, so the portal notice links it as the company-wide policy instead.
 
 // AA-885 — security headers on every portal response. The CSP is deliberately minimal (no
 // script-src / style-src yet: the pages use inline styles and Next inline scripts); it only stops
@@ -33,7 +33,6 @@ const nextConfig: NextConfig = {
       // The portal keeps its /portal/* paths on its own host (AA-885: no href rewrite). The bare
       // host lands on the dashboard; proxy.ts sends a visitor without a session to /tenant-login.
       { source: "/", destination: "/portal/dashboard", permanent: false },
-      { source: "/privacy", destination: PRIVACY_POLICY_URL, permanent: false },
     ];
   },
   async headers() {
