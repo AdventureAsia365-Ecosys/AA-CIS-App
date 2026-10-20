@@ -54,11 +54,12 @@ from services.acp_content_writing import authenticity, hygiene, sentence_repair,
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
-                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES, F9PassMemory,
+                                                          FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
-                                                          hold_failure, merge_faq_pairs, paa_for_scope,
+                                                          hold_failure, merge_faq_pairs, never_holds,
+                                                          paa_for_scope,
                                                           replace_faq_section,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
@@ -378,11 +379,12 @@ def _held_reason_from(first_failure: dict) -> str:
 def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
     """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
     product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
-    (F15_voice) is left — it is added to the flags so the admin still sees it."""
+    (F15_voice) or an under-floor F14_social_shape (AA-780) is left — it is added to the flags so the
+    admin still sees it (quality_gates.never_holds)."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
         return "held", _held_reason_from(hold), flags
-    style = [g for g in gate_ledger if not g["passed"] and g["gate"] in STYLE_ONLY_GATES]
+    style = [g for g in gate_ledger if not g["passed"] and never_holds(g)]
     return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
 
 
@@ -852,8 +854,9 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     (CONTEXT.md), and "failed blocking yet approved" read as a gate bug."""
     if status != "approved":
         return gate_ledger
+    # AA-780 — an under-floor F14_social_shape kept from attempt 1 the same way (never_holds).
     return [{**g, "blocking": False, "waived": True}
-            if not g["passed"] and g.get("blocking", True) and g["gate"] in STYLE_ONLY_GATES else g
+            if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
             for g in gate_ledger]
 
 

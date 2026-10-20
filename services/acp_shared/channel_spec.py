@@ -139,6 +139,9 @@ STOCK_PHRASES = (
     "worth sitting with", "worth paying attention to", "difficult to overstate", "not incidental",
     "not by accident", "tells you something", "says something about", "speaks volumes", "here's the thing",
     "in a world where", "Not as X. Not as Y.",
+    # AA-780 (S234 r4 plan #7) — lines the r1–r4 LinkedIn posts repeated across brands and rounds.
+    "not filler", "worth pausing on", "is not a backdrop", "does not perform", "tolerates them",
+    "isn't an inconvenience",
 )
 STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"\bworth sitting with\b",
@@ -154,6 +157,19 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"\bhere'?s the thing\b",
     r"\bNot as [^.!?\n]{1,40}\.\s+Not as\b",
     r"\bin a world (?:where|of)\b",
+    # AA-780 — S234 r1–r4 posts: "That's not filler." / "That stop isn't filler." / "not downtime filler"
+    r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:\w+\s+)?filler\b",
+    r"\bworth pausing (?:on|over|in|for)\b",
+    # "was not simply a dramatic backdrop", "That is not a backdrop." — never "forms a dramatic backdrop"
+    r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t)\s+(?:simply\s+|just\s+|merely\s+|only\s+)?"
+    r"(?:an?\s+|the\s+)?(?:\w+\s+)?backdrop\b",
+    # "The landscape does not perform for visitors." — intransitive only: "the monks do not perform the
+    # dance" (an object follows) is a trip fact
+    r"\b(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform\b(?!\s+(?:a|an|the|its|their|any|this|these|"
+    r"those|it|them|rituals?|ceremon(?:y|ies)|dances?)\b)",
+    r"\btolerates (?:them|you|us|visitors|travell?ers)\b",
+    # "isn't an inconvenience", "These aren't inconveniences", "not a bureaucratic inconvenience"
+    r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:an?\s+)?(?:\w+\s+)?inconveniences?\b",
 ))
 # A first sentence that starts "There is a …" / "There's a …" (S232: 20/29 openers; S233: 6/12).
 GENERIC_OPENER_RE = re.compile(r"^\s*There(?:\s+is|'s|’s|\s+was)\s+(?:a|an|one)\b", re.I)
@@ -183,7 +199,10 @@ B2B_RE = re.compile(TRADE_PATTERN, re.I)
 
 _LINKEDIN_AVOID = (
     "many emojis, generic travel copy, hard sell, long itinerary lists, hidden gem, bucket list, paradise awaits, "
-    "markdown formatting, contrast frames (isn't X but Y), " + ", ".join(STOCK_PHRASES)
+    "markdown formatting, contrast frames (isn't X but Y), "
+    # AA-780 (plan §3.7) — no commas inside an item (ranking.split_avoid_phrases splits on them)
+    "the one-line-per-paragraph broetry cadence, two short maxims in a row (\"That's not X. That's Y.\"), "
+    "humblebrag framing, " + ", ".join(STOCK_PHRASES)
 )
 _TRAVELLER_FACING = ("traveller-facing: write to people who might take this trip (the brand's Audience line), "
                      "never to travel professionals, operators or other brands")
@@ -191,8 +210,13 @@ _TRAVELLER_FACING = ("traveller-facing: write to people who might take this trip
 _REGISTER_ROWS: dict[str, dict] = {
     CONSUMER_SOCIAL: {
         "use_when": f"Social proof of a trip worth doing, in the brand's own energetic voice; {_TRAVELLER_FACING}",
-        "structure": ("One-sentence hook → 2-4 short paragraphs built on concrete details from the source → what "
-                      "it means for the people on the trip → light, direct CTA → hashtags"),
+        # AA-780 (plan §3.7) — no example sentence: Trail Pulse's test seed is Kuang Si, and a worked
+        # example is pasted verbatim (the brief-paste failure F15 catches). "Contractions" stay with the
+        # brand pack.
+        "structure": ("One-sentence hook that states the observation, not a question → 3-4 short paragraphs "
+                      "developing one idea, in second person with active verbs on what the people on the trip "
+                      "do in the source, no maxims → light, direct CTA → hashtags. Instead of a maxim pair like "
+                      "\"That's not X. That's Y.\" write one plain sentence that says what happens and when."),
         "words": (120, 250),
     },
     EDITORIAL: {
