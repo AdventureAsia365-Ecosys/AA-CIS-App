@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from api.routers import v1_integrations as integ_mod
+from tests.unit.safe_http_fakes import TARGET, response
 from tests.unit.test_aa859_tenant_pool_reentrancy import TENANT_ID, _ReentrancyGuardPool, _conn, _request
 
 _ROW = {"config": {"site_url": "https://blog.example.com", "page_id": "123"}, "secret_key": "acp/x",
@@ -19,26 +20,12 @@ _FB_CREDS = {"page_id": "123", "page_access_token": "t"}
 
 
 def _http(check=None):
-    """aiohttp.ClientSession() stand-in; `check()` runs when the remote GET is entered."""
-    resp = MagicMock()
-    resp.status = 200
-    resp.headers = {"content-type": "application/json"}
-    resp.text = AsyncMock(return_value='{"id": "1"}')
-
-    async def enter(*_a):
+    """shared.safe_http.request stand-in (AA-875); `check()` runs when the remote GET is made."""
+    async def request(*_a, **_k):
         if check:
             check()
-        return resp
-
-    resp_ctx = MagicMock()
-    resp_ctx.__aenter__ = AsyncMock(side_effect=enter)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-    session = MagicMock()
-    session.get = MagicMock(return_value=resp_ctx)
-    session_ctx = MagicMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
+        return response(200, "application/json", '{"id": "1"}')
+    return AsyncMock(side_effect=request)
 
 
 def _no_connection_held(request):
@@ -85,7 +72,7 @@ async def _test_wp(request):
         held()
         return dict(_WP_CREDS)
     with patch.object(integ_mod, "_get_secret", side_effect=secret), \
-            patch.object(integ_mod.aiohttp, "ClientSession", _http(held)):
+            patch(TARGET, _http(held)):
         return await integ_mod.test_wordpress(request, tenant={"sub": TENANT_ID})
 
 
@@ -96,7 +83,7 @@ async def _test_fb(request):
         held()
         return dict(_FB_CREDS)
     with patch.object(integ_mod, "_get_secret", side_effect=secret), \
-            patch.object(integ_mod.aiohttp, "ClientSession", _http(held)):
+            patch(TARGET, _http(held)):
         return await integ_mod.test_facebook(request, tenant={"sub": TENANT_ID})
 
 
@@ -146,32 +133,20 @@ async def test_held_check_catches_a_connection_held_across_the_remote_get(handle
     """Mutation check through the route itself: block 2 opened before the remote GET (acquire -> GET ->
     UPDATE; still 2 acquires, nothing nested, all released). The route swallows any exception around the
     GET, so only the recorded holders show it."""
-    real_session = None
+    real_request = None
 
-    def session_inside_a_tenant_block(*a, **k):
-        ctx = real_session(*a, **k)
-        outer = ctx.__aenter__
-
-        async def enter():
-            enter.cm = integ_mod.acquire_scoped_conn(request, TENANT_ID, integ_mod.INTEGRATION_CONNECT_FLAG,
-                                                     fail_closed=True)
-            await enter.cm.__aenter__()
-            return await outer()
-
-        async def leave(*exc):
-            await enter.cm.__aexit__(None, None, None)
-            return False
-        ctx.__aenter__ = AsyncMock(side_effect=enter)
-        ctx.__aexit__ = AsyncMock(side_effect=leave)
-        return ctx
+    async def request_inside_a_tenant_block(*a, **k):
+        async with integ_mod.acquire_scoped_conn(request, TENANT_ID, integ_mod.INTEGRATION_CONNECT_FLAG,
+                                                 fail_closed=True):
+            return await real_request(*a, **k)
 
     pool = _ReentrancyGuardPool(_conn(_ROW))
     request = _request(pool)
     held = _no_connection_held(request)
-    real_session = _http(held)
+    real_request = _http(held)
     secret = _WP_CREDS if handler is _test_wp else _FB_CREDS
     with patch.object(integ_mod, "_get_secret", return_value=dict(secret)), \
-            patch.object(integ_mod.aiohttp, "ClientSession", side_effect=session_inside_a_tenant_block):
+            patch(TARGET, side_effect=request_inside_a_tenant_block):
         await (integ_mod.test_wordpress if handler is _test_wp else integ_mod.test_facebook)(
             request, tenant={"sub": TENANT_ID})
     assert pool.violations == [] and pool.holders == set()

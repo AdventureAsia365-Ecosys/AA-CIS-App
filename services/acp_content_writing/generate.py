@@ -462,7 +462,7 @@ Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}"""
 def write_faq(
     *, source: str, body: str, brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, unused_facts: list[str] | None = None,
-    paa_questions: list[str] | None = None,
+    paa_questions: list[str] | None = None, required_questions: list[str] | None = None,
 ) -> tuple[list[tuple[str, str]], float]:
     """AA-768 (S234 round 2) — the blog FAQ contract's one regeneration: 4 Q/A pairs answered from
     `source` (the moment's own seed lines + Facts — never the AUDIENCE / BRAND lines or another
@@ -475,7 +475,11 @@ def write_faq(
     drop_restated_faq and add something the post lacks.
 
     `paa_questions` (AA-779): People Also Ask questions for the piece's own places
-    (quality_gates.paa_for_scope) — preferred when a SOURCE fact answers one."""
+    (quality_gates.paa_for_scope) — preferred when a SOURCE fact answers one.
+
+    `required_questions` (AA-779, S245 r7): the real search questions the post's FAQ does not ask
+    yet — answered first, in order, keeping their words, each one a SOURCE fact answers (the
+    writer used 3 of 30 given questions in r7). Without them the prompt is unchanged."""
     parts = []
     if brand_name:
         parts.append(f"BRAND (never name another brand): {brand_name}")
@@ -483,6 +487,12 @@ def write_faq(
     if unused_facts:
         parts.append("UNUSED FACTS (from the SOURCE; the POST does not tell these yet):\n"
                      + "\n".join(f"- {f}" for f in unused_facts))
+    if required_questions:
+        parts.append("REAL QUESTIONS (what readers really search for; write these pairs FIRST, in this order, "
+                     "one pair per question a SOURCE fact answers: keep the question's own words — you may only "
+                     "fix its grammar or add the place's name — and skip one no SOURCE fact answers; then fill "
+                     "the rest as usual. Never write that readers search for or ask it):\n"
+                     + "\n".join(f"- {q}" for q in required_questions))
     if paa_questions:
         parts.append("SEARCH QUESTIONS (what readers search for; use one only when a SOURCE fact answers it):\n"
                      + "\n".join(f"- {q}" for q in paa_questions))
@@ -495,7 +505,8 @@ def write_faq(
         tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
         cost_usd=resp.cost_usd, tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id,
         quality_signal={"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
-                        "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or [])},
+                        "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or []),
+                        **({"required_questions": len(required_questions)} if required_questions else {})},
         stop_reason=getattr(resp, "stop_reason", None),
         account=getattr(resp, "satellite_account", None),
         fallback_used=getattr(resp, "fallback_used", None),

@@ -1276,10 +1276,11 @@ logged under `F7_faq_autofix`.
 S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
 consumer_social / editorial / warm_practical / observational, from the voice adjectives then brand_type) —
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
-and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks only above 1.3× the band → full
-rewrite), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
+and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
+rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
+holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
-generic or repeated opener; warn only, never repaired). All pass for every other channel. The F9 judge
+generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
 on…", "This guide covers…", the SCOPE's day span), the brand pack's audience ranges ("25–40", "seven-to-sixteen")
@@ -1342,6 +1343,19 @@ the chain (every tier, so it never reaches the T8 prompt, ranking or the tenant-
 records `search_questions` (with source), `question_sources` (per-source counts) and `faq_questions` (each
 final FAQ question's real source, or `writer`); the admin Content Quality drawer shows them. AA-779 (B) SERP
 top-up and (C) Autocomplete are admin jobs that will add sources to `DB_SOURCES`.
+S245 r7 follow-up (AA-779) — **real questions first.** The off-meaning test also drops a place name used as
+a dictionary word ('Is moron a British word?', 'What is moron in German?', spelling / translation cues, or
+the name lowercase with no travel word). When the writer's FAQ skips a given real question, the blog's one FAQ
+regeneration (`write_faq` `required_questions`) answers it first; the FAQ then lists real-question pairs first
+(a reorder only — a writer pair goes only above 5 pairs; deterministic, `real_first_faq`; `writer_input`
+records `faq_pairs_before`/`after`). The lowercase-name test reads only whole single-word place names that are
+not common English words, with no other place / country / travel word in the question, never on autocomplete
+text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_serp_topup.py`
+(admin-run only, dry run by default, hard cap $3 across all runs, summed from `shared.dfs_call_log` endpoint
+`serp_advanced_paa_deep`) buys one SERP with `people_also_ask_click_depth=2` per blog place with < 3 real
+questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
+`US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
+question) and read back as the `serp_topup` tier.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a

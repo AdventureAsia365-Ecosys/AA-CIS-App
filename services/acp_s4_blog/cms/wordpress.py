@@ -8,19 +8,24 @@ post status. Existing callers (services/acp_s4_blog/cms/publisher.py) never set 
 explicitly, so they keep getting BlogContent's own default ("draft") — zero behavior change for
 that pipeline. api/routers/v1_publish.py (AA-458's real publish endpoint) is the first caller to
 pass `status="publish"`.
+
+AA-875: `wp_url` is tenant-supplied, so every call goes through shared.safe_http (public addresses
+only, checked at connect and on each redirect; https only; body cap). A blocked site raises
+safe_http.UnsafeURLError, which callers treat like any other failure.
 """
 import base64
 import json
 import logging
 from typing import Optional, Tuple
+from urllib.parse import quote
 
-import aiohttp
+from shared import safe_http
 
 from .base import CMSAdapter, BlogContent, CMSPostResult
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_TIMEOUT_S = 30.0
 
 
 class WordPressAdapter(CMSAdapter):
@@ -44,15 +49,11 @@ class WordPressAdapter(CMSAdapter):
             },
         }
 
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.post(
-                f"{self.api_base}/posts",
-                json=payload,
-                headers=self._headers(),
-            ) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("POST", f"{self.api_base}/posts", json=payload,
+                                       headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         if status_code not in (200, 201):
             raise RuntimeError(f"WP API {status_code}: {body_text[:300]}")
@@ -88,11 +89,11 @@ class WordPressAdapter(CMSAdapter):
         even though its response was lost. Raises on anything that is not a real WordPress list
         response — the caller must not post again when it cannot tell."""
         params = {"slug": slug, "status": "publish,future,draft,pending,private", "context": "edit"}
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(f"{self.api_base}/posts", params=params, headers=self._headers()) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("GET", f"{self.api_base}/posts", params=params,
+                                       headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         parsed_body = None
         if status_code == 200 and content_type.startswith("application/json"):
@@ -120,11 +121,11 @@ class WordPressAdapter(CMSAdapter):
         object in the trash, and a 404/410 counts only with WordPress's own JSON error code — a
         WAF or host 404 page raises instead, so the caller never reports a post removed while it
         is still live."""
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.delete(f"{self.api_base}/posts/{post_id}", headers=self._headers()) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("DELETE", f"{self.api_base}/posts/{quote(str(post_id), safe='')}",
+                                       headers=self._headers(), timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         parsed_body = _json_or_none(content_type, body_text)
         if status_code == 200 and isinstance(parsed_body, dict) and "id" in parsed_body:

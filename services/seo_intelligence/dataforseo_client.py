@@ -16,6 +16,9 @@ DEFAULT_LOCATION_NAME = "United States"
 DEFAULT_LANGUAGE_CODE = "en"
 
 DFS_OK = 20000
+# AA-779 (B) — the `shared.dfs_call_log.endpoint` label of the admin SERP top-up's deep-PAA calls, so
+# their spend can be summed on its own (the top-up's $3 cap is across every run).
+SERP_PAA_DEEP_ENDPOINT = "serp_advanced_paa_deep"
 # AA-647 — HTTP statuses / DFS status-code families that mean "every further call will fail too"
 # (auth or payment). Anything else is a failure of this one call only.
 _FATAL_HTTP = {401, 402, 403}
@@ -237,6 +240,8 @@ class DataForSEOClient:
         seed: str,
         location_code: int = DEFAULT_LOCATION_CODE,
         language_code: str = DEFAULT_LANGUAGE_CODE,
+        people_also_ask_click_depth: int | None = None,
+        log_endpoint: str = "serp_advanced",
     ) -> dict:
         # One SERP call serves both People-Also-Ask and related searches (cost-neutral).
         payload = [{
@@ -244,7 +249,11 @@ class DataForSEOClient:
             "location_code": location_code,
             "keyword":       seed,
         }]
-        self._precheck("serp_advanced")
+        if people_also_ask_click_depth:
+            # AA-779 (B) — DFS expands the PAA box this many levels (1-4; billed extra per click).
+            # Only the admin SERP top-up passes it; every other payload is unchanged.
+            payload[0]["people_also_ask_click_depth"] = int(people_also_ask_click_depth)
+        self._precheck(log_endpoint)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{DATAFORSEO_BASE}/serp/google/organic/live/advanced",
@@ -253,7 +262,7 @@ class DataForSEOClient:
             )
             resp.raise_for_status()
             data = resp.json()
-        self._log_live("serp_advanced", data, keyword=seed, location_code=location_code, keyword_count=1)
+        self._log_live(log_endpoint, data, keyword=seed, location_code=location_code, keyword_count=1)
         # AA-647 — an HTTP-200 body with a failed task status is not a SERP; every caller already
         # wraps this method in try/except, so raising keeps a failure from being parsed as "0 PAA".
         status_err = _dfs_status_error(data)
@@ -269,6 +278,45 @@ class DataForSEOClient:
     ) -> list[str]:
         data = await self._serp_advanced(seed, location_code, language_code)
         return self._parse_paa(data)
+
+    async def fetch_people_also_ask_deep(
+        self,
+        seed: str,
+        click_depth: int = 2,
+        location_code: int = DEFAULT_LOCATION_CODE,
+        language_code: str = DEFAULT_LANGUAGE_CODE,
+    ) -> tuple[list[str], list[str]]:
+        """AA-779 (B) — one SERP with the PAA box expanded `click_depth` levels: (questions, organic
+        domains). Admin SERP top-up only (services/acp_shared/question_topup.py)."""
+        data = await self._serp_advanced(seed, location_code, language_code,
+                                         people_also_ask_click_depth=click_depth,
+                                         log_endpoint=SERP_PAA_DEEP_ENDPOINT)
+        return self._parse_paa_deep(data), self._parse_organic_domains(data)
+
+    def _parse_paa_deep(self, data: dict, cap: int = 20) -> list[str]:
+        """Every `people_also_ask_element` title under the SERP's PAA items, at any nesting (an
+        expanded element may carry its own follow-up elements), in order, without duplicates."""
+        out: list[str] = []
+
+        def walk(node, in_paa: bool) -> None:
+            if isinstance(node, dict):
+                kind = node.get("type")
+                if in_paa and kind == "people_also_ask_element":
+                    title = node.get("title")
+                    if isinstance(title, str) and title.strip() and title.strip() not in out:
+                        out.append(title.strip())
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        walk(value, in_paa or kind == "people_also_ask")
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, in_paa)
+
+        try:
+            walk(data["tasks"][0]["result"][0]["items"], False)
+        except (KeyError, IndexError, TypeError):
+            return []
+        return out[:cap]
 
     async def fetch_related(
         self,

@@ -47,6 +47,9 @@ DFS_CALL_ESTIMATE_USD = {
     "search_volume_bulk": 0.09,
     "keywords_for_keywords": 0.09,
     "serp_advanced": 0.002,
+    # AA-779 (B) — the admin SERP top-up's own log label: a live advanced SERP with the PAA box
+    # expanded 2 levels (billed per extra click). Deliberately high so the $3 cap is never overshot.
+    "serp_advanced_paa_deep": 0.01,
 }
 
 _DAY_SPEND_SQL = {

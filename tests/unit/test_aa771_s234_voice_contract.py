@@ -608,7 +608,8 @@ class TestF15Voice:
     def test_clean_post_passes_and_other_channels_skip(self):
         text = "Day 2 ends at turquoise pools. Swim, rest, eat. Ask us for the dates."
         assert qg.gate_voice(text, spec=self.spec)["passed"]
-        assert qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL)["passed"]
+        # AA-780 — "Swim, rest, eat." + "Ask us for the dates." would be a broetry run but for the CTA
+        assert qg.gate_voice_warn(text, spec=self.spec, brand_pack=TRAIL, cta="Ask us for the dates.")["passed"]
         # S234 round 3 — the cross-round stock lines ('worth sitting with', …) run on every channel; the
         # rest of the LinkedIn stock list stays LinkedIn-only
         assert qg.gate_voice("That detail speaks volumes about the place.", spec=None)["passed"]
@@ -622,15 +623,16 @@ class TestF15Voice:
             out = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                        brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL)
         gates = {g["gate"]: g for g in out["gate_ledger"]}
-        assert not gates["F14_social_shape"]["passed"]  # 13 words, under the band
-        assert gates["F15_voice"]["blocking"] and out["first_failure"]["gate"] == "F15_voice"
+        # 13 words, under the band: AA-780 — blocks on attempt 1 (one full rewrite), ahead of F15 in the ledger
+        assert gates["F14_social_shape"]["blocking"] and out["first_failure"]["gate"] == "F14_social_shape"
+        assert gates["F15_voice"]["blocking"]
         assert not gates["F15_voice_warn"]["passed"] and not gates["F15_voice_warn"]["blocking"]
         with patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
                                                                  qg._result("F9_brand_style", [], blocking=False)]):
             later = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                          brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL,
                                          stock_blocking=False)
-        assert later["passed"] and any(g["gate"] == "F15_voice" for g in later["flags"])
+        assert later["passed"] and {"F14_social_shape", "F15_voice"} <= {g["gate"] for g in later["flags"]}
 
     # S234 review — a stock repair touches the stock sentence only, never the warn-only checks.
     def test_stock_repair_plan_ignores_the_warn_only_checks(self):

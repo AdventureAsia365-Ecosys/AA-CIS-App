@@ -53,19 +53,21 @@ from services.acp_content_writing.facts import fetch_facts_for_writing, format_f
 from services.acp_content_writing import authenticity, hygiene, sentence_repair, text_integrity, trip_facts
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
-from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
-                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES, F9PassMemory,
+from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
+                                                          FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_subjectless_faq, drop_unanswerable_faq,
                                                           faq_answer_problem, faq_pair_count, faq_pairs,
-                                                          hold_failure, merge_faq_pairs, paa_for_scope,
-                                                          replace_faq_section,
+                                                          hold_failure, merge_faq_pairs, never_holds,
+                                                          paa_for_scope, replace_faq_section, seed_place_names,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
-from services.acp_shared.real_questions import collect_real_questions, faq_sources, label_questions, source_counts
+from services.acp_shared.real_questions import (SOURCE_WRITER, collect_real_questions, faq_sources,
+                                                is_off_meaning, label_questions, missing_real_questions,
+                                                real_first_pairs, source_counts)
 from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
@@ -378,11 +380,14 @@ def _held_reason_from(first_failure: dict) -> str:
 def _hold_or_ship(gate_ledger: list, flags: list) -> tuple[str, Optional[str], list]:
     """(status, held_reason, flags) for a piece that stops with failures: 'held' on the first
     product-truth gate (quality_gates.hold_failure); 'approved' when only a style-only gate
-    (F15_voice) is left — it is added to the flags so the admin still sees it."""
+    (F15_voice) or an under-floor F14_social_shape (AA-780) is left — it is added to the flags so the
+    admin still sees it (quality_gates.never_holds)."""
     hold = hold_failure(gate_ledger)
     if hold is not None:
         return "held", _held_reason_from(hold), flags
-    style = [g for g in gate_ledger if not g["passed"] and g["gate"] in STYLE_ONLY_GATES]
+    # Only the BLOCKING entries being waived here (mirrors _waive_style_only): a non-blocking warn —
+    # e.g. a post-cut F14 under-floor warn — is already in `flags` from run_quality_gates or the cut.
+    style = [g for g in gate_ledger if not g["passed"] and g.get("blocking", True) and never_holds(g)]
     return "approved", None, list(flags) + [{**g, "blocking": False} for g in style if g not in flags]
 
 
@@ -508,6 +513,29 @@ def _cut_blog_truth_items(content_text: str, items: list[dict], *, ignore: froze
                        "cut_gates": sorted({g for it in cut_items for g in (it.get("gates") or [it.get("gate")])})}
 
 
+def _is_floor_block(g: dict) -> bool:
+    """AA-780 — a failed, blocking F14_social_shape that never holds: the attempt-1 under-floor block."""
+    return g["gate"] == F14_GATE and not g["passed"] and g.get("blocking", True) and never_holds(g)
+
+
+def _floor_only_failure(blocking_fails: list) -> bool:
+    """AA-780 review — the attempt's blocking failures are all gates that never hold, one of them the
+    under-floor F14 block (the AA-528 guard does not revert a rewrite of such an attempt that is repairable)."""
+    return (bool(blocking_fails) and all(never_holds(g) for g in blocking_fails)
+            and any(_is_floor_block(g) for g in blocking_fails))
+
+
+def _waive_floor_block(gate_ledger: list, flags: list) -> tuple[list, list]:
+    """AA-780 review — (ledger, flags) with the under-floor F14 block of a reverted-to attempt 1 stored
+    `blocking: false, waived: true` and shown as the F14 flag (replacing an F14 flag of the discarded
+    rewrite). A no-op for any other ledger."""
+    if not any(_is_floor_block(g) for g in gate_ledger):
+        return gate_ledger, flags
+    ledger = [{**g, "blocking": False, "waived": True} if _is_floor_block(g) else g for g in gate_ledger]
+    waived = [g for g in ledger if g["gate"] == F14_GATE and g.get("waived")]
+    return ledger, [f for f in flags if f.get("gate") != F14_GATE] + waived
+
+
 def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, channel: str,
                      ignore: frozenset = frozenset(), cta: Optional[str] = None,
                      moments: Optional[list] = None, spec=None) -> tuple[str, list, list, Optional[dict]]:
@@ -564,7 +592,16 @@ def _cut_truth_items(content_text: str, gate_ledger: list, flags: list, *, chann
     ledger = [fresh.get(g["gate"], new_f9 if g is f9 else g) for g in gate_ledger]
     entry = {"gate_targeted": "F9_cta_fact", "repair_mode": "f9_truth_cut" if n_cut else "f9_cut_refused",
              **marks, "violations": [reason], "repairable": False}
-    return content_text, ledger, list(flags) + ([new_f9] if all_cut else []), entry
+    return content_text, ledger, _refresh_flags(flags, fresh) + ([new_f9] if all_cut else []), entry
+
+
+def _refresh_flags(flags: list, fresh: dict) -> list:
+    """AA-780 review — after a cut re-runs the length/shape gates (`fresh`, gate name → result), their
+    warn flags from before the cut (e.g. an F14 under-floor warn with the pre-cut word count) are
+    replaced by the post-cut warns, so the admin drawer never shows a stale and a fresh entry side by side.
+    A fresh BLOCKING failure stays only in the ledger (it holds the piece)."""
+    kept = [f for f in flags if f.get("gate") not in fresh]
+    return kept + [r for r in fresh.values() if not r["passed"] and not r.get("blocking", True)]
 
 
 def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, status: str,
@@ -605,7 +642,7 @@ def _enforce_authenticity(content_text: str, gate_ledger: list, flags: list, sta
     else:
         new_f19 = {**f19, **marks, "blocking": False, "waived": True, "waived_reason": reason}
     ledger = [fresh.get(g["gate"], new_f19 if g is f19 else g) for g in gate_ledger]
-    flags = list(flags) + ([] if left else [new_f19])
+    flags = _refresh_flags(flags, fresh) + ([] if left else [new_f19])
     status, held_reason, flags = _hold_or_ship(ledger, flags)
     entry = {"gate_targeted": F19_GATE, "repair_mode": "aup_cut", **marks, "violations": [reason],
              "repairable": False}
@@ -852,8 +889,9 @@ def _waive_style_only(gate_ledger: list[dict], status: str) -> list[dict]:
     (CONTEXT.md), and "failed blocking yet approved" read as a gate bug."""
     if status != "approved":
         return gate_ledger
+    # AA-780 — an under-floor F14_social_shape kept from attempt 1 the same way (never_holds).
     return [{**g, "blocking": False, "waived": True}
-            if not g["passed"] and g.get("blocking", True) and g["gate"] in STYLE_ONLY_GATES else g
+            if not g["passed"] and g.get("blocking", True) and never_holds(g) else g
             for g in gate_ledger]
 
 
@@ -882,7 +920,8 @@ def _style_only_repair(gate_ledger: list[dict]) -> bool:
 
 async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygiene.HygieneContext,
                                 request_id, brand_ignore: frozenset,
-                                fix_subjects: bool = False) -> tuple[str, float, list[str]]:
+                                fix_subjects: bool = False,
+                                required: Optional[list[str]] = None) -> tuple[str, float, list[str]]:
     """S234 round 2 (panel §5 fix 1) — a blog must end with "## FAQ" and ≥ FAQ_MIN_PAIRS pairs, counted
     after drop_restated_faq / drop_unanswerable_faq. When short: ONE t9_repair call
     (generate.write_faq, about $0.004–0.008 on Haiku) writes a new FAQ from the moment's own seed
@@ -900,23 +939,35 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     do not answer their question (quality_gates.faq_answer_problem) and could not be dropped without
     going under the minimum — the same one regeneration runs; those pairs leave the base before the
     merge, and the merged FAQ goes through drop_subjectless_faq too. Kept when it has more pairs, or
-    (fix_subjects) at least as many with fewer failing ones."""
+    (fix_subjects) at least as many with fewer failing ones.
+
+    S245 r7 — `required`: the real search questions the FAQ does not ask yet (missing_real_questions).
+    The same one regeneration answers them first (write_faq required_questions); the merged FAQ puts
+    real-question pairs first (real_first_pairs: a reorder; a writer pair goes only above
+    FAQ_MAX_PAIRS). Kept also when it asks more real questions than before and does not fall under
+    min(before, FAQ_MIN_PAIRS). An off-meaning question is never required (checked again here)."""
     before = faq_pair_count(content_text)
-    if before >= FAQ_MIN_PAIRS and not fix_subjects:
-        return content_text, 0.0, []
     own_seed = hygiene.split_seed(context.get("atom_text") or "")[0]
+    if required:
+        names, lower, countries = seed_place_names(own_seed)
+        required = [q for q in required if q and not is_off_meaning(q, names, lower, countries)]
+    required = [q for q in (required or []) if q][:FAQ_MAX_PAIRS]
+    if before >= FAQ_MIN_PAIRS and not fix_subjects and not required:
+        return content_text, 0.0, []
     facts_text = context.get("facts_text") or ""
     audience = context.get("brand_audience") or {}
     source = own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
     subject_source = f"{own_seed}\n{facts_text}"
     body = content_text.partition("## FAQ")[0]
-    paa_questions = context.get("paa_questions") or []
+    paa_questions = [q for q in context.get("paa_questions") or [] if q not in required]
+    real_pool = _real_question_pool(context)
     try:
         pairs, cost = await asyncio.to_thread(
             write_faq, source=source, body=body, brand_name=audience.get("brand_name"),
             tenant_id=context.get("tenant_id"), angle_gate_request_id=str(request_id),
             unused_facts=unused_source_facts(source, body),
             **({"paa_questions": paa_questions} if paa_questions else {}),
+            **({"required_questions": required} if required else {}),
         )
     except Exception as e:  # noqa: BLE001 — F16_faq reports the short FAQ
         logger.warning("t9_faq_regen_failed", request_id=str(request_id), error=str(e)[:200])
@@ -930,16 +981,68 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     new, _ = drop_restated_faq(new)
     new, _ = drop_unanswerable_faq(new, own_seed, facts_text)
     new, _, failing_after = drop_subjectless_faq(new, subject_source)
-    merged = merge_faq_pairs(faq_pairs(new))[:FAQ_MAX_PAIRS]
-    if len(merged) != faq_pair_count(new):
+    # S245 r7 — a pair asking a real search question goes before the writer's own (and wins a duplicate)
+    ordered = _real_pairs_first(faq_pairs(new), real_pool)
+    merged, real_after = real_first_pairs(merge_faq_pairs(ordered), real_pool, max_pairs=FAQ_MAX_PAIRS)
+    merged = merged[:FAQ_MAX_PAIRS]
+    if merged != faq_pairs(new):
         new = replace_faq_section(new, merged)
     after = faq_pair_count(new)
+    real_before = sum(1 for f in faq_sources([q for q, _ in faq_pairs(content_text)], real_pool)
+                      if f["source"] != SOURCE_WRITER) if real_pool else 0
     problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
-    better = after > before or (fix_subjects and after >= before and failing_after < failing_before)
+    better = (after > before or (fix_subjects and after >= before and failing_after < failing_before)
+              or (bool(required) and real_after > real_before and after >= min(before, FAQ_MIN_PAIRS)))
     if not better or problems:
         why = "; ".join(problems[:2]) if problems else f"{after} pair(s) left after the droppers"
         return content_text, cost, [f"FAQ regeneration not kept ({why})"]
-    return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs)"]
+    real_note = f", real questions {real_before} → {real_after}" if required else ""
+    return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs{real_note})"]
+
+
+def _real_question_pool(context: dict) -> list[dict]:
+    """S245 r7 — what a FAQ question is matched against to be ordered first / counted as real: only
+    the in-scope, labelled questions the writer got (paa_for_scope kept them). A chain candidate
+    paa_for_scope dropped never makes a writer pair 'real'; the full candidate pool is used only for
+    the admin faq_questions provenance record."""
+    return [g for g in context.get("search_questions") or []
+            if isinstance(g, dict) and g.get("source") != SOURCE_WRITER]
+
+
+def _real_pairs_first(pairs: list[tuple[str, str]], real_pool: list[dict]) -> list[tuple[str, str]]:
+    """Stable: pairs asking a real question first (so merge_faq_pairs keeps the real twin)."""
+    if not real_pool:
+        return list(pairs)
+    tags = [f["source"] != SOURCE_WRITER for f in faq_sources([q for q, _ in pairs], real_pool)]
+    return [p for p, t in zip(pairs, tags) if t] + [p for p, t in zip(pairs, tags) if not t]
+
+
+def real_first_faq(content_text: str, context: dict) -> tuple[str, list[str]]:
+    """S245 r7 (AA-779) — deterministic, every blog attempt after the FAQ contract: real-question
+    pairs first (real_first_pairs: a reorder; no writer pair is dropped unless the FAQ is over
+    FAQ_MAX_PAIRS). No change when the FAQ asks no real question. Returns (text, log lines for the
+    admin-only F7_faq_autofix flag)."""
+    real_pool = _real_question_pool(context)
+    pairs = faq_pairs(content_text)
+    if not real_pool or not pairs:
+        return content_text, []
+    out, real_n = real_first_pairs(pairs, real_pool, max_pairs=FAQ_MAX_PAIRS)
+    if out == pairs:
+        return content_text, []
+    dropped = len(pairs) - len(out)
+    log = [f"FAQ puts its {real_n} real search question(s) first"
+           + (f" and drops {dropped} writer question(s) over the {FAQ_MAX_PAIRS}-pair cap" if dropped else "")]
+    return replace_faq_section(content_text, out), log
+
+
+def faq_pair_stats(content_text: str, context: dict) -> dict:
+    """S245 r7 review — {pairs, real} of a FAQ (real = asks an in-scope given question), recorded
+    before and after the FAQ step so the Done-when line-2 checkpoint can tell real questions added
+    from writer questions removed."""
+    pool_ = _real_question_pool(context)
+    questions = [q for q, _ in faq_pairs(content_text)]
+    real = sum(1 for f in faq_sources(questions, pool_) if f["source"] != SOURCE_WRITER) if pool_ else 0
+    return {"pairs": len(questions), "real": real}
 
 
 async def _fix_first_line(content_text: str, *, spec, context: dict, hyg: hygiene.HygieneContext,
@@ -1689,6 +1792,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             content_text, caveat_log = trip_facts.add_family_caveats(content_text, trip_ctx, brand_ignore)
             hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
+                if fresh_text:  # S245 r7 review — the writer's own FAQ, before any FAQ step
+                    context["faq_pairs_before"] = faq_pair_stats(content_text, context)
                 content_text, faq_dropped = drop_restated_faq(content_text)
                 own_seed = hygiene.split_seed(atom_text)[0]
                 content_text, faq_unanswerable = drop_unanswerable_faq(content_text, own_seed, facts_text)
@@ -1707,11 +1812,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             <= faq_pair_count(prev_snapshot["content_text"]))
                 if faq_fell:
                     faq_repair_regen = True
+                # S245 r7 — the real search questions the writer's FAQ does not ask: the same one
+                # regeneration per writer text answers them first.
+                missing_real = (missing_real_questions([q for q, _ in faq_pairs(content_text)],
+                                                       context.get("search_questions") or [])
+                                if fresh_text else [])
                 if fresh_text or faq_fell:
                     before_regen = content_text
                     content_text, faq_cost, faq_regen = await _enforce_faq_contract(
                         content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore,
-                        fix_subjects=fresh_text and subject_short > 0)
+                        fix_subjects=fresh_text and subject_short > 0, required=missing_real)
                     total_cost += faq_cost
                     if content_text != before_regen:
                         # the new FAQ replaced the kept non-answers: report what the new one still has
@@ -1719,6 +1829,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         faq_unanswerable = [x for x in faq_unanswerable if not x.startswith("kept FAQ pair")] \
                             + again_log
                     faq_unanswerable = list(faq_unanswerable) + faq_regen
+                content_text, real_first_log = real_first_faq(content_text, context)
+                faq_unanswerable = list(faq_unanswerable) + real_first_log
             first_line_log: list[str] = []
             if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split
                 content_text, fl_cost, first_line_log = await _fix_first_line(
@@ -1793,6 +1905,19 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 prev_blocking_fail = {g["gate"] for g in prev_ledger if g.get("blocking", True) and not g["passed"]}
                 cur_blocking_fail = {g["gate"] for g in gate_ledger if g.get("blocking", True) and not g["passed"]}
                 new_regressions = cur_blocking_fail - prev_blocking_fail
+                # AA-780 review — an attempt 1 that blocked only on gates that never hold, one of them the
+                # under-floor F14 (a too-short post sent to a full rewrite), had no product-truth problem for
+                # this rewrite to trade against: reverting would ship the short post the rewrite was for (the
+                # r4 false pass). When this attempt's failures are all sentence-repairable and an attempt is
+                # left, keep it and let the next attempt repair it. (An F15-only attempt 1 still reverts: its
+                # text is the full-length, truth-clean one.)
+                prev_fail = [g for g in prev_ledger if g.get("blocking", True) and not g["passed"]]
+                if (new_regressions and attempt < MAX_ATTEMPTS and _floor_only_failure(prev_fail)
+                        and first_failure["repairable"]
+                        and sentence_repair.plan(content_text, gate_ledger) is not None):
+                    logger.info("t9_gate_regression_kept_after_floor_rewrite", request_id=str(request_id),
+                                attempt=attempt, regressed_gates=sorted(new_regressions))
+                    new_regressions = set()
                 if new_regressions and len(cur_blocking_fail) >= len(prev_blocking_fail):
                     logger.info(
                         "t9_gate_regression_reverted", request_id=str(request_id), attempt=attempt,
@@ -1810,6 +1935,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         "gate_ledger": gate_ledger,
                     }
                     content_text = prev_snapshot["content_text"]
+                    # AA-780 review — attempt 1's under-floor F14 block asked for the rewrite just discarded;
+                    # it never holds, so it is waived now (and shown as a flag) instead of blocking the next
+                    # step: a remaining F1/F9 still gets its attempt-3 sentence repair (sentence_repair.plan
+                    # returns None while an F14 block is in the ledger), and nothing else → the piece ships.
+                    prev_ledger, flags = _waive_floor_block(prev_ledger, flags)
                     gate_ledger = prev_ledger
                     seo_meta = prev_snapshot["seo_meta"]
                     summary = prev_snapshot["summary"]
@@ -1830,7 +1960,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             # AA-770 — attempt 3 only when attempt 2's failures are all sentence-repairable.
             last_try = attempt >= MAX_ATTEMPTS or (
                 attempt == MAX_ATTEMPTS - 1 and sentence_repair.plan(content_text, gate_ledger) is None)
-            if not first_failure["repairable"] or last_try:
+            if first_failure is None or not first_failure["repairable"] or last_try:
                 # AA-613 — under the 3-tier severity model, `first_failure` is now ONLY ever a
                 # BLOCKING (product-truth) gate: grounding/banned/CTA/FACT_CHECK/cannibalization/
                 # SEO/structure. Brand-voice/framework failures are non-blocking warns (they never
@@ -1933,6 +2063,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             context["faq_questions"] = faq_sources([q for q, _ in faq_pairs(content_text)],
                                                    context.get("search_questions") or [],
                                                    context.get("real_questions") or [])
+            context["faq_pairs_after"] = faq_pair_stats(content_text, context)
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,
             content_text=content_text, status=status, held_reason=held_reason,
@@ -1994,7 +2125,8 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"search_questions": context.get("search_questions") or [],
             "question_sources": source_counts(context.get("real_questions") or [],
                                               context.get("search_questions") or []),
-            "faq_questions": context.get("faq_questions") or []}
+            "faq_questions": context.get("faq_questions") or [],
+            **{k: context[k] for k in ("faq_pairs_before", "faq_pairs_after") if k in context}}
            if context.get("channel") == "blog" and "real_questions" in context else {}),
     }
 
