@@ -58,7 +58,7 @@ from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
-from services.acp_shared.real_questions import is_off_meaning
+from services.acp_shared.real_questions import is_off_meaning, single_word_places
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -1739,16 +1739,28 @@ def _seed_countries(own_seed: str) -> set[str]:
     return out
 
 
+def seed_place_names(own_seed: str) -> tuple[set[str], set[str], set[str]]:
+    """The off-meaning filter's inputs for a moment (real_questions.is_off_meaning): its place name
+    tokens (proper nouns, line openers included), the single-word place names written mid-sentence
+    (the only ones the lowercase-word test reads: 'Mörön' yes, a line opener 'Fly to …' or a token of
+    'Lake Khövsgöl' / 'Great Wall' no), and the seed's country words."""
+    countries = _seed_countries(own_seed)
+    names: set[str] = set()
+    for phrase in proper_nouns(own_seed, keep_initial=True):
+        names |= set(phrase_tokens(phrase))
+    names -= countries
+    single = single_word_places(proper_nouns(own_seed), countries)
+    return names, single, countries
+
+
 def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
                   out_of_scope=(), limit: int = PAA_MAX_QUESTIONS) -> list[str]:
     """AA-779 — the PAA questions a piece's FAQ may use (see the comment above). `own_seed` = the
     moment's own lines (hygiene.split_seed), `out_of_scope` = folded gazetteer keys
     (hygiene.build_scope_lexicon(...).gazetteer). Order kept, duplicates dropped, at most `limit`."""
-    countries = _seed_countries(own_seed)
-    seed_names: set[str] = set()
-    for phrase in proper_nouns(own_seed, keep_initial=True):
-        seed_names |= set(phrase_tokens(phrase))
-    seed_names -= countries
+    # S245 r7 — the lowercase-word test (a place name written as a common word: 'Is moron still used
+    # today?') reads only single-word names capitalised mid-sentence (seed_place_names).
+    seed_names, mid_names, countries = seed_place_names(own_seed)
     seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
     out: list[str] = []
     seen: set[str] = set()
@@ -1768,7 +1780,7 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
             continue
         # S245 (AA-779 item 3) — a question about the name as a word, not the place ('Is moron a bad
         # word?' for the town Mörön) names an own place only by spelling.
-        if is_off_meaning(q, seed_names):
+        if is_off_meaning(q, seed_names, lowercase_names=mid_names, countries=countries):
             continue
         q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
         shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
