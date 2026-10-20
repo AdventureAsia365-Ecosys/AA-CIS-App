@@ -253,7 +253,8 @@ class TestRunQualityGates:
         # AA-771 (S234): + F14_social_shape, F15_voice, F15_voice_warn (pass for a channel without a spec).
         # ...+f12+f13+f13_leak+f13_repeat+f17+f18 (S234 round 3)+f14+f15+f15w+f8+f9x2
         # AA-819: + F19_authenticity (after F11, every channel).
-        assert len(outcome["gate_ledger"]) == 22
+        # AA-800: + F2_platform_truth, F2_superlatives, F2_style_warn (the word layers, every channel).
+        assert len(outcome["gate_ledger"]) == 25
 
     def test_first_det_failure_used_for_repair_targeting(self):
         rubric = qg.get_framework_rubric("promotion")
@@ -312,7 +313,8 @@ class TestRunQualityGatesFlagNotBlock:
         assert outcome["passed"] is False
         assert outcome["first_failure"]["gate"] == "F2_banned_patterns"
         assert outcome["first_failure"]["blocking"] is True
-        assert outcome["flags"] == []
+        # AA-800: the one stock superlative ('breathtaking') is a warning now, not a banned pattern
+        assert [g["gate"] for g in outcome["flags"]] == ["F2_style_warn"]
 
     def test_blocking_flags_match_the_3_tier_severity_model(self):
         # AA-613 — the non-blocking (warn/note) gates are: promises_an_option (note),
@@ -320,8 +322,9 @@ class TestRunQualityGatesFlagNotBlock:
         # structural / SEO) stays blocking.
         # AA-768 (S234): + F12_scope (warn for one round) and F13_hygiene (warn).
         # AA-771 (S234): F14/F15 block only on their own triggers; a passing result is non-blocking.
+        # AA-800: F2_superlatives blocks only on its own trigger (a 2nd superlative); F2_style_warn is warn-only.
         _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style", "F12_scope", "F13_hygiene",
-                         "F14_social_shape", "F15_voice", "F15_voice_warn"}
+                         "F14_social_shape", "F15_voice", "F15_voice_warn", "F2_superlatives", "F2_style_warn"}
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",

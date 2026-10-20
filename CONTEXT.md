@@ -1513,9 +1513,20 @@ _Avoid_: block (alone), delete, filter.
     `batch_prompt.build_t2_system_prompt`. These builders are chosen only when `is_tenant_rewrite`.
     The user prompt uses `build_rewrite_prompt(voice="tenant")`. The tenant's core idea
     (`tenant_brand_rules.core_idea`) is the lens for the overview and each day's framing.
-  - **Shared rules.** T2 keeps A1's truth and structure rules as the same prompt pieces: core
-    forbidden words, structure, source fidelity and the meta band. It drops A1's neutral catalogue
-    voice. The A1 prompts are pinned byte-for-byte by `tests/unit/test_aa792_a1_prompt_golden.py`.
+  - **Shared rules.** T2 keeps A1's truth and structure rules as the same prompt pieces: structure,
+    source fidelity and the meta band. It drops A1's neutral catalogue voice. The A1 prompts are pinned
+    byte-for-byte by `tests/unit/test_aa792_a1_prompt_golden.py`.
+  - **Signature vocabulary (AA-800).** The forbidden words come in three layers
+    (`services/acp_shared/signature_vocabulary.py`): platform truth (cheap, deal, discount, book now,
+    instant booking) is refused for every tenant; AA style is unchanged for A1 but, for a tenant, stock
+    superlatives (pristine, stunning, breathtaking, magical, paradise) are allowed once per tour (a second
+    one is FORBIDDEN_WORD) and positioning words (curated, refined, tailored, bespoke, luxury) are allowed
+    when the tenant declares them; the tenant's own list is always refused. A tenant declares a word in its
+    T0 text (brand type, core idea, voice, style guide, on-brand example; not in a negated clause) or in
+    `tenant_brand_rules.custom_validators.signature_words`. T2 prompt rule 1, validate, the strip, flag_fix,
+    T3 and the admin T2 drawer all read the same layered list (`forbidden_words.state_forbidden`); A1 keeps
+    `VALIDATE_FORBIDDEN`. Evidence rule: a service-level claim ("a luxury lodge", "a tailored itinerary")
+    the source does not support is a T3 grounding finding (sentence repair), for every tenant.
   - **Brand loading.** The brand is loaded once, through `brand_pack.fetch_brand_pack_conn` (AA-771).
   - **Itinerary nudge.** The length nudge keeps the draft's tenant voice. T2 flag-fix repairs speak as
     the tenant's editorial fixer.
@@ -1649,6 +1660,10 @@ _Avoid_: block (alone), delete, filter.
   keyword cut to its place words; a meta's product nouns must be in the seed or the body (SEO fit
   and F4).
 - **T10 — Quality Gates**: inline within T9 (not a separate request) for the automatic Gate run.
+  Word layers (AA-800, same module as T2): `F2_platform_truth` blocks (sentence repair),
+  `F2_superlatives` blocks a second stock superlative (style only: one repair, never a hold),
+  `F2_style_warn` warns on a single superlative or an undeclared positioning word; the writer prompt has a
+  WORDS line built from the brand pack; an unsupported service-level claim is an `F17_trip_fact` finding.
   No Jev on T10: the AA-701 shadow questions were turned off in S234 (no signal) and their
   observer removed; migration 194's `t10_gates` question rows stay at `mode=off` as history.
   `/portal/t10-review` is now **My Content** (AA-614): the tenant's pieces with no gate/held

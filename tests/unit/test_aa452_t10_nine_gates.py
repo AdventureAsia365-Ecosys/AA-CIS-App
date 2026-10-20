@@ -164,7 +164,9 @@ class TestRunQualityGatesChannelDispatch:
         # a `None` cannibalization_match (this test's default) always passes with 0 violations.
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
-            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
+            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
+            "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
+            "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",
@@ -190,7 +192,9 @@ class TestRunQualityGatesChannelDispatch:
         # AA-484: + F10_cannibalization_cross_tenant, right after F2 (before promises_an_option).
         # AA-613: F9 split into F9_cta_fact (block) + F9_brand_style (warn).
         assert gates == [
-            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden", "F11_brand_name",
+            "F6_cta_present", "F1_grounding", "F2_banned_patterns", "F2_brand_forbidden",
+            "F2_platform_truth", "F2_superlatives", "F2_style_warn",  # AA-800 word layers, every channel
+            "F11_brand_name",
             "F19_authenticity",  # AA-819 (AUP 2026-11) — every channel, right after F11
             "F10_cannibalization_cross_tenant",
             "promises_an_option", "F4_extreme_length", "F0_complete", "F12_scope", "F13_hygiene", "F13_leak",

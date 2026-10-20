@@ -19,6 +19,8 @@ import re
 from typing import Optional, TypedDict
 from uuid import UUID
 
+from services.acp_shared.signature_vocabulary import explicit_signature_words
+
 
 class BrandPack(TypedDict, total=False):
     brand_name: Optional[str]
@@ -33,6 +35,9 @@ class BrandPack(TypedDict, total=False):
     default_cta: Optional[str]
     system_prompt: Optional[str]
     version: Optional[int]
+    # AA-800: positioning words the tenant lists as its own in custom_validators.signature_words (the
+    # rest of its signature vocabulary is read from its T0 text: signature_vocabulary.signature_words).
+    signature_words: list[str]
 
 
 _PACK_QUERY = """
@@ -87,6 +92,7 @@ def pack_from_row(row) -> BrandPack:
         "default_cta": _clean(get("default_cta")),  # migration 220; absent before it → None
         "system_prompt": _clean(get("system_prompt")),
         "version": get("version"),
+        "signature_words": explicit_signature_words(get("custom_validators")),  # AA-800
     }
 
 

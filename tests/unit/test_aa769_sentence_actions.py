@@ -107,7 +107,9 @@ def test_check_replacement_runs_the_deterministic_gates():
     gates = lambda s: [f["gate"] for f in sr.check_replacement(s, grounding, pack)]  # noqa: E731
     assert gates("The monastery has 900 steps.") == ["F1_grounding"]
     assert gates("The rooms are cosy at dawn.") == ["F2_brand_forbidden"]
-    assert "F2_banned_patterns" in gates("The view is breathtaking at dawn.")
+    assert "F2_banned_patterns" in gates("The view is unforgettable at dawn.")
+    # AA-800: a price / booking promise is refused on an admin sentence too
+    assert "F2_platform_truth" in gates("The rooms are cheap at dawn.")
     assert gates("Adventure Asia runs it every week.") == ["F11_brand_name"]
     assert sr.check_replacement("", grounding, pack) == []
 

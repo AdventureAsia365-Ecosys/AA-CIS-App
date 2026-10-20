@@ -336,6 +336,9 @@ def _repair_prompt(violations: list[dict], source: str, forbidden) -> str:
     listed = "\n".join(
         f'{i}. [{v["field"]}] {json.dumps(v["sentence"])}'
         + (f' (unsupported figures: {", ".join(v["novel_numbers"])})' if v.get("novel_numbers") else "")
+        # AA-800 (T3 only; A1 violations never carry it, so A1's prompt is unchanged)
+        + (f' (unsupported service claim: {", ".join(v["unsupported_claims"])})' if v.get("unsupported_claims")
+           else "")
         for i, v in enumerate(violations, start=1)
     )
     return (f"SOURCE (the only facts you may state):\n{source}\n\nSENTENCES TO CORRECT:\n{listed}\n\n"

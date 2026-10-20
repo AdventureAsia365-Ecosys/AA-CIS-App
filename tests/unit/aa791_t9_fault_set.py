@@ -110,7 +110,8 @@ FAULT_CASES: list[FaultCase] = [
               "A once in a lifetime night at Sod Camp. " + CLEAN,
               brand_pack={**PACK, "forbidden_words": ["once in a lifetime"]}),
     # F2_banned_patterns — the core cliché list
-    FaultCase("f2-1", "F2_banned_patterns", "'breathtaking'", "The breathtaking range faces the camp. " + CLEAN),
+    # AA-800: 'breathtaking' is a capped stock superlative now (F2_superlatives), not a banned pattern
+    FaultCase("f2-1", "F2_banned_patterns", "'unforgettable'", "The unforgettable range faces the camp. " + CLEAN),
     FaultCase("f2-2", "F2_banned_patterns", "'hidden gem'", "Sod Camp is a hidden gem. " + CLEAN),
     FaultCase("f2-3", "F2_banned_patterns", "'embark on'", "Embark on a quiet night by the lake. " + CLEAN),
     # F13_leak — writer instructions / source notes / the brand's audience leak into the copy

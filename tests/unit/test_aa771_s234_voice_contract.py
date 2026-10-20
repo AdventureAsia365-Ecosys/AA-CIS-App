@@ -434,7 +434,10 @@ class TestT9Prompt:
         customer first person, no independence claim); `single` and `route` do not change.
         Updated AA-778 (S238): every em-dash is gone from the prompt text (blog format, SEO envelope,
         FACTS / GOAL / VOICE / CHANNEL AVOID lines, the brand block) and SYSTEM_PROMPT gets the plan
-        §3.1 "Never use an em-dash" rule, so all three change."""
+        §3.1 "Never use an em-dash" rule, so all three change.
+        Updated AA-800 (S245): one WORDS line after the brand block (the word layers for this brand:
+        platform truth, the superlative cap, undeclared positioning words, the service-level claim rule), so
+        `single` and `route` change; SYSTEM_PROMPT does not."""
         pack = {"brand_name": "Trail Pulse", "brand_type": "Young active adventure travel brand",
                 "core_idea": "Active trips for people who like to move.", "customer_segment": "25-40 years old",
                 "voice": ["Energetic", "Fresh", "Direct", "Friendly", "Modern", "Confident", "Lightly playful"],
@@ -456,8 +459,8 @@ class TestT9Prompt:
             return hashlib.sha256(s.encode()).hexdigest()
         assert GOAL["key"] == GOALS[0]["key"]
         assert sha(SYSTEM_PROMPT) == "662d4aa598b44a7d63eeca5180655d94505dd1f198edd40b25d556ff60ec3baa"
-        assert sha(single) == "23675af23befd294f608be034f3486f165371ddc102f664bb9345bf137e7a173"
-        assert sha(route) == "3c9c7c7d64fedc870fae5ba3b04352205f77ef8ae1da24db7c1ad89ba9c3a9fd"
+        assert sha(single) == "f1b3345190a7e826fbf759032a51044872c77f01a80bca05c2a127aacce1bd1c"
+        assert sha(route) == "14f5ac4e626392a1d64581dcd846bb1f47a196cd2ddf9ef298c4444c66f49423"
 
     def test_prompts_carry_no_em_dash_but_the_rule(self):
         """AA-778 — our own prompt text primed the habit (S234: 78 in the writer prompts). The one em-dash

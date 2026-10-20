@@ -190,6 +190,8 @@ async def _rewrite_tour(
             "brand_name":             _br.get("brand_name", ""),
             "brand_type":             _br.get("brand_type", ""),
             "brand_default_cta":      _br.get("default_cta", ""),
+            # AA-800: the tenant's explicit signature words (custom_validators); T2 only.
+            "brand_signature_words":  _br.get("signature_words", []),
             "subtitle_focus":       subtitle_focus,
             "seo_mode":             seo_mode,
             # brand audit defaults

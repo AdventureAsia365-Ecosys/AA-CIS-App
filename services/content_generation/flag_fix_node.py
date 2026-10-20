@@ -17,7 +17,7 @@ from shared.llm_client.call_log import record_call_sync
 from .seo_meta_utils import (best_meta_candidate, meta_in_band, meta_complete_sentence,
                              meta_has_forbidden, fit_seo_meta_final, fit_seo_title,
                              SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX)
-from .forbidden_words import all_forbidden, forbidden_in
+from .forbidden_words import all_forbidden, forbidden_in, state_forbidden
 from .prompts import parse_source_day_word_counts
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
@@ -480,7 +480,8 @@ def flag_fix_node(state: dict) -> dict:
                 itin_after = {"itineraries": new_itinerary}
                 itin_reverted = _revert_introduced_forbidden(
                     current_content, itin_after, {"itineraries"},
-                    all_forbidden(state.get("brand_forbidden_words")),
+                    # AA-800: T2 uses the tenant's layered list (A1: all_forbidden, unchanged)
+                    state_forbidden(state, {**current_content, **itin_after}),
                 )
                 if itin_reverted:
                     logger.warning("flag_fix_introduced_forbidden", fields=itin_reverted,
@@ -518,7 +519,8 @@ def flag_fix_node(state: dict) -> dict:
         tour = state.get("tour", {})
         # AA-641: the words validate_node fires FORBIDDEN_WORD on (AA list + tenant list). A repair
         # that adds one of them turns a soft/length problem into a hard code and a full rewrite.
-        forbidden = all_forbidden(state.get("brand_forbidden_words"))
+        # AA-800: for a T2 tenant rewrite, the tenant's layered list (state_forbidden); A1 unchanged.
+        forbidden = state_forbidden(state, current_content)
 
         # AA-201/AA-204: seo_meta repair-to-band rules (port of v5 repair_seo_fields)
         meta_rules = ""

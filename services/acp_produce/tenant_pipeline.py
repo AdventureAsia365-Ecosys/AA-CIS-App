@@ -100,6 +100,7 @@ def _t3_grounding_check(rewritten: dict, source_texts: list[str], *, background:
     if background is None:
         from services.content_generation.t2_repair import background_facts_enabled
         background = background_facts_enabled()
+    from services.acp_shared.signature_vocabulary import service_level_claims
     violations: list[dict] = []
     for field in _T3_GATED_FIELDS:
         val = rewritten.get(field)
@@ -109,11 +110,32 @@ def _t3_grounding_check(rewritten: dict, source_texts: list[str], *, background:
                 novel, allowed = _t3_novel_numbers(sent, source_texts, background=background)
                 if allowed and cleared is not None:
                     cleared.append({"field": field, "sentence": sent.strip(), "background_numbers": allowed})
-                if novel:
-                    violations.append({
-                        "field": field, "sentence": sent.strip(), "novel_numbers": novel,
-                    })
+                # AA-800 evidence rule: a service-level positioning claim ("a luxury lodge", "a tailored
+                # itinerary") the source does not support is a fidelity finding, for every tenant.
+                claims = [c["phrase"] for c in service_level_claims(sent, *source_texts)]
+                if novel or claims:
+                    v = {"field": field, "sentence": sent.strip(), "novel_numbers": novel}
+                    if claims:
+                        v["unsupported_claims"] = claims
+                    violations.append(v)
     return violations
+
+
+def _t3_unsupported(sentence: str, source_texts: list[str], *, background: bool) -> bool:
+    """A sentence still fails T3 grounding: a novel number, or (AA-800) an unsupported service claim."""
+    from services.acp_shared.signature_vocabulary import service_level_claims
+    return bool(_t3_novel_numbers(sentence, source_texts, background=background)[0]
+                or service_level_claims(sentence, *source_texts))
+
+
+def t3_brand_pack(brand_rules: dict) -> dict:
+    """AA-800: the brand-pack view of T2's `brand_rules` (t2_rewrite_job.brand_rules_from_pack keys) that
+    the word layers read: forbidden words, T0 text that declares signature words, the explicit list."""
+    br = brand_rules or {}
+    return {"forbidden_words": br.get("forbidden_words") or [], "brand_type": br.get("brand_type"),
+            "core_idea": br.get("core_idea"), "voice": br.get("voice_examples") or [],
+            "style_guide": br.get("style_guide"), "good_examples": br.get("good_examples"),
+            "signature_words": br.get("signature_words") or []}
 
 
 # AA-699 T3-1 — before a numeric hit costs a full rewrite, ask Jev whether the sentence is supported
@@ -176,10 +198,21 @@ def _t3_structural_issues(generated: dict, tour_dict: dict, brand_rules: dict) -
     this check can't go stale relative to what a human reviewer (or the tenant) actually
     sees."""
     from services.content_generation.graph import validate_node, _HARD_BLOCK_CODES
+    # AA-800: checked as the tenant rewrite it is, so validate applies the tenant's layered word list
+    # (its signature words pass; platform truth, undeclared positioning words, its own list and a second
+    # stock superlative fire FORBIDDEN_WORD).
+    pack = t3_brand_pack(brand_rules)
     state = {
         "generated": generated,
         "tour": tour_dict,
-        "brand_forbidden_words": brand_rules.get("forbidden_words") or [],
+        "brand_forbidden_words": pack["forbidden_words"],
+        "is_tenant_rewrite": True,
+        "brand_type": pack["brand_type"] or "",
+        "brand_core_idea": pack["core_idea"] or "",
+        "brand_voice_examples": pack["voice"],
+        "brand_style_guide": pack["style_guide"] or "",
+        "brand_good_examples": pack["good_examples"] or "",
+        "brand_signature_words": pack["signature_words"],
         "retry_count": 0,
     }
     codes = list(validate_node(state).get("failure_codes") or [])
@@ -210,10 +243,18 @@ def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
             "source tour. Use only figures (distances, altitudes, durations, counts, prices, years) "
             "that the source itself gives; otherwise remove the number or rephrase without one. "
             "Do not add conversions (e.g. feet) or outside facts."
+            + (" A service-level claim (luxury, bespoke, tailored, curated or refined lodging, dining,"
+               " transport or itinerary) must also be in the source: drop the claim word, keep the fact."
+               if any(g.get("unsupported_claims") for g in grounding) else "")
         )
         for g in grounding[:_T3_FEEDBACK_MAX_SENTENCES]:
             sent = " ".join(str(g.get("sentence", "")).split())[:240]
-            parts.append(f"- [{g.get('field')}] numbers {', '.join(g.get('novel_numbers', []))}: \"{sent}\"")
+            what = []
+            if g.get("novel_numbers"):
+                what.append(f"numbers {', '.join(g['novel_numbers'])}")
+            if g.get("unsupported_claims"):  # AA-800
+                what.append(f"service claim {', '.join(g['unsupported_claims'])} (the source does not state it)")
+            parts.append(f"- [{g.get('field')}] {'; '.join(what)}: \"{sent}\"")
         if len(grounding) > _T3_FEEDBACK_MAX_SENTENCES:
             extra = len(grounding) - _T3_FEEDBACK_MAX_SENTENCES
             parts.append(f"- …and {extra} more sentence(s) with the same problem.")
@@ -227,7 +268,8 @@ def t3_repair_feedback(structural: list[str], grounding: list[dict]) -> str:
 T3_REPAIR_SYSTEM = """You are the fact editor for a travel brand's tour page. The page was written from a
 SOURCE tour, and some sentences state figures the source does not give. Rewrite each numbered sentence so
 it keeps its place in the text, its tone and the brand's voice, but states only what the SOURCE states.
-Drop the unsupported figure (a distance, duration, time, count, price, height, date or size); never
+Drop the unsupported figure (a distance, duration, time, count, price, height, date or size), or the
+unsupported service-level claim (a "luxury" lodge, a "tailored" itinerary), keeping the fact itself; never
 replace it with another invented one. If nothing in the sentence is supported, return an empty string.
 Return strict JSON only."""
 
@@ -269,15 +311,16 @@ def _t3_sentence_repair(base: dict, tour_dict: dict, source_texts: list[str], br
     """AA-793 targeted repair: rewrite only the sentences T3 flagged (one t2_flag_fix call) instead of
     the whole tour. Returns the repaired result (the draft's judge score carried: removing a figure
     does not change its brand fit) or None when nothing could be replaced. Sync — run in a thread."""
-    from services.content_generation.forbidden_words import all_forbidden
+    from services.acp_shared.signature_vocabulary import tenant_blocked_words
     from services.content_generation.grounding import repair
 
     def still_unsupported(sentence: str) -> bool:
-        return bool(_t3_novel_numbers(sentence, source_texts, background=background)[0])
+        return _t3_unsupported(sentence, source_texts, background=background)
 
     result = base["result"]
+    # AA-800: the tenant's layered list (its signature words are not refused in a repaired sentence).
     fixed = repair(result.get("generated") or {}, base["grounding"], tour_dict,
-                   forbidden=all_forbidden(brand_rules.get("forbidden_words")),
+                   forbidden=tenant_blocked_words(t3_brand_pack(brand_rules)),
                    stage="t2_flag_fix", tenant_id=tenant_id, system_prompt=T3_REPAIR_SYSTEM,
                    still_unsupported=still_unsupported)
     if not fixed["fields"]:
@@ -442,9 +485,13 @@ async def escalate_t3_failure(
         })
     for v in grounding_issues:
         detail.append({
-            "check_id": "grounding:novel_numeric_claim", "field": v["field"],
+            "check_id": ("grounding:novel_numeric_claim" if v.get("novel_numbers")
+                         else "grounding:service_level_claim"),  # AA-800
+            "field": v["field"],
             "description": (
                 f"Unsupported number(s) {v['novel_numbers']} in a {v['field']} sentence"
+                if v.get("novel_numbers") else
+                f"Unsupported service claim(s) {v.get('unsupported_claims')} in a {v['field']} sentence"
             ),
             "source_span": v["sentence"][:500], "suggested_fix": None,
         })
