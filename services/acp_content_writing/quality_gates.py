@@ -982,12 +982,13 @@ class F9PassMemory(set):
 
 
 # AA-865 — words a deletion must never remove: without them the sentence makes a stronger claim ('optional boat
-# rides' → 'boat rides', 'about 30 km' → '30 km', 'not open in winter' → 'open in winter'). n't is read as 'not'.
+# rides' → 'boat rides', 'about 30 km' → '30 km', 'not open in winter' → 'open in winter', 'most visitors' →
+# 'visitors', 'at least two' → 'two'). n't is read as 'not'.
 _F9_KEEP_WORDS = frozenset("""not no never nor neither none nothing without cannot unless except only if whether may
 might can could would should optional optionally option options choose chosen possible possibly perhaps maybe likely
 usually often sometimes occasionally typically generally mostly around about approximately roughly nearly almost
 some several up until estimated estimate said reportedly believed thought according traditionally permitting
-depending depends subject request""".split())
+depending depends subject request most many few just mainly partly least each per every all""".split())
 # AA-865 — adverbs a style repair may drop from mid-sentence without re-attaching anything.
 _F9_FILLER_WORDS = frozenset("""also very truly really quite simply particularly especially genuinely deeply rather
 still even indeed certainly entirely fully well so too""".split())
@@ -1009,10 +1010,15 @@ def _f9_words(text: str) -> list[tuple[str, bool]]:
 
 def _f9_deletion_only(old: str, new: str) -> bool:
     """AA-865 — True when `new` is `old` with words removed and nothing else: its words are old's words in the
-    same order, every removed run is at the start or the end of `old`, sits between two punctuation breaks (an
-    appositive or a parenthetical), or is only filler adverbs; no negation / hedge / option word is removed and
-    no symbol is new. Such an edit cannot add a claim, so an F9 pass of `old` still holds for `new`
-    (r6: '…of 1937: a single, spare reminder that…' → '…of 1937.' was flagged again only because it changed)."""
+    same order and every removed run is only filler adverbs or ends at a punctuation break: a start run needs a
+    break before the first kept word ('Unlike the southern route, the drive…'), an end run a break before the
+    first removed word ('…of 1937: a single, spare reminder…'), a middle run a break on both sides (an appositive
+    or a parenthetical). No negation / hedge / option / quantifier word is removed and no symbol is new.
+    A run cut at a break drops a whole phrase or clause; a run cut without one can drop a qualifier and broaden
+    the claim ('Lunch is included on most days of the trek.' → 'Lunch is included.', 'The museum is open daily in
+    summer.' → '…open daily.'), so that is judged again. With these limits an F9 pass of `old` still holds for
+    `new` (r6: '…of 1937: a single, spare reminder that…' → '…of 1937.' was flagged again only because it
+    changed)."""
     if _cmp_fold(old) == _cmp_fold(new):
         return True
     ow, nw = _f9_words(old), _f9_words(new)
@@ -1028,9 +1034,13 @@ def _f9_deletion_only(old: str, new: str) -> bool:
             return False
     n, m = len(ow), len(nw)
 
-    def run_ok(i: int, k: int) -> bool:  # old words [i, k) removed
-        if i == 0 or k == n or all(w in _F9_FILLER_WORDS for w in o_words[i:k]):
+    def run_ok(i: int, k: int) -> bool:  # old words [i, k) removed, 0 <= i < k <= n
+        if all(w in _F9_FILLER_WORDS for w in o_words[i:k]):
             return True
+        if i == 0:
+            return ow[k][1]  # start run: a break before the first kept word
+        if k == n:
+            return ow[i][1]  # end run: a break before the first removed word
         return ow[i][1] and ow[k][1]  # a break before the run and one right after it
 
     from functools import lru_cache
@@ -1038,7 +1048,7 @@ def _f9_deletion_only(old: str, new: str) -> bool:
     @lru_cache(maxsize=None)
     def fits(i: int, j: int) -> bool:  # new[j:] can be matched in old[i:]
         if j == m:
-            return True  # whatever is left of old is an end run
+            return i == n or run_ok(i, n)  # whatever is left of old is an end run
         for k in range(i, n):
             if o_words[k] == n_words[j] and (k == i or run_ok(i, k)) and fits(k + 1, j + 1):
                 return True

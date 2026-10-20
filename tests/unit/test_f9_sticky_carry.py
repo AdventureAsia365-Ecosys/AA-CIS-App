@@ -61,6 +61,8 @@ class TestDeletionOnly:
         ("Unlike the southern route, the drive north follows the river valley.",
          "The drive north follows the river valley."),
         (CAMP_BEFORE, CAMP_BEFORE),
+        # a whole clause cut at its break drops a claim without broadening the rest
+        ("The pass is closed in winter, and the road floods in spring.", "The pass is closed in winter."),
     ])
     def test_a_pure_deletion_keeps_the_claim(self, old, new):
         assert qg._f9_deletion_only(old, new)
@@ -79,6 +81,13 @@ class TestDeletionOnly:
          "The dzong is open to visitors during the winter months."),
         ("The trail isn't steep once you cross the bridge.", "The trail is steep once you cross the bridge."),
         ("The drive takes about four hours on a paved road.", "The drive takes four hours on a paved road."),
+        # a start or end run cut without a punctuation break can drop a qualifier and broaden the claim
+        ("Lunch is included on most days of the trek.", "Lunch is included."),
+        ("The museum is open daily in summer.", "The museum is open daily."),
+        ("Most visitors arrive at the lake by boat.", "Visitors arrive at the lake by boat."),
+        ("At least two guides accompany each group on the glacier.", "Two guides accompany each group on the glacier."),
+        ("The tour costs 500 USD per person sharing.", "The tour costs 500 USD."),
+        ("The pass is closed in winter, and the road floods in spring.", "The pass is closed."),
         # a new symbol and a reorder are not deletions
         ("Groups of 12 travellers share two guides on the trek.", "Groups of 12+ travellers share guides on the trek."),
         ("We drive from Moron to Khatgal on day three.", "We drive from Khatgal to Moron on day three."),
