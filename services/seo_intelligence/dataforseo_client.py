@@ -237,6 +237,7 @@ class DataForSEOClient:
         seed: str,
         location_code: int = DEFAULT_LOCATION_CODE,
         language_code: str = DEFAULT_LANGUAGE_CODE,
+        people_also_ask_click_depth: int | None = None,
     ) -> dict:
         # One SERP call serves both People-Also-Ask and related searches (cost-neutral).
         payload = [{
@@ -244,6 +245,10 @@ class DataForSEOClient:
             "location_code": location_code,
             "keyword":       seed,
         }]
+        if people_also_ask_click_depth:
+            # AA-779 (B) — DFS expands the PAA box this many levels (1-4; billed extra per click).
+            # Only the admin SERP top-up passes it; every other payload is unchanged.
+            payload[0]["people_also_ask_click_depth"] = int(people_also_ask_click_depth)
         self._precheck("serp_advanced")
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -269,6 +274,44 @@ class DataForSEOClient:
     ) -> list[str]:
         data = await self._serp_advanced(seed, location_code, language_code)
         return self._parse_paa(data)
+
+    async def fetch_people_also_ask_deep(
+        self,
+        seed: str,
+        click_depth: int = 2,
+        location_code: int = DEFAULT_LOCATION_CODE,
+        language_code: str = DEFAULT_LANGUAGE_CODE,
+    ) -> tuple[list[str], list[str]]:
+        """AA-779 (B) — one SERP with the PAA box expanded `click_depth` levels: (questions, organic
+        domains). Admin SERP top-up only (services/acp_shared/question_topup.py)."""
+        data = await self._serp_advanced(seed, location_code, language_code,
+                                         people_also_ask_click_depth=click_depth)
+        return self._parse_paa_deep(data), self._parse_organic_domains(data)
+
+    def _parse_paa_deep(self, data: dict, cap: int = 20) -> list[str]:
+        """Every `people_also_ask_element` title under the SERP's PAA items, at any nesting (an
+        expanded element may carry its own follow-up elements), in order, without duplicates."""
+        out: list[str] = []
+
+        def walk(node, in_paa: bool) -> None:
+            if isinstance(node, dict):
+                kind = node.get("type")
+                if in_paa and kind == "people_also_ask_element":
+                    title = node.get("title")
+                    if isinstance(title, str) and title.strip() and title.strip() not in out:
+                        out.append(title.strip())
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        walk(value, in_paa or kind == "people_also_ask")
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, in_paa)
+
+        try:
+            walk(data["tasks"][0]["result"][0]["items"], False)
+        except (KeyError, IndexError, TypeError):
+            return []
+        return out[:cap]
 
     async def fetch_related(
         self,

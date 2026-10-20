@@ -65,7 +65,9 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
-from services.acp_shared.real_questions import collect_real_questions, faq_sources, label_questions, source_counts
+from services.acp_shared.real_questions import (SOURCE_WRITER, collect_real_questions, faq_sources,
+                                                label_questions, missing_real_questions, real_first_pairs,
+                                                source_counts)
 from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
@@ -882,7 +884,8 @@ def _style_only_repair(gate_ledger: list[dict]) -> bool:
 
 async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygiene.HygieneContext,
                                 request_id, brand_ignore: frozenset,
-                                fix_subjects: bool = False) -> tuple[str, float, list[str]]:
+                                fix_subjects: bool = False,
+                                required: Optional[list[str]] = None) -> tuple[str, float, list[str]]:
     """S234 round 2 (panel §5 fix 1) — a blog must end with "## FAQ" and ≥ FAQ_MIN_PAIRS pairs, counted
     after drop_restated_faq / drop_unanswerable_faq. When short: ONE t9_repair call
     (generate.write_faq, about $0.004–0.008 on Haiku) writes a new FAQ from the moment's own seed
@@ -900,9 +903,15 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     do not answer their question (quality_gates.faq_answer_problem) and could not be dropped without
     going under the minimum — the same one regeneration runs; those pairs leave the base before the
     merge, and the merged FAQ goes through drop_subjectless_faq too. Kept when it has more pairs, or
-    (fix_subjects) at least as many with fewer failing ones."""
+    (fix_subjects) at least as many with fewer failing ones.
+
+    S245 r7 — `required`: the real search questions the FAQ does not ask yet (missing_real_questions).
+    The same one regeneration answers them first (write_faq required_questions); the merged FAQ puts
+    real-question pairs first and keeps writer pairs only to fill (real_first_pairs). Kept also when
+    it asks more real questions than before and does not fall under min(before, FAQ_MIN_PAIRS)."""
     before = faq_pair_count(content_text)
-    if before >= FAQ_MIN_PAIRS and not fix_subjects:
+    required = [q for q in (required or []) if q][:FAQ_MAX_PAIRS]
+    if before >= FAQ_MIN_PAIRS and not fix_subjects and not required:
         return content_text, 0.0, []
     own_seed = hygiene.split_seed(context.get("atom_text") or "")[0]
     facts_text = context.get("facts_text") or ""
@@ -910,13 +919,15 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     source = own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
     subject_source = f"{own_seed}\n{facts_text}"
     body = content_text.partition("## FAQ")[0]
-    paa_questions = context.get("paa_questions") or []
+    paa_questions = [q for q in context.get("paa_questions") or [] if q not in required]
+    real_pool = _real_question_pool(context)
     try:
         pairs, cost = await asyncio.to_thread(
             write_faq, source=source, body=body, brand_name=audience.get("brand_name"),
             tenant_id=context.get("tenant_id"), angle_gate_request_id=str(request_id),
             unused_facts=unused_source_facts(source, body),
             **({"paa_questions": paa_questions} if paa_questions else {}),
+            **({"required_questions": required} if required else {}),
         )
     except Exception as e:  # noqa: BLE001 — F16_faq reports the short FAQ
         logger.warning("t9_faq_regen_failed", request_id=str(request_id), error=str(e)[:200])
@@ -930,16 +941,56 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     new, _ = drop_restated_faq(new)
     new, _ = drop_unanswerable_faq(new, own_seed, facts_text)
     new, _, failing_after = drop_subjectless_faq(new, subject_source)
-    merged = merge_faq_pairs(faq_pairs(new))[:FAQ_MAX_PAIRS]
-    if len(merged) != faq_pair_count(new):
+    # S245 r7 — a pair asking a real search question goes before the writer's own (and wins a duplicate)
+    ordered = _real_pairs_first(faq_pairs(new), real_pool)
+    merged, real_after = real_first_pairs(merge_faq_pairs(ordered), real_pool, min_pairs=FAQ_MIN_PAIRS,
+                                          max_pairs=FAQ_MAX_PAIRS)
+    merged = merged[:FAQ_MAX_PAIRS]
+    if merged != faq_pairs(new):
         new = replace_faq_section(new, merged)
     after = faq_pair_count(new)
+    real_before = sum(1 for f in faq_sources([q for q, _ in faq_pairs(content_text)], real_pool)
+                      if f["source"] != SOURCE_WRITER) if real_pool else 0
     problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
-    better = after > before or (fix_subjects and after >= before and failing_after < failing_before)
+    better = (after > before or (fix_subjects and after >= before and failing_after < failing_before)
+              or (bool(required) and real_after > real_before and after >= min(before, FAQ_MIN_PAIRS)))
     if not better or problems:
         why = "; ".join(problems[:2]) if problems else f"{after} pair(s) left after the droppers"
         return content_text, cost, [f"FAQ regeneration not kept ({why})"]
-    return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs)"]
+    real_note = f", real questions {real_before} → {real_after}" if required else ""
+    return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs{real_note})"]
+
+
+def _real_question_pool(context: dict) -> list[dict]:
+    """S245 r7 — what a FAQ question is matched against to count as real: the labelled questions the
+    writer got, then every chain candidate (the same pool faq_sources records)."""
+    return list(context.get("search_questions") or []) + list(context.get("real_questions") or [])
+
+
+def _real_pairs_first(pairs: list[tuple[str, str]], real_pool: list[dict]) -> list[tuple[str, str]]:
+    """Stable: pairs asking a real question first (so merge_faq_pairs keeps the real twin)."""
+    if not real_pool:
+        return list(pairs)
+    tags = [f["source"] != SOURCE_WRITER for f in faq_sources([q for q, _ in pairs], real_pool)]
+    return [p for p, t in zip(pairs, tags) if t] + [p for p, t in zip(pairs, tags) if not t]
+
+
+def real_first_faq(content_text: str, context: dict) -> tuple[str, list[str]]:
+    """S245 r7 (AA-779) — deterministic, every blog attempt after the FAQ contract: real-question
+    pairs first, writer pairs only to fill (real_first_pairs). No change when the FAQ asks no real
+    question. Returns (text, log lines for the F7_faq_autofix flag)."""
+    real_pool = _real_question_pool(context)
+    pairs = faq_pairs(content_text)
+    if not real_pool or not pairs:
+        return content_text, []
+    ordered = _real_pairs_first(pairs, real_pool)
+    out, real_n = real_first_pairs(ordered, real_pool, min_pairs=FAQ_MIN_PAIRS, max_pairs=FAQ_MAX_PAIRS)
+    if out == pairs:
+        return content_text, []
+    dropped = len(pairs) - len(out)
+    log = [f"FAQ puts its {real_n} real search question(s) first"
+           + (f" and keeps {dropped} fewer writer question(s)" if dropped else "")]
+    return replace_faq_section(content_text, out), log
 
 
 async def _fix_first_line(content_text: str, *, spec, context: dict, hyg: hygiene.HygieneContext,
@@ -1707,11 +1758,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                             <= faq_pair_count(prev_snapshot["content_text"]))
                 if faq_fell:
                     faq_repair_regen = True
+                # S245 r7 — the real search questions the writer's FAQ does not ask: the same one
+                # regeneration per writer text answers them first.
+                missing_real = (missing_real_questions([q for q, _ in faq_pairs(content_text)],
+                                                       context.get("search_questions") or [])
+                                if fresh_text else [])
                 if fresh_text or faq_fell:
                     before_regen = content_text
                     content_text, faq_cost, faq_regen = await _enforce_faq_contract(
                         content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore,
-                        fix_subjects=fresh_text and subject_short > 0)
+                        fix_subjects=fresh_text and subject_short > 0, required=missing_real)
                     total_cost += faq_cost
                     if content_text != before_regen:
                         # the new FAQ replaced the kept non-answers: report what the new one still has
@@ -1719,6 +1775,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         faq_unanswerable = [x for x in faq_unanswerable if not x.startswith("kept FAQ pair")] \
                             + again_log
                     faq_unanswerable = list(faq_unanswerable) + faq_regen
+                content_text, real_first_log = real_first_faq(content_text, context)
+                faq_unanswerable = list(faq_unanswerable) + real_first_log
             first_line_log: list[str] = []
             if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split
                 content_text, fl_cost, first_line_log = await _fix_first_line(

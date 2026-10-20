@@ -1342,6 +1342,15 @@ the chain (every tier, so it never reaches the T8 prompt, ranking or the tenant-
 records `search_questions` (with source), `question_sources` (per-source counts) and `faq_questions` (each
 final FAQ question's real source, or `writer`); the admin Content Quality drawer shows them. AA-779 (B) SERP
 top-up and (C) Autocomplete are admin jobs that will add sources to `DB_SOURCES`.
+S245 r7 follow-up (AA-779) — **real questions first.** The off-meaning test also drops a place name used as
+a dictionary word ('Is moron a British word?', 'What is moron in German?', spelling / translation cues, or
+the name lowercase with no travel word). When the writer's FAQ skips a given real question, the blog's one FAQ
+regeneration (`write_faq` `required_questions`) answers it first; the FAQ then lists real-question pairs first
+and keeps writer pairs only to fill (to the 3-pair minimum, never more writer than real ones; deterministic,
+`real_first_faq`). (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_serp_topup.py`
+(admin-run only, dry run by default, hard cap $3) buys one SERP with `people_also_ask_click_depth=2` per blog
+place with < 3 real questions, query '<place> <country>', stored in `search_demand` (keyword
+`topup_keyword`, market US, no volume) and read back as the `serp_topup` tier.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a

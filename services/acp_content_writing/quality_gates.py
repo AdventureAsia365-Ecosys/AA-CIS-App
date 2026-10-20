@@ -1749,6 +1749,12 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
     for phrase in proper_nouns(own_seed, keep_initial=True):
         seed_names |= set(phrase_tokens(phrase))
     seed_names -= countries
+    # S245 r7 — the lowercase-word test (a place name written as a common word: 'Is moron a British
+    # word?') reads only names capitalised mid-sentence, never a line opener ('Fly to Mörön').
+    mid_names: set[str] = set()
+    for phrase in proper_nouns(own_seed):
+        mid_names |= set(phrase_tokens(phrase))
+    mid_names -= countries
     seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
     out: list[str] = []
     seen: set[str] = set()
@@ -1768,7 +1774,7 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
             continue
         # S245 (AA-779 item 3) — a question about the name as a word, not the place ('Is moron a bad
         # word?' for the town Mörön) names an own place only by spelling.
-        if is_off_meaning(q, seed_names):
+        if is_off_meaning(q, seed_names, lowercase_names=mid_names):
             continue
         q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
         shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC

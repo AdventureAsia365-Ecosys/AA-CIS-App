@@ -103,3 +103,45 @@ async def test_chain_reads_segment_matches_and_place_paa_from_the_real_tables(tx
     assert scope.places == ("Lake Khövsgölzz", "Khövsgöl Lake")
     got = await rq.SegmentMatchSource().fetch(tx, scope)
     assert sorted(got) == ["How deep is Lake Khövsgöl?", "Who are the Tsaatan people?"]
+
+
+@pytest.mark.asyncio
+async def test_serp_topup_finds_blog_places_stores_and_reads_back(tx):
+    """AA-779 (B) — the admin top-up's queries on the real schema: blog work → places, the store upsert,
+    and the chain's serp_topup reader. No DataForSEO call (store_questions is given the questions)."""
+    from services.acp_shared import question_topup as qt
+
+    tour_id = uuid.uuid4()
+    await tx.execute("SELECT set_config('app.tenant_id', $1, true)", TENANT_ID)
+    await tx.execute("""INSERT INTO silver_aa_internal.raw_tours
+                        (tour_id, tenant_id, batch_id, src_name, country, source_group_id, source_status)
+                        VALUES ($1, $2, $3, 'Moron stop zz779', 'Mongolia', $4, 'active')""",
+                     tour_id, uuid.UUID(TENANT_ID), uuid.UUID(BATCH_ID), uuid.uuid4())
+    await tx.execute("""INSERT INTO acp_contract.tour_atoms (atom_id, tour_id, text, itinerary_day, place,
+                        activity_type) VALUES ('zz779_m1', $1, 'atom text', 4, 'Mörönzz', 'sightseeing')""", tour_id)
+    await tx.execute("""INSERT INTO acp_contract.atom_segment (segment_id, canonical_place, canonical_action)
+                        VALUES ('zz779_mseg', 'Mörönzz', 'stop')""")
+    await tx.execute("INSERT INTO acp_contract.atom_segment_member (segment_id, atom_id, is_alias) "
+                     "VALUES ('zz779_mseg', 'zz779_m1', false)")
+    await tx.execute("""INSERT INTO acp_contract.route (route_id, tour_id, hub_name, ordered_segment_ids,
+                        first_day, last_day) VALUES ('zz779_route', $1, 'Mörönzz', '["zz779_mseg"]'::jsonb, 4, 4)""",
+                     tour_id)
+    await tx.execute("""INSERT INTO acp_shared.subject (tenant_id, route_id, channel, state, cleared_bar_reason)
+                        VALUES ($1, 'zz779_route', 'blog', 'proposed', '{}'::jsonb)""", uuid.UUID(TENANT_ID))
+
+    needs = {n.keyword: n for n in await qt.find_needs(_Pool(tx))}
+    need = needs["moronzz mongolia"]
+    assert need.query == "Mörönzz Mongolia" and need.segment_ids == ["zz779_mseg"]
+    assert need.real_now == 0 and need.needs_serp
+
+    await qt.store_questions(tx, "moronzz mongolia", ["Does Mörönzz have an airport?"], ["example.com"])
+    await qt.store_questions(tx, "moronzz mongolia", [], [])  # an empty answer never wipes stored questions
+    row = await tx.fetchrow("SELECT search_volume, people_also_ask, serp_domains FROM acp_contract.search_demand "
+                            "WHERE keyword = 'moronzz mongolia' AND market = 'US'")
+    assert row["search_volume"] is None  # ranking reads volume rows only: the top-up never shifts it
+    assert json.loads(row["people_also_ask"]) == ["Does Mörönzz have an airport?"]
+
+    out = await rq.collect_real_questions(_Pool(tx), atom_ids=["zz779_m1"])
+    assert [(r.question, r.source) for r in out] == [("Does Mörönzz have an airport?", "serp_topup")]
+    again = {n.keyword: n for n in await qt.find_needs(_Pool(tx))}["moronzz mongolia"]
+    assert again.topped_up and again.real_now == 1 and not again.needs_serp

@@ -266,7 +266,7 @@ def test_label_and_counts():
 def test_faq_sources_match_exact_or_close_else_writer():
     kept = rq.label_questions(["Who are the Tsaatan people?"], CANDIDATES)
     out = rq.faq_sources(["Who are the Tsaatan people", "How deep is the Lake Khövsgöl?",
-                          "How deep is Lake Khövsgöl, really?",  # 3 of 4 content words = 0.75 < 0.8
+                          "How deep is Lake Khövsgöl in winter?",  # 3 of 4 content words = 0.75 < 0.8
                           "What should families pack for the lake?"], kept, CANDIDATES)
     assert [f["source"] for f in out] == ["segment_match", "segment_match", "writer", "writer"]
 
