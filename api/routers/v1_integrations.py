@@ -23,11 +23,10 @@ draft->publish change — all AA-458.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 from contextlib import nullcontext
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote
 
 import aiohttp
 import boto3
@@ -42,14 +41,15 @@ from api.core.aa544_tenant_pool import (
 )
 from api.routers.v1_tours import get_tenant
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
+from shared import safe_http
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/v1/integrations", tags=["integrations"])
 
 _SM_REGION = "us-west-1"
-_TEST_TIMEOUT = aiohttp.ClientTimeout(total=8)
-
-_BLOCKED_HOSTNAMES = {"localhost"}
+# AA-875: remote calls go through shared.safe_http (SSRF guard: public addresses only, checked at
+# connect and on every redirect). Seconds, total per call.
+_TEST_TIMEOUT_S = 8.0
 
 
 class SaveWordPressRequest(BaseModel):
@@ -58,31 +58,12 @@ class SaveWordPressRequest(BaseModel):
     app_password: str
 
 
-def _validate_wp_url(url: str) -> str:
-    """Basic SSRF-aware validation for a tenant-supplied WordPress site URL — blocks the
-    obvious local/private-IP-literal cases (localhost, 127.0.0.1, 169.254.x.x cloud-metadata
-    range, RFC1918 ranges, etc). Deliberately does NOT perform DNS resolution at save time — a
-    domain that doesn't resolve yet (typo, not-yet-propagated DNS) is a real-URL-just-unreachable
-    case, which is exactly what the test-connection endpoint (not this validator) classifies.
-    Returns the trimmed URL or raises ValueError with a message safe to show the tenant."""
+def _normalize_wp_url(url: str) -> str:
+    """Trimmed, no trailing slash; static SSRF checks (https only, no user-info, no local name, no
+    private/reserved IP literal) via safe_http.validate_url. Raises safe_http.UnsafeURLError
+    (a ValueError) with a message safe to show the tenant. No DNS here."""
     url = url.strip().rstrip("/")
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        raise ValueError("wp_url must start with https://")
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
-        raise ValueError("wp_url must include a valid hostname")
-    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(".local"):
-        raise ValueError("wp_url cannot point to a local address")
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        ip = None
-    if ip is not None and (
-        ip.is_private or ip.is_loopback or ip.is_link_local
-        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
-    ):
-        raise ValueError("wp_url cannot point to a private or reserved IP address")
+    safe_http.validate_url(url)
     return url
 
 
@@ -261,8 +242,13 @@ async def save_wordpress(body: SaveWordPressRequest, request: Request, tenant=De
     acp/cms/{tenant_id}; the DB row only ever gets site_url + the secret's KEY NAME, never the
     application password. connected_at is set only on first connect (ON CONFLICT leaves it
     alone) — a credential UPDATE isn't a new "connection"."""
+    # AA-875: static checks, then one DNS lookup — a host resolving to a private/reserved address is
+    # refused here (422, logged as safe_http_blocked). A name that does not resolve yet is still
+    # accepted (the test connection classifies it); the connect-time check in safe_http.request()
+    # is the real control.
     try:
-        wp_url = _validate_wp_url(body.wp_url)
+        wp_url = _normalize_wp_url(body.wp_url)
+        await safe_http.check_destination(wp_url, allow_unresolved=True)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -328,7 +314,7 @@ async def test_wordpress(request: Request, tenant=Depends(get_tenant)):
         raise HTTPException(status_code=422, detail=reconnect_detail("WordPress"))
 
     try:
-        wp_url = _validate_wp_url(creds["wp_url"])
+        wp_url = _normalize_wp_url(creds["wp_url"])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -336,27 +322,33 @@ async def test_wordpress(request: Request, tenant=Depends(get_tenant)):
     error: Optional[Exception] = None
     invalid_200_body = False
     try:
-        auth = aiohttp.BasicAuth(creds["username"], creds["app_password"])
-        async with aiohttp.ClientSession(timeout=_TEST_TIMEOUT) as session:
-            async with session.get(f"{wp_url}/wp-json/wp/v2/users/me", auth=auth) as resp:
-                status_code = resp.status
-                if status_code == 200:
-                    # AA-460: status 200 alone doesn't mean this is real WordPress — a WAF/
-                    # anti-bot challenge page, a maintenance page, or a misconfigured catch-all
-                    # route can all return 200 at this exact path (confirmed live, AA-457-02:
-                    # InfinityFree's anti-bot layer did exactly this for every credential tried,
-                    # correct and wrong alike). Require content-type + real WordPress user-object
-                    # shape (an "id" field) before trusting it.
-                    content_type = resp.headers.get("content-type", "")
-                    body_text = await resp.text()
+        resp = await safe_http.request(
+            "GET", f"{wp_url}/wp-json/wp/v2/users/me",
+            auth=aiohttp.BasicAuth(creds["username"], creds["app_password"]), timeout=_TEST_TIMEOUT_S,
+        )
+        status_code = resp.status
+        if status_code == 200:
+            # AA-460: status 200 alone doesn't mean this is real WordPress — a WAF/
+            # anti-bot challenge page, a maintenance page, or a misconfigured catch-all
+            # route can all return 200 at this exact path (confirmed live, AA-457-02:
+            # InfinityFree's anti-bot layer did exactly this for every credential tried,
+            # correct and wrong alike). Require content-type + real WordPress user-object
+            # shape (an "id" field) before trusting it.
+            content_type = resp.headers.get("content-type", "")
+            body_text = resp.text()
+            parsed_body = None
+            if content_type.startswith("application/json"):
+                try:
+                    parsed_body = json.loads(body_text)
+                except (json.JSONDecodeError, ValueError):
                     parsed_body = None
-                    if content_type.startswith("application/json"):
-                        try:
-                            parsed_body = json.loads(body_text)
-                        except (json.JSONDecodeError, ValueError):
-                            parsed_body = None
-                    if not (isinstance(parsed_body, dict) and "id" in parsed_body):
-                        invalid_200_body = True
+            if not (isinstance(parsed_body, dict) and "id" in parsed_body):
+                invalid_200_body = True
+    except safe_http.UnsafeURLError as exc:
+        # AA-875: the site (or a redirect from it) resolves to a private/reserved address — refused
+        # before any connection, logged by safe_http as safe_http_blocked. Same 422 as the static check.
+        logger.warning("wordpress_test_connection_blocked", tenant_id=tenant_id, error=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — classified below, any network failure lands here
         error = exc
 
@@ -473,18 +465,19 @@ async def test_facebook(request: Request, tenant=Depends(get_tenant)):
     parsed_body: Optional[dict] = None
     try:
         params = {"fields": "id,name", "access_token": creds["page_access_token"]}
-        async with aiohttp.ClientSession(timeout=_TEST_TIMEOUT) as session:
-            async with session.get(
-                f"https://graph.facebook.com/{creds['page_id']}", params=params
-            ) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
-                if content_type.startswith("application/json"):
-                    try:
-                        parsed_body = json.loads(body_text)
-                    except (json.JSONDecodeError, ValueError):
-                        parsed_body = None
+        # AA-875: fixed Graph host; the tenant's page_id is one percent-encoded path segment.
+        resp = await safe_http.request(
+            "GET", f"https://graph.facebook.com/{quote(str(creds['page_id']), safe='')}",
+            params=params, timeout=_TEST_TIMEOUT_S,
+        )
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
+        if content_type.startswith("application/json"):
+            try:
+                parsed_body = json.loads(body_text)
+            except (json.JSONDecodeError, ValueError):
+                parsed_body = None
     except Exception:  # noqa: BLE001 — classified below (status_code stays None -> generic message)
         pass
 

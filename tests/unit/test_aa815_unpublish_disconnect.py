@@ -23,6 +23,7 @@ from api.routers import v1_publish as pub_mod
 from services.acp_publish.facebook import FacebookAdapter
 from services.acp_publish.idempotency import Claim
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+from tests.unit.safe_http_fakes import TARGET, response
 
 TENANT_ID = str(uuid.uuid4())
 TENANT = {"sub": TENANT_ID, "role": "tenant"}
@@ -35,24 +36,15 @@ UPDATED_AT = datetime(2026, 10, 14, 9, 0, 0, 654321, tzinfo=timezone.utc)
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _http_response(status: int, body=None, content_type: str = "application/json"):
-    resp = MagicMock()
-    resp.status = status
-    resp.headers = {"content-type": content_type}
     text = body if isinstance(body, str) else (json.dumps(body) if body is not None else "")
-    resp.text = AsyncMock(return_value=text)
-    return resp
+    return response(status, content_type, text)
 
 
-def _session_ctx(resp, method: str = "delete"):
-    session = MagicMock()
-    call = MagicMock()
-    call.return_value.__aenter__ = AsyncMock(return_value=resp)
-    call.return_value.__aexit__ = AsyncMock(return_value=False)
-    setattr(session, method, call)
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx, call
+def _session_ctx(resp):
+    """AA-875: stand-in for shared.safe_http.request (called as request(method, url, ...)).
+    Returned twice so call sites keep the (ctx, call) shape."""
+    call = AsyncMock(return_value=resp)
+    return call, call
 
 
 def _sequential_pool(*fetchrow_returns):
@@ -107,53 +99,54 @@ class TestWordPressDelete:
 
     async def test_trash_response_is_trashed_and_hits_posts_endpoint_without_force(self):
         ctx, call = _session_ctx(_http_response(200, {"id": 42, "status": "trash", "link": "x"}))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             assert await self.adapter.delete_post(42) == "trashed"
-        url = call.call_args[0][0]
+        method, url = call.call_args[0]
+        assert method == "DELETE"
         assert url == "https://tenant-blog.com/wp-json/wp/v2/posts/42"
         assert "force" not in url and "params" not in call.call_args.kwargs
 
     async def test_already_trashed_410_is_already_gone(self):
         body = {"code": "rest_already_trashed", "message": "The post has already been deleted."}
         ctx, _ = _session_ctx(_http_response(410, body))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             assert await self.adapter.delete_post(42) == "already_gone"
 
     async def test_invalid_id_404_is_already_gone(self):
         body = {"code": "rest_post_invalid_id", "message": "Invalid post ID."}
         ctx, _ = _session_ctx(_http_response(404, body))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             assert await self.adapter.delete_post(42) == "already_gone"
 
     async def test_html_404_from_a_waf_is_not_read_as_gone(self):
         ctx, _ = _session_ctx(_http_response(404, "<html>Not Found</html>", content_type="text/html"))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError, match="unexpected response"):
                 await self.adapter.delete_post(42)
 
     async def test_200_html_anti_bot_page_raises(self):
         ctx, _ = _session_ctx(_http_response(200, "<html>checking your browser</html>", content_type="text/html"))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError):
                 await self.adapter.delete_post(42)
 
     async def test_200_post_not_in_trash_raises(self):
         ctx, _ = _session_ctx(_http_response(200, {"id": 42, "status": "publish"}))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError):
                 await self.adapter.delete_post(42)
 
     async def test_cannot_delete_401_raises_permission_message(self):
         body = {"code": "rest_cannot_delete", "message": "Sorry, you are not allowed to delete this post."}
         ctx, _ = _session_ctx(_http_response(401, body))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError, match="cannot delete posts"):
                 await self.adapter.delete_post(42)
 
     async def test_trash_disabled_501_raises_clear_message_no_force_delete(self):
         body = {"code": "rest_trash_not_supported", "message": "The post does not support trashing."}
         ctx, call = _session_ctx(_http_response(501, body))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError, match="trash turned off"):
                 await self.adapter.delete_post(42)
         assert call.call_count == 1  # never retried with force=true
@@ -167,27 +160,27 @@ class TestFacebookDelete:
 
     async def test_success_true_is_deleted(self):
         ctx, call = _session_ctx(_http_response(200, {"success": True}))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             assert await self.adapter.delete_post("123_456") == "deleted"
-        assert call.call_args[0][0].endswith("/123_456")
+        assert call.call_args[0] == ("DELETE", "https://graph.facebook.com/v21.0/123_456")
         assert call.call_args.kwargs["params"] == {"access_token": "tok"}
 
     async def test_graph_error_raises_with_message(self):
         body = {"error": {"code": 100, "error_subcode": 33, "message": "Object with ID '123_456' does not exist"}}
         ctx, _ = _session_ctx(_http_response(400, body))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError, match="does not exist"):
                 await self.adapter.delete_post("123_456")
 
     async def test_non_json_200_raises(self):
         ctx, _ = _session_ctx(_http_response(200, "<html/>", content_type="text/html"))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError):
                 await self.adapter.delete_post("123_456")
 
     async def test_success_false_raises(self):
         ctx, _ = _session_ctx(_http_response(200, {"success": False}))
-        with patch("aiohttp.ClientSession", return_value=ctx):
+        with patch(TARGET, ctx):
             with pytest.raises(RuntimeError):
                 await self.adapter.delete_post("123_456")
 
