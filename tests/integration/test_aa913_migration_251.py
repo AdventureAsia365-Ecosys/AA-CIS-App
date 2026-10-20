@@ -56,18 +56,26 @@ def _role_exists(cur, name: str) -> bool:
 @pytest.fixture
 def app(su):
     """A connection logged in AS cis_app. The replay skips CIS 244, so schema USAGE is granted here for the test
-    only (and taken back) when cis_app lacks it."""
+    only (and taken back) when cis_app lacks it. The table grant from 251 is restored the same way: conftest's
+    x1_244_undo (run by the AA-860 modules that sort before this one) revokes every table in `shared` from
+    cis_app, including this one."""
     if not _role_exists(su, "cis_app"):
         pytest.skip("role cis_app does not exist on this test DB (conftest creates it on a superuser replay)")
     su.execute("SELECT has_schema_privilege('cis_app', 'shared', 'USAGE')")
     granted = not su.fetchone()[0]
     if granted:
         su.execute("GRANT USAGE ON SCHEMA shared TO cis_app")
+    su.execute("SELECT has_table_privilege('cis_app', 'shared.alert_recipient', 'SELECT, INSERT, UPDATE')")
+    table_granted = not su.fetchone()[0]
+    if table_granted:
+        su.execute("GRANT SELECT, INSERT, UPDATE ON shared.alert_recipient TO cis_app")
     try:
         c = _connect("cis_app", CIS_APP_CI_PASSWORD)
     except psycopg2.OperationalError as e:
         if granted:
             su.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
+        if table_granted:
+            su.execute("REVOKE SELECT, INSERT, UPDATE ON shared.alert_recipient FROM cis_app")
         pytest.skip(f"cannot log in as cis_app here: {e}")
     c.autocommit = True
     cur = c.cursor()
@@ -78,6 +86,8 @@ def app(su):
         c.close()
         if granted:
             su.execute("REVOKE USAGE ON SCHEMA shared FROM cis_app")
+        if table_granted:
+            su.execute("REVOKE SELECT, INSERT, UPDATE ON shared.alert_recipient FROM cis_app")
 
 
 def _insert(cur, email, status="pending", **kw):
