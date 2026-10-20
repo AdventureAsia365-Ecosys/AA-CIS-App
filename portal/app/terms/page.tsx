@@ -1,35 +1,108 @@
 // portal/app/terms/page.tsx
-// AA-885 — /terms. adventure.asia has no terms page yet (only /privacy-policy exists), and the
-// partner terms are not approved (AA-820). This page states that and gives SUPPORT_EMAIL (the contact
-// address adventure.asia itself publishes). It is NOT legal text: replace it with a redirect to the real
-// document (next.config.ts, like /privacy) once that document exists.
+// AA-886 — /terms: DRAFT partner terms (was the AA-885 "being finalised" placeholder). Product facts
+// only (what the platform does, who publishes, the AI notice, suspension); commercial and legal terms are
+// left [to be confirmed] for counsel, and the AI acceptable-use clause comes from AA-820 once approved.
+// Not indexed while it is a draft.
 import type { Metadata } from "next";
-import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "../_brand/tokens";
+import LegalPage, { A, LegalSection } from "../_legal/LegalPage";
+import { SUPPORT_EMAIL } from "../_brand/tokens";
 import { PRIVACY_PATH } from "@/lib/hosts";
 
-export const metadata: Metadata = { title: "Terms — Adventure Asia Partner Portal" };
+export const metadata: Metadata = {
+  title: "Partner terms (draft) — Adventure Asia Partner Portal",
+  robots: { index: false, follow: true },
+};
 
 export default function TermsPage() {
   return (
-    <div data-theme="light" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)", fontFamily: FONT_SANS, padding: 16, boxSizing: "border-box" }}>
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 16, padding: 32, width: "100%", maxWidth: 480, boxSizing: "border-box" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={LOGO_SRC} alt="Adventure Asia" width={52} height={33} style={{ width: 52, height: "auto", display: "block", marginBottom: 16 }} />
-        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 20, color: "var(--text-primary)", margin: "0 0 12px" }}>
-          Partner terms
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 12px" }}>
-          The terms for the Adventure Asia Partner Portal are being finalised and will be published here.
+    <LegalPage
+      title="Partner terms"
+      intro={
+        <p style={{ margin: 0 }}>
+          These terms apply to partner businesses that use the Adventure Asia Partner Portal and its API. They will form
+          part of, or sit next to, the partner agreement you sign with Adventure Asia [relationship to be confirmed].
         </p>
-        <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 20px" }}>
-          Questions in the meantime:{" "}
-          <a href={`mailto:${SUPPORT_EMAIL}`} style={{ color: BRAND.accentDeep }}>{SUPPORT_EMAIL}</a>
+      }
+    >
+      <LegalSection id="service" title="1. The service">
+        <p>
+          The portal gives you Adventure Asia catalog tours rewritten in your brand voice, social and blog pieces about
+          those tours, and tools to export them or publish them to your own channels. The operating legal entity is
+          [to be confirmed].
         </p>
-        <div style={{ display: "flex", gap: 16, fontSize: 12 }}>
-          <a href={PRIVACY_PATH} style={{ color: "var(--text-muted)", textDecoration: "none" }}>Privacy policy</a>
-          <a href="/tenant-login" style={{ color: "var(--text-muted)", textDecoration: "none" }}>Partner login</a>
-        </div>
-      </div>
-    </div>
+      </LegalSection>
+
+      <LegalSection id="account" title="2. Your account and API key">
+        <ul>
+          <li>Keep your API key secret. Activity under your key is treated as yours.</li>
+          <li>
+            Tell us at once at <A href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</A> if you think the key is known to
+            someone else, so we can revoke it.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection id="ai" title="3. AI-generated content">
+        <ul>
+          <li>
+            Content is generated with AI and can contain mistakes. The portal shows this at review, publish and export:
+            &ldquo;This content was generated with AI. Review it before publishing; you are responsible for what you
+            publish.&rdquo;
+          </li>
+          <li>
+            You must not use the content to mislead people, for example as fake customer reviews or testimonials.
+          </li>
+          <li>The full AI acceptable-use terms are [to be confirmed].</li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection id="publishing" title="4. Publishing to your channels">
+        <ul>
+          <li>
+            Adventure Asia publishes a piece to your channels only when you tell it to publish that piece, using the
+            access you connected. The post appears under your name.
+          </li>
+          <li>There is a daily limit on the number of posts Adventure Asia publishes for you.</li>
+          <li>
+            You can unpublish your posts. Adventure Asia can also unpublish a post it published for you, for example when
+            it breaks these terms.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection id="suspension" title="5. Suspension and ending the service">
+        <p>
+          Adventure Asia may suspend an account, which stops its API access and publishing at once, for example to
+          protect the service or when these terms are broken. Notice periods, termination and what happens to your
+          content afterwards are [to be confirmed].
+        </p>
+      </LegalSection>
+
+      <LegalSection id="ownership" title="6. Content rights">
+        <p>Who owns the generated content and the licence to the catalog tours are [to be confirmed].</p>
+      </LegalSection>
+
+      <LegalSection id="fees" title="7. Plans and fees">
+        <p>Plans, fees and payment terms are [to be confirmed].</p>
+      </LegalSection>
+
+      <LegalSection id="availability" title="8. Availability">
+        <p>
+          The portal is under active development; features can change and the service may be unavailable at times.
+          Service levels and support hours are [to be confirmed].
+        </p>
+      </LegalSection>
+
+      <LegalSection id="liability" title="9. Liability and governing law">
+        <p>Limits of liability, the governing law and the competent courts are [to be confirmed].</p>
+      </LegalSection>
+
+      <LegalSection id="contact" title="10. Contact">
+        <p>
+          Questions: <A href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</A>. How we handle personal data is described
+          in the <A href={PRIVACY_PATH}>privacy notice</A>.
+        </p>
+      </LegalSection>
+    </LegalPage>
   );
 }

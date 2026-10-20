@@ -4,11 +4,11 @@ botocore==1.43.49
 
 # LLM - unpinned để pip tự resolve compatibility
 openai>=1.16.2
-langchain>=0.3.0
-langchain-core>=1.3.0
-langchain-community>=0.3.0
-langgraph==1.1.8
-langgraph-checkpoint-postgres>=2.0.0
+# Only langgraph is imported (services/content_generation/graph.py). langchain, langchain-community
+# and langgraph-checkpoint-postgres were never imported and were dropped (pip-audit, see
+# docs/implementation-notes/AA-907-s245.md). langchain-core comes in through langgraph.
+langgraph==1.2.16
+langgraph-sdk>=0.4.4  # PYSEC-2026-4240 fixed in 0.4.4; transitive via langgraph, floor kept explicit
 pytrends>=4.9.2
 
 # Data
@@ -19,13 +19,14 @@ python-docx>=1.1.0
 xlsxwriter>=3.2.0
 Pillow>=10.3.0
 
-# Vector DB
-chromadb==0.4.24
-
 # API
 fastapi>=0.110.1
-uvicorn>=0.29.0
+# [standard] = uvloop + httptools, which the running image already used: chromadb used to pull them in.
+uvicorn[standard]>=0.29.0
 httpx>=0.27.0
+# Imported directly (v1_integrations, acp_publish/facebook, acp_s4_blog/cms/wordpress); it used to
+# arrive only through langchain-community.
+aiohttp>=3.14.5
 
 # Testing
 pytest==9.0.3
