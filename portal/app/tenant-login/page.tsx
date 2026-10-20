@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
-import { PRIVACY_PATH, STAFF_LOGIN_URL, TERMS_PATH } from "@/lib/hosts";
+import { PRIVACY_PATH, TERMS_PATH } from "@/lib/hosts";
 import { useRouter } from "next/navigation";
 import { Key, Loader2 } from "lucide-react";
 
@@ -106,13 +106,8 @@ export default function TenantLoginPage() {
 
 
 
-        {/* AA-885: staff sign in on the admin console (another host); the portal has no staff login. */}
-        <div style={{ marginTop:16, textAlign:"center" as const }}>
-          <a href={STAFF_LOGIN_URL} style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>
-            ← Staff login
-          </a>
-        </div>
-        <div data-testid="portal-legal-links" style={{ marginTop:12, display:"flex", justifyContent:"center", gap:16, fontSize:11 }}>
+        {/* The portal and the staff console are separate apps on separate hosts: no link between their logins. */}
+        <div data-testid="portal-legal-links" style={{ marginTop:16, display:"flex", justifyContent:"center", gap:16, fontSize:11 }}>
           <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color:"var(--text-muted)", textDecoration:"none" }}>Privacy</a>
           <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color:"var(--text-muted)", textDecoration:"none" }}>Terms</a>
         </div>

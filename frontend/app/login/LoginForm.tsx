@@ -7,7 +7,6 @@
 import { useState } from "react";
 import { BRAND, BTN_PRIMARY_TEXT, BTN_RADIUS, FONT_DISPLAY, FONT_SANS, LOGO_SRC } from "../_brand/tokens";
 import { User, Lock, Mail } from "lucide-react";
-import { PORTAL_BASE_URL } from "@/lib/apps";
 
 interface LoginFormProps {
   legacyEnabled: boolean;
@@ -155,9 +154,6 @@ export default function LoginForm({ legacyEnabled, cognitoAvailable, signInHost,
           </>
         )}
 
-        <div style={{ marginTop:16, textAlign:"center" as const }}>
-          <a href={`${PORTAL_BASE_URL}/tenant-login`} style={{ fontSize:12, color:"var(--text-muted)", textDecoration:"none" }}>B2B Tenant login →</a>
-        </div>
       </div>
     </div>
   );
