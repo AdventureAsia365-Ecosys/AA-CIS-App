@@ -95,7 +95,7 @@ Names only — values come from Secrets Manager / the ECS task definition (AA-CI
 | Ops / alerts | `ALERT_TOPIC_ARN`, `SWEEPER_ALERT_SNS_ARN`, `SWEEPER_SLA_HOURS`, `DFS_BALANCE_ALERT_THRESHOLD_USD`, `JEV_CREDIT_COOLDOWN_MIN`, `ECS_CLUSTER`, `ECS_SERVICE`, `RDS_INSTANCE_ID`, `NAT_INSTANCE_ID`, `REDIS_CLUSTER_ID` |
 | Frontend (Vercel) | `API_URL`, `NEXT_PUBLIC_API_URL`, `ADMIN_SECRET`, `INTERNAL_API_KEY` |
 
-Some legacy variables (Chroma, Langfuse) are still read by old code paths and are not set on Dev.
+Some legacy variables (Langfuse) are still read by old code paths and are not set on Dev.
 The Step Functions pipeline and its SQS queues were retired (AA-750), so `STEP_FUNCTIONS_ARN` /
 `SF_BATCH_THRESHOLD` on the api task definition are now unused and can be dropped from the task def
 in a future Infra change.
