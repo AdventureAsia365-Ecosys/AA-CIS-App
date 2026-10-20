@@ -3,7 +3,9 @@ name: Cognito E2E
 # AA-816 (E1) — real Cognito email-code sign-in on https://aa-cis.lumiguides.it.com (production host: the
 # only registered callback of the cis-admin client, so never a preview). Playwright project `cognito`:
 #   /login → "Sign in with company email" → staff-auth.lumiguides.it.com managed login → the E2E staff user's
-#   email code, read from the SES inbound mailbox in S3 → lands under /admin → sign out, no silent re-login.
+#   email code, read from the SES inbound mailbox in S3 → lands under /admin → (AA-680) tries the Booking staff
+#   admin https://booking.lumiguides.it.com with the same session and must be refused (no booking-* group →
+#   /login?reason=no_booking_role, no Booking session) → back on CIS → sign out, no silent re-login.
 #
 # Mailbox (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): the E2E staff user's address IS the test
 # mailbox e2e@e2e-mail.lumiguides.it.com (S243 option B, a TEMPORARY exception to the @adventure.asia-only rule:
