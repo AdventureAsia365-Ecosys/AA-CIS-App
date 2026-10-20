@@ -90,6 +90,32 @@ export function isCompanyDomain(raw: string): boolean {
   return v.endsWith(`@${COMPANY_DOMAIN}`);
 }
 
+/** Edit distance with adjacent swaps (optimal string alignment), small inputs only. */
+function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/** The company address the admin probably meant when the domain is a near miss of adventure.asia (e.g. "aisa",
+ *  "adventrue"), else null. A mistyped domain never receives the AWS confirmation e-mail, and nothing on the page
+ *  says why (S245: admin@adventure.aisa). */
+export function companyDomainSuggestion(raw: string): string | null {
+  const v = raw.trim().toLowerCase();
+  const at = v.lastIndexOf("@");
+  if (at <= 0) return null;
+  const domain = v.slice(at + 1);
+  if (!domain || domain === COMPANY_DOMAIN) return null;
+  return editDistance(domain, COMPANY_DOMAIN) <= 2 ? `${v.slice(0, at)}@${COMPANY_DOMAIN}` : null;
+}
+
 /** Seconds to wait from a refused (429) change. The body's `retry_after_s` comes first: the admin BFF proxy forwards
  *  only Content-Type, so the Retry-After header normally never reaches the browser. */
 export function retryAfterSeconds(body: { retry_after_s?: unknown } | null | undefined, header: string | null): number | undefined {
