@@ -1356,16 +1356,21 @@ text. (B) is built: `services/acp_shared/question_topup.py` + `scripts/aa779_ser
 questions, query '<place> <country>', stored in `search_demand` (keyword `topup_keyword`, its own market
 `US-PAA2` apart from the Segment research cache, no volume; an empty row marks a place bought with no
 question) and read back as the `serp_topup` tier.
-S245 (AA-779, 20/10; review rounds 1–2) — **scope filter: spelling variants + country-level travel questions,
+S245 (AA-779, 20/10; review rounds 1–3) — **scope filter: spelling variants + country-level travel questions,
 precision first** (a kept question can reach a customer-facing FAQ). Every path first drops a war / death /
-politics / celebrity / romance / diet-health-leftovers / name-as-a-name / media question (`harm_question`;
-a word of an own place name does not count: 'War Remnants Museum'). `paa_for_scope` then keeps a question that:
+politics / unrest (coup, martial law, riots, 'what happened at', 'who owns') / crime / drugs / sex work /
+censorship / medical tourism / dog meat / celebrity / romance / diet-health-leftovers / name-as-a-name / media
+question (`harm_question`; a word of an own place name does not count: 'War Remnants Museum'), a question about
+the person a place is named after (`person_question`: 'Was Ho Chi Minh a good leader?'; the name counts as the
+place only with a kind word: 'Ho Chi Minh City', 'the Genghis Khan statue'), and an own name used as a product,
+brand, breed or another place (`name_homonym`: 'Great Wall cars', 'Lhasa apso', 'learn Java', 'Saigon
+cinnamon', 'Mandalay Bay'). `paa_for_scope` then keeps a question that:
 (1) names an own place exactly (`own_place_forms` / `own_place_named`: only the Location fields, the label and
 mid-line names with a kind of landmark — 'Great Wall', 'Gandan Monastery', never 'Dalai Lama', 'Nguyễn' or a
 line opener; the whole name, its core, the core joined ('Halong') or a distinctive core word of ≥ 5 letters;
 written capitalised and not a first-word opener, so 'can' of Can Tho, 'hue' and 'hoi polloi' never count; a
 lowercase name only as a whole ≥ 6-letter name with a travel word) and is no comparison, world question or
-other place; or (2) names it in another romanisation (`variant_place_question`: diacritics folded incl. đ,
+other place, and a one-word own name also has a travel word or a place fact ('How high is Lhasa?'); or (2) names it in another romanisation (`variant_place_question`: diacritics folded incl. đ,
 kh→h, o/u/ö/ü, doubled letters, one inserted vowel for a capitalised word, words joined or split — 'Hoian',
 'Halong', 'Ulan Bator' — or a listed exonym: Karakorum, Muren, Louangphabang, Rangoon, Saigon, Burma; never a
 consonant change, so Karakoram / Darkhan / Chengde stay other places), with the same checks; an exonym alone
@@ -1377,8 +1382,11 @@ travel noun ('Mongolian gers', never 'Mongolian beef'), no people / politics / e
 history / past-tense ('did', 'was', 'century', 'soldiers') / living-retiring / names / sport-music question,
 no comparison ('as safe as', '-er than'), no other place or nationality outside a traveller frame ('for
 American tourists'), a cuisine named only by its demonym never with a price ('How much does Chinese food
-cost?'), and either a practical topic (best time, weather, visa, currency, food, pack, worth, expensive /
-cheap, known for, a good place to visit, safe for tourists) or a traveller frame plus the kind of the
+cost?'), no goods / property / study / cost-of-living question ('Is land cheap in Mongolia?'), and either a
+practical topic (best time, weather, visa, currency, food, pack, worth, known for, a good place to visit; a
+price word only for the country itself, a travel subject or the traveller's money; 'safe' / 'friendly' only
+about the country, its people, the locals or 'it' — never 'Are girls in Vietnam friendly …') or a traveller
+frame plus the kind of the
 moment's own place ('most famous lake' only for a lake moment; never 'most famous horse'). The off-meaning
 test reads a variant as the name.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without

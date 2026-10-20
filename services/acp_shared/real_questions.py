@@ -278,6 +278,7 @@ _PLACE_ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
     ("luangprabang", "louangphabang", "louangprabang"),
     ("thimphu", "thimpu"),
     ("yangon", "rangoon"),
+    # 'Ho Chi Minh' alone in a question is the person: `person_question` drops it first (review round 3)
     ("hochiminh", "hochiminhcity", "saigon"),
     ("siemreap", "siemriep"),
     ("kathmandu", "katmandu"),
@@ -306,6 +307,8 @@ _ALIAS_HOMONYMS: dict[str, frozenset] = {
     "kharakhorum": frozenset("range ranges mountain mountains highway peak peaks glacier glaciers pass k".split()),
     "rangoon": frozenset("crab crabs cheese wonton wontons recipe recipes calories sauce dip".split()),
     "burma": frozenset("shave".split()),
+    # review round 3 — Saigon cinnamon (a spice), Saigon beer, Miss Saigon (a musical)
+    "saigon": frozenset("cinnamon cassia spice spices powder beer miss musical".split()),
 }
 
 
@@ -475,17 +478,40 @@ _PRACTICAL_RE = re.compile(
     r"|(?:time|month|season)s?\s+(?:of\s+(?:the\s+)?year\s+)?to\s+(?:visit|go|travel)"
     r"|weather|climate|temperatures?|rain|rains|rainy|snow|snows|monsoon|cold|warm|hot\s+(?:in|during)|freezing"
     r"|winter|summer"
-    r"|visas?|passports?|currency|money|cash|atms?|credit\s+cards?|cards|tipping|tip"
+    r"|visas?|passports?|currency|cash|atms?|credit\s+cards?|cards|tipping|tip"
     r"|food|foods|dish|dishes|cuisine|restaurants?|tap\s+water|drinking\s+water"
-    r"|pack|packing|wear|clothes|clothing|worth|expensive|cheap|budget|afford\w*|(?:known|famous)\s+for"
+    r"|pack|packing|wear|clothes|clothing|worth|(?:known|famous)\s+for"
     r"|good\s+(?:place|country|destination)\s+(?:to|for)\s+(?:visit|travel|tourists?|holidays?|vacations?)"
     r"|how\s+many\s+days|how\s+long\s+(?:should|do|does|to|is\s+enough)"
     r"|speak\s+english|english\s+(?:is\s+)?(?:\w+\s+)?spoken|english\s+speaking"
     r"|toilets?|bathrooms?|showers?|wi\s+fi|wifi|internet|sim|electricity|plugs?|sockets?"
     r"|get(?:ting)?\s+around|transport\w*)\b")
+# Price words (review round 3): 'cheap' / 'expensive' / 'money' say nothing about what is cheap, so they
+# count only for the country itself ('Is Mongolia expensive?', 'How cheap is Laos?') or a travel subject
+# ('Is food cheap in Laos?', 'Is Vietnam cheap to visit?'), and 'money' only for the traveller's own ('How
+# much money do I need …?') — never 'Are drugs / guns / iPhones cheap in …', 'Is money laundering common …'.
+_COST_RE = re.compile(r"\b(?:expensive|cheap|cheaper|pricey|affordable|afford\w*|budget|money|costs?|prices?)\b")
+_COST_SUBJECT_RE = re.compile(
+    r"\b(?:trips?|tours?|travel\w*|visit\w*|holidays?|vacations?|touris\w*|backpack\w*|food|foods|meals?|eat"
+    r"|eating|drinks?|beer|hotels?|hostels?|accommodation|guesthouses?|homestays?|stay|staying|flights?|transport"
+    r"|taxis?|buses|trains?|souvenirs?|shopping|restaurants?|street\s+food|tickets?|entrance\s+fees?)\b")
+_MONEY_FRAME_RE = re.compile(
+    r"\bmoney\b.*\b(?:i|you|we)\s+(?:need|bring|take)\b|\b(?:bring|take|exchange|change|withdraw|carry)\s+money\b"
+    r"|\bhow\s+much\s+money\b")
+# The cost of living there, not of a trip ('Is electricity expensive in Vietnam?')
+_LIVING_COST_RE = re.compile(r"\b(?:electricity|utilit\w*|rent|rents|bills?|groceries|healthcare|insurance|taxes)\b")
 _SAFETY_RE = re.compile(r"\b(?:safe|safety|dangerous|friendly|welcoming)\b")
 _SAFETY_FRAME_RE = re.compile(
     r"\b(?:touris\w*|travel\w*|visit\w*|you|i|we|foreigners?|solo|backpack\w*|citizens?|americans|brits)\b")
+# Review round 3: who is safe / friendly must be the country, its people, the locals or 'it' ('Is Vietnam
+# friendly to foreigners?', 'Are Vietnamese people friendly?', 'Is it safe to travel to Vietnam?') — never
+# 'Are girls in Vietnam friendly to foreigners?'. {c}: the scope's country names and demonyms.
+_SAFETY_SUBJECT_TMPL = (
+    r"\b(?:is|are|isn\s+t|aren\s+t)\s+(?:it|the\s+)?(?:{c}|locals?|people|the\s+locals|it)(?:\s+(?:{c}|people|locals))?"
+    r"(?:\s+(?:in|of)\s+(?:{c}))?\s+(?:\w+\s+)?(?:safe|safer|dangerous|friendly|welcoming)\b"
+    r"|\bhow\s+(?:safe|dangerous|friendly|welcoming)\s+(?:is|are)\s+(?:it|the\s+)?(?:{c}|locals?|people|it)\b"
+    r"|\bsafe\s+(?:to|for)\s+(?:travel|visit|go|tourists?|travell?ers?|foreigners|backpack\w*|solo)\b"
+    r"|\bsafety\b")
 _EAT_RE = re.compile(r"\b(?:eat|eating)\b")
 _EAT_FRAME_RE = re.compile(r"\b(?:you|i|we|touris\w*|travel\w*|visitors?)\b")
 # Not travel: people, politics, economy, demographics, history trivia.
@@ -509,7 +535,12 @@ _COUNTRY_DENY_RE = re.compile(
     r"|live\s+in|living\s+in|move\s+to|moving\s+to|relocat\w*|retire\w*|refugees?|asylum|citizenship"
     r"|criticiz\w*|criticis\w*|make\s+money|makes\s+money|earn\w*|deficit|debt|budget\s+deficit"
     r"|so\s+(?:cheap|expensive)|family\s+names?|surnames?|names?|band|bands|songs?|albums?|movies?|films?"
-    r"|football|soccer|teams?|league|olympic\w*)\b")
+    r"|football|soccer|teams?|league|olympic\w*"
+    # review round 3 — goods, property, study: what a price word asks about when it is not travel ('Is land
+    # cheap in Mongolia?', 'Are cars expensive in Mongolia?', 'Is it cheap to study in Vietnam?')
+    r"|cars|property|properties|land|real\s+estate|houses|housing|apartments?|condos?|guns?|firearms?|weapons?"
+    r"|iphones?|laptops?|electronics|gold|jewel\w*|study|studying|students?|universit\w*|tuition|schools?"
+    r"|babies|baby|adopt\w*|labou?r|workers?)\b")
 # Off-topic shapes: comparisons with somewhere else ('What US state is most like Mongolia?', 'Is Mongolia
 # as safe as the UK?', 'Is Lao food spicier than Thai food?'). World superlatives: `is_world_question`.
 _COMPARISON_RE = re.compile(
@@ -593,6 +624,13 @@ def own_place_forms(canonical: Iterable[str], landmarks: Iterable[str] = ()) -> 
         toks = tuple(_name_seq(phrase))
         if not toks:
             continue
+        if set(toks) & _PERSON_TOKENS and _PERSON_NAMES_RE.search(" ".join(toks)):
+            # named after a person ('Ho Chi Minh City', 'Genghis Khan Equestrian Statue'): only the whole
+            # name, never its core or a word of it ('ho chi minh', 'genghis' are the person; review round 3)
+            if len(toks) > 1:
+                forms.add(toks)
+                forms.add(("".join(toks),))
+            continue
         if len(toks) > 1 or _distinct_word(toks[0]):
             forms.add(toks)
         core = list(toks)
@@ -673,7 +711,26 @@ _HARM_DENY_RE = re.compile(
     r"|sodium|carbs?|keto|fattening|recipes?|takeout|take\s+out|takeaway|delivery|near\s+me|buffets?"
     # a name as a name, media and entertainment ('Is Paro a good name for a girl?', 'Is Star Trek on Netflix?')
     r"|baby\s+names?|last\s+name|first\s+name|surnames?|good\s+name|names?\s+for\s+(?:an?\s+)?\w+"
-    r"|bands?|albums?|songs?|lyrics|movies?|films?|netflix|episodes?|tv\s+(?:show|series)|video\s+games?)\b")
+    r"|bands?|albums?|songs?|lyrics|movies?|films?|netflix|episodes?|tv\s+(?:show|series)|video\s+games?"
+    # review round 3 — coups and unrest, crime, drugs, sex work, disputed land, censorship, medical tourism,
+    # a person's body or grave, dog meat ('Is Yangon under martial law?', 'Can you buy weed in Vang Vieng?',
+    # 'Where are the massage parlors in Hanoi?', 'Who owns Kashmir?', 'What happened at Tiananmen Square?',
+    # 'Is dental work cheap in Vietnam?', 'Are girls in Vietnam friendly to foreigners?')
+    r"|coups?|junta|martial\s+law|curfews?|riots?|rioting|uprisings?|crackdown|revolution\w*|tanks?"
+    r"|terror\w*|murder\w*|kidnap\w*|rape|raped|rapes|rapist\w*|crime\s+rates?|police|shootings?|gunm[ae]n"
+    r"|traffick\w*|smuggl\w*|launder\w*|brib\w*|corrupt\w*|censor\w*|disputed?|occupied"
+    r"|self\s+immolat\w*|set\s+(?:themselves|himself|herself)\s+on\s+fire"
+    r"|what\s+happened\s+(?:at|in|to|on|during)|who\s+(?:owns|controls|rules|governs|runs)"
+    r"|drugs?|weed|cannabis|marijuana|opium|cocaine|heroin|meth|methamphetamine|ecstasy|mdma|ketamine|kratom"
+    r"|narcotics?|magic\s+mushrooms?|happy\s+(?:pizzas?|shakes?)"
+    r"|prostitut\w*|brothels?|red\s+light|massage\s+parlou?rs?|happy\s+endings?|sex|sexy|sexual\w*|hookers?"
+    r"|escort\s+(?:services?|girls?|agenc\w*)|strip\s+clubs?|ladyboys?|bar\s+girls?|go\s+go\s+bars?|brides?"
+    r"|(?:girls?|women|woman|ladies|lady|men|guys)\s+(?:in|from)|single\s+(?:men|males?|guys|women|girls)"
+    r"|dental|dentists?|dentistry|teeth|implants?|veneers?|surger(?:y|ies)|surgeons?|plastic\s+surgery"
+    r"|cosmetic\w*|botox|ivf|surrogac\w*|medical\s+tourism|have\s+a\s+baby|give\s+birth|giving\s+birth"
+    r"|childbirth|abortions?|hair\s+transplants?"
+    r"|buried|burial\s+place|embalm\w*|(?:dogs?|cats?)\s+meat|eat\w*\s+(?:\w+\s+){0,2}?(?:dogs?|cats?|snakes?|bats?"
+    r"|rats?|monkeys?|pangolins?)\b)\b")
 
 
 def harm_question(question: str, exempt: Iterable[str] = ()) -> bool:
@@ -686,7 +743,112 @@ def harm_question(question: str, exempt: Iterable[str] = ()) -> bool:
 
 def _travel_context(question: str) -> bool:
     q = " ".join(_TOKEN_RE.findall(fold(question)))
-    return bool(set(q.split()) & _TRAVEL_CONTEXT) or bool(_PRACTICAL_RE.search(q))
+    return bool(set(q.split()) & _TRAVEL_CONTEXT) or bool(_PRACTICAL_RE.search(q) or _COST_RE.search(q))
+
+
+# Facts about a place itself a one-word own name may be asked with ('How high is Lhasa?', 'How old is Hue?').
+_PLACE_FACT_WORDS = frozenset("high altitude elevation height old big large size built founded".split())
+
+
+def travel_context(question: str) -> bool:
+    """Does `question` carry a travel word (`_TRAVEL_CONTEXT`), a practical travel topic or a fact about
+    a place itself (high, old, built …)? What a question naming an own place by a one-word name needs
+    (review round 3: 'Is Java hard to learn?' has none)."""
+    return _travel_context(question) or bool(set(_TOKEN_RE.findall(fold(question))) & _PLACE_FACT_WORDS)
+
+
+# ---------------------------------------------------------------- people and homonyms (review round 3)
+# A place named after a person ('Ho Chi Minh City', 'Chinggis Khaan Statue Complex'): the person's name
+# alone is the person ('Where is Ho Chi Minh buried?', 'How many children did Genghis Khan have?'). It
+# names the place only with a kind of place right after it ('Ho Chi Minh City', 'the Genghis Khan
+# statue'), and 'Ho Chi Minh' also after a place preposition ('things to do in Ho Chi Minh').
+_PERSON_NAMES_RE = re.compile(
+    r"\b(?:ho\s+chi\s+minh|(?:genghis|chinggis|chingis|jenghis|genghiz|chingghis)\s+kha+n|kublai\s+kha+n"
+    r"|aung\s+san(?:\s+suu\s+kyi)?|suu\s+kyi|su(?:k)?hbaatar|sukhe\s+bator|mao(?:\s+zedong|\s+tse\s+tung)?"
+    r"|pol\s+pot)\b")
+_PERSON_PLACE_KINDS = frozenset("""
+city mausoleum museum statue statues square complex trail airport memorial house residence park monument
+temple palace stilt market street road bridge international equestrian tomb shrine avenue boulevard theme
+province aimag district stadium
+""".split())
+_PERSON_PLACE_FRAME = frozenset("in to from near around visit visiting reach reaching leave leaving between".split())
+_PERSON_TOKENS = frozenset("""
+ho chi minh genghis chinggis chingis jenghis genghiz chingghis khan khaan kublai aung san suu kyi sukhbaatar
+suhbaatar sukhe bator mao zedong tse tung pol pot
+""".split())
+
+
+def person_question(question: str) -> bool:
+    """`question` names a person a place is named after, not the place: 'Was Ho Chi Minh a good
+    leader?', "Is Ho Chi Minh's body real?", 'How tall was Genghis Khan?' — but not 'Is Ho Chi Minh
+    City worth visiting?', 'How tall is the Genghis Khan statue?' or 'things to do in Ho Chi Minh'."""
+    q = " ".join(_TOKEN_RE.findall(fold(_normalise_question(question))))
+    for m in _PERSON_NAMES_RE.finditer(q):
+        after = q[m.end():].split()
+        if after and after[0] == "s":
+            after = after[1:]
+        if after and after[0] in _PERSON_PLACE_KINDS:
+            continue
+        before = q[:m.start()].split()
+        if m.group(0) == "ho chi minh" and before and before[-1] in _PERSON_PLACE_FRAME:
+            continue
+        return True
+    return False
+
+
+# A place name that is also a product, brand, breed or programming language ('Great Wall cars', 'Lhasa
+# apso', 'Jodhpur boots', 'Saigon cinnamon', 'Kathmandu clothing', 'learn Java'): one of these right after
+# the name (or the verb right before it) makes the question about the thing, not the place.
+_NAME_HOMONYM_NEXT = frozenset("""
+car cars ute utes suv suvs truck trucks pickup pickups motor motors haval brand brands clothing clothes jacket
+jackets boot boots breeches jodhpurs apso apsos terrier terriers spaniel spaniels cat cats dog dogs puppy
+puppies breed breeds camera cameras film films lens lenses printer printers bank banks cinnamon cassia spice
+spices rug rugs programming code script jdk syndrome virus flu fever shares stock stocks
+""".split())
+_NAME_HOMONYM_BEFORE = frozenset("learn learning install installing download downloading code coding".split())
+# A capitalised kind of place after an own name that the moment's own names do not carry is another place
+# ('Mandalay Bay' — a Las Vegas resort — for Mandalay Hill).
+_OTHER_PLACE_NEXT = frozenset("""
+bay hotel hotels casino casinos resort resorts mall county state university college stadium arena airlines
+airways
+""".split())
+_HOMONYM_THEME_RE = re.compile(
+    r"\b(?:hypoallergenic|shedding|grooming|(?:hard|easy|difficult)\s+to\s+learn|programming|coding|developers?"
+    r"|javascript|warranty|horsepower|mpg)\b")
+
+
+def name_homonym(question: str, names: Iterable[str], own_words: Iterable[str] = ()) -> bool:
+    """`question` uses one of the folded own name words `names` as a product, brand, breed or other
+    place: a homonym noun right after it ('Are Great Wall cars reliable?', 'Is a Lhasa apso
+    hypoallergenic?', 'Is Kathmandu a good clothing brand?' — two words on), a verb before it ('How long
+    does it take to learn Java?'), a capitalised kind of place the own names do not carry ('Does Mandalay
+    Bay have a lazy river?' for Mandalay Hill; `own_words`: words of the own names), or a homonym theme
+    anywhere (hypoallergenic, programming, 'hard to learn')."""
+    names = {n for n in names if n}
+    if not names:
+        return False
+    own = {w for w in own_words if w}
+    text = _normalise_question(question)
+    raw = _NAME_TOKEN_RE.findall(text)
+    words = [fold(w) for w in raw]
+    hit = False
+    for i, w in enumerate(words):
+        if w not in names:
+            continue
+        hit = True
+        j = i + 1
+        if j < len(words) and words[j] == "s":
+            j += 1
+        nxt = words[j:j + 4]
+        if nxt and (nxt[0] in _NAME_HOMONYM_NEXT
+                    or (raw[j][:1].isupper() and nxt[0] in _OTHER_PLACE_NEXT and nxt[0] not in own)):
+            return True
+        # 'Is Kathmandu a good clothing brand?' — a homonym noun a few words on, after an article
+        if len(nxt) >= 2 and nxt[0] in {"a", "an", "the"} and set(nxt[1:]) & _NAME_HOMONYM_NEXT:
+            return True
+        if i and words[i - 1] in _NAME_HOMONYM_BEFORE:
+            return True
+    return hit and bool(_HOMONYM_THEME_RE.search(" ".join(_TOKEN_RE.findall(fold(text)))))
 
 
 def _normalise_question(question: Optional[str]) -> str:
@@ -804,6 +966,34 @@ def _country_mention(words: list[str], raw: list[str], names: set[str], demonyms
     return found
 
 
+def _country_alt(terms: set[str]) -> str:
+    return "|".join(sorted((re.escape(t) for t in terms if t), key=len, reverse=True)) or "(?!)"
+
+
+def _cost_question(q: str, terms: set[str]) -> bool:
+    """A price word about the trip (folded question `q`, `terms`: the scope's country names and
+    demonyms): the country itself ('Is Mongolia expensive?', 'How cheap is Laos?'), a travel subject
+    ('Is food cheap in Laos?', 'Is Vietnam cheap to visit?') or the traveller's own money ('How much
+    money do I need for Mongolia?')."""
+    if not _COST_RE.search(q):
+        return False
+    if _COST_SUBJECT_RE.search(q) or _MONEY_FRAME_RE.search(q):
+        return True
+    c = _country_alt(terms)
+    price = r"(?:expensive|cheap|pricey|affordable)"
+    return bool(re.search(rf"\b(?:is|isn\s+t)\s+(?:{c})\s+(?:\w+\s+)?{price}\b", q)
+                or re.search(rf"\bhow\s+{price}\s+is\s+(?:{c})\b", q))
+
+
+def _safety_question(q: str, terms: set[str]) -> bool:
+    """'Safe' / 'friendly' about the country, its people, the locals or the trip, for a traveller:
+    'Is Mongolia safe for tourists?', 'Are Vietnamese people friendly to foreigners?' — never 'Are
+    girls in Vietnam friendly to foreigners?'."""
+    if not (_SAFETY_RE.search(q) and _SAFETY_FRAME_RE.search(q)):
+        return False
+    return bool(re.search(_SAFETY_SUBJECT_TMPL.format(c=_country_alt(terms)), q))
+
+
 # A cuisine named only by its demonym ('Chinese food', no 'China') is the takeaway down the road when the
 # question asks its price or menu.
 _DEMONYM_ONLY_DENY_RE = re.compile(r"\b(?:cost|costs|price|prices|pricey|how\s+much|cheap|expensive|order|menu)\b")
@@ -824,8 +1014,10 @@ def country_travel_question(question: str, countries: Iterable[str], seed_words:
     - no other place or nationality (`names_other_place`; allowed: the moment's own names
       `allowed_names`, and a traveller nationality: 'for American tourists');
     - a general practical travel topic (`_PRACTICAL_RE`: best time, weather, visa, currency, food and
-      dishes, what to pack, worth visiting, expensive / cheap, known for; 'safe' / 'friendly' only for
-      tourists or travel), or a traveller frame ('you', visit, travel, famous, best …) AND a word of
+      dishes, what to pack, worth visiting, known for; review round 3: a price word only for the country
+      itself, a travel subject or the traveller's money, `_cost_question`, never the cost of living;
+      'safe' / 'friendly' only for tourists or travel and only about the country, its people, the locals
+      or 'it', `_safety_question`), or a traveller frame ('you', visit, travel, famous, best …) AND a word of
       `seed_words` (paa_for_scope passes the kinds of the moment's own places, `place_kind_words`):
       'What is the most famous lake in Mongolia?' stays for a lake moment, not for a dunes moment, and
       'the most famous horse in Mongolia' for none."""
@@ -842,13 +1034,16 @@ def country_travel_question(question: str, countries: Iterable[str], seed_words:
     if (_COUNTRY_DENY_RE.search(q) or _COMPARISON_RE.search(q) or is_world_question(norm)
             or harm_question(question)):
         return False
+    if _COST_RE.search(q) and _LIVING_COST_RE.search(q):
+        return False  # 'Is electricity expensive in Vietnam?' — the cost of living there
     if mention == "demonym" and _DEMONYM_ONLY_DENY_RE.search(q):
         return False  # 'How much does Chinese food cost?' is a takeaway price, not the country
     if names_other_place(question, allowed_names, countries):
         return False
-    if (_PRACTICAL_RE.search(q) or (_SAFETY_RE.search(q) and _SAFETY_FRAME_RE.search(q))
-            or (_EAT_RE.search(q) and _EAT_FRAME_RE.search(q))):
+    if _PRACTICAL_RE.search(q) or _cost_question(q, names | demonyms) or _safety_question(q, names | demonyms):
         return True
+    if _EAT_RE.search(q) and _EAT_FRAME_RE.search(q):
+        return True  # 'What should you eat in Vietnam?' (dog, cat, snake …: harm_question)
     if not _TRAVEL_FRAME_RE.search(q):
         return False
     shared = (set(content_words(norm)) & set(seed_words)) - names - demonyms - _COUNTRY_GENERIC
@@ -1255,6 +1450,7 @@ __all__ = [
     "ENGLISH_ONLY_SOURCES", "merge", "looks_english", "is_off_meaning", "single_word_places",
     "chain_filter_names", "deaccent", "joined_name", "name_skeleton", "place_variant_match", "name_variants_in",
     "names_own_place", "own_place_forms", "own_place_named", "place_kind_words", "harm_question", "variant_kinds",
+    "person_question", "name_homonym", "travel_context",
     "place_variant_kind", "scope_name_key", "variant_place_question", "names_other_place",
     "is_comparison", "ALL_COUNTRY_WORDS", "DEMONYMS", "country_terms", "country_travel_question", "is_world_question",
     "question_key",

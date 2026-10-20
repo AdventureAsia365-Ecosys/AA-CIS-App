@@ -838,3 +838,198 @@ def test_r2_economy_living_and_off_kind_country_questions_are_dropped(seed, q):
 ])
 def test_r2_mongolian_kind_words_and_a_good_place_to_visit_stay(seed, q):
     assert _kept(q, seed)
+
+
+# ================================================================ review round 3 (S245, 20/10)
+# The still-open HIGH findings of the re-review of 4c986704, every cited question with its seed: each was
+# KEPT at 4c986704 and must be dropped. Controls below keep the travel questions of the same shape.
+
+VANG_VIENG = _seed("Vang Vieng — tubing on the river", "Vang Vieng, Vientiane Province, Laos",
+                   "Float down the Nam Song river in Vang Vieng on a tube.", "Vang Vieng sits among limestone karsts.")
+DAL_LAKE = _seed("Dal Lake — shikara ride", "Dal Lake, Srinagar, Kashmir, India",
+                 "Glide across Dal Lake on a shikara at dawn.", "Dal Lake covers about 18 square kilometres.")
+TIANANMEN = _seed("Tiananmen Square — morning walk", "Tiananmen Square, Beijing, China",
+                  "Walk across Tiananmen Square to the Forbidden City with a local guide.",
+                  "Tiananmen Square covers about 44 hectares.")
+HCM_MAUSOLEUM = _seed("Ho Chi Minh Mausoleum — morning visit", "Ho Chi Minh Mausoleum, Hanoi, Vietnam",
+                      "Visit the Ho Chi Minh Mausoleum and the One Pillar Pagoda.", "The mausoleum opened in 1975.")
+GENGHIS_STATUE = _seed("Genghis Khan Equestrian Statue — day trip",
+                       "Genghis Khan Equestrian Statue, Tsonjin Boldog, Mongolia",
+                       "Drive to the Genghis Khan Equestrian Statue and climb to the viewing platform.",
+                       "The statue is 40 metres tall.")
+CHINGGIS_COMPLEX = _seed("Chinggis Khaan Statue — day trip",
+                         "Chinggis Khaan Statue Complex, Tsonjin Boldog, Töv Province, Mongolia",
+                         "Drive to the Chinggis Khaan Statue Complex and climb to the viewing platform.",
+                         "The statue is 40 metres tall and clad in stainless steel.")
+YOGYAKARTA = _seed("Yogyakarta — batik workshop", "Yogyakarta, Java, Indonesia",
+                   "Learn batik in a family workshop in Yogyakarta.", "Yogyakarta is a centre of Javanese culture.")
+FUJI = _seed("Mount Fuji — fifth station", "Mount Fuji, Yamanashi, Japan",
+             "Drive to the Fuji fifth station and walk the trail.", "Mount Fuji rises 3,776 metres.")
+KATHMANDU = _seed("Kathmandu — Durbar Square walk", "Durbar Square, Kathmandu, Nepal",
+                  "Walk Kathmandu Durbar Square with a local guide.", "The square holds palaces of the Malla kings.")
+JODHPUR = _seed("Mehrangarh Fort — morning visit", "Mehrangarh Fort, Jodhpur, Rajasthan, India",
+                "Walk up to Mehrangarh Fort above the blue city of Jodhpur.", "Mehrangarh Fort was founded in 1459.")
+
+
+# ---------------------------------------------------------------- R3-1: price words need a travel subject
+
+@pytest.mark.parametrize("seed,q", [
+    (KHAIPHAEN_SEED, "Are drugs cheap in Laos?"), (KHAIPHAEN_SEED, "Is weed cheap in Laos?"),
+    (KHOVSGOL_SEED, "Are drugs cheap in Mongolia?"), (KHOVSGOL_SEED, "Is land cheap in Mongolia?"),
+    (KHOVSGOL_SEED, "Are cars expensive in Mongolia?"),
+    (HUE, "Is dental work cheap in Vietnam?"), (HUE, "Are dental implants cheap in Vietnam?"),
+    (HUE, "Is plastic surgery cheap in Vietnam?"), (HUE, "Is property cheap in Vietnam?"),
+    (HUE, "Are guns cheap in Vietnam?"), (HUE, "Is it cheap to study in Vietnam?"),
+    (HUE, "Are iPhones cheap in Vietnam?"), (ANGKOR, "Is money laundering common in Cambodia?"),
+    (KHAIPHAEN_SEED, "Is it cheap to have a baby in Laos?"),
+    (MUTIANYU, "Is the internet censored in China?"), (MUTIANYU, "Is surgery cheap in China?"),
+    # siblings of the same shape (not cited)
+    (HUE, "Is electricity expensive in Vietnam?"), (HUE, "Is rent cheap in Vietnam?"),
+])
+def test_r3_1_price_words_about_goods_drugs_or_surgery_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (KHOVSGOL_SEED, "Is Mongolia expensive?"), (KHOVSGOL_SEED, "Is Mongolia cheap to visit?"),
+    (KHAIPHAEN_SEED, "Is Laos cheap to visit?"), (KHAIPHAEN_SEED, "Is food cheap in Laos?"),
+    (HUE, "Is Vietnam cheap for tourists?"), (HUE, "How expensive is Vietnam?"),
+    (HUE, "Is street food cheap in Vietnam?"), (KHOVSGOL_SEED, "Is internet good in Mongolia?"),
+])
+def test_r3_1_control_price_of_the_trip_stays(seed, q):
+    assert _kept(q, seed)
+
+
+def test_r3_1_money_counts_only_as_the_travellers_own():
+    assert rq.country_travel_question("How much money do I need for a trip to Mongolia?", ["Mongolia"])
+    assert not rq.country_travel_question("Is money laundering common in Cambodia?", ["Cambodia"])
+    assert not rq.country_travel_question("Are iPhones cheap in Vietnam?", ["Vietnam"])
+
+
+# ---------------------------------------------------------------- R3-2: who is friendly, what is eaten
+
+@pytest.mark.parametrize("seed,q", [
+    (HUE, "Are girls in Vietnam friendly to foreigners?"),
+    (KHOVSGOL_SEED, "Are women in Mongolia friendly to foreigners?"),
+    (HUE, "Can you eat dog meat in Vietnam?"), (HUE, "Can you eat dog in Vietnam?"),
+    (HUE, "Can you eat cat in Vietnam?"), (HANOI, "Is Hanoi safe for single men?"),
+])
+def test_r3_2_dating_and_dog_meat_questions_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+def test_r3_2_the_helper_reads_the_subject():
+    assert not rq.country_travel_question("Are girls in Vietnam friendly to foreigners?", ["Vietnam"])
+    assert rq.country_travel_question("Is Vietnam friendly to foreigners?", ["Vietnam"])
+    assert rq.country_travel_question("Are Vietnamese people friendly to foreigners?", ["Vietnam"])
+
+
+@pytest.mark.parametrize("seed,q", [
+    (HUE, "Are Vietnamese people friendly to foreigners?"), (HUE, "Is Vietnam friendly to foreigners?"),
+    (HUE, "Is it safe to travel to Vietnam?"), (HUE, "What should you eat in Vietnam?"),
+    (HUE, "How safe is Vietnam for tourists?"), (HANOI, "Is Hanoi safe at night?"),
+])
+def test_r3_2_control_country_and_people_safety_questions_stay(seed, q):
+    assert _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R3-3: coups, crime, drugs, sex work, disputes
+
+@pytest.mark.parametrize("seed,q", [
+    (YANGON, "Is there a coup in Yangon?"), (YANGON, "What happened in Yangon in 2021?"),
+    (YANGON, "Who controls Yangon now?"), (YANGON, "Is Yangon under martial law?"),
+    (HANOI, "Is prostitution legal in Hanoi?"), (HANOI, "Where are the massage parlors in Hanoi?"),
+    (HANOI, "How many people have been murdered in Hanoi?"),
+    (VANG_VIENG, "Can you buy weed in Vang Vieng?"), (VANG_VIENG, "Are drugs legal in Vang Vieng?"),
+    (VANG_VIENG, "Is opium easy to get in Vang Vieng?"),
+    (POTALA, "Why do monks set themselves on fire in Lhasa?"), (POTALA, "Why are there so many police in Lhasa?"),
+    (POTALA, "Were there riots in Lhasa in 2008?"),
+    (DAL_LAKE, "Why is Kashmir disputed?"), (DAL_LAKE, "Who owns Kashmir?"),
+    (DAL_LAKE, "Is there terrorism in Srinagar?"),
+    (TIANANMEN, "What happened at Tiananmen Square?"), (TIANANMEN, "What happened in Tiananmen Square in 1989?"),
+    (TIANANMEN, "Why is Tiananmen Square censored?"),
+])
+def test_r3_3_unrest_crime_drugs_and_disputes_on_the_exact_path_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (YANGON, "Is Yangon worth visiting?"), (VANG_VIENG, "Is Vang Vieng worth visiting?"),
+    (DAL_LAKE, "Is Dal Lake worth visiting?"), (TIANANMEN, "Is Tiananmen Square worth visiting?"),
+    (TIANANMEN, "How big is Tiananmen Square?"), (POTALA, "Is Lhasa worth visiting?"),
+])
+def test_r3_3_control_travel_questions_of_the_same_places_stay(seed, q):
+    assert _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R3-4: a place named after a person
+
+@pytest.mark.parametrize("seed,q", [
+    (HCMC, "Where is Ho Chi Minh buried?"), (HCMC, "Was Ho Chi Minh a good leader?"),
+    (HCMC, "What did Ho Chi Minh believe in?"), (HCMC, "Is Ho Chi Minh's body real?"),
+    (HCM_MAUSOLEUM, "Is Ho Chi Minh's body real?"), (HCM_MAUSOLEUM, "Was Ho Chi Minh a good leader?"),
+    (GENGHIS_STATUE, "How many children did Genghis Khan have?"), (GENGHIS_STATUE, "Where is Genghis Khan buried?"),
+    (GENGHIS_STATUE, "How tall was Genghis Khan?"), (GENGHIS_STATUE, "Was Genghis Khan a good leader?"),
+    (CHINGGIS_COMPLEX, "How many children did Chinggis Khaan have?"),
+])
+def test_r3_4_questions_about_the_person_a_place_is_named_after_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (HCMC, "Is Ho Chi Minh City worth visiting?"), (HCMC, "What to do in Ho Chi Minh?"),
+    (HCM_MAUSOLEUM, "Is the Ho Chi Minh Mausoleum worth visiting?"),
+    (GENGHIS_STATUE, "Is the Genghis Khan Equestrian Statue worth visiting?"),
+])
+def test_r3_4_control_the_place_with_its_kind_word_stays(seed, q):
+    assert _kept(q, seed)
+
+
+def test_r3_4_person_cores_are_no_own_place_form():
+    forms = qg.seed_own_place_forms(GENGHIS_STATUE)
+    assert ("genghis",) not in forms and ("genghis", "khan") not in forms
+    assert ("genghis", "khan", "equestrian", "statue") in forms
+    assert ("ho", "chi", "minh") not in qg.seed_own_place_forms(HCMC)
+    assert rq.person_question("Is Ho Chi Minh's body real?")
+    assert not rq.person_question("How tall is the Genghis Khan statue?")
+
+
+# ---------------------------------------------------------------- R3-5: an own name that is a brand, product or breed
+
+@pytest.mark.parametrize("seed,q", [
+    (MANDALAY_HILL, "What happened at Mandalay Bay?"), (MANDALAY_HILL, "Does Mandalay Bay have a lazy river?"),
+    (MUTIANYU, "Are Great Wall cars reliable?"), (MUTIANYU, "Are Great Wall utes any good?"),
+    (MUTIANYU, "Is a Great Wall ute reliable?"),
+    (YOGYAKARTA, "Is Java hard to learn?"), (YOGYAKARTA, "How long does it take to learn Java?"),
+    (POTALA, "Is a Lhasa apso hypoallergenic?"), (POTALA, "How big do Lhasa apsos get?"),
+    (POTALA, "Are Lhasa apsos good with kids?"),
+    (FUJI, "Is Fuji a good camera brand?"),
+    (KATHMANDU, "Is Kathmandu a good clothing brand?"), (KATHMANDU, "Is Kathmandu clothing good quality?"),
+    (JODHPUR, "What are Jodhpur boots?"), (JODHPUR, "How should Jodhpur boots fit?"),
+])
+def test_r3_5_an_own_name_used_as_a_brand_product_or_breed_is_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (MANDALAY_HILL, "Is Mandalay worth visiting?"), (MUTIANYU, "Is the Great Wall worth visiting?"),
+    (YOGYAKARTA, "Is Yogyakarta worth visiting?"), (FUJI, "Is Mount Fuji worth climbing?"),
+    (KATHMANDU, "Is Kathmandu worth visiting?"), (JODHPUR, "Is Jodhpur worth visiting?"),
+    (POTALA, "How high is Lhasa?"), (HA_LONG, "Is Ha Long Bay worth visiting?"),
+])
+def test_r3_5_control_the_place_itself_stays(seed, q):
+    assert _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R3-6: Saigon cinnamon
+
+@pytest.mark.parametrize("q", [
+    "Is Saigon cinnamon the best cinnamon?", "Is Saigon cinnamon worth it?", "What is the best Saigon cinnamon?",
+    "Is Saigon cinnamon safe to eat every day?", "Where to buy Saigon cinnamon?",
+])
+def test_r3_6_saigon_cinnamon_is_dropped(q):
+    assert not _kept(q, HCMC)
+
+
+def test_r3_6_control_saigon_the_city_stays():
+    assert _kept("Is Saigon worth visiting?", HCMC)

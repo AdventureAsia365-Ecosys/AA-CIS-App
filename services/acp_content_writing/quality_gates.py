@@ -60,9 +60,10 @@ from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import (ALL_COUNTRY_WORDS, country_travel_question, deaccent,
                                                  harm_question, is_comparison, is_off_meaning, is_world_question,
-                                                 name_variants_in, names_other_place, own_place_forms,
-                                                 own_place_named, place_kind_words, scope_name_key,
-                                                 single_word_places, variant_place_question)
+                                                 name_homonym, name_variants_in, names_other_place, own_place_forms,
+                                                 own_place_named, person_question, place_kind_words,
+                                                 scope_name_key, single_word_places, travel_context,
+                                                 variant_place_question)
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -1722,14 +1723,18 @@ def drop_subjectless_faq(content_text: str, source_text: str = "",
 # questions first, then the tour's People Also Ask; not scoped to the piece) the writer may answer in the
 # FAQ. Kept only when they name no place outside the piece's scope, ask nothing the source cannot
 # answer, are about the place rather than its name as a word (S245), ask no war / politics / celebrity /
-# diet question (real_questions.harm_question, review round 2), and either name one of the moment's own
+# diet / crime / drugs / sex work / medical tourism question (real_questions.harm_question, review rounds
+# 2–3), no question about the person a place is named after (person_question: 'Was Ho Chi Minh a good
+# leader?'), use no own name as a product, brand, breed or another place (name_homonym: 'Great Wall cars',
+# 'Lhasa apso', 'Mandalay Bay'; review round 3), and either name one of the moment's own
 # places — the Location fields, the label or a mid-line name with a kind of landmark, written as a name
 # (real_questions.own_place_named), or as a romanisation variant / exonym ('Lake Khuvsgul' for Khövsgöl,
 # 'Ulan Bator', 'Halong'; an exonym alone also needs a travel word) — and then no comparison, world
-# question or other place (S245 20/10, review rounds 1–2); or share ≥ 2 non-generic content words with
-# its seed (a multi-word seed name that is no place counted once: 'Dalai Lama'); or are a practical
-# travel question about the scope's country tied to the moment by its kind of place ('What is the most
-# famous lake in Mongolia?' for a lake moment, real_questions.country_travel_question).
+# question or other place, and a one-word own name also a travel word (S245 20/10, review rounds 1–3); or
+# share ≥ 2 non-generic content words with its seed (a multi-word seed name that is no place counted once:
+# 'Dalai Lama'); or are a practical travel question about the scope's country tied to the moment by its
+# kind of place ('What is the most famous lake in Mongolia?' for a lake moment,
+# real_questions.country_travel_question).
 PAA_MAX_QUESTIONS = 6
 # Words a seed and a search question share without being about the same thing (content_words stems:
 # a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
@@ -1875,14 +1880,24 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
         # word?' for the town Mörön) names an own place only by spelling.
         if is_off_meaning(q, seed_names, lowercase_names=mid_names, countries=countries):
             continue
-        # war, politics, celebrities, diet: never a FAQ question, whatever it names (review round 2)
-        if harm_question(q, place_words):
+        # war, politics, celebrities, diet, crime, drugs, sex work: never a FAQ question, whatever it names
+        # (review rounds 2–3); nor a person a place is named after ('Was Ho Chi Minh a good leader?')
+        if harm_question(q, place_words) or person_question(q):
             continue
-        if own_place_named(q, own_forms):
+        # an own name used as a product, brand, breed or another place ('Are Great Wall cars reliable?', 'Is
+        # a Lhasa apso hypoallergenic?', 'Does Mandalay Bay have a lazy river?', 'Is Saigon cinnamon worth
+        # it?'; review round 3)
+        if name_homonym(q, place_words | name_variants_in(q, variant_names), place_words):
+            continue
+        named = own_place_named(q, own_forms)
+        if named:
             # an own place by its exact name ('How deep is Lake Khövsgöl?'): no comparison ('Is Lake Khövsgöl
             # bigger than Lake Baikal?'), world question or other place ('How long does it take to climb
-            # Mount Everest?' never names Mandalay Hill)
+            # Mount Everest?' never names Mandalay Hill); a one-word name also needs a travel word ('Is
+            # Java hard to learn?', review round 3)
             if is_comparison(q) or is_world_question(q) or names_other_place(q, name_words, countries):
+                continue
+            if all(" " not in n for n in named) and not travel_context(q):
                 continue
         elif name_variants_in(q, variant_names):
             # another spelling ('Can you swim in Lake Khuvsgul?'): the same checks; an exonym alone also
