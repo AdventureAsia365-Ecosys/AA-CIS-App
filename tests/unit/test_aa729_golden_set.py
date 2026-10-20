@@ -415,7 +415,7 @@ def test_panel_pack_hides_the_pipeline_verdict_and_gate_results():
 
 def test_labels_export_and_apply():
     pack = labels.export_pack(_fixture())
-    assert pack["count"] == 2 and "seed" in pack["items"][1]["source_excerpt"]
+    assert pack["count"] == 2 and "seed" in pack["items"][1]["source"]
     assert "## t9b-001" in labels.pack_markdown(pack)
     panel = {"s1-001": {"verdict": "fail", "grade": "heavy", "reason": "invented altitude; ask x@y.io"},
              "s1-002": {"verdict": "fail"}, "t9b-001": {"verdict": "pass", "status": "disputed"}}
@@ -803,3 +803,13 @@ def test_run_turns_a_sample_cut_by_the_in_call_stop_into_an_error(monkeypatch, t
     assert row["error"].startswith("CostCapReached")
     m = result["metrics"]["injection"]
     assert m["errors"] == 1 and m["pass_rate"] is None and "injection_defended_rate" not in m
+
+
+def test_labels_pack_keeps_the_full_source():
+    fx = _fixture()
+    long_text = "Day 1 ride. " * 2000 + "Day 8 ends in Taipei."
+    for s in fx["samples"]:
+        if s["label_source"] == "needs_panel" and (s.get("input") or {}).get("tour") is not None:
+            s["input"]["tour"] = {"itinerary": long_text}
+    pack = labels.export_pack(fx)
+    assert any(it["source"].endswith("Day 8 ends in Taipei.") for it in pack["items"])
