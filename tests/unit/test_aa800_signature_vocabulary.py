@@ -195,7 +195,7 @@ def test_t2_rule_1_is_built_from_the_tenant_layers():
     ah = batch_prompt.build_s1_system_prompt({**_state(AH, {}), "seo": {}, "few_shots": []})
     assert ("NEVER use these words: curated, refined, tailored, bespoke, cheap, deal, book now, instant booking, "
             "discount\n") in ah
-    assert "This brand's own signature words, yours to use where the facts fit: luxury." in ah
+    assert "This brand's own signature words: luxury. Source fidelity (rule 6) comes first" in ah  # S245 nudge
     trail = batch_prompt.build_s1_system_prompt({**_state(TRAIL, {}), "seo": {}, "few_shots": []})
     assert "NEVER use these words: curated, refined, tailored, bespoke, luxury, cheap" in trail
     assert "signature words" not in trail
