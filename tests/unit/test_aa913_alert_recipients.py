@@ -302,7 +302,9 @@ async def test_reconcile_applies_and_audits_changes():
     old = db.insert("late@x.com", "removed", reason="admin")
     sns = StubSns(subs={"keep@x.com": sub_arn("keep"), "new@x.com": sub_arn("new"), "late@x.com": sub_arn("late"),
                         BOOTSTRAP: sub_arn("boot")})
-    result = await ar.reconcile(db, sns, ar.topic_config(), now=NOW)
+    # The fake DB stamps rows from the real clock (sent = now - 1 h), so reconcile must use the same clock: a fixed
+    # NOW made this test fail once the wall clock passed NOW + 55 min (pending grace, S245).
+    result = await ar.reconcile(db, sns, ar.topic_config(), now=datetime.now(timezone.utc))
     assert db.row(gone)["status"] == "removed" and db.row(gone)["removed_reason"] == "unsubscribed"
     assert db.row(gone)["removed_by"] == "reconcile"
     assert db.row(new)["status"] == "confirmed" and db.row(new)["confirmed_at"] is not None
