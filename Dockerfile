@@ -3,7 +3,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system deps including C++ compiler for chroma-hnswlib and git for pip VCS deps
+# Install system deps: C/C++ toolchain for packages that build from source, and git for pip VCS deps
 RUN apt-get update && apt-get install -y \
     curl \
     gcc \

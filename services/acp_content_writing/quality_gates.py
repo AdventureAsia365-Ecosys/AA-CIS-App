@@ -971,6 +971,152 @@ def _drop_sticky_claims(content_text: str, claims: list[dict],
     return kept, sticky
 
 
+class F9PassMemory(set):
+    """AA-865 — the job's sticky-pass set (`_f9_key` keys, as before) plus `last_text`: the tag-free body the last
+    F9 verdict judged. `gate_brand_voice` carries a pass from that text to the current one through a repair edit
+    that only deleted words (`_f9_carry_keys`), then sets `last_text`. A plain set keeps the AA-777 behaviour."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.last_text: Optional[str] = None
+
+
+# AA-865 — words a deletion must never remove: without them the sentence makes a stronger claim ('optional boat
+# rides' → 'boat rides', 'about 30 km' → '30 km', 'not open in winter' → 'open in winter', 'most visitors' →
+# 'visitors', 'at least two' → 'two'). n't is read as 'not'.
+_F9_KEEP_WORDS = frozenset("""not no never nor neither none nothing without cannot unless except only if whether may
+might can could would should optional optionally option options choose chosen possible possibly perhaps maybe likely
+usually often sometimes occasionally typically generally mostly around about approximately roughly nearly almost
+some several up until estimated estimate said reportedly believed thought according traditionally permitting
+depending depends subject request most many few just mainly partly least each per every all""".split())
+# AA-865 — adverbs a style repair may drop from mid-sentence without re-attaching anything.
+_F9_FILLER_WORDS = frozenset("""also very truly really quite simply particularly especially genuinely deeply rather
+still even indeed certainly entirely fully well so too""".split())
+_F9_WORD_RE = re.compile(r"[0-9a-z]+")
+_F9_BREAK_CHARS = frozenset(",;:()[]—–-")
+_F9_PLAIN_CHARS = frozenset(".,;:!?'\"()[]-–—’‘“”…")
+
+
+def _f9_words(text: str) -> list[tuple[str, bool]]:
+    """(folded word, is a punctuation break before it) for each word of `text`; n't → not."""
+    t = re.sub(r"n['’]t\b", " not", _fold(" ".join(strip_citation_tags(text or "").split())))
+    out: list[tuple[str, bool]] = []
+    pos = 0
+    for m in _F9_WORD_RE.finditer(t):
+        out.append((m.group(), any(c in _F9_BREAK_CHARS for c in t[pos:m.start()])))
+        pos = m.end()
+    return out
+
+
+def _f9_deletion_only(old: str, new: str) -> bool:
+    """AA-865 — True when `new` is `old` with words removed and nothing else: its words are old's words in the
+    same order and every removed run is only filler adverbs or ends at a punctuation break: a start run needs a
+    break before the first kept word ('Unlike the southern route, the drive…'), an end run a break before the
+    first removed word ('…of 1937: a single, spare reminder…'), a middle run a break on both sides (an appositive
+    or a parenthetical). No negation / hedge / option / quantifier word is removed and no symbol is new.
+    A run cut at a break drops a whole phrase or clause; a run cut without one can drop a qualifier and broaden
+    the claim ('Lunch is included on most days of the trek.' → 'Lunch is included.', 'The museum is open daily in
+    summer.' → '…open daily.'), so that is judged again. With these limits an F9 pass of `old` still holds for
+    `new` (r6: '…of 1937: a single, spare reminder that…' → '…of 1937.' was flagged again only because it
+    changed)."""
+    if _cmp_fold(old) == _cmp_fold(new):
+        return True
+    ow, nw = _f9_words(old), _f9_words(new)
+    if not nw or len(nw) >= len(ow):
+        return False
+    if any(c not in _F9_PLAIN_CHARS and not c.isalnum() and not c.isspace() and c not in old for c in new):
+        return False  # a new symbol ('12+', '%', '$') is a new claim
+    o_words, n_words = [w for w, _ in ow], [w for w, _ in nw]
+    if not set(n_words) <= set(o_words):
+        return False  # a new word (cheap check before the alignment below)
+    for w in _F9_KEEP_WORDS & set(o_words):
+        if n_words.count(w) < o_words.count(w):
+            return False
+    n, m = len(ow), len(nw)
+
+    def run_ok(i: int, k: int) -> bool:  # old words [i, k) removed, 0 <= i < k <= n
+        if all(w in _F9_FILLER_WORDS for w in o_words[i:k]):
+            return True
+        if i == 0:
+            return ow[k][1]  # start run: a break before the first kept word
+        if k == n:
+            return ow[i][1]  # end run: a break before the first removed word
+        return ow[i][1] and ow[k][1]  # a break before the run and one right after it
+
+    from functools import lru_cache
+
+    @lru_cache(maxsize=None)
+    def fits(i: int, j: int) -> bool:  # new[j:] can be matched in old[i:]
+        if j == m:
+            return i == n or run_ok(i, n)  # whatever is left of old is an end run
+        for k in range(i, n):
+            if o_words[k] == n_words[j] and (k == i or run_ok(i, k)) and fits(k + 1, j + 1):
+                return True
+        return False
+
+    return fits(0, 0)
+
+
+def _f9_antecedent_kept(sentence: str, old_prev: Optional[str], new_prev: Optional[str]) -> bool:
+    """AA-865 — may a pass of `sentence` survive its previous sentence changing from `old_prev` to `new_prev`?
+    Yes when it does not open on a referent word (`_f9_key` keys it alone anyway), when the previous sentence is
+    the same or a deletion-only edit of the old one, or when it opens on a definite noun phrase ('The sacred cave
+    at the heart of the site…', not a pronoun) and every content word it shared with the old previous sentence is
+    still in the new one. A pronoun opener after a rewritten neighbour ('It was founded in 1692.') is judged again."""
+    body = " ".join(_fold(strip_citation_tags(sentence or "")).split())
+    if not _REFERENT_OPEN_RE.match(body):
+        return True
+    if _cmp_fold(old_prev) == _cmp_fold(new_prev):
+        return True
+    if old_prev and new_prev and _f9_deletion_only(old_prev, new_prev):
+        return True
+    opener = re.match(r"^\W*(?:(?:and|but|yet|so|still|or)\s+)?(\w+)", body)
+    if not opener or opener.group(1) != "the":
+        return False
+    shared = set(content_words(sentence)) & set(content_words(old_prev or ""))
+    return shared <= set(content_words(new_prev or ""))
+
+
+def _f9_carry_keys(old_text: str, new_text: str, passed: set[str]) -> set[str]:
+    """AA-865 — the sticky-pass keys a repair edit carries from `old_text` (the body the last F9 verdict judged) to
+    `new_text`: for each prose / bullet / FAQ-answer sentence of `new_text` (>= 4 words) whose key is not passed
+    yet, the old sentence it comes from (difflib alignment of the two sentence lists) must have a passed key, the
+    new sentence must be that sentence or a deletion-only edit of it (`_f9_deletion_only`), and a referent opener
+    must keep its antecedent (`_f9_antecedent_kept`). r7: an unchanged 'The sacred cave at the heart of the site…'
+    got a new key when the hook before it was rewritten, and F9 flagged it again."""
+    import difflib
+
+    old = sentence_spans(old_text or "")
+    new = sentence_spans(new_text or "")
+    if not old or not new or not passed:
+        return set()
+    sm = difflib.SequenceMatcher(None, [_cmp_fold(s["clean"]) for s in old], [_cmp_fold(s["clean"]) for s in new],
+                                 autojunk=False)
+    sources: dict[int, list[int]] = {}
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for d in range(j2 - j1):
+                sources[j1 + d] = [i1 + d]
+        elif tag == "replace":
+            for j in range(j1, j2):
+                sources[j] = list(range(i1, i2))
+    out: set[str] = set()
+    for j, sp in enumerate(new):
+        if sp["kind"] not in _F9_PASS_KINDS or len(_cmp_fold(sp["clean"]).split()) < _F9_PASS_MIN_WORDS:
+            continue
+        new_prev = new[j - 1]["clean"] if j else None
+        key = _f9_key(new_prev, sp["clean"])
+        if key in passed:
+            continue
+        for i in sources.get(j, []):
+            old_prev = old[i - 1]["clean"] if i else None
+            if (_f9_key(old_prev, old[i]["clean"]) in passed and _f9_deletion_only(old[i]["clean"], sp["clean"])
+                    and _f9_antecedent_kept(sp["clean"], old_prev, new_prev)):
+                out.add(key)
+                break
+    return out
+
+
 def gate_brand_voice(
     content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
     voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
@@ -1012,7 +1158,12 @@ def gate_brand_voice(
     sentences it passed are ADDED to the set (the caller owns it, one per job). A verdict with no
     checkable reason, no verdict (judge unavailable), a truncated / json_repair-salvaged verdict, or
     one with a claim or broken-sentence quote that locates in no body sentence adds nothing. A sticky
-    sentence quoted in the notes never becomes TEXT_INTEGRITY."""
+    sentence quoted in the notes never becomes TEXT_INTEGRITY.
+
+    AA-865 — when `passed_sentences` is an `F9PassMemory`, the passes of the text the last verdict judged are first
+    carried through this attempt's repair edit (`_f9_carry_keys`: deletion-only edits, and unchanged sentences whose
+    referent opener kept its antecedent), so a retry does not judge again what an earlier verdict passed and the
+    repair did not change. A plain set, and attempt 1, behave as before."""
     content_text = strip_citation_tags(content_text)  # AA-786 — defence in depth; the caller strips too
     has_seo = bool((seo_title or "").strip() or (meta_description or "").strip())
     contract = json.dumps({
@@ -1127,6 +1278,16 @@ def gate_brand_voice(
     # never added to the passed set below.
     flagged_folds, loose_quotes, quotes_complete = _f9_verdict_quotes(
         content_text, data, phrases, seo_title, meta_description)
+    # AA-865 — carry the passes of the last judged text through this attempt's repair edit (deletion-only
+    # sentences, unchanged sentences whose referent opener kept its antecedent) before the sticky filter.
+    prev_text = getattr(passed_sentences, "last_text", None)
+    if passed_sentences and prev_text and prev_text != content_text:
+        carried = _f9_carry_keys(prev_text, content_text, passed_sentences)
+        if carried:
+            passed_sentences |= carried
+            logger.info("F9_sticky_carry", carried=len(carried))
+    if isinstance(passed_sentences, F9PassMemory):
+        passed_sentences.last_text = content_text
     claims, sticky = _drop_sticky_claims(content_text, claims, passed_sentences)
     if sticky:
         logger.info("F9_sticky_pass", dropped=len(sticky), sentences=[s[:160] for s in sticky[:5]])

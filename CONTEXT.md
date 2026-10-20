@@ -1,3 +1,17 @@
+---
+id: ARCH-06-cis
+title: "AA-CIS-App — Repo Context"
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API, job worker, admin app and tenant portal); read it before designing or changing code in this repo.
+type: explanation
+status: active
+owner: nghiep
+audience: [engineer, agent]
+applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
+last_reviewed: 2026-10-19
+review_every_days: 90
+related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
+---
+
 # AA-CIS-App — Repo Context
 
 The core application of the Adventure Asia (AA) ecosystem: the **CIS (Content Intelligence
@@ -83,9 +97,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
-      object-src 'none'`), `Permissions-Policy`. `/privacy` → `https://adventure.asia/privacy-policy`
-      (307); `/terms` is a holding page (no terms document exists yet, AA-820). Links in the sidebar and
-      on `/tenant-login`.
+      object-src 'none'`), `Permissions-Policy`.
+    - Legal pages (AA-886): `/privacy` and `/terms` are public portal pages (outside the `proxy.ts`
+      matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
+      "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
+      data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
+      is gone); the AI acceptable-use clause of the terms waits for AA-820. Factual sentences must match
+      the code; open legal points stay `[to be confirmed]`. Links in the sidebar and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
     - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
@@ -471,7 +489,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
-  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms`), and
+  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms` draft pages), and
   logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
   `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
@@ -484,7 +502,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   read-only: List + Get on `s3://aa-cis-dev-e2e-mail-<acc2>/inbound/`, no delete; 1-day expiry). Playwright
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
-  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`, signs out,
+  TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
+  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
+  with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
+  no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
   are uploaded (reports would carry the typed code). Not on any PR.
 - **Migrations are not applied by Deploy Dev.** Deploy only builds the image and updates the ECS
@@ -861,6 +882,12 @@ profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=bookin
 CIS is the staff identity provider for AA-Booking. Two public endpoints, both on `app` in
 `api/main.py`, key handling in `api/core/booking_jwt.py`:
 
+Status (S245, owner decision): the bridge is **kept on purpose**. Booking production signs staff in through
+Cognito WORKFORCE (Booking roles from `booking-*` groups), but Vercel previews of the Booking admin have no
+registered Cognito callback, so the legacy CIS password → `/auth/booking-token` path is still their only staff
+sign-in. Removing these endpoints, the Booking bridge issuer and the signing key moves to a follow-up that first
+designs a preview sign-in. Do not delete them as dead code.
+
 - `POST /auth/booking-token` — needs a CIS **HS256** staff session (a Cognito session cannot mint one until
   Booking Phase 2): the `cis_admin_token` JWT as an `Authorization: Bearer` header or the cookie. The staff row is re-read from `shared.admin_users`
   (must be `is_active`; the role comes from the row, not the session). Returns
@@ -944,6 +971,14 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   tenant pool needs gets RLS and its grants in the same migration. Enforced by
   `NO_PRIVILEGE_WITHOUT_RLS_SQL` (`tests/integration/_rls_fixture_helpers.py`), the same query as 241's
   guard 4 and the AA-859 probe.
+- **Catalogue-wide RLS guard (X2):** `tests/integration/test_rls_catalogue_guard.py` runs the rules in
+  `tests/integration/rls_catalogue_rules.py` on the replayed migrations in every PR's Integration Tests job.
+  The rules: a `tenant_id` table needs RLS and an `app.tenant_id` policy; no policy `TO PUBLIC`; no
+  `app.current_tenant`; `current_setting('app.tenant_id')` only inside `NULLIF`; no FK across owners; no grant to
+  PUBLIC; grants to another owner's role only on the list; `USING (true)` only on the X1 parity policies. Each
+  exception is an `ALLOWLIST` entry with a one-line reason. A `tenant_id` table the tenant pool can read is never
+  allowlisted. AA-CIS-Infra runs a byte copy (`db/rls_catalogue_rules.py`, Copy Guard) on the nightly Dev dump
+  and writes the result into `db-schema-reference.md`. If you change the file here, copy it to Infra.
 - Write grants are column grants where a route writes only some columns (`tenant_integrations`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
