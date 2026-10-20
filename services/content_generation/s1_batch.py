@@ -31,6 +31,7 @@ import structlog
 from shared.llm_client import bedrock_batch
 from shared.llm_client.bedrock_batch import BatchUnavailable
 from services.content_generation.batch_prompt import materialize_s1_prompt
+from services.content_generation.pipeline_lessons import load_s1_lessons_block
 
 logger = structlog.get_logger()
 
@@ -43,10 +44,12 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
                              rewrite_language: str = "en-US",
                              subtitle_focus: str = "standard") -> Optional[dict]:
     """Build the graph-state-shaped dict the prompt builder needs for one tour: tour data +
-    resolved brand rule (+ lessons) + SEO context. Returns None if the tour is missing/trashed.
+    resolved brand rule (+ the frozen AA-132 lessons, only when PIPELINE_LESSONS_ENABLED is on — AA-915)
+    + SEO context. Returns None if the tour is missing/trashed.
 
     Deliberately mirrors _execute_run_tour's own context load (raw_tours row shape, brand resolve,
-    lessons append, SEO fetch) so the materialized prompt matches the synchronous writer prompt.
+    lessons append via the shared load_s1_lessons_block, SEO fetch) so the materialized prompt matches
+    the synchronous writer prompt.
     Imported lazily from admin_pipeline to reuse _resolve_brand_rule without a circular import."""
     from api.routers.admin_pipeline import _resolve_brand_rule
     import json as _json
@@ -105,21 +108,12 @@ async def _load_prompt_state(conn, tour_id: str, tenant_uuid: str, *,
     except Exception as _br_err:
         logger.warning("s1_batch_brand_fetch_failed", tour_id=tour_id, error=str(_br_err))
 
-    # Lessons (same append the sync path does) — non-fatal.
-    try:
-        lesson_rows = await conn.fetch(
-            "SELECT what_to_do, field FROM shared.pipeline_lessons "
-            "WHERE stage IN ('S1_rewrite','S1_editor') AND is_active = true ORDER BY id"
-        )
-        if lesson_rows:
-            lines = [f"- {('['+lr['field']+'] ') if lr['field'] else ''}{lr['what_to_do']}"
-                     for lr in lesson_rows]
-            brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + (
-                "\n\n## LESSONS FROM PREVIOUS BATCHES\n"
-                "Apply these rules strictly — they come from real batch failures:\n" + "\n".join(lines)
-            )
-    except Exception as _le:
-        logger.warning("s1_batch_lessons_failed", tour_id=tour_id, error=str(_le))
+    # AA-915: the AA-132 lessons append (same helper as the sync path). Frozen behind
+    # PIPELINE_LESSONS_ENABLED (default off): with the flag off no SQL is sent and the prompt has no
+    # lessons block. Non-fatal either way.
+    lessons_block = await load_s1_lessons_block(conn)
+    if lessons_block:
+        brand_rules["system_prompt"] = (brand_rules.get("system_prompt") or "") + lessons_block
 
     seo_data: dict = {}
     _SEO_MODE_MAP = {"standard": "dataforseo", "aggressive": "dataforseo", "minimal": "disabled"}

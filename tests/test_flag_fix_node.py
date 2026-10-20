@@ -109,8 +109,9 @@ def test_flag_fix_graceful_fallback_on_llm_error():
 # ── write_lessons_log ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_write_lessons_log_deduplicates_by_stage_field_pattern():
+async def test_write_lessons_log_deduplicates_by_stage_field_pattern(monkeypatch):
     """Lessons with the same (stage, field, pattern) should only be inserted once."""
+    monkeypatch.setenv("PIPELINE_LESSONS_ENABLED", "true")  # AA-915: the loop is frozen by default
     lessons = [
         {"failure_code": "META_OPENER_ROBOTIC", "field": "seo_meta",
          "pattern": "opens with Discover", "example_before": "Discover Bhutan.",
@@ -135,8 +136,9 @@ async def test_write_lessons_log_deduplicates_by_stage_field_pattern():
 
 
 @pytest.mark.asyncio
-async def test_write_lessons_log_respects_min_frequency():
+async def test_write_lessons_log_respects_min_frequency(monkeypatch):
     """Lessons appearing fewer than min_frequency times should be skipped."""
+    monkeypatch.setenv("PIPELINE_LESSONS_ENABLED", "true")  # AA-915: the loop is frozen by default
     lessons = [
         {"failure_code": "NAME_ALL_CAPS", "field": "name",
          "pattern": "all caps name", "example_before": "BHUTAN TOUR",
