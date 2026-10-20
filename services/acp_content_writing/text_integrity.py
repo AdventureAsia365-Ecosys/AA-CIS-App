@@ -25,6 +25,7 @@ from services.acp_content_writing.hygiene import (
     CTA_WINDOW, _FAQ_HEADING_RE, _HASHTAG_LINE_RE, _HEADING_RE, _cta_brand_word, _is_cta_invite, _safe_to_delete,
     brand_words, cta_norm, dedupe, has_cta_literal, sentence_spans, tidy_after_cut,
 )
+from services.acp_shared.citation_tags import strip_citation_tags
 
 _HEADING_LINE_RE = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]")
 
@@ -202,16 +203,14 @@ def cta_findings(text: str, cta: Optional[str]) -> list[str]:
 # ---------------------------------------------------------------- broken fragments
 
 _OPEN_CLOSE = (("(", ")"), ("[", "]"), ("“", "”"))
-_TAG_RE = re.compile(r"\[(?:R|F):[^\]]+\]")
 
 
 def _drop_tags(text: str) -> str:
-    """`_TAG_RE.sub("", text)` in linear time (AA-912, CodeQL py/polynomial-redos): a tag needs a
-    closing ']', so nothing after the last ']' can start one. Scanning that tail from every
-    '[R:' / '[F:' was quadratic ('[R:[F:[F:…' with no ']': 100k chars ~1 s, 1M > 20 s).
-    Before the last ']' every start either matches (and is consumed) or fails at once ('[R:]')."""
-    k = text.rfind("]")
-    return _TAG_RE.sub("", text[:k + 1]) + text[k + 1:]
+    """The paragraph without its citation tags — the shared AA-912 definition, linear time (the old
+    body "anything but ']'" was O(n^2) on '[R:[F:[F:…' with no ']'). A dangling '[R:id' opener is dropped too:
+    quality_gates.strip_citation_tags removes it before the tenant sees the piece, so it is not an
+    unbalanced bracket of the prose."""
+    return strip_citation_tags(text)
 
 
 # not brackets or quotes of the prose (S234 round 4 review): an emoticon (':)', ';-('), an inline

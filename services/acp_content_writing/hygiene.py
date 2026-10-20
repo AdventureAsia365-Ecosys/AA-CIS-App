@@ -26,8 +26,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
-_TAG = r"\[(?:R|F):[^\]]+\]"
-_TAG_STRIP_RE = re.compile(rf"\s?{_TAG}")
+from services.acp_shared.citation_tags import TAG as _TAG
+from services.acp_shared.citation_tags import strip_citation_tags
 
 
 def fold(text: Optional[str]) -> str:
@@ -37,7 +37,9 @@ def fold(text: Optional[str]) -> str:
 
 
 def strip_tags(text: Optional[str]) -> str:
-    return _TAG_STRIP_RE.sub("", text or "")
+    """Citation tags (and a dangling, unclosed tag opener) removed — the shared AA-912 definition, so a
+    sentence reads here exactly as the tenant will see it after quality_gates.strip_citation_tags."""
+    return strip_citation_tags(text)
 
 
 # ---------------------------------------------------------------- proper nouns
@@ -375,9 +377,9 @@ _CLOSERS = "\"'”’)*"
 # The end mark (run), its closers, and the citation tags that follow it.
 _SENTENCE_TRAILER_RE = re.compile(
     rf"[{re.escape(_SENTENCE_END_CHARS)}]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
-# AA-912: is_sentence_end runs this at the char after every '.', and [^\]]+ scanned to the next ']'
-# anywhere in the text (O(n^2) on '.[F:' * n). A tag id never holds '[' or a newline.
-_TAG_AT_RE = re.compile(r"\[(?:R|F):[^\]\[\n]+\]")
+# AA-912: is_sentence_end runs this at the char after every '.'; the shared tag body stops at the next
+# bracket or newline (the old [^\]]+ scanned to the next ']' anywhere: O(n^2) on '.[F:' * n).
+_TAG_AT_RE = re.compile(_TAG)
 _ABBREVIATIONS = frozenset({"mt", "st", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "vs",
                             "approx", "ca", "e.g", "i.e"})
 # "No." is an abbreviation only before a number ("No. 5"); "Is it hard? No." ends a sentence.

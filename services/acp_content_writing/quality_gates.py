@@ -56,6 +56,7 @@ from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
+from services.acp_shared.citation_tags import TAG_RE, strip_citation_tags as _strip_tags
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
@@ -72,7 +73,7 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 # _fetch_route_segments()) — but there is still no closed-world/multi-id CHECK made against this
 # pattern (unlike N7). AA-787 dropped F5 (citation density), its first reader; today it only tells the F9
 # log whether a citation tag reached the judge (`piece_tag_free`). It matches any id, one or several.
-TAG_RE = re.compile(r"\[(?:R|F):([^\]]+)\]")
+# AA-912: TAG_RE is the shared definition (services/acp_shared/citation_tags.py), imported above.
 
 # AA-514 — exact numeric thresholds ported verbatim from the origin's own
 # `reference/gate-thresholds.toml` (not invented), for gate_seo_surface().
@@ -85,12 +86,6 @@ _META_DESCRIPTION_MAX_CHARS = 158
 _SLUG_MAX_CHARS = 60
 _SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 
-# Strips a citation tag AND one leading space if present, so "sentence. [R:id] Next." doesn't
-# leave a double space where the tag used to sit ("sentence.  Next.") — "sentence.[R:id] Next."
-# (no leading space) is unaffected either way.
-# AA-912: tag ids never contain '[' or ']'; excluding '[' too stops each failed attempt at the next
-# '[', so the scan is linear on '[R:' + '[F:' * n with no closing ']' (was quadratic: 1M chars > 20 s).
-_STRIP_TAG_RE = re.compile(r"\s?\[(?:R|F):[^\[\]]+\]")
 
 
 def strip_citation_tags(text: Optional[str]) -> str:
@@ -103,8 +98,13 @@ def strip_citation_tags(text: Optional[str]) -> str:
     message shape below). Non-blog channels never produce a tag in the first place
     (prompts.py only emits the tag instruction for channel=='blog') — calling this
     unconditionally on every channel's output is a deliberate no-cost safety net, not dead code
-    for 7 of T9's 8 channels."""
-    return _STRIP_TAG_RE.sub("", text or "")
+    for 7 of T9's 8 channels.
+
+    Strips a tag AND one leading space if present, so "sentence. [R:id] Next." doesn't leave a double
+    space where the tag used to sit. AA-912: one shared, linear-time definition
+    (services/acp_shared/citation_tags.py); a dangling opener the writer left unclosed ('[R:atom_1'
+    with no ']') is removed too — only the '[R:' and its id, never the prose after it."""
+    return _strip_tags(text)
 
 
 def deep_strip_citation_tags(value):

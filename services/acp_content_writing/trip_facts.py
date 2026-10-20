@@ -28,6 +28,7 @@ from typing import Optional
 from services.acp_content_writing.hygiene import (
     COMMON_CAPS, content_words, fold, phrase_tokens, sentence_spans, split_seed, strip_tags,
 )
+from services.acp_shared.citation_tags import TAG, trailing_tags
 from services.acp_shared.offered import (LOOSE_MARK_RE, OFFERED, activity_text, decide, is_status_line,
                                          status_of_line, strip_status_lines)
 
@@ -43,6 +44,8 @@ _GENERIC = frozenset({"lake", "camp", "ruins", "ruin", "settlement", "settlement
                       "ancient", "monastery", "temple", "falls", "dzong", "nest", "visit", "province", "district"})
 # 'Khövsgöl Province' / 'Khövsgöl Aimag' name the province, not the lake moment.
 _PROVINCE_AFTER_RE = re.compile(r"\s+(?:province|aimag)\b", re.I)
+# The citation tags right after a sentence (AA-912: the shared tag definition, services/acp_shared/citation_tags.py).
+_TAG_RUN_RE = re.compile(rf"(?:\s?{TAG})+")
 
 
 @dataclass
@@ -569,9 +572,9 @@ def add_family_caveats(text: str, ctx: Optional["TripFactContext"], ignore: froz
         if not add or anchor is None:
             continue
         end = anchor["end"]
-        tags = re.match(r"(?:\s?\[(?:R|F):[^\]]+\])+", text[end:])
+        tags = _TAG_RUN_RE.match(text, end)  # AA-912: shared tag body, matched in place (no tail copy)
         if tags:
-            end += tags.end()
+            end = tags.end()
         trial = text[:end] + " " + add + text[end:]
         if integrity_problems(text, trial, ignore, ctx.cta):
             continue
@@ -1179,10 +1182,10 @@ def fix_thin_moments(text: str, moments: list[Moment], cta: Optional[str] = None
         sp, m = hit
         if len(_thin_extra(sp["clean"], m)) > THIN_EXTRA_MAX:
             raw = text[sp["start"]:sp["end"]]
-            tags = re.search(r"(?:\s?\[(?:R|F):[^\]]+\])+\s*$", raw)
+            tags = trailing_tags(raw)  # AA-912: one backward pass (the regex search was O(n^2))
             trimmed = _trim_thin(sp["clean"], m, moments)
             if trimmed:
-                text = text[:sp["start"]] + trimmed + (tags.group(0).rstrip() if tags else "") + text[sp["end"]:]
+                text = text[:sp["start"]] + trimmed + tags.rstrip() + text[sp["end"]:]
                 log.append(f"cut the interpretation appended to the thin moment {m.name}: '{sp['clean'][:160]}'")
     return text, log
 

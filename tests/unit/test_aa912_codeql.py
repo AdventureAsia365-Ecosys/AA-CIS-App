@@ -23,6 +23,7 @@ from services.acp_content_writing import quality_gates as qg
 from services.acp_content_writing import sentence_repair as sr
 from services.acp_content_writing import text_integrity as ti
 from services.acp_content_writing import trip_facts as tf
+from services.acp_shared import citation_tags as ct
 from services.acp_shared import grounding
 from services.photos import match as photo_match
 
@@ -124,6 +125,15 @@ def test_tag_after_dot_same_on_real_tags():
     assert hygiene.is_sentence_end("It ends.[R:atom_1] Next", 7)
 
 
+def test_sentence_end_and_strip_tags_agree_on_malformed_tags():  # review: one tag definition in hygiene
+    # a "tag" spanning a newline or holding '[' is no tag for either reader
+    for text, i in [("It ends here.[R:a\nb] Next one.", 12), ("It ends here.[R:a1 and [F:f2] goes on.", 12)]:
+        assert not hygiene.is_sentence_end(text, i)
+        assert "[R:" not in hygiene.strip_tags(text)
+    assert hygiene.strip_tags("It ends here.[R:a1 and [F:f2] goes on.") == "It ends here. and goes on."
+    assert hygiene._TAG == ct.TAG and hygiene._TAG_AT_RE.pattern == ct.TAG
+
+
 def test_tag_after_dot_scan_is_bounded():  # alert 9 (quadratic through sentence_tail_end)
     assert _elapsed(lambda: hygiene.sentence_tail_end(".[F:" * 250_000, 0)) < BOUND_S
 
@@ -132,26 +142,29 @@ def test_tag_after_dot_scan_is_bounded():  # alert 9 (quadratic through sentence
 
 _OLD_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|\*+$")
 _OLD_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
+# well-formed tags only: every reader gives the pre-AA-912 result on these
 _TAG_SAMPLES = [
     "Lake [R:3f2a-11] is cold [F:9].",
     "[R:a][F:b] tail",
     "Punakha. [R:atom_1] Ask [F:f2][R:a] us.",
     "x [R:a][F:b] y",
-    "[R:]",
-    "Stray [ bracket ] and [R:ok] and [F:open",
+    "Stray [ bracket ] and [R:ok] and more",
     "We visit **Tiger's Nest** [R:abc] [Moment id=m1].",
+    "Two ids [R:atom_1, atom_2] here.\nNext line [F:fact_9]",
 ]
 
 
 def test_sentence_repair_tag_same_as_old():  # alert 20
     for s in _TAG_SAMPLES:
         assert re.sub(sr._TAG, " ", s) == re.sub(_OLD_TAG, " ", s), s
-    assert " ".join(re.sub(sr._TAG, " ", "Lake [R:3f2a-11] is cold [F:9].").split()) == "Lake is cold ."
+        assert " ".join(ct.strip_citation_tags(s, " ").split()) == " ".join(re.sub(_OLD_TAG, " ", s).split()), s
+    assert sr._clean_quote("Lake [R:3f2a-11] is cold [F:9].") == "Lake is cold ."
 
 
 def test_sentence_repair_tag_is_linear():
     s = "[R:" + "[F:" * 100_000
     assert _elapsed(lambda: re.sub(sr._TAG, " ", s)) < BOUND_S
+    assert _elapsed(lambda: sr._clean_quote(s)) < BOUND_S
 
 
 def test_faq_markup_same_as_old():  # alert 21
@@ -166,9 +179,12 @@ def test_faq_markup_is_linear():
 
 
 def test_source_label_same_as_old():  # alert 22
-    for s in ["A [Fact id=f12] and [Moment id=m-3] label.", "[Fact id=]", "No label [Fact id=open", *_TAG_SAMPLES]:
+    for s in ["A [Fact id=f12] and [Moment id=m-3] label.", "[Fact id=]", *_TAG_SAMPLES]:
         assert sr._SOURCE_LABEL_RE.sub("", s) == _OLD_SOURCE_LABEL_RE.sub("", s), s
     assert sr._SOURCE_LABEL_RE.sub("", "A [Fact id=f12] and [Moment id=m-3] label.") == "A and label."
+    # malformed (review): an unclosed label loses only itself and its id, never the prose after it
+    assert sr._SOURCE_LABEL_RE.sub("", "No label [Fact id=open") == "No label"
+    assert sr._SOURCE_LABEL_RE.sub("", "Camp [Moment id=m1 by the lake [Fact id=f2].") == "Camp by the lake."
 
 
 def test_source_label_is_linear():
@@ -184,19 +200,52 @@ _OLD_STRIP_TAG_RE = re.compile(r"\s?\[(?:R|F):[^\]]+\]")
 def test_strip_citation_tags_same_as_old():  # alert 17
     for s in _TAG_SAMPLES:
         assert qg.strip_citation_tags(s) == _OLD_STRIP_TAG_RE.sub("", s), s
+        assert hygiene.strip_tags(s) == _OLD_STRIP_TAG_RE.sub("", s), s
     assert qg.strip_citation_tags("Punakha. [R:atom_1] Ask [F:f2][R:a] us.") == "Punakha. Ask us."
-    assert qg.strip_citation_tags("[R:]") == "[R:]"
 
 
 def test_strip_citation_tags_is_linear():
-    s = "[R:" + "[F:" * 100_000
-    assert _elapsed(lambda: qg.strip_citation_tags(s)) < BOUND_S
+    for s in ("[R:" + "[F:" * 100_000, "[R:" + "a" * 1_000_000, "[R:a " * 200_000, " [R:" * 300_000):
+        assert _elapsed(lambda s=s: qg.strip_citation_tags(s)) < BOUND_S
 
 
-def test_drop_tags_matches_regex_sub():  # alert 24 (exact semantics, nested tags included)
+# Malformed tags (review finding, medium). Pre-AA-912 the strip deleted everything from an unclosed
+# '[R:' to the next ']' (real prose); the first AA-912 cut left '[R:abc' visible. Now: only the opener and
+# the id right after it go, the prose stays, and no '[R:' / '[F:' reaches the tenant.
+_MALFORMED = [
+    ("The lake freezes in winter [R:a1. Visit in July [F:f2] for festivals.",
+     "The lake freezes in winter. Visit in July for festivals."),
+    ("Lake views [R:a1 all day [F:f2] from camp.", "Lake views all day from camp."),
+    ("Walk to the lake [R:atom_1 [F:fact_2] then rest.", "Walk to the lake then rest."),
+    ("Ends on an open tag [F:fact_9", "Ends on an open tag"),
+    ("An empty tag [R:] stays out.", "An empty tag stays out."),
+    ("Stray [ bracket ] and [R:ok] and [F:open", "Stray [ bracket ] and and"),
+    # a tag never spans a line: the opener goes, the next line is kept
+    ("Paro sits high [R:a1\nThe dzong is old.]", "Paro sits high\nThe dzong is old.]"),
+]
+
+
+def test_malformed_tags_keep_prose_and_leave_no_fragment():
+    for raw, want in _MALFORMED:
+        for out in (qg.strip_citation_tags(raw), hygiene.strip_tags(raw), ct.strip_citation_tags(raw)):
+            assert out == want, raw
+            assert "[R:" not in out and "[F:" not in out, raw
+        assert sr.sanitize_replacement(raw, None) == " ".join(want.split()), raw
+        assert qg.deep_strip_citation_tags({"v": [raw]}) == {"v": [want]}
+
+
+def test_dangling_tag_is_not_an_unbalanced_bracket():
+    # text_integrity reads the paragraph as the tenant will see it (after the final strip); a real stray
+    # bracket of the prose is still reported
+    assert not ti._unbalanced("Lake views [R:a1 all day [F:f2] from camp.")
+    assert not ti._unbalanced("Ends on an open tag [F:fact_9")
+    assert ti._unbalanced("Lake views [all day from camp.")
+
+
+def test_drop_tags_is_the_shared_strip():  # alert 24
     for s in ["Visit Erdene Zuu [R:f-01]. Then [F:atom 7] rest.", "no tags here", "[R:]", "[R:a [F:b]",
-              "a] [R:x", "[R:x] tail [F:", "", *_TAG_SAMPLES]:
-        assert ti._drop_tags(s) == ti._TAG_RE.sub("", s), s
+              "a] [R:x", "[R:x] tail [F:", "", *_TAG_SAMPLES, *(r for r, _ in _MALFORMED)]:
+        assert ti._drop_tags(s) == ct.strip_citation_tags(s), s
 
 
 def test_unbalanced_is_linear_on_unclosed_tags():
@@ -208,14 +257,54 @@ _OLD_CITE_RE = re.compile(r"\[(?:R|F):[^\]]*\]")
 
 
 def test_cite_strip_same_as_old():  # alert 8
-    for s in [*_TAG_SAMPLES, "Walk 12 km [R:atom_1][F:fact_9].", "Day 3: 4,460 m [F:]"]:
-        assert grounding._CITE_RE.sub("", s) == _OLD_CITE_RE.sub("", s), s
+    for s in [*_TAG_SAMPLES, "Walk 12 km [R:atom_1][F:fact_9].", "Day 3: 4,460 m [F:]", "From 1637 [R:a]-38 on"]:
+        for yf in (False, True):
+            want = grounding.find_novel_numeric_claims(_OLD_CITE_RE.sub("", s), ["2"], year_forms=yf)
+            assert grounding.find_novel_numeric_claims(s, ["2"], year_forms=yf) == want, s
     assert grounding.find_novel_numeric_claims("Walk 12 km [R:atom_1][F:fact_9].", ["12 km"]) == []
+
+
+def test_cite_strip_on_dangling_tag_checks_the_tenant_text():
+    # the number after an unclosed tag is prose the tenant sees: F1 must check it (the old strip hid it)
+    assert grounding.find_novel_numeric_claims("The trek is [R:a1 12 km long [F:f2].", ["the trek"]) == ["12"]
+    # an id that looks like a number is never read as a claim
+    assert grounding.find_novel_numeric_claims("The trek is long [R:12", ["the trek"]) == []
 
 
 def test_cite_strip_is_linear():
     s = "[R:" + "[F:" * 100_000
     assert _elapsed(lambda: grounding.find_novel_numeric_claims(s, [])) < BOUND_S
+
+
+# ---------------------------------------------------------------- one tag definition, trailing tags
+
+_OLD_TRAILING_TAGS_RE = re.compile(rf"(?:\s?{_OLD_TAG})+\s*$")
+_TRAILING_SAMPLES = [
+    "Visit Paro. [R:atom_1]", "Visit Paro.[R:a][F:b] \n", "Visit Paro. [R:a]  [F:b]", "No tags.", "",
+    "[R:a]", "x\n\n[R:a]", "Mid [R:a] text.", "Ends ] [R:a]", "Bad [R:a]b]", "Two [R:a1, a2]\t",
+]
+
+
+def test_trailing_tags_same_as_old_regex():
+    for s in _TRAILING_SAMPLES:
+        old = _OLD_TRAILING_TAGS_RE.search(s)
+        assert ct.trailing_tags(s) == (old.group(0) if old else ""), s
+    assert ct.trailing_tags("Visit Paro. [R:a]  [F:b]") == " [F:b]"
+
+
+def test_trailing_tags_is_linear():  # sentence_repair.splice / trip_facts thin coda (was ~11 s at 100k chars)
+    for s in ("[R:a]" * 20_000 + "x", "[R:a] " * 20_000, "x]" * 100_000, "[R:" + "a" * 200_000 + "]"):
+        assert _elapsed(lambda s=s: ct.trailing_tags(s)) < BOUND_S
+
+
+def test_tag_patterns_have_one_definition():
+    """Every reader of a citation tag uses services/acp_shared/citation_tags.py (review: four bodies drifted)."""
+    from pathlib import Path
+    assert sr._TAG == ct.TAG and qg.TAG_RE is ct.TAG_RE
+    root = Path(__file__).resolve().parents[2]
+    files = [*sorted((root / "services/acp_content_writing").glob("*.py")), root / "services/acp_shared/grounding.py"]
+    for f in files:
+        assert not re.search(r"\(\?:R\|F\):|\[RF\]:", f.read_text()), f"{f.name} defines its own citation-tag regex"
 
 
 # ---------------------------------------------------------------- generate.py
@@ -225,13 +314,24 @@ _OLD_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 def test_md_link_same_as_old():  # alert 7
     for s in ["See [Paro](https://x.com/a) **now**", "[a](http://b.c/d?e=f) and [g](https://h.i)",
-              "[no url](ftp://x)", "[x](https://a b)", "[[nested]](https://x.com)", "plain"]:
+              "[no url](ftp://x)", "[x](https://a b)", "[[nested]](https://x.com)", "plain",
+              "Book here: [Bhutan tours](https://example.com/tours?country[]=bt)"]:
         assert generate._MD_LINK_RE.sub(r"\1 \2", s) == _OLD_MD_LINK_RE.sub(r"\1 \2", s), s
     assert generate.strip_markdown("See [Paro](https://x.com/a) **now**") == "See Paro https://x.com/a now"
 
 
+def test_md_link_accepted_differences():
+    # review (low): a URL with a non-empty "[...]" stays raw markdown (old: converted) — rare in writer output,
+    # and allowing it would bring back the O(n^2) scan; "[]" query arrays still convert
+    s = "Map: [Paro](https://x.com/m?a[0]=1)"
+    assert generate.strip_markdown(s) == s
+    # an unclosed '[' before a link: the stray bracket stays, the link converts (old: the link text kept the '[')
+    assert (generate.strip_markdown("From $500 [subject to change. See [our site](https://example.com/x)")
+            == "From $500 [subject to change. See our site https://example.com/x")
+
+
 def test_md_link_is_linear():
-    for s in ("[" + "[\\" * 100_000, "[\\](http://" + "[!](http://" * 20_000):
+    for s in ("[" + "[\\" * 100_000, "[\\](http://" + "[!](http://" * 20_000, "[a](http://[]" * 60_000):
         assert _elapsed(lambda s=s: generate.strip_markdown(s)) < BOUND_S
 
 
@@ -250,7 +350,8 @@ def test_names_moment_province_reads_stripped_offsets():  # alert 25
 
 
 def test_names_moment_is_linear_on_long_tag():
-    L = 100_000
+    # 400k: the pre-fix code takes ~13 s here (1 s at 100k, too close to the bound to guard); new: ms
+    L = 400_000
     s = "[R:" + " " * L + "province]" + " erdene" * (L // 7)
     assert _elapsed(lambda: tf.names_moment(s, _M)) < BOUND_S
 
@@ -262,8 +363,10 @@ _OLD_TRAILING = re.compile(r"(?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$", re.IGNORECASE)
 
 def test_trailing_counter_same_as_old():  # alert 27
     for s in ["Olkhon Island1", "Gyeongbokgung Palace (2)", "Bukchon_Hanok-Village (2)", "Temple copy 3",
-              "Mt Fuji (1) (2)", "IMG_20240101_123456", "x(12", "Copy", "Lake COPY", "plain", "", "12"]:
+              "Mt Fuji (1) (2)", "IMG_20240101_123456", "x(12", "Copy", "Lake COPY", "plain", "", "12",
+              "Olkhon Island 2\n", "Lake copy\n", "\n", "12\n", "x\n\n"]:
         assert photo_match._strip_trailing_counter(s) == _OLD_TRAILING.sub("", s), s
+    assert photo_match.place_label("Olkhon Island 2\n.jpg") == "Olkhon Island"  # review: '$' before a final '\n'
     assert photo_match.place_label("Gyeongbokgung Palace (2).jpg") == "Gyeongbokgung Palace"
     assert photo_match.place_label("Temple copy 3.jpg") == "Temple"
     assert photo_match.place_label("Olkhon Island1.jpeg") == "Olkhon Island"

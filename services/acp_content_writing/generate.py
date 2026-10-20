@@ -145,9 +145,10 @@ def _strip_fences(raw: str) -> str:
 
 _MD_BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1", re.DOTALL)
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
-# AA-912: neither the link text nor the URL may contain "[", so a failed attempt stops at the next "[" (was
-# O(n^2) on "[[\\[\\…" / "[!](http://[!](http://…"). Real [text](url) links are unaffected.
-_MD_LINK_RE = re.compile(r"\[([^\[\]]+)\]\((https?://[^\[)\s]+)\)")
+# AA-912: the link text may not contain "[" and the URL only as an empty "[]" (a query array, "country[]=bt"),
+# so a failed attempt stops at the next link's "[" (was O(n^2) on "[[\\[\\…" / "[!](http://[!](http://…").
+# A URL with "[0]" inside is left as raw markdown (accepted; pinned in tests/unit/test_aa912_codeql.py).
+_MD_LINK_RE = re.compile(r"\[([^\[\]]+)\]\((https?://(?:[^\[)\s]|\[\])+)\)")
 
 
 def strip_markdown(text: str) -> str:

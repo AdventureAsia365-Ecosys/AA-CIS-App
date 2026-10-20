@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 _EXT = re.compile(r"\.[a-z0-9]{2,5}$", re.IGNORECASE)
 # A trailing run of copy markers (" (2)", "copy", "_3", "-12"), matched REVERSED at the start of the reversed
 # name (AA-912: the forward form (?:[\s_\-]*(?:\(\d+\)|copy|\d+))+$ backtracked exponentially on "000…0x";
-# reversed + re.match has one start and one parse). Same result (fuzzed).
+# reversed + re.match has one start and one parse). Same result (fuzzed, a final '\n' included).
 _TRAILING_REV = re.compile(r"(?:(?:\)\d+\(|ypoc|\d+(?!\d))[\s_\-]*)+", re.IGNORECASE)
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 TOUR_RATIO = 0.85
@@ -33,8 +33,9 @@ def norm(text: str) -> str:
 
 def _strip_trailing_counter(base: str) -> str:
     """Drop a trailing run of copy markers: " (2)", "copy", "_3", "-12" (any mix, any order)."""
-    m = _TRAILING_REV.match(base[::-1])
-    return base[: len(base) - m.end()] if m else base
+    end = len(base) - 1 if base.endswith("\n") else len(base)  # the old '$' also matched before a final '\n'
+    m = _TRAILING_REV.match(base[:end][::-1])
+    return base[: end - m.end()] + base[end:] if m else base
 
 
 def place_label(file_name: str) -> str:

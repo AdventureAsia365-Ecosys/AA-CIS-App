@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import re
 
+from services.acp_shared.citation_tags import strip_citation_tags
+
 # AA-639: a number is a digit run (optionally with thousands separators and a decimal part) that
 # does not start inside a word/number. It may be followed directly by a unit ("4,460m", "710m",
 # "12km") — the old `\b\d+\b` could not match "460m" at all (no word boundary between "0" and
@@ -42,8 +44,6 @@ import re
 # was flagged for a "novel" 460. Thousands separators are normalised away ("4,460" == "4460").
 _NUM_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 _DAY_LABEL_RE = re.compile(r"\bDay\s+\d+\b\s*:?", re.IGNORECASE)
-# AA-912: body excludes "[" too, so a run of unclosed "[F:" tags is scanned once, not once per tag (was O(n^2)).
-_CITE_RE = re.compile(r"\[[RF]:[^\[\]]*\]")
 # AA-785 — "1637–38" / "1637-38" / "1637/38": a 4-digit year, a dash or slash, a 2-digit tail that is
 # not the start of a longer number. Same left boundary as _NUM_RE.
 _YEAR_RANGE_RE = re.compile(r"(?<![\w.,])(1\d{3}|20\d{2})\s*[–—\-/]\s*(\d{2})(?!\d|[.,]\d)")
@@ -105,7 +105,9 @@ def find_novel_numeric_claims(sentence: str, cited_atom_texts: list[str], *, yea
     `year_forms=True` (AA-785, T9/T10 F1 only) reads "1637–38" and "1630s" as years — see
     _novel_year_forms. Off by default: T3, A1 and source_facts keep the plain reading."""
     clean = _DAY_LABEL_RE.sub("", sentence)
-    clean = _CITE_RE.sub("", clean)
+    # AA-912: the shared linear tag strip (citation_tags.py); a dangling '[R:12' opener goes too, so its
+    # id is never read as a number and the text checked is the text the tenant sees
+    clean = strip_citation_tags(clean)
     if year_forms:
         return _novel_year_forms(clean, cited_atom_texts)
     sentence_nums = _numbers(clean)
