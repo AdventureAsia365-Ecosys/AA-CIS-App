@@ -1,3 +1,17 @@
+---
+id: ARCH-06-cis
+title: "AA-CIS-App — Repo Context"
+description: Stack, boundaries, ownership, domain terms and working rules of AA-CIS-App (API, job worker, admin app and tenant portal); read it before designing or changing code in this repo.
+type: explanation
+status: active
+owner: nghiep
+audience: [engineer, agent]
+applies_to: [aa-cis-api, aa-cis-worker, aa-cis-frontend, aa-cis-portal]
+last_reviewed: 2026-10-19
+review_every_days: 90
+related: [ARCH-01, ARCH-05, ARCH-08, docs/adr/README.md]
+---
+
 # AA-CIS-App — Repo Context
 
 The core application of the Adventure Asia (AA) ecosystem: the **CIS (Content Intelligence
@@ -949,6 +963,14 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   tenant pool needs gets RLS and its grants in the same migration. Enforced by
   `NO_PRIVILEGE_WITHOUT_RLS_SQL` (`tests/integration/_rls_fixture_helpers.py`), the same query as 241's
   guard 4 and the AA-859 probe.
+- **Catalogue-wide RLS guard (X2):** `tests/integration/test_rls_catalogue_guard.py` runs the rules in
+  `tests/integration/rls_catalogue_rules.py` on the replayed migrations in every PR's Integration Tests job.
+  The rules: a `tenant_id` table needs RLS and an `app.tenant_id` policy; no policy `TO PUBLIC`; no
+  `app.current_tenant`; `current_setting('app.tenant_id')` only inside `NULLIF`; no FK across owners; no grant to
+  PUBLIC; grants to another owner's role only on the list; `USING (true)` only on the X1 parity policies. Each
+  exception is an `ALLOWLIST` entry with a one-line reason. A `tenant_id` table the tenant pool can read is never
+  allowlisted. AA-CIS-Infra runs a byte copy (`db/rls_catalogue_rules.py`, Copy Guard) on the nightly Dev dump
+  and writes the result into `db-schema-reference.md`. If you change the file here, copy it to Infra.
 - Write grants are column grants where a route writes only some columns (`tenant_integrations`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
