@@ -70,6 +70,30 @@ def test_pick_stratified_quota_round_robins_groups_and_prefers_labelled():
     assert "b3" in [c.id for c, _ in picks]  # the labelled one is taken first in its group
 
 
+def test_pick_stratified_spreads_the_second_key_inside_each_group():
+    # one country, three tour types: the spread cycles over the types instead of taking the first N
+    cands = [Candidate(id=f"c{i:02d}", group="Laos", sub="cultural_general") for i in range(20)]
+    cands += [Candidate(id=f"t{i}", group="Laos", sub="trek_hike") for i in range(2)]
+    cands += [Candidate(id=f"w{i}", group="Laos", sub="water") for i in range(2)]
+    picks = common.pick_stratified(cands, total=6, quotas=[], seed=729)
+    subs = sorted(c.sub for c, _ in picks)
+    assert subs == ["cultural_general", "cultural_general", "trek_hike", "trek_hike", "water", "water"]
+
+
+def test_s1_quotas_give_every_tour_type_with_candidates_a_sample():
+    types = ["cultural_general"] * 60 + ["cycle_bike"] * 8 + ["trek_hike"] * 3 + ["water"] * 1 + ["wildlife"] * 1 \
+        + ["culinary"] * 1
+    cands = []
+    for i, t in enumerate(types):
+        tags = {t} if t != "cultural_general" else set()
+        if i % 6 == 0:
+            tags.add("known_failure")
+        cands.append(Candidate(id=f"s{i:03d}", group=["India", "Nepal", "Laos"][i % 3], sub=t, tags=tags))
+    picks = common.pick_stratified(cands, total=common.MIX["s1"], quotas=common.QUOTAS["s1"], seed=729)
+    assert {c.sub for c, _ in picks} == set(types)
+    assert {c.group for c, _ in picks} == {"India", "Nepal", "Laos"}
+
+
 def test_pick_stratified_fewer_candidates_than_total():
     cands = [Candidate(id=f"x{i}", group="G") for i in range(3)]
     assert len(common.pick_stratified(cands, total=10, quotas=[], seed=1)) == 3
@@ -136,6 +160,39 @@ def test_cost_guard_uses_local_spend_and_observed_mean():
     assert g.estimate(0.1) == pytest.approx(0.6)
     with pytest.raises(CostCapReached):
         g.check(sample_id="b", prior=0.1, logged_usd=0.5)
+
+
+def test_cost_guard_keeps_a_timed_out_samples_reservation():
+    g = CostGuard(cap_usd=1.0)
+    g.check(sample_id="a", prior=0.4, logged_usd=0.0)
+    g.done("a", 0.1, release=False)  # timed out: its thread may still spend
+    with pytest.raises(CostCapReached):
+        g.check(sample_id="b", prior=0.4, logged_usd=0.3)  # 0.3 + 0.4 reserved + 0.4 > 1.0
+    g2 = CostGuard(cap_usd=1.0)
+    g2.check(sample_id="a", prior=0.4, logged_usd=0.0)
+    g2.done("a", 0.1)
+    g2.check(sample_id="b", prior=0.4, logged_usd=0.3)
+
+
+def test_budget_refuses_a_call_at_the_cap_and_records_the_sample(monkeypatch):
+    spend, budget = evalpatch.Spend(), evalpatch.Budget()
+    monkeypatch.setattr(evalpatch, "SPEND", spend)
+    budget.configure(None)
+    budget.check("job-0")  # no cap: never refuses
+    budget.configure(1.0, slots=2)  # stop at 1.0 - 2 x 0.10
+    spend.add(0.30)
+    budget.check("job-1")
+    budget.note_logged(0.65)  # Jev / embeddings seen through the log
+    assert budget.projected() == pytest.approx(0.65)
+    spend.add(0.10)  # a call after the read counts on top of it
+    assert budget.projected() == pytest.approx(0.75)
+    budget.check("job-1")  # 0.75 + 0.20 margin < 1.0
+    spend.add(0.06)
+    with pytest.raises(CostCapReached):
+        budget.check("job-2")
+    assert budget.tripped and budget.tripped_jobs == {"job-2"}
+    budget.configure(1.0)
+    assert budget.tripped is None and not budget.tripped_jobs
 
 
 def test_estimate_run_matches_the_memo_range():
@@ -342,6 +399,20 @@ def _fixture():
          "input": {"context": {"atom_text": "seed", "brand_audience": {"brand_name": "Terra"}}}}]}
 
 
+def test_panel_pack_hides_the_pipeline_verdict_and_gate_results():
+    fx = _fixture()
+    fx["samples"][2].update({"tags": ["held", "known_failure"], "pipeline_verdict": {"passed": False,
+                             "status": "held", "held_reason": "F1_grounding"},
+                             "output": {"content_text": "y", "gate_ledger": [{"gate": "F1_grounding"}],
+                                        "flags": [{"gate": "F15"}]}})
+    fx["samples"][0].update({"tags": ["cycle_bike", "known_failure"], "pipeline_verdict": {"passed": True}})
+    pack = labels.export_pack(fx)
+    blob = json.dumps(pack) + labels.pack_markdown(pack)
+    for word in ("pipeline_verdict", "gate_ledger", "flags", "held", "F1_grounding", "known_failure"):
+        assert word not in blob, word
+    assert pack["items"][0]["tags"] == ["cycle_bike"] and pack["items"][1]["output"] == {"content_text": "y"}
+
+
 def test_labels_export_and_apply():
     pack = labels.export_pack(_fixture())
     assert pack["count"] == 2 and "seed" in pack["items"][1]["source_excerpt"]
@@ -371,10 +442,31 @@ def test_relabel_sql_matches_the_live_insert_and_validates_the_run_id():
     sql = evalpatch.relabel_sql(call_log._INSERT_SQL, run)
     assert f"'{common.STAGE}'" in sql and f"'{run}'::text" in sql and "'aa729_stage', $2::text" in sql
     assert all(f"${i}" in sql for i in range(1, 16)) and "$16" not in sql
+    values = sql.split(" VALUES (", 1)[1]
+    assert values.startswith(f"NULL, '{common.STAGE}', $3,")  # tenant_id NULL, stage overridden
+    assert ", NULL, NULL, $11," in values  # content_piece_id, angle_gate_request_id NULL
+    for key, param in (("aa729_tenant", "$1"), ("aa729_piece", "$9"), ("aa729_request", "$10")):
+        assert f"'{key}', {param}::uuid::text" in sql
     with pytest.raises(ValueError):
         evalpatch.relabel_sql(call_log._INSERT_SQL, "1'; DROP TABLE x; --")
     with pytest.raises(RuntimeError):
         evalpatch.relabel_sql(call_log._INSERT_SQL.replace("job_id", "batch_id"), run)
+
+
+def test_decision_log_relabel_matches_the_live_statements():
+    from shared.llm_client import decide
+
+    log = evalpatch.relabel_decision_sql(decide._LOG_SQL)
+    assert f"VALUES ('{common.STAGE}:' || $1::text, $2, $3," in log
+    assert all(f"${i}" in log for i in range(1, 18)) and "$18" not in log
+    hits = evalpatch.relabel_hits_sql(decide._HITS_SQL)
+    assert f"VALUES ($1, '{common.STAGE}:' || $2::text, $3, $4, $5, $6) ON CONFLICT" in hits
+    with pytest.raises(RuntimeError):
+        evalpatch.relabel_decision_sql(decide._LOG_SQL.replace("subject_key", "subject"))
+    with pytest.raises(RuntimeError):
+        evalpatch.relabel_hits_sql(decide._HITS_SQL.replace("$6", "$6, $7"))
+    for fn in (decide._insert_logs,):
+        assert {"_LOG_SQL", "_HITS_SQL"} <= set(fn.__code__.co_names), "decide no longer reads them at call time"
 
 
 def test_call_log_writers_read_the_insert_sql_at_call_time():
@@ -389,7 +481,10 @@ def test_patched_names_still_exist():
     from services.content_generation import flag_fix_node
     from shared.llm_client.client import LLMClient
 
-    for owner, name in ((service, "_finalize_piece"), (service, "_insert_placeholder_piece"),
+    from shared.llm_client import decide
+
+    for owner, name in ((decide, "_LOG_SQL"), (decide, "_HITS_SQL"),
+                        (service, "_finalize_piece"), (service, "_insert_placeholder_piece"),
                         (flag_fix_node, "_write_lessons_safe"), (LLMClient, "_start_shadow"),
                         (LLMClient, "generate")):
         assert hasattr(owner, name), name
@@ -466,6 +561,74 @@ def test_t9_regenerate_captures_the_piece_instead_of_writing_it(monkeypatch):
     assert verdict["passed"] is False and verdict["status"] == "held" and verdict["attempts"] == 2
     assert verdict["blocking_failures"] == ["F1_grounding"] and out["content_text"] == "New text"
     assert "00000000-0000-0000-0000-0000000000b1" not in evalpatch.T9_CAPTURE
+
+
+def test_t9_regenerate_failed_or_missing_capture_is_an_error(monkeypatch):
+    import asyncio
+
+    from services.acp_content_writing import service
+
+    monkeypatch.setattr(service, "_finalize_piece", evalpatch._capture_finalize)
+
+    async def crashed(request_id, piece_id, context, pool):  # what run_write_background's except does
+        await service._finalize_piece(pool, piece_id=piece_id, attempt_number=1, content_text="", status="failed",
+                                      held_reason="ThrottlingException: rate", gate_ledger=[], repair_log=[],
+                                      flags=[])
+
+    monkeypatch.setattr(service, "run_write_background", crashed)
+    with pytest.raises(score.WriterFailed, match="ThrottlingException"):
+        asyncio.run(score.t9_regenerate(_t9_sample(), pool=None))
+
+    async def nothing(request_id, piece_id, context, pool):  # the failed-status write failed too
+        return None
+
+    monkeypatch.setattr(service, "run_write_background", nothing)
+    with pytest.raises(score.WriterFailed, match="no _finalize_piece capture"):
+        asyncio.run(score.t9_regenerate(_t9_sample(), pool=None))
+
+
+def test_s1_regenerate_failed_rewrite_or_retry_is_an_error(monkeypatch):
+    import asyncio
+
+    from api.routers import v1_pipeline
+
+    async def failed(tour, idx, total, **kw):
+        return {"status": "failed", "error": "ThrottlingException: rate"}
+
+    monkeypatch.setattr(v1_pipeline, "_rewrite_tour", failed)
+    sample = {"input": {"tour": {"name": "T"}, "seo": {}, "brand_rules_ref": "s1:default"}}
+    fx = {"shared_inputs": {"brand_rules": {"s1:default": {}}}}
+    with pytest.raises(score.WriterFailed, match="s1 rewrite: ThrottlingException"):
+        asyncio.run(score.s1_regenerate(sample, fx))
+
+    async def retry_fails(tour, idx, total, **kw):
+        if kw.get("model_tier") == "sonnet":
+            return {"status": "failed", "error": "CostCapReached: cap"}
+        return {"status": "success", "model_used": "haiku-4-5", "quality_score": 8.0,
+                "failure_codes": ["MISSING_FIELD"], "brand_audit_status": "pass", "generated": {"name": "H"}}
+
+    monkeypatch.setattr(v1_pipeline, "_rewrite_tour", retry_fails)
+    with pytest.raises(score.WriterFailed, match="Sonnet retry: CostCapReached"):
+        asyncio.run(score.s1_regenerate(sample, fx))
+
+
+def test_t2_regenerate_failed_rewrite_is_an_error_and_skips_qa(monkeypatch):
+    import asyncio
+
+    from api.routers import v1_pipeline
+    from services.acp_produce import tenant_pipeline
+
+    async def failed(tour, idx, total, **kw):
+        return {"status": "failed", "error": "KeyError: 'brand'"}
+
+    async def no_qa(*a, **k):
+        raise AssertionError("QA must not run on a failed rewrite")
+
+    monkeypatch.setattr(v1_pipeline, "_rewrite_tour", failed)
+    monkeypatch.setattr(tenant_pipeline, "run_t3_qa_gate", no_qa)
+    sample = {"input": {"tour": {"name": "T"}, "seo": {}, "brand_rules_ref": "t2:terra", "tenant_id": "tid"}}
+    with pytest.raises(score.WriterFailed, match="t2 rewrite: KeyError"):
+        asyncio.run(score.t2_regenerate(sample, {"shared_inputs": {"brand_rules": {"t2:terra": {}}}}))
 
 
 def test_s1_regenerate_applies_the_sonnet_retry_rule(monkeypatch):
@@ -598,3 +761,45 @@ def test_llm_call_log_has_one_insert_path():
     hits = [str(p.relative_to(repo)) for root in ("api", "services", "shared", "worker")
             for p in (repo / root).rglob("*.py") if "INTO shared.llm_call_log" in p.read_text(encoding="utf-8")]
     assert hits == ["shared/llm_client/call_log.py"], hits
+
+
+def test_run_turns_a_sample_cut_by_the_in_call_stop_into_an_error(monkeypatch, tmp_path):
+    import argparse
+    import asyncio
+
+    state = {"spent": 0.0, "calls": []}
+    fx = {"fixture_version": "1.0.0", "seed": 729, "samples": [
+        {"sample_id": f"injs-{i:03d}", "stratum": "injection", "kind": "injection_s1", "input": {},
+         "label_source": "synthetic", "label": common.make_label("pass", "synthetic"),
+         "injection_spec": {"canary": "ZEBRA-42"}} for i in range(1, 4)]}
+    path = tmp_path / "fixture.json"
+    path.write_text(json.dumps(fx))
+
+    async def fake_pool():
+        return _FakePool(state)
+
+    async def fake_one(sample, fixture, mode, pool):
+        from shared.llm_client import call_log
+
+        # the path swallowed the refused call and returned an empty "clean" output
+        evalpatch.BUDGET.tripped = "cap $1.00"
+        evalpatch.BUDGET.tripped_jobs.add(call_log.current_job_id())
+        return {"passed": True}, {}
+
+    monkeypatch.setattr(score, "_pool", fake_pool)
+    monkeypatch.setattr(score, "score_one", fake_one)
+    monkeypatch.setattr(score, "SETTLE_S", 0)
+    monkeypatch.setattr(evalpatch, "install", lambda run_id: None)
+    monkeypatch.setattr(common, "save_output", lambda obj, key, **kw: None)
+    args = argparse.Namespace(fixture=str(path), mode="regenerate", limit=None, strata=None, sample_ids=None,
+                              max_cost_usd=1.0, concurrency=1, resume=None, resume_file=None,
+                              allow_busy_queue=False, no_upload=True)
+    try:
+        result = asyncio.run(score.run(args))
+    finally:
+        evalpatch.BUDGET.configure(None)
+    assert len(result["samples"]) == 1 and result["stopped"].startswith("cost_cap")
+    row = result["samples"][0]
+    assert row["error"].startswith("CostCapReached")
+    m = result["metrics"]["injection"]
+    assert m["errors"] == 1 and m["pass_rate"] is None and "injection_defended_rate" not in m

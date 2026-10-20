@@ -14,8 +14,13 @@
 
 Every model call goes through the gateway (LLMClient, Jev decide, embed) and lands in shared.llm_call_log
 with stage 'adhoc_aa729' (evalpatch: real stage in quality_signal.aa729_stage, run id in
-quality_signal.aa729_run, per-sample job_id). Nothing is written to app data (evalpatch). The cost guard
-reads that spend before each sample and stops launching at --max-cost-usd (default 15).
+quality_signal.aa729_run, per-sample job_id; tenant / piece / request ids only in quality_signal) and every
+Jev verdict in shared.decision_log under stage 'adhoc_aa729:<real stage>'. Nothing is written to app data
+(evalpatch). Two cost stops share --max-cost-usd (default 15): the launch guard (common.CostGuard) starts a
+sample only while logged spend + in-flight reservations + its estimate fit; the in-call stop
+(evalpatch.BUDGET) refuses any model call once spend + one call margin per concurrent sample reaches the
+cap, and that sample is reported as an error. A writer crash (exception, throttle, empty output) is an
+error row too, never a quality verdict.
 
   cd /app && PYTHONPATH=/tmp/aa729 python3 -m scripts.aa729.score --fixture s3:scripts/out/aa729/fixture-1.1.0.json
       --mode regenerate --limit 3 [--concurrency 3] [--max-cost-usd 15] [--strata s1,t9_blog]
@@ -48,6 +53,7 @@ from scripts.aa729.common import (  # noqa: E402
 )
 
 PER_SAMPLE_TIMEOUT_S = 1500
+SPEND_REFRESH_S = 5.0  # how often the in-call stop (evalpatch.BUDGET) re-reads the logged spend
 SETTLE_S = 2.0  # fire-and-forget llm_call_log writes land within this after a sample ends
 ROUND_ROBIN = ("s1", "t9_blog", "t9_linkedin", "t2", "injection")
 
@@ -156,6 +162,18 @@ def s1_verdict(result: dict) -> dict:
             "grounding_violations": len(result.get("grounding_violations") or [])}
 
 
+class WriterFailed(RuntimeError):
+    """The writer path crashed or produced nothing (exception, throttle, cost stop) — an error row, never a
+    quality verdict: a crashed sample must not lower the pass rate or count as a defended injection."""
+
+
+def _require_success(result: dict, what: str) -> None:
+    """_rewrite_tour returns status 'failed' (not an exception) when the graph raised or produced no
+    `generated`; turn that into an error for one()."""
+    if result.get("status") != "success":
+        raise WriterFailed(f"{what}: {(result.get('error') or 'no generated output')[:300]}")
+
+
 def _brand(fixture: dict, ref: Optional[str]) -> dict:
     return copy.deepcopy(((fixture.get("shared_inputs") or {}).get("brand_rules") or {}).get(ref or "") or {})
 
@@ -169,12 +187,14 @@ async def s1_regenerate(sample: dict, fixture: dict) -> tuple[dict, Any]:
     kw = {"brand_rules": _brand(fixture, inp.get("brand_rules_ref")), "seo": copy.deepcopy(inp.get("seo") or {}),
           "model_tier": None, "subtitle_focus": "standard", "seo_mode": "dataforseo"}
     result = await _rewrite_tour(tour, 0, 1, **kw)
+    _require_success(result, "s1 rewrite")
     sonnet = False
     # AA-736 (admin_pipeline._execute_run_tour): a rewrite-class hard code left on a Haiku run → one Sonnet
     # rewrite, kept when fewer hard codes survive. The AA-237 opt-in upgrade is off by default there too.
-    if (_surviving_hard_codes(result) & _REWRITE_CLASS_HARD_CODES and result.get("status") == "success"
+    if (_surviving_hard_codes(result) & _REWRITE_CLASS_HARD_CODES
             and "haiku" in (result.get("model_used") or "").lower()):
         upgraded = await _rewrite_tour(copy.deepcopy(inp["tour"]), 0, 1, **{**kw, "model_tier": "sonnet"})
+        _require_success(upgraded, "s1 Sonnet retry")
         if len(_surviving_hard_codes(upgraded)) < len(_surviving_hard_codes(result)):
             result = upgraded
         sonnet = True
@@ -212,11 +232,10 @@ async def t2_regenerate(sample: dict, fixture: dict) -> tuple[dict, Any]:
         _brand(fixture, inp.get("brand_rules_ref")), inp["tenant_id"]
     result = await _rewrite_tour(tour, 0, 1, brand_rules=br, seo=seo, is_tenant_rewrite=True, tenant_id=tid,
                                  generate_stage="t2_generate")
-    qa = None
-    if result.get("status") == "success" and result.get("generated"):
-        qa = await run_t3_qa_gate(tour, [str(v) for v in tour.values() if v], result, br, seo_data=seo,
-                                  tenant_id=tid)
-        result = qa["result"]
+    _require_success(result, "t2 rewrite")
+    qa = await run_t3_qa_gate(tour, [str(v) for v in tour.values() if v], result, br, seo_data=seo,
+                              tenant_id=tid)
+    result = qa["result"]
     return t2_verdict(result, qa), result.get("generated") or {}
 
 
@@ -251,6 +270,12 @@ async def t9_regenerate(sample: dict, pool) -> tuple[dict, Any]:
     evalpatch.T9_CAPTURE.pop(piece_id, None)
     await svc.run_write_background(UUID(inp["request_id"]), UUID(piece_id), copy.deepcopy(inp["context"]), pool)
     cap = evalpatch.T9_CAPTURE.pop(piece_id, None) or {}
+    # run_write_background catches every exception and finalizes status='failed' (and nothing at all when
+    # that write fails too): an error, not a held piece.
+    if not cap:
+        raise WriterFailed("t9 write: no _finalize_piece capture")
+    if cap.get("status") == "failed":
+        raise WriterFailed(f"t9 write: {(cap.get('held_reason') or 'failed')[:300]}")
     ledger = cap.get("gate_ledger") or []
     verdict = {"passed": cap.get("status") == "approved", "status": cap.get("status"),
                "held_reason": (cap.get("held_reason") or "")[:300] or None, "attempts": cap.get("attempt_number"),
@@ -387,6 +412,7 @@ async def run(args) -> dict:
                 ids=set(args.sample_ids.split(",")) if args.sample_ids else None, limit=args.limit,
                 done=set(results))
     evalpatch.install(run_id)
+    evalpatch.BUDGET.configure(args.max_cost_usd, slots=max(1, args.concurrency))
     pool = await _pool()
     guard = CostGuard(cap_usd=args.max_cost_usd)
     stopped: dict = {"reason": None}
@@ -394,7 +420,17 @@ async def run(args) -> dict:
 
     async def logged_spend() -> float:
         async with pool.acquire() as conn:
-            return float(await conn.fetchval(_SPEND_SQL, since, run_id) or 0.0)
+            usd = float(await conn.fetchval(_SPEND_SQL, since, run_id) or 0.0)
+        evalpatch.BUDGET.note_logged(usd)
+        return usd
+
+    async def refresh_spend() -> None:
+        while True:
+            await asyncio.sleep(SPEND_REFRESH_S)
+            try:
+                await logged_spend()
+            except Exception as e:  # noqa: BLE001 — the in-process number still guards the next call
+                print(f"spend refresh failed: {e}", flush=True)
 
     def snapshot(final: bool) -> dict:
         return {"schema": SCORE_SCHEMA, "run_id": run_id, "mode": args.mode,
@@ -412,9 +448,12 @@ async def run(args) -> dict:
                                  "queue (lessons); pass --allow-busy-queue to override")
         sem = asyncio.Semaphore(max(1, args.concurrency))
         lock = asyncio.Lock()
+        refresher = asyncio.create_task(refresh_spend())
 
         async def one(sample: dict) -> None:
             async with sem:
+                if not stopped["reason"] and evalpatch.BUDGET.tripped:
+                    stopped["reason"] = f"cost_cap: {evalpatch.BUDGET.tripped}"
                 if stopped["reason"]:
                     return
                 sid = sample["sample_id"]
@@ -429,12 +468,23 @@ async def run(args) -> dict:
                 row = _row(sample, run_id, args.mode)
                 t0 = time.monotonic()
                 verdict, new_output = {}, None
+                timed_out = False
                 try:
                     with call_log.bind_job(row["job_id"]), call_log.bind_tenant(_tenant_of(sample)):
                         verdict, new_output = await asyncio.wait_for(
                             score_one(sample, fixture, args.mode, pool), timeout=PER_SAMPLE_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    # the S1/T2 graph keeps running in its to_thread worker: keep this sample's reservation
+                    # (guard.done below) — the in-call stop still bounds what that thread can spend.
+                    timed_out = True
+                    row["error"] = f"TimeoutError: no result after {PER_SAMPLE_TIMEOUT_S}s"
                 except Exception as e:  # noqa: BLE001 — one sample's failure is a result, not the run's
                     row["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+                if row["job_id"] in evalpatch.BUDGET.tripped_jobs:
+                    # a model call of this sample was refused at the cap: whatever the path returned is cut
+                    # short, so it is an error row, not a verdict
+                    row["error"] = row.get("error") or f"CostCapReached: {evalpatch.BUDGET.tripped}"
+                    stopped["reason"] = stopped["reason"] or f"cost_cap: {evalpatch.BUDGET.tripped}"
                 await asyncio.sleep(SETTLE_S)
                 row.update({"verdict": verdict, "seconds": round(time.monotonic() - t0, 1),
                             "injection": injection_block(sample, args.mode, verdict, new_output)})
@@ -444,14 +494,17 @@ async def run(args) -> dict:
                     calls = _calls_by_job(await conn.fetch(_CALLS_SQL, since, run_id)).get(row["job_id"], {})
                 row.update({"calls": calls.get("calls", {}), "calls_by_stage": calls.get("by_stage", {}),
                             "cost_usd": calls.get("cost_usd", 0.0)})
-                guard.done(sid, row["cost_usd"])
+                guard.done(sid, row["cost_usd"], release=not timed_out)
                 async with lock:
                     results[sid] = row
                     save_output(snapshot(False), f"{out_key}.partial.json", upload=not args.no_upload)
                 print(f"{sid:10} {row['stratum']:12} passed={verdict.get('passed')} label={row['label_verdict']} "
                       f"cost=${row['cost_usd']:.4f} {row.get('error') or ''}", flush=True)
 
-        await asyncio.gather(*(one(s) for s in todo))
+        try:
+            await asyncio.gather(*(one(s) for s in todo))
+        finally:
+            refresher.cancel()
         await asyncio.sleep(SETTLE_S * 2)
         async with pool.acquire() as conn:
             calls = _calls_by_job(await conn.fetch(_CALLS_SQL, since, run_id))

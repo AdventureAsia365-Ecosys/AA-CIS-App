@@ -3,8 +3,10 @@
 
 Mix (decision memo S245 §1, option a): 50 S1/Master tours, 10 T2 tenant versions, 15 T9 blogs,
 15 T9 LinkedIn posts, 10 synthetic prompt-injection samples. Inside each stratum the hard cases are
-quotas filled first (common.QUOTAS), the rest is spread over countries (S1) or tenants (T2/T9); the
-order is `random.Random(--seed)` over sorted ids, labelled samples first (common.pick_stratified).
+quotas filled first (common.QUOTAS, incl. a floor of one per minority S1 tour type), the rest is
+spread over countries (S1) or tenants (T2/T9) and, inside each share, over tour types (S1), countries
+(T2) or destinations (T9); the order is `random.Random(--seed)` over sorted ids, labelled samples
+first (common.pick_stratified).
 
 Per sample the fixture holds: ids (refs), stratum and pick reason, the frozen INPUT the writer needs to
 regenerate it (S1: source tour + SEO + brand rules; T2: Master source + tenant brand rules + SEO; T9: the
@@ -43,7 +45,8 @@ sys.path.insert(0, os.getcwd())
 from scripts.aa729 import injection  # noqa: E402
 from scripts.aa729.common import (  # noqa: E402
     FIXTURE_VERSION, LONG_TOUR_DAYS, MASTER_TENANT_ID, MIX, PIECE_LABEL_VERDICT, POOR_RAW_PERCENTILE,
-    QUOTAS, REVIEW_VERDICT, S3_PREFIX, SCHEMA, Candidate, DEFAULT_SEED, duration_days, find_pii, first_label,
+    QUOTAS, REVIEW_VERDICT, S3_PREFIX, SCHEMA, TOUR_TYPE_FLOORS, Candidate, DEFAULT_SEED, duration_days, find_pii,
+    first_label,
     make_label, percentile, pick_stratified, save_output, scrub, tour_type,
 )
 
@@ -245,8 +248,8 @@ async def s1_candidates(conn, audit: dict) -> tuple[list[Candidate], dict]:
         ttype = tour_type(r["src_name"], r["activities"])
         in_master = r["master_status"] == "active" and r["published_gc_id"] == r["gc_id"]
         tags = set()
-        if ttype == "cycle_bike":
-            tags.add("cycle_bike")
+        if ttype == "cycle_bike" or ttype in TOUR_TYPE_FLOORS:
+            tags.add(ttype)
         if days and days >= LONG_TOUR_DAYS:
             tags.add("long_18d")
         if float(r["raw_chars"] or 0) <= p_raw:
@@ -257,7 +260,7 @@ async def s1_candidates(conn, audit: dict) -> tuple[list[Candidate], dict]:
                  or "elephant" in f"{r['src_name']} {r['src_description'] or ''}".lower())
         if known:
             tags.add("known_failure")
-        out.append(Candidate(id=r["tour_id"], group=r["country"] or "unknown", tags=tags,
+        out.append(Candidate(id=r["tour_id"], group=r["country"] or "unknown", sub=ttype, tags=tags,
                              labelled=label["verdict"] is not None, data={
                                  "row": r, "label": label, "post_edit": post_edit, "days": days, "type": ttype,
                                  "pipeline": {"passed": in_master, "master_status": r["master_status"],
@@ -350,7 +353,7 @@ async def t2_candidates(conn, audit: dict, actions: dict) -> tuple[list[Candidat
         label, post_edit = t2_label(r, reviews.get(r["version_id"], []), actions.get(r["version_id"], {}), audit)
         passed = r["status"] in ("ai_generated", "approved") and r["qa_status"] == "passed"
         tags = {"known_failure"} if (not passed or label["verdict"] == "fail") else set()
-        out.append(Candidate(id=r["version_id"], group=r["tenant_slug"], tags=tags,
+        out.append(Candidate(id=r["version_id"], group=r["tenant_slug"], sub=r["country"] or "unknown", tags=tags,
                              labelled=label["verdict"] is not None, data={
                                  "row": r, "label": label, "post_edit": post_edit,
                                  "pipeline": {"passed": passed, "status": r["status"], "qa_status": r["qa_status"],
@@ -484,7 +487,8 @@ async def t9_candidates(conn, audit: dict, actions: dict) -> tuple[dict[str, lis
         if r["status"] == "held" or label["verdict"] == "fail":
             tags.add("known_failure")
         out[r["channel"]].append(Candidate(
-            id=r["piece_id"], group=r["tenant_slug"], tags=tags, labelled=label["verdict"] is not None,
+            id=r["piece_id"], group=r["tenant_slug"], sub=wi.get("destination") or "unknown", tags=tags,
+            labelled=label["verdict"] is not None,
             data={"row": r, "wi": wi, "label": label, "post_edit": post_edit,
                   "pipeline": {"passed": r["status"] == "approved", "status": r["status"],
                                "held_reason": (r["held_reason"] or "")[:300]}}))

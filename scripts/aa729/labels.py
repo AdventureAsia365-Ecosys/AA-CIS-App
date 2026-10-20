@@ -5,7 +5,10 @@ Local, $0 (the panel is Claude Code agents reading the pack, not a gateway call)
   python3 -m scripts.aa729.labels export-pack fixture-1.0.0.json --out pack.json [--md pack.md]
   python3 -m scripts.aa729.labels apply fixture-1.0.0.json panel.json --approved-by nghiep --out fixture-1.1.0.json
 
-The pack holds, per needs_panel sample, the frozen output, a short source excerpt and the rubric. The panel
+The pack holds, per needs_panel sample, the frozen output, a short source excerpt and the rubric — never the
+pipeline's own verdict (passed / held / score / failure codes), T9's gate_ledger / flags, nor the selection
+tags derived from them (held, known_failure): the panel label is
+what the judges are measured against, so it must not be anchored on them (PANEL_HIDDEN_KEYS). The panel
 returns {"<sample_id>": {"verdict": "pass|fail", "grade": "as_is|light|heavy|reject", "reason": "...",
 "votes": [...], "status": "agreed|disputed"}}. `apply` writes those labels with
 `label_source = "agent_panel"` and who approved them, bumps the fixture's minor version and keeps a
@@ -31,6 +34,17 @@ RUBRIC = {
     "post_edit": "When output_post_edit is true the text was already edited by a person: label the text you see.",
 }
 EXCERPT_CHARS = 2500
+# Output keys that carry the pipeline's own judgement (T9 gate results) — left out of the panel pack.
+PANEL_HIDDEN_KEYS = frozenset({"gate_ledger", "flags"})
+# Selection tags that restate the pipeline verdict or an existing label — left out too.
+PANEL_HIDDEN_TAGS = frozenset({"held", "known_failure"})
+
+
+def panel_output(output):
+    """The frozen output as the panel sees it: the text only, without the pipeline's gate results."""
+    if isinstance(output, dict):
+        return {k: v for k, v in output.items() if k not in PANEL_HIDDEN_KEYS}
+    return output
 
 
 def _source_excerpt(sample: dict) -> str:
@@ -49,10 +63,10 @@ def export_pack(fixture: dict) -> dict:
         if s.get("label_source") != "needs_panel":
             continue
         items.append({"sample_id": s["sample_id"], "stratum": s["stratum"], "channel": s.get("channel"),
-                      "country": s.get("country"), "group": s.get("group"), "tags": s.get("tags") or [],
+                      "country": s.get("country"), "group": s.get("group"),
+                      "tags": [t for t in s.get("tags") or [] if t not in PANEL_HIDDEN_TAGS],
                       "output_post_edit": s.get("output_post_edit", False),
-                      "pipeline_verdict": s.get("pipeline_verdict"), "source_excerpt": _source_excerpt(s),
-                      "output": s.get("output")})
+                      "source_excerpt": _source_excerpt(s), "output": panel_output(s.get("output"))})
     return {"fixture_version": fixture["fixture_version"], "rubric": RUBRIC, "count": len(items), "items": items}
 
 
@@ -61,10 +75,9 @@ def pack_markdown(pack: dict) -> str:
              f"- pass: {RUBRIC['pass']}", f"- fail: {RUBRIC['fail']}", f"- {RUBRIC['post_edit']}", ""]
     for it in pack["items"]:
         lines += [f"## {it['sample_id']} · {it['stratum']} · {it.get('group')} · {it.get('country')}", "",
-                  f"Tags: {', '.join(it['tags']) or '–'} · pipeline verdict: {json.dumps(it['pipeline_verdict'])}"
-                  f"{' · POST-EDIT' if it['output_post_edit'] else ''}", "",
+                  f"Tags: {', '.join(it['tags']) or '–'}{' · POST-EDIT' if it['output_post_edit'] else ''}", "",
                   "Source excerpt:", "", "```", it["source_excerpt"], "```", "", "Output:", "", "```",
-                  flatten_text(it["output"]), "```", ""]
+                  flatten_text(panel_output(it["output"])), "```", ""]
     return "\n".join(lines)
 
 

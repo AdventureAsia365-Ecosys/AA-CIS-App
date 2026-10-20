@@ -2,7 +2,8 @@
 
 Everything here is unit-tested without a database (tests/unit/test_aa729_golden_set.py):
   * stratified selection math: `allocate` (largest remainder with floors) and `pick_stratified`
-    (hard-case quotas first, then the rest spread over countries / tenants);
+    (hard-case quotas first, then the rest spread over groups — country for S1, tenant for T2/T9 — and
+    inside each group over a second key: tour type for S1, country / destination for T2/T9);
   * tour classification: `duration_days`, `tour_type`, hard-case tags;
   * the PII scrubber the fixture passes through (`scrub`, `find_pii`);
   * the cost guard (`CostGuard`) the scorer checks before every sample;
@@ -33,9 +34,12 @@ MIX = {"s1": 50, "t2": 10, "t9_blog": 15, "t9_linkedin": 15, "injection": 10}
 STRATA = tuple(MIX)
 
 # Hard-case quotas inside a stratum, filled before the country / tenant spread (order matters: a sample
-# picked for an earlier tag is not picked again).
+# picked for an earlier tag is not picked again). S1 also has a floor of one per minority tour type (spec:
+# stratify by country AND tour type), so a rare type is never left out of the 50.
+TOUR_TYPE_FLOORS = ("trek_hike", "water", "wildlife", "culinary")
 QUOTAS: dict[str, list[tuple[str, int]]] = {
-    "s1": [("cycle_bike", 6), ("long_18d", 6), ("poor_raw", 6), ("known_failure", 10)],
+    "s1": [("cycle_bike", 6), *((t, 1) for t in TOUR_TYPE_FLOORS), ("long_18d", 6), ("poor_raw", 6),
+           ("known_failure", 10)],
     "t2": [("known_failure", 4)],
     "t9_blog": [("held", 5)],
     "t9_linkedin": [("held", 5)],
@@ -100,12 +104,14 @@ def allocate(total: int, weights: dict[str, float], floors: Optional[dict[str, i
 
 @dataclass
 class Candidate:
-    """One selectable sample. `group` is the spread key (country for S1, tenant for T2/T9)."""
+    """One selectable sample. `group` is the spread key (country for S1, tenant for T2/T9); `sub` the second
+    key spread inside a group's share (tour type for S1, country for T2, destination for T9)."""
     id: str
     group: str
     tags: set = field(default_factory=set)
     labelled: bool = False
     data: dict = field(default_factory=dict)
+    sub: str = ""
 
 
 def _seeded_order(candidates: Iterable[Candidate], seed: int) -> list[Candidate]:
@@ -115,12 +121,12 @@ def _seeded_order(candidates: Iterable[Candidate], seed: int) -> list[Candidate]
     return sorted(order, key=lambda c: not c.labelled)
 
 
-def _round_robin(pool: list[Candidate], n: int) -> list[Candidate]:
-    """Take n from `pool` cycling over groups in order of first appearance, so one group cannot fill
-    a quota alone."""
+def _round_robin(pool: list[Candidate], n: int, key=lambda c: c.group) -> list[Candidate]:
+    """Take n from `pool` cycling over `key` (the group by default) in order of first appearance, so one
+    group cannot fill a quota alone."""
     by_group: dict[str, list[Candidate]] = {}
     for c in pool:
-        by_group.setdefault(c.group, []).append(c)
+        by_group.setdefault(key(c), []).append(c)
     out: list[Candidate] = []
     while len(out) < n and any(by_group.values()):
         for g in list(by_group):
@@ -157,7 +163,11 @@ def pick_stratified(candidates: Iterable[Candidate], *, total: int, quotas: list
     floors = {g: 1 for g in avail if g not in covered}
     alloc = allocate(left, {g: float(n) for g, n in avail.items()}, floors)
     for g in sorted(alloc, key=lambda g: (-alloc[g], g)):
-        picked = [c for c in rest if c.group == g][:alloc[g]]
+        in_group = [c for c in rest if c.group == g]
+        # inside the group's share: labelled samples first, each half cycled over the second key
+        picked = _round_robin([c for c in in_group if c.labelled], alloc[g], key=lambda c: c.sub)
+        picked += _round_robin([c for c in in_group if not c.labelled], alloc[g] - len(picked),
+                               key=lambda c: c.sub)
         for c in picked:
             chosen.append((c, f"spread:{g}"))
             taken.add(c.id)
@@ -291,7 +301,8 @@ class CostCapReached(RuntimeError):
 
 @dataclass
 class CostGuard:
-    """Stops launching samples before the run can pass `cap_usd`.
+    """Stops launching samples before the run can pass `cap_usd` (the in-call stop for samples already
+    running is evalpatch.BUDGET).
 
     `spent` = max(logged spend from llm_call_log, in-process spend) — the logged number is the source of
     truth, the local one covers a log write that failed. A sample may start only if
@@ -316,8 +327,11 @@ class CostGuard:
         self.reserved[sample_id] = est
         return est
 
-    def done(self, sample_id: str, cost_usd: float) -> None:
-        self.reserved.pop(sample_id, None)
+    def done(self, sample_id: str, cost_usd: float, *, release: bool = True) -> None:
+        """A finished sample. `release=False` (a timed-out sample whose worker thread may still spend) keeps
+        its reservation for the rest of the run."""
+        if release:
+            self.reserved.pop(sample_id, None)
         self.finished += 1
         self.finished_cost += max(cost_usd or 0.0, 0.0)
 
