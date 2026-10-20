@@ -158,10 +158,13 @@ def _strip_text(field: str, text: str, forbidden: list[str], report: dict) -> st
     return text
 
 
-def strip_forbidden(generated: dict, tenant_words=None) -> tuple[dict, dict]:
+def strip_forbidden(generated: dict, tenant_words=None, *, words=None) -> tuple[dict, dict]:
     """Return (cleaned copy of `generated`, report). The report lists (field, word) pairs under
-    "replaced", "dropped" (sentence/item removed) and "unresolved" (left for the AA-736 gate)."""
-    forbidden = all_forbidden(tenant_words)
+    "replaced", "dropped" (sentence/item removed) and "unresolved" (left for the AA-736 gate).
+
+    AA-800: `words` (the full list, e.g. a T2 tenant's layered list from forbidden_words.state_forbidden)
+    replaces the default AA list + `tenant_words`."""
+    forbidden = list(words) if words is not None else all_forbidden(tenant_words)
     report = {"replaced": [], "dropped": [], "unresolved": []}
     out = dict(generated or {})
     for field, value in out.items():

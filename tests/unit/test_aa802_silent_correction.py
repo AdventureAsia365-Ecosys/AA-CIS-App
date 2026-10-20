@@ -148,7 +148,13 @@ def test_t2_sections_and_flags():
     from services.jobs.t2_rewrite_job import source_tour_dict
     flagged = cq.t2_flag(secs, source_tour_dict(_version_row()), ["cosy"])
     by = {(f["field"], f["index"]): f["gates"] for f in flagged}
-    assert by == {("summary", None): ["T3_grounding"], ("highlights", 1): ["FORBIDDEN_WORD"]}
+    # AA-800: one stock superlative ("A stunning boat ride") is allowed in a tenant tour; a second one
+    # makes both FORBIDDEN_WORD, as T3 validates.
+    assert by == {("summary", None): ["T3_grounding"]}
+    secs2 = cq.t2_sections({**rc, "subtitle": "A magical week on the Mekong."})
+    flagged2 = cq.t2_flag(secs2, source_tour_dict(_version_row()), ["cosy"])
+    by2 = {(f["field"], f["index"]): f["gates"] for f in flagged2}
+    assert by2[("highlights", 1)] == ["FORBIDDEN_WORD"] and by2[("subtitle", None)] == ["FORBIDDEN_WORD"]
 
 
 # ── T2 apply: the tenant's copy changes in place ────────────────────────────────────────────────
@@ -325,7 +331,8 @@ async def test_version_detail_lists_sections_flags_history_and_older_copy():
     assert out["editable"] is True and out["edit_block_reason"] is None
     assert out["tenant_copy"]["older_copy"] is True  # downloaded before the admin edit
     assert out["admin_edits"][0]["details"]["before"] == BAD
-    assert {f["field"] for f in out["flagged_sentences"]} == {"summary", "highlights"}
+    # AA-800: the one stock superlative in the highlights is allowed for a tenant (not flagged)
+    assert {f["field"] for f in out["flagged_sentences"]} == {"summary"}
     assert "aa_summary" not in out and out["rewritten_content"]["summary"] == SUMMARY
 
 

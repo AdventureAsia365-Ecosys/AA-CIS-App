@@ -1484,6 +1484,24 @@ class TripFactContext:
             self.source = split_seed(self.seed)[0]
 
 
+SERVICE_CLAIM_PROBLEM = ("states a service level the source does not ('{phrase}') — keep the fact, cut the "
+                         "claim word")
+
+
+def service_claims(text: str, ctx: Optional[TripFactContext]) -> list[str]:
+    """AA-800 — F17 findings for a positioning word that states a service level ('a luxury lodge', 'a
+    tailored itinerary') with no support in the seed or its Facts (signature_vocabulary.service_level_claims).
+    The brand may use its signature words; it may not promise a service level the trip does not have."""
+    if ctx is None:
+        return []
+    from services.acp_shared.signature_vocabulary import service_level_claims
+    out = []
+    for sp in _body_spans(text, ctx.cta):
+        for claim in service_level_claims(sp["clean"], ctx.seed, ctx.source):
+            out.append(_quoted(SERVICE_CLAIM_PROBLEM.format(phrase=claim["phrase"]), sp["clean"]))
+    return out
+
+
 def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_title: Optional[str] = None,
                           meta_description: Optional[str] = None) -> dict[str, list[str]]:
     """{"trip_fact": [...], "rarity": [...]} — every finding quotes its sentence; title/meta
@@ -1506,6 +1524,7 @@ def find_trip_fact_issues(text: str, ctx: Optional[TripFactContext], *, seo_titl
              for hit in background_bases(text, ctx)]
     if ctx.channel == "blog":  # AA-775
         trip += pace_claims(text, ctx.source, ctx.cta, ctx.brand_name)
+    trip += service_claims(text, ctx)  # AA-800 evidence rule
     rarity = rarity_claims(text, ctx.source, ctx.cta, extra)
     return {"trip_fact": list(dict.fromkeys(trip)), "rarity": list(dict.fromkeys(rarity))}
 
@@ -1516,5 +1535,5 @@ __all__ = [
     "find_trip_fact_issues", "missing_family_caveat", "fix_trip_facts", "fix_thin_moments", "thin_moment_issues",
     "minimised_hazards", "background_bases", "names_thin", "MINIMISE_RE", "THIN_EXTRA_MAX",
     "mentions_activity", "moments_named", "names_moment", "optional_activities", "optional_as_fixed",
-    "pace_claims", "parse_moments", "rarity_claims", "timing_claims", "with_date_spans",
+    "pace_claims", "parse_moments", "rarity_claims", "timing_claims", "with_date_spans", "service_claims",
 ]

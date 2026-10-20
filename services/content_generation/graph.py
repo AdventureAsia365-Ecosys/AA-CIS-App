@@ -24,7 +24,8 @@ from .t2_repair import (
 )
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
                              fit_seo_meta_final, fit_seo_title)
-from .forbidden_words import VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word
+from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
+                              state_forbidden)
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
 from .itinerary_utils import (
     ITINERARY_CLAMP_MIN, ITINERARY_CLAMP_MAX, MAX_NUDGES_PER_TOUR, NUDGE_SKIP_REASON,
@@ -231,6 +232,7 @@ class ContentState(TypedDict):
     brand_name:             str
     brand_type:             str
     brand_default_cta:      str
+    brand_signature_words:  list   # AA-800: custom_validators.signature_words (T2 only)
     model_tier:             str
     fallback_used:          bool   # AA-213: True khi Sonnet T1 fell back to Haiku T2
     satellite_account:      Optional[str]  # AA-296/397: "acc1"/"acc3" nếu qua satellite, None nếu không
@@ -654,7 +656,10 @@ def _apply_forbidden_strip(generated: dict, state: ContentState) -> bool:
     What cannot be cleaned is left as is: validate fires FORBIDDEN_WORD and the AA-736 gate holds."""
     if not isinstance(generated, dict) or not generated:
         return False
-    cleaned, report = strip_forbidden(generated, state.get("brand_forbidden_words"))
+    # AA-800: a T2 tenant rewrite strips the tenant's layered list (its signature words stay; stock
+    # superlatives only when there are more than one); A1 strips the AA list + brand list as before.
+    words = state_forbidden(state, generated) if state.get("is_tenant_rewrite") else None
+    cleaned, report = strip_forbidden(generated, state.get("brand_forbidden_words"), words=words)
     changed = bool(report["replaced"] or report["dropped"])
     if changed or report["unresolved"]:
         generated.clear()
@@ -785,7 +790,13 @@ def validate_node(state: ContentState) -> ContentState:
 
     # Forbidden words — AA core list + tenant custom list
     # P3-S3: AA core list + the tenant's own words (AA-641: shared with flag_fix_node)
-    all_forbidden = all_forbidden_words(state.get("brand_forbidden_words"))
+    # AA-800: a T2 tenant rewrite is checked against its layered list (state_forbidden): platform truth,
+    # the positioning words it did not declare, its own list, and the stock superlatives once there is more
+    # than one. A1 is unchanged (all_forbidden).
+    if state.get("is_tenant_rewrite"):
+        all_forbidden = state_forbidden(state, generated)
+    else:
+        all_forbidden = all_forbidden_words(state.get("brand_forbidden_words"))
 
     # AA-738: scan the copy only. seo_keywords_used holds DFS keywords (e.g. "cheap summer getaways",
     # or the source title "Explore Amazing Five ...") — data the writer did not author and no repair
@@ -798,6 +809,14 @@ def validate_node(state: ContentState) -> ContentState:
             issues.append(f"Forbidden word: '{word}'")
             fired.append("FORBIDDEN_WORD")
             score -= 0.5
+    if state.get("is_tenant_rewrite"):
+        # AA-800: one stock superlative in a tenant tour is a warning (soft code, no deduction); a second
+        # one made them all FORBIDDEN_WORD above.
+        from services.acp_shared.signature_vocabulary import superlative_hits
+        _sup = superlative_hits(content_text)
+        if len(_sup) == 1:
+            issues.append(f"Stock superlative (allowed once per tour, prefer a concrete detail): '{_sup[0]}'")
+            fired.append("STOCK_SUPERLATIVE")
 
     # Highlights specificity — must not be pure generic
     generic_highlight_patterns = [

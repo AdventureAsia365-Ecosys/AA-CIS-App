@@ -959,14 +959,27 @@ def t2_sections(rc: dict) -> list[dict]:
     return out
 
 
-def t2_flag(sections: list[dict], tour: dict, forbidden_words) -> list[dict]:
+def _t2_pack(pack_or_words) -> dict:
+    """A brand pack, or (the pre-AA-800 call shape) just the tenant's forbidden words."""
+    if isinstance(pack_or_words, dict):
+        return pack_or_words
+    return {"forbidden_words": list(pack_or_words or [])}
+
+
+def t2_flag(sections: list[dict], tour: dict, pack_or_words) -> list[dict]:
     """Mark each sentence with what T3 would flag on it NOW (deterministic, no LLM): a number the
-    source tour lacks (`find_novel_numeric_claims`, T3's own reading) and a forbidden word (the
-    validate list + the tenant's words). Candidates only: T3's Jev step may have cleared a number.
-    Returns the flagged sentences (the drawer's Cut / Rewrite / Edit list)."""
-    from services.content_generation.forbidden_words import all_forbidden, has_word
+    source tour lacks (`find_novel_numeric_claims`, T3's own reading), a service-level claim the source
+    does not support (AA-800) and a forbidden word. Candidates only: T3's Jev step may have cleared a
+    number. Returns the flagged sentences (the drawer's Cut / Rewrite / Edit list).
+
+    AA-800: the forbidden words are the tenant's layered list, the same one T3 validates with
+    (signature_vocabulary.tenant_blocked_words): its signature words are not flagged, and the stock
+    superlatives only when the version holds more than one."""
+    from services.acp_shared.signature_vocabulary import service_level_claims, tenant_blocked_words
+    from services.content_generation.forbidden_words import has_word
     source_texts = [str(v) for v in tour.values() if v]
-    words = all_forbidden(forbidden_words)
+    whole = "\n".join(sec["text"] for sec in sections)
+    words = tenant_blocked_words(_t2_pack(pack_or_words), whole)
     flagged = []
     for sec in sections:
         for s in sec["sentences"]:
@@ -974,6 +987,10 @@ def t2_flag(sections: list[dict], tour: dict, forbidden_words) -> list[dict]:
             if novel:
                 s["problems"].append({"gate": "T3_grounding", "blocking": True,
                                       "problem": f"number(s) {novel} not in the source tour"})
+            claims = [c["phrase"] for c in service_level_claims(s["sentence"], *source_texts)]
+            if claims:
+                s["problems"].append({"gate": "T3_grounding", "blocking": True,
+                                      "problem": f"service claim(s) {claims} not in the source tour"})
             hits = [w for w in words if has_word(s["sentence"], w)]
             if hits:
                 s["problems"].append({"gate": "FORBIDDEN_WORD", "blocking": True,
@@ -990,8 +1007,11 @@ def t2_check_replacement(replacement: str, tour: dict, pack: dict, field_text: s
     """The deterministic checks on an admin's (or the model's) sentence for a T2 version, same shape
     as `sentence_repair.check_replacement` (which runs first, against the source tour): F1 / F2 /
     brand-forbidden / F11 / a near-verbatim neighbour block. On top, T2's own rules block: a number
-    T3's plain reading finds outside the source, and a word on the validate forbidden list."""
-    from services.content_generation.forbidden_words import VALIDATE_FORBIDDEN, has_word
+    T3's plain reading finds outside the source, and a word on the tenant's layered forbidden list
+    (AA-800: platform truth, undeclared positioning words; a second stock superlative is caught by the
+    whole-version T3 check at apply time)."""
+    from services.acp_shared.signature_vocabulary import service_level_claims, tenant_blocked_words
+    from services.content_generation.forbidden_words import has_word
     source_texts = [str(v) for v in tour.values() if v]
     checks = sentence_repair.check_replacement(replacement, "\n".join(source_texts), pack,
                                                text=field_text, span=span)
@@ -1002,7 +1022,11 @@ def t2_check_replacement(replacement: str, tour: dict, pack: dict, field_text: s
     if novel and not any(c["gate"] == "F1_grounding" for c in checks):
         checks.append({"gate": "T3_grounding", "blocking": True,
                        "violations": [f"number(s) {novel} not in the source tour"]})
-    hits = [w for w in VALIDATE_FORBIDDEN if has_word(sentence, w)]
+    claims = [c["phrase"] for c in service_level_claims(sentence, *source_texts)]
+    if claims:
+        checks.append({"gate": "T3_grounding", "blocking": True,
+                       "violations": [f"service claim(s) {claims} not in the source tour"]})
+    hits = [w for w in tenant_blocked_words({**(pack or {}), "forbidden_words": []}) if has_word(sentence, w)]
     if hits:
         checks.append({"gate": "FORBIDDEN_WORD", "blocking": True,
                        "violations": [f"forbidden word(s): {', '.join(hits)}"]})
@@ -1062,7 +1086,7 @@ async def _load_version_detail(conn, version_id: str) -> dict:
     out["rewritten_content"] = rc or _j(row["rewritten_content"])
     out["reviews"] = [_row(r) for r in reviews]
     out["cost_by_stage"] = [_row(r) for r in cost_rows]
-    out["flagged_sentences"] = t2_flag(sections, source_tour_dict(row), pack.get("forbidden_words"))
+    out["flagged_sentences"] = t2_flag(sections, source_tour_dict(row), pack)
     out["sections"] = sections
     out["admin_edits"] = [{**_row(r), "details": _j(r["details"]) or {}} for r in edits]
     block = t2_edit_block(row["status"], row["version_number"], row["latest_version_number"],
@@ -1156,7 +1180,7 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
     verify_admin_secret(x_admin_secret)
     _require_admin_role(x_admin_role)
     from services.acp_produce.tenant_pipeline import _t3_structural_issues
-    from services.jobs.t2_rewrite_job import source_tour_dict
+    from services.jobs.t2_rewrite_job import brand_rules_from_pack, source_tour_dict
     if body.mode not in _TOUR_ACTION_BY_MODE:
         raise HTTPException(status_code=422, detail="mode must be cut, rewrite or manual")
     replacement = body.replacement.strip()
@@ -1199,7 +1223,7 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
             broken = text_integrity.edit_findings(old_text, new_text, None, pack.get("brand_name"))
             if broken:
                 warnings.append({"gate": "F13_repeat", "violations": broken, "blocking": False})
-            rules = {"forbidden_words": pack.get("forbidden_words") or []}
+            rules = brand_rules_from_pack(pack)  # AA-800: T3 reads the signature words too
             added = sorted(set(_t3_structural_issues(new_rc, tour, rules))
                            - set(_t3_structural_issues(rc, tour, rules)))
             if added:

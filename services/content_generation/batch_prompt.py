@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 from typing import TypedDict
 
-from .prompts import SYSTEM_PROMPT, T2_SYSTEM_PROMPT, build_rewrite_prompt, t2_dashless
+from .prompts import SYSTEM_PROMPT, build_rewrite_prompt, build_t2_base_prompt, t2_dashless
 
 
 class S1PromptInputs(TypedDict, total=False):
@@ -44,6 +44,7 @@ class S1PromptInputs(TypedDict, total=False):
     brand_name: str           # AA-792: from the AA-771 brand pack (T2 only)
     brand_type: str
     brand_default_cta: str
+    brand_signature_words: list  # AA-800: custom_validators.signature_words (T2 only)
 
 
 def build_brand_diff_block(state: dict) -> str:
@@ -106,6 +107,7 @@ def brand_pack_from_state(state: dict) -> dict:
         "good_examples": state.get("brand_good_examples") or None,
         "default_cta": state.get("brand_default_cta") or None,
         "system_prompt": state.get("brand_system_prompt") or None,
+        "signature_words": [w for w in (state.get("brand_signature_words") or []) if w],  # AA-800
     }
 
 
@@ -120,11 +122,13 @@ def build_t2_system_prompt(state: dict) -> str:
     from services.acp_shared.brand_pack import render_brand_block
     from .brand_fit import has_brand_signals
     brand_sp = state.get("brand_system_prompt", "") or ""
-    system = T2_SYSTEM_PROMPT + _language_line(state)
-    system += "\n\n" + render_brand_block(brand_pack_from_state(state), heading="CLIENT BRAND")
+    pack = brand_pack_from_state(state)
+    # AA-800: rule 1 is built per tenant from the word layers (signature words allowed).
+    system = build_t2_base_prompt(pack) + _language_line(state)
+    system += "\n\n" + render_brand_block(pack, heading="CLIENT BRAND")
     if brand_sp:
         system += f"\n\nCLIENT BRAND BRIEF (the brand's own words, part of the brand above):\n{brand_sp}"
-    system += _core_idea_lens_block(brand_pack_from_state(state).get("core_idea"))
+    system += _core_idea_lens_block(pack.get("core_idea"))
     if has_brand_signals(state):
         system += _brand_contrast_rules()
     # AA-778: the contrast rules and the forbidden-words block are shared with A1 (pinned); T2 reads them
@@ -187,8 +191,10 @@ def _forbidden_words_block(state: dict) -> str:
     # S207: the writer is told the SAME list validate_node checks (AA core + brand). It used to see
     # only the brand's words, so core words (curated, refined, tailored, deal…) were written and
     # then fired FORBIDDEN_WORD → a flag_fix repair call for something the prompt never forbade.
-    from .forbidden_words import all_forbidden
-    fw = all_forbidden(state.get("brand_forbidden_words"))
+    # AA-800: a T2 tenant rewrite lists the words validate refuses for THIS tenant (state_forbidden: platform
+    # truth, undeclared positioning words, its own list); A1 is all_forbidden as before (golden test).
+    from .forbidden_words import state_forbidden
+    fw = state_forbidden(state)
     # AA-738: a bare list was ignored for ordinary words ("explore", "package", "nestled") on both
     # Haiku and Sonnet. State it as a hard constraint covering every field, with plain alternatives
     # for the words actually measured on the S217 Nepal wave.

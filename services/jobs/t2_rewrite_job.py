@@ -55,6 +55,33 @@ def source_tour_dict(pt) -> dict:
     }
 
 
+def brand_rules_from_pack(pack: dict, rewrite_language: str = "EN-US") -> dict:
+    """The T2 `brand_rules` dict (the keys _rewrite_tour maps into the graph's brand_* state) from an
+    AA-771 brand pack. AA-800: also what T3 and the admin T2 edit check read (signature words)."""
+    return {
+        "system_prompt":    pack.get("system_prompt") or "",
+        "style_guide":      pack.get("style_guide") or "",
+        "forbidden_words":  list(pack.get("forbidden_words") or []),
+        "rewrite_language": rewrite_language,
+        # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
+        # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
+        "core_idea":        pack.get("core_idea") or "",
+        "customer_segment": pack.get("customer_segment") or "",
+        "customer_mindset": pack.get("customer_mindset") or "",
+        "voice_examples":   list(pack.get("voice") or []),
+        "good_examples":    pack.get("good_examples") or "",
+        # AA-792: the brand's identity for the T2 CLIENT BRAND block. default_cta is carried
+        # (tenant rubric for the audit fallback) but not written into the tour: a tour has no
+        # CTA field.
+        "brand_name":       pack.get("brand_name") or "",
+        "brand_type":       pack.get("brand_type") or "",
+        "default_cta":      pack.get("default_cta") or "",
+        # AA-800: the explicit signature words (custom_validators); the rest is read from the T0 text.
+        "signature_words":  list(pack.get("signature_words") or []),
+        "_brand_loaded":    True,
+    }
+
+
 async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dict, dict]:
     """tour_dict + brand_rules, unchanged from the pre-AA-652 router code."""
     tour_dict = source_tour_dict(pt)
@@ -85,26 +112,7 @@ async def _prepare(pool, pt, tenant_id: str, rewrite_language: str) -> tuple[dic
     async with pool.acquire() as _conn2:
         pack = await fetch_brand_pack_conn(_conn2, tenant_id)
     if pack:
-        brand_rules = {
-            "system_prompt":    pack.get("system_prompt") or "",
-            "style_guide":      pack.get("style_guide") or "",
-            "forbidden_words":  list(pack.get("forbidden_words") or []),
-            "rewrite_language": rewrite_language,
-            # AA-612a: brand-diff fields — the keys _rewrite_tour maps into the graph's
-            # brand_* state (v1_pipeline.py), which the judge brand-fit gate reads.
-            "core_idea":        pack.get("core_idea") or "",
-            "customer_segment": pack.get("customer_segment") or "",
-            "customer_mindset": pack.get("customer_mindset") or "",
-            "voice_examples":   list(pack.get("voice") or []),
-            "good_examples":    pack.get("good_examples") or "",
-            # AA-792: the brand's identity for the T2 CLIENT BRAND block. default_cta is carried
-            # (tenant rubric for the audit fallback) but not written into the tour: a tour has no
-            # CTA field.
-            "brand_name":       pack.get("brand_name") or "",
-            "brand_type":       pack.get("brand_type") or "",
-            "default_cta":      pack.get("default_cta") or "",
-            "_brand_loaded":    True,
-        }
+        brand_rules = brand_rules_from_pack(pack, rewrite_language)
     return tour_dict, brand_rules
 
 

@@ -63,11 +63,16 @@ def test_t2_system_prompt_is_written_as_the_brand():
 
 
 def test_t2_core_forbidden_words_still_bind_the_tenant_voice():
-    # Gate-1 default: the AA core list stays banned for tenants (validate enforces it too).
+    # AA-800: rule 1 is built from the word layers. Trail Pulse declares no positioning word, so the AA
+    # positioning words and platform truth stay NEVER; stock superlatives are capped at one.
     sp = batch_prompt.build_s1_system_prompt(dict(_T2))
-    assert "NEVER use these words: curated, pristine, refined" in sp
+    assert ("NEVER use these words: curated, refined, tailored, bespoke, luxury, cheap, deal, book now, "
+            "instant booking, discount") in sp
+    assert "Stock superlatives (pristine, stunning, breathtaking, magical, paradise): at most one" in sp
+    assert "signature words" not in sp
     hard = sp.split("HARD CONSTRAINT: FORBIDDEN WORDS")[1]
-    assert "curated" in hard and "conquer" in hard
+    assert "curated" in hard and "conquer" in hard and "discount" in hard
+    assert "stunning" not in hard and "luxury" not in hard  # capped / prompt-only, never auto-rejected
 
 
 def test_t2_brand_system_prompt_is_a_brief_not_an_append():

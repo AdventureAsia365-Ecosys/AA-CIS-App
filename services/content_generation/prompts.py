@@ -276,8 +276,18 @@ def t2_dashless(text: str) -> str:
     return text
 
 
-T2_SYSTEM_PROMPT = t2_dashless(_T2_HEAD + "\nSTRICT RULES:\n" + _RULE_1_CORE_FORBIDDEN + _T2_RULE_2_HEAD
-                               + _RULE_2_BODY + _RULES_3_TO_6 + _T2_RULE_7 + _RULE_8_AND_OUTPUT)
+def build_t2_base_prompt(pack: dict | None = None) -> str:
+    """AA-800: the T2 writer base prompt for one tenant. Rule 1 is built from the three word layers
+    (services/acp_shared/signature_vocabulary.t2_rule_1): platform truth and the AA positioning words the
+    tenant did not declare are never used, stock superlatives at most once, the tenant's signature words
+    are allowed. Every other rule is the shared A1 piece. A1 keeps _RULE_1_CORE_FORBIDDEN byte for byte."""
+    from services.acp_shared.signature_vocabulary import t2_rule_1
+    return t2_dashless(_T2_HEAD + "\nSTRICT RULES:\n" + t2_rule_1(pack) + _T2_RULE_2_HEAD
+                       + _RULE_2_BODY + _RULES_3_TO_6 + _T2_RULE_7 + _RULE_8_AND_OUTPUT)
+
+
+# The base for a tenant with no signature words (AA-800: built per tenant by build_t2_base_prompt).
+T2_SYSTEM_PROMPT = build_t2_base_prompt({})
 
 
 _SUBTITLE_INSTRUCTIONS = {

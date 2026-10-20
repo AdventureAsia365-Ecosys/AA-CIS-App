@@ -40,10 +40,12 @@ _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
 _ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
                    "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
                    "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3
-                   "F19_authenticity"}  # AA-819 (AUP 2026-11)
+                   "F19_authenticity",  # AA-819 (AUP 2026-11)
+                   "F2_platform_truth", "F2_superlatives"}  # AA-800
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
 _QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
-                 "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity"}
+                 "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity",
+                 "F2_platform_truth", "F2_superlatives"}  # AA-800
 # S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
 # rewrite); like F4_seo_surface they never send a piece to the full rewrite.
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
@@ -678,6 +680,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         qg.gate_grounding(sentence, grounding),
         qg.gate_banned_patterns(sentence, grounding),
         qg.gate_brand_forbidden_words(sentence, grounding, pack.get("forbidden_words")),
+        qg.gate_platform_truth(sentence, grounding),  # AA-800
         qg.gate_brand_name(sentence, grounding, pack.get("brand_name")),
         # AA-819 — an admin suggestion (t9_repair) or edit never puts a review / customer voice in
         qg.gate_authenticity(sentence, (writer_input or {}).get("cta")),

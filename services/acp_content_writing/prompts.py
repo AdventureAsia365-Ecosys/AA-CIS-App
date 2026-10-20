@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_shared.brand_pack import render_brand_block
+from services.acp_shared.signature_vocabulary import t9_words_line
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
@@ -328,6 +329,9 @@ def build_user_prompt(
         f"WRITING METHOD FOR THIS GOAL: {goal['logic']}",
         "",
         render_brand_block(brand_audience),
+        # AA-800 — the word layers for THIS brand: platform truth never, one stock superlative at most,
+        # its declared signature words allowed, service-level claims only from the seed.
+        t9_words_line(brand_audience),
         "",
         f"SELECTED ANGLE: {angle['name']}",
         f"WHY THIS ANGLE WORKS: {angle['why_it_works']}",

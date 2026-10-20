@@ -149,7 +149,9 @@ def deep_strip_citation_tags(value):
 # _BANNED_PATTERNS_COMPILED.
 _BANNED_PATTERNS_SEED = [
     r"\bnestled\b", r"\btapestry\b", r"\bhidden gem(s)?\b", r"\bmust[- ]visit\b",
-    r"\bmust[- ]see\b", r"\bunforgettable\b", r"\bbreathtaking\b", r"\bbucket[- ]list\b",
+    # AA-800: "breathtaking" left this list — it is a stock superlative (signature_vocabulary layer 2):
+    # one per piece is a warning, a second one blocks (gate_signature_words, F2_superlatives).
+    r"\bmust[- ]see\b", r"\bunforgettable\b", r"\bbucket[- ]list\b",
     r"\bwhether you'?re .{3,40} or .{3,40}\b", r"\bin conclusion\b", r"\bembark on\b",
     r"\bawait(s)? you\b", r"\bimmerse yourself\b", r"\blook no further\b", r"\bdelve\b",
     # SKILL_v2.md §Avoid — not in N7's own list
@@ -334,6 +336,62 @@ def gate_brand_forbidden_words(content_text: str, atom_text: str,
             violations.append(f"uses '{m.group(0)}', which the brand forbids: "
                               f"'{_sentence_with(content_text, m.group(0))}'")
     return _result("F2_brand_forbidden", violations)
+
+
+# ---------------------------------------------------------------- F2 word layers (AA-800)
+
+F2_PLATFORM_GATE = "F2_platform_truth"
+F2_SUPERLATIVE_GATE = "F2_superlatives"
+F2_STYLE_WARN_GATE = "F2_style_warn"
+
+
+def _word_hits(text: str, words, exempt_text: str) -> list[tuple[str, str]]:
+    """(word, sentence) for each sentence of `text` holding one of `words` that `exempt_text` (the seed,
+    the CTA, the trip name) does not itself contain, in text order."""
+    from services.acp_shared.signature_vocabulary import has_word
+    exempt = (exempt_text or "").lower()
+    out = []
+    for sent in _SENT_SPLIT_RE.split(strip_citation_tags(text or "")):
+        for w in words:
+            if has_word(sent, w) and not has_word(exempt, w):
+                out.append((w, sent.strip()[:300]))
+    return out
+
+
+def gate_platform_truth(content_text: str, atom_text: str) -> GateResultLite:
+    """F2_platform_truth — blocking, sentence-repairable: a price or booking promise (cheap, deal,
+    discount, book now, instant booking) the platform cannot back, for every tenant (AA-800 layer 1).
+    T9 never checked these before. A word in the source (seed, CTA, trip name) is exempt, as for F2."""
+    from services.acp_shared.signature_vocabulary import PLATFORM_TRUTH
+    violations = [f"uses '{w}', a price or booking promise the platform cannot back: '{sent}'"
+                  for w, sent in _word_hits(content_text, PLATFORM_TRUTH, atom_text)]
+    return _result(F2_PLATFORM_GATE, list(dict.fromkeys(violations)), repairable=True)
+
+
+def gate_signature_words(content_text: str, atom_text: str,
+                         brand_pack: Optional[dict]) -> list[GateResultLite]:
+    """AA-800 layer 2 (AA style) for a tenant piece:
+    - F2_superlatives — blocking (one sentence repair, never holds: STYLE_ONLY_GATES) when the piece has
+      more than one stock superlative (pristine, stunning, breathtaking, magical, paradise); every one
+      after the first is quoted;
+    - F2_style_warn — warn only: a single stock superlative, or a positioning word (curated, refined,
+      tailored, bespoke, luxury) the brand has not declared as its signature vocabulary.
+    A word the source has is exempt. A word on the tenant's own list is F2_brand_forbidden's."""
+    from services.acp_shared.signature_vocabulary import (STOCK_SUPERLATIVES, SUPERLATIVE_CAP,
+                                                          undeclared_positioning)
+    pack = brand_pack or {}
+    own = {str(w).lower().strip() for w in pack.get("forbidden_words") or []}
+    sup = [(w, sent) for w, sent in _word_hits(content_text, STOCK_SUPERLATIVES, atom_text) if w not in own]
+    excess = sup[SUPERLATIVE_CAP:] if len(sup) > SUPERLATIVE_CAP else []
+    over = [f"stock superlative '{w}' ({len(sup)} in this piece, at most {SUPERLATIVE_CAP}): say it with a "
+            f"concrete detail from the seed or cut it: '{sent}'" for w, sent in excess]
+    warn = [f"uses one stock superlative ('{w}'), allowed once per piece: '{sent}'"
+            for w, sent in (sup if len(sup) == SUPERLATIVE_CAP else [])]
+    undeclared = [w for w in undeclared_positioning(pack, include_prompt_only=True) if w not in own]
+    warn += [f"uses '{w}', a positioning word this brand has not declared as its own: '{sent}'"
+             for w, sent in _word_hits(content_text, undeclared, atom_text)]
+    return [_result(F2_SUPERLATIVE_GATE, list(dict.fromkeys(over)), repairable=True, blocking=bool(over)),
+            _result(F2_STYLE_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)]
 
 
 def gate_brand_name(content_text: str, atom_text: str, brand_name: Optional[str]) -> GateResultLite:
@@ -1897,12 +1955,15 @@ F14_GATE = "F14_social_shape"
 F15_GATE = "F15_voice"
 F15_WARN_GATE = "F15_voice_warn"
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
-STYLE_ONLY_GATES = frozenset({F15_GATE})
+# AA-800: a second stock superlative (F2_superlatives) is style too.
+STYLE_ONLY_GATES = frozenset({F15_GATE, "F2_superlatives"})
 # S234 round 3 — gates whose sentence repair runs on the cheap t9_repair stage (Haiku) when they are
 # the only blocking failures: style (F15), near-duplicates (F13_repeat), trip facts and rarity
 # (F17/F18 — the repair keeps or cuts a sentence the seed already bounds).
 # AA-819 — F19_authenticity too: the repair rewrites the sentence in the brand's voice or cuts it.
-CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity"})
+# AA-800 — the F2 word layers too: the repair swaps or cuts one word.
+CHEAP_REPAIR_GATES = frozenset({F15_GATE, "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity",
+                                "F2_platform_truth", "F2_superlatives"})
 # S234 round 2 — gates a dedicated deterministic/one-call step in service.py fixes every attempt
 # (like F4_seo_surface and the SEO fit): sentence_repair.plan never turns them into a rewrite.
 OWNED_BY_FIX_STEP = frozenset({"F16_faq", "F14_first_line"})
@@ -2182,15 +2243,21 @@ def run_quality_gates(
 
     length_check_text = strip_citation_tags(content_text)
     spec = channel_spec(channel, brand_pack)
+    # AA-778 — the configured CTA (ensure_cta puts it in word for word, after autofix) and the full trip
+    # name (fix_dashes keeps it verbatim) are source text for F2 too (AA-800: and for the word layers)
+    f2_source = "\n".join(t for t in (atom_text, cta, hygiene_ctx.trip_name if hygiene_ctx else None) if t)
     gate_ledger = [
         cta_result,
         gate_grounding(content_text, atom_text),
         # AA-778 — the configured CTA (ensure_cta puts it in word for word, after autofix) and the full
         # trip name (fix_dashes keeps it verbatim) are source text for F2 too
-        gate_banned_patterns(content_text, "\n".join(
-            t for t in (atom_text, cta, hygiene_ctx.trip_name if hygiene_ctx else None) if t)),
+        gate_banned_patterns(content_text, f2_source),
         # AA-771 (S233) — the tenant's own forbidden words and brand name, deterministic.
         gate_brand_forbidden_words(content_text, atom_text, (brand_pack or {}).get("forbidden_words")),
+        # AA-800 — the word layers: platform truth blocks; stock superlatives capped at one; positioning
+        # words the brand did not declare are a warning. Same source exemption as F2.
+        gate_platform_truth(content_text, f2_source),
+        *gate_signature_words(content_text, f2_source, brand_pack),
         gate_brand_name(content_text, atom_text, (brand_pack or {}).get("brand_name")),
         # AA-819 (AUP 2026-11) — no reviews / testimonials / customer first person / independence claim.
         gate_authenticity(content_text, cta, seo_title, meta_description),
@@ -2285,4 +2352,5 @@ __all__ = [
     "F13_REPEAT_GATE", "gate_repeat", "title_key", "title_taken",
     "F17_GATE", "F18_GATE", "gate_trip_facts", "CHEAP_REPAIR_GATES", "F9_NO_REASON", "F9_PROMPT_VERSION",
     "F19_GATE", "gate_authenticity",
+    "F2_PLATFORM_GATE", "F2_SUPERLATIVE_GATE", "F2_STYLE_WARN_GATE", "gate_platform_truth", "gate_signature_words",
 ]
