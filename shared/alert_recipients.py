@@ -38,7 +38,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -95,8 +94,18 @@ class AlertAudit:
 
 # ── E-mail ───────────────────────────────────────────────────────────────────────────────────────
 
-# Same pattern as the table's alert_recipient_email_chk (migration 251).
-_EMAIL_RE = re.compile(r'^[^@\s,;<>"]+@[^@\s,;<>"]+\.[^@\s,;<>"]+$')
+# Same rule as the table's alert_recipient_email_chk (migration 251): one @, no whitespace or , ; < > ",
+# a non-empty local part and a domain with a dot that is neither its first nor its last character. Checked
+# without a regex: the overlapping `[^@…]+\.[^@…]+` form is polynomial on long dotted input (CodeQL
+# py/polynomial-redos).
+_EMAIL_FORBIDDEN = frozenset(',;<>"')
+
+
+def _email_shape_ok(value: str) -> bool:
+    if any(c.isspace() or c in _EMAIL_FORBIDDEN for c in value):
+        return False
+    local, _, domain = value.partition("@")
+    return bool(local) and "@" not in domain and "." in domain[1:-1]
 
 
 def normalize_email(raw: Any) -> str:
@@ -110,7 +119,7 @@ def normalize_email(raw: Any) -> str:
         raise ValueError(f"The address is longer than {MAX_EMAIL_LEN} characters")
     if value.count("@") != 1:
         raise ValueError("Enter one e-mail address (exactly one @)")
-    if not _EMAIL_RE.match(value):
+    if not _email_shape_ok(value):
         raise ValueError("Enter one e-mail address: no spaces, commas, semicolons, quotes or angle brackets, "
                          "and a domain with a dot")
     return value
