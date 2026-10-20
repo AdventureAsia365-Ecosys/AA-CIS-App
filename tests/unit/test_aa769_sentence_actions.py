@@ -506,7 +506,8 @@ REQUEST_ID = str(uuid.uuid4())
 
 
 def _angle_request_conn(status="approved", goal="inspire", busy=0):
-    conn = _conn({"request_id": uuid.UUID(REQUEST_ID), "tenant_id": TENANT_ID, "goal": goal, "status": status})
+    conn = _conn({"request_id": uuid.UUID(REQUEST_ID), "tenant_id": TENANT_ID, "goal": goal, "status": status,
+                  "trip_id": None, "route_segment_ids": None, "route_id": None})  # AA-914: a Segment request
     conn.fetchval.return_value = busy
     conn.fetch.return_value = [{"idx": 0, "name": "Ruins at dawn", "best_final_style": "s", "recommended": True,
                                 "chosen": True}]
@@ -530,7 +531,7 @@ async def test_regenerate_angles_clones_the_request_and_leaves_the_old_one_alone
     assert new_id != REQUEST_ID and uuid.UUID(new_id)
     assert out == {"request_id": new_id, "regenerated_from": REQUEST_ID, "job_id": "job-1",
                    "status": "pending_goal", "goal": "inspire"}
-    assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
+    assert "FOR UPDATE" in conn.fetchrow.await_args_list[0].args[0]
     args, kw = enq.await_args.args, enq.await_args.kwargs
     assert args[0] is conn and args[1] == "t8_angles"
     assert args[2] == {"request_id": new_id, "tenant_id": str(TENANT_ID), "goal": "inspire",
@@ -541,7 +542,7 @@ async def test_regenerate_angles_clones_the_request_and_leaves_the_old_one_alone
     # nothing on the old request or its option rows is updated or deleted
     assert not any("UPDATE acp_shared.angle_gate" in q or "DELETE" in q for q in sqls)
     [clone] = [c for c in calls if "INSERT INTO acp_shared.angle_gate_request" in c.args[0]]
-    assert clone.args[1:] == (REQUEST_ID, new_id)
+    assert clone.args[1:] == (REQUEST_ID, new_id, None)  # AA-914: no Route, route_segment_ids stays NULL
     for col in ("atom_id", "trip_id", "channel", "goal", "cta", "subject_id", "route_segment_ids"):
         assert col in clone.args[0]
     assert "'pending_goal'" in clone.args[0]

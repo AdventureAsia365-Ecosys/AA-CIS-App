@@ -40,6 +40,7 @@ from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_shared.atom_seed import atom_seed_text
 from services.acp_shared.dfs_relevance import SearchDemandSignal, fetch_search_demand_signal, score_dfs_relevance
 from services.acp_shared.real_questions import collect_real_questions
+from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_shared.piece_history import fetch_piece_history
 
 logger = structlog.get_logger()
@@ -127,6 +128,11 @@ async def set_goal_and_generate(tenant_id: UUID, request_id: UUID, goal_key: str
     goal = get_goal(goal_key)
     if goal is None:
         raise InvalidGoalError(f"Unknown goal key: {goal_key!r}")
+    # AA-914 — the stored Route snapshot can hold ids that now belong to another tour's Segment (or
+    # none): only the Segments the trip has a live atom in reach the digest and the question chain.
+    if req["route_segment_ids"]:
+        req = {**dict(req), "route_segment_ids": await request_route_segment_ids(
+            pool, req, tenant_id=tenant_id, consumer="t8_angles")}
 
     # AA-772 (S233) — the atom's place card (built here in the t8_angles job if missing) is part
     # of the seed the angles are written from. Soft-fail: no card → the plain seed.

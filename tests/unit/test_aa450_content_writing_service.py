@@ -245,9 +245,12 @@ class TestStartWrite:
              patch.object(service, "fetch_brand_audience", new=AsyncMock(return_value={})), \
              patch.object(service, "fetch_brand_rubric_text", new=AsyncMock(return_value="rubric")), \
              patch.object(service, "get_goal", return_value=GOAL), \
+             patch.object(service, "request_route_segment_ids",  # AA-914 guard: keeps every id here
+                          new=AsyncMock(return_value=["seg1", "seg2"])) as guard, \
              patch.object(service, "_fetch_route_segments", new=AsyncMock(return_value=segments)) as mock_fetch:
             result = await service.start_write(TENANT_ID, REQUEST_ID, pool)
 
+        assert guard.await_args.kwargs == {"tenant_id": TENANT_ID, "consumer": "t9_write"}
         mock_fetch.assert_called_once_with(TENANT_ID, "trip1", ["seg1", "seg2"], pool, atoms_out=[])
         assert result["context"]["route_segments"] == segments
         assert result["context"]["atom_text"] == "Cross the bamboo bridge at dawn\n\nKayak the bay at sunset"

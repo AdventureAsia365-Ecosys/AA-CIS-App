@@ -66,6 +66,7 @@ from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
 from services.acp_shared.real_questions import collect_real_questions, faq_sources, label_questions, source_counts
+from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
@@ -1140,9 +1141,13 @@ async def start_write(
     # content_piece. Set once, immutable across the write/rewrite retry loop below (same as
     # channel/angle_gate_option_id) — NOT recomputed at _finalize_piece() time.
     route_hub_name = req.get("subject_hub_name")
-    route_segment_count = len(req["route_segment_ids"]) if req.get("route_segment_ids") else None
+    route_segment_count = None
     if req.get("route_segment_ids"):
-        route_segments = await _fetch_route_segments(tenant_id, req["trip_id"], req["route_segment_ids"], pool,
+        # AA-914 — only the Route Segments the trip has a live atom in (merged ids followed to the
+        # live one); a stale snapshot's foreign / orphaned id is dropped and logged, not counted.
+        segment_ids = await request_route_segment_ids(pool, req, tenant_id=tenant_id, consumer="t9_write")
+        route_segment_count = len(segment_ids)
+        route_segments = await _fetch_route_segments(tenant_id, req["trip_id"], segment_ids, pool,
                                                      atoms_out=route_atoms)
         atom_text = "\n\n".join(text for _, text in route_segments)
     else:
