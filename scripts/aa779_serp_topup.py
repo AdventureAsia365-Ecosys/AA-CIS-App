@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""AA-779 (B) — admin-only SERP top-up of real search questions for blog places. Hard cap $3 in all.
+"""AA-779 (B) — admin-only SERP top-up of real search questions for blog places. Hard cap $3 across all runs.
 
 What it does (services/acp_shared/question_topup.py): for every place of blog work (Subjects a tenant
 can still write + blog angle-gate requests) it counts the real questions the chain already has
 (Segment matches, place PAA, earlier top-up); a place with fewer than 3 gets ONE Google SERP for
 '<place> <country>' (US, English) with `people_also_ask_click_depth=2`, and the questions are stored in
-`acp_contract.search_demand` (keyword '<place> <country>' folded, market US). Blogs then read them as
-the `serp_topup` tier.
+`acp_contract.search_demand` (keyword '<place> <country>' folded, market 'US-PAA2' — its own, apart from
+the Segment research cache). A place that returned no question gets an empty row, so a rerun skips it.
+Blogs then read them as the `serp_topup` tier.
 
 Default = DRY RUN: SELECTs only, prints the place list and the estimated cost, buys nothing, writes
-nothing. `--run` buys, under a budget of min(--cap, $3) (a cap above $3 is refused) checked before every
-call; each call is logged in shared.dfs_call_log. Never wired to a tenant action, a router or a job (AA-646).
+nothing; it also prints what earlier runs spent (`prior_spent_usd`) and what is left of the $3. `--run`
+buys, under a budget of min(--cap, $3 − earlier spend) (a cap above $3 is refused; nothing left = refused)
+checked before every call; each call is logged in shared.dfs_call_log as endpoint 'serp_advanced_paa_deep'.
+Never wired to a tenant action, a router or a job (AA-646).
 
 Run inside the CIS api container (ECS exec + S3 pattern, one line per command; see
 skill/aa-cis-schema/references/ecs-exec.md). The image must carry this change:

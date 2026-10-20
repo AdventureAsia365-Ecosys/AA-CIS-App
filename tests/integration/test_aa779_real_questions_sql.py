@@ -134,14 +134,48 @@ async def test_serp_topup_finds_blog_places_stores_and_reads_back(tx):
     assert need.query == "Mörönzz Mongolia" and need.segment_ids == ["zz779_mseg"]
     assert need.real_now == 0 and need.needs_serp
 
+    # Segment research already holds the exact '<place> <country>' key (market US, with a volume): the
+    # top-up's row lives under its own market, so the research row (and its PAA) is never touched.
+    await tx.execute("""INSERT INTO acp_contract.search_demand (keyword, market, search_volume, people_also_ask,
+                        retrieved_on) VALUES ('moronzz mongolia', 'US', 40, '[]'::jsonb, now() - interval '9 days')""")
     await qt.store_questions(tx, "moronzz mongolia", ["Does Mörönzz have an airport?"], ["example.com"])
+    await tx.execute("UPDATE acp_contract.search_demand SET retrieved_on = now() - interval '5 days' "
+                     "WHERE keyword = 'moronzz mongolia' AND market = $1", rq.TOPUP_MARKET)
     await qt.store_questions(tx, "moronzz mongolia", [], [])  # an empty answer never wipes stored questions
-    row = await tx.fetchrow("SELECT search_volume, people_also_ask, serp_domains FROM acp_contract.search_demand "
-                            "WHERE keyword = 'moronzz mongolia' AND market = 'US'")
+    row = await tx.fetchrow("SELECT search_volume, people_also_ask, serp_domains, retrieved_on > now() - interval "
+                            "'1 minute' AS fresh FROM acp_contract.search_demand "
+                            "WHERE keyword = 'moronzz mongolia' AND market = $1", rq.TOPUP_MARKET)
     assert row["search_volume"] is None  # ranking reads volume rows only: the top-up never shifts it
     assert json.loads(row["people_also_ask"]) == ["Does Mörönzz have an airport?"]
+    assert row["fresh"]  # a rerun's store refreshes retrieved_on
+    research = await tx.fetchrow("SELECT search_volume, people_also_ask FROM acp_contract.search_demand "
+                                 "WHERE keyword = 'moronzz mongolia' AND market = 'US'")
+    assert research["search_volume"] == 40 and json.loads(research["people_also_ask"]) == []
+    from services.acp_contract.segment_research import _cached_volume
+    assert await _cached_volume(tx, "moronzz mongolia", "US") == (True, 40)
 
     out = await rq.collect_real_questions(_Pool(tx), atom_ids=["zz779_m1"])
     assert [(r.question, r.source) for r in out] == [("Does Mörönzz have an airport?", "serp_topup")]
     again = {n.keyword: n for n in await qt.find_needs(_Pool(tx))}["moronzz mongolia"]
     assert again.topped_up and again.real_now == 1 and not again.needs_serp
+
+    # a place bought with no question back: an empty marker row, so a rerun does not buy it again
+    await tx.execute("DELETE FROM acp_contract.search_demand WHERE keyword = 'moronzz mongolia' AND market = $1",
+                     rq.TOPUP_MARKET)
+    await qt.store_questions(tx, "moronzz mongolia", [], [])
+    marked = {n.keyword: n for n in await qt.find_needs(_Pool(tx))}["moronzz mongolia"]
+    assert marked.topped_up and marked.real_now == 0 and not marked.needs_serp
+
+
+@pytest.mark.asyncio
+async def test_topup_prior_spend_sums_only_its_own_endpoint(tx):
+    from services.acp_shared import question_topup as qt
+
+    base = await qt.prior_spend(_Pool(tx))
+    await tx.execute("""INSERT INTO shared.dfs_call_log (id, endpoint, cost_usd, cache_hit, fetched_live)
+                        VALUES ($1, 'serp_advanced_paa_deep', 0.5, false, true),
+                               ($2, 'serp_advanced_paa_deep', NULL, false, true),
+                               ($3, 'serp_advanced', 7.0, false, true)""",
+                     uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+    # the NULL-cost call counts at the estimate; the plain SERP endpoint never counts
+    assert await qt.prior_spend(_Pool(tx)) == pytest.approx(base + 0.5 + qt.TOPUP_CALL_ESTIMATE_USD)

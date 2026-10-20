@@ -76,8 +76,8 @@ async def _one(pool, row) -> dict[str, Any]:
     from services.acp_content_writing.quality_gates import paa_for_scope
     from services.acp_content_writing.service import _fetch_route_segments, _scope_line, _trip_places_outside
     from services.acp_shared.dfs_relevance import fetch_search_demand_signal
-    from services.acp_shared.real_questions import (collect_real_questions, is_off_meaning, label_questions,
-                                                    place_words, resolve_scope)
+    from services.acp_shared.real_questions import (chain_filter_names, collect_real_questions, is_off_meaning,
+                                                    label_questions, resolve_scope)
 
     segment_ids = row["ordered_segment_ids"]
     if isinstance(segment_ids, str):
@@ -104,8 +104,9 @@ async def _one(pool, row) -> dict[str, Any]:
     # S245 r7 — an off-meaning question never counts as real (belt and braces over the chain + scope filter)
     async with pool.acquire() as conn:
         qscope = await resolve_scope(conn, scope_atoms)
-    names = sorted(place_words(qscope.places, qscope.countries))
-    off = [k for k in kept if is_off_meaning(k["question"], names)]
+    filt = chain_filter_names(qscope)
+    off = [k for k in kept if is_off_meaning(k["question"], filt["names"], filt["lowercase_names"],
+                                             filt["countries"])]
     kept = [k for k in kept if k not in off]
     out.update({
         "off_meaning_not_counted": [k["question"] for k in off],
@@ -125,9 +126,10 @@ _PIECES_SQL = """
 
 async def pieces(ids: list[str]) -> dict[str, Any]:
     """Done-when line 2 on stored blogs. Place names for the off-meaning test: the proper nouns the
-    blog itself writes mid-sentence (its places), folded."""
+    blog itself writes mid-sentence (its places), folded; the lowercase test reads only the single-word
+    ones. Each piece also reports its FAQ pair counts before / after the FAQ step (when recorded)."""
     from services.acp_content_writing.hygiene import phrase_tokens, proper_nouns
-    from services.acp_shared.real_questions import piece_question_stats
+    from services.acp_shared.real_questions import piece_question_stats, single_word_places
 
     pool = await _pool()
     try:
@@ -139,8 +141,10 @@ async def pieces(ids: list[str]) -> dict[str, Any]:
     for r in rows:
         wi = r["writer_input"]
         wi = json.loads(wi) if isinstance(wi, str) else (wi or {})
-        names = sorted({t for p in proper_nouns(r["content_text"] or "") for t in phrase_tokens(p)})
-        per.append({"piece_id": r["piece_id"], "status": r["status"], **piece_question_stats(wi, names)})
+        phrases = proper_nouns(r["content_text"] or "")
+        names = sorted({t for p in phrases for t in phrase_tokens(p)})
+        per.append({"piece_id": r["piece_id"], "status": r["status"],
+                    **piece_question_stats(wi, names, sorted(single_word_places(phrases)))})
     faq_total = sum(p["faq_total"] for p in per)
     faq_real = sum(p["faq_real"] for p in per)
     with_2 = sum(1 for p in per if p["faq_real"] >= LINE2_BLOGS_WITH)
@@ -150,8 +154,22 @@ async def pieces(ids: list[str]) -> dict[str, Any]:
         "faq_real_share": round(faq_real / faq_total, 3) if faq_total else 0.0,
         "done_when_line_2_met": bool(per) and with_2 >= LINE2_BLOG_SHARE * len(per)
         and faq_total > 0 and faq_real / faq_total >= LINE2_FAQ_SHARE,
+        # S245 r7 review — did the real share rise by adding real pairs or by losing writer ones?
+        "pair_counts": _pair_count_totals(per),
         "per_piece": per,
     }
+
+
+def _pair_count_totals(per: list[dict[str, Any]]) -> dict[str, int]:
+    """Real / writer FAQ pairs summed before and after the FAQ step, over the pieces that recorded both."""
+    both = [p for p in per
+            if isinstance(p.get("faq_pairs_before"), dict) and isinstance(p.get("faq_pairs_after"), dict)]
+    out = {"pieces_recorded": len(both)}
+    for when in ("before", "after"):
+        out[f"real_{when}"] = sum(p[f"faq_pairs_{when}"].get("real", 0) for p in both)
+        out[f"writer_{when}"] = sum(p[f"faq_pairs_{when}"].get("pairs", 0) - p[f"faq_pairs_{when}"].get("real", 0)
+                                    for p in both)
+    return out
 
 
 async def main() -> dict[str, Any]:

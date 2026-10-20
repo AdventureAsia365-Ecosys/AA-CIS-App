@@ -55,19 +55,71 @@ MORON_SEED = (
 
 @pytest.mark.parametrize("q", WORD_QUESTIONS)
 def test_a_place_name_used_as_a_word_is_off_meaning(q):
-    assert rq.is_off_meaning(q, ["moron", "khovsgol"])
+    assert rq.is_off_meaning(q, ["moron", "khovsgol"], lowercase_names=["moron"], countries=["Mongolia"])
 
 
 @pytest.mark.parametrize("q", TRAVEL_QUESTIONS)
 def test_real_travel_questions_stay(q):
-    assert not rq.is_off_meaning(q, ["moron", "khovsgol", "tsaatan"])
+    assert not rq.is_off_meaning(q, ["moron", "khovsgol", "tsaatan"], lowercase_names=["moron"],
+                                 countries=["Mongolia"])
 
 
 def test_lowercase_test_reads_only_the_given_place_names():
     # 'fly' opens a seed line ('Fly to Mörön') — it is not a place name, so lowercase 'fly' is fine
     assert not rq.is_off_meaning("Can you fly to Mörön?", ["fly", "moron"], lowercase_names=["moron"])
     # a generic place word written lowercase is never the 'word' case
-    assert not rq.is_off_meaning("Is the lake frozen?", ["lake"])
+    assert not rq.is_off_meaning("Is the lake frozen?", ["lake"], lowercase_names=["lake"])
+    # no lowercase test unless the caller names single-word places (the default reads none)
+    assert not rq.is_off_meaning("Is moron still used today?", ["moron"])
+    assert rq.is_off_meaning("Is moron still used today?", ["moron"], lowercase_names=["moron"])
+
+
+# S245 r7 review — real traveller questions the first lowercase rule dropped: lowercase text, tokens of
+# multi-word names ('long' of Ha Long Bay, 'wall' of Great Wall) and place tokens that are English words.
+REVIEW_PLACES = ["Uran Togoo", "Mörön", "Ha Long Bay", "Great Wall", "Flaming Cliffs", "Tiger's Nest",
+                 "Golden Triangle", "Terelj", "Tsaatan", "Lake Khövsgöl"]
+REVIEW_COUNTRIES = ["Mongolia", "Vietnam", "China", "Bhutan", "Thailand"]
+MUST_KEEP = [
+    "Is uran togoo an active volcano?", "what is moron mongolia like", "How long should I spend in Hanoi?",
+    "How long does it take to walk the great wall?", "Is the great wall crowded?", "What are the flaming cliffs?",
+    "Is tiger's nest hard to climb?", "How many steps to tiger's nest?", "Is the golden triangle dangerous?",
+    "what to pack for terelj", "is terelj expensive", "who are the tsaatan people",
+    # global word cues that never name a place (finding 2)
+    "How do you say hello in Mongolian?", "What is the Mongolian word for hello?",
+    "What words should I know before visiting Mongolia?", "Is English translation available on Mongolia tours?",
+]
+
+
+def _review_filter():
+    scope = rq.QuestionScope(segment_ids=(), places=tuple(REVIEW_PLACES), countries=tuple(REVIEW_COUNTRIES))
+    return rq.chain_filter_names(scope)
+
+
+@pytest.mark.parametrize("q", MUST_KEEP)
+def test_review_travel_questions_are_kept_with_the_chain_names(q):
+    f = _review_filter()
+    assert "long" in f["names"] and "wall" not in f["lowercase_names"]  # the review's own setting
+    assert not rq.is_off_meaning(q, f["names"], f["lowercase_names"], f["countries"])
+    assert [c.question for c in rq.merge([(rq.SOURCE_PLACE, [q])], **f)] == [q]
+
+
+def test_only_whole_single_word_places_feed_the_lowercase_test():
+    assert rq.single_word_places(REVIEW_PLACES, REVIEW_COUNTRIES) == {"moron", "terelj", "tsaatan"}
+    assert rq.single_word_places(["Mongolia", "Lake", "Golden"], ["Mongolia"]) == set()
+
+
+def test_the_lowercase_word_case_still_drops_with_the_chain_names():
+    f = _review_filter()
+    for q in ("Is moron still used today?", "What is the plural of moron?", "Is moron a British word?",
+              "Is moron a slur?", "What is a word for moron?", "What rhymes with moron?"):
+        assert rq.is_off_meaning(q, f["names"], f["lowercase_names"], f["countries"]), q
+
+
+def test_autocomplete_tier_skips_the_lowercase_test():
+    f = _review_filter()
+    q = "is moron still used today"
+    assert [c.question for c in rq.merge([(rq.SOURCE_AUTOCOMPLETE, [q])], **f)] == [q]
+    assert rq.merge([(rq.SOURCE_PLACE, [q])], **f) == []
 
 
 def test_scope_filter_drops_the_r7_junk_and_keeps_travel_questions():
@@ -110,32 +162,46 @@ R = [("Does Mongolia have volcanoes?", "r1"), ("How deep is Lake Khövsgöl?", "
 
 
 def test_no_real_pair_leaves_the_faq_alone():
-    assert rq.real_first_pairs(W, POOL, min_pairs=3, max_pairs=5) == (W, 0)
-    assert rq.real_first_pairs(W, [], min_pairs=3, max_pairs=5) == (W, 0)
+    assert rq.real_first_pairs(W, POOL, max_pairs=5) == (W, 0)
+    assert rq.real_first_pairs(W, [], max_pairs=5) == (W, 0)
 
 
-def test_one_real_pair_goes_first_and_writer_pairs_only_fill_to_the_minimum():
-    out, n = rq.real_first_pairs(W[:2] + R[:1] + W[2:], POOL, min_pairs=3, max_pairs=5)
-    assert n == 1 and out == [R[0], W[0], W[1]]
+def test_one_real_pair_goes_first_and_every_writer_pair_stays():
+    # S245 r7 review: a reorder only — r7 piece 8db691f7 (1 real + 4 writer) keeps all 5 pairs
+    out, n = rq.real_first_pairs(W[:2] + R[:1] + W[2:], POOL, max_pairs=5)
+    assert n == 1 and out == [R[0]] + W
 
 
-def test_two_real_pairs_keep_two_writer_pairs():
-    out, n = rq.real_first_pairs(W + R[:2], POOL, min_pairs=3, max_pairs=5)
-    assert n == 2 and out == [R[0], R[1], W[0], W[1]]
+def test_one_real_and_three_writer_pairs_stay_four():
+    # r7 piece fac93f45 (1 real + 3 writer) stays at 4 pairs
+    out, n = rq.real_first_pairs(W[:3] + R[:1], POOL, max_pairs=5)
+    assert n == 1 and out == [R[0]] + W[:3]
 
 
-def test_three_real_pairs_cap_at_five():
-    out, n = rq.real_first_pairs(W + R, POOL, min_pairs=3, max_pairs=5)
+def test_writer_pairs_go_only_over_the_cap():
+    out, n = rq.real_first_pairs(W + R[:2], POOL, max_pairs=5)
+    assert n == 2 and out == [R[0], R[1], W[0], W[1], W[2]]
+    out, n = rq.real_first_pairs(W + R, POOL, max_pairs=5)
     assert n == 3 and out == R + W[:2]
 
 
-def test_real_first_faq_rewrites_the_section_and_logs_it():
+def test_real_first_faq_reorders_the_section_and_logs_it():
     text = qg.replace_faq_section("## Lake\n\nBody. Ask Terra to plan this trip.\n", W + R[:1])
     out, log = writing_service.real_first_faq(text, {"search_questions": POOL[:1]})
-    assert [q for q, _ in qg.faq_pairs(out)] == [R[0][0], W[0][0], W[1][0]]
-    assert log == ["FAQ puts its 1 real search question(s) first and keeps 2 fewer writer question(s)"]
+    assert [q for q, _ in qg.faq_pairs(out)] == [R[0][0]] + [q for q, _ in W]
+    assert log == ["FAQ puts its 1 real search question(s) first"]
     assert "Ask Terra to plan this trip." in out.partition("## FAQ")[0]
     assert writing_service.real_first_faq(text, {}) == (text, [])
+
+
+def test_a_candidate_the_scope_filter_dropped_never_makes_a_writer_pair_real():
+    # only the in-scope search_questions count; the chain's dropped candidates stay provenance-only
+    text = qg.replace_faq_section("## Lake\n\nBody. Ask Terra to plan this trip.\n", W[:2] + R[:1])
+    ctx = {"search_questions": [], "real_questions": [{"q": R[0][0], "source": "segment_match"}]}
+    assert writing_service.real_first_faq(text, ctx) == (text, [])
+    assert writing_service.faq_pair_stats(text, ctx) == {"pairs": 3, "real": 0}
+    ctx["search_questions"] = [{"question": R[0][0], "source": "segment_match"}]
+    assert writing_service.faq_pair_stats(text, ctx) == {"pairs": 3, "real": 1}
 
 
 # ---------------------------------------------------------------- (2) write_faq + the contract step
@@ -212,8 +278,25 @@ async def test_full_faq_without_the_real_question_regenerates_once_and_puts_it_f
     assert wf.call_count == 1
     assert wf.call_args.kwargs["required_questions"] == ["How deep is Lake Khövsgöl?"]
     assert "paa_questions" not in wf.call_args.kwargs  # the required one is not listed twice
-    assert [q for q, _ in qg.faq_pairs(out)] == [REAL_PAIR[0], WRITER_FAQ[0][0], WRITER_FAQ[1][0]]
+    assert [q for q, _ in qg.faq_pairs(out)] == [REAL_PAIR[0]] + [q for q, _ in WRITER_FAQ]
     assert cost == 0.006 and "real questions 0 → 1" in log[0]
+
+
+@pytest.mark.asyncio
+async def test_an_off_meaning_required_question_is_not_sent_to_the_regeneration():
+    writer = qg.replace_faq_section(BODY, WRITER_FAQ)
+    seed = SEED.replace("- The lake freezes", "- Mörön has a small airport.\n- The lake freezes")
+    with patch.object(writing_service, "write_faq", return_value=([REAL_PAIR], 0.006)) as wf:
+        await writing_service._enforce_faq_contract(
+            writer, context=_ctx(atom_text=seed), hyg=h.HygieneContext(seed=seed), request_id=uuid.uuid4(),
+            brand_ignore=frozenset(), required=["Is moron a British word?", "How deep is Lake Khövsgöl?"])
+    assert wf.call_args.kwargs["required_questions"] == ["How deep is Lake Khövsgöl?"]
+    with patch.object(writing_service, "write_faq") as wf2:
+        out, cost, log = await writing_service._enforce_faq_contract(
+            writer, context=_ctx(atom_text=seed), hyg=h.HygieneContext(seed=seed), request_id=uuid.uuid4(),
+            brand_ignore=frozenset(), required=["Is moron a British word?"])
+    wf2.assert_not_called()
+    assert (out, cost, log) == (writer, 0.0, [])
 
 
 @pytest.mark.asyncio
@@ -256,9 +339,13 @@ async def test_job_asks_the_regeneration_for_the_real_questions_the_writer_skipp
          patch.object(writing_service, "_finalize_piece", new=AsyncMock(return_value=row)) as fin:
         await writing_service.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
     assert wf.call_args.kwargs["required_questions"] == ["How deep is Lake Khövsgöl?"]
-    faq = fin.call_args.kwargs["writer_input"]["faq_questions"]
+    wi = fin.call_args.kwargs["writer_input"]
+    faq = wi["faq_questions"]
     assert faq[0] == {"question": "How deep is Lake Khövsgöl?", "source": "place_paa"}
-    assert [f["source"] for f in faq[1:]] == ["writer", "writer"]
+    assert [f["source"] for f in faq[1:]] == ["writer", "writer", "writer"]
+    # the line-2 checkpoint can see the real pair was added, no writer pair removed
+    assert wi["faq_pairs_before"] == {"pairs": 3, "real": 0}
+    assert wi["faq_pairs_after"] == {"pairs": 4, "real": 1}
 
 
 # ---------------------------------------------------------------- (4) the measure never counts junk
@@ -283,13 +370,20 @@ def test_topup_keyword_is_folded_place_and_country():
 
 
 class _Conn:
-    def __init__(self, demand=(), matches=()):
+    def __init__(self, demand=(), matches=(), prior=0.0):
         self.demand, self.matches, self.calls, self.executed = list(demand), list(matches), [], []
+        self.prior = prior
 
     async def fetch(self, sql, *args):
         self.calls.append((sql, args))
         if "atom_matches" in sql:
             return [{"query": q} for q in self.matches]
+        if "shared.dfs_call_log" in sql:
+            assert args[0] == "serp_advanced_paa_deep"
+            return [{"spent": self.prior}]
+        if "SELECT keyword FROM acp_contract.search_demand" in sql:  # _BOUGHT_SQL
+            return [{"keyword": r["keyword"]} for r in self.demand
+                    if r["market"] == args[0] and r["keyword"] in args[1]]
         if "acp_contract.search_demand" in sql:
             return list(self.demand)
         raise AssertionError(sql)
@@ -308,6 +402,9 @@ def _pool(conn):
     return pool
 
 
+TOP = rq.TOPUP_MARKET
+
+
 def _row(keyword, qs, market="US"):
     return {"keyword": keyword, "market": market, "search_volume": None, "people_also_ask": json.dumps(qs)}
 
@@ -316,13 +413,36 @@ def _row(keyword, qs, market="US"):
 async def test_topup_rows_carry_their_own_label_and_place_paa_leaves_them():
     scope = rq.QuestionScope(segment_ids=(), places=("Mörön",), countries=("Mongolia",))
     conn = _Conn(demand=[_row("moron", ["Is moron a bad word?"]),
-                         _row("moron mongolia", ["Does Mörön have an airport?", "How cold is Mörön in winter?"])])
+                         _row("moron mongolia", ["Does Mörön have an airport?", "How cold is Mörön in winter?"],
+                              market=TOP)])
     assert await rq.PlacePaaSource().fetch(conn, scope) == ["Is moron a bad word?"]
+    sql, args = conn.calls[-1]
+    assert "market <> $2" in sql and args[1] == TOP
     assert await rq.SerpTopupSource().fetch(conn, scope) == ["Does Mörön have an airport?",
                                                              "How cold is Mörön in winter?"]
     sql, args = conn.calls[-1]
-    assert "market = 'US'" in sql and args == (["moron mongolia"],)
+    assert "market = $2" in sql and args == (["moron mongolia"], TOP)
     assert [s.name for s in rq.DB_SOURCES] == ["segment_match", "place_paa", "serp_topup"]
+
+
+@pytest.mark.asyncio
+async def test_a_research_row_with_the_topup_key_stays_place_paa():
+    # S245 r7 review: Segment research may buy the exact '<place> <country>' keyword (market US); that
+    # row is its own (place_paa) and the top-up's row lives under TOPUP_MARKET — no clash either way
+    scope = rq.QuestionScope(segment_ids=(), places=("Lake Khövsgöl",), countries=("Mongolia",))
+    conn = _Conn(demand=[_row("lake khovsgol mongolia", ["How deep is Lake Khövsgöl?"]),
+                         _row("lake khovsgol mongolia", ["Can you swim in Lake Khövsgöl?"], market=TOP)])
+    assert await rq.PlacePaaSource().fetch(conn, scope) == ["How deep is Lake Khövsgöl?"]
+    assert await rq.SerpTopupSource().fetch(conn, scope) == ["Can you swim in Lake Khövsgöl?"]
+    assert TOP not in ("US", "UK", "AU", "DE", "FR", "NL")
+
+
+def test_topup_store_sql_uses_its_own_market_and_refreshes_retrieved_on():
+    assert "retrieved_on = excluded.retrieved_on" in qt._STORE_SQL
+    assert qt.SERP_PAA_DEEP_ENDPOINT == __import__(
+        "services.seo_intelligence.dataforseo_client", fromlist=["x"]).SERP_PAA_DEEP_ENDPOINT
+    from shared.cost_guard import DFS_CALL_ESTIMATE_USD
+    assert DFS_CALL_ESTIMATE_USD[qt.SERP_PAA_DEEP_ENDPOINT] == qt.TOPUP_CALL_ESTIMATE_USD
 
 
 def test_collect_needs_groups_by_place_and_country_and_skips_generic_places():
@@ -358,16 +478,79 @@ def _fake_needs(*keys):
 @pytest.mark.asyncio
 async def test_dry_run_buys_nothing_and_writes_nothing():
     client = MagicMock()
+    conn = _Conn(prior=0.4)
     with patch.object(qt, "find_needs", _fake_needs("moron mongolia")):
-        out = await qt.run_topup(MagicMock(), client=client)
+        out = await qt.run_topup(_pool(conn), client=client)
     assert out["dry_run"] is True and out["planned_calls"] == 1
+    assert out["prior_spent_usd"] == 0.4 and out["left_usd"] == pytest.approx(2.6)
     client.fetch_people_also_ask_deep.assert_not_called()
+    assert conn.executed == []
 
 
 @pytest.mark.asyncio
 async def test_cap_above_three_dollars_is_refused():
     with pytest.raises(ValueError):
         await qt.run_topup(MagicMock(), dry_run=False, cap_usd=3.5)
+
+
+def _buying_client(budget, cost=0.012, empty=()):
+    client = MagicMock()
+    client.budget = budget
+
+    async def buy(query, **kw):
+        budget.charge(cost)
+        return ([] if query in empty else [f"Does {query} have an airport?"]), ["example.com"]
+    client.fetch_people_also_ask_deep = AsyncMock(side_effect=buy)
+    return client
+
+
+def _budget():
+    return RunBudget(provider="dfs", scope="job:aa779_serp_topup", per_run_usd=None, per_day_usd=None)
+
+
+@pytest.mark.asyncio
+async def test_the_three_dollar_cap_counts_earlier_runs():
+    # $2.95 already spent: what is left ($0.05) caps this run, so the total stays within $3
+    conn = _Conn(prior=2.95)
+    budget = _budget()
+    client = _buying_client(budget)
+    with patch.object(qt, "find_needs", _fake_needs(*[f"p{i}" for i in range(20)])):
+        out = await qt.run_topup(_pool(conn), dry_run=False, cap_usd=3.0, client=client, budget=budget)
+    assert out["planned_calls"] == 5 and out["prior_spent_usd"] == 2.95
+    assert client.fetch_people_also_ask_deep.call_count == 4  # the 5th estimate would pass $0.05
+    assert out["total_spent_usd"] <= qt.TOPUP_CAP_USD and out["stopped"]
+
+
+@pytest.mark.asyncio
+async def test_no_call_when_the_cap_is_already_spent():
+    for prior in (2.995, 3.0, 3.4):
+        conn = _Conn(prior=prior)
+        budget = _budget()
+        client = _buying_client(budget)
+        with patch.object(qt, "find_needs", _fake_needs("a", "b")):
+            out = await qt.run_topup(_pool(conn), dry_run=False, cap_usd=3.0, client=client, budget=budget)
+        client.fetch_people_also_ask_deep.assert_not_called()
+        assert out["planned_calls"] == 0 and conn.executed == []
+        if prior >= 3.0:
+            assert "already spent" in out["refused"]
+
+
+@pytest.mark.asyncio
+async def test_a_place_with_no_question_is_marked_bought_and_skipped_next_time():
+    conn = _Conn()
+    budget = _budget()
+    client = _buying_client(budget, empty=("b",))
+    with patch.object(qt, "find_needs", _fake_needs("a", "b")):
+        out = await qt.run_topup(_pool(conn), dry_run=False, cap_usd=1.0, client=client, budget=budget)
+    assert out["stored_places"] == 1 and out["empty_places"] == 1
+    stored = {args[0]: (args[1], json.loads(args[2])) for _, args in conn.executed}
+    assert stored == {"a": (TOP, ["Does a have an airport?"]), "b": (TOP, [])}
+    # the rerun's count sees the empty marker row as bought
+    need = _need("uran togoo mongolia")
+    need.place = "Uran Togoo"
+    marker = _Conn(demand=[_row("uran togoo mongolia", [], market=TOP)])
+    real, need.topped_up = await qt._count_real(marker, need)
+    assert real == 0 and need.topped_up is True and need.needs_serp is False
 
 
 @pytest.mark.asyncio
@@ -388,7 +571,7 @@ async def test_real_run_stores_each_place_and_stops_at_the_budget():
     assert [b["keyword"] for b in out["bought"]] == ["a", "b"] and out["stored_places"] == 2
     assert out["stopped"] and "per-run budget" in out["stopped"] and out["spent_usd"] == pytest.approx(0.024)
     sql, args = conn.executed[0]
-    assert "INSERT INTO acp_contract.search_demand" in sql and args[0] == "a" and args[1] == "US"
+    assert "INSERT INTO acp_contract.search_demand" in sql and args[0] == "a" and args[1] == TOP
     assert json.loads(args[2]) == ["Does a have an airport?"]
 
 
@@ -396,10 +579,13 @@ async def test_real_run_stores_each_place_and_stops_at_the_budget():
 async def test_count_real_uses_the_chain_filters_and_sees_an_earlier_topup():
     need = _need("moron mongolia")
     need.place = "Mörön"
-    conn = _Conn(demand=[_row("moron", ["Is moron a British word?", "What is moron in German?"]),
-                         _row("moron mongolia", ["Does Mörön have an airport?"])])
+    conn = _Conn(demand=[_row("moron", ["Is moron a British word?", "What is moron in German?",
+                                        "Is moron still used today?"]),
+                         _row("moron mongolia", ["Does Mörön have an airport?"], market=TOP)])
     real, topped = await qt._count_real(conn, need)
     assert real == 1 and topped is True
+    fresh = _Conn(demand=[_row("moron", ["Is moron a British word?"])])
+    assert await qt._count_real(fresh, need) == (0, False)
 
 
 @pytest.mark.asyncio
@@ -429,9 +615,11 @@ async def test_serp_payload_carries_click_depth_only_when_asked():
 
     client = DataForSEOClient(login="l", password="p")
     with patch("services.seo_intelligence.dataforseo_client.httpx.AsyncClient", _Http), \
-         patch("services.seo_intelligence.dataforseo_client.record_dfs_call_sync"):
+         patch("services.seo_intelligence.dataforseo_client.record_dfs_call_sync") as log:
         await client.fetch_people_also_ask("moron")
         await client.fetch_people_also_ask_deep("Mörön Mongolia", click_depth=2)
+    # the top-up's calls carry their own dfs_call_log label (its $3 cap is summed across runs)
+    assert [c.kwargs["endpoint"] for c in log.call_args_list] == ["serp_advanced", "serp_advanced_paa_deep"]
     assert "people_also_ask_click_depth" not in sent[0][0]
     assert sent[1][0]["people_also_ask_click_depth"] == 2 and sent[1][0]["keyword"] == "Mörön Mongolia"
 
@@ -449,24 +637,57 @@ def test_deep_paa_parse_reads_nested_expanded_questions():
     assert out == ["Does Mörön have an airport?", "How far is Mörön from Lake Khövsgöl?", "What is Mörön known for?"]
 
 
-def test_nothing_but_the_admin_script_imports_the_topup_buyer():
-    """AA-646 — no router, job handler or tenant path may reach the paid top-up."""
+_DEEP = {"fetch_people_also_ask_deep", "people_also_ask_click_depth"}
+
+
+def _deep_serp_hits(tree) -> list[int]:
+    """Lines that import question_topup, call fetch_people_also_ask_deep or pass / name
+    people_also_ask_click_depth."""
+    hits = []
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+        elif isinstance(node, ast.Attribute):
+            names = [node.attr]
+        elif isinstance(node, ast.Name):
+            names = [node.id]
+        elif isinstance(node, ast.keyword) and node.arg:
+            names = [node.arg]
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names = [node.value]
+        if any(n.endswith("question_topup") or n in _DEEP for n in names):
+            hits.append(getattr(node, "lineno", 0))
+    return hits
+
+
+def test_nothing_but_the_admin_script_reaches_the_paid_deep_serp():
+    """AA-646 — no router, job handler or tenant path may reach the paid top-up: no import of
+    question_topup, and no call to fetch_people_also_ask_deep nor a people_also_ask_click_depth
+    argument (or string) outside question_topup.py and the DFS client itself."""
     root = pathlib.Path(__file__).resolve().parents[2]
+    allowed = {"question_topup.py", "dataforseo_client.py"}
     offenders = []
     for folder in ("api", "worker", "services", "shared", "portal", "frontend"):
         for path in (root / folder).rglob("*.py"):
-            if path.name == "question_topup.py":
+            if path.name in allowed:
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (SyntaxError, UnicodeDecodeError):
                 continue
-            for node in ast.walk(tree):
-                names = []
-                if isinstance(node, ast.Import):
-                    names = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
-                if any(n.endswith("question_topup") for n in names):
-                    offenders.append(str(path.relative_to(root)))
+            offenders += [f"{path.relative_to(root)}:{n}" for n in _deep_serp_hits(tree)]
     assert offenders == []
+
+
+@pytest.mark.parametrize("src", [
+    "from services.acp_shared import question_topup\n",
+    "async def f(c):\n    return await c.fetch_people_also_ask_deep('x')\n",
+    "async def f(c):\n    return await c._serp_advanced('x', people_also_ask_click_depth=2)\n",
+    "PAYLOAD = {'people_also_ask_click_depth': 2}\n",
+])
+def test_the_guard_catches_every_way_to_the_deep_serp(src):
+    assert _deep_serp_hits(ast.parse(src))
+    assert not _deep_serp_hits(ast.parse("async def f(c):\n    return await c.fetch_people_also_ask('x')\n"))

@@ -491,7 +491,8 @@ def write_faq(
         parts.append("REAL QUESTIONS (what readers really search for; write these pairs FIRST, in this order, "
                      "one pair per question a SOURCE fact answers: keep the question's own words — you may only "
                      "fix its grammar or add the place's name — and skip one no SOURCE fact answers; then fill "
-                     "the rest as usual):\n" + "\n".join(f"- {q}" for q in required_questions))
+                     "the rest as usual. Never write that readers search for or ask it):\n"
+                     + "\n".join(f"- {q}" for q in required_questions))
     if paa_questions:
         parts.append("SEARCH QUESTIONS (what readers search for; use one only when a SOURCE fact answers it):\n"
                      + "\n".join(f"- {q}" for q in paa_questions))

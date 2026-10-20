@@ -187,7 +187,8 @@ async def test_collect_reads_segments_then_places_then_the_tour():
     match_args = next(a for s, a in conn.calls if "atom_matches" in s)
     assert match_args == (["seg-lake", "seg-tsaatan"],)
     demand_args = next(a for s, a in conn.calls if "search_demand" in s)
-    assert demand_args == (["%khovsgol%", "%tsaatan%"],)  # 'lake', 'camp' and the country are not place words
+    # 'lake', 'camp' and the country are not place words; the top-up's own market is left out
+    assert demand_args == (["%khovsgol%", "%tsaatan%"], rq.TOPUP_MARKET)
 
 
 @pytest.mark.asyncio
