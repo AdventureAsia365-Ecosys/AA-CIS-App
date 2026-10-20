@@ -2169,17 +2169,19 @@ BROETRY_RUN = 2
 
 
 def _broetry_violations(spans: list[dict], cta: Optional[str] = None) -> list[str]:
-    """AA-780 — one warning per run of ≥ BROETRY_RUN consecutive prose/bullet sentences of ≤
-    BROETRY_MAX_WORDS words each (hashtag lines are not in `spans`; a sentence the configured CTA
-    contains ends a run — a short "Ask us." is the tenant's line, not a maxim). S234 r1–r4 replay:
-    4 hits in 48 LinkedIn posts, all Trail Pulse maxim pairs, 0 false positives."""
+    """AA-780 — one warning per run of ≥ BROETRY_RUN consecutive prose sentences of ≤
+    BROETRY_MAX_WORDS words each (hashtag lines are not in `spans`). A bullet, a span with no word
+    (an emoji-only line) or a sentence the configured CTA contains ends a run — a short itinerary list
+    is a list, and a short "Ask us." is the tenant's line, not a maxim. S234 r1–r4 replay: 4 hits in
+    48 LinkedIn posts, all Trail Pulse maxim pairs, 0 false positives."""
     cta_key = " ".join(re.findall(r"\w+", fold(cta or "")))
     out: list[str] = []
     run: list[dict] = []
     for sp in spans + [None]:
         key = " ".join(re.findall(r"\w+", fold(sp["clean"]))) if sp is not None else ""
         in_cta = bool(key) and f" {key} " in f" {cta_key} "
-        if sp is not None and len(sp["clean"].split()) <= BROETRY_MAX_WORDS and not in_cta:
+        if (sp is not None and sp["kind"] == "prose" and key and not in_cta
+                and len(sp["clean"].split()) <= BROETRY_MAX_WORDS):
             run.append(sp)
             continue
         if len(run) >= BROETRY_RUN:

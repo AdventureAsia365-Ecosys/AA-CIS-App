@@ -145,6 +145,116 @@ async def test_t9_loop_rewrites_a_short_post_once_and_ships():
     assert any(f["gate"] == "F14_social_shape" and f["blocking"] is False for f in kw["flags"])
 
 
+QUOTE = "The pools are 25 metres deep."
+IN_BAND = ("Day 2 is the falls day on this trip.\n\n" + QUOTE + "\n\n"
+           + "The trek starts early from the village, while mist still sits low over the rice terraces. "
+           "Your guide leads the group along a narrow dirt path shaded by teak and bamboo. "
+           "Halfway up, a small farm sells fresh mango juice and sticky rice wrapped in banana leaves. "
+           "The first pool appears through the trees, pale blue against grey limestone ledges. "
+           "Swimming is allowed in the lower basins, and a wooden ladder helps people climb out. "
+           "Lunch is served at a riverside café with grilled fish, herbs and jeow dipping sauce. "
+           "In the afternoon there is free time to rest in hammocks near the bear rescue centre. "
+           "The van returns to Luang Prabang before sunset, in time for the night market on Sisavangvong Road. "
+           "Pack sandals with grip, a dry bag for phones, and a light layer for the evening breeze. "
+           "Groups stay small, so everyone keeps the same pace on the steeper sections near the top."
+           "\n\nAsk us.")
+UNREPAIRABLE = {"gate": "F0_complete", "passed": False, "blocking": True, "repairable": False,
+                "violations": ["the post ends mid-sentence"]}
+
+
+def _f1(text):
+    return [{"gate": "F1_grounding", "passed": False, "blocking": True, "repairable": True,
+             "violations": [f"sentence states 25 not present in the content seed: '{QUOTE}'"]}] \
+        if QUOTE in text else [qg._result("F1_grounding", [])]
+
+
+def _loop_gates(extra=lambda text, attempt: []):
+    """A fake run_quality_gates: F1 on QUOTE, the real F14 (floor on attempt 1 only), plus `extra`."""
+    calls = []
+
+    def fake(*, content_text, stock_blocking=True, **_):
+        calls.append(content_text)
+        ledger = _f1(content_text) + extra(content_text, len(calls)) + [
+            qg.gate_social_shape(content_text, SPEC, floor_blocking=stock_blocking)]
+        first = next((g for g in ledger if not g["passed"] and g.get("blocking", True)), None)
+        return {"passed": first is None, "gate_ledger": ledger, "first_failure": first,
+                "flags": [g for g in ledger if not g["passed"] and not g.get("blocking", True)]}
+    return MagicMock(side_effect=fake)
+
+
+async def _run_loop(first_text, rewrite_text, gates, repaired="The pools are deep."):
+    ctx = {"atom_text": "seed", "goal": {"key": "promotion", "name": "P", "description": "d", "logic": "l"},
+           "channel_style": {"channel": "linkedin"}, "brand_audience": TRAIL, "chosen": {"name": "a"},
+           "cta": "Ask us.", "destination": None, "trip_name": None, "brand_rubric_text": "r",
+           "channel": "linkedin", "atom_id": "a1", "tenant_id": None}
+    with patch.object(writing_service, "write_content", return_value=(first_text, 0.01, {}, None)), \
+            patch.object(writing_service, "rewrite_with_feedback",
+                         return_value=(rewrite_text, 0.01, {}, None)) as rewrite, \
+            patch.object(writing_service, "repair_sentences", return_value=([repaired], 0.001)) as repair, \
+            patch.object(writing_service, "run_quality_gates", new=gates), \
+            patch.object(writing_service, "_finalize_piece", new=AsyncMock()) as fin:
+        await writing_service.run_write_background(uuid.uuid4(), uuid.uuid4(), ctx, pool=MagicMock())
+    return rewrite, repair, fin.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_floor_rewrite_with_a_new_f1_is_kept_and_repaired_not_reverted():
+    """Review — attempt 1 is under the floor only; the attempt-2 rewrite is in the band but has one invented
+    number (F1). The AA-528 guard must not revert to the short post: attempt 3 repairs the quote."""
+    rewrite, repair, kw = await _run_loop(R4_7, IN_BAND, _loop_gates())
+    assert rewrite.call_count == 1 and repair.call_count == 1
+    assert repair.call_args.kwargs["sentences"][0]["sentence"] == QUOTE
+    assert kw["attempt_number"] == 3 and kw["status"] == "approved"
+    assert QUOTE not in kw["content_text"] and "The pools are deep." in kw["content_text"]
+    assert post_words(kw["content_text"]) >= 120
+    assert not any(e.get("gate_targeted") == "gate_regression_guard" for e in kw["repair_log"])
+
+
+@pytest.mark.asyncio
+async def test_reverted_attempt_1_still_gets_its_f1_sentence_repair():
+    """Review — attempt 1 is short AND has an F1 quote; the rewrite trades it for an unrepairable failure →
+    revert. The attempt-1 floor block is waived, so the F1 quote still gets the attempt-3 sentence repair
+    (before, F14 in the ledger made sentence_repair.plan return None and F1 went straight to the hold)."""
+    short_f1 = R4_7.replace("The itinerary keeps you there", QUOTE + " The itinerary keeps you there")
+    gates = _loop_gates(lambda text, n: [UNREPAIRABLE] if n == 2 else [])
+    rewrite, repair, kw = await _run_loop(short_f1, IN_BAND, gates)
+    assert rewrite.call_count == 1 and repair.call_count == 1
+    assert any(e.get("gate_targeted") == "gate_regression_guard" for e in kw["repair_log"])
+    assert kw["attempt_number"] == 3 and kw["status"] == "approved" and QUOTE not in kw["content_text"]
+    assert kw["content_text"].startswith("Planning a trip well")  # attempt 1's text, repaired
+
+
+@pytest.mark.asyncio
+async def test_reverted_floor_only_attempt_1_ships_with_the_floor_waived():
+    """Review — attempt 1 is short only; the rewrite breaks an unrepairable gate → revert; nothing blocks the
+    attempt-1 text any more (the floor block is waived), so it ships with the F14 flag, never a crash."""
+    gates = _loop_gates(lambda text, n: [UNREPAIRABLE] if n == 2 else [])
+    rewrite, repair, kw = await _run_loop(R4_7, "Day 2 is the falls day.", gates)
+    assert rewrite.call_count == 1 and repair.call_count == 0
+    assert kw["status"] == "approved" and kw["content_text"].startswith("Planning a trip well")
+    f14 = next(g for g in kw["gate_ledger"] if g["gate"] == "F14_social_shape")
+    assert f14["blocking"] is False and f14["waived"] is True
+    f14_flags = [f for f in kw["flags"] if f["gate"] == "F14_social_shape"]
+    assert len(f14_flags) == 1 and "words, under the 120–250-word band" in f14_flags[0]["violations"][0]
+
+
+# ---------------------------------------------------------------- _hold_or_ship / cut flags
+
+def test_hold_or_ship_adds_only_the_waived_blocking_entries():
+    """Review — a non-blocking F14 warn is already in the flags; _hold_or_ship must not add it again."""
+    warn = qg.gate_social_shape(R4_7, SPEC)
+    status, _, flags = writing_service._hold_or_ship([warn], [])
+    assert status == "approved" and flags == []
+
+
+def test_cut_refresh_replaces_the_stale_f14_flag():
+    stale = qg.gate_social_shape(R4_7, SPEC)
+    fresh = qg.gate_social_shape(R4_12, SPEC)
+    out = writing_service._refresh_flags([stale, {"gate": "F13_autofix"}], {"F14_social_shape": fresh})
+    assert [f["gate"] for f in out] == ["F13_autofix", "F14_social_shape"]
+    assert "113 words" in out[1]["violations"][0]
+
+
 # ---------------------------------------------------------------- channel spec §3.7
 
 class TestConsumerSocialSpec:
@@ -197,8 +307,13 @@ class TestNewStockLines:
 
     @pytest.mark.parametrize("sentence", [
         "The Khoridol Saridag range forms a dramatic backdrop on the opposite shore.",  # S234 r1 #17
-        "The monks do not perform the cham dance outside the festival days.",
+        "The lead monk does not perform the cham dance outside the festival days.",
         "Guides did not perform the ritual for the group.",
+        # review — an operating-schedule fact is not the stock line (time / place after the verb)
+        "The water puppet troupe does not perform on Mondays.",
+        "The show doesn't perform in the rainy season.",
+        "The festival troupe does not perform at night.",
+        "The troupe did not perform for two years after the flood.",
         "Pack light and leave the filler snacks at home.",
         "The checkpoint search is a small inconvenience for most guests.",
     ])
@@ -245,6 +360,21 @@ class TestBroetry:
         text = "Day 2 ends at the falls after a two-hour trek. Swim and rest. Ask us for dates."
         assert any(x.startswith("broetry") for x in qg.gate_voice_warn(text, spec=SPEC)["violations"])
         assert qg.gate_voice_warn(text, spec=SPEC, cta="Ask us for dates")["passed"]
+
+    def test_a_short_bullet_itinerary_does_not_warn(self):
+        """Review — bullets are a list, not a maxim run; a bullet also ends a prose run."""
+        text = ("Three days in northern Laos, at an easy pace:\n\n- Day 1: Luang Prabang\n- Day 2: Kuang Si Falls\n"
+                "- Day 3: Mekong cruise\n\nAsk us for the dates and the price of the trip.")
+        assert not any(x.startswith("broetry") for x in qg.gate_voice_warn(text, spec=SPEC)["violations"])
+
+    def test_emoji_only_lines_do_not_warn(self):
+        text = ("You swim at the falls before lunch on Day 2.\n\n🔥\n\n🌊\n\n"
+                "You rest after a long walk through the forest.")
+        assert not any(x.startswith("broetry") for x in qg.gate_voice_warn(text, spec=SPEC)["violations"])
+
+    def test_an_emoji_line_ends_a_run(self):
+        text = "Day 2 is the falls day.\n\nSwim.\n\n🌊\n\nRest.\n\nThen the long trek back to town before dark."
+        assert not any(x.startswith("broetry") for x in qg.gate_voice_warn(text, spec=SPEC)["violations"])
 
     def test_run_quality_gates_passes_the_cta(self):
         f9 = [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]

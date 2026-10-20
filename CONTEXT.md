@@ -1278,9 +1278,9 @@ consumer_social / editorial / warm_practical / observational, from the voice adj
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
 and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target, and never
-holds a piece — `quality_gates.never_holds`), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
+holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it) and **F15_voice_warn** (trade register, audience-number leak,
-generic or repeated opener, AA-780 broetry — ≥2 consecutive sentences of ≤5 words; warn only, never repaired). All pass for every other channel. The F9 judge
+generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired). All pass for every other channel. The F9 judge
 gets the brand's voice adjectives and no longer favours a calm house voice.
 S234 round 2 (AA-768): **F13_leak** (blocking, sentence-repairable) — writer-instruction wording ("A Sentence
 on…", "This guide covers…", the SCOPE's day span), the brand pack's audience ranges ("25–40", "seven-to-sixteen")

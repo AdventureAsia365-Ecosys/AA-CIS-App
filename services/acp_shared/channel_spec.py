@@ -163,10 +163,11 @@ STOCK_PATTERNS = tuple(re.compile(p, re.I) for p in (
     # "was not simply a dramatic backdrop", "That is not a backdrop." — never "forms a dramatic backdrop"
     r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t|weren['’]?t)\s+(?:simply\s+|just\s+|merely\s+|only\s+)?"
     r"(?:an?\s+|the\s+)?(?:\w+\s+)?backdrop\b",
-    # "The landscape does not perform for visitors." — intransitive only: "the monks do not perform the
-    # dance" (an object follows) is a trip fact
-    r"\b(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform\b(?!\s+(?:a|an|the|its|their|any|this|these|"
-    r"those|it|them|rituals?|ceremon(?:y|ies)|dances?)\b)",
+    # "The landscape does not perform for visitors." / "The valley doesn't perform." — the stock shape only:
+    # sentence end or "for <the onlooker>". An object ("does not perform the cham dance") or a time/place
+    # ("does not perform on Mondays", "in the rainy season", "at night") is an operating-schedule fact.
+    r"\b(?:does not|doesn['’]?t|did not|didn['’]?t)\s+perform(?=\s*[.!?;]|\s*$|\s+for\s+(?:visitors|you|"
+    r"tourists|travell?ers|anyone|the camera)\b)",
     r"\btolerates (?:them|you|us|visitors|travell?ers)\b",
     # "isn't an inconvenience", "These aren't inconveniences", "not a bureaucratic inconvenience"
     r"\b(?:not|isn['’]?t|wasn['’]?t|aren['’]?t)\s+(?:an?\s+)?(?:\w+\s+)?inconveniences?\b",
