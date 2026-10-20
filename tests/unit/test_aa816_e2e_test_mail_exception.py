@@ -7,6 +7,7 @@ off-domain address is still refused. The E2E helper's recipient and migration 25
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -157,8 +158,12 @@ async def test_disable_the_e2e_row_works_like_any_other(db, stubbed):
 
 # ── The other copies of the address ──────────────────────────────────────────────────────────────
 
-def test_e2e_helper_and_migration_250_name_the_same_address():
+def test_e2e_helper_names_a_company_address_and_migration_250_the_old_one():
+    # Root ADR 0006a A10 removal: the E2E helper signs in as an ordinary @adventure.asia reviewer (forwarded to
+    # the SES mailbox); migration 250 still names the old exception until the removal migration replaces it.
     with open(os.path.join(ROOT, "tests", "e2e", "helpers", "mailbox.ts"), encoding="utf-8") as f:
-        assert f"export const E2E_COGNITO_EMAIL = '{E2E}';" in f.read()
+        m = re.search(r"export const E2E_COGNITO_EMAIL = '([^']+)';", f.read())
+    assert m and re.fullmatch(r"[^@\s]+@adventure[.]asia", m.group(1)), m and m.group(1)
+    assert sd.require_staff_email(m.group(1)) == m.group(1)
     with open(os.path.join(ROOT, "api", "migrations", "250_admin_users_e2e_test_email.sql"), encoding="utf-8") as f:
         assert f"email = '{E2E}' AND role = 'reviewer'" in f.read()

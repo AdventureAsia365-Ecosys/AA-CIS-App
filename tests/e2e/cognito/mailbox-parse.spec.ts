@@ -1,6 +1,7 @@
 // tests/e2e/cognito/mailbox-parse.spec.ts
 // AA-816 (E1) — unit test for the mailbox helper's MIME parsing (no browser, no AWS, no env).
-// Fixtures are synthetic messages with fake codes: quoted-printable plain + base64 HTML (multipart, folded
+// Fixtures are synthetic messages with fake codes, in the forwarded shape (To = the company address,
+// Delivered-To / X-Forwarded-To = the SES mailbox): quoted-printable plain + base64 HTML (multipart, folded
 // Content-Type), HTML-only base64 with CSS colours, a stray recipient, and an ambiguous invite mail.
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
@@ -37,6 +38,16 @@ test.describe('AA-816 — mailbox MIME code extractor', () => {
 
   test('another recipient is not ours', () => {
     expect(isAddressedTo(fixture('other-recipient.eml'), E2E_COGNITO_EMAIL)).toBe(false);
+  });
+
+  test('mail sent straight to the SES mailbox (not forwarded from the company address) is not ours', () => {
+    // The pre-A10 shape: To = the mailbox itself. The E2E user is now the company address only.
+    const raw =
+      'From: no-reply@lumiguides.it.com\r\nDelivered-To: e2e@e2e-mail.lumiguides.it.com\r\n' +
+      'To: e2e@e2e-mail.lumiguides.it.com\r\nSubject: Sign in\r\nContent-Type: text/plain\r\n\r\n' +
+      'Your code is 112233\r\n';
+    expect(E2E_COGNITO_EMAIL.endsWith('@adventure.asia')).toBe(true);
+    expect(isAddressedTo(raw, E2E_COGNITO_EMAIL)).toBe(false);
   });
 
   test('ambiguous numbers without a code give null (keep waiting, never guess)', () => {

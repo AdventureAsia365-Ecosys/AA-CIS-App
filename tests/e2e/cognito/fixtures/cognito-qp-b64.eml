@@ -3,8 +3,10 @@ Received: from relay.mailchannels.net by inbound-smtp.us-west-1.amazonaws.com
 X-SES-Spam-Verdict: PASS
 X-SES-Virus-Verdict: PASS
 Delivered-To: e2e@e2e-mail.lumiguides.it.com
+X-Forwarded-To: e2e@e2e-mail.lumiguides.it.com
+X-Forwarded-For: e2e-cognito@adventure.asia e2e@e2e-mail.lumiguides.it.com
 From: no-reply@lumiguides.it.com
-To: e2e@e2e-mail.lumiguides.it.com
+To: e2e-cognito@adventure.asia
 Subject: Your sign-in code 20261019
 Date: Mon, 19 Oct 2026 08:00:00 +0000
 MIME-Version: 1.0

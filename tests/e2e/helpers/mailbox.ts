@@ -1,10 +1,14 @@
 // tests/e2e/helpers/mailbox.ts
 // AA-816 (E1) — read the Cognito sign-in code for the E2E staff user from the SES inbound mailbox.
 //
-// Mail path (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5): Cognito emails the code straight to the
-// E2E staff user's own address e2e@e2e-mail.lumiguides.it.com (S243 option B: a TEMPORARY exception to the
-// @adventure.asia-only staff rule, root ADR 0006a; no forwarder) → SES receipt rule `e2e-cognito` →
-// s3://aa-cis-dev-e2e-mail-<acc2>/inbound/<message id> (1-day expiry).
+// Mail path (AA-CIS-Infra accounts/aa365/e2e_mailbox.tf, AA-816 I5; root ADR 0006a A10 removal): Cognito emails
+// the code to the E2E staff user's company address e2e-cognito@adventure.asia, an ordinary reviewer → the
+// adventure.asia mail host forwards it (forward-only address) to the SES test mailbox
+// e2e@e2e-mail.lumiguides.it.com → SES receipt rule `e2e-cognito` (matches the envelope recipient, which stays
+// the mailbox after forwarding) → s3://aa-cis-dev-e2e-mail-<acc2>/inbound/<message id> (1-day expiry).
+// A forwarded message keeps To = the company address; the mailbox shows up in Delivered-To / X-Forwarded-To.
+// The address is public (this repo is public), so spam can reach the mailbox too: only a NEW message addressed
+// to the company address that yields a code is ever used.
 //
 // The runner's AWS CLI does the reads (no new npm dependency): `s3api list-objects-v2` + `s3api get-object`,
 // via execFile (fixed argv, no shell). In CI the credentials are the read-only role
@@ -23,8 +27,8 @@ const execFileAsync = promisify(execFile);
 export const MAILBOX_BUCKET_PREFIX = 'aa-cis-dev-e2e-mail-';
 export const MAILBOX_PREFIX = 'inbound/';
 export const MAILBOX_REGION = 'us-west-1';
-// Must equal api/services/staff_directory.py E2E_TEST_STAFF_EMAIL (the only non-company staff address).
-export const E2E_COGNITO_EMAIL = 'e2e@e2e-mail.lumiguides.it.com';
+// An ordinary @adventure.asia reviewer; its mail is forwarded by the adventure.asia mail host to the SES mailbox.
+export const E2E_COGNITO_EMAIL = 'e2e-cognito@adventure.asia';
 
 /** Each AWS CLI call has its own cap; the whole wait has another (lesson: every wait is bounded). */
 const CLI_TIMEOUT_MS = 20_000;
@@ -35,8 +39,8 @@ const CLOCK_SKEW_MS = 60_000;
 /** A Cognito code mail is a few KB; anything this large is not one. */
 const MAX_OBJECT_BYTES = 1_000_000;
 
-// Headers that can carry the recipient (SES stores the message as received; the extra ones matter only if a
-// forwarder is ever put in front of the mailbox again).
+// Headers that can carry the recipient (SES stores the message as received). A forwarder keeps To / Cc = the
+// company address and adds Delivered-To / X-Forwarded-To / X-Original-To / Envelope-To.
 const RECIPIENT_HEADERS = ['to', 'cc', 'delivered-to', 'x-original-to', 'x-forwarded-to', 'envelope-to'];
 
 export type MailObject = { key: string; lastModified: Date; size: number };
