@@ -1320,6 +1320,17 @@ as SEARCH QUESTIONS (used only when a seed fact answers one). After the other FA
 demonstrative opening, wrong subject) or only says what is not the case, while more than 3 pairs remain;
 pairs it had to keep make the writer text's one FAQ regeneration rewrite them. Logged in `F7_faq_autofix`;
 F16_faq stays the only FAQ hold.
+S245 (AA-779 2A + 3) — **real-question source chain for blogs** (`services/acp_shared/real_questions.py`,
+$0 DB reads, never a DataForSEO call): a blog's questions come first from its own Segments
+(`atom_matches` kind `question` on the Segments' atoms — per Segment only the `questions_count` newest rows,
+the table is upsert-only), then from `search_demand.people_also_ask` of keywords naming one of its places
+(English questions only), then the tour-level PAA of the request snapshot. T8 angles of a blog request read
+the merged list (snapshot keeps the tour list as `tour_people_also_ask`); T9 `start_write` re-reads it live
+with the piece's kept moments as scope. Off-meaning PAA (the place name used as a word — 'Is moron a bad
+word?' for Mörön) is dropped in the chain and in `paa_for_scope`. Each piece's `writer_input` (admin-only)
+records `search_questions` (with source), `question_sources` (per-source counts) and `faq_questions` (each
+final FAQ question's real source, or `writer`); the admin Content Quality drawer shows them. AA-779 (B) SERP
+top-up and (C) Autocomplete are admin jobs that will add sources to `DB_SOURCES`.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a

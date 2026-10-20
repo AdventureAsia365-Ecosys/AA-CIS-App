@@ -92,7 +92,13 @@ export interface WriterInput {
   angle?: Record<string, string | null>;
   goal?: string; channel?: string; keyword?: string | null; cta?: string;
   trip?: string | null; destination?: string | null;
+  // AA-779 (S245) — blog only: real search questions the writer got, per-source counts, final FAQ sources.
+  search_questions?: QuestionWithSource[];
+  question_sources?: { candidates?: Record<string, number>; kept?: Record<string, number> };
+  faq_questions?: QuestionWithSource[];
 }
+
+export interface QuestionWithSource { question: string; source: string }
 
 export interface PieceDetail extends Omit<PieceRow, "failed_gates" | "flag_gates" | "title" | "content_chars" | "has_writer_input"> {
   content_text: string;
