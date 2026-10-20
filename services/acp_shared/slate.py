@@ -69,6 +69,7 @@ from uuid import UUID
 import structlog
 
 from services.acp_contract.segment_matching import live_segment_labels, resolve_segment_aliases
+from services.acp_shared.route_guard import current_route, trip_route_segment_ids
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.subject_seed import (
     choose_representative, choose_route_anchor, load_alias_cards, load_segment_members,
@@ -949,14 +950,17 @@ async def _resolve_representative_atom(
             return None, None, None
         return member.atom_id, str(member.tour_id), None
 
-    route = await conn.fetchrow(
-        "SELECT tour_id, ordered_segment_ids FROM acp_contract.route WHERE route_id = $1", route_id,
-    )
+    # AA-914 — the current version only (`superseded_at IS NULL`): a Subject still on a superseded
+    # Route is not pickable (the next proposal drops it), never seeded from the old Segment list.
+    route = await current_route(conn, route_id)
     if route is None:
+        logger.warning("slate_route_not_current", tenant_id=str(tenant_id), route_id=route_id)
         return None, None, None
-    segment_ids = route["ordered_segment_ids"]
-    if isinstance(segment_ids, str):
-        segment_ids = json.loads(segment_ids)
+    route_tour = route["tour_id"]
+    # AA-914 — and only the Segments the Route's tour has a live atom in (merged ids followed), so
+    # the snapshot T8/T9 read never starts out with a foreign Segment.
+    segment_ids = await trip_route_segment_ids(conn, route_tour, route["segment_ids"], tenant_id=tenant_id,
+                                               consumer="slate_pick")
     if not segment_ids:
         return None, None, None
     # AA-857 — the Route's own tour only (one tour = one country); prefer the member that is the
@@ -966,7 +970,6 @@ async def _resolve_representative_atom(
     place = await conn.fetchval(
         "SELECT canonical_place FROM acp_contract.atom_segment WHERE segment_id = $1", first,
     )
-    route_tour = str(route["tour_id"])
     members = (await load_segment_members(conn, [first], str(tenant_id))).get(first, [])
     member = choose_route_anchor(place, members, route_tour)
     return (member.atom_id, route_tour, list(segment_ids)) if member else (None, None, None)

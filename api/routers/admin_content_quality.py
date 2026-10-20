@@ -42,7 +42,7 @@ from services.acp_content_writing import hygiene, sentence_repair, text_integrit
 from services.acp_content_writing.generate import SentenceRepairError, repair_sentences_detailed
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
-from services.acp_shared import place_cards, seed_audit
+from services.acp_shared import place_cards, route_guard, seed_audit
 from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
@@ -603,6 +603,31 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
 _REGENERABLE_STATUSES = ("pending_choice", "approved", "reusable")
 
 
+async def _regenerate_route_segment_ids(conn, request_id: str) -> Optional[list[str]]:
+    """AA-914 — the Route Segments the regenerated request carries: the Subject's Route when it is
+    still the current version (`superseded_at IS NULL`), else the old request's snapshot — either
+    way only the Segments the trip has a live atom in (route_guard), so a stale foreign id is never
+    copied forward. None for a Segment / atom request (no Route). 409 when no Segment is left."""
+    src = await conn.fetchrow(
+        """
+        SELECT r.tenant_id, r.trip_id, r.route_segment_ids, s.route_id
+        FROM acp_shared.angle_gate_request r
+        LEFT JOIN acp_shared.subject s ON s.subject_id = r.subject_id
+        WHERE r.request_id = $1::uuid
+        """, request_id)
+    if src is None or not route_guard.parse_segment_ids(src["route_segment_ids"]):
+        return None
+    route = await route_guard.current_route(conn, src["route_id"])
+    kept = await route_guard.trip_route_segment_ids(
+        conn, src["trip_id"], route["segment_ids"] if route else src["route_segment_ids"],
+        tenant_id=src["tenant_id"], request_id=request_id, consumer="admin_regenerate",
+    )
+    if not kept:
+        raise HTTPException(status_code=409, detail="None of this request's Route Segments is still on its trip "
+                                                    "— pick the Route again from the Slate")
+    return kept
+
+
 @router.post("/requests/{request_id}/regenerate-angles", status_code=202)
 async def regenerate_angles(request_id: str, request: Request, x_admin_secret: str = Header(None),
                             x_admin_user_id: Optional[str] = Header(None),
@@ -652,6 +677,7 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                 SELECT idx, name, best_final_style, recommended, chosen FROM acp_shared.angle_gate_option
                 WHERE request_id = $1::uuid ORDER BY idx
                 """, request_id)
+            route_segment_ids = await _regenerate_route_segment_ids(conn, request_id)
             new_id = str(uuid4())
             await conn.execute(
                 """
@@ -659,9 +685,10 @@ async def regenerate_angles(request_id: str, request: Request, x_admin_secret: s
                     (request_id, tenant_id, atom_id, trip_id, channel, goal, status, cta, subject_id,
                      route_segment_ids)
                 SELECT $2::uuid, tenant_id, atom_id, trip_id, channel, goal, 'pending_goal', cta, subject_id,
-                       route_segment_ids
+                       $3::jsonb
                 FROM acp_shared.angle_gate_request WHERE request_id = $1::uuid
-                """, request_id, new_id)
+                """, request_id, new_id,
+                json.dumps(route_segment_ids) if route_segment_ids is not None else None)
             actor = f"admin:{x_admin_user_id or 'unknown'}"
             job_id, _ = await enqueue(
                 conn, T8_ANGLES_KIND,

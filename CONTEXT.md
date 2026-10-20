@@ -1180,6 +1180,12 @@ A consecutive-day span (2-5 days) of one tour's ranked, non-excluded Segments â€
 concept (the only channel scored at Route grain instead of Segment grain). Rebuilt whole on
 every re-run (old rows are superseded, never deleted). Platform-wide since AA-545: identity is
 `(tour_id, first_day, last_day)`, no `tenant_id`.
+A blog request keeps a frozen copy of the Route's Segment ids (`angle_gate_request.route_segment_ids`).
+Since AA-914 every reader of that copy (Slate pick, T8 angles, T9 write, admin regenerate) goes through
+`services/acp_shared/route_guard.py`: a merged id is followed to its live Segment, and a Segment counts
+only when the request's trip has a live member atom in it; every dropped id is logged
+(`route_segment_dropped`). A pick or regenerate reads only the current Route version
+(`superseded_at IS NULL`); a Subject still on a superseded Route is not pickable.
 _Avoid_: itinerary segment, leg, journey (that's Hub).
 
 **Hub**:
