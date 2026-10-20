@@ -300,8 +300,10 @@ FAQ_TEXT = qg.replace_faq_section(
      ("How deep is Lake Khövsgöl?", "Lake Khövsgöl is up to 262 metres deep."),
      ("What should families pack for the lake?", "Lake Khövsgöl evenings are cold, so pack warm layers.")])
 SEED = ("Lake Khövsgöl — trekking along the shore\n"
-        "Location: Khövsgöl Lake, Khövsgöl Province, Mongolia (do not place it in any other town, region or "
-        "country)\nSource itinerary: Trek the lakeshore; visit a Tsaatan reindeer camp.\n"
+        # S245 review round 2: a name written only mid-line counts as an own place only with a kind of landmark,
+        # so the Tsaatan camp is a Location field here ('Who are the Tsaatan people?' stays in scope)
+        "Location: Khövsgöl Lake, Tsaatan camp, Khövsgöl Province, Mongolia (do not place it in any other town, "
+        "region or country)\nSource itinerary: Trek the lakeshore; visit a Tsaatan reindeer camp.\n"
         "Place background (checked facts about the place itself — you may use these):\n"
         "- Lake Khövsgöl is up to 262 metres deep.\n- The Tsaatan herd reindeer in the northern taiga.\n")
 

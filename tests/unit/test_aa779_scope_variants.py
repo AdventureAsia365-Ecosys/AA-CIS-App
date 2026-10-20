@@ -649,3 +649,192 @@ def test_f14_seed_demonyms_never_make_the_country_an_own_place(seed, q):
                                        ("Indonesia", "indonesian"), ("Philippines", "philippine")])
 def test_f14_country_and_demonym_are_no_variants(word, name):
     assert not rq.name_variants_in(f"Is {word} safe?", {name})
+
+
+# ================================================================ review round 2 (S245, 20/10)
+# The still-open HIGH findings of the re-review of 3bc6c922, every cited question with its seed. Precision
+# first again: each question below was KEPT at 3bc6c922 and must be dropped.
+
+HCMC = _seed("Ben Thanh Market — street food tour", "Ben Thanh Market, Ho Chi Minh City, Vietnam",
+             "Walk through Ben Thanh Market in Ho Chi Minh City and taste street food.",
+             "Ben Thanh Market opened in 1914.")
+YANGON = _seed("Shwedagon Pagoda — sunset", "Shwedagon Pagoda, Yangon, Myanmar",
+               "Visit Shwedagon Pagoda in Yangon at sunset.", "Yangon was the capital of Myanmar until 2006.")
+CAN_THO = _seed("Cai Rang — floating market at dawn", "Cai Rang Floating Market, Can Tho, Vietnam",
+                "Boat to the Cai Rang floating market at dawn from Can Tho.",
+                "Cai Rang is the largest floating market in the Mekong Delta.")
+DON_DET = _seed("Don Det — bicycle loop", "Don Det, Si Phan Don, Laos",
+                "Cycle around Don Det and cross the old railway bridge to Don Khon.",
+                "Don Det is one of the 4,000 Islands of the Mekong.")
+WAR_MUSEUM = _seed("War Remnants Museum — morning visit", "War Remnants Museum, Ho Chi Minh City, Vietnam",
+                   "Visit the War Remnants Museum in Ho Chi Minh City with a local guide.",
+                   "The War Remnants Museum opened in 1975.")
+
+
+# ---------------------------------------------------------------- R2-1: exonyms that are homonyms
+
+@pytest.mark.parametrize("seed,q", [
+    (KHARKHORIN, "How high is the Karakorum range?"), (KHARKHORIN, "Where is the Karakorum mountain range?"),
+    (KHARKHORIN, "Is K2 in the Karakorum?"),
+    (YANGON, "How many calories are in crab Rangoon?"), (YANGON, "What is crab Rangoon made of?"),
+    (YANGON, "Is crab Rangoon healthy?"),
+])
+def test_r2_1_an_exonym_alone_needs_a_travel_word_and_no_homonym(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (KHARKHORIN, "Is Karakorum worth visiting?"), (YANGON, "Is Rangoon safe for tourists?"),
+    (HCMC, "Is Saigon worth visiting?"), (HCMC, "What is the best time to visit Saigon?"),
+])
+def test_r2_1_control_an_exonym_with_a_travel_word_stays(seed, q):
+    assert qg.paa_for_scope([q], seed, "Season: November to April is dry.") == [q]
+
+
+def test_r2_1_a_code_name_is_another_place():
+    assert rq.names_other_place("Is K2 in the Karakorum?", {"karakorum"})
+    assert rq.place_variant_kind("Karakorum", "kharkhorin") == "alias"
+    assert rq.place_variant_kind("Khuvsgul", "khovsgol") == "skeleton"
+
+
+# ---------------------------------------------------------------- R2-2: war and politics on the variant path
+
+@pytest.mark.parametrize("seed,q", [
+    (HCMC, "When did Saigon fall?"), (HCMC, "What happened at the fall of Saigon?"),
+    (HCMC, "How many people died in the fall of Saigon?"), (HCMC, "Who won the battle of Saigon?"),
+    (YANGON, "Who was the president when Rangoon was bombed?"),
+])
+def test_r2_2_war_and_politics_are_dropped_on_the_variant_path(seed, q):
+    assert not _kept(q, seed)
+
+
+def test_r2_2_harm_words_of_the_own_place_name_do_not_count():
+    assert _kept("Is the War Remnants Museum worth visiting?", WAR_MUSEUM)
+    assert not _kept("How many people died in the war in Vietnam?", WAR_MUSEUM)
+    assert rq.harm_question("When did Saigon fall?")
+    assert not rq.harm_question("Is the War Remnants Museum worth visiting?", {"war", "remnants", "museum"})
+
+
+# ---------------------------------------------------------------- R2-3: diet, health and leftovers of a cuisine
+
+@pytest.mark.parametrize("seed,q", [(MUTIANYU, q) for q in (
+    "How long does Chinese food last in the fridge?", "Can you eat Chinese food left out overnight?",
+    "Why does Chinese food make me sleepy?", "Is Chinese food bad for weight loss?",
+    "Why do I get a headache after Chinese food?", "Is Chinese food safe during pregnancy?")]
+    + [(HUE, "How long does Vietnamese food last in the fridge?"), (HUE, "Is Vietnamese food good for diabetics?"),
+       (ANGKOR, "Is Cambodian food good for weight loss?")])
+def test_r2_3_food_health_questions_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (HUE, "What food is Vietnam famous for?"), (HUE, "What is Vietnam's national dish?"),
+    (MUTIANYU, "What food should I try in China?"), (ANGKOR, "What is Cambodia known for?"),
+])
+def test_r2_3_control_food_travel_questions_stay(seed, q):
+    assert _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R2-4: past tense, war and history
+
+@pytest.mark.parametrize("seed,q", [
+    (HUE, "What did soldiers wear in Vietnam?"), (HUE, "What food did soldiers eat in Vietnam?"),
+    (HUE, "How cold did it get for soldiers in Vietnam?"),
+    (KHOVSGOL_SEED, "What food did Mongolians eat in the 13th century?"),
+    (KHOVSGOL_SEED, "What currency did Mongolia use before the tugrik?"),
+    (ANGKOR, "What is Cambodia known for historically?"),
+])
+def test_r2_4_past_tense_and_history_country_questions_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R2-5: lowercase Vietnamese name tokens
+
+@pytest.mark.parametrize("seed,q", [
+    (HUE, "What is hue in color theory?"), (HUE, "What is hue in art?"),
+    (HUE, "How do you change the hue of an image?"),
+    (HUE, "Why is Nguyen such a common last name?"), (HUE, "Who is the richest Nguyen in America?"),
+    (HOI_AN, "Who are the hoi polloi?"),
+])
+def test_r2_5_lowercase_name_tokens_and_seed_surnames_are_no_own_place(seed, q):
+    assert not _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R2-6: the exact path checks everything
+
+@pytest.mark.parametrize("seed,q", [
+    (TERELJ, "Is The Rock still married to Lauren?"), (TERELJ, "What does a turtle eat?"),
+    (TERELJ, "How long can a turtle live without water?"),
+    (PARO, "Is Tiger Woods still playing golf?"), (MUTIANYU, "Is Wall Street open today?"),
+    (HA_LONG, "Is Long Island worth visiting?"), (HA_LONG, "Is Long Beach safe at night?"),
+    (HA_LONG, "Are Carnival cruise ships safe?"), (KHOVSGOL_SEED, "Is Star Trek on Netflix?"),
+    (GOBI, "Is Ernie Els still playing golf?"), (LUANG_PRABANG, "Is the Apple Watch waterproof?"),
+    (BUKHARA, "How is silk made?"), (BUKHARA, "Is a silk pillowcase good for your hair?"),
+    (POTALA, "Where does the Dalai Lama live now?"), (POTALA, "Is the Dalai Lama allowed in Tibet?"),
+    (POTALA, "Who will be the next Dalai Lama?"), (POTALA, "Is it safe to talk about the Dalai Lama in Tibet?"),
+    (KHARKHORIN, "How tall is the Empire State Building?"), (KHARKHORIN, "Why did the Roman empire fall?"),
+    (MANDALAY_HILL, "How long does it take to climb Mount Everest?"),
+    (MANDALAY_HILL, "Can you climb Mount Fuji in winter?"),
+    (ANGKOR, "Do you reap what you sow?"), (HOI_AN, "Who built the pyramids in Ancient Egypt?"),
+])
+def test_r2_6_seed_words_that_are_no_place_never_make_an_own_place(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (MUTIANYU, "Is the Great Wall worth visiting?"), (TERELJ, "Is Turtle Rock worth visiting?"),
+    (PARO, "Is Paro Taktsang worth visiting?"), (GOBI, "Is Khongoryn Els worth visiting?"),
+    (TERELJ, "Is Terelj National Park worth visiting?"), (ANGKOR, "Is Siem Reap worth visiting?"),
+])
+def test_r2_6_control_own_places_and_landmarks_stay(seed, q):
+    assert _kept(q, seed)
+
+
+def test_r2_6_own_place_forms_are_location_label_and_landmarks():
+    forms = qg.seed_own_place_forms(POTALA)
+    assert ("dalai", "lama") not in forms and ("potala", "palace") in forms and ("lhasa",) in forms
+    assert not rq.own_place_named("What is hue in color theory?", qg.seed_own_place_forms(HUE))
+    assert rq.own_place_named("Is Hue worth visiting?", qg.seed_own_place_forms(HUE)) == {"hue"}
+
+
+# ---------------------------------------------------------------- R2-7: a Location token that is an English word
+
+@pytest.mark.parametrize("seed,q", [
+    (CAN_THO, "Can you see the Northern Lights in Iceland?"), (CAN_THO, "Can dogs eat grapes?"),
+    (CAN_THO, "Can I bring my cat to Japan?"), (CAN_THO, "Can you drink alcohol on the beach in Thailand?"),
+    (CAN_THO, "Can I use my phone abroad?"),
+    (DON_DET, "Why don't Japanese people tip?"), (DON_DET, "Why don't you put ice in drinks in China?"),
+])
+def test_r2_7_an_english_word_of_a_location_name_is_no_own_place(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [(CAN_THO, "Is Can Tho worth visiting?"), (DON_DET, "What is Don Det known for?")])
+def test_r2_7_control_the_whole_name_stays(seed, q):
+    assert _kept(q, seed)
+
+
+# ---------------------------------------------------------------- R2: probes of the same review (not HIGH)
+
+@pytest.mark.parametrize("seed,q", [
+    (MUTIANYU, "Why is China so cheap?"), (MUTIANYU, "How does China make money?"),
+    (MUTIANYU, "Is it safe for Americans to criticize China?"), (KHOVSGOL_SEED, "How does Mongolia make money?"),
+    (KHOVSGOL_SEED, "Is Mongolia expensive to live in?"), (KHAIPHAEN_SEED, "Is Laos cheap to retire?"),
+    (PARO, "How does Bhutan make money?"), (PARO, "Is Bhutan cold for a refugee?"),
+    (GOBI, "What is the most popular Mongolian family name?"),
+    (TERELJ, "What is the most famous rock band in Mongolia?"),
+    (KHAIPHAEN_SEED, "What is the best youth football team in Laos?"),
+    (MUTIANYU, "What is the most famous tower in China?"),
+    (KHOVSGOL_SEED, "What is the most famous horse in Mongolia?"),
+    (KHOVSGOL_SEED, "Can you buy a horse in Mongolia?"), (KHOVSGOL_SEED, "What is the most popular boat in Mongolia?"),
+    (ULAANBAATAR, "What is the best city to live in Mongolia?"),
+])
+def test_r2_economy_living_and_off_kind_country_questions_are_dropped(seed, q):
+    assert not _kept(q, seed)
+
+
+@pytest.mark.parametrize("seed,q", [
+    (KHOVSGOL_SEED, "Is Khuvsgul Nuur worth visiting?"), (KHOVSGOL_SEED, "Is Mongolia a good place to visit?"),
+])
+def test_r2_mongolian_kind_words_and_a_good_place_to_visit_stay(seed, q):
+    assert _kept(q, seed)

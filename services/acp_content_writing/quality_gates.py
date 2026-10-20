@@ -59,8 +59,9 @@ from services.acp_produce.judge_client import invoke_judge, parse_judge_json_che
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import (ALL_COUNTRY_WORDS, country_travel_question, deaccent,
-                                                 is_comparison, is_off_meaning, is_world_question, name_variants_in,
-                                                 names_other_place, own_place_tokens, scope_name_key,
+                                                 harm_question, is_comparison, is_off_meaning, is_world_question,
+                                                 name_variants_in, names_other_place, own_place_forms,
+                                                 own_place_named, place_kind_words, scope_name_key,
                                                  single_word_places, variant_place_question)
 from shared.llm_client.call_log import record_call_sync
 
@@ -1720,12 +1721,15 @@ def drop_subjectless_faq(content_text: str, source_text: str = "",
 # AA-779 — real search questions (services/acp_shared/real_questions.py: the piece's Segment / place
 # questions first, then the tour's People Also Ask; not scoped to the piece) the writer may answer in the
 # FAQ. Kept only when they name no place outside the piece's scope, ask nothing the source cannot
-# answer, are about the place rather than its name as a word (S245), and either name one of the
-# moment's own places — exactly, or as a romanisation variant / exonym ('Lake Khuvsgul' for Khövsgöl,
-# 'Ulan Bator', 'Halong'; then still no comparison, world question or other place: S245 20/10, review
-# round 1) — or share ≥ 2 non-generic content words with its seed, or are a practical travel question
-# about the scope's country tied to the moment ('What is the most famous lake in Mongolia?' for a lake
-# moment, real_questions.country_travel_question).
+# answer, are about the place rather than its name as a word (S245), ask no war / politics / celebrity /
+# diet question (real_questions.harm_question, review round 2), and either name one of the moment's own
+# places — the Location fields, the label or a mid-line name with a kind of landmark, written as a name
+# (real_questions.own_place_named), or as a romanisation variant / exonym ('Lake Khuvsgul' for Khövsgöl,
+# 'Ulan Bator', 'Halong'; an exonym alone also needs a travel word) — and then no comparison, world
+# question or other place (S245 20/10, review rounds 1–2); or share ≥ 2 non-generic content words with
+# its seed (a multi-word seed name that is no place counted once: 'Dalai Lama'); or are a practical
+# travel question about the scope's country tied to the moment by its kind of place ('What is the most
+# famous lake in Mongolia?' for a lake moment, real_questions.country_travel_question).
 PAA_MAX_QUESTIONS = 6
 # Words a seed and a search question share without being about the same thing (content_words stems:
 # a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
@@ -1779,14 +1783,28 @@ def _seed_place_phrases(text: str) -> set[str]:
     return out
 
 
+def seed_landmark_names(own_seed: str) -> set[str]:
+    """Names the seed writes mid-line that carry a kind of landmark ('Gandan Monastery', 'Great Wall',
+    'Turtle Rock'): the only mid-line names that count as the moment's own places (review round 2 —
+    never 'Dalai Lama', 'Nguyễn', 'Mongol Empire')."""
+    return {p for p in proper_nouns(deaccent(own_seed)) if own_place_forms((), [p])}
+
+
+def seed_own_place_forms(own_seed: str) -> frozenset:
+    """real_questions.own_place_forms of the seed: its Location fields and label, and the mid-line
+    names with a kind of landmark."""
+    text = deaccent(own_seed)
+    return own_place_forms(_seed_place_phrases(text), proper_nouns(text))
+
+
 def seed_variant_names(own_seed: str, countries: set[str]) -> set[str]:
-    """The moment's real place names a spelling variant may match: tokens of proper nouns written
-    mid-line, of the Location fields and of the label (never a line opener like 'Source' / 'Trek'),
-    plus the joined key of each multi-word name ('halong' for Ha Long Bay, 'luangprabang'). No country
-    or nationality word."""
+    """The moment's real place names a spelling variant may match: tokens of the Location fields, of
+    the label and of mid-line names with a kind of landmark (never a line opener like 'Source' /
+    'Trek', never a person or thing like 'Dalai Lama' or 'Nguyễn'), plus the joined key of each
+    multi-word name ('halong' for Ha Long Bay, 'luangprabang'). No country or nationality word."""
     text = deaccent(own_seed)
     out: set[str] = set()
-    for phrase in proper_nouns(text) | _seed_place_phrases(text):
+    for phrase in _seed_place_phrases(text) | seed_landmark_names(text):
         out |= set(phrase_tokens(phrase))
         key = scope_name_key(phrase)
         if key:
@@ -1801,6 +1819,19 @@ def _seed_name_words(own_seed: str, countries: set[str]) -> set[str]:
             for w in _SUBJ_TOKEN_RE.findall(fold(p))} - countries
 
 
+def _shared_units(shared: set[str], groups: list[set[str]]) -> int:
+    """Shared seed words, the words of one multi-word seed name counted once (review round 2: 'Dalai'
+    + 'Lama' is one thing the seed names, not two words tying a question to the moment)."""
+    rest = set(shared)
+    units = 0
+    for g in sorted(groups, key=len, reverse=True):
+        hit = rest & g
+        if len(hit) >= 2:
+            units += 1
+            rest -= hit
+    return units + len(rest)
+
+
 def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
                   out_of_scope=(), limit: int = PAA_MAX_QUESTIONS) -> list[str]:
     """AA-779 — the PAA questions a piece's FAQ may use (see the comment above). `own_seed` = the
@@ -1810,10 +1841,20 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
     # today?') reads only single-word names capitalised mid-sentence (seed_place_names).
     seed_names, mid_names, countries = seed_place_names(own_seed)
     seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
-    # S245 (20/10, review round 1) — spelling variants match only real names (mid-line, Location line,
-    # label), never a line opener the keep_initial name set also holds ('Source', 'Trek').
+    # S245 (20/10, review rounds 1–2) — own places are the Location fields, the label and mid-line names
+    # with a kind of landmark (never a line opener 'Trek …', a person 'Dalai Lama' or a lowercase word:
+    # 'hue', 'can' of Can Tho); spelling variants match only those.
+    own_forms = seed_own_place_forms(own_seed)
     variant_names = seed_variant_names(own_seed, countries)
     name_words = _seed_name_words(own_seed, countries) | seed_names | variant_names
+    # words of the moment's own places: the only seed words that lift the harm deny ('War Remnants Museum')
+    place_words = variant_names | {w for f in own_forms for w in f}
+    # multi-word seed names that are no own place ('Dalai Lama') count once among shared words
+    # a country-level question off the practical list is tied to the moment only by its kind of place
+    # ('the most famous lake in Mongolia' for a lake; review round 2: never 'the most famous horse')
+    kind_words = place_kind_words(own_forms)
+    name_groups = [g for g in (set(content_words(p)) for p in proper_nouns(deaccent(own_seed), keep_initial=True))
+                   if not g & place_words]
     out: list[str] = []
     seen: set[str] = set()
     for raw in questions or []:
@@ -1834,21 +1875,27 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
         # word?' for the town Mörön) names an own place only by spelling.
         if is_off_meaning(q, seed_names, lowercase_names=mid_names, countries=countries):
             continue
-        if own_place_tokens(q, seed_names | variant_names, variant_names):
-            # an own place by its exact name ('How deep is Lake Khövsgöl?'), compared with nowhere else
-            if is_comparison(q):  # 'Is Lake Khövsgöl bigger than Lake Baikal?'
+        # war, politics, celebrities, diet: never a FAQ question, whatever it names (review round 2)
+        if harm_question(q, place_words):
+            continue
+        if own_place_named(q, own_forms):
+            # an own place by its exact name ('How deep is Lake Khövsgöl?'): no comparison ('Is Lake Khövsgöl
+            # bigger than Lake Baikal?'), world question or other place ('How long does it take to climb
+            # Mount Everest?' never names Mandalay Hill)
+            if is_comparison(q) or is_world_question(q) or names_other_place(q, name_words, countries):
                 continue
         elif name_variants_in(q, variant_names):
-            # another spelling ('Can you swim in Lake Khuvsgul?'): still no comparison, world question or
-            # other place ('Is Lake Khuvsgul bigger than Lake Baikal?')
-            if not variant_place_question(q, name_words, countries):
+            # another spelling ('Can you swim in Lake Khuvsgul?'): the same checks; an exonym alone also
+            # needs a travel word and none of its homonyms ('Is crab Rangoon healthy?')
+            if not variant_place_question(q, variant_names, countries, allowed=name_words, exempt=place_words):
                 continue
         else:
             # 'Which restaurant is the most famous in the world?', 'Is Lao food spicier than Thai food?'
             if is_world_question(q) or is_comparison(q) or names_other_place(q, name_words, countries):
                 continue
             shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
-            if len(shared) < 2 and not country_travel_question(q, countries, seed_words, name_words):
+            if (_shared_units(shared, name_groups) < 2
+                    and not country_travel_question(q, countries, kind_words, name_words)):
                 continue
         seen.add(key)
         out.append(q)

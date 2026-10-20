@@ -175,7 +175,8 @@ def test_paa_filter_lets_facts_answer_a_topic_and_caps():
     q = "What is the best time to visit Lake Khövsgöl?"
     assert qg.paa_for_scope([q], PAA_SEED.replace("freezes solidly in winter", "freezes solidly"), None) == []
     assert qg.paa_for_scope([q], PAA_SEED, "Season: June to August is the main season.") == [q]
-    many = [f"Question {i} about Lake Khövsgöl?" for i in range(10)]
+    # S245 review round 2: a capitalised first word that is no question word reads as another name now
+    many = [f"What is question {i} about Lake Khövsgöl?" for i in range(10)]
     assert len(qg.paa_for_scope(many, PAA_SEED)) == qg.PAA_MAX_QUESTIONS
     assert qg.paa_for_scope(None, PAA_SEED) == []
 
