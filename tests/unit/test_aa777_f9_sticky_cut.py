@@ -347,6 +347,7 @@ async def test_blog_attempt_three_cuts_the_truth_item_instead_of_a_second_repair
     # one sticky-pass set for the whole job, handed to every attempt's gates
     sets = [c.kwargs["f9_passed_sentences"] for c in rqg.call_args_list]
     assert isinstance(sets[0], set) and all(s is sets[0] for s in sets)
+    assert isinstance(sets[0], qg.F9PassMemory)  # AA-865 — it also keeps the last judged text
 
 
 @pytest.mark.asyncio

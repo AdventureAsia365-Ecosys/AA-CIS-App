@@ -54,7 +54,7 @@ from services.acp_content_writing import authenticity, hygiene, sentence_repair,
 from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, fit_seo_fields,
                                                    repair_sentences, rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
-                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES,
+                                                          FAQ_MIN_PAIRS, STYLE_ONLY_GATES, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq,
                                                           drop_unanswerable_faq, faq_pair_count, faq_pairs,
                                                           hold_failure, merge_faq_pairs, replace_faq_section,
@@ -1431,7 +1431,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         faq_repair_regen = False  # S234 r2 review — the one FAQ regeneration after a sentence repair
         # AA-777 — the job's F9 sticky-pass memory: the body sentences (folded) an earlier F9 verdict of
         # this piece passed; run_quality_gates drops a later re-flag of one of them while it is unchanged.
-        f9_passed: set[str] = set()
+        # AA-865 — an F9PassMemory also keeps the last judged text, so a pass survives a deletion-only repair.
+        f9_passed: set[str] = F9PassMemory()
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if attempt == 1:
