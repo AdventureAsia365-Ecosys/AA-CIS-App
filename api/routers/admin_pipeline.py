@@ -15,6 +15,7 @@ import asyncpg
 import boto3 as _boto3
 import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from api.core.error_ref import log_exception_ref, public_error
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -4290,9 +4291,11 @@ async def get_spot_workers(request: Request, x_admin_secret: str = Header(None))
             "saving_per_hr":   round(spot_count * 0.04048 * 0.7, 4),
             "tasks":           spot_tasks + on_demand_tasks,
         }
-    except Exception as e:
+    except Exception:
+        # AA-912: boto's AccessDenied text names the role ARN / account id — server log only
+        ref = log_exception_ref("admin_spot_workers_failed", cluster=cluster)
         return {"total_tasks": 0, "spot_tasks": 0, "on_demand_tasks": 0,
-                "spot_pct": 0, "saving_per_hr": 0, "tasks": [], "error": str(e)}
+                "spot_pct": 0, "saving_per_hr": 0, "tasks": [], "error": public_error("ECS task list", ref)}
 
 
 # ── GET /admin/infra/status ───────────────────────────────────────────────────
@@ -4372,12 +4375,14 @@ async def get_infra_status(request: Request, x_admin_secret: str = Header(None))
             ecs_info["digest_matches_latest"] = (
                 running_digest == latest["imageDigest"] if running_digest else None
             )
-        except Exception as e:
-            ecs_info["ecr_error"] = str(e)
+        except Exception:
+            # AA-912: every error below goes to the server log under a ref; the response (also cached
+            # in Redis for 60 s) carries only generic text — boto errors name the role ARN / account id
+            ecs_info["ecr_error"] = public_error("ECR describe", log_exception_ref("infra_status_ecr_failed"))
 
         result["ecs"] = ecs_info
-    except Exception as e:
-        result["ecs"] = {"error": str(e)}
+    except Exception:
+        result["ecs"] = {"error": public_error("ECS describe", log_exception_ref("infra_status_ecs_failed"))}
 
     # ── RDS ──
     try:
@@ -4388,24 +4393,26 @@ async def get_infra_status(request: Request, x_admin_secret: str = Header(None))
             "engine":         db["Engine"],
             "instance_class": db["DBInstanceClass"],
         }
-    except Exception as e:
-        result["rds"] = {"error": str(e)}
+    except Exception:
+        result["rds"] = {"error": public_error("RDS describe", log_exception_ref("infra_status_rds_failed"))}
 
     # ── NAT instance ──
     try:
         ec2 = _boto3.client("ec2", region_name=region)
         inst = ec2.describe_instances(InstanceIds=[nat_id])["Reservations"][0]["Instances"][0]
         result["nat"] = {"instance_id": nat_id, "state": inst["State"]["Name"]}
-    except Exception as e:
-        result["nat"] = {"instance_id": nat_id, "error": str(e)}
+    except Exception:
+        result["nat"] = {"instance_id": nat_id,
+                         "error": public_error("EC2 describe", log_exception_ref("infra_status_nat_failed"))}
 
     # ── ElastiCache Redis ──
     try:
         ec = _boto3.client("elasticache", region_name=region)
         cache = ec.describe_cache_clusters(CacheClusterId=redis_id)["CacheClusters"][0]
         result["redis"] = {"status": cache["CacheClusterStatus"], "node_type": cache["CacheNodeType"]}
-    except Exception as e:
-        result["redis"] = {"error": str(e)}
+    except Exception:
+        result["redis"] = {"error": public_error("ElastiCache describe",
+                                                 log_exception_ref("infra_status_redis_failed"))}
 
     # AA-257: "AWS đang chạy — nhớ tắt cuối session" badge — true whenever ECS
     # has a nonzero desired count or RDS is available, regardless of which

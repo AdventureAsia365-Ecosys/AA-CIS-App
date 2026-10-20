@@ -205,6 +205,15 @@ _OPEN_CLOSE = (("(", ")"), ("[", "]"), ("“", "”"))
 _TAG_RE = re.compile(r"\[(?:R|F):[^\]]+\]")
 
 
+def _drop_tags(text: str) -> str:
+    """`_TAG_RE.sub("", text)` in linear time (AA-912, CodeQL py/polynomial-redos): a tag needs a
+    closing ']', so nothing after the last ']' can start one. Scanning that tail from every
+    '[R:' / '[F:' was quadratic ('[R:[F:[F:…' with no ']': 100k chars ~1 s, 1M > 20 s).
+    Before the last ']' every start either matches (and is consumed) or fails at once ('[R:]')."""
+    k = text.rfind("]")
+    return _TAG_RE.sub("", text[:k + 1]) + text[k + 1:]
+
+
 # not brackets or quotes of the prose (S234 round 4 review): an emoticon (':)', ';-('), an inline
 # enumerator ('1) a fleece, 2) a hat', 'a) … b) …' — only when there are ≥ 2, so 'see note b)'
 # alone still counts), an inch / seconds mark after a digit (6'2", only when the quotes are odd)
@@ -214,7 +223,7 @@ _INCH_RE = re.compile(r"(?<=\d)[\"″]")
 
 
 def _unbalanced(paragraph: str) -> bool:
-    p = _EMOTICON_RE.sub(" ", _TAG_RE.sub("", paragraph))
+    p = _EMOTICON_RE.sub(" ", _drop_tags(paragraph))
     enum = len(_ENUMERATOR_RE.findall(p))
     if enum >= 2:
         p = _ENUMERATOR_RE.sub(" ", p)

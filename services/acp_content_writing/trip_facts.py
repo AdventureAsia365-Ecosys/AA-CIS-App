@@ -120,9 +120,12 @@ def names_moment(sentence: str, moment: Moment) -> bool:
     named after the place — 'Khövsgöl Province' — does not count)?"""
     if not moment.tokens:
         return False
-    for m in re.finditer(r"[A-Za-zÀ-ÖØ-öø-ÿ’'-]+", strip_tags(sentence or "")):
+    # AA-912: the province look-ahead reads the SAME tag-stripped text the word offsets come from
+    # (it read the raw sentence: wrong offsets on a tagged sentence, and quadratic on a long tag)
+    clean = strip_tags(sentence or "")
+    for m in re.finditer(r"[A-Za-zÀ-ÖØ-öø-ÿ’'-]+", clean):
         toks = set(phrase_tokens(m.group(0)))
-        if toks & moment.tokens and not _PROVINCE_AFTER_RE.match(sentence, m.end()):
+        if toks & moment.tokens and not _PROVINCE_AFTER_RE.match(clean, m.end()):
             return True
     return False
 

@@ -375,7 +375,9 @@ _CLOSERS = "\"'”’)*"
 # The end mark (run), its closers, and the citation tags that follow it.
 _SENTENCE_TRAILER_RE = re.compile(
     rf"[{re.escape(_SENTENCE_END_CHARS)}]+[{re.escape(_CLOSERS)}]*(?:\s?{_TAG})*")
-_TAG_AT_RE = re.compile(_TAG)
+# AA-912: is_sentence_end runs this at the char after every '.', and [^\]]+ scanned to the next ']'
+# anywhere in the text (O(n^2) on '.[F:' * n). A tag id never holds '[' or a newline.
+_TAG_AT_RE = re.compile(r"\[(?:R|F):[^\]\[\n]+\]")
 _ABBREVIATIONS = frozenset({"mt", "st", "dr", "mr", "mrs", "ms", "prof", "jr", "sr", "vs",
                             "approx", "ca", "e.g", "i.e"})
 # "No." is an abbreviation only before a number ("No. 5"); "Is it hard? No." ends a sentence.
@@ -384,10 +386,25 @@ _NUMBER_ABBREVIATIONS = frozenset({"no"})
 # the valley"); "The pass sits at 4,000 ft. The trail is steep." ends at "ft.".
 _UNIT_ABBREVIATIONS = frozenset({"ft", "km", "mi", "hr", "hrs", "min", "mins"})
 # The word right before the dot — a whole word: "1st." / "21st." / "4ft." are not "st" / "ft".
-_WORD_BEFORE_DOT_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z.]+$")
+# AA-912: a backward scan, not search(r"(?<![A-Za-z0-9])[A-Za-z.]+$", text, 0, i), which restarted at
+# offset 0 for every period (O(i) per period on plain prose, O(n^2) on a run of dots).
+_WORD_DOT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
 _NEXT_RUNS_ON_RE = re.compile(r"\s*[a-z0-9]")
 _DOTTED_ACRONYM_RE = re.compile(r"(?:[A-Za-z]\.)+[A-Za-z]")
 _NEXT_IS_NUMBER_RE = re.compile(r"\s*\d")
+
+
+def _word_before_dot(text: str, i: int) -> str:
+    """The word right before the dot at text[i] ('' when none) — a whole word: '1st.' / '4ft.' are
+    not 'st' / 'ft'. Same result as searching (?<![A-Za-z0-9])[A-Za-z.]+$ in text[:i]."""
+    e = i - 1 if i > 0 and text[i - 1] == "\n" else i  # '$' also matched before a final '\n'
+    k = e
+    while k > 0 and text[k - 1] in _WORD_DOT_CHARS:
+        k -= 1
+    if k > 0 and text[k - 1] in "0123456789":  # the word may only start after a '.' of the run
+        p = text.find(".", k, e)
+        k = e if p < 0 else p + 1
+    return text[k:e]
 
 
 def is_sentence_end(text: str, i: int) -> bool:
@@ -405,9 +422,9 @@ def is_sentence_end(text: str, i: int) -> bool:
     if j < len(text) and not text[j].isspace() and not _TAG_AT_RE.match(text, j):
         return False
     if text[i] == "." and (i + 1 >= len(text) or text[i + 1] not in _SENTENCE_END_CHARS):
-        word = _WORD_BEFORE_DOT_RE.search(text, 0, i)
-        w = word.group(0).lower() if word else ""
-        if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word.group(0))):
+        word = _word_before_dot(text, i)
+        w = word.lower()
+        if w in _ABBREVIATIONS or (word and _DOTTED_ACRONYM_RE.fullmatch(word)):
             return False
         if w in _NUMBER_ABBREVIATIONS and _NEXT_IS_NUMBER_RE.match(text, i + 1):
             return False
@@ -1616,7 +1633,27 @@ def brief_phrases(text: str, briefs: dict, *, exclude: list[str] = (), brand_nam
 # ---------------------------------------------------------------- CTA literal (S234 round 3)
 
 _FAQ_HEADING_RE = re.compile(r"(?im)^#{1,6}[ \t]*faq\b.*$")
-_HASHTAG_TAIL_RE = re.compile(r"(?:\n[ \t]*(?:#[A-Za-z][A-Za-z0-9]+[\s,]*)+[ \t]*)+\s*$")
+# AA-912: the old (?:\n[ \t]*(?:#T[\s,]*)+[ \t]*)+\s*$ backtracked exponentially ('\n#A0' x24 + '!' = 3.4 s).
+# Same language, checked line by line: the block's first line is [ \t]*#T…, every later line only
+# tags / ',' / whitespace (blank lines included), up to the end of the text.
+_HASHTAG_TAIL_FIRST_RE = re.compile(
+    r"[ \t]*+#[A-Za-z][A-Za-z0-9]++(?:[^\S\n]|,)*+(?:#[A-Za-z][A-Za-z0-9]++(?:[^\S\n]|,)*+)*+")
+_HASHTAG_TAIL_LINE_RE = re.compile(
+    r"(?:[^\S\n]|,)*+(?:#[A-Za-z][A-Za-z0-9]++(?:[^\S\n]|,)*+)*+")
+
+
+def _hashtag_tail_start(body: str) -> Optional[int]:
+    """Offset of the '\\n' that opens the trailing hashtag block (hashtag lines, blank lines and
+    ',' / whitespace between tags, to the end), or None — walking the lines back from the end."""
+    lines = body.split("\n")
+    pos, start = len(body), None
+    for k in range(len(lines) - 1, 0, -1):
+        pos -= len(lines[k]) + 1  # the '\n' before line k
+        if not _HASHTAG_TAIL_LINE_RE.fullmatch(lines[k]):
+            break
+        if _HASHTAG_TAIL_FIRST_RE.fullmatch(lines[k]):
+            start = pos
+    return start
 
 
 def cta_norm(text: Optional[str]) -> str:
@@ -1681,9 +1718,9 @@ def ensure_cta(text: str, cta: Optional[str]) -> tuple[str, list[str]]:
     body = text or ""
     faq = _FAQ_HEADING_RE.search(body)
     end = faq.start() if faq else len(body)
-    tail = _HASHTAG_TAIL_RE.search(body[:end]) if not faq else None
-    if tail:
-        end = tail.start()
+    tail = _hashtag_tail_start(body[:end]) if not faq else None
+    if tail is not None:
+        end = tail
     spans = [s for s in sentence_spans(body) if s["kind"] == "prose" and s["end"] <= end and not s["in_faq"]]
     closing = spans[-CTA_WINDOW:]
     invites = [s for s in closing if _is_cta_invite(s["clean"], cta)]
@@ -1957,7 +1994,10 @@ def _round2_fix(spans: list[dict], i: int, ctx: HygieneContext,
 # are never dashes. Code uses the escapes (— em, – en) so a search for the character finds
 # only text.
 _EM, _EN = "—", "–"
-_DASH_RE = re.compile(r"[ \t]*—[ \t]*|[ \t]+–[ \t]+")
+# AA-912: a match starts only where a blank run starts (the old leading [ \t]* was retried from every
+# blank: O(n^2) on a long run of spaces/tabs); '—[ \t]*' alone covers a dash right after the previous
+# match ('a — \t— b'). Same spans as before (fuzzed).
+_DASH_RE = re.compile(r"(?<![ \t])[ \t]*+—[ \t]*|—[ \t]*|(?<![ \t])[ \t]++–[ \t]+")
 _RANGE_END_RE = re.compile(r"[ \t]*[$€£¥]?\d")
 # The F2 residue guard (quality_gates._BANNED_PATTERNS_SEED): an em-dash with the word on each side. F2
 # exempts a match found verbatim in the source, and every seed has em-dashes in its own labels ('Uran

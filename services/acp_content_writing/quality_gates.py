@@ -88,7 +88,9 @@ _SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 # Strips a citation tag AND one leading space if present, so "sentence. [R:id] Next." doesn't
 # leave a double space where the tag used to sit ("sentence.  Next.") — "sentence.[R:id] Next."
 # (no leading space) is unaffected either way.
-_STRIP_TAG_RE = re.compile(r"\s?\[(?:R|F):[^\]]+\]")
+# AA-912: tag ids never contain '[' or ']'; excluding '[' too stops each failed attempt at the next
+# '[', so the scan is linear on '[R:' + '[F:' * n with no closing ']' (was quadratic: 1M chars > 20 s).
+_STRIP_TAG_RE = re.compile(r"\s?\[(?:R|F):[^\[\]]+\]")
 
 
 def strip_citation_tags(text: Optional[str]) -> str:

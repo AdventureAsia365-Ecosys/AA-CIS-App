@@ -42,7 +42,8 @@ import re
 # was flagged for a "novel" 460. Thousands separators are normalised away ("4,460" == "4460").
 _NUM_RE = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 _DAY_LABEL_RE = re.compile(r"\bDay\s+\d+\b\s*:?", re.IGNORECASE)
-_CITE_RE = re.compile(r"\[(?:R|F):[^\]]*\]")
+# AA-912: body excludes "[" too, so a run of unclosed "[F:" tags is scanned once, not once per tag (was O(n^2)).
+_CITE_RE = re.compile(r"\[[RF]:[^\[\]]*\]")
 # AA-785 — "1637–38" / "1637-38" / "1637/38": a 4-digit year, a dash or slash, a 2-digit tail that is
 # not the start of a longer number. Same left boundary as _NUM_RE.
 _YEAR_RANGE_RE = re.compile(r"(?<![\w.,])(1\d{3}|20\d{2})\s*[–—\-/]\s*(\d{2})(?!\d|[.,]\d)")

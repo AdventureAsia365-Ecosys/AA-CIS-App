@@ -30,7 +30,9 @@ from services.acp_content_writing.hygiene import (
 )
 from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
 
-_TAG = r"\[(?:R|F):[^\]]+\]"
+# AA-912: '[' excluded from the body, so each '[' start scans only to the next bracket (linear;
+# tag ids never contain '[')
+_TAG = r"\[(?:R|F):[^\]\[]+\]"
 _SEP = rf"(?:\s|{_TAG})+"
 _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOTALL)
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
@@ -631,9 +633,11 @@ def apply_edit(text: str, start: int, end: int, replacement: str) -> str:
 
 
 # "**Q: " / "Q: " / "**" an admin may type around a rewritten FAQ question (the line keeps its own)
-_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|\*+$")
+# AA-912: the trailing run is tried only from its first '*' (was O(n^2) on a long star run; same matches)
+_FAQ_MARKUP_RE = re.compile(r"^\**\s*Q:\s*|(?<!\*)\*+$")
 
-_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]]*\]")
+# AA-912: '[' excluded from the id body (linear; ids never contain '[')
+_SOURCE_LABEL_RE = re.compile(r"\s?\[(?:Moment|Fact) id=[^\]\[]*\]")
 
 
 def sanitize_replacement(replacement: str, channel: Optional[str]) -> str:
