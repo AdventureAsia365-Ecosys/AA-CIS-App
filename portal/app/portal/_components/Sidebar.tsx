@@ -145,7 +145,7 @@ export default function Sidebar({
             <LogOut size={12} />
           </button>
         </div>
-        {/* AA-885 — legal links (privacy → adventure.asia/privacy-policy; terms → the portal's /terms page). */}
+        {/* AA-885/AA-886 — legal links to the portal's draft /privacy and /terms pages. */}
         <div data-testid="portal-legal-links" style={{ display: "flex", gap: 12, padding: "10px 8px 0", fontSize: 10.5 }}>
           <a href={PRIVACY_PATH} target="_blank" rel="noopener noreferrer" style={{ color: "#8A929D", textDecoration: "none" }}>Privacy</a>
           <a href={TERMS_PATH} target="_blank" rel="noopener noreferrer" style={{ color: "#8A929D", textDecoration: "none" }}>Terms</a>

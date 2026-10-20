@@ -93,9 +93,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
-      object-src 'none'`), `Permissions-Policy`. `/privacy` → `https://adventure.asia/privacy-policy`
-      (307); `/terms` is a holding page (no terms document exists yet, AA-820). Links in the sidebar and
-      on `/tenant-login`.
+      object-src 'none'`), `Permissions-Policy`.
+    - Legal pages (AA-886): `/privacy` and `/terms` are public portal pages (outside the `proxy.ts`
+      matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
+      "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
+      data and links `https://adventure.asia/privacy-policy` as the company-wide policy (the AA-885 redirect
+      is gone); the AI acceptable-use clause of the terms waits for AA-820. Factual sentences must match
+      the code; open legal points stay `[to be confirmed]`. Links in the sidebar and on `/tenant-login`.
     - Staff have **no** access to the tenant portal (no staff session there; a support view is future
       work). Staff sign in on the admin host (the tenant-login "← Staff login" link).
     - **Vendored UI kit** (byte copies, guarded by `tests/unit/test_aa885_portal_split.py`): a change to
@@ -481,7 +485,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   required check.
 - **Portal UI smoke (AA-885, `.github/workflows/ui-smoke-portal.yml`)**: Playwright project
   `smoke-portal` (`tests/e2e/smoke-portal/`) against a portal preview: host checks without a session
-  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms`), and
+  (redirects, forged cookies refused, no admin routes = 404, security headers, `/privacy` + `/terms` draft pages), and
   logged in as a test tenant (API key in `E2E_TENANT_API_KEY`, copied by hand from Secrets Manager
   `aa-cis/dev/e2e-tenant/<slug>` — re-copy after a key rotation) every portal page with the shared
   `runPageCheck` + a 390 px no-sideways-scroll check, screenshots 1440 + 390, and the host-only cookie check.
