@@ -29,13 +29,19 @@ Page + Page Access Token.
 """
 import json
 from typing import Optional
+from urllib.parse import quote
 
-import aiohttp
+from shared import safe_http
 
 from .base import SocialAdapter, SocialPost, SocialPostResult
 
-_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_TIMEOUT_S = 30.0
 _GRAPH_VERSION = "v21.0"
+
+
+def _segment(value) -> str:
+    """AA-875: a tenant-entered id (page_id, post id) as exactly one URL path segment."""
+    return quote(str(value), safe="")
 
 
 class FacebookAdapter(SocialAdapter):
@@ -49,11 +55,11 @@ class FacebookAdapter(SocialAdapter):
         if post.link:
             payload["link"] = post.link
 
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.post(f"{self.api_base}/{self.page_id}/feed", data=payload) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("POST", f"{self.api_base}/{_segment(self.page_id)}/feed", data=payload,
+                                       timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         parsed_body = None
         if content_type.startswith("application/json"):
@@ -84,11 +90,11 @@ class FacebookAdapter(SocialAdapter):
         the last 25 feed posts are matched on the full message text. Raises when the feed
         cannot be read — the caller must not post again when it cannot tell."""
         params = {"fields": "id,message", "limit": "25", "access_token": self.access_token}
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(f"{self.api_base}/{self.page_id}/feed", params=params) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("GET", f"{self.api_base}/{_segment(self.page_id)}/feed", params=params,
+                                       timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         parsed_body = None
         if content_type.startswith("application/json"):
@@ -117,11 +123,11 @@ class FacebookAdapter(SocialAdapter):
         post is gone when it may still be live (the tenant can delete it on Facebook and an
         admin can force-unpublish the row)."""
         params = {"access_token": self.access_token}
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.delete(f"{self.api_base}/{post_id}", params=params) as resp:
-                status_code = resp.status
-                content_type = resp.headers.get("content-type", "")
-                body_text = await resp.text()
+        resp = await safe_http.request("DELETE", f"{self.api_base}/{_segment(post_id)}", params=params,
+                                       timeout=_TIMEOUT_S)
+        status_code = resp.status
+        content_type = resp.headers.get("content-type", "")
+        body_text = resp.text()
 
         parsed_body = None
         if content_type.startswith("application/json"):

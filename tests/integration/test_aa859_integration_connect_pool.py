@@ -18,6 +18,7 @@ HTTP call are mocked.
 """
 import json
 import os
+import socket
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from fastapi import HTTPException
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from api.routers import v1_integrations as integ_mod  # noqa: E402
+from shared.safe_http import SafeResponse  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 TENANT_ROLE = "aa_app_user"
@@ -105,37 +107,29 @@ def _wp_body(url="https://blog.example.com"):
     return integ_mod.SaveWordPressRequest(wp_url=url, username="u", app_password="p")
 
 
+async def _public_dns(host, port, family=0):
+    """AA-875: save_wordpress resolves the host (shared.safe_http); no real DNS in tests."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port))]
+
+
 async def _connect_wp(c, tid, flag_on, url="https://blog.example.com"):
-    with patch.object(integ_mod, "_sm_client", return_value=MagicMock()):
+    with patch.object(integ_mod, "_sm_client", return_value=MagicMock()), \
+            patch("shared.safe_http._getaddrinfo", _public_dns):
         return await integ_mod.save_wordpress(_wp_body(url), _request(c.conn, flag_on), tenant={"sub": str(tid)})
 
 
 def _http(status=200, body='{"id": 1}', on_enter=None):
-    """aiohttp.ClientSession() replacement; `on_enter` (async) runs when the remote GET is entered."""
-    resp = MagicMock()
-    resp.status = status
-    resp.headers = {"content-type": "application/json"}
-    resp.text = AsyncMock(return_value=body)
-
-    async def enter(*_a):
+    """shared.safe_http.request replacement (AA-875); `on_enter` (async) runs when the remote GET is made."""
+    async def request(*_a, **_k):
         if on_enter:
             await on_enter()
-        return resp
-
-    resp_ctx = MagicMock()
-    resp_ctx.__aenter__ = AsyncMock(side_effect=enter)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-    session = MagicMock()
-    session.get = MagicMock(return_value=resp_ctx)
-    session_ctx = MagicMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
+        return SafeResponse(status=status, headers={"content-type": "application/json"}, body=body.encode())
+    return AsyncMock(side_effect=request)
 
 
 async def _test_wp(c, tid, flag_on, status=200, on_enter=None):
     with patch.object(integ_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(integ_mod.aiohttp, "ClientSession", _http(status, on_enter=on_enter)):
+            patch("shared.safe_http.request", _http(status, on_enter=on_enter)):
         return await integ_mod.test_wordpress(_request(c.conn, flag_on), tenant={"sub": str(tid)})
 
 
@@ -273,7 +267,7 @@ async def test_connection_test_block_one_rls_holds_when_the_where_is_forgotten(c
     async def run(flag_on):
         get_secret = MagicMock(return_value=dict(WP_CREDS))
         with patch.object(integ_mod, "_get_secret", get_secret), \
-                patch.object(integ_mod.aiohttp, "ClientSession", _http()):
+                patch("shared.safe_http.request", _http()):
             with pytest.raises(HTTPException) as exc:
                 await integ_mod.test_wordpress(_request(ctx.conn, flag_on), tenant={"sub": str(ctx.b)})
         assert exc.value.status_code == 404

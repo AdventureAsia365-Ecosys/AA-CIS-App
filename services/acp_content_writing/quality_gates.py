@@ -1938,7 +1938,13 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
 # phrase is not product truth (AA-613 'held'). Trade register, audience leak and opener checks are a
 # separate warn-only result, F15_voice_warn, so sentence_repair.plan never rewrites them.
 F15_STOCK_BLOCKING = True
+# AA-780 (S234 r4 plan #7) — a LinkedIn post under the band's floor (120 words) blocks on attempt 1 only
+# (the same `stock_blocking` flag): one full rewrite to the target, never a rewrite loop, never a hold
+# (`never_holds`). Both r4 false passes were under it (105 and 113 words, Trail Pulse).
+F14_FLOOR_BLOCKING = True
 F14_GATE = "F14_social_shape"
+# The over-the-band text of the one F14 violation that may hold a piece (> 1.3 × the band's top).
+_F14_FAR_OVER = "far over the"
 F15_GATE = "F15_voice"
 F15_WARN_GATE = "F15_voice_warn"
 # Gates that may block (to trigger one repair) but never hold a piece on their own.
@@ -1958,10 +1964,13 @@ _MIN_QUOTE_WORDS = 4  # sentence_repair.locate_sentence needs 4 words to find a 
 OPENER_REPEAT_JACCARD = 0.6
 
 
-def gate_social_shape(content_text: str, spec: Optional[ChannelSpec]) -> GateResultLite:
+def gate_social_shape(content_text: str, spec: Optional[ChannelSpec], *,
+                      floor_blocking: bool = False) -> GateResultLite:
     """F14_social_shape — LinkedIn word count, hashtags and first line against the brand's channel
-    spec. Warn outside the word band; BLOCKING (a full rewrite with the explicit target) only when
-    the post is over 1.3 × the band's top (325 words; 390 editorial). Hashtags and the first line are
+    spec. Warn outside the word band; BLOCKING (a full rewrite with the explicit target) when the post
+    is over 1.3 × the band's top (325 words; 390 editorial), and — AA-780 — when it is under the band's
+    floor and `floor_blocking` (run_quality_gates passes it on attempt 1 only). The under-floor block
+    never holds a piece (`never_holds`); the far-over one still does. Hashtags and the first line are
     normally fixed in place by hygiene.autofix first, so they show here only as residue. No spec
     (every other channel) → passes."""
     if spec is None:
@@ -1977,6 +1986,12 @@ def gate_social_shape(content_text: str, spec: Optional[ChannelSpec]) -> GateRes
                           f"rewrite it to {tlo}–{thi} words, keeping the same angle and facts")
     elif n > hi:
         violations.append(f"post is {n} words, over the {lo}–{hi}-word band for this brand on LinkedIn")
+    elif n < lo and floor_blocking:
+        # AA-780 — " under the " stays in the text: service._cut_truth_items reads it
+        blocking = True
+        violations.append(f"post is {n} words, under the {lo}–{hi}-word band for this brand on LinkedIn — "
+                          f"rewrite it to {tlo}–{thi} words with more of the source's own detail, keeping the "
+                          f"same angle and adding nothing the source does not state")
     elif n < lo:
         violations.append(f"post is {n} words, under the {lo}–{hi}-word band for this brand on LinkedIn")
     tags = list(dict.fromkeys(HASHTAG_RE.findall(text)))
@@ -2112,7 +2127,8 @@ def gate_voice(content_text: str, *, spec: Optional[ChannelSpec], stock_blocking
 
 
 def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pack: Optional[dict] = None,
-                    atom_text: str = "", sibling_openers: Optional[list[str]] = None) -> GateResultLite:
+                    atom_text: str = "", sibling_openers: Optional[list[str]] = None,
+                    cta: Optional[str] = None) -> GateResultLite:
     """F15_voice_warn — warn-only voice checks for a channel with a spec (LinkedIn), kept apart from
     F15_voice so a stock-phrase repair never rewrites them:
     - writing to (or as) the travel trade for a non-editorial brand (S233 Trail Pulse 3/3: 'Active
@@ -2120,7 +2136,10 @@ def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pac
     - the brand's Audience numbers in the text when the source does not have them (S233 #6
       'clients in the 25–40 range');
     - a generic 'There is a …' opener, or the same opener as an earlier piece from the same brief
-      (token Jaccard ≥ 0.6; S233 Terra 3/3 identical).
+      (token Jaccard ≥ 0.6; S233 Terra 3/3 identical);
+    - AA-780 — broetry: ≥ BROETRY_RUN consecutive sentences of ≤ BROETRY_MAX_WORDS words (S234 Trail
+      Pulse "That's not filler. That's structure.", "Not squeezed in. Planned in."), one warning per run;
+      a sentence of the configured `cta` (ensure_cta puts it in word for word) never counts.
     Same "<problem>: '<sentence>'" shape, for the admin highlights."""
     if spec is None:
         return _result(F15_WARN_GATE, [], repairable=False, blocking=False)
@@ -2153,15 +2172,54 @@ def gate_voice_warn(content_text: str, *, spec: Optional[ChannelSpec], brand_pac
         same = next((o for o in sibling_openers or [] if opener_overlap(opener, o) >= OPENER_REPEAT_JACCARD), None)
         if same:
             warn.append(f"opens like an earlier piece from this brief ('{same[:80]}'): '{q}'")
+    warn += _broetry_violations(spans, cta)
     return _result(F15_WARN_GATE, list(dict.fromkeys(warn)), repairable=False, blocking=False)
 
 
+BROETRY_MAX_WORDS = 5
+BROETRY_RUN = 2
+
+
+def _broetry_violations(spans: list[dict], cta: Optional[str] = None) -> list[str]:
+    """AA-780 — one warning per run of ≥ BROETRY_RUN consecutive prose sentences of ≤
+    BROETRY_MAX_WORDS words each (hashtag lines are not in `spans`). A bullet, a span with no word
+    (an emoji-only line) or a sentence the configured CTA contains ends a run — a short itinerary list
+    is a list, and a short "Ask us." is the tenant's line, not a maxim. S234 r1–r4 replay: 4 hits in
+    48 LinkedIn posts, all Trail Pulse maxim pairs, 0 false positives."""
+    cta_key = " ".join(re.findall(r"\w+", fold(cta or "")))
+    out: list[str] = []
+    run: list[dict] = []
+    for sp in spans + [None]:
+        key = " ".join(re.findall(r"\w+", fold(sp["clean"]))) if sp is not None else ""
+        in_cta = bool(key) and f" {key} " in f" {cta_key} "
+        if (sp is not None and sp["kind"] == "prose" and key and not in_cta
+                and len(sp["clean"].split()) <= BROETRY_MAX_WORDS):
+            run.append(sp)
+            continue
+        if len(run) >= BROETRY_RUN:
+            out.append(f"broetry: {len(run)} very short sentences in a row — say it in one plain sentence: "
+                       f"'{_quote(spans, run[0]['start'], run[-1]['end'])}'")
+        run = []
+    return out
+
+
+def never_holds(g: dict) -> bool:
+    """A failed result that may block (to get one repair or rewrite) but never holds a piece: a
+    style-only gate (STYLE_ONLY_GATES), or — AA-780 — an F14_social_shape that blocked for the
+    under-floor rewrite on attempt 1 (only the far-over-the-band violation may hold). Reads the stored
+    violation text, so a ledger kept by the AA-528 revert or read back from the DB answers the same."""
+    if g.get("gate") in STYLE_ONLY_GATES:
+        return True
+    return g.get("gate") == F14_GATE and not any(_F14_FAR_OVER in str(v) for v in g.get("violations") or [])
+
+
 def hold_failure(gate_ledger: list[GateResultLite]) -> Optional[GateResultLite]:
-    """The failed blocking gate a piece is HELD on — the first one that is not style-only
-    (STYLE_ONLY_GATES: F15_voice may block to get one sentence repair, but a stock phrase is not
-    unresolved product truth, AA-613). None → nothing holds the piece; it ships with the flags."""
+    """The failed blocking gate a piece is HELD on — the first one that may hold (`never_holds`:
+    F15_voice may block to get one sentence repair, but a stock phrase is not unresolved product
+    truth, AA-613; an under-floor LinkedIn post gets one rewrite, AA-780). None → nothing holds the
+    piece; it ships with the flags."""
     return next((g for g in gate_ledger if not g["passed"] and g.get("blocking", True)
-                 and g["gate"] not in STYLE_ONLY_GATES), None)
+                 and not never_holds(g)), None)
 
 
 # ---------------------------------------------------------------- orchestration
@@ -2258,7 +2316,8 @@ def run_quality_gates(
         *gate_trip_facts(content_text, trip_ctx, seo_title, meta_description),
         # AA-771 (S234) — LinkedIn shape and voice from the brand's channel spec; both pass for a
         # channel without a spec (every channel but LinkedIn).
-        gate_social_shape(content_text, spec),
+        # AA-780 — under the floor blocks on attempt 1 only (`stock_blocking`), for one full rewrite.
+        gate_social_shape(content_text, spec, floor_blocking=F14_FLOOR_BLOCKING and stock_blocking),
         # S234 review — F15_voice blocks (stock phrases) only while `stock_blocking` (attempt 1);
         # the warn-only checks are their own result so a stock repair never rewrites them.
         # S234 round 2 — plus contrast density and sibling templates, every channel.
@@ -2267,7 +2326,7 @@ def run_quality_gates(
                                               hygiene_ctx.facts if hygiene_ctx else None) if t],
                    brand_name=(brand_pack or {}).get("brand_name"), keyword=keyword, brief_texts=brief_texts),
         gate_voice_warn(content_text, spec=spec, brand_pack=brand_pack, atom_text=atom_text,
-                        sibling_openers=sibling_openers),
+                        sibling_openers=sibling_openers, cta=cta),
     ]
     if channel == "blog":
         gate_ledger.append(gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text,
@@ -2315,6 +2374,7 @@ __all__ = [
     "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
     "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
     "gate_social_shape", "gate_voice", "gate_voice_warn", "hold_failure", "F15_STOCK_BLOCKING", "STYLE_ONLY_GATES",
+    "F14_FLOOR_BLOCKING", "never_holds", "BROETRY_MAX_WORDS", "BROETRY_RUN",
     "FAQ_MIN_PAIRS", "F16_GATE", "faq_pair_count", "replace_faq_section", "gate_faq_contract", "F13_LEAK_GATE",
     "gate_leak", "F14_FIRST_LINE_GATE", "gate_first_line", "OWNED_BY_FIX_STEP",
     "F13_REPEAT_GATE", "gate_repeat", "title_key", "title_taken",

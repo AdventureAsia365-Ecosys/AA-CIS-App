@@ -509,7 +509,7 @@ def _main_request(*fetchrows):
 async def test_connection_test_on_a_tombstoned_secret_is_422(call, name):
     request, conn = _main_request({"config": {}, "secret_key": "acp/x"})
     with patch.object(integ_mod, "_get_secret", return_value=dict(TOMBSTONE)), \
-            patch.object(integ_mod.aiohttp, "ClientSession", side_effect=AssertionError("no remote call")):
+            patch("shared.safe_http.request", side_effect=AssertionError("no remote call")):
         with pytest.raises(HTTPException) as exc:
             await call(request, tenant={"sub": str(TENANT_ID)})
     assert exc.value.status_code == 422 and name in exc.value.detail and "reconnect" in exc.value.detail
