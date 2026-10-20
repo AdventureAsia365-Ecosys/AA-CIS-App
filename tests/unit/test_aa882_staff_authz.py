@@ -148,6 +148,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/run-tour", "/admin/run-tour-async", "/admin/s1-batch/submit", "/admin/s1/seo-prefetch",
         "/admin/review-queue/{review_id}/approve", "/admin/review-queue/{review_id}/reject",
         "/admin/review-queue/{review_id}/dismiss", "/admin/review-queue/{review_id}/supersede",
+        "/admin/review-queue/{review_id}/claims/label",
         "/admin/tours/{tour_id}/country", "/admin/tours/{tour_id}/raw",
         "/admin/tours/{tour_id}/generated/{content_id}",
         "/admin/tours/{tour_id}/generated/{content_id}/revalidate",

@@ -143,6 +143,10 @@
     "capability": null,
     "module": "api.routers.admin_dashboard"
   },
+  "GET /admin/decisions/claim-sample": {
+    "capability": null,
+    "module": "api.routers.admin_decisions"
+  },
   "GET /admin/decisions/jev-credit": {
     "capability": "spend.read",
     "module": "api.routers.admin_decisions"
@@ -332,6 +336,10 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/review-queue": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/review-queue/{review_id}/claims": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
@@ -740,6 +748,10 @@
     "module": "api.routers.admin_pipeline"
   },
   "POST /admin/review-queue/{review_id}/approve": {
+    "capability": "review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/review-queue/{review_id}/claims/label": {
     "capability": "review.act",
     "module": "api.routers.admin_pipeline"
   },

@@ -8,6 +8,7 @@ import { AlertTriangle, Edit3, Loader2, Save, ShieldCheck, XCircle } from "lucid
 import { useState } from "react";
 import { A, mono, sans, Btn } from "../_components/adminUi";
 import { formatDateTime } from "../../_kit";
+import { ClaimChecks } from "./ClaimChecks";
 import {
   AREA_FIELDS,
   FIELD_LABEL,
@@ -143,12 +144,15 @@ export function ReviewEditor({
   onSaved,
   onRevalidated,
   readOnly = false,
+  canLabel = false,
 }: {
   item: ReviewItem;
   onSaved: (id: string) => void;
   onRevalidated: (id: string, passed: boolean | null) => void;
   /** AA-878 — the read-only viewer: no Save / Re-validate (the BFF and the backend refuse them anyway). */
   readOnly?: boolean;
+  /** AA-845 — may mark sentences unsupported in the Source check (review.act). */
+  canLabel?: boolean;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>(() => toDraft(item.raw));
   const [dirty, setDirty] = useState<Set<string>>(new Set());
@@ -266,6 +270,8 @@ export function ReviewEditor({
           {msg.text}
         </div>
       )}
+
+      <ClaimChecks reviewId={item.id} canLabel={canLabel} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 20px" }}>
         {TEXT_FIELDS.map((f) => (

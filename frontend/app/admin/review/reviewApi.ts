@@ -139,3 +139,45 @@ export async function fetchRevalidateState(reviewId: string): Promise<boolean | 
     return null;
   }
 }
+
+// AA-845 — per-sentence source check. Each grounded sentence of the row's version, its latest Jev
+// a1_claim_supported verdict and the reviewer's label. "Mark unsupported" stamps truth=False on that
+// sentence only (a whole-version reject never labels sentences).
+export type ClaimVerdict = { zone: string; mode: string; probability: number | null; at: string | null };
+export type ClaimLabel = { truth: boolean | null; source: string | null; at: string | null; by: string | null };
+export type ReviewClaim = {
+  index: number;
+  field: string;
+  day: number | null;
+  sentence: string;
+  subject_key: string;
+  verdict: ClaimVerdict | null;
+  promise_probability: number | null;
+  label: ClaimLabel | null;
+  marked_unsupported: boolean;
+};
+export type ReviewClaimsResponse = {
+  review_id: string;
+  generated_content_id: string;
+  review_status: string;
+  human_edited: boolean;
+  claims: ReviewClaim[];
+  with_verdict: number;
+  marked_unsupported: number;
+};
+
+export function fetchReviewClaims(reviewId: string): Promise<ReviewClaimsResponse> {
+  return apiGet<ReviewClaimsResponse>(`/api/admin/review-queue/${reviewId}/claims`, { admin: true });
+}
+
+export function labelReviewClaim(
+  reviewId: string,
+  subjectKey: string,
+  unsupported: boolean,
+): Promise<{ rows_updated: number }> {
+  return apiSend(`/api/admin/review-queue/${reviewId}/claims/label`, {
+    method: "POST",
+    body: { subject_key: subjectKey, unsupported },
+    admin: true,
+  });
+}

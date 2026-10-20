@@ -1508,6 +1508,11 @@ _Avoid_: block (alone), delete, filter.
   rewritten sentence by sentence against the source (one `s1_flag_fix` call); what is still
   unsupported after revalidate → `manual_check` (A2). Master content is the one place this check
   exists — T3 grounds tenant rewrites against master content, not the raw source.
+  Ground truth for the Jev Question (AA-845): in the Review Queue drawer ("Source check") a reviewer
+  marks single sentences unsupported (`decision_log.outcome` truth=false for that sentence only); a
+  Review approve stamps truth=true on the rest, a Review reject stamps nothing (it judges the whole
+  version). `GET /admin/decisions/claim-sample` rebuilds a stratified sentence sample (+ the source
+  Jev read) for panel labelling ($0).
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value

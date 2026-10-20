@@ -181,7 +181,7 @@ def _source_days(tour: dict) -> tuple[dict[int, str], bool]:
     return parsed["day_text"], parsed["used_fallback"]
 
 
-def unit_source(tour: dict, unit: dict) -> str:
+def unit_source(tour: dict, unit: dict, days: Optional[tuple[dict[int, str], bool]] = None) -> str:
     """AA-756: the source a single grounding unit is judged against, instead of the whole tour.
 
     For an ``itineraries`` sentence with a known day number, send a compact tour header
@@ -191,10 +191,13 @@ def unit_source(tour: dict, unit: dict) -> str:
     INCLUSIONS / EXCLUSIONS (meals, transport, services live there). If the source days cannot be
     split (parser fallback / even split) or the unit has no day number, fall back to the full
     ``source_text(tour)`` — never guess a slice.
-    subtitle / summary / highlights always keep the full source."""
+    subtitle / summary / highlights always keep the full source.
+
+    AA-845: ``days`` is ``_source_days(tour)`` computed once by a caller that builds many units of
+    one tour (``review_units``); the result is the same string either way."""
     if unit.get("field") != "itineraries" or unit.get("day") is None:
         return source_text(tour)
-    day_text, used_fallback = _source_days(tour)
+    day_text, used_fallback = days if days is not None else _source_days(tour)
     day = unit["day"]
     if used_fallback or day not in day_text:
         return source_text(tour)
@@ -501,6 +504,142 @@ def regrounding(state: dict) -> Optional[dict]:
         return None
 
 
+# ── AA-845 — the a1_claim_supported ground-truth loop ──────────────────────────────────────────
+# One builder for the units + subject keys of a stored master version, shared by the Review Queue
+# approve hook, the reviewer's per-sentence label and the calibration sample, so all three stamp or
+# read exactly the decision_log rows the S1 run wrote.
+
+# decision_log.outcome `source` of a reviewer's per-sentence "unsupported" (truth=False).
+REVIEW_UNSUPPORTED_SOURCE = "review_sentence_unsupported"
+REVIEW_APPROVE_SOURCE = "review_approve"
+
+
+def _json_list(value: Any) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def tour_from_row(row) -> dict:
+    """The raw `tour` dict exactly as _execute_run_tour / s1_batch build it (SOURCE_FIELDS shape)
+    from a row carrying raw_tours' src_* columns (src_highlights may arrive as a JSON string)."""
+    return {
+        "name":        row["src_name"],
+        "subtitle":    row["src_subtitle"],
+        "summary":     row["src_summary"],
+        "description": row["src_description"],
+        "highlights":  _json_list(row["src_highlights"]),
+        "itineraries": row["src_itineraries"],
+        "country":     row["country"],
+        "duration":    row["duration"],
+        "price":       row["price_raw"],
+        "inclusions":  row["inclusions"],
+        "exclusions":  row["exclusions"],
+    }
+
+
+def generated_from_row(row) -> dict:
+    """The grounded fields of a stored generated_content row (aa_* columns), keyed like the S1
+    graph's `generated` dict."""
+    return {
+        "subtitle":    row["aa_subtitle"],
+        "summary":     row["aa_summary"],
+        "highlights":  _json_list(row["aa_highlights"]),
+        "itineraries": row["aa_itineraries"],
+    }
+
+
+def review_units(tour: dict, generated: dict) -> list[dict]:
+    """sentence_units(generated), each with its ``subject_key`` (the key the grounding run asked Jev
+    with: per-unit source + sentence) and ``index``. The source itinerary is split once per tour."""
+    tour = tour or {}
+    units = sentence_units(generated or {})
+    if not units or not source_text(tour):
+        return []
+    days = _source_days(tour) if any(u["field"] == "itineraries" and u["day"] is not None
+                                     for u in units) else None
+    out = []
+    for i, u in enumerate(units):
+        out.append({**u, "index": i, "subject_key": subject_key(unit_source(tour, u, days), u["sentence"])})
+    return out
+
+
+# The verdict is the newest row of each (subject, question); the label is the newest row that HAS an
+# outcome. A label belongs to the sentence: a later S1 run that asks Jev again (cache hit or not) logs
+# a fresh row with outcome NULL, and that row must not hide the reviewer's mark.
+_LATEST_VERDICTS_SQL = """
+    SELECT v.subject_key, v.question_key, v.zone, v.mode, v.probability, v.created_at, o.outcome
+      FROM (
+        SELECT DISTINCT ON (subject_key, question_key)
+               subject_key, question_key, zone, mode, probability::float AS probability, created_at
+          FROM shared.decision_log
+         WHERE question_key = ANY($1::text[]) AND subject_key = ANY($2::text[])
+         ORDER BY subject_key, question_key, created_at DESC, id DESC
+      ) v
+      LEFT JOIN LATERAL (
+        SELECT k.outcome
+          FROM shared.decision_log k
+         WHERE k.subject_key = v.subject_key AND k.question_key = v.question_key
+           AND k.outcome IS NOT NULL
+         ORDER BY k.created_at DESC, k.id DESC
+         LIMIT 1
+      ) o ON true
+"""
+
+
+def parse_outcome(raw: Any) -> Optional[dict]:
+    """decision_log.outcome (TEXT holding a JSON object) → dict, or None."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def latest_verdicts(conn_or_pool, subject_keys: list[str],
+                          questions: tuple[str, ...] = (QUESTION,)) -> dict[tuple[str, str], dict]:
+    """{(question_key, subject_key): latest logged verdict} for the given keys. Read-only; no Jev."""
+    keys = sorted({k for k in subject_keys if k})
+    if not keys:
+        return {}
+    rows = await conn_or_pool.fetch(_LATEST_VERDICTS_SQL, list(questions), keys)
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["outcome"] = parse_outcome(d.get("outcome"))
+        out[(d["question_key"], d["subject_key"])] = d
+    return out
+
+
+async def record_rejected_outcome(conn_or_pool, subject_key_: str, *, ref: Optional[str] = None,
+                                  by: Optional[str] = None) -> int:
+    """AA-845 — a reviewer marked ONE sentence "unsupported": stamp `a1_claim_supported` truth=False on
+    that sentence's decision_log rows. A Review reject scores the whole version and writes nothing
+    (S245 scope change: it would mislabel every supported sentence of a rejected version).
+    Best-effort: returns rows updated, never raises."""
+    from shared.llm_client.decide import record_outcome
+
+    return await record_outcome(conn_or_pool, QUESTION, subject_key_, truth=False,
+                                source=REVIEW_UNSUPPORTED_SOURCE, ref=ref, by=by)
+
+
+async def clear_rejected_outcome(conn_or_pool, subject_key_: str) -> int:
+    """AA-845 — undo a reviewer's "unsupported" on one sentence (only that source's label)."""
+    from shared.llm_client.decide import clear_outcome
+
+    return await clear_outcome(conn_or_pool, QUESTION, subject_key_, REVIEW_UNSUPPORTED_SOURCE)
+
+
 async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> int:
     """AA-756 — a human approved this master version in the Review Queue, so every grounded sentence
     is now known-supported truth. Stamp `a1_claim_supported` truth=True on each sentence unit's
@@ -510,21 +649,22 @@ async def record_approved_outcome(conn_or_pool, tour: dict, generated: dict) -> 
     is the approved version's grounded fields (keys subtitle/summary/highlights/itineraries). Uses
     the SAME per-unit source (`unit_source`) + `subject_key` as the grounding run (AA-756), so an
     approved sentence maps to exactly the row Jev wrote. Best-effort: never raises, returns rows
-    updated."""
+    updated.
+
+    AA-845: a sentence a reviewer marked "unsupported" keeps its truth=False (keep_sources)."""
     from shared.llm_client.decide import record_outcome
 
     try:
-        source = source_text(tour or {})
-        units = sentence_units(generated or {})
+        units = review_units(tour, generated)
     except Exception as exc:
         logger.warning("record_approved_outcome_build_failed", error=str(exc)[:200])
         return 0
-    if not source or not units:
+    if not units:
         return 0
     updated = 0
     for u in units:
         updated += await record_outcome(
-            conn_or_pool, QUESTION, subject_key(unit_source(tour or {}, u), u["sentence"]),
-            truth=True, source="review_approve")
+            conn_or_pool, QUESTION, u["subject_key"], truth=True, source=REVIEW_APPROVE_SOURCE,
+            keep_sources=(REVIEW_UNSUPPORTED_SOURCE,))
     logger.info("record_approved_outcome", units=len(units), rows_updated=updated)
     return updated
