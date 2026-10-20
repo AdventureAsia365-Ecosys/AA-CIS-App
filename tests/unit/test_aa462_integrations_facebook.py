@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
 from api.routers import v1_integrations as mod
+from tests.unit.safe_http_fakes import TARGET, fake_request
 
 TENANT = {"sub": "6fbaf284-e3cd-4b4b-b53b-c9a04e8fae8e", "role": "tenant"}
 
@@ -32,23 +33,6 @@ def _make_request(pool):
     req.app.state.pool = pool
     req.app.state.redis.get = AsyncMock(return_value="false")  # S241 D-12: explicit OFF
     return req
-
-
-def _mock_aiohttp_get_session(status, content_type="application/json", body_text=""):
-    resp_ctx = AsyncMock()
-    mock_resp = MagicMock()
-    mock_resp.status = status
-    mock_resp.headers = {"content-type": content_type}
-    mock_resp.text = AsyncMock(return_value=body_text)
-    resp_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    session = MagicMock()
-    session.get = MagicMock(return_value=resp_ctx)
-    session_ctx = AsyncMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
 
 
 # ── save_facebook ────────────────────────────────────────────────────────────
@@ -150,7 +134,7 @@ async def test_test_facebook_success_sets_last_verified_at():
     page_json = json.dumps({"id": "1234567890", "name": "Test Page"})
     with patch.object(mod, "_get_secret", return_value={
             "page_id": "1234567890", "page_access_token": "EAAtoken"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_get_session(200, body_text=page_json)):
+         patch(TARGET, fake_request(200, body_text=page_json)):
         result = await mod.test_facebook(req, TENANT)
 
     assert result["success"] is True
@@ -177,7 +161,7 @@ async def test_test_facebook_expired_token_classified():
     error_json = json.dumps({"error": {"code": 190, "message": "Error validating access token"}})
     with patch.object(mod, "_get_secret", return_value={
             "page_id": "1234567890", "page_access_token": "expired"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_get_session(400, body_text=error_json)):
+         patch(TARGET, fake_request(400, body_text=error_json)):
         result = await mod.test_facebook(req, TENANT)
 
     assert result["success"] is False

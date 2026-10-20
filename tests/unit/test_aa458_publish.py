@@ -3,8 +3,8 @@ tests/unit/test_aa458_publish.py — AA-458 [T11 PR2]: GET /v1/publish-log/pendi
 POST /v1/publish-log/{piece_id}/publish, and WordPressAdapter.create_post()'s real-response
 validation (the AA-460 lesson, applied here).
 
-Mocks asyncpg via pool.acquire() (matches v1_publish.py's own connection style) and aiohttp at
-the module level — no live AWS/network calls in unit tests.
+Mocks asyncpg via pool.acquire() (matches v1_publish.py's own connection style) and
+shared.safe_http.request (AA-875) — no live AWS/network calls in unit tests.
 """
 import json
 import uuid
@@ -19,6 +19,7 @@ from api.routers import v1_publish as mod
 from services.acp_s4_blog.cms.base import BlogContent
 from services.acp_publish.idempotency import Claim
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+from tests.unit.safe_http_fakes import TARGET, fake_request
 
 TENANT = {"sub": str(uuid.uuid4()), "role": "tenant"}
 PIECE_ID = uuid.uuid4()
@@ -387,18 +388,11 @@ def test_publish_key_changes_with_text_and_channel():
 
 # ── WordPressAdapter.find_post_by_slug() (AA-726) ─────────────────────────────
 
-def _mock_get_response(status: int, content_type: str = "application/json", body_text: str = ""):
-    factory = _mock_post_response(status, content_type, body_text)
-    session = factory.return_value.__aenter__.return_value
-    session.get = session.post
-    return factory
-
-
 @pytest.mark.asyncio
 async def test_find_post_by_slug_returns_existing_post():
     adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
     body = json.dumps([{"id": 9, "link": "https://b.com/p/9", "status": "publish"}])
-    with patch("aiohttp.ClientSession", _mock_get_response(200, body_text=body)):
+    with patch(TARGET, fake_request(200, body_text=body)):
         found = await adapter.find_post_by_slug("x-1234abcd")
     assert found.post_id == 9 and found.post_url == "https://b.com/p/9"
 
@@ -406,37 +400,19 @@ async def test_find_post_by_slug_returns_existing_post():
 @pytest.mark.asyncio
 async def test_find_post_by_slug_none_when_empty_list():
     adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
-    with patch("aiohttp.ClientSession", _mock_get_response(200, body_text="[]")):
+    with patch(TARGET, fake_request(200, body_text="[]")):
         assert await adapter.find_post_by_slug("x-1234abcd") is None
 
 
 @pytest.mark.asyncio
 async def test_find_post_by_slug_raises_on_html_challenge_page():
     adapter = WordPressAdapter(wp_url="https://b.com", username="admin", app_password="pw")
-    with patch("aiohttp.ClientSession", _mock_get_response(200, content_type="text/html", body_text="<html>")):
+    with patch(TARGET, fake_request(200, content_type="text/html", body_text="<html>")):
         with pytest.raises(RuntimeError, match="unexpected response"):
             await adapter.find_post_by_slug("x-1234abcd")
 
 
 # ── WordPressAdapter.create_post() — the AA-460 lesson applied here ──────────
-
-def _mock_post_response(status: int, content_type: str = "application/json", body_text: str = ""):
-    resp_ctx = AsyncMock()
-    mock_resp = MagicMock()
-    mock_resp.status = status
-    mock_resp.headers = {"content-type": content_type}
-    mock_resp.text = AsyncMock(return_value=body_text)
-    resp_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    session = MagicMock()
-    session.post = MagicMock(return_value=resp_ctx)
-
-    session_ctx = AsyncMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
-
 
 @pytest.mark.asyncio
 async def test_create_post_success_real_wp_response():
@@ -444,7 +420,7 @@ async def test_create_post_success_real_wp_response():
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
     real_wp_body = json.dumps({"id": 7, "link": "https://tenant-blog.com/p/7", "status": "publish"})
 
-    with patch("aiohttp.ClientSession", _mock_post_response(201, body_text=real_wp_body)):
+    with patch(TARGET, fake_request(201, body_text=real_wp_body)):
         result = await adapter.create_post(content)
 
     assert result.post_id == 7
@@ -459,14 +435,26 @@ async def test_create_post_sends_content_status_not_hardcoded():
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
     real_wp_body = json.dumps({"id": 1, "link": "https://x.com/1"})
 
-    mock_session_factory = _mock_post_response(201, body_text=real_wp_body)
-    with patch("aiohttp.ClientSession", mock_session_factory):
+    fake = fake_request(201, body_text=real_wp_body)
+    with patch(TARGET, fake):
         await adapter.create_post(content)
 
-    session_ctx = mock_session_factory.return_value
-    session = await session_ctx.__aenter__()
-    sent_payload = session.post.call_args.kwargs["json"]
+    assert fake.await_args.args == ("POST", "https://tenant-blog.com/wp-json/wp/v2/posts")
+    sent_payload = fake.await_args.kwargs["json"]
     assert sent_payload["status"] == "publish"
+
+
+@pytest.mark.asyncio
+async def test_create_post_blocked_destination_raises_unsafe_url_error():
+    """AA-875: the tenant's wp_url resolving/redirecting to a private address is refused by
+    safe_http; the error reaches publish()'s generic failure branch (a 'failed' publish_log row)."""
+    from shared.safe_http import UnsafeURLError
+
+    adapter = WordPressAdapter(wp_url="https://tenant-blog.com", username="admin", app_password="pw")
+    content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
+    with patch(TARGET, fake_request(raise_exc=UnsafeURLError("URL cannot point to a private or reserved IP address"))):
+        with pytest.raises(UnsafeURLError):
+            await adapter.create_post(content)
 
 
 @pytest.mark.asyncio
@@ -474,7 +462,7 @@ async def test_create_post_non_2xx_raises():
     adapter = WordPressAdapter(wp_url="https://tenant-blog.com", username="admin", app_password="wrong")
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
 
-    with patch("aiohttp.ClientSession", _mock_post_response(401, body_text="Unauthorized")):
+    with patch(TARGET, fake_request(401, body_text="Unauthorized")):
         with pytest.raises(RuntimeError, match="WP API 401"):
             await adapter.create_post(content)
 
@@ -487,7 +475,7 @@ async def test_create_post_200_html_anti_bot_page_raises_not_returns_fake_succes
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
     anti_bot_html = '<html><body><script src="/aes.js"></script></body></html>'
 
-    with patch("aiohttp.ClientSession", _mock_post_response(200, content_type="text/html", body_text=anti_bot_html)):
+    with patch(TARGET, fake_request(200, content_type="text/html", body_text=anti_bot_html)):
         with pytest.raises(RuntimeError, match="not a real WordPress post"):
             await adapter.create_post(content)
 
@@ -498,7 +486,7 @@ async def test_create_post_200_json_missing_id_or_link_raises():
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="", status="publish")
     wrong_shape = json.dumps({"status": "ok"})
 
-    with patch("aiohttp.ClientSession", _mock_post_response(200, body_text=wrong_shape)):
+    with patch(TARGET, fake_request(200, body_text=wrong_shape)):
         with pytest.raises(RuntimeError, match="not a real WordPress post"):
             await adapter.create_post(content)
 
@@ -511,11 +499,10 @@ async def test_create_post_default_status_still_draft_for_existing_caller():
     content = BlogContent(title="T", content_html="body", slug="", seo_title="T", seo_meta="")
     real_wp_body = json.dumps({"id": 1, "link": "https://x.com/1"})
 
-    mock_session_factory = _mock_post_response(201, body_text=real_wp_body)
-    with patch("aiohttp.ClientSession", mock_session_factory):
+    fake = fake_request(201, body_text=real_wp_body)
+    with patch(TARGET, fake):
         await adapter.create_post(content)
 
-    session_ctx = mock_session_factory.return_value
-    session = await session_ctx.__aenter__()
-    sent_payload = session.post.call_args.kwargs["json"]
+    assert fake.await_args.args == ("POST", "https://tenant-blog.com/wp-json/wp/v2/posts")
+    sent_payload = fake.await_args.kwargs["json"]
     assert sent_payload["status"] == "draft"
