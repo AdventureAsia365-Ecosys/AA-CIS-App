@@ -76,8 +76,12 @@ _SUPPORT_ROOTS = {
 # The source wording the T2 writer is told to look for before it uses a signature word (rule 1). Each cue
 # holds a root of _SUPPORT_ROOTS, so "the source says it" in the prompt is the same test the evidence rule
 # (`service_level_claims`) applies afterwards (tests/unit/test_aa800_signature_nudge.py pins this).
+# The cues are a strict subset of the roots: rule 1 asks the writer to USE the word on a cue, so a cue must
+# state the level on its own. "premium" and "deluxe" are everyday mid-range wording ("premium supplement",
+# "premium economy", "deluxe room") and stay evidence-only roots: the gate still accepts them, the prompt
+# never names them as a reason to write "luxury".
 _SUPPORT_CUES = {
-    "luxury": ("luxury", "luxurious", "deluxe", "five-star", "premium"),
+    "luxury": ("luxury", "luxurious", "five-star"),
     "tailored": ("tailored", "tailor-made", "bespoke", "customised", "personalised"),
     "bespoke": ("bespoke", "tailor-made", "customised", "personalised"),
     "curated": ("curated",),

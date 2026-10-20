@@ -33,10 +33,10 @@ AH_ROW = {
     "style_guide": None, "forbidden_words": json.dumps(["bucket list"]), "good_examples": None,
     "default_cta": None, "system_prompt": None, "version": 1, "is_active": True, "custom_validators": None,
 }
-# A published_tours row (`_PT_SQL` shape) whose source states the level: "deluxe" supports "luxury".
+# A published_tours row (`_PT_SQL` shape) whose source states the level: "luxurious" supports "luxury".
 PT_ROW = {
     "aa_name": "Bhutan: Paro and Punakha in 4 Days", "aa_subtitle": "Paro valley walks and Punakha Dzong",
-    "aa_summary": "A walk through the Paro valley with dzong visits and nights in a deluxe heritage lodge.",
+    "aa_summary": "A walk through the Paro valley with dzong visits and nights in a luxurious heritage lodge.",
     "aa_description": "", "aa_highlights": "Tiger's Nest hike\nPunakha Dzong",
     "aa_itineraries": "Day 1: Arrive in Paro.\nDay 2: Hike to Tiger's Nest.\nDay 3: Punakha Dzong.\n"
                       "Day 4: Depart.",
@@ -122,7 +122,7 @@ def test_live_t2_prompt_for_atlas_and_hearth_carries_the_signature_words_line(mo
                              "instant booking, discount\n")
     assert "luxury" not in rule_1.split("\n", 1)[0]                     # declared: not under NEVER
     assert "This brand's own signature words: luxury." in rule_1
-    assert "(luxury: the source says luxury, luxurious, deluxe, five-star or premium)" in rule_1
+    assert "(luxury: the source says luxury, luxurious or five-star)" in rule_1
     assert "use that signature word at least once, on the fact the source states" in rule_1
     assert "When the source does not state it, leave the word out" in rule_1
     # and nothing later in the prompt tells the writer to avoid it
@@ -156,8 +156,8 @@ def test_rule_1_names_the_source_wording_for_every_declared_word():
     assert rule_1.startswith("1. NEVER use these words: cheap, deal, book now, instant booking, discount\n")
     assert ("(curated: the source says curated; refined: the source says refined; tailored: the source says "
             "tailored, tailor-made, bespoke, customised or personalised; bespoke: the source says bespoke, "
-            "tailor-made, customised or personalised; luxury: the source says luxury, luxurious, deluxe, "
-            "five-star or premium)") in rule_1
+            "tailor-made, customised or personalised; luxury: the source says luxury, luxurious or "
+            "five-star)") in rule_1
     assert "Source fidelity (rule 6) comes first" in rule_1
 
 
@@ -169,6 +169,16 @@ def test_every_source_cue_is_support_the_evidence_rule_accepts(word):
         assert sv._supported(word, [f"Nights in a {cue} lodge."]), (word, cue)
         assert sv.service_level_claims(f"A {word} lodge by the river.", f"Nights in a {cue} lodge.") == []
     assert sv.service_level_claims(f"A {word} lodge by the river.", "Nights in a farmhouse lodge.")
+
+
+@pytest.mark.parametrize("weak", ["premium", "deluxe"])
+def test_weak_luxury_roots_are_evidence_only_not_prompt_cues(weak):
+    """Review finding (S245): "premium supplement" or "deluxe room" at a mid-range hotel does not state a
+    luxury level, so rule 1 must not name them as a reason to write "luxury". The gate is unchanged: they
+    stay accepted roots, so an existing tour on such a source does not start failing T3."""
+    assert weak not in sv._SUPPORT_CUES["luxury"]
+    assert weak not in sv.t2_rule_1({"brand_type": "Luxury cultural travel brand"})
+    assert sv.service_level_claims("A luxury lodge by the river.", f"Nights in a {weak} room.") == []
 
 
 def test_the_nudge_leaves_the_gates_unchanged():
