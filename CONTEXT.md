@@ -954,6 +954,14 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   tenant pool needs gets RLS and its grants in the same migration. Enforced by
   `NO_PRIVILEGE_WITHOUT_RLS_SQL` (`tests/integration/_rls_fixture_helpers.py`), the same query as 241's
   guard 4 and the AA-859 probe.
+- **Catalogue-wide RLS guard (X2):** `tests/integration/test_rls_catalogue_guard.py` runs the rules in
+  `tests/integration/rls_catalogue_rules.py` on the replayed migrations in every PR's Integration Tests job.
+  The rules: a `tenant_id` table needs RLS and an `app.tenant_id` policy; no policy `TO PUBLIC`; no
+  `app.current_tenant`; `current_setting('app.tenant_id')` only inside `NULLIF`; no FK across owners; no grant to
+  PUBLIC; grants to another owner's role only on the list; `USING (true)` only on the X1 parity policies. Each
+  exception is an `ALLOWLIST` entry with a one-line reason. A `tenant_id` table the tenant pool can read is never
+  allowlisted. AA-CIS-Infra runs a byte copy (`db/rls_catalogue_rules.py`, Copy Guard) on the nightly Dev dump
+  and writes the result into `db-schema-reference.md`. If you change the file here, copy it to Infra.
 - Write grants are column grants where a route writes only some columns (`tenant_integrations`
   connect / test, `angle_gate_option.chosen`), so a tenant cannot move a row to another tenant or
   channel even inside its own rows.
