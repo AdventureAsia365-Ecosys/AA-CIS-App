@@ -42,10 +42,9 @@ class TestTagStrip:
             captured["user"] = user
             return _judge()
         with patch.object(qg, "invoke_judge", side_effect=fake_judge), \
-             patch.object(qg, "_log_t10_judge_call"), \
-             patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
+             patch.object(qg, "_log_t10_judge_call"):
             qg.run_quality_gates(content_text=tagged, atom_text="SEED [R:keep] TEXT", cta="Ask us about the dates.",
-                                 goal_key="promotion", brand_rubric_text="r", channel="blog")
+                                 brand_rubric_text="r", channel="blog")
         piece_block = captured["user"].split("SOURCE (everything", 1)[0]
         assert "[R:" not in piece_block and "[F:" not in piece_block
         assert "It was built in 1637 by the Zhabdrung. Ask us" in piece_block
@@ -64,9 +63,8 @@ class TestTagStrip:
         tagged = "It was built in 1637 by the Zhabdrung. [R:atom_1] Ask us about the dates."
         with patch.object(qg, "gate_grounding", wraps=qg.gate_grounding) as mock_f1, \
              patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
-                                                                 qg._result("F9_brand_style", [], blocking=False)]), \
-             patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
-            qg.run_quality_gates(content_text=tagged, atom_text="1637", cta="Ask us", goal_key="promotion",
+                                                                 qg._result("F9_brand_style", [], blocking=False)]):
+            qg.run_quality_gates(content_text=tagged, atom_text="1637", cta="Ask us",
                                  brand_rubric_text="r", channel="linkedin")
         assert "[R:atom_1]" in mock_f1.call_args[0][0]
 
@@ -110,10 +108,9 @@ class TestTextIntegrity:
         assert log.call_args.kwargs["extra"]["reasonless"] is True
         # the warn still reaches `flags` through run_quality_gates
         style = qg._result("F9_brand_style", [], blocking=False)
-        with patch.object(qg, "gate_brand_voice", return_value=[f9, style]), \
-             patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
+        with patch.object(qg, "gate_brand_voice", return_value=[f9, style]):
             result = qg.run_quality_gates(content_text="Ask us about the dates today.", atom_text="seed", cta="Ask us",
-                         goal_key="promotion", brand_rubric_text="r", channel="facebook")
+                         brand_rubric_text="r", channel="facebook")
         assert any(g["gate"] == "F9_cta_fact" for g in result["flags"])
         assert result["first_failure"] is None or result["first_failure"]["gate"] != "F9_cta_fact"
 
@@ -190,10 +187,9 @@ class TestTitleMeta:
     def test_run_quality_gates_passes_title_meta_for_blog_only(self):
         res = [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]
         for channel, expect in (("blog", self.TITLE), ("linkedin", None)):
-            with patch.object(qg, "gate_brand_voice", return_value=res) as mock_bv, \
-                 patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
+            with patch.object(qg, "gate_brand_voice", return_value=res) as mock_bv:
                 qg.run_quality_gates(content_text="A short piece.", atom_text="seed", cta="Ask us",
-                                     goal_key="promotion", brand_rubric_text="r", channel=channel,
+                                     brand_rubric_text="r", channel=channel,
                                      seo_title=self.TITLE, meta_description=self.META)
             assert mock_bv.call_args.kwargs.get("seo_title") == expect
 

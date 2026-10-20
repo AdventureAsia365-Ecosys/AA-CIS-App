@@ -51,21 +51,19 @@ class TestGatesAdvisory:
     def _blog(self, text):
         f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1", "failure_codes": [],
               "flagged_phrases": [], "notes": ""}
-        rubric = qg.get_framework_rubric("promotion")
-        f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
         import json
-        with patch.object(qg, "invoke_judge", side_effect=[{"text": json.dumps(f8)}, {"text": json.dumps(f9)}]):
-            return qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us", goal_key="promotion",
+        with patch.object(qg, "invoke_judge", side_effect=[{"text": json.dumps(f9)}]):
+            return qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                         brand_rubric_text="r", channel="blog", seo_title="x" * 50,
                                         meta_description="x" * 130 + ".", slug="a-b", keyword=None)
 
-    def test_blog_shape_gates_only_warn(self):
+    def test_blog_shape_gates_are_gone(self):
+        """AA-770 made F5/F3/F7 warn-only; AA-787 removed them (F7 folded into F16_faq). A blog with no
+        citation tags and no rhythm is no longer flagged for either."""
         out = self._blog("## One\n" + "Word after word here. " * 300)  # no tags, no rhythm
-        ledger = {g["gate"]: g for g in out["gate_ledger"]}
-        for gate in ("F5_atom_density", "F3_structural_variance", "F7_faq_dedup"):
-            assert ledger[gate]["blocking"] is False
-        assert (out["first_failure"] or {}).get("gate") not in ("F5_atom_density", "F3_structural_variance",
-                                                                "F7_faq_dedup")
+        gates = {g["gate"] for g in out["gate_ledger"]}
+        assert not gates & {"F5_atom_density", "F3_structural_variance", "F7_faq_dedup"}
+        assert "F16_faq" in gates
 
     def test_judge_outage_does_not_hold(self):
         with patch.object(qg, "invoke_judge", side_effect=RuntimeError("timeout")):

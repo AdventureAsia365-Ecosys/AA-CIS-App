@@ -1,11 +1,10 @@
 """AA-450 — services/acp_content_writing/quality_gates.py. F1/F2/F4-adjusted are pure functions
-(no mocking needed); F8/F9-adjusted patch invoke_judge, same convention gates.py's own test
-suite and test_aa449_angle_gate_generate.py both already use."""
+(no mocking needed); F9-adjusted patches invoke_judge, same convention gates.py's own test
+suite and test_aa449_angle_gate_generate.py both already use. (F8_framework was dropped by AA-787.)"""
 import json
 from unittest.mock import patch
 
 from services.acp_content_writing import quality_gates as qg
-from services.acp_content_writing.framework_rubrics import DEFAULT_RUBRIC
 
 
 class TestGateCtaPresent:
@@ -108,42 +107,6 @@ def _judge_raw(**fields) -> dict:
     return {"text": json.dumps(fields)}
 
 
-class TestGateFramework:
-    def test_all_criteria_met_passes(self):
-        rubric = qg.get_framework_rubric("promotion")
-        data = {"items": [{"criterion": c, "score": "1", "evidence": "quote"} for c in rubric]}
-        with patch.object(qg, "invoke_judge", return_value=_judge_raw(**data)):
-            result = qg.gate_framework("some piece", "promotion")
-        assert result["passed"] is True
-
-    def test_unmet_criterion_fails(self):
-        rubric = qg.get_framework_rubric("promotion")
-        items = [{"criterion": c, "score": "1", "evidence": "quote"} for c in rubric]
-        items[0]["score"] = "0"
-        with patch.object(qg, "invoke_judge", return_value=_judge_raw(items=items)):
-            result = qg.gate_framework("some piece", "promotion")
-        assert result["passed"] is False
-
-    def test_score_1_without_evidence_treated_as_fail(self):
-        rubric = qg.get_framework_rubric("promotion")
-        items = [{"criterion": c, "score": "1", "evidence": ""} for c in rubric]
-        with patch.object(qg, "invoke_judge", return_value=_judge_raw(items=items)):
-            result = qg.gate_framework("some piece", "promotion")
-        assert result["passed"] is False
-
-    def test_judge_exception_treated_as_fail_not_crash(self):
-        with patch.object(qg, "invoke_judge", side_effect=RuntimeError("bedrock down")):
-            result = qg.gate_framework("some piece", "promotion")
-        assert result["passed"] is False
-
-    def test_covers_goal_with_no_n7_equivalent_framework(self):
-        # product_service_explanation -> FAB, which does NOT exist in N7's own FRAMEWORK_RUBRICS
-        # (AA-450-02 gate map, F8 row) — confirms the derived rubric, not a silent DEFAULT_RUBRIC.
-        rubric = qg.get_framework_rubric("product_service_explanation")
-        assert rubric != DEFAULT_RUBRIC
-        assert any("Feature" in c for c in rubric)
-
-
 class TestGateBrandVoice:
     """AA-613 — gate_brand_voice now returns a LIST of two results: F9_cta_fact (blocking,
     product-truth) + F9_brand_style (non-blocking warn)."""
@@ -225,7 +188,7 @@ class TestRunQualityGates:
     def test_missing_cta_short_circuits_before_any_judge_call(self):
         with patch.object(qg, "invoke_judge") as mock_judge:
             outcome = qg.run_quality_gates(
-                content_text="piece", atom_text="atom", cta=None, goal_key="promotion",
+                content_text="piece", atom_text="atom", cta=None,
                 brand_rubric_text="rubric", channel="facebook",
             )
         assert outcome["passed"] is False
@@ -234,17 +197,15 @@ class TestRunQualityGates:
         mock_judge.assert_not_called()
 
     def test_all_gates_pass(self):
-        rubric = qg.get_framework_rubric("promotion")
-        f8_data = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
         f9_data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                     "failure_codes": [], "flagged_phrases": [], "notes": ""}
-        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f8_data), _judge_raw(**f9_data)]):
+        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f9_data)]):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",
-                cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="facebook",
+                cta="Book now", brand_rubric_text="rubric", channel="facebook",
             )
         assert outcome["passed"] is True
-        # AA-514: + promises_an_option (runs for every channel now, not just blog)
+        # AA-514: + promises_an_option (runs for every channel now, not just blog) — AA-787: dropped
         # AA-484: + F10_cannibalization_cross_tenant (runs for every channel, no match here since
         # this call passes no cannibalization_match — always passes with 0 violations).
         # AA-613: F9 now yields TWO results (F9_cta_fact + F9_brand_style), so 9 not 8.
@@ -254,17 +215,17 @@ class TestRunQualityGates:
         # ...+f12+f13+f13_leak+f13_repeat+f17+f18 (S234 round 3)+f14+f15+f15w+f8+f9x2
         # AA-819: + F19_authenticity (after F11, every channel).
         # AA-800: + F2_platform_truth, F2_superlatives, F2_style_warn (the word layers, every channel).
-        assert len(outcome["gate_ledger"]) == 25
+        # AA-787: - promises_an_option, - F8_framework (25 → 23).
+        assert len(outcome["gate_ledger"]) == 23
+        assert not {"promises_an_option", "F8_framework"} & {g["gate"] for g in outcome["gate_ledger"]}
 
     def test_first_det_failure_used_for_repair_targeting(self):
-        rubric = qg.get_framework_rubric("promotion")
-        f8_data = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
         f9_data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                     "failure_codes": [], "flagged_phrases": [], "notes": ""}
-        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f8_data), _judge_raw(**f9_data)]):
+        with patch.object(qg, "invoke_judge", side_effect=[_judge_raw(**f9_data)]):
             outcome = qg.run_quality_gates(
                 content_text="This breathtaking view awaits you.", atom_text="a view",
-                cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="facebook",
+                cta="Book now", brand_rubric_text="rubric", channel="facebook",
             )
         assert outcome["passed"] is False
         assert outcome["first_failure"]["gate"] == "F2_banned_patterns"
@@ -272,35 +233,26 @@ class TestRunQualityGates:
 
 
 class TestRunQualityGatesFlagNotBlock:
-    """AA-519 Việc 5 — ADR 0023/0026 (Ms. Thư repo): a Piece whose ONLY violation is
-    promises_an_option ships (`passed=True`, gate never becomes `first_failure`, held out
-    separately in `flags`) rather than being held. The other 8 gates are completely unaffected —
-    a real DET failure among them still holds/repairs exactly as before this change."""
+    """AA-519 Việc 5 — a failed non-blocking (warn) gate ships the piece (`passed=True`, never
+    `first_failure`, collected in `flags`); a real DET failure still holds/repairs as before.
+    AA-787: promises_an_option, the first warn gate, is gone — an offered moment stated as planned is
+    F17_trip_fact's (blocking, sentence-repairable) when the trip-fact context is given."""
 
     def _judge_pass(self):
-        rubric = qg.get_framework_rubric("promotion")
-        f8_data = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
         f9_data = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
                    "failure_codes": [], "flagged_phrases": [], "notes": ""}
-        return [_judge_raw(**f8_data), _judge_raw(**f9_data)]
+        return [_judge_raw(**f9_data)]
 
-    def test_only_promises_an_option_violation_still_passes_and_is_flagged(self):
+    def test_offered_moment_stated_as_definite_is_no_longer_a_flag(self):
         atom_text = "The temple visit is optional, at your own expense, weather permitting."
         content = "You will visit the temple at dawn."  # states the offered moment as definite
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
-                content_text=content, atom_text=atom_text, cta="Book now", goal_key="promotion",
+                content_text=content, atom_text=atom_text, cta="Book now",
                 brand_rubric_text="rubric", channel="facebook",
             )
-        assert outcome["passed"] is True  # ships -- ADR 0023, "every Piece ships"
-        assert outcome["first_failure"] is None  # never selected -- blocking=False
-        assert len(outcome["flags"]) == 1
-        assert outcome["flags"][0]["gate"] == "promises_an_option"
-        assert outcome["flags"][0]["passed"] is False
-        # the gate's own violation is still in gate_ledger too (nothing silently dropped)
-        ledger_entry = next(g for g in outcome["gate_ledger"] if g["gate"] == "promises_an_option")
-        assert ledger_entry["passed"] is False
-        assert ledger_entry["blocking"] is False
+        assert outcome["passed"] is True
+        assert "promises_an_option" not in {g["gate"] for g in outcome["gate_ledger"] + outcome["flags"]}
 
     def test_other_8_gates_keep_blocking_unaffected_by_this_change(self):
         """Regression guard — a real DET failure (F2, blocking=True by _result()'s own default)
@@ -308,7 +260,7 @@ class TestRunQualityGatesFlagNotBlock:
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="This breathtaking view awaits you.", atom_text="a view",
-                cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="facebook",
+                cta="Book now", brand_rubric_text="rubric", channel="facebook",
             )
         assert outcome["passed"] is False
         assert outcome["first_failure"]["gate"] == "F2_banned_patterns"
@@ -317,18 +269,18 @@ class TestRunQualityGatesFlagNotBlock:
         assert [g["gate"] for g in outcome["flags"]] == ["F2_style_warn"]
 
     def test_blocking_flags_match_the_3_tier_severity_model(self):
-        # AA-613 — the non-blocking (warn/note) gates are: promises_an_option (note),
-        # F8_framework (warn), F9_brand_style (warn). Everything else (product-truth /
+        # AA-613 — the non-blocking (warn/note) gates are: F9_brand_style (warn); promises_an_option (note)
+        # and F8_framework (warn) were dropped by AA-787. Everything else (product-truth /
         # structural / SEO) stays blocking.
         # AA-768 (S234): + F12_scope (warn for one round) and F13_hygiene (warn).
         # AA-771 (S234): F14/F15 block only on their own triggers; a passing result is non-blocking.
         # AA-800: F2_superlatives blocks only on its own trigger (a 2nd superlative); F2_style_warn is warn-only.
-        _NON_BLOCKING = {"promises_an_option", "F8_framework", "F9_brand_style", "F12_scope", "F13_hygiene",
+        _NON_BLOCKING = {"F9_brand_style", "F12_scope", "F13_hygiene",
                          "F14_social_shape", "F15_voice", "F15_voice_warn", "F2_superlatives", "F2_style_warn"}
         with patch.object(qg, "invoke_judge", side_effect=self._judge_pass()):
             outcome = qg.run_quality_gates(
                 content_text="A clean, specific piece about the trail.", atom_text="the trail",
-                cta="Book now", goal_key="promotion", brand_rubric_text="rubric", channel="facebook",
+                cta="Book now", brand_rubric_text="rubric", channel="facebook",
             )
         for g in outcome["gate_ledger"]:
             expected = g["gate"] not in _NON_BLOCKING

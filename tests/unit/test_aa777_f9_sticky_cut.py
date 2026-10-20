@@ -209,9 +209,8 @@ class TestStickyPass:
     def test_run_quality_gates_hands_the_set_to_f9(self):
         passed: set[str] = {"x"}
         ok = [qg._result("F9_cta_fact", []), qg._result("F9_brand_style", [], blocking=False)]
-        with patch.object(qg, "gate_brand_voice", return_value=ok) as bv, \
-             patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])):
-            qg.run_quality_gates(content_text=PIECE, atom_text="seed", cta=CTA, goal_key="promotion",
+        with patch.object(qg, "gate_brand_voice", return_value=ok) as bv:
+            qg.run_quality_gates(content_text=PIECE, atom_text="seed", cta=CTA,
                                  brand_rubric_text="r", channel="facebook", f9_passed_sentences=passed)
         assert bv.call_args.kwargs["passed_sentences"] is passed
 

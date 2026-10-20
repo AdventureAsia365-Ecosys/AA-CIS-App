@@ -440,8 +440,6 @@ def test_f12_warns_and_f13_reports_residue():
 
 def test_run_quality_gates_with_hygiene_context_never_holds_on_f12():
     from unittest.mock import patch
-    rubric = qg.get_framework_rubric("promotion")
-    f8 = {"items": [{"criterion": c, "score": "1", "evidence": "q"} for c in rubric]}
     f9 = {"status": "pass", "brand_fit": "1", "cta_clear": "1", "human_read": "1",
           "failure_codes": [], "flagged_phrases": [], "notes": ""}
 
@@ -449,9 +447,9 @@ def test_run_quality_gates_with_hygiene_context_never_holds_on_f12():
         import json
         return {"text": json.dumps(d)}
 
-    with patch.object(qg, "invoke_judge", side_effect=[raw(**f8), raw(**f9)]):
+    with patch.object(qg, "invoke_judge", side_effect=[raw(**f9)]):
         out = qg.run_quality_gates(content_text="Sod Camp faces the Gobi. Book now.", atom_text=SEED, cta="Book now",
-                                   goal_key="promotion", brand_rubric_text="r", channel="linkedin",
+                                   brand_rubric_text="r", channel="linkedin",
                                    hygiene_ctx=_ctx(cta="Book now"))
     f12 = next(g for g in out["gate_ledger"] if g["gate"] == "F12_scope")
     assert not f12["passed"] and f12 in out["flags"]

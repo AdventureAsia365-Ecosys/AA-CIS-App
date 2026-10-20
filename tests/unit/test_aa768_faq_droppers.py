@@ -75,7 +75,7 @@ def test_restated_body_facts_survive_and_fill_the_contract():
     out, dropped = qg.drop_restated_faq(text)
     assert dropped == 0 and out == text
     assert qg.faq_pair_count(out) == 3 and qg.gate_faq_contract(out)["passed"]
-    assert qg.gate_faq_dedup(out)["passed"]
+    assert qg.restated_faq_answers(out) == []
 
 
 def test_copied_answers_are_still_dropped():
@@ -84,8 +84,7 @@ def test_copied_answers_are_still_dropped():
     assert dropped == 2
     assert "How big is the crater?" not in out and "What are the reindeer used for?" not in out
     assert all(q in out for q, _ in RESTATED)
-    gate = qg.gate_faq_dedup(text)
-    assert not gate["passed"] and len(gate["violations"]) == 2 and "copies a body sentence" in gate["violations"][0]
+    assert len(qg.restated_faq_answers(text)) == 2 and qg.restated_faq_answers(out) == []
 
 
 def _body():
@@ -104,7 +103,7 @@ def test_a_copied_sentence_is_cut_from_a_mixed_answer():
     out, changed = qg.drop_restated_faq(text)
     assert changed == 1 and qg.faq_pair_count(out) == 4
     assert "primarily raised for meat" not in out.partition("## FAQ")[2] and new_part in out
-    assert qg.gate_faq_dedup(out)["passed"]
+    assert qg.restated_faq_answers(out) == []
 
 
 def test_whats_left_must_still_answer_and_stand_alone():
@@ -239,7 +238,7 @@ async def test_contract_merges_the_writers_surviving_pairs_with_the_regeneration
             writer, context=ctx, hyg=h.HygieneContext(seed=SEED), request_id=uuid.uuid4(), brand_ignore=frozenset())
     assert [q for q, _ in qg.faq_pairs(out)] == [RESTATED[0][0], RESTATED[1][0], RESTATED[2][0],
                                                  "Is there an airport near Mörön?"]
-    assert "2 → 4 pairs" in log[0] and qg.gate_faq_contract(out)["passed"] and qg.gate_faq_dedup(out)["passed"]
+    assert "2 → 4 pairs" in log[0] and qg.gate_faq_contract(out)["passed"] and qg.restated_faq_answers(out) == []
 
 
 @pytest.mark.asyncio

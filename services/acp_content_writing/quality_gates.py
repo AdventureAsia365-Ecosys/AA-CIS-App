@@ -4,23 +4,20 @@ confirmed architecture, docs/claude_audit/AA-450-01-t9-t10-retry-loop-investigat
 gate-by-gate mapping/reasoning: docs/claude_audit/AA-450-02-t10-gate-map.md,
 docs/claude_audit/AA-452-t10-nine-gates.md.
 
-6 gates for every channel (F6/F1/F2/F4/F8/F9-adjusted), mirroring services/acp_produce/gates.py's
+6 gates for every channel at first (F6/F1/F2/F4/F8/F9-adjusted), mirroring services/acp_produce/gates.py's
 own `GateResult`/one-function-per-gate/`gate_fns` list shape (kept for the same reason N7 has it
 — "dễ đọc/debug/mở rộng sau này", per the AA-450 build task's own instruction) WITHOUT importing
 anything from that module — every gate here is written fresh against T9's short single-channel
 content, referenced not reused (ADR §0.5).
 
-AA-452: `channel == 'blog'` gets 3 MORE gates (F5_atom_density/F3_structural_variance/
-F7_faq_dedup, 9 total) — `channel_style.py`'s own `blog` entry describes N7-shaped structure
-(H2 sections, optional FAQ) that `prompts.py` now actually instructs the writer to produce in
-markup terms for that one channel. F5 needs `[R:{atom_id}]` citation tags the writer is told to
-emit ONLY for blog — those tags are internal provenance markup, never shown to the tenant:
+AA-452: `channel == 'blog'` got 3 MORE gates (F5_atom_density/F3_structural_variance/
+F7_faq_dedup) — AA-787 removed all three (F7 folded into F16_faq; see run_quality_gates()).
+`prompts.py` still asks the blog writer for H2 sections, a FAQ and `[R:{atom_id}]` citation tags
+— those tags are internal provenance markup (F1 reads them), never shown to the tenant:
 `strip_citation_tags()`/`deep_strip_citation_tags()` (below) remove every tag from `content_text`
 and from every gate_ledger/repair_log violation string before `service.write_and_check()` ever
 persists or returns a piece (all 8 channels — the other 7 never produce a tag to strip, so this
-is a no-cost safety net for them, not dead code). All 3 new gates are pure DET (rule-based, ported
-from `acp_produce/gates.py`'s own F3/F5/F7 — no LLM call, confirmed against that module's own
-"(DET)" labels), so they need no new `asyncio.to_thread()` wrapping of their own.
+is a no-cost safety net for them, not dead code).
 
 Each gate is a plain SYNCHRONOUS function — same "wrap at the async/sync boundary" decision as
 generate.py (see that module's docstring). `run_quality_gates()` (the one function service.py
@@ -30,10 +27,8 @@ together on the same request.
 
 AA-514: 2 more gates, ported from `src/aa_social/gates/__init__.py`'s GATES tuple (11 origin
 gates total, read verbatim — docs/claude_audit/AA-514-step0-investigation.md):
-  - `gate_promises_an_option()` — NOT F-numbered (genuinely new, no N7/T10 analog to extend).
-    Runs for EVERY channel (origin's own `channels=None`), never auto-fixed (ADR 0023 flag-not-
-    block — the same reasoning F8/F9's judge-scored fields already aren't auto-repaired, just
-    disclosed as a violation for a human to read).
+  - `gate_promises_an_option()` — removed by AA-787 (CIS ADR 0009): F17_trip_fact blocks and
+    repairs the same "optional stated as planned" failure.
   - `gate_seo_surface()` — a sibling of F4_extreme_length (grouped under the "F4 family" in the
     ledger, kept as its own function for clarity rather than folding 2 concerns into 1), blog-only,
     `repairable=True` — participates in the SAME uniform attempt-2 rewrite loop F2_banned_patterns
@@ -52,19 +47,17 @@ from typing import Optional, TypedDict
 import structlog
 
 from services.acp_content_writing import authenticity
-from services.acp_content_writing.framework_rubrics import get_framework_rubric
 from services.acp_content_writing.hygiene import (EM_DASH_PATTERN, HygieneContext, brief_phrases, content_words,
                                                   contrast_excess, copies, dangling_opener, find_issues, fold,
                                                   names_place, near_verbatim, phrase_tokens, proper_nouns,
                                                   sentence_spans, sibling_templates, template_lines)
-from services.acp_content_writing.trip_facts import (TripFactContext, find_trip_fact_issues, mentions_activity,
-                                                     optional_activities, parse_moments)
+from services.acp_content_writing.trip_facts import TripFactContext, find_trip_fact_issues
 from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_RE, HASHTAG_RE, STOCK_PATTERNS,
                                               ChannelSpec, channel_spec, first_sentence, opener_overlap,
                                               post_words)
-from services.acp_produce.judge_client import invoke_judge, parse_judge_json, parse_judge_json_checked
+from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
-from services.acp_shared.offered import OFFERED_PHRASES, STATUS_PREFIX, has_status_lines, is_offered_seed
+from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning
 from shared.llm_client.call_log import record_call_sync
 
@@ -77,29 +70,9 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'‘’“”])")
 # Segment pick (AA-513 STEP0 corrected this comment — a Route/Blog pick can carry several
 # Segments' own distinct ids, see services/acp_content_writing/service.py::
 # _fetch_route_segments()) — but there is still no closed-world/multi-id CHECK made against this
-# pattern (unlike N7): its only job here is "does this stretch of text have >=1 citation at all,
-# of ANY id" (gate_atom_density(), F5) — this generic capture group already matches any id,
-# whether there's one or several in the piece, with no code change needed for AA-513.
+# pattern (unlike N7). AA-787 dropped F5 (citation density), its first reader; today it only tells the F9
+# log whether a citation tag reached the judge (`piece_tag_free`). It matches any id, one or several.
 TAG_RE = re.compile(r"\[(?:R|F):([^\]]+)\]")
-
-# Same window constant as acp_produce/gates.py::ATOM_DENSITY_WORDS — CONTEXT.md §1.6.1's "every
-# 200-300 words" resolved to the upper bound, ported verbatim, not re-decided.
-ATOM_DENSITY_WORDS = 300
-
-# AA-514 — ported verbatim from the origin's `reference/offered-phrases.toml` (not re-authored;
-# see docs/claude_audit/AA-514-step0-investigation.md §5). Said of something the traveller has
-# not bought (at_a_price) or something included but not compulsory (offered) — both want the same
-# hedge in the prose, so gate_promises_an_option() treats them as one list, same as the origin.
-# AA-773: the list now lives in services/acp_shared/offered.py (the seed builder reads it too and
-# must not import this module); re-exported here under its old name.
-_OFFERED_PHRASES = OFFERED_PHRASES
-# What a sentence has to say for an offered moment to be described rather than promised — read
-# by the gate, ported verbatim from the same reference file.
-_HEDGE_PHRASES = frozenset({
-    "can ", "choose", "could ", "if ", "may ", "might ", "offer", "on request",
-    "opt ", "option", "perhaps", "possible", "prefer", "there is time",
-    "those who", "time to", "want to", "wish", "you can", "you may",
-})
 
 # AA-514 — exact numeric thresholds ported verbatim from the origin's own
 # `reference/gate-thresholds.toml` (not invented), for gate_seo_surface().
@@ -120,8 +93,8 @@ _STRIP_TAG_RE = re.compile(r"\s?\[(?:R|F):[^\]]+\]")
 
 def strip_citation_tags(text: Optional[str]) -> str:
     """AA-452 — removes every [R:id]/[F:id] citation tag from `text`. This is the ONLY place
-    T9's tagged intermediate content (blog channel, written so gate_atom_density()/
-    gate_grounding() have something to check) becomes what a tenant actually sees — called once,
+    T9's tagged intermediate content (blog channel, written so gate_grounding() has
+    something to check) becomes what a tenant actually sees — called once,
     at the very end of service.write_and_check(), on content_text AND (via
     deep_strip_citation_tags() below) every violation string in gate_ledger/repair_log, since a
     gate's own violation message can itself quote a tagged excerpt (see gate_grounding()'s
@@ -223,23 +196,12 @@ class GateResultLite(TypedDict):
 def _result(
     gate: str, violations: list[str], repairable: bool = True, blocking: bool = True,
 ) -> GateResultLite:
-    # AA-519 Việc 5 — `blocking` defaults True so every pre-existing call site (F1/F2/F3/F4/F6/
-    # F7/F8/F9/F4-seo-surface) is byte-identical in behavior without touching them; only
-    # gate_promises_an_option() below passes blocking=False. See run_quality_gates()'s own
-    # docstring for how this changes first_failure/passed without touching the other 8 gates.
+    # AA-519 Việc 5 — `blocking` defaults True; a warn gate passes blocking=False. See
+    # run_quality_gates()'s own docstring for how `blocking` drives first_failure / passed / flags.
     return {
         "gate": gate, "passed": not violations, "violations": violations,
         "repairable": repairable, "blocking": blocking,
     }
-
-
-def _downgrade_to_warn(result: GateResultLite) -> GateResultLite:
-    """AA-613 — flip a gate result to non-blocking (warn) at the orchestration layer without
-    touching the gate function itself. Used for F8_framework: the gate still computes its
-    verdict the same way, but a failure ships as a flag rather than holding/retrying the piece.
-    A non-blocking failed gate is never `first_failure` and is collected into `flags` (see
-    run_quality_gates)."""
-    return {**result, "blocking": False, "repairable": False}
 
 
 # ---------------------------------------------------------------- CTA gate (F6-DET-half)
@@ -471,114 +433,6 @@ def gate_cannibalization(match: Optional[dict]) -> GateResultLite:
     return _result("F10_cannibalization_cross_tenant", violations, repairable=True)
 
 
-# ---------------------------------------------------------------- promises an option (new, AA-514)
-
-def gate_promises_an_option(
-    content_text: str, atom_text: str, route_segments: Optional[list[tuple[str, str]]] = None,
-) -> GateResultLite:
-    """AA-514/AA-519 — ADR 0023 (flag-not-block, Ms. Thư repo) + ADR 0026 ("an offered moment is
-    ranked and never promised"): a sentence citing an OFFERED (optional/at-a-price) moment must
-    hedge it ("there is time to visit...", "you may choose to...") rather than state it as
-    something the reader will definitely do ("visit the..."). `never repairable` — this is a
-    judgement call about what the sentence claims, same class of gap gate_grounding()/F1 already
-    leaves to a human rather than asking a model to insert a hedge (which the origin's own
-    docstring warns "will hedge the whole paragraph into mush").
-
-    AA-519 Việc 5 — `blocking=False`: AA-514 shipped this as `repairable=False`, which T10's loop
-    (service.py) reads as an immediate HOLD — a block. ADR 0023 read verbatim (and ADR 0026's own
-    closing line, "a Piece built on an offered moment will usually carry a flag on its first
-    draft, and that is the normal case under ADR 0023 rather than a failure") says this must ship
-    flagged, not held. `repairable` stays False (still never sent to the writer — same "the
-    world, not the shape" reasoning) — only `blocking` changes.
-
-    Applies to EVERY channel (origin's own `channels=None`), not just blog — but the DETECTION
-    shape differs by whether real per-sentence citation tags exist (AA-513, blog Route pick
-    only):
-      - `route_segments` given (>1 real Segment): map each cited sentence to ITS OWN Segment's
-        text via the tag it actually carries, and check ONLY that Segment's own offered-ness —
-        a sentence tagged with a non-offered Segment is never flagged even if another Segment in
-        the same piece is offered.
-      - Otherwise (every non-blog channel, and every single-atom blog piece): T9's whole seed is
-        the ONE atom `content_text` is written from, so if THAT atom's own text carries an
-        offered-phrase, every substantive sentence in the piece is checked for a hedge — there is
-        no second, unrelated source in the piece to accidentally flag.
-
-    Known, disclosed approximation (single-atom branch only): a sentence that is not actually
-    ABOUT the offered moment at all (a pure CTA line, a brand-framing opener) can still be
-    checked, since T9 has no per-sentence topic boundary to exclude it — the origin's own
-    per-sentence tag check avoids this by construction (every checked sentence carries a real
-    citation), which the multi-Segment branch above already replicates faithfully. Not fixed
-    here — flagged as a real, narrow false-positive surface for a future refinement, not a
-    silent gap.
-    """
-    violations = [
-        (f"{', '.join(ids)} is offered rather than included, and this states it as done: '{sent[:120]}'"
-         if ids else f"content seed is offered rather than included, and this states it as done: '{sent[:120]}'")
-        for sent, ids, _ in promised_sentences(content_text, atom_text, route_segments)
-    ]
-    return _result("promises_an_option", violations, repairable=False, blocking=False)
-
-
-def promised_sentences(
-    content_text: str, atom_text: str, route_segments: Optional[list[tuple[str, str]]] = None,
-) -> list[tuple[str, list[str], str]]:
-    """The sentences gate_promises_an_option() flags: (sentence without tags, offered Segment ids
-    — [] on the single-atom branch —, the offered source text)."""
-    out: list[tuple[str, list[str], str]] = []
-    if route_segments and len(route_segments) > 1:
-        # AA-773 — a block with Status lines flags only the sentences that name one of ITS offered
-        # activities (the Khövsgöl block holds the included steppe/taiga moment too).
-        acts_by_id = {aid: _status_activities(text) for aid, text in route_segments}
-        text_by_id = {aid: text for aid, text in route_segments}
-        for sent in _SENT_SPLIT_RE.split(content_text or ""):
-            tags = TAG_RE.findall(sent)
-            offered_ids = [t for t in tags if t in text_by_id and _is_offered(text_by_id[t])]
-            if not offered_ids:
-                continue
-            plain = strip_citation_tags(sent).lower()
-            if any(h in plain for h in _HEDGE_PHRASES):
-                continue
-            offered_ids = [t for t in offered_ids if _names_offered(plain, acts_by_id.get(t))]
-            if not offered_ids:
-                continue
-            ids = sorted(set(offered_ids))
-            out.append((strip_citation_tags(sent.strip()), ids, "\n".join(text_by_id[i] for i in ids)))
-    elif _is_offered(atom_text):
-        acts = _status_activities(atom_text)
-        for sent in _SENT_SPLIT_RE.split(content_text or ""):
-            plain = strip_citation_tags(sent).lower()
-            if not plain.strip():
-                continue
-            if any(h in plain for h in _HEDGE_PHRASES):
-                continue
-            if not _names_offered(plain, acts):
-                continue
-            out.append((strip_citation_tags(sent.strip()), [], atom_text))
-    return out
-
-
-def _is_offered(text: str) -> bool:
-    """AA-773 — Status-aware (offered.is_offered_seed): a seed with Status lines is offered only when
-    one says OFFERED; the Status text's own 'optional' / 'not included' never counts."""
-    return is_offered_seed(text)
-
-
-def _status_activities(seed: str) -> Optional[list]:
-    """The offered activities F17 reads from a seed that carries Status lines
-    (trip_facts.optional_activities, Status-aware), or None for a pre-AA-773 seed: every sentence is
-    then checked, as before."""
-    if not has_status_lines(seed):
-        return None
-    return optional_activities(parse_moments(seed))
-
-
-def _names_offered(sentence: str, acts: Optional[list]) -> bool:
-    """None (no Status lines) or no activity parsed → True (check the sentence, as before)."""
-    if not acts:
-        return True
-    return any(mentions_activity(sentence, a) for a in acts)
-
-
 # ---------------------------------------------------------------- F4-adjusted (extreme length only)
 
 # STEP0/build task's own explicit instruction: no hardcoded exact per-channel word limit (no
@@ -705,7 +559,7 @@ def gate_seo_surface(
 ) -> GateResultLite:
     """AA-514 — ported from `gates/shape.py::seo_surface()` (thresholds verbatim from
     `gate-thresholds.toml`). Blog-only (dispatch in run_quality_gates(), not here — same
-    "gate functions stay channel-agnostic" shape F3/F5/F7 already use). `repairable=True` —
+    "gate functions stay channel-agnostic" shape). `repairable=True` —
     joins F2_banned_patterns in the existing uniform attempt-2 rewrite loop (STEP0 §3 corrected
     premise: no separate "3 rounds" mechanism exists in T10 to build).
 
@@ -769,8 +623,8 @@ def gate_seo_surface(
 # ---------------------------------------------------------------- AA-505 judge call logging
 
 def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> None:
-    """Shared by gate_framework()/gate_brand_voice() below. Both gate functions are deliberately
-    channel/context-agnostic (this file's own module docstring), so no tenant identity is threaded
+    """Used by gate_brand_voice() below (gate_framework() shared it until AA-787). The gate function is
+    deliberately channel/context-agnostic (this file's own module docstring), so no tenant identity is threaded
     down into them — the row's tenant comes from the running T9 job (call_log.bind_tenant,
     AA-741 G1). cost_usd uses pricing.calc_cost() — accurate for the real production judge (gpt-4.1, in
     COST_TABLE); an approximation (Sonnet-tier fallback rate) for a manual nova_pro/gpt56
@@ -788,54 +642,6 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
         stop_reason=raw.get("stop_reason"),
         account=raw.get("account"), fallback_used=raw.get("fallback_used"),
     )
-
-
-# ---------------------------------------------------------------- F8-adjusted (framework judge)
-
-def gate_framework(content_text: str, goal_key: str) -> GateResultLite:
-    """AA-450-02 gate map, F8 row — same Nova Pro judge, same binary 1/0 + mandatory-evidence-
-    quote contract, same writer-prompt isolation as N7's gate_framework() (reuses
-    services.acp_produce.judge_client.invoke_judge/parse_judge_json directly — those two
-    functions are pure LLM-call plumbing, not N7 business logic, importing them is not a
-    departure from ADR §0.5's "don't reuse acp_s4_social/acp_produce business logic"). Rubric
-    items come from framework_rubrics.py (derived from goals.py's own `logic` field), not N7's
-    FRAMEWORK_RUBRICS (T8's 8 goals include SLAP/FAB/BAB/5W1H, which N7's table doesn't cover)."""
-    rubric_items = get_framework_rubric(goal_key)
-    contract = json.dumps({
-        "items": [{"criterion": "str", "score": "1|0",
-                    "evidence": "exact quote from the piece, or empty string if score is 0"}],
-    }, indent=1)
-    user_prompt = (
-        f"PIECE:\n{content_text}\n\n"
-        f"RUBRIC — score each item 1 (met) or 0 (not met), quoting exact evidence from the "
-        f"piece for every 1:\n- " + "\n- ".join(rubric_items) +
-        f"\n\nOutput ONLY JSON matching this contract:\n{contract}"
-    )
-    try:
-        raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, stage="t10_judge")
-        data = parse_judge_json(raw["text"])
-    except Exception as e:
-        logger.warning("t10_f8_judge_unavailable", error=str(e))
-        return _result("F8_framework", [f"judge unavailable: {e} — treated as fail"])
-
-    violations: list[str] = []
-    items = data.get("items") or []
-    for item in items:
-        criterion = item.get("criterion", "(unnamed criterion)")
-        score = str(item.get("score"))
-        evidence = (item.get("evidence") or "").strip()
-        if score != "1":
-            violations.append(f"framework criterion failed: {criterion}")
-        elif not evidence:
-            violations.append(f"framework criterion '{criterion}' scored 1 with no evidence quote — treated as fail")
-    if not items:
-        violations.append("judge returned no rubric items — treated as fail, not a silent pass")
-    # AA-505 — real judge outcome (item-level pass ratio), not a placeholder. The tenant comes
-    # from the running job (call_log.bind_tenant), not from this context-agnostic function.
-    _log_t10_judge_call(raw, gate="F8_framework", passed=not violations,
-                         extra={"items_total": len(items),
-                                "items_passed": sum(1 for i in items if str(i.get("score")) == "1")})
-    return _result("F8_framework", violations)
 
 
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
@@ -1459,99 +1265,7 @@ def gate_brand_voice(
     ]
 
 
-# ---------------------------------------------------------------- F5-adjusted (atom density, blog only)
-
-def gate_atom_density(content_text: str) -> GateResultLite:
-    """AA-452 gate map (docs/claude_audit/AA-452-t10-nine-gates.md) — F5 port, channel=='blog'
-    only (dispatch lives in run_quality_gates() below, not here — same "gate functions stay
-    channel-agnostic, run_quality_gates() decides what to call" shape F3/F7 also use). Ported
-    from acp_produce/gates.py::gate_atom_density() (referenced, not imported, ADR §0.5): chunks
-    `content_text` into non-overlapping ATOM_DENSITY_WORDS(300)-word windows; a window with zero
-    [R:id]/[F:id] tags fails. Runs on content WITH tags still present — this is the one gate
-    whose entire job is to see the tags gate_grounding()/the tenant-facing output never keep. A
-    trailing chunk shorter than window//2 is skipped, same guard as the N7 original (avoids
-    flagging a short leftover fragment that could never reach a full window)."""
-    body = content_text or ""
-    words = body.split()
-    violations: list[str] = []
-    window = ATOM_DENSITY_WORDS
-    for start in range(0, max(1, len(words)), window):
-        chunk_words = words[start:start + window]
-        if len(chunk_words) < window // 2:
-            continue
-        chunk = " ".join(chunk_words)
-        if not TAG_RE.search(chunk):
-            violations.append(
-                f"words {start}-{start + len(chunk_words)}: zero atom citations in this "
-                f"stretch — that's where AI-voice lives; add a specific, verifiable detail or "
-                f"cut it. First 80 chars: '{chunk[:80]}'"
-            )
-    return _result("F5_atom_density", violations)
-
-
-# ---------------------------------------------------------------- F3-adjusted (structural variance, blog only)
-
-def gate_structural_variance(
-    content_text: str, route_segments: Optional[list[tuple[str, str]]] = None,
-) -> GateResultLite:
-    """AA-452 gate map — F3 port, channel=='blog' only (dispatch in run_quality_gates()). Ported
-    from acp_produce/gates.py::gate_structural_variance() (referenced, not imported): (1) at
-    least one genuinely one-sentence paragraph exists, (2) variance check (below), (3) at most 1
-    bulleted list. Runs on content WITH citation tags still present — paragraph/section
-    boundaries are blank-line/`## `-delimited, tag tokens inside a paragraph don't affect either
-    boundary, so no stripping is needed here (unlike gate_extreme_length(), which
-    run_quality_gates() deliberately calls on the STRIPPED text since a citation tag shouldn't
-    count toward a length ceiling meant to bound what the tenant reads).
-
-    AA-514 — (2), the variance check itself, is now ROUTE-AWARE when `route_segments` carries
-    >1 real Segment: instead of comparing lengths between ANY H2 sections (which might not
-    correlate to a Segment at all), each section is mapped to the Segment whose own id is cited
-    most inside it (first citation found, same "representative" convention
-    `_fetch_route_segments()`/AA-513 already use elsewhere), and variance is measured strictly
-    BETWEEN those Segment-mapped sections — the real ask ("biến thiên GIỮA CÁC ĐOẠN TƯƠNG ỨNG
-    TỪNG SEGMENT", not between arbitrary H2s). Falls back to the original generic H2 check,
-    byte-identical, when `route_segments` is None or has <=1 Segment (every non-Route blog
-    piece, unchanged from before this build)."""
-    body = content_text or ""
-    violations: list[str] = []
-    paras = [p for p in body.split("\n\n") if p.strip() and not p.startswith("#")]
-
-    if not any(
-        len(re.split(r"(?<=[.!?])\s+", p.strip())) == 1 and len(p.split()) >= 2
-        for p in paras
-    ):
-        violations.append("no one-sentence paragraph found (variance rule)")
-
-    sections = re.split(r"^## ", body, flags=re.MULTILINE)[1:]
-    if route_segments and len(route_segments) > 1:
-        segment_ids = {aid for aid, _ in route_segments}
-        by_segment: dict[str, int] = {}
-        for sec in sections:
-            tags = [t for t in TAG_RE.findall(sec) if t in segment_ids]
-            if tags:
-                seg_id = tags[0]
-                by_segment[seg_id] = by_segment.get(seg_id, 0) + len(sec.split())
-        if len(by_segment) < 2:
-            violations.append(
-                "fewer than 2 Segment-mapped sections found — cannot measure route-aware variance"
-            )
-        else:
-            lens = sorted(by_segment.values())
-            if lens[-1] < lens[-2] * 1.4:
-                violations.append("no Segment-section is notably longer than the others (route-aware variance)")
-    elif len(sections) >= 3:
-        lens = sorted(len(s.split()) for s in sections)
-        if lens and lens[-1] < lens[-2] * 1.4:
-            violations.append("no section is notably longer than the others")
-
-    blocks = len([b for b in body.split("\n\n") if re.match(r"^\s*[-*] ", b)])
-    if blocks > 1:
-        violations.append(f"{blocks} bulleted lists — max 1 per article")
-
-    return _result("F3_structural_variance", violations)
-
-
-# ---------------------------------------------------------------- F7-adjusted (FAQ dedup, blog only)
+# ---------------------------------------------------------------- FAQ restates the body (F7 fixer, blog only)
 
 _FAQ_ANSWER_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: (.*?)(?=\n\*\*Q: |\Z)", re.DOTALL)
 _FAQ_PAIR_RE = re.compile(r"\*\*Q: .*?\*\*\s*\nA: .*?(?=\n\*\*Q: |\Z)", re.DOTALL)
@@ -1603,24 +1317,20 @@ def answer_copies_body(answer: str, body_sentences: list[str]) -> bool:
     return strip_copied_sentences(answer, body_sentences)[1] > 0
 
 
-def gate_faq_dedup(content_text: str) -> GateResultLite:
-    """AA-452 gate map — F7 port, channel=='blog' only (dispatch in run_quality_gates()): does a FAQ
-    answer copy the body within the SAME piece? INTRA-piece only (cross-time dedup against
-    previously-published FAQs needs a table that doesn't exist for T9 either). No-op (passed=True)
-    when the piece has no '## FAQ' section. Same test as drop_restated_faq (answer_copies_body,
-    AA-768 S234 round 2), so it only fails when that auto-fix did not run."""
+def restated_faq_answers(content_text: str) -> list[int]:
+    """1-based numbers of the FAQ answers that copy a body sentence of the SAME piece (answer_copies_body,
+    the test drop_restated_faq cuts on). [] when the piece has no '## FAQ' section.
+
+    AA-787 — this was the F7_faq_dedup gate; F16_faq absorbed it. The pipeline runs drop_restated_faq on
+    every attempt before the gates read the text, so a non-empty result after that fixer is a fixer bug,
+    not a writer defect: tests use this to prove the fixer leaves nothing behind."""
     body = content_text or ""
     if "## FAQ" not in body:
-        return _result("F7_faq_dedup", [])
+        return []
     pre, _, faq = body.partition("## FAQ")
     sentences = _body_sentences(pre)
-    violations: list[str] = []
-    for i, m in enumerate(_FAQ_ANSWER_RE.finditer(faq)):
-        if answer_copies_body(m.group(1).strip(), sentences):
-            violations.append(
-                f"FAQ answer {i + 1} copies a body sentence -- cut or answer in other words"
-            )
-    return _result("F7_faq_dedup", violations)
+    return [i + 1 for i, m in enumerate(_FAQ_ANSWER_RE.finditer(faq))
+            if answer_copies_body(m.group(1).strip(), sentences)]
 
 
 def drop_restated_faq(content_text: str) -> tuple[str, int]:
@@ -2452,9 +2162,8 @@ class QualityCheckOutcome(TypedDict):
 
 
 def run_quality_gates(
-    *, content_text: str, atom_text: str, cta: Optional[str], goal_key: str,
+    *, content_text: str, atom_text: str, cta: Optional[str],
     brand_rubric_text: str, channel: str,
-    route_segments: Optional[list[tuple[str, str]]] = None,
     seo_title: Optional[str] = None, meta_description: Optional[str] = None,
     slug: Optional[str] = None, keyword: Optional[str] = None,
     cannibalization_match: Optional[dict] = None,
@@ -2479,28 +2188,22 @@ def run_quality_gates(
     `first_failure` and never holds/repairs a piece — it's collected into the returned `flags`
     list instead, still visible in `gate_ledger` either way.
 
-    AA-452: `channel` is now required (every real caller — service.py — always has it; existing
-    tests updated to pass one explicitly rather than given a default, same "explicit over
-    implicit" discipline this codebase already applies elsewhere, e.g. gate_brief_compliance's
-    fail-closed `brief=None`). `channel == 'blog'` runs 3 more DET gates
-    (gate_atom_density/gate_structural_variance/gate_faq_dedup, F5/F3/F7) between F4 and F8 —
-    the other 7 channels get exactly the 6-gate stack this function has always run, unchanged.
-    gate_extreme_length() (F4) is deliberately called on the TAG-STRIPPED text, not raw
-    `content_text` — citation tags are internal markup and shouldn't count toward a length
-    ceiling meant to bound what the tenant actually reads (AA-531: also passed `channel` now, so
-    blog gets its own wider length band instead of the shared 7-channel one — see
-    `_length_bounds_for_channel()`); every other gate below still sees the
-    tagged text, since F1/F5/F3/F7 all need it (F1/F5 read the tags directly; F3/F7 just don't
-    need it stripped, see their own docstrings).
-    AA-786: the F9 judge also gets the tag-stripped text (it flagged the tags as "citation markers").
+    `channel` is required (AA-452). gate_extreme_length() (F4) is called on the TAG-STRIPPED text,
+    not raw `content_text` — citation tags are internal markup and shouldn't count toward a length
+    ceiling meant to bound what the tenant actually reads (AA-531: blog gets its own wider band, see
+    `_length_bounds_for_channel()`). AA-786: the F9 judge also gets the tag-stripped text (it
+    flagged the tags as "citation markers"). `gate_seo_surface()` (F4 family) and the FAQ contract
+    (F16) are blog-only; `seo_title`/`meta_description`/`slug`/`keyword` are `None` for every
+    non-blog channel.
 
-    AA-514: `gate_promises_an_option()` runs for EVERY channel (origin's own `channels=None`,
-    right after F2 — deliberately unaffected by the blog-only branch below) — `route_segments`
-    (None for every non-Route request, unchanged default) lets it map a cited sentence to its
-    OWN Segment when one exists. `gate_seo_surface()` (F4 family) is blog-only, alongside the
-    existing 3 blog-only DET gates — `seo_title`/`meta_description`/`slug`/`keyword` are all
-    `None` for every non-blog channel (nothing to check, matches every other blog-only gate's
-    own "channel decides, not the gate function" convention)."""
+    AA-787 (S234 gate evaluation, Report 12 §1.2; Nghiệp S234 + S245) removed four results from this
+    stack: `promises_an_option` (fired on every blog; F17_trip_fact blocks and repairs the same
+    "optional stated as planned" failure — CIS ADR 0009), F8_framework (an LLM call that fired on
+    20/24 light LinkedIn posts and showed no lift on blogs), F3_structural_variance (no lift over the
+    blog base rate) and F5_atom_density (too rare to mean anything). F7_faq_dedup is folded into
+    F16_faq: service.py's `drop_restated_faq` fixer cuts every FAQ answer sentence that copies the
+    body before these gates read the text (logged in the `F7_faq_autofix` flag), and F16 counts the
+    pairs that are left."""
     cta_result = gate_cta_present(cta)
     ledger = [cta_result]
     if not cta_result["passed"]:
@@ -2529,7 +2232,6 @@ def run_quality_gates(
         # AA-484 — every channel, not blog-only (cannibalization risk isn't channel-specific);
         # placed right after F2 (another content-safety-class gate), before the DET/judge gates.
         gate_cannibalization(cannibalization_match),
-        gate_promises_an_option(content_text, atom_text, route_segments),
         # AA-531 — channel-aware length band (blog gets its own wider band, see
         # _length_bounds_for_channel()); the other 7 channels are unaffected.
         gate_extreme_length(length_check_text, channel),
@@ -2556,22 +2258,11 @@ def run_quality_gates(
                         sibling_openers=sibling_openers),
     ]
     if channel == "blog":
-        gate_ledger += [
-            gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text, body=content_text,
-                             taken_titles=taken_titles),
-            # AA-770 (S233) — blog shape is advice, not product truth: F5 (citation density), F3
-            # (rhythm) and F7 (FAQ restates; service.py auto-drops those pairs first) warn only.
-            # S232: they held 12/20 final blogs and forced full rewrites that invented new facts.
-            _downgrade_to_warn(gate_atom_density(content_text)),
-            _downgrade_to_warn(gate_structural_variance(content_text, route_segments)),
-            _downgrade_to_warn(gate_faq_dedup(content_text)),
-        ]
-    # AA-613 — F8 framework/formula-fit is now a WARN (non-blocking): a piece that misses its
-    # goal's framework is a quality note for the tenant/admin, not a reason to withhold it. F9
-    # returns TWO results (blocking F9_cta_fact + non-blocking F9_brand_style), spread in here.
-    gate_ledger.append(_downgrade_to_warn(gate_framework(content_text, goal_key)))
+        gate_ledger.append(gate_seo_surface(seo_title, meta_description, slug, keyword, seed=atom_text,
+                                            body=content_text, taken_titles=taken_titles))
     # AA-786 — F9 judges what the tenant reads: no citation tags (S234: "visible citation markers"
-    # notes on r1#9 / r3#4), plus the blog's search title and meta.
+    # notes on r1#9 / r3#4), plus the blog's search title and meta. F9 returns TWO results (blocking
+    # F9_cta_fact + non-blocking F9_brand_style), spread in here.
     seo_kw = {"seo_title": seo_title, "meta_description": meta_description} if channel == "blog" else {}
     # AA-777 — the job's sticky-pass set (sentences an earlier F9 verdict passed); None = no memory.
     gate_ledger += gate_brand_voice(length_check_text, cta or "", brand_rubric_text, source_text=atom_text,
@@ -2586,10 +2277,9 @@ def run_quality_gates(
     if spec is not None:
         gate_ledger.append(gate_first_line(content_text, spec))
     # AA-519 Việc 5 — first_failure (drives service.py's hold/repair decision) only ever
-    # considers a BLOCKING gate now; a failed non-blocking gate (currently only
-    # promises_an_option) never holds/repairs a piece, but its result is still in gate_ledger AND
-    # collected into `flags` below so it isn't silently dropped — it ships WITH the piece as a
-    # note, per ADR 0023/0026.
+    # considers a BLOCKING gate; a failed non-blocking gate never holds/repairs a piece, but its
+    # result is still in gate_ledger AND collected into `flags` below so it isn't silently
+    # dropped — it ships WITH the piece as a note.
     first_failure = next((g for g in gate_ledger if not g["passed"] and g["blocking"]), None)
     flags = [g for g in gate_ledger if not g["passed"] and not g["blocking"]]
     return {
@@ -2601,12 +2291,12 @@ def run_quality_gates(
 
 
 __all__ = [
-    "GateResultLite", "QualityCheckOutcome", "TAG_RE", "ATOM_DENSITY_WORDS",
+    "GateResultLite", "QualityCheckOutcome", "TAG_RE",
     "strip_citation_tags", "deep_strip_citation_tags", "gate_cta_present", "gate_grounding",
     "gate_banned_patterns", "gate_cannibalization", "gate_complete", "gate_brand_forbidden_words",
-    "gate_brand_name", "gate_promises_an_option", "gate_extreme_length",
-    "gate_seo_surface", "gate_atom_density", "gate_structural_variance", "gate_faq_dedup",
-    "gate_framework", "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
+    "gate_brand_name", "gate_extreme_length",
+    "gate_seo_surface", "restated_faq_answers",
+    "gate_brand_voice", "run_quality_gates", "drop_restated_faq", "keyword_covered",
     "drop_unanswerable_faq", "unanswerable_faq_topics", "answer_copies_body", "strip_copied_sentences",
     "unused_source_facts",
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",

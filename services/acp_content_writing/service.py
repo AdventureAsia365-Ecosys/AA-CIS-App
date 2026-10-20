@@ -1402,8 +1402,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     facts_text = context.get("facts_text") or ""
     # AA-529 — the grounding-gate's OWN view of the source text: atom_text (or the joined route
     # segments) PLUS the Facts block, so a claim genuinely sourced from a Fact (e.g. a price) is
-    # no longer flagged as an unsupported number by gate_grounding()/gate_banned_patterns()/
-    # gate_promises_an_option(). Deliberately NOT what's passed as `content_seed=` to
+    # no longer flagged as an unsupported number by gate_grounding()/gate_banned_patterns().
+    # Deliberately NOT what's passed as `content_seed=` to
     # write_content()/rewrite_with_feedback() below (those get `facts_text=facts_text` as its own
     # argument instead, appended once inside build_user_prompt()) — this avoids the Facts block
     # appearing twice in what the model actually reads.
@@ -1454,8 +1454,8 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         content_text: str = ""
         gate_ledger: list[dict] = []
         repair_log: list[dict] = []
-        # AA-519 Việc 5 — non-blocking gate failures (ADR 0023 flag-not-block; currently only
-        # promises_an_option), from whichever attempt actually shipped. Same "final attempt wins"
+        # AA-519 Việc 5 — non-blocking (warn) gate failures (ADR 0023 flag-not-block), from whichever
+        # attempt actually shipped. Same "final attempt wins"
         # convention content_text/gate_ledger/seo_meta already follow.
         flags: list[dict] = []
         # AA-498 (Decision 4) — same "final attempt wins" convention as seo_meta/content_text:
@@ -1731,8 +1731,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             progress_step("check")  # AA-637 live view (no-op without a bound tracker)
             outcome = await asyncio.to_thread(
                 run_quality_gates, content_text=content_text, atom_text=grounding_text, cta=cta,
-                goal_key=goal["key"], brand_rubric_text=brand_rubric_text, channel=channel,
-                route_segments=route_segments, keyword=keyword,
+                brand_rubric_text=brand_rubric_text, channel=channel, keyword=keyword,
                 seo_title=seo_meta.get("seo_title"), meta_description=seo_meta.get("meta_description"),
                 slug=seo_meta.get("slug"), cannibalization_match=cannibalization_match,
                 brand_pack=brand_audience, hygiene_ctx=hyg, **openers_kw,

@@ -615,19 +615,17 @@ class TestF15Voice:
 
     def test_run_quality_gates_wires_both_for_linkedin(self):
         text = "Active travel brands have a pacing problem. That detail is worth sitting with."
-        with patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])), \
-             patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
+        with patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
                                                                  qg._result("F9_brand_style", [], blocking=False)]):
-            out = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us", goal_key="promotion",
+            out = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                        brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL)
         gates = {g["gate"]: g for g in out["gate_ledger"]}
         assert not gates["F14_social_shape"]["passed"]  # 13 words, under the band
         assert gates["F15_voice"]["blocking"] and out["first_failure"]["gate"] == "F15_voice"
         assert not gates["F15_voice_warn"]["passed"] and not gates["F15_voice_warn"]["blocking"]
-        with patch.object(qg, "gate_framework", return_value=qg._result("F8_framework", [])), \
-             patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
+        with patch.object(qg, "gate_brand_voice", return_value=[qg._result("F9_cta_fact", []),
                                                                  qg._result("F9_brand_style", [], blocking=False)]):
-            later = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us", goal_key="promotion",
+            later = qg.run_quality_gates(content_text=text, atom_text="seed", cta="Ask us",
                                          brand_rubric_text="r", channel="linkedin", brand_pack=TRAIL,
                                          stock_blocking=False)
         assert later["passed"] and any(g["gate"] == "F15_voice" for g in later["flags"])

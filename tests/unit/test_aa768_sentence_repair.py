@@ -51,7 +51,7 @@ def test_unlocatable_quote_means_full_rewrite():
 
 
 def test_non_blocking_failures_do_not_block_the_plan():
-    warn = {"gate": "F8_framework", "passed": False, "blocking": False, "violations": ["hook"]}
+    warn = {"gate": "F15_voice_warn", "passed": False, "blocking": False, "violations": ["hook"]}
     assert sr.plan(PIECE, [F9, warn]) is not None
 
 
