@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 from api.core import aa544_tenant_pool as tp
 from api.routers import v1_integrations as integ_mod
+from tests.unit.safe_http_fakes import TARGET, fake_request
 from tests.integration._rls_fixture_helpers import migration_path
 from tests.unit import test_aa817_fail_closed_routes as matrix
 
@@ -36,19 +37,8 @@ def _row():
 
 
 def _http(status=200, body='{"id": "1"}'):
-    resp = MagicMock()
-    resp.status = status
-    resp.headers = {"content-type": "application/json"}
-    resp.text = AsyncMock(return_value=body)
-    resp_ctx = MagicMock()
-    resp_ctx.__aenter__ = AsyncMock(return_value=resp)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-    session = MagicMock()
-    session.get = MagicMock(return_value=resp_ctx)
-    session_ctx = MagicMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
+    """shared.safe_http.request stand-in (AA-875)."""
+    return fake_request(status, body_text=body)
 
 
 def _tenant(tenant_id):
@@ -77,13 +67,13 @@ async def _connect_fb(request, tenant_id):
 
 async def _test_wp(request, tenant_id):
     with patch.object(integ_mod, "_get_secret", return_value=dict(WP_CREDS)), \
-            patch.object(integ_mod.aiohttp, "ClientSession", _http()):
+            patch(TARGET, _http()):
         return await integ_mod.test_wordpress(request, tenant=_tenant(tenant_id))
 
 
 async def _test_fb(request, tenant_id):
     with patch.object(integ_mod, "_get_secret", return_value=dict(FB_CREDS)), \
-            patch.object(integ_mod.aiohttp, "ClientSession", _http()):
+            patch(TARGET, _http()):
         return await integ_mod.test_facebook(request, tenant=_tenant(tenant_id))
 
 
@@ -272,8 +262,8 @@ async def test_connection_test_block_two_is_the_verify_update(call, kind, status
     tenant = matrix._conn(fetchrow=_row())
     request = matrix._request(flag=True, tenant_conn=tenant)
     with patch.object(integ_mod, "_get_secret", return_value=dict(WP_CREDS if kind == "wordpress" else FB_CREDS)), \
-            patch.object(integ_mod.aiohttp, "ClientSession",
-                         _http(status, '{"id": "1"}' if status == 200 else '{"error": {"code": 190}}')):
+            patch(TARGET,
+                  _http(status, '{"id": "1"}' if status == 200 else '{"error": {"code": 190}}')):
         test = integ_mod.test_wordpress if kind == "wordpress" else integ_mod.test_facebook
         out = await test(request, tenant=_tenant(TENANT_ID))
     assert out["success"] is (status == 200)

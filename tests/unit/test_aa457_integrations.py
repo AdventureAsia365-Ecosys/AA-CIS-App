@@ -3,7 +3,7 @@ tests/unit/test_aa457_integrations.py — AA-457 [T11 PR1]: shared.tenant_integr
 POST/GET /v1/integrations/wordpress, POST /v1/integrations/wordpress/test.
 
 Mocks asyncpg via pool.acquire() (matches v1_publish.py/admin_a4.py's own connection style) and
-boto3/aiohttp at the module level — no live AWS/network calls in unit tests.
+boto3 at the module level and shared.safe_http.request (AA-875) — no live AWS/network calls in unit tests.
 """
 import json
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
 from api.routers import v1_integrations as mod
+from tests.unit.safe_http_fakes import TARGET, fake_request
 
 
 def _make_pool(fetchrow=None):
@@ -40,43 +41,54 @@ TENANT = {"sub": "6fbaf284-e3cd-4b4b-b53b-c9a04e8fae8e", "role": "tenant"}
 OTHER_TENANT = {"sub": "48a63db8-731b-45cf-96ac-d4a1be9ba440", "role": "tenant"}
 
 
-# ── _validate_wp_url ─────────────────────────────────────────────────────────
+# ── _normalize_wp_url (AA-875: static checks from shared.safe_http.validate_url) ──────────────
 
-def test_validate_wp_url_accepts_valid_https():
-    assert mod._validate_wp_url("https://example-tenant-blog.com/") == "https://example-tenant-blog.com"
+def test_normalize_wp_url_accepts_valid_https():
+    assert mod._normalize_wp_url("https://example-tenant-blog.com/") == "https://example-tenant-blog.com"
 
 
-def test_validate_wp_url_rejects_http():
+def test_normalize_wp_url_rejects_http():
     with pytest.raises(ValueError, match="https"):
-        mod._validate_wp_url("http://example.com")
+        mod._normalize_wp_url("http://example.com")
 
 
-def test_validate_wp_url_rejects_localhost():
+def test_normalize_wp_url_rejects_localhost():
     with pytest.raises(ValueError, match="local"):
-        mod._validate_wp_url("https://localhost/")
+        mod._normalize_wp_url("https://localhost/")
 
 
-def test_validate_wp_url_rejects_loopback_ip():
+def test_normalize_wp_url_rejects_loopback_ip():
     with pytest.raises(ValueError, match="private or reserved"):
-        mod._validate_wp_url("https://127.0.0.1/")
+        mod._normalize_wp_url("https://127.0.0.1/")
 
 
-def test_validate_wp_url_rejects_private_range():
+def test_normalize_wp_url_rejects_private_range():
     with pytest.raises(ValueError, match="private or reserved"):
-        mod._validate_wp_url("https://192.168.1.5/")
+        mod._normalize_wp_url("https://192.168.1.5/")
 
 
-def test_validate_wp_url_rejects_link_local_metadata_ip():
+def test_normalize_wp_url_rejects_link_local_metadata_ip():
     """169.254.169.254 — the AWS/GCP cloud metadata endpoint, the classic SSRF target."""
     with pytest.raises(ValueError, match="private or reserved"):
-        mod._validate_wp_url("https://169.254.169.254/")
+        mod._normalize_wp_url("https://169.254.169.254/")
 
 
-def test_validate_wp_url_does_not_resolve_dns():
+def test_normalize_wp_url_does_not_resolve_dns():
     """A syntactically valid https URL for a non-existent domain must NOT be rejected at
     validation time — that's the test-connection endpoint's job, not the validator's."""
-    assert mod._validate_wp_url("https://this-domain-does-not-exist-xyz123.com") == \
+    assert mod._normalize_wp_url("https://this-domain-does-not-exist-xyz123.com") == \
         "https://this-domain-does-not-exist-xyz123.com"
+
+
+def test_normalize_wp_url_rejects_ipv6_ula_metadata():
+    """AA-875: the EC2 IPv6 metadata address (fd00:ec2::254, inside fd00::/8)."""
+    with pytest.raises(ValueError, match="private or reserved"):
+        mod._normalize_wp_url("https://[fd00:ec2::254]/")
+
+
+def test_normalize_wp_url_rejects_userinfo_trick():
+    with pytest.raises(ValueError, match="username or password"):
+        mod._normalize_wp_url("https://evil.example.com@169.254.169.254/")
 
 
 # ── save_wordpress ───────────────────────────────────────────────────────────
@@ -90,6 +102,46 @@ async def test_save_wordpress_rejects_bad_url():
     with pytest.raises(HTTPException) as exc_info:
         await mod.save_wordpress(body, req, TENANT)
     assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_save_wordpress_rejects_name_resolving_to_private_address(monkeypatch):
+    """AA-875 Done-when: connecting with an internal address -> 4xx, no secret written."""
+    import socket
+
+    async def internal_dns(host, port, family=0):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.3.7", port))]
+
+    monkeypatch.setattr("shared.safe_http._getaddrinfo", internal_dns)
+    pool, conn = _make_pool()
+    req = _make_request(pool)
+    body = mod.SaveWordPressRequest(wp_url="https://wp.internal-looking.example", username="u", app_password="p")
+
+    with patch.object(mod, "_put_secret") as mock_put, pytest.raises(HTTPException) as exc_info:
+        await mod.save_wordpress(body, req, TENANT)
+    assert exc_info.value.status_code == 422
+    assert "private or reserved" in exc_info.value.detail
+    mock_put.assert_not_called()
+    conn.fetchrow.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_save_wordpress_accepts_name_that_does_not_resolve_yet(monkeypatch):
+    """Unchanged design: a typo / not-yet-propagated domain is saved; the test connection classifies it."""
+    import socket
+
+    async def nxdomain(host, port, family=0):
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr("shared.safe_http._getaddrinfo", nxdomain)
+    row = {"config": json.dumps({"site_url": "https://not-yet-live.example"}), "connected_at": None,
+           "last_verified_at": None, "last_verify_error": None}
+    pool, _ = _make_pool(fetchrow=row)
+    req = _make_request(pool)
+    body = mod.SaveWordPressRequest(wp_url="https://not-yet-live.example", username="u", app_password="p")
+    with patch.object(mod, "_put_secret"):
+        result = await mod.save_wordpress(body, req, TENANT)
+    assert result["site_url"] == "https://not-yet-live.example"
 
 
 @pytest.mark.asyncio
@@ -178,32 +230,6 @@ def _wp_row():
             "secret_key": f"acp/cms/{TENANT['sub']}"}
 
 
-def _mock_aiohttp_session(status: int | None, raise_exc: Exception | None = None,
-                           content_type: str = "application/json", body_text: str = ""):
-    """Build a mock replacing aiohttp.ClientSession() so session.get(...).status/headers/text()
-    are all controllable — AA-460 needs headers+body, not just status, to test the real
-    content-validation fix (a bare status mock can no longer stand in for "a real WordPress
-    response", exactly the gap that let the false-positive bug through in the first place)."""
-    resp_ctx = AsyncMock()
-    if raise_exc:
-        resp_ctx.__aenter__ = AsyncMock(side_effect=raise_exc)
-    else:
-        mock_resp = MagicMock()
-        mock_resp.status = status
-        mock_resp.headers = {"content-type": content_type}
-        mock_resp.text = AsyncMock(return_value=body_text)
-        resp_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
-    resp_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    session = MagicMock()
-    session.get = MagicMock(return_value=resp_ctx)
-
-    session_ctx = AsyncMock()
-    session_ctx.__aenter__ = AsyncMock(return_value=session)
-    session_ctx.__aexit__ = AsyncMock(return_value=False)
-    return MagicMock(return_value=session_ctx)
-
-
 @pytest.mark.asyncio
 async def test_test_wordpress_success_sets_last_verified_at():
     updated_row = {
@@ -224,7 +250,7 @@ async def test_test_wordpress_success_sets_last_verified_at():
     wp_user_json = json.dumps({"id": 1, "name": "admin", "slug": "admin"})
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://example-tenant-blog.com", "username": "admin", "app_password": "pw"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(200, body_text=wp_user_json)):
+         patch(TARGET, fake_request(200, body_text=wp_user_json)):
         result = await mod.test_wordpress(req, TENANT)
 
     assert result["success"] is True
@@ -251,7 +277,7 @@ async def test_test_wordpress_401_classified_as_wrong_credentials():
 
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://example-tenant-blog.com", "username": "admin", "app_password": "wrong"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(401)):
+         patch(TARGET, fake_request(401)):
         result = await mod.test_wordpress(req, TENANT)
 
     assert result["success"] is False
@@ -281,7 +307,7 @@ async def test_test_wordpress_connection_error_classified_as_unreachable():
     import aiohttp as real_aiohttp
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://this-domain-does-not-exist-xyz123.com", "username": "admin", "app_password": "pw"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(
+         patch(TARGET, fake_request(
              None, raise_exc=real_aiohttp.ClientConnectorError(MagicMock(), OSError("DNS fail")))):
         result = await mod.test_wordpress(req, TENANT)
 
@@ -311,7 +337,7 @@ async def test_test_wordpress_200_html_anti_bot_page_is_not_success():
     anti_bot_html = '<html><body><script src="/aes.js"></script></body></html>'
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://aa-wordpress.rf.gd", "username": "admin", "app_password": "correct"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(200, content_type="text/html", body_text=anti_bot_html)):
+         patch(TARGET, fake_request(200, content_type="text/html", body_text=anti_bot_html)):
         result = await mod.test_wordpress(req, TENANT)
 
     assert result["success"] is False
@@ -340,7 +366,7 @@ async def test_test_wordpress_200_json_but_missing_id_field_is_not_success():
 
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://example-tenant-blog.com", "username": "admin", "app_password": "pw"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(
+         patch(TARGET, fake_request(
              200, content_type="application/json", body_text=json.dumps({"status": "ok"}))):
         result = await mod.test_wordpress(req, TENANT)
 
@@ -365,11 +391,62 @@ async def test_test_wordpress_200_malformed_json_is_not_success():
 
     with patch.object(mod, "_get_secret", return_value={
             "wp_url": "https://example-tenant-blog.com", "username": "admin", "app_password": "pw"}), \
-         patch("aiohttp.ClientSession", _mock_aiohttp_session(
+         patch(TARGET, fake_request(
              200, content_type="application/json", body_text="{not valid json")):
         result = await mod.test_wordpress(req, TENANT)
 
     assert result["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_test_wordpress_blocked_destination_is_422_and_not_recorded():
+    """AA-875: the saved site now resolves (or redirects) to a private address -> safe_http refuses
+    the connection; the endpoint answers 422 and does not run the verify UPDATE."""
+    from shared.safe_http import UnsafeURLError
+
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=[_wp_row()])
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=ctx)
+    req = _make_request(pool)
+
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://example-tenant-blog.com", "username": "admin", "app_password": "pw"}), \
+         patch(TARGET, fake_request(raise_exc=UnsafeURLError(
+             "URL cannot point to a private or reserved IP address"))), \
+         pytest.raises(HTTPException) as exc_info:
+        await mod.test_wordpress(req, TENANT)
+
+    assert exc_info.value.status_code == 422
+    assert conn.fetchrow.await_count == 1  # only the block-1 SELECT
+
+
+@pytest.mark.asyncio
+async def test_test_wordpress_calls_users_me_with_basic_auth_through_safe_http():
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=[_wp_row(), {
+        "config": json.dumps({"site_url": "https://example-tenant-blog.com"}),
+        "connected_at": None, "last_verified_at": None, "last_verify_error": None,
+    }])
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=ctx)
+    req = _make_request(pool)
+
+    fake = fake_request(200, body_text=json.dumps({"id": 1}))
+    with patch.object(mod, "_get_secret", return_value={
+            "wp_url": "https://example-tenant-blog.com/", "username": "admin", "app_password": "pw"}), \
+         patch(TARGET, fake):
+        await mod.test_wordpress(req, TENANT)
+
+    method, url = fake.await_args.args
+    assert (method, url) == ("GET", "https://example-tenant-blog.com/wp-json/wp/v2/users/me")
+    assert fake.await_args.kwargs["auth"].login == "admin"
 
 
 def test_classify_test_failure_200_invalid_body_has_dedicated_message():

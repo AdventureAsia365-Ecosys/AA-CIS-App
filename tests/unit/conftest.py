@@ -73,3 +73,15 @@ def _atom_seed_label_only(request, monkeypatch):
     monkeypatch.setattr(angle_service, "atom_seed_text", _no_seed)  # T8 falls back to row["text"]
     monkeypatch.setattr(writing_service, "atom_seed_text", _no_seed)  # T9 falls back to the label
     monkeypatch.setattr(writing_service, "route_moment_seeds", _label_route_seeds)
+
+
+async def _fake_public_dns(host, port, family=0):
+    """AA-875 — no unit test does a real DNS lookup through shared.safe_http: every name resolves to
+    one public address. Tests of the DNS rules replace safe_http._getaddrinfo themselves."""
+    import socket
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port))]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dns(monkeypatch):
+    monkeypatch.setattr("shared.safe_http._getaddrinfo", _fake_public_dns)
