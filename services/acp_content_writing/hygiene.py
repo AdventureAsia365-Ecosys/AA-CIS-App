@@ -31,9 +31,9 @@ _TAG_STRIP_RE = re.compile(rf"\s?{_TAG}")
 
 
 def fold(text: Optional[str]) -> str:
-    """Accent-folded lower case: 'Khövsgöl' → 'khovsgol'."""
+    """Accent-folded lower case: 'Khövsgöl' → 'khovsgol', 'Đà Nẵng' → 'da nang' (NFKD leaves đ whole)."""
     return "".join(c for c in unicodedata.normalize("NFKD", text or "")
-                   if not unicodedata.combining(c)).lower()
+                   if not unicodedata.combining(c)).lower().replace("đ", "d")
 
 
 def strip_tags(text: Optional[str]) -> str:

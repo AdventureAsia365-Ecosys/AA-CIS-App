@@ -58,8 +58,10 @@ from services.acp_shared.channel_spec import (B2B_RE, EDITORIAL, GENERIC_OPENER_
 from services.acp_produce.judge_client import invoke_judge, parse_judge_json_checked
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
-from services.acp_shared.real_questions import (country_travel_question, is_off_meaning, is_world_question,
-                                                 names_own_place, single_word_places)
+from services.acp_shared.real_questions import (ALL_COUNTRY_WORDS, country_travel_question, deaccent,
+                                                 is_comparison, is_off_meaning, is_world_question, name_variants_in,
+                                                 names_other_place, own_place_tokens, scope_name_key,
+                                                 single_word_places, variant_place_question)
 from shared.llm_client.call_log import record_call_sync
 
 logger = structlog.get_logger()
@@ -1719,9 +1721,11 @@ def drop_subjectless_faq(content_text: str, source_text: str = "",
 # questions first, then the tour's People Also Ask; not scoped to the piece) the writer may answer in the
 # FAQ. Kept only when they name no place outside the piece's scope, ask nothing the source cannot
 # answer, are about the place rather than its name as a word (S245), and either name one of the
-# moment's own places — exactly or as a spelling variant ('Lake Khuvsgul' for Khövsgöl, S245 20/10) —
-# or share ≥ 2 non-generic content words with its seed, or are a travel question about the scope's
-# country ('What is the most famous lake in Mongolia?', real_questions.country_travel_question).
+# moment's own places — exactly, or as a romanisation variant / exonym ('Lake Khuvsgul' for Khövsgöl,
+# 'Ulan Bator', 'Halong'; then still no comparison, world question or other place: S245 20/10, review
+# round 1) — or share ≥ 2 non-generic content words with its seed, or are a practical travel question
+# about the scope's country tied to the moment ('What is the most famous lake in Mongolia?' for a lake
+# moment, real_questions.country_travel_question).
 PAA_MAX_QUESTIONS = 6
 # Words a seed and a search question share without being about the same thing (content_words stems:
 # a trailing 's' is cut from words over 4 letters, so 'famous' → 'famou').
@@ -1746,14 +1750,55 @@ def seed_place_names(own_seed: str) -> tuple[set[str], set[str], set[str]]:
     """The off-meaning filter's inputs for a moment (real_questions.is_off_meaning): its place name
     tokens (proper nouns, line openers included), the single-word place names written mid-sentence
     (the only ones the lowercase-word test reads: 'Mörön' yes, a line opener 'Fly to …' or a token of
-    'Lake Khövsgöl' / 'Great Wall' no), and the seed's country words."""
-    countries = _seed_countries(own_seed)
+    'Lake Khövsgöl' / 'Great Wall' no), and the seed's country words. Read with diacritics folded
+    (review round 1: the proper-noun pattern cuts 'Huế' / 'Hội An' / 'Đà Nẵng' short)."""
+    text = deaccent(own_seed)
+    countries = _seed_countries(text)
     names: set[str] = set()
-    for phrase in proper_nouns(own_seed, keep_initial=True):
+    for phrase in proper_nouns(text, keep_initial=True):
         names |= set(phrase_tokens(phrase))
     names -= countries
-    single = single_word_places(proper_nouns(own_seed), countries)
+    single = single_word_places(proper_nouns(text), countries)
     return names, single, countries
+
+
+def _seed_place_phrases(text: str) -> set[str]:
+    """The place names a seed gives in its canonical fields: every comma field of a 'Location:' line
+    before the country, and the label — the first line's part before a dash — when it is all
+    capitalised words ('Thimphu', 'Lake Khövsgöl'; never 'Sunrise hike')."""
+    out: set[str] = set()
+    lines = (text or "").splitlines()
+    for line in lines:
+        if line.startswith("Location:"):
+            fields = re.sub(r"\(.*?\)", " ", line.split(":", 1)[1]).split(",")
+            out |= {f.strip() for f in fields[:-1] if f.strip()}
+    first = next((ln for ln in lines if ln.strip()), "")
+    label = re.split(r"\s+[—–-]\s+", first, maxsplit=1)
+    if len(label) == 2 and label[0].split() and all(w[:1].isupper() for w in label[0].split()):
+        out.add(label[0].strip())
+    return out
+
+
+def seed_variant_names(own_seed: str, countries: set[str]) -> set[str]:
+    """The moment's real place names a spelling variant may match: tokens of proper nouns written
+    mid-line, of the Location fields and of the label (never a line opener like 'Source' / 'Trek'),
+    plus the joined key of each multi-word name ('halong' for Ha Long Bay, 'luangprabang'). No country
+    or nationality word."""
+    text = deaccent(own_seed)
+    out: set[str] = set()
+    for phrase in proper_nouns(text) | _seed_place_phrases(text):
+        out |= set(phrase_tokens(phrase))
+        key = scope_name_key(phrase)
+        if key:
+            out.add(key)
+    return {n for n in out if n not in countries and n not in ALL_COUNTRY_WORDS}
+
+
+def _seed_name_words(own_seed: str, countries: set[str]) -> set[str]:
+    """Every folded word of the seed's proper nouns ('ha', 'long' of Ha Long Bay): capitalised words a
+    question may use without naming another place."""
+    return {w for p in proper_nouns(deaccent(own_seed), keep_initial=True)
+            for w in _SUBJ_TOKEN_RE.findall(fold(p))} - countries
 
 
 def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
@@ -1765,9 +1810,10 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
     # today?') reads only single-word names capitalised mid-sentence (seed_place_names).
     seed_names, mid_names, countries = seed_place_names(own_seed)
     seed_words = set(content_words(f"{own_seed}\n{facts_text or ''}")) - countries
-    # S245 (20/10) — spelling variants match only real names (capitalised mid-sentence), never a
-    # line opener the keep_initial name set also holds ('Source', 'Trek').
-    variant_names = {t for p in proper_nouns(own_seed) for t in phrase_tokens(p)} - countries
+    # S245 (20/10, review round 1) — spelling variants match only real names (mid-line, Location line,
+    # label), never a line opener the keep_initial name set also holds ('Source', 'Trek').
+    variant_names = seed_variant_names(own_seed, countries)
+    name_words = _seed_name_words(own_seed, countries) | seed_names | variant_names
     out: list[str] = []
     seen: set[str] = set()
     for raw in questions or []:
@@ -1788,13 +1834,21 @@ def paa_for_scope(questions, own_seed: str, facts_text: Optional[str] = None,
         # word?' for the town Mörön) names an own place only by spelling.
         if is_off_meaning(q, seed_names, lowercase_names=mid_names, countries=countries):
             continue
-        q_tokens = set(_SUBJ_TOKEN_RE.findall(fold(q)))
-        own_place = bool(q_tokens & seed_names) or names_own_place(q, variant_names)
-        if not own_place:
-            shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
-            if is_world_question(q):  # 'Which restaurant is the most famous in the world?'
+        if own_place_tokens(q, seed_names | variant_names, variant_names):
+            # an own place by its exact name ('How deep is Lake Khövsgöl?'), compared with nowhere else
+            if is_comparison(q):  # 'Is Lake Khövsgöl bigger than Lake Baikal?'
                 continue
-            if len(shared) < 2 and not country_travel_question(q, countries, seed_words, seed_names):
+        elif name_variants_in(q, variant_names):
+            # another spelling ('Can you swim in Lake Khuvsgul?'): still no comparison, world question or
+            # other place ('Is Lake Khuvsgul bigger than Lake Baikal?')
+            if not variant_place_question(q, name_words, countries):
+                continue
+        else:
+            # 'Which restaurant is the most famous in the world?', 'Is Lao food spicier than Thai food?'
+            if is_world_question(q) or is_comparison(q) or names_other_place(q, name_words, countries):
+                continue
+            shared = (set(content_words(q)) & seed_words) - _PAA_GENERIC
+            if len(shared) < 2 and not country_travel_question(q, countries, seed_words, name_words):
                 continue
         seen.add(key)
         out.append(q)
