@@ -1,12 +1,6 @@
 // portal/lib/hosts.ts
-// AA-885 — cross-app URLs the portal links to. Code constants, no env var (same pattern as
+// AA-885 — URLs the portal links to. It never links to the staff console (separate app, separate host). Code constants, no env var (same pattern as
 // frontend/lib/apps.ts). The portal itself is https://portal.lumiguides.it.com.
-
-/** The CIS admin console (staff sign in there, never on the portal). */
-export const ADMIN_BASE_URL = "https://aa-cis.lumiguides.it.com";
-
-/** Staff login on the admin console — the "← Staff login" link on /tenant-login. */
-export const STAFF_LOGIN_URL = `${ADMIN_BASE_URL}/login`;
 
 /** The portal's legal pages (AA-886: app/privacy and app/terms, drafts pending legal review). */
 export const PRIVACY_PATH = "/privacy";

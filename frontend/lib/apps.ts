@@ -23,8 +23,8 @@ export const BOOKING_ADMIN_URL = trimSlash(process.env.NEXT_PUBLIC_BOOKING_ADMIN
 export const TRIPPLANNER_URL = trimSlash(process.env.NEXT_PUBLIC_TRIPPLANNER_URL || DEV_TRIPPLANNER_URL);
 
 /** AA-885 — the tenant portal, its own Next.js app (portal/) and Vercel project (aa-cis-portal). Code
- * constant, no env var. Used by next.config.ts (308 from the old /portal URLs) and the /login page's
- * "B2B Tenant login" link. */
+ * constant, no env var. Used only by next.config.ts (308 from the old /portal and /tenant-login URLs);
+ * the staff /login page does not link to the portal (separate app, separate host). */
 export const PORTAL_BASE_URL = "https://portal.lumiguides.it.com";
 
 // No "Tenant portal" entry: the portal needs a tenant session (cis_tenant_token, host-only on the
