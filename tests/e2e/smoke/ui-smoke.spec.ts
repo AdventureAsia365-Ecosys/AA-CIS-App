@@ -53,6 +53,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'platform-apps', label: 'Apps', path: '/admin/platform/apps', readySelector: '[data-testid="platform-apps-ready"]', viewerRefused: true },
   { id: 'platform-audit', label: 'Audit log', path: '/admin/platform/audit', viewerRefused: true },
   { id: 'platform-cost', label: 'Cost per app', path: '/admin/platform/cost', readySelector: '[data-testid="platform-cost-ready"]', viewerRefused: true },
+  // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
+  { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
   { id: 'photos', label: 'Photos', path: '/admin/photos', viewerRefused: true },
   { id: 'platform-stats', label: 'A4 Quality', path: '/admin/platform-stats', readySelector: '[data-testid="admin-content-ready"]', viewerRefused: true },
   // AA-769 — Content Quality (T2/T9 quality signals for every tenant; tenants never see them).

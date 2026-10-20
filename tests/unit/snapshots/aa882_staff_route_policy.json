@@ -7,6 +7,10 @@
     "capability": "spend.write",
     "module": "api.routers.admin_decisions"
   },
+  "DELETE /admin/platform/alert-recipients/{recipient_id}": {
+    "capability": "alerts.write",
+    "module": "api.routers.admin_alert_recipients"
+  },
   "DELETE /admin/raw-tours/{tour_id}": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
@@ -286,6 +290,10 @@
   "GET /admin/photos/tours": {
     "capability": null,
     "module": "api.routers.admin_photos"
+  },
+  "GET /admin/platform/alert-recipients": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_alert_recipients"
   },
   "GET /admin/platform/apps": {
     "capability": "ops.read",
@@ -682,6 +690,22 @@
   "POST /admin/places/backfill": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
+  },
+  "POST /admin/platform/alert-recipients": {
+    "capability": "alerts.write",
+    "module": "api.routers.admin_alert_recipients"
+  },
+  "POST /admin/platform/alert-recipients/refresh": {
+    "capability": "alerts.write",
+    "module": "api.routers.admin_alert_recipients"
+  },
+  "POST /admin/platform/alert-recipients/test-email": {
+    "capability": "alerts.write",
+    "module": "api.routers.admin_alert_recipients"
+  },
+  "POST /admin/platform/alert-recipients/{recipient_id}/resend": {
+    "capability": "alerts.write",
+    "module": "api.routers.admin_alert_recipients"
   },
   "POST /admin/platform/staff": {
     "capability": "staff.write",

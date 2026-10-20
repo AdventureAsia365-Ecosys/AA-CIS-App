@@ -162,13 +162,15 @@ export function landingPage(role: string | null | undefined): string {
 export type Capability =
   | "content.read" | "content.write" | "review.act" | "master.admin" | "atoms.write" | "photos.write"
   | "a4.unpublish" | "quality.write" | "content.settings.write" | "tenant.read" | "tenant.write"
-  | "ops.read" | "ops.write" | "ai.admin" | "spend.read" | "spend.write" | "staff.read" | "audit.read";
+  | "ops.read" | "ops.write" | "ai.admin" | "spend.read" | "spend.write" | "staff.read" | "audit.read"
+  | "alerts.write";   // AA-913 — Platform › Alert recipients (changes also need a Cognito session)
 
 export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
   admin: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "tenant.read", "tenant.write",
     "ops.read", "ops.write", "ai.admin", "spend.read", "spend.write", "staff.read", "audit.read",
+    "alerts.write",
   ],
   reviewer: ["content.read", "content.write", "review.act"],
   content: ["content.read", "content.write", "review.act"],
