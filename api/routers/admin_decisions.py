@@ -320,6 +320,127 @@ async def outcomes_summary(request: Request, days: int = Query(90, ge=1, le=365)
     }
 
 
+# ── AA-845 — stratified sample of a1_claim_supported sentences for a labelling panel ──────────────
+# decision_log keeps only the subject key, so the sentence and the source Jev read are rebuilt from
+# the latest master version of each sampled tour (grounding.review_units — the same key builder the
+# S1 run, the approve hook and the reviewer label use). Read-only, no Jev/LLM call ($0). The sample is
+# reproducible: tours and sentences are ordered by md5(seed || key).
+_CLAIM_SAMPLE_TOURS_SQL = """
+    SELECT x.* FROM (
+        SELECT DISTINCT ON (gc.tour_id)
+               gc.tour_id::text AS tour_id, gc.id::text AS generated_content_id, gc.version_num,
+               gc.aa_subtitle, gc.aa_summary, gc.aa_highlights, gc.aa_itineraries,
+               rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
+               rt.src_itineraries, rt.country, rt.duration, rt.price_raw, rt.inclusions, rt.exclusions
+          FROM silver_aa_internal.generated_content gc
+          JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = gc.tour_id
+         WHERE gc.tenant_id = $1::uuid
+           AND rt.source_status = 'active' AND rt.deleted_at IS NULL
+           AND ($2::text IS NULL OR rt.country = $2)
+         ORDER BY gc.tour_id, gc.version_num DESC
+    ) x
+    ORDER BY md5($3 || x.tour_id)
+    LIMIT $4
+"""
+_MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _md5(text: str) -> str:
+    import hashlib
+    return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+def pick_stratum(candidates: list[dict], n: int, seed: str, per_tour: int,
+                 taken_per_tour: dict[str, int]) -> list[dict]:
+    """Up to n candidates in md5(seed || subject_key) order, at most `per_tour` per tour overall
+    (`taken_per_tour` is shared across strata and updated in place)."""
+    out = []
+    for c in sorted(candidates, key=lambda c: _md5(seed + c["subject_key"])):
+        if len(out) >= n:
+            break
+        if taken_per_tour.get(c["tour_id"], 0) >= per_tour:
+            continue
+        taken_per_tour[c["tour_id"]] = taken_per_tour.get(c["tour_id"], 0) + 1
+        out.append(c)
+    return out
+
+
+def build_claim_candidates(rows: list) -> list[dict]:
+    """One candidate per distinct subject key of the sampled tours' current master versions."""
+    from services.content_generation import grounding as gr
+
+    seen: set[str] = set()
+    out = []
+    for r in rows:
+        tour = gr.tour_from_row(r)
+        for u in gr.review_units(tour, gr.generated_from_row(r)):
+            if u["subject_key"] in seen:
+                continue
+            seen.add(u["subject_key"])
+            out.append({"tour_id": r["tour_id"], "generated_content_id": r["generated_content_id"],
+                        "tour_name": r["src_name"], "country": r["country"], "field": u["field"],
+                        "day": u["day"], "sentence": u["sentence"], "subject_key": u["subject_key"],
+                        "_tour": tour, "_unit": u})
+    return out
+
+
+@router.get("/claim-sample",
+            summary="AA-845 — stratified a1_claim_supported sentences (+ source) for a labelling panel")
+async def claim_sample(request: Request,
+                       n: int = Query(100, ge=1, le=300),
+                       low_share: float = Query(0.6, ge=0, le=1),
+                       low_max: float = Query(0.20, ge=0, le=1),
+                       high_max: float = Query(0.85, ge=0, le=1),
+                       tours: int = Query(150, ge=1, le=400),
+                       per_tour: int = Query(3, ge=1, le=20),
+                       seed: str = Query("aa845", min_length=1, max_length=40),
+                       country: Optional[str] = None,
+                       x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    if low_max >= high_max:
+        raise HTTPException(status_code=422, detail="low_max must be below high_max")
+    from services.acp_shared.grounding import find_novel_numeric_claims
+    from services.content_generation import grounding as gr
+
+    pool = request.app.state.pool
+    rows = await pool.fetch(_CLAIM_SAMPLE_TOURS_SQL, _MASTER_TENANT_ID, country, seed, tours)
+    candidates = await asyncio.to_thread(build_claim_candidates, rows)
+    verdicts = await gr.latest_verdicts(pool, [c["subject_key"] for c in candidates],
+                                        (gr.QUESTION, gr.PROMISE_QUESTION))
+    low, mid = [], []
+    with_verdict = 0
+    for c in candidates:
+        v = verdicts.get((gr.QUESTION, c["subject_key"]))
+        if v is None or v["probability"] is None or v["zone"] in ("error", "skipped"):
+            continue
+        with_verdict += 1
+        p = v["probability"]
+        c.update(p=p, zone=v["zone"], mode=v["mode"],
+                 promise_p=(verdicts.get((gr.PROMISE_QUESTION, c["subject_key"])) or {}).get("probability"),
+                 outcome=v["outcome"])
+        if p <= low_max:
+            low.append({**c, "stratum": "low"})
+        elif p < high_max:
+            mid.append({**c, "stratum": "mid"})
+    n_low = round(n * low_share)
+    taken: dict[str, int] = {}
+    picked = pick_stratum(low, n_low, seed, per_tour, taken) + pick_stratum(mid, n - n_low, seed, per_tour, taken)
+    items = []
+    for i, c in enumerate(picked, start=1):
+        tour, unit = c.pop("_tour"), c.pop("_unit")
+        c["numeric_hit"] = bool(find_novel_numeric_claims(c["sentence"], gr.source_number_parts(tour)))
+        c["source"] = gr.unit_source(tour, unit)
+        items.append({"id": i, **c})
+    return {
+        "question_key": gr.QUESTION,
+        "params": {"n": n, "low_share": low_share, "low_max": low_max, "high_max": high_max,
+                   "tours": tours, "per_tour": per_tour, "seed": seed, "country": country},
+        "population": {"tours": len(rows), "units": len(candidates), "with_verdict": with_verdict,
+                       "low": len(low), "mid": len(mid)},
+        "items": items,
+    }
+
+
 _SORTS = {"created_at": "l.created_at", "probability": "l.probability", "latency_ms": "l.latency_ms",
           "cost_usd": "l.cost_usd"}
 _LOG_WHERE = """

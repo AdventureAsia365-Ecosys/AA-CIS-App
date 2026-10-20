@@ -467,31 +467,79 @@ _OUTCOME_SQL = """
      WHERE question_key = $1 AND subject_key = $2
 """
 
+# AA-845 — the same write, except rows whose stored outcome came from one of `keep_sources` ($4) are
+# left alone (a reviewer's per-sentence "unsupported" survives a later whole-version approve).
+_OUTCOME_KEEP_SQL = """
+    UPDATE shared.decision_log
+       SET outcome = $3
+     WHERE question_key = $1 AND subject_key = $2
+       AND (outcome IS NULL OR coalesce(outcome::jsonb ->> 'source', '') <> ALL($4::text[]))
+"""
+
+# AA-845 — undo one source's label: only rows whose stored outcome came from `source` ($3).
+_CLEAR_OUTCOME_SQL = """
+    UPDATE shared.decision_log
+       SET outcome = NULL
+     WHERE question_key = $1 AND subject_key = $2
+       AND outcome IS NOT NULL AND outcome::jsonb ->> 'source' = $3
+"""
+
+
+def _row_count(tag) -> int:
+    # asyncpg returns a command tag like "UPDATE 7"; the trailing integer is the row count.
+    return int(tag.rsplit(" ", 1)[-1]) if isinstance(tag, str) and tag else 0
+
+
+async def _execute(conn_or_pool, sql: str, *args):
+    if hasattr(conn_or_pool, "acquire"):
+        async with conn_or_pool.acquire() as conn:
+            return await conn.execute(sql, *args)
+    return await conn_or_pool.execute(sql, *args)
+
 
 async def record_outcome(conn_or_pool, question_key: str, subject_key: str, truth: bool,
-                         source: str, ref: Optional[str] = None) -> int:
+                         source: str, ref: Optional[str] = None, *, keep_sources: tuple = (),
+                         by: Optional[str] = None) -> int:
     """Stamp `outcome` on every decision_log row of (question_key, subject_key) with the truth a
     human later established. Returns the number of rows updated.
+
+    AA-845: `keep_sources` — rows whose current outcome came from one of these sources are not
+    overwritten (the approve path keeps a reviewer's per-sentence label). `by` — who established the
+    truth (an admin user id); added to the JSON object only when given.
 
     Best-effort by contract: never raises into the caller's request and never blocks the user action
     (log + return 0 on any failure). No Jev call. `conn_or_pool` may be an asyncpg Pool/_SingleConn
     (anything with `.acquire()`) or a bare connection."""
-    outcome = json.dumps({
+    payload = {
         "truth": bool(truth),
         "source": source,
         "ref": ref,
         "at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if by:
+        payload["by"] = by
+    outcome = json.dumps(payload)
     try:
-        if hasattr(conn_or_pool, "acquire"):
-            async with conn_or_pool.acquire() as conn:
-                tag = await conn.execute(_OUTCOME_SQL, question_key, subject_key, outcome)
+        if keep_sources:
+            tag = await _execute(conn_or_pool, _OUTCOME_KEEP_SQL, question_key, subject_key, outcome,
+                                 list(keep_sources))
         else:
-            tag = await conn_or_pool.execute(_OUTCOME_SQL, question_key, subject_key, outcome)
-        # asyncpg returns a command tag like "UPDATE 7"; the trailing integer is the row count.
-        return int(tag.rsplit(" ", 1)[-1]) if isinstance(tag, str) and tag else 0
+            tag = await _execute(conn_or_pool, _OUTCOME_SQL, question_key, subject_key, outcome)
+        return _row_count(tag)
     except Exception as exc:
         logger.warning("record_outcome_failed", question_key=question_key, subject=subject_key,
+                       error=str(exc)[:200])
+        return 0
+
+
+async def clear_outcome(conn_or_pool, question_key: str, subject_key: str, source: str) -> int:
+    """AA-845 — remove the outcome a given `source` wrote on (question_key, subject_key) (a reviewer's
+    undo). An outcome from any other source is untouched. Best-effort like record_outcome: never
+    raises, returns the number of rows cleared (0 on failure)."""
+    try:
+        return _row_count(await _execute(conn_or_pool, _CLEAR_OUTCOME_SQL, question_key, subject_key, source))
+    except Exception as exc:
+        logger.warning("clear_outcome_failed", question_key=question_key, subject=subject_key,
                        error=str(exc)[:200])
         return 0
 

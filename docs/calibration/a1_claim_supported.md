@@ -78,3 +78,43 @@ times in other units (`1h30m` = 90-minute, `2hr 30min` = 2.5-hour), clock format
 accept_floor 0.90 → **0.85**. Sample (200): precision 100% → 97%, supported sentences cleared 43% → 52%. Live accept rate: 31.1% → 41.9%. Reject ceiling still NULL: reject ≤ 0.30 would hold 97% precision and catch 81% of unsupported sentences on the sample, but flag 19.5% of live sentences — measured offline on the next wave from logged probabilities before any change (Nghiệp, S223).
 
 Recomputed from the labelled sample in `data/` (no new labels). Approved by Nghiệp; applied on Dev through `PUT /admin/decisions/questions/{key}` (threshold_version 2). Before-values snapshot: `s3://aa-cis-bronze-{acc2-id}/scripts/restore/s223_aa756_decision_question_before.json`. Audit: `docs/audits/2026-10-10-S223-jev-audit.html` (root repo). Spot-check 30 new decisions per question after the next recompute.
+
+
+## Ground truth and the reject side — S245 (AA-845)
+
+Label source chosen by Nghiệp (S245): **(c)** — a one-off agent-panel label set now, then the
+reviewer's per-sentence action as the long-term truth loop.
+
+### 1. Panel label set (one-off, $0)
+
+`GET /admin/decisions/claim-sample` returns a reproducible stratified sample from the current master
+versions: defaults `n=100`, `low_share=0.6` (≈ 60 sentences with p ≤ `low_max=0.20`, ≈ 40 with
+0.20 < p < `high_max=0.85`), `tours=150` random active tours (`seed`), at most `per_tour=3` sentences
+per tour. Each item carries the sentence, the exact per-unit source Jev read (`source`), `p`, zone,
+`promise_p` (`a1_promise_unsupported`, so AA-803 is labelled in the same pass) and `numeric_hit`
+(the deterministic check fires; the reject side only matters for non-numeric sentences).
+
+Labels follow §"Labels" above (1 = every fact is in the source; 0 = a fact the source does not
+give). The set is saved as `data/a1_claim_supported_<date>.json`, with agent-vs-Jev disagreements
+listed for Nghiệp's review, as in S204.
+
+### 2. Reviewer per-sentence "unsupported" (the long-term loop)
+
+Review Queue drawer → **Source check**: each grounded sentence of the version with its latest
+verdict. **Mark unsupported** writes `outcome = {"truth": false, "source":
+"review_sentence_unsupported", "ref": <review id>, "by": <admin user id>}` on exactly that sentence's
+`decision_log` rows (`POST /admin/review-queue/{id}/claims/label`); **Undo** clears only that label.
+A Review **reject** writes nothing (it judges the whole version — S228 Part 6). A Review **approve**
+still writes truth=true for every sentence, except a sentence a reviewer marked. Precision on the
+reject side then comes from `GET /admin/decisions/outcomes/summary` without a new sample.
+
+### 3. Choosing the reject ceiling (after the set is approved)
+
+Zone → system action → quality (`grounding.classify`, enforce mode): a reject (p ≤ ceiling) on a
+non-numeric sentence raises `UNSUPPORTED_CLAIM` → `s1_flag_fix` rewrites that sentence against the
+source → revalidate → still unsupported → `manual_check` (Review Queue, not published). When Jev is
+right, an invented detail is removed before every tenant inherits it. When Jev is wrong, a supported
+sentence is rewritten or dropped (lost detail) or a good tour waits for a reviewer, and each reject
+costs a flag_fix call. So the ceiling is the higher of 0.15 / 0.20 whose precision on the
+**non-numeric** labelled sentences is ≥ 95%; neither → stays NULL. Then one measurement wave
+(≤ ~50 tours, < $1 Jev) reports grey % and Jev cost before/after and flag_fix volume per tour.

@@ -123,7 +123,7 @@ async def test_record_approved_outcome_stamps_each_unit_with_the_run_subject_key
 
     seen = []
 
-    async def fake_record_outcome(conn, qkey, subject_key, *, truth, source, ref=None):
+    async def fake_record_outcome(conn, qkey, subject_key, *, truth, source, ref=None, keep_sources=(), by=None):
         seen.append((qkey, subject_key, truth, source))
         return 1
 

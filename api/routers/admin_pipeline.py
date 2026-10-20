@@ -17,7 +17,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from api.core.staff_authz import staff_policy_if_staff
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Awaitable, Callable, Optional, List
 
 from api.routers._billing import usage_row_to_dict
@@ -2674,10 +2674,13 @@ async def admin_approve_review(
 
 # AA-756 — the raw source fields that _execute_run_tour builds the grounding `tour` dict from, in
 # the same shape (so source_text() reproduces the exact `source` the S1 run judged against).
+# AA-845: also the review's version id / status, read by the per-sentence claims panel.
 _GROUNDING_OUTCOME_SQL = """
     SELECT rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
            rt.src_itineraries, rt.country, rt.duration, rt.price_raw, rt.inclusions, rt.exclusions,
-           gc.aa_subtitle, gc.aa_summary, gc.aa_highlights, gc.aa_itineraries
+           gc.aa_subtitle, gc.aa_summary, gc.aa_highlights, gc.aa_itineraries,
+           rq.tour_id::text AS tour_id, gc.id::text AS generated_content_id,
+           rq.review_status::text AS review_status, gc.human_edited
     FROM silver_aa_internal.review_queue rq
     JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
@@ -2693,32 +2696,102 @@ async def _record_grounding_approved_outcome(pool, review_id: str) -> None:
     row = await pool.fetchrow(_GROUNDING_OUTCOME_SQL, review_id)
     if row is None:
         return
-    highlights = row["src_highlights"]
-    if not isinstance(highlights, list):
-        highlights = json.loads(highlights) if highlights else []
-    tour = {
-        "name":        row["src_name"],
-        "subtitle":    row["src_subtitle"],
-        "summary":     row["src_summary"],
-        "description": row["src_description"],
-        "highlights":  highlights,
-        "itineraries": row["src_itineraries"],
-        "country":     row["country"],
-        "duration":    row["duration"],
-        "price":       row["price_raw"],
-        "inclusions":  row["inclusions"],
-        "exclusions":  row["exclusions"],
+    await gr.record_approved_outcome(pool, gr.tour_from_row(row), gr.generated_from_row(row))
+
+
+# ── AA-845 — reviewer per-sentence "unsupported" (the a1_claim_supported ground-truth loop) ─────────
+# A Review reject scores the whole version, so it writes no outcome (S245 scope change). Instead the
+# reviewer marks the sentences that are not in the source; each mark stamps truth=False on exactly
+# the decision_log rows the S1 grounding run wrote for that sentence (same subject key builder as the
+# approve hook: grounding.review_units).
+
+async def _review_claim_units(pool, review_id: str):
+    """(row, units) for a review, or HTTP 404. Units carry field/day/sentence/subject_key/index."""
+    from services.content_generation import grounding as gr
+
+    if not _is_uuid(review_id):
+        raise HTTPException(status_code=404, detail="review not found")
+    row = await pool.fetchrow(_GROUNDING_OUTCOME_SQL, review_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="review not found")
+    return row, gr.review_units(gr.tour_from_row(row), gr.generated_from_row(row))
+
+
+def _claim_label(outcome: Optional[dict]) -> Optional[dict]:
+    if not outcome:
+        return None
+    return {"truth": outcome.get("truth"), "source": outcome.get("source"), "at": outcome.get("at"),
+            "by": outcome.get("by")}
+
+
+@router.get("/review-queue/{review_id}/claims",
+            summary="AA-845 — the review's grounded sentences, each with its Jev verdict and label")
+async def admin_review_claims(review_id: str, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.content_generation import grounding as gr
+
+    pool = request.app.state.pool
+    row, units = await _review_claim_units(pool, review_id)
+    verdicts = await gr.latest_verdicts(pool, [u["subject_key"] for u in units],
+                                        (gr.QUESTION, gr.PROMISE_QUESTION))
+    claims = []
+    for u in units:
+        v = verdicts.get((gr.QUESTION, u["subject_key"]))
+        promise = verdicts.get((gr.PROMISE_QUESTION, u["subject_key"]))
+        label = _claim_label(v.get("outcome") if v else None)
+        claims.append({
+            "index": u["index"], "field": u["field"], "day": u["day"], "sentence": u["sentence"],
+            "subject_key": u["subject_key"],
+            "verdict": None if v is None else {
+                "zone": v["zone"], "mode": v["mode"], "probability": v["probability"],
+                "at": v["created_at"].isoformat() if v.get("created_at") else None,
+            },
+            "promise_probability": promise["probability"] if promise else None,
+            "label": label,
+            "marked_unsupported": bool(label and label["source"] == gr.REVIEW_UNSUPPORTED_SOURCE),
+        })
+    return {
+        "review_id": review_id, "tour_id": row["tour_id"],
+        "generated_content_id": row["generated_content_id"], "review_status": row["review_status"],
+        "human_edited": bool(row["human_edited"]), "question_key": gr.QUESTION,
+        "claims": claims,
+        "with_verdict": sum(1 for c in claims if c["verdict"] is not None),
+        "marked_unsupported": sum(1 for c in claims if c["marked_unsupported"]),
     }
-    aa_highlights = row["aa_highlights"]
-    if isinstance(aa_highlights, str):
-        aa_highlights = json.loads(aa_highlights) if aa_highlights else []
-    generated = {
-        "subtitle":    row["aa_subtitle"],
-        "summary":     row["aa_summary"],
-        "highlights":  aa_highlights,
-        "itineraries": row["aa_itineraries"],
-    }
-    await gr.record_approved_outcome(pool, tour, generated)
+
+
+class ClaimLabelBody(BaseModel):
+    subject_key: str = Field(..., min_length=1, max_length=64)
+    unsupported: bool = True
+
+
+@router.post("/review-queue/{review_id}/claims/label",
+             summary="AA-845 — mark (or unmark) one sentence as not supported by the source")
+async def admin_label_review_claim(review_id: str, body: ClaimLabelBody, request: Request,
+                                   x_admin_secret: str = Header(None),
+                                   x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.content_generation import grounding as gr
+
+    pool = request.app.state.pool
+    _, units = await _review_claim_units(pool, review_id)
+    unit = next((u for u in units if u["subject_key"] == body.subject_key), None)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="sentence not in this review's current version")
+    verdicts = await gr.latest_verdicts(pool, [body.subject_key])
+    if (gr.QUESTION, body.subject_key) not in verdicts:
+        raise HTTPException(status_code=409, detail=(
+            "No Jev verdict is logged for this sentence (edited after the source check, or aged out), "
+            "so there is nothing to label."))
+    reviewer = x_admin_user_id if x_admin_user_id and _is_uuid(x_admin_user_id) else None
+    if body.unsupported:
+        updated = await gr.record_rejected_outcome(pool, body.subject_key, ref=review_id, by=reviewer)
+    else:
+        updated = await gr.clear_rejected_outcome(pool, body.subject_key)
+    logger.info("review_claim_labelled", review_id=review_id, subject_key=body.subject_key,
+                unsupported=body.unsupported, rows=updated, admin_user=reviewer)
+    return {"review_id": review_id, "subject_key": body.subject_key, "unsupported": body.unsupported,
+            "rows_updated": updated}
 
 
 @router.post("/review-queue/{review_id}/reject")
