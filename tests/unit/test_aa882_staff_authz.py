@@ -53,7 +53,7 @@ def test_role_perms_match_the_s241_matrix():
         "master.admin", "atoms.write", "photos.write", "a4.unpublish", "quality.write",
         "content.settings.write",
         "tenant.read", "tenant.write", "ops.read", "ops.write", "ai.admin", "spend.read",
-        "spend.write", "staff.read", "audit.read",
+        "spend.write", "staff.read", "audit.read", "alerts.write",   # alerts.write: AA-913
     }
 
 

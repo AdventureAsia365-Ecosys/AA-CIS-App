@@ -11,24 +11,29 @@ At most one e-mail per budget (provider + scope), per threshold, per UTC day: th
 of that the bell's own throttle (one unread alert per provider per 24 h) gates the enqueue, so the
 e-mail never fires more often than the bell.
 
-Not configured (ALERT_EMAIL_TO or SES_FROM_ADDRESS empty) -> nothing is queued; one log line.
+Not configured (SES_FROM_ADDRESS empty) -> nothing is queued; one log line. AA-913: the recipients are resolved
+when the job runs (services/jobs/ops_alert_email_job.py): the confirmed rows of shared.alert_recipient, managed on
+the admin page Platform › Alert recipients, plus ALERT_EMAIL_TO (shared/alert_recipients.ops_recipients). The
+``test`` template is the page's "Send test e-mail" (api/services/alert_recipients.send_test).
 """
 from __future__ import annotations
 
 import html
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Union
 
 import structlog
 
-from shared.aws_client.ses_mailer import Message, alert_mail_config
+from shared.aws_client.ses_mailer import Message, sender_config
 
 logger = structlog.get_logger()
 
 KIND = "ops_alert_email"
 MAX_ATTEMPTS = 5
 TEMPLATE_SPEND_BUDGET = "spend_budget"
+TEMPLATE_TEST = "test"           # AA-913: "Send test e-mail" on Platform › Alert recipients
+ALERTS_PAGE_PATH = "/admin/platform/alerts"
 THRESHOLD_STOP = "stop"
 # Admin page with the spend overview and the Budgets tab (nav: Operations -> External Spend).
 SPEND_PAGE_PATH = "/admin/llm-usage"
@@ -58,9 +63,9 @@ async def enqueue_spend_budget_email(conn, *, summary: dict, alert_pct: int, sto
     not configured or this budget/threshold/day already has its e-mail job. `conn` is an asyncpg
     connection or pool (only fetchrow/fetchval are used)."""
     provider, scope = str(summary.get("provider", "")), str(summary.get("scope", ""))
-    if alert_mail_config() is None:
+    if sender_config() is None:
         logger.info("ops_alert_email_not_configured", provider=provider, scope=scope,
-                    hint="set ALERT_EMAIL_TO and SES_FROM_ADDRESS on the task definition")
+                    hint="set SES_FROM_ADDRESS on the task definition")
         return None
     from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
 
@@ -87,7 +92,10 @@ def _usd(v) -> str:
     return "none" if v is None else f"${float(v):,.2f}"
 
 
-def render_spend_budget(payload: dict, *, to: str, base_url: Optional[str] = None,
+Recipients = Union[str, tuple[str, ...]]
+
+
+def render_spend_budget(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
                         environment: Optional[str] = None) -> Message:
     """The operator e-mail for one spend budget alert (plain text + HTML)."""
     b = payload.get("budget") or {}
@@ -134,3 +142,31 @@ def render_spend_budget(payload: dict, *, to: str, base_url: Optional[str] = Non
         "One e-mail per budget, threshold and UTC day.</p></div>"
     )
     return Message(to=to, subject=subject, text=text, html=body)
+
+
+def render_test(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                environment: Optional[str] = None) -> Message:
+    """AA-913: the test e-mail of Platform › Alert recipients (the CIS SES path only)."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    who = " ".join(str(payload.get("requested_by") or "").split())[:120] or "an administrator"
+    link = f"{base_url or admin_base_url()}{ALERTS_PAGE_PATH}"
+    subject = f"[AA-CIS {env}] Test alert e-mail"
+    lines = [
+        f"This test was sent from Platform > Alert recipients by {who}.",
+        "",
+        "It came through the CIS spend alert path (Amazon SES), the one that sends spend budget e-mails.",
+        "AWS alarms, security alerts, cost anomalies and AWS Budgets arrive separately from AWS Notifications "
+        "(no-reply@sns.amazonaws.com).",
+        "",
+        f"Recipients: {link}",
+    ]
+    body = (
+        "<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+        f"<p><strong>Test alert e-mail</strong></p><p>This test was sent from Platform &gt; Alert recipients by "
+        f"{html.escape(who)}.</p>"
+        "<p>It came through the CIS spend alert path (Amazon SES), the one that sends spend budget e-mails. AWS "
+        "alarms, security alerts, cost anomalies and AWS Budgets arrive separately from AWS Notifications "
+        "(no-reply@sns.amazonaws.com).</p>"
+        f"<p><a href=\"{html.escape(link)}\">Open Alert recipients</a></p></div>"
+    )
+    return Message(to=to, subject=subject, text="\n".join(lines), html=body)

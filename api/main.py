@@ -59,6 +59,7 @@ from api.routers.admin_waves import router as admin_waves_router  # AA-727 — r
 from api.routers.admin_content_quality import router as admin_content_quality_router  # AA-769
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
+from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
 from api.routers.v1_progress import router as v1_progress_router  # AA-637
 from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
@@ -259,6 +260,7 @@ app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guar
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
+app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
 app.include_router(admin_photos_router)  # AA-708 — /admin/photos (Drive photo sync, matching)
 app.include_router(admin_places_router)  # AA-712 — /admin/places/backfill (place pipeline)
 app.include_router(admin_search_router)  # AA-752 — GET /admin/search (global ⌘K palette)

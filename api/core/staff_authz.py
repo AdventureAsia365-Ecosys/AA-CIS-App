@@ -75,6 +75,9 @@ SPEND_WRITE = "spend.write"                  # budgets, Jev credit ledger, Cost 
 STAFF_READ = "staff.read"
 STAFF_WRITE = "staff.write"                  # change a staff role / active flag: owners only
 AUDIT_READ = "audit.read"
+# AA-913 — change the platform alert recipients (SNS alerts topic + ops e-mail). Admin role; the router also requires
+# a verified Cognito session for every change but the status refresh (api/routers/admin_alert_recipients.py).
+ALERTS_WRITE = "alerts.write"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -82,7 +85,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     "admin": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         TENANT_READ, TENANT_WRITE, OPS_READ, OPS_WRITE, AI_ADMIN, SPEND_READ, SPEND_WRITE,
-        STAFF_READ, AUDIT_READ,
+        STAFF_READ, AUDIT_READ, ALERTS_WRITE,
     },
     "reviewer": _CONTENT_WORK,
     "content": _CONTENT_WORK,
@@ -313,6 +316,15 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/admin/platform/audit"): AUDIT_READ,
     ("GET", "/admin/platform/audit/verify"): AUDIT_READ,
     ("GET", "/admin/platform/cost"): SPEND_READ,
+
+    # ── admin_alert_recipients (AA-913) — Platform › Alert recipients. Reads ops.read (admin); changes alerts.write
+    # (admin) and, in the router, a Cognito session for add / remove / resend / test (not for the status refresh).
+    ("GET", "/admin/platform/alert-recipients"): OPS_READ,
+    ("POST", "/admin/platform/alert-recipients"): ALERTS_WRITE,
+    ("POST", "/admin/platform/alert-recipients/refresh"): ALERTS_WRITE,
+    ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,
+    ("DELETE", "/admin/platform/alert-recipients/{recipient_id}"): ALERTS_WRITE,
+    ("POST", "/admin/platform/alert-recipients/{recipient_id}/resend"): ALERTS_WRITE,
 }
 
 # POLICY entries whose route is not on main yet. (method, route) -> the change that adds it. The

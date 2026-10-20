@@ -101,7 +101,8 @@ def _insert(cur, email, status="pending", **kw):
 # ── shape ────────────────────────────────────────────────────────────────────────────────────────
 
 def test_table_exists_registered_and_rls_off(su):
-    su.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = 'shared.alert_recipient'::regclass")
+    su.execute("SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+               "WHERE oid = 'shared.alert_recipient'::regclass")
     assert su.fetchone() == (False, False)
     su.execute("SELECT description FROM shared.schema_versions WHERE version = '251'")
     row = su.fetchone()

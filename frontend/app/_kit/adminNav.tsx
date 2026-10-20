@@ -16,7 +16,7 @@
 import {
   Gauge, Users, Upload, Wand2, ClipboardList, Library, Settings, Wallet, UserCog, Radio,
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldCheck,
-  Boxes, ScrollText, ChartPie,
+  Boxes, ScrollText, ChartPie, BellRing,
 } from "lucide-react";
 import { canSeePage } from "@/lib/rbac";
 
@@ -54,6 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: "People & access", section: "platform", items: [
     { href: "/admin/platform/staff", icon: <UserCog size={16} />, label: "Staff" },  // AA-883
     { href: "/admin/platform/audit", icon: <ScrollText size={16} />, label: "Audit log" },  // AA-884
+    { href: "/admin/platform/alerts", icon: <BellRing size={16} />, label: "Alert recipients" },  // AA-913
   ] },
   // AA-884 — health and running commit of each ecosystem app (CIS api/worker, Booking, TripPlanner).
   { label: "Apps", section: "platform", items: [

@@ -4,15 +4,19 @@ SES identity `lumiguides.it.com` on acc2 (AA-CIS-Infra ses.tf, AA-811). The CIS 
 only as the Terraform `ses_from_address` (IAM condition `ses:FromAddress`) and only through the
 `transactional` configuration set, so both come from the environment the task definition sets:
 
-  ALERT_EMAIL_TO          operator mailbox (Dev: nghieppham@adventure.asia)
+  ALERT_EMAIL_TO          operator mailbox fallback (Terraform var.cis_ops_alert_email). AA-913: the ops alert
+                          e-mail goes to the confirmed rows of shared.alert_recipient (managed on the admin page,
+                          shared/alert_recipients.py) plus this address
   SES_FROM_ADDRESS        must equal var.ses_from_address (no-reply@lumiguides.it.com)
   SES_CONFIGURATION_SET   aa-email-dev-transactional
   SES_REGION              optional, default AWS_REGION / us-west-1
 
 `ALERT_EMAIL_TO` or `SES_FROM_ADDRESS` empty -> `alert_mail_config()` returns None and callers log and
 send nothing. AA-816: `sender_config()` is the same sender without the operator mailbox, for the staff
-invitation (services/jobs/staff_invite_email_job.py). Used from job handlers only, never from a request
-or an LLM call path: the boto3 call blocks, so it runs in a thread.
+invitation (services/jobs/staff_invite_email_job.py) and, since AA-913, for the ops alert e-mail (its recipients
+are resolved when the job runs). AA-913: `Message.to` is one address or a tuple of addresses (all in `To`).
+Used from job handlers only, never from a request or an LLM call path: the boto3 call blocks, so it runs in a
+thread.
 
 boto3 is imported lazily; tests inject a stub client (anything with
 `send_email(**kwargs) -> {"MessageId": ...}`). Same contract as AA-Booking app/mailer.py.
@@ -22,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Union
 
 
 class SesClient(Protocol):
@@ -57,7 +61,7 @@ class MailError(Exception):
 
 @dataclass(frozen=True)
 class Message:
-    to: str
+    to: Union[str, tuple[str, ...]]   # AA-913: the ops alert e-mail goes to several addresses
     subject: str
     text: str
     html: str
@@ -107,6 +111,11 @@ def sender_config() -> Optional[SenderConfig]:
     )
 
 
+def to_addresses(to: Union[str, tuple[str, ...], list[str]]) -> list[str]:
+    """SES ToAddresses from Message.to (one address or several)."""
+    return [to] if isinstance(to, str) else list(to)
+
+
 def ses_client(region: str) -> SesClient:
     import boto3  # lazy: only the worker path that sends mail needs it
 
@@ -128,7 +137,7 @@ async def send(client: SesClient, message: Message, *, sender: str,
     """Send one message; returns the SES MessageId. Raises MailError on an SES refusal."""
     kwargs: dict[str, Any] = {
         "FromEmailAddress": sender,
-        "Destination": {"ToAddresses": [message.to]},
+        "Destination": {"ToAddresses": to_addresses(message.to)},
         "Content": {
             "Simple": {
                 "Subject": {"Data": message.subject, "Charset": "UTF-8"},

@@ -230,9 +230,13 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   `PUT /admin/budgets/{provider}/{scope}` (no settings screen yet).
   Alerts: `maybe_alert` writes a `spend_budget_alert` bell row (one unread per provider per 24 h)
   and, since AA-828, queues one `ops_alert_email` job that the worker sends through SES
-  (`shared/ops_alerts.py`, `shared/aws_client/ses_mailer.py`; env `ALERT_EMAIL_TO`,
-  `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET` from AA-CIS-Infra). At most one e-mail per budget,
-  threshold and UTC day (job idempotency key); unset env = no e-mail, one log line.
+  (`shared/ops_alerts.py`, `shared/aws_client/ses_mailer.py`; env `SES_FROM_ADDRESS`,
+  `SES_CONFIGURATION_SET` from AA-CIS-Infra). At most one e-mail per budget,
+  threshold and UTC day (job idempotency key); `SES_FROM_ADDRESS` unset = nothing queued, one log line.
+  Recipients (AA-913) are resolved when the job runs: the **confirmed** rows of `shared.alert_recipient`
+  (Platform › Alert recipients, below) plus `ALERT_EMAIL_TO` (Terraform fallback, always included), deduplicated,
+  all in one message; pending rows get nothing. When `ALERTS_TOPIC_ARN` is set the job first reconciles the table
+  with SNS (best effort). Nobody to mail = `skipped`. Template `test` = the page's "Send test e-mail".
 - **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
   (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
   losing it.
@@ -777,6 +781,30 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+- **Alert recipients (AA-913).** Who gets the platform alert e-mails, chosen on the admin page instead of a
+  Terraform variable. One list for everything: the CIS api manages the **e-mail subscriptions of the SNS alerts
+  topic** (CloudWatch alarms of CIS, Booking, TripPlanner and shared; security EventBridge rules; cost anomalies;
+  AWS Budgets, which notify the topic since the AA-913 Infra change), and `ops_alert_email` mails the confirmed
+  rows. Table `shared.alert_recipient` (CIS 251: e-mail, note, `pending`/`confirmed`/`removed` +
+  `removed_reason` `admin`/`unsubscribed`/`expired`, the subscription ARN — never returned to the browser —, who /
+  when; rows are history, `cis_app` has no DELETE). Env from Terraform on api + worker: `ALERTS_TOPIC_ARN` (unset =
+  page read-only "not configured", writes 503) and `ALERT_BOOTSTRAP_EMAIL` (the one Terraform-managed subscription,
+  `var.alert_email`: shown **locked**, never stored or changed by the app, so alarms still reach someone if the app
+  or the DB is down). Code: `shared/alert_recipients.py` (e-mail rule, SNS calls in a thread with 3 s/8 s timeouts,
+  pure `plan_reconcile` + `reconcile`, `ops_recipients`), `api/services/alert_recipients.py` (page, add, remove,
+  resend, test e-mail, rate limits from `acp_shared.audit_log`), router `api/routers/admin_alert_recipients.py`:
+  `GET /admin/platform/alert-recipients[?refresh=true]` (`ops.read`; reconciles with SNS first, throttled 60 s in
+  Redis), `POST …` add, `DELETE …/{recipient_id}`, `POST …/{recipient_id}/resend`, `POST …/test-email`,
+  `POST …/refresh` (all `alerts.write`). Add / remove / resend / test also need a **Cognito session** (checked in the
+  router; the topic carries security alerts), refresh does not. AWS sends and validates the confirmation e-mail
+  (no token handled here). Reconcile: SNS confirmed -> `confirmed`; gone after confirmation -> `unsubscribed`;
+  never confirmed (AWS drops it after 3 days) -> `expired`; an address removed by an admin whose confirmation was
+  clicked later is unsubscribed again; other topic subscriptions are listed read-only ("unmanaged"). Limits: 10
+  active, 10 adds / 24 h, resend 1 per 10 min and 3 per 24 h per row, test e-mail 1 per 5 min (429 + Retry-After).
+  IAM (AA-CIS-Infra): Subscribe (e-mail protocol), ListSubscriptionsByTopic, Unsubscribe, GetSubscriptionAttributes
+  on that topic only; no `sns:Publish`, so the test e-mail tests the SES path and SNS delivery is checked with
+  `aws cloudwatch set-alarm-state`. Page `/admin/platform/alerts` (People & access › **Alert recipients**). Notes:
+  `docs/implementation-notes/AA-913.md`.
 - **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
   `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
   `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain
@@ -812,7 +840,7 @@ fetched about once a day.
 | Content work pages: Upload, Rewrite (S1) | ✓ | ✓ | ✓ | — | — |
 | Content pages: Review Queue, Master Content, Settings (viewer: read only, write controls hidden by `can()`) | ✓ | ✓ | ✓ | read | — |
 | Overview, Photos, Social Content (atom curation), Content Trace, A4 Quality (`/admin/platform-stats`), Content Quality, SEO Intelligence, Tenants, External Spend, Jobs, Jev Decisions, API Docs | ✓ | — | — | — | — |
-| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only) | ✓ | — | — | — | — |
+| Platform pages `/admin/platform/*` (AA-883 Staff directory; writes need `staff.write`, owners only; AA-913 Alert recipients, changes need `alerts.write` + Cognito) | ✓ | — | — | — | — |
 | BFF `/api/admin/openapi.json` and `/api/admin/platform/*` (any method; `lib/rbac.ts` API_READ_RULES, backend re-checks the role) | ✓ | — | — | — | — |
 | Backend docs `openapi.json`, `docs`, `redoc` through the staff branch of `/api/tenant/*` (`lib/rbac.ts` isApiDocsPath) | ✓ | — | — | — | — |
 | Tenant portal `/portal/*` — **portal app** (`portal.lumiguides.it.com`, AA-885; no staff access) | — | — | — | — | ✓ |
@@ -843,7 +871,8 @@ what they may call there is narrowed by the backend capabilities below (AA-882),
 **Backend capabilities (AA-882, S241 GĐ1 + GĐ3).** `api/core/staff_authz.py` holds `ROLE_PERMS` (role →
 capabilities: `content.read/write` and `review.act` for every staff role; `master.admin`,
 `atoms.write`, `photos.write`, `a4.unpublish`, `quality.write`, `content.settings.write`, `tenant.*`,
-`ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read` for admin; `staff.write` is an owner flag,
+`ops.*`, `ai.admin`, `spend.*`, `staff.read`, `audit.read`, `alerts.write` (AA-913; the alert-recipient changes
+also need a Cognito session, checked in their router) for admin; `staff.write` is an owner flag,
 not a role permission) and `POLICY` keyed by `(method, route template)`. The router-level dependency
 `staff_policy` (secret check, then policy) refuses with 403 a role that lacks the route's capability;
 `staff_policy_if_staff` does the same only for a request carrying a staff credential (the valid secret, or since
