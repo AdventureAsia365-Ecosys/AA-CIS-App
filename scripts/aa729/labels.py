@@ -5,7 +5,7 @@ Local, $0 (the panel is Claude Code agents reading the pack, not a gateway call)
   python3 -m scripts.aa729.labels export-pack fixture-1.0.0.json --out pack.json [--md pack.md]
   python3 -m scripts.aa729.labels apply fixture-1.0.0.json panel.json --approved-by nghiep --out fixture-1.1.0.json
 
-The pack holds, per needs_panel sample, the frozen output, a short source excerpt and the rubric — never the
+The pack holds, per needs_panel sample, the frozen output, the FULL writer source and the rubric — never the
 pipeline's own verdict (passed / held / score / failure codes), T9's gate_ledger / flags, nor the selection
 tags derived from them (held, known_failure): the panel label is
 what the judges are measured against, so it must not be anchored on them (PANEL_HIDDEN_KEYS). The panel
@@ -33,7 +33,8 @@ RUBRIC = {
     "grades": {"as_is": "pass", "light": "pass", "heavy": "fail", "reject": "fail"},
     "post_edit": "When output_post_edit is true the text was already edited by a person: label the text you see.",
 }
-EXCERPT_CHARS = 2500
+# The panel reads the whole source: a 2,500-char excerpt (1.0.0) hid the later days of 76/82 sources, and judges
+# failed claims that were in the full text (26/82 samples, S245). Panel agents read files, so size is not a limit.
 # Output keys that carry the pipeline's own judgement (T9 gate results) — left out of the panel pack.
 PANEL_HIDDEN_KEYS = frozenset({"gate_ledger", "flags"})
 # Selection tags that restate the pipeline verdict or an existing label — left out too.
@@ -47,14 +48,14 @@ def panel_output(output):
     return output
 
 
-def _source_excerpt(sample: dict) -> str:
+def _source_text(sample: dict) -> str:
     inp = sample.get("input") or {}
     src = inp.get("tour") or {}
     if not src and inp.get("context"):
         ctx = inp["context"]
         src = {"seed": ctx.get("atom_text"), "facts": ctx.get("facts_text"), "cta": ctx.get("cta"),
                "brand": (ctx.get("brand_audience") or {}).get("brand_name")}
-    return flatten_text(src)[:EXCERPT_CHARS]
+    return flatten_text(src)
 
 
 def export_pack(fixture: dict) -> dict:
@@ -66,7 +67,7 @@ def export_pack(fixture: dict) -> dict:
                       "country": s.get("country"), "group": s.get("group"),
                       "tags": [t for t in s.get("tags") or [] if t not in PANEL_HIDDEN_TAGS],
                       "output_post_edit": s.get("output_post_edit", False),
-                      "source_excerpt": _source_excerpt(s), "output": panel_output(s.get("output"))})
+                      "source": _source_text(s), "output": panel_output(s.get("output"))})
     return {"fixture_version": fixture["fixture_version"], "rubric": RUBRIC, "count": len(items), "items": items}
 
 
@@ -76,7 +77,7 @@ def pack_markdown(pack: dict) -> str:
     for it in pack["items"]:
         lines += [f"## {it['sample_id']} · {it['stratum']} · {it.get('group')} · {it.get('country')}", "",
                   f"Tags: {', '.join(it['tags']) or '–'}{' · POST-EDIT' if it['output_post_edit'] else ''}", "",
-                  "Source excerpt:", "", "```", it["source_excerpt"], "```", "", "Output:", "", "```",
+                  "Source (full):", "", "```", it["source"], "```", "", "Output:", "", "```",
                   flatten_text(panel_output(it["output"])), "```", ""]
     return "\n".join(lines)
 
