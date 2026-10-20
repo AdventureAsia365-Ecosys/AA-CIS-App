@@ -9,6 +9,8 @@ were already in the DB. This module reads them, in a fixed order, at $0 (DB read
      (`acp_contract.atom_matches`, kind 'question'; they passed the A3 Jev scope/landing gates).
   2. `place_paa`     — PAA bought for a keyword of one of the piece's places
      (`acp_contract.search_demand.people_also_ask`, any market, English questions only).
+  Off-meaning questions (about a place name as a word: 'What is a moron?' for Mörön) are dropped
+  from every tier, using the piece's own place words.
   3. `tour_paa`      — the tour-level PAA the request snapshot holds (the only source before).
 
 Later sources plug in as more `QuestionSource` objects in `DB_SOURCES` (between `place_paa` and the
@@ -121,11 +123,20 @@ class RealQuestion:
         return {"q": self.question, "source": self.source}
 
 
+# Tiers whose questions can come from a DE / FR / NL market (`search_demand` of any market, and the
+# atom_matches questions landed from it): only those are language-checked. The tour tier is the
+# US / English SERP of the tour title, so 'Best time to visit Bhutan?' stays there.
+ENGLISH_ONLY_SOURCES = frozenset({SOURCE_SEGMENT, SOURCE_PLACE, SOURCE_SERP_TOPUP, SOURCE_AUTOCOMPLETE})
+
+
 def merge(tiers: Sequence[tuple[str, Iterable]], per_source: int = PER_SOURCE_MAX,
-          limit: int = CHAIN_MAX) -> list[RealQuestion]:
-    """The chain in tier order: cleaned (whitespace, 10–160 chars), English only, word-sense
-    questions out, a question already given by an earlier tier skipped, at most `per_source`
-    from one tier and `limit` in all."""
+          limit: int = CHAIN_MAX, names: Iterable[str] = (),
+          english_only: frozenset = ENGLISH_ONLY_SOURCES) -> list[RealQuestion]:
+    """The chain in tier order: cleaned (whitespace, 10–160 chars), English only for the
+    `english_only` tiers, off-meaning questions out (word-sense cues, and a name of `names` — the
+    piece's folded place words — used as a common noun: 'What is a moron?' for Mörön), a question
+    already given by an earlier tier skipped, at most `per_source` from one tier and `limit` in all."""
+    names = tuple(names)
     out: list[RealQuestion] = []
     seen: set[str] = set()
     for source, questions in tiers:
@@ -136,7 +147,9 @@ def merge(tiers: Sequence[tuple[str, Iterable]], per_source: int = PER_SOURCE_MA
             if not isinstance(raw, str):
                 continue
             q = " ".join(raw.split())
-            if not 10 <= len(q) <= 160 or not looks_english(q) or is_off_meaning(q):
+            if not 10 <= len(q) <= 160 or is_off_meaning(q, names):
+                continue
+            if source in english_only and not looks_english(q):
                 continue
             key = question_key(q)
             if key in seen:
@@ -285,6 +298,7 @@ async def collect_real_questions(pool, *, atom_ids: Sequence[str], segment_ids: 
     """The whole chain for one piece. Soft-fails per source (a failed read is logged and skipped;
     the tour tier always remains), so writing never stops on it. $0: DB reads only."""
     tiers: list[tuple[str, list]] = []
+    scope: Optional[QuestionScope] = None
     try:
         async with pool.acquire() as conn:
             scope = await resolve_scope(conn, atom_ids, segment_ids)
@@ -296,7 +310,10 @@ async def collect_real_questions(pool, *, atom_ids: Sequence[str], segment_ids: 
     except Exception as e:  # noqa: BLE001
         logger.warning("real_questions_scope_failed", error=str(e)[:200])
     tiers.append((SOURCE_TOUR, list(tour_paa or [])))
-    return merge(tiers)
+    # The place words also drop a question using a place name as a common noun: the place_paa tier
+    # buys exactly those ('moron' for Mörön), and T8 shows the merged list to the tenant.
+    names = place_words(scope.places, scope.countries) if scope else set()
+    return merge(tiers, names=sorted(names))
 
 
 # ---------------------------------------------------------------- admin record
@@ -350,7 +367,8 @@ def faq_sources(faq_questions: Sequence[str], kept: Sequence[dict],
 __all__ = [
     "SOURCE_SEGMENT", "SOURCE_PLACE", "SOURCE_TOUR", "SOURCE_SERP_TOPUP", "SOURCE_AUTOCOMPLETE",
     "SOURCE_WRITER", "REAL_SOURCES", "RealQuestion", "QuestionScope", "QuestionSource", "DB_SOURCES",
-    "SegmentMatchSource", "PlacePaaSource", "merge", "looks_english", "is_off_meaning", "question_key",
+    "SegmentMatchSource", "PlacePaaSource", "ENGLISH_ONLY_SOURCES", "merge", "looks_english", "is_off_meaning",
+    "question_key",
     "place_words", "rank_place_rows", "resolve_scope", "collect_real_questions", "label_questions", "source_counts",
     "faq_sources",
 ]

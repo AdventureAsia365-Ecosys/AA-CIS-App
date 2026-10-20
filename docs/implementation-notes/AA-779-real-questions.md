@@ -22,10 +22,18 @@ Agent: Claude Code (coding lane `aa779-cis`). Runtime cost: $0 (DB reads only).
   `hygiene.COMMON_CAPS`: lake, province, desert…) and not the tour's country — 'mongolia' would match
   every Mongolia keyword. Whole-word match against the keyword (`keyword_words`); ranked by shared
   words, then volume, then market US/UK/AU/DE/FR/NL.
-- **English only**: DE/FR/NL markets can return German/French/Dutch PAA. A question must open with an
-  English question word/auxiliary and carry no German/French/Dutch function word (`looks_english`).
-- **Off-meaning PAA (item 3)** is dropped in two places: in the chain merge (word-sense cues, so T8
-  never sees them) and in the existing scope filter `quality_gates.paa_for_scope` (word-sense cues
+- **English only, for the market tiers**: DE/FR/NL markets can return German/French/Dutch PAA. A
+  `segment_match` / `place_paa` (and later `serp_topup` / `autocomplete`) question must open with an
+  English question word/auxiliary and carry no German/French/Dutch function word (`looks_english`,
+  `ENGLISH_ONLY_SOURCES`). The tour tier is NOT language-checked (review fix): it is the US/English
+  SERP of the tour title and was used unfiltered before this change; `looks_english` would drop real
+  English shapes such as 'Best time to visit Bhutan?' or 'Mongolia: is it safe to travel?'.
+  `segment_match` stays checked although the review named only `place_paa`: its questions are
+  `search_demand` PAA of any market landed by embedding, so a German one can reach it too.
+- **Off-meaning PAA (item 3)** is dropped in two places: in the chain merge (word-sense cues plus the
+  name-as-common-noun tests against the scope's folded place words — `place_words(scope.places,
+  scope.countries)`; review fix: with word-sense cues alone 'What is a moron?' / 'Is moron offensive?'
+  reached the T8 prompt, `rank_angles` and the tenant-visible `dfs_paa_snapshot`) and in the existing scope filter `quality_gates.paa_for_scope` (word-sense cues
   plus name-as-common-noun tests against the moment's own name tokens: 'What is a moron?', 'Is moron
   offensive?', 'call someone a moron'). The Mörön case: the town's DFS keyword is 'moron', whose SERP
   asks about the insult; before this, 'Is moron a bad word?' passed `paa_for_scope` because 'moron'
@@ -109,3 +117,17 @@ Agent: Claude Code (coding lane `aa779-cis`). Runtime cost: $0 (DB reads only).
   is below 80%, the `below_3` list is the target set for (B)/(C).
 - The A1 (S1) writer prompt is untouched; the blog writer prompt template is unchanged (only which
   questions fill the existing SEARCH QUESTIONS block).
+
+## Review fixes (independent review, S245)
+
+- **High — name-aware off-meaning in the chain**: `merge(..., names=...)`; `collect_real_questions`
+  passes the scope's place words (empty when scope resolution failed). Verified first: `merge` kept
+  'What is a moron?', 'Is moron offensive?', 'Why do people call someone a moron?' from a `place_paa`
+  tier for Mörön. Tests: chain with place Mörön keeps only 'How cold is Mörön in winter?'; T8
+  `_blog_search_demand` over the real chain keeps the insult questions out of the signal that becomes
+  `dfs_paa_snapshot`.
+- **Low — tour tier language check**: `looks_english` now applies only to `ENGLISH_ONLY_SOURCES`;
+  length and off-meaning checks stay for every tier. Side effect: the T8 fallback to the unfiltered tour
+  list (when the chain is empty) now differs from the chain only by length / off-meaning, not language.
+  Test fixture moved its German noise question from the tour tier to the place tier.
+

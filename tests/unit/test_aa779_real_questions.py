@@ -69,8 +69,9 @@ def test_only_english_questions_count():
 # ---------------------------------------------------------------- the chain
 
 def test_merge_keeps_tier_order_drops_duplicates_and_noise():
-    out = rq.merge([(rq.SOURCE_SEGMENT, SEGMENT_QS), (rq.SOURCE_PLACE, PLACE_QS + ["Is moron a bad word?"]),
-                    (rq.SOURCE_TOUR, TOUR_QS + ["Wie kalt ist es?", "Hi?", None, 7])])
+    out = rq.merge([(rq.SOURCE_SEGMENT, SEGMENT_QS),
+                    (rq.SOURCE_PLACE, PLACE_QS + ["Is moron a bad word?", "Wie kalt ist der Khövsgöl See?"]),
+                    (rq.SOURCE_TOUR, TOUR_QS + ["Hi?", None, 7])])
     assert [(r.question, r.source) for r in out] == [
         ("Who are the Tsaatan people?", "segment_match"),
         ("How deep is Lake Khövsgöl?", "segment_match"),
@@ -79,6 +80,28 @@ def test_merge_keeps_tier_order_drops_duplicates_and_noise():
         ("How many days do you need in Mongolia?", "tour_paa"),
         ("Is Mongolia safe for tourists?", "tour_paa"),
     ]
+
+
+def test_merge_language_checks_only_the_market_tiers():
+    # the tour tier is the US/English SERP of the tour title: real English shapes stay
+    tour = ["Best time to visit Bhutan?", "Mongolia: is it safe to travel?"]
+    out = rq.merge([(rq.SOURCE_TOUR, tour)])
+    assert [r.question for r in out] == tour
+    # the same shapes from a DE/FR/NL-capable tier are language-checked
+    assert rq.merge([(rq.SOURCE_PLACE, tour + ["Wie kalt ist der Khövsgöl See?"])]) == []
+    assert rq.merge([(rq.SOURCE_SEGMENT, ["Was ist Khövsgöl?"])]) == []
+    # length and off-meaning still apply to the tour tier
+    assert rq.merge([(rq.SOURCE_TOUR, ["Bhutan?", "Is moron a bad word?"])]) == []
+
+
+MORON_TOWN_PAA = ["What is a moron?", "Is moron offensive?", "Why do people call someone a moron?",
+                  "How cold is Mörön in winter?"]
+
+
+def test_merge_drops_a_place_name_used_as_a_common_noun():
+    tiers = [(rq.SOURCE_PLACE, MORON_TOWN_PAA)]
+    assert [r.question for r in rq.merge(tiers, names=["moron"])] == ["How cold is Mörön in winter?"]
+    assert len(rq.merge(tiers)) == 4  # without the place words only word-sense cues count
 
 
 def test_merge_caps_each_source_and_the_total():
@@ -182,6 +205,30 @@ async def test_no_scope_reads_nothing_but_the_tour():
     conn = _Conn()
     out = await rq.collect_real_questions(_pool(conn), atom_ids=[], tour_paa=["Is Mongolia safe for tourists?"])
     assert [r.source for r in out] == ["tour_paa"] and conn.calls == []
+
+
+MORON_CONN = dict(
+    segments=[{"segment_id": "seg-moron", "canonical_place": "Mörön"}],
+    atoms=[{"place": "Mörön", "country": "Mongolia"}],
+    demand=[_row("moron", "US", 74000, MORON_TOWN_PAA)],  # the town's DFS keyword asks about the insult
+)
+
+
+@pytest.mark.asyncio
+async def test_chain_drops_the_town_name_used_as_an_insult():
+    out = await rq.collect_real_questions(_pool(_Conn(**MORON_CONN)), atom_ids=["atom-moron"],
+                                          tour_paa=["How many days do you need in Mongolia?"])
+    assert [(r.question, r.source) for r in out] == [
+        ("How cold is Mörön in winter?", "place_paa"),
+        ("How many days do you need in Mongolia?", "tour_paa"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chain_without_a_scope_still_runs_the_word_sense_check():
+    out = await rq.collect_real_questions(_pool(_Conn(fail=("atom_segment_alias",))), atom_ids=["a"],
+                                          tour_paa=["Is moron a bad word?", "What is a moron?"])
+    assert [r.question for r in out] == ["What is a moron?"]  # no place words known: name test cannot run
 
 
 def test_segment_match_sql_counts_only_the_last_landing_pass():
@@ -298,6 +345,21 @@ async def test_t8_blog_signal_puts_real_questions_before_the_tour():
                                   "tour_paa": TOUR_QS}
     assert signal.people_also_ask == SEGMENT_QS + TOUR_QS and tour_paa == TOUR_QS
     assert (signal.relevance, signal.related_keywords) == ("HIGH", ["khovsgol tour"])
+
+
+@pytest.mark.asyncio
+async def test_t8_blog_snapshot_never_shows_the_tenant_an_off_meaning_question():
+    """Real chain (no mock): the signal _blog_search_demand returns is what the angle prompt, rank_angles
+    and the tenant-visible dfs_paa_snapshot (asdict of it) carry."""
+    from dataclasses import asdict
+    req = {"atom_id": "atom-moron", "route_segment_ids": json.dumps(["seg-moron"])}
+    tour = SearchDemandSignal(relevance="HIGH", people_also_ask=["Is Mongolia safe for tourists?"],
+                              related_keywords=[])
+    signal, tour_paa = await angle_service._blog_search_demand(req, tour, pool=_pool(_Conn(**MORON_CONN)))
+    snapshot_paa = asdict(signal)["people_also_ask"]
+    assert snapshot_paa == ["How cold is Mörön in winter?", "Is Mongolia safe for tourists?"]
+    assert not set(snapshot_paa) & {"What is a moron?", "Is moron offensive?", "Why do people call someone a moron?"}
+    assert tour_paa == ["Is Mongolia safe for tourists?"]
 
 
 @pytest.mark.asyncio
