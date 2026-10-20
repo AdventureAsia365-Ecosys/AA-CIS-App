@@ -42,6 +42,7 @@ import {
   emailLooksValid,
   formatWait,
   isCompanyDomain,
+  companyDomainSuggestion,
   retryAfterSeconds,
   secondsUntil,
   snsStateLabel,
@@ -149,18 +150,22 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
   const trimmed = email.trim();
   const valid = emailLooksValid(trimmed);
   const outside = valid && !isCompanyDomain(trimmed);
+  const suggestion = valid ? companyDomainSuggestion(trimmed) : null;
+  const [keepTypo, setKeepTypo] = useState(false);
+  const blockedByTypo = !!suggestion && !keepTypo;
   const noteTooLong = note.trim().length > maxNote;
 
   const close = () => {
     if (busy) return;
     setEmail("");
+    setKeepTypo(false);
     setNote("");
     setError(null);
     onClose();
   };
 
   const submit = async () => {
-    if (!valid || noteTooLong || busy) return;
+    if (!valid || noteTooLong || busy || blockedByTypo) return;
     setBusy(true);
     setError(null);
     const out = await send("POST", API, { email: trimmed, note: note.trim() || undefined });
@@ -183,7 +188,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
       footer={
         <>
           <Button variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={!valid || noteTooLong || busy}>
+          <Button variant="primary" onClick={submit} disabled={!valid || noteTooLong || busy || blockedByTypo}>
             <MailPlus size={13} /> {busy ? "Adding…" : "Add and send confirmation"}
           </Button>
         </>
@@ -201,7 +206,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
             type="email"
             autoComplete="off"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => { setEmail(e.target.value); setKeepTypo(false); }}
             onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
             placeholder="name@adventure.asia"
             aria-invalid={trimmed.length > 0 && !valid}
@@ -213,7 +218,26 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
             One address only: no spaces, commas or angle brackets, and a domain with a dot.
           </div>
         )}
-        {outside && (
+        {suggestion && (
+          <Notice tone="danger">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span>
+                Did you mean <strong style={{ fontFamily: mono }}>{suggestion}</strong>? A mistyped domain never receives
+                the AWS confirmation e-mail.
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <Button variant="secondary" onClick={() => { setEmail(suggestion); setKeepTypo(false); }}>
+                  Use {suggestion}
+                </Button>
+                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
+                  <input id="alert-keep-typo" type="checkbox" checked={keepTypo} onChange={(e) => setKeepTypo(e.target.checked)} />
+                  Keep the address as typed
+                </label>
+              </div>
+            </div>
+          </Notice>
+        )}
+        {outside && !suggestion && (
           <Notice tone="warning">
             This address is outside {"adventure.asia"}. Alerts include security details (who read a secret, from which IP
             address). Add an outside mailbox only if you trust it.
