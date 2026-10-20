@@ -12,7 +12,10 @@ What it enforces, on the first request and on every redirect hop:
     checked is the address connected — a DNS answer that changes after an earlier check (DNS
     rebinding) cannot reach an internal address;
   * redirects followed by hand (at most `max_redirects`), credentials dropped on a cross-origin hop;
-  * total + connect timeouts, a response body cap (on the decompressed stream), no proxy from env.
+  * numeric hosts only in canonical form (`2130706433`, `127.1`, `0177.0.0.1` are refused: aiohttp
+    sends them straight to getaddrinfo, past the resolver);
+  * one total deadline over all hops, a connect timeout, a response body cap (on the decompressed
+    stream), no proxy from env.
 
 Every rejection logs `safe_http_blocked` (host, reason, stage) — never the path or query, which can
 carry credentials. `UnsafeURLError` messages are safe to show the tenant.
@@ -53,6 +56,9 @@ _DENY_NETS = tuple(ipaddress.ip_network(n) for n in (
     "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
     "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
     "::/128", "::1/128", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8", "2001:db8::/32",
+    # IPv4-compatible (deprecated, ::a.b.c.d) and SIIT (::ffff:0:a.b.c.d): `is_global` calls them
+    # public, and some stacks map them to the embedded IPv4 (::7f00:1 -> 127.0.0.1). Never a web host.
+    "::/96", "::ffff:0:0:0/96",
 ))
 _NAT64_NETS = tuple(ipaddress.ip_network(n) for n in ("64:ff9b::/96", "64:ff9b:1::/48"))
 _BLOCKED_NAMES = {"localhost"}
@@ -134,9 +140,19 @@ def validate_url(url: str, *, allowed_schemes: Iterable[str] = DEFAULT_SCHEMES, 
         literal = ipaddress.ip_address(host.strip("[]").split("%", 1)[0])
     except ValueError:
         literal = None
+    if literal is None and _looks_like_ip_to_aiohttp(parsed.host or ""):
+        # aiohttp skips the resolver for any all-digits-and-dots host and hands it to getaddrinfo,
+        # whose inet_aton reads `2130706433`, `127.1`, `0177.0.0.1`, `0` as 127.0.0.1 / 0.0.0.0. Only
+        # the canonical forms `ipaddress` parses (checked above) are allowed.
+        raise _block("noncanonical_ip", host, stage, "URL cannot point to a private or reserved IP address")
     if literal is not None and not is_public_ip(literal):
         raise _block("private_ip", host, stage, "URL cannot point to a private or reserved IP address")
     return parsed
+
+
+def _looks_like_ip_to_aiohttp(host: str) -> bool:
+    """Mirror of `aiohttp.helpers.is_ip_address` (3.x): such a host never reaches our resolver."""
+    return ":" in host or host.replace(".", "").isdigit()
 
 
 async def _getaddrinfo(host: str, port: int, family: int = socket.AF_UNSPEC) -> list:
@@ -236,9 +252,14 @@ async def request(
     req_headers = CIMultiDict(headers or {})
     history: List[int] = []
 
+    # aiohttp's `total` applies per session.request() call, i.e. per hop; `asyncio.timeout` makes
+    # `timeout` one deadline for the whole exchange (all hops + body), so callers' budgets hold.
     client_timeout = aiohttp.ClientTimeout(total=timeout, connect=min(DEFAULT_CONNECT_TIMEOUT_S, timeout))
     connector = aiohttp.TCPConnector(resolver=_PublicOnlyResolver(), use_dns_cache=False, force_close=True)
-    async with aiohttp.ClientSession(connector=connector, timeout=client_timeout, trust_env=False) as session:
+    async with (
+        asyncio.timeout(timeout),
+        aiohttp.ClientSession(connector=connector, timeout=client_timeout, trust_env=False) as session,
+    ):
         while True:
             async with session.request(method, current, headers=req_headers, json=json, data=data,
                                        auth=auth, allow_redirects=False) as resp:
