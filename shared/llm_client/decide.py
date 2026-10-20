@@ -467,13 +467,19 @@ _OUTCOME_SQL = """
      WHERE question_key = $1 AND subject_key = $2
 """
 
-# AA-845 — the same write, except rows whose stored outcome came from one of `keep_sources` ($4) are
-# left alone (a reviewer's per-sentence "unsupported" survives a later whole-version approve).
+# AA-845 — the same write, skipped for the WHOLE subject when any of its rows carries an outcome from
+# one of `keep_sources` ($4): a reviewer's per-sentence "unsupported" belongs to the sentence, not to
+# single rows. decide() logs a fresh row (outcome NULL, cached or not) every time a later S1 run asks
+# about the same sentence, so a per-row guard would stamp truth=True on those newer rows and leave the
+# sentence with both truths.
 _OUTCOME_KEEP_SQL = """
     UPDATE shared.decision_log
        SET outcome = $3
      WHERE question_key = $1 AND subject_key = $2
-       AND (outcome IS NULL OR coalesce(outcome::jsonb ->> 'source', '') <> ALL($4::text[]))
+       AND NOT EXISTS (
+           SELECT 1 FROM shared.decision_log k
+            WHERE k.question_key = $1 AND k.subject_key = $2
+              AND k.outcome IS NOT NULL AND k.outcome::jsonb ->> 'source' = ANY($4::text[]))
 """
 
 # AA-845 — undo one source's label: only rows whose stored outcome came from `source` ($3).
@@ -503,8 +509,9 @@ async def record_outcome(conn_or_pool, question_key: str, subject_key: str, trut
     """Stamp `outcome` on every decision_log row of (question_key, subject_key) with the truth a
     human later established. Returns the number of rows updated.
 
-    AA-845: `keep_sources` — rows whose current outcome came from one of these sources are not
-    overwritten (the approve path keeps a reviewer's per-sentence label). `by` — who established the
+    AA-845: `keep_sources` — if any row of the subject carries an outcome from one of these sources,
+    nothing is written for that subject (the approve path keeps a reviewer's per-sentence label, also
+    against rows logged after the mark). `by` — who established the
     truth (an admin user id); added to the JSON object only when given.
 
     Best-effort by contract: never raises into the caller's request and never blocks the user action

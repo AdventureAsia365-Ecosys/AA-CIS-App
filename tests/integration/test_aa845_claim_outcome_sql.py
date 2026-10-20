@@ -67,6 +67,36 @@ async def test_approve_does_not_overwrite_a_reviewer_unsupported(pool):
 
 
 @pytest.mark.asyncio
+async def test_mark_survives_a_newer_unlabelled_row_and_a_later_approve(pool):
+    """Review finding: a later S1 run (Regenerate / rewrite) asks Jev about the same sentence again and
+    decide() logs a fresh row (cached=true, outcome NULL). The mark belongs to the sentence: the claims
+    read still sees it, and an approve writes no truth=True anywhere on that subject."""
+    p, prefix = pool
+    s = prefix + "re"
+    await _seed(p, s, zone="grey", prob=0.3, age_min=30)
+    assert await gr.record_rejected_outcome(p, s, ref="rq-1", by="u-1") == 1
+    await p.execute(
+        """INSERT INTO shared.decision_log (stage, question_key, subject_key, mode, zone, probability, cached)
+           VALUES ('s1_grounding', $1, $2, 'enforce', 'grey', 0.3, true)""", Q, s)
+
+    out = await gr.latest_verdicts(p, [s])
+    assert out[(Q, s)]["outcome"]["source"] == gr.REVIEW_UNSUPPORTED_SOURCE
+    assert out[(Q, s)]["outcome"]["truth"] is False
+
+    assert await d.record_outcome(p, Q, s, truth=True, source=gr.REVIEW_APPROVE_SOURCE,
+                                  keep_sources=(gr.REVIEW_UNSUPPORTED_SOURCE,)) == 0
+    outcomes = await _outcomes(p, s)
+    assert not any(o and o["truth"] is True for o in outcomes)
+    assert outcomes[0]["source"] == gr.REVIEW_UNSUPPORTED_SOURCE and outcomes[1] is None
+
+    # Undo, then approve: the whole subject (newer row included) becomes truth=True.
+    assert await gr.clear_rejected_outcome(p, s) == 1
+    assert await d.record_outcome(p, Q, s, truth=True, source=gr.REVIEW_APPROVE_SOURCE,
+                                  keep_sources=(gr.REVIEW_UNSUPPORTED_SOURCE,)) == 2
+    assert [o["truth"] for o in await _outcomes(p, s)] == [True, True]
+
+
+@pytest.mark.asyncio
 async def test_clear_only_removes_the_reviewer_label(pool):
     p, prefix = pool
     marked, approved = prefix + "m", prefix + "a"

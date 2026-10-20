@@ -570,12 +570,26 @@ def review_units(tour: dict, generated: dict) -> list[dict]:
     return out
 
 
+# The verdict is the newest row of each (subject, question); the label is the newest row that HAS an
+# outcome. A label belongs to the sentence: a later S1 run that asks Jev again (cache hit or not) logs
+# a fresh row with outcome NULL, and that row must not hide the reviewer's mark.
 _LATEST_VERDICTS_SQL = """
-    SELECT DISTINCT ON (subject_key, question_key)
-           subject_key, question_key, zone, mode, probability::float AS probability, created_at, outcome
-      FROM shared.decision_log
-     WHERE question_key = ANY($1::text[]) AND subject_key = ANY($2::text[])
-     ORDER BY subject_key, question_key, created_at DESC
+    SELECT v.subject_key, v.question_key, v.zone, v.mode, v.probability, v.created_at, o.outcome
+      FROM (
+        SELECT DISTINCT ON (subject_key, question_key)
+               subject_key, question_key, zone, mode, probability::float AS probability, created_at
+          FROM shared.decision_log
+         WHERE question_key = ANY($1::text[]) AND subject_key = ANY($2::text[])
+         ORDER BY subject_key, question_key, created_at DESC, id DESC
+      ) v
+      LEFT JOIN LATERAL (
+        SELECT k.outcome
+          FROM shared.decision_log k
+         WHERE k.subject_key = v.subject_key AND k.question_key = v.question_key
+           AND k.outcome IS NOT NULL
+         ORDER BY k.created_at DESC, k.id DESC
+         LIMIT 1
+      ) o ON true
 """
 
 

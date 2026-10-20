@@ -67,7 +67,8 @@ async def test_record_outcome_keep_sources_uses_guarded_update_and_adds_by():
                                keep_sources=("review_sentence_unsupported",), by="u-1")
     assert n == 2
     sql, args = conn.calls[0]
-    assert "<> ALL($4::text[])" in sql and "outcome IS NULL" in sql
+    # Subject-level guard (review finding): any kept-source label on ANY row of the subject skips it.
+    assert "NOT EXISTS" in sql and "= ANY($4::text[])" in sql and "k.subject_key = $2" in sql
     assert args[3] == ["review_sentence_unsupported"]
     payload = json.loads(args[2])
     assert payload["truth"] is True and payload["by"] == "u-1"
@@ -155,6 +156,8 @@ async def test_latest_verdicts_parses_outcome_and_skips_empty_keys():
     class P:
         async def fetch(self, sql, questions, keys):
             assert "DISTINCT ON (subject_key, question_key)" in sql
+            # The label comes from the newest row WITH an outcome, not from the newest verdict row.
+            assert "LEFT JOIN LATERAL" in sql and "k.outcome IS NOT NULL" in sql
             assert keys == ["k1"]
             return [{"subject_key": "k1", "question_key": "a1_claim_supported", "zone": "grey", "mode": "enforce",
                      "probability": 0.31, "created_at": None,

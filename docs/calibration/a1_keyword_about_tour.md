@@ -81,8 +81,13 @@ waterfall").
 - **Accept 0.65: do not apply as-is.** At 70% precision about 3 in 10 newly accepted ideas are
   off-topic, and an accepted idea can steer the writer into an unsupported promise. Keep accept at
   **0.80** (population: accept 14%, reject 61%, grey 25%) until a relabel shows ≥ 95% at a lower
-  floor. This deviates from the approved number, so the orchestrator confirms with Nghiệp before the
-  PUT; if Nghiệp keeps 0.65, apply it and watch `top_keywords` for hotel/off-route terms in the wave.
+  floor.
+- **Gate before the PUT (blocking).** The S245 approval of 0.65 was given on the grey-share number
+  alone, before this precision table existed, so it is not enough to apply 0.65. The orchestrator
+  takes this write-up back to Nghiệp and records his revised answer on AA-845 first. Until that
+  answer is on the issue, only the PUT below (accept stays 0.80) may run. If Nghiệp, having seen the
+  70.3%, still chooses 0.65, record that explicitly on AA-845, then apply it and check `top_keywords`
+  for hotel and off-route terms in the wave.
 
 Apply (orchestrator, Dev, $0; back up the current row first with `GET /admin/decisions/summary`):
 
