@@ -1570,7 +1570,10 @@ _Avoid_: block (alone), delete, filter.
     `tenant_brand_rules.custom_validators.signature_words`. T2 prompt rule 1, validate, the strip, flag_fix,
     T3 and the admin T2 drawer all read the same layered list (`forbidden_words.state_forbidden`); A1 keeps
     `VALIDATE_FORBIDDEN`. Evidence rule: a service-level claim ("a luxury lodge", "a tailored itinerary")
-    the source does not support is a T3 grounding finding (sentence repair), for every tenant.
+    the source does not support is a T3 grounding finding (sentence repair), for every tenant. Rule 1
+    nudges the writer to use a signature word where the source states that level (it names the source
+    wording per word, the same roots the evidence rule accepts) and to leave it out everywhere else:
+    source fidelity first.
   - **Brand loading.** The brand is loaded once, through `brand_pack.fetch_brand_pack_conn` (AA-771).
   - **Itinerary nudge.** The length nudge keeps the draft's tenant voice. T2 flag-fix repairs speak as
     the tenant's editorial fixer.

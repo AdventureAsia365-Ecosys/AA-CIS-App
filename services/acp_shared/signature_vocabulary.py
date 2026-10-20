@@ -73,6 +73,16 @@ _SUPPORT_ROOTS = {
     "curated": ("curat",),
     "refined": ("refine",),
 }
+# The source wording the T2 writer is told to look for before it uses a signature word (rule 1). Each cue
+# holds a root of _SUPPORT_ROOTS, so "the source says it" in the prompt is the same test the evidence rule
+# (`service_level_claims`) applies afterwards (tests/unit/test_aa800_signature_nudge.py pins this).
+_SUPPORT_CUES = {
+    "luxury": ("luxury", "luxurious", "deluxe", "five-star", "premium"),
+    "tailored": ("tailored", "tailor-made", "bespoke", "customised", "personalised"),
+    "bespoke": ("bespoke", "tailor-made", "customised", "personalised"),
+    "curated": ("curated",),
+    "refined": ("refined",),
+}
 
 
 # ---------------------------------------------------------------- matching (same rule as validate_node)
@@ -222,18 +232,34 @@ def _join(words: list[str]) -> str:
     return ", ".join(words)
 
 
+def _or_join(words) -> str:
+    words = list(words)
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " or " + words[-1]
+
+
 def t2_rule_1(pack: Optional[dict]) -> str:
     """Rule 1 of the T2 writer prompt, built from the layers for this tenant (A1 keeps
-    prompts._RULE_1_CORE_FORBIDDEN byte for byte)."""
+    prompts._RULE_1_CORE_FORBIDDEN byte for byte).
+
+    S245 follow-up (owner decision 20/10/2026): with signature words, rule 1 nudges the writer to use one
+    where the source states that level (the source wording to look for is named per word, the same roots
+    the evidence rule accepts), and to leave it out everywhere else: source fidelity comes first. A tenant
+    with no signature words gets the same rule as before (T2_SYSTEM_PROMPT is unchanged)."""
     sig = signature_words(pack)
     never = undeclared_positioning(pack, include_prompt_only=True) + list(PLATFORM_TRUTH)
     lines = [f"1. NEVER use these words: {_join(never)}",
              f"   Stock superlatives ({_join(list(STOCK_SUPERLATIVES))}): at most one in the whole tour; a"
              " concrete detail says more."]
     if sig:
-        lines.append(f"   This brand's own signature words, yours to use where the facts fit: {_join(sig)}."
-                     " A service-level claim (a luxury lodge, a tailored itinerary) still needs the source"
-                     " to state it.")
+        cues = "; ".join(f"{w}: the source says {_or_join(_SUPPORT_CUES[w])}" for w in sig)
+        lines += [
+            f"   This brand's own signature words: {_join(sig)}. Source fidelity (rule 6) comes first: use a"
+            f" signature word only where the source itself states that level ({cues}).",
+            "   When the source states it, use that signature word at least once, on the fact the source"
+            " states, so the page reads as this brand. When the source does not state it, leave the word"
+            " out: never add it as mood, and never as a service-level claim (a luxury lodge, a tailored"
+            " itinerary) the source does not make.",
+        ]
     return "\n".join(lines) + "\n"
 
 
