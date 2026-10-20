@@ -65,6 +65,7 @@ from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from services.acp_shared.content_embedding import compute_embedding, embedding_to_pgvector_literal
 from services.acp_shared.piece_similarity import find_similar_pieces
+from services.acp_shared.real_questions import collect_real_questions, faq_sources, label_questions, source_counts
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
@@ -1206,7 +1207,17 @@ async def start_write(
     keyword = choose_keyword(related_keywords, atom_text, out_of_scope=out_of_scope)
     # AA-779 — the snapshot's People Also Ask questions (per TOUR, not scoped). The t9_write job
     # filters them to this piece (paa_for_scope, once the Facts are known) for the blog FAQ.
-    people_also_ask = [q for q in (dfs_snapshot.get("people_also_ask") or []) if isinstance(q, str)][:PAA_RAW_MAX]
+    # S245 (AA-779 item 2A) — a blog reads real questions of its own Segments and places first
+    # (services/acp_shared/real_questions.py, $0 DB reads), the tour's last; `real_questions` keeps
+    # each one's source for the admin record (writer_input), never for the tenant.
+    tour_paa = snapshot_tour_paa(dfs_snapshot)
+    real_questions: list[dict] = []
+    if req["channel"] == "blog":
+        chain = await collect_real_questions(pool, atom_ids=scope_atoms, tour_paa=tour_paa[:PAA_RAW_MAX])
+        real_questions = [r.as_dict() for r in chain]
+        people_also_ask = [r.question for r in chain]
+    else:
+        people_also_ask = tour_paa[:PAA_RAW_MAX]
 
     # AA-529 — Facts Entry source: ALL scope='platform' facts + this tenant's own scope='tenant'
     # facts, never another tenant's (fetch_facts_for_writing()'s own WHERE clause enforces that).
@@ -1225,6 +1236,7 @@ async def start_write(
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
         "people_also_ask": people_also_ask,  # AA-779 — raw; the job keeps the in-scope ones
+        "real_questions": real_questions,  # S245 (AA-779 2A) — [{q, source}], blog only; admin record
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
@@ -1240,6 +1252,15 @@ async def start_write(
         "sibling_openers": sibling_openers,  # S234 (AA-771) — non-blog channels only
     }
     return {"piece": piece, "context": context}
+
+
+def snapshot_tour_paa(snapshot: Optional[dict]) -> list[str]:
+    """S245 (AA-779) — the tour-level People Also Ask of a request snapshot. A blog snapshot written
+    since S245 holds the angle prompt's merged list in `people_also_ask` and the tour's own in
+    `tour_people_also_ask`; an older snapshot (or a non-blog one) has only `people_also_ask`."""
+    snapshot = snapshot or {}
+    questions = snapshot.get("tour_people_also_ask", snapshot.get("people_also_ask")) or []
+    return [q for q in questions if isinstance(q, str)]
 
 
 async def _insert_placeholder_piece(
@@ -1418,6 +1439,9 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     paa_questions = (paa_for_scope(context.get("people_also_ask"), hyg.lexicon.own_text, facts_text,
                                    hyg.lexicon.gazetteer) if channel == "blog" else [])
     context["paa_questions"] = paa_questions
+    # S245 (AA-779 2A) — the source of each question the writer got (admin-only, writer_input).
+    context["search_questions"] = (label_questions(paa_questions, context.get("real_questions") or [])
+                                   if channel == "blog" else [])
     search_kw = {"search_questions": paa_questions} if paa_questions else {}
     brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
     sibling_texts = await _sibling_texts(context.get("tenant_id"), request_id, piece_id, pool)
@@ -1900,6 +1924,11 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
         gate_ledger = _waive_style_only(gate_ledger, status)  # S234 round 2 — panel §3, piece #7
         _show_live_text(content_text, seo_meta, channel)  # AA-668: the final snapshot is the saved text
         progress_step("save")  # AA-637 live view
+        if channel == "blog":
+            # S245 (AA-779 2A) — where each final FAQ question came from (a real source, or `writer`).
+            context["faq_questions"] = faq_sources([q for q, _ in faq_pairs(content_text)],
+                                                   context.get("search_questions") or [],
+                                                   context.get("real_questions") or [])
         await _finalize_piece(
             pool, piece_id=piece_id, attempt_number=attempt,
             content_text=content_text, status=status, held_reason=held_reason,
@@ -1956,6 +1985,13 @@ def writer_input_snapshot(context: dict) -> dict:
         **({"writer_trip": context["writer_trip_name"]} if "writer_trip_name" in context else {}),
         # S234 round 3 — the full trip's places outside the scope (out-of-scope gazetteer); absent before.
         **({"trip_places": context["trip_places"]} if context.get("trip_places") else {}),
+        # S245 (AA-779 2A) — blog only: the real search questions the writer got, with their source;
+        # how many each source offered / kept; and the source of each final FAQ question. Admin-only.
+        **({"search_questions": context.get("search_questions") or [],
+            "question_sources": source_counts(context.get("real_questions") or [],
+                                              context.get("search_questions") or []),
+            "faq_questions": context.get("faq_questions") or []}
+           if context.get("channel") == "blog" and "real_questions" in context else {}),
     }
 
 
