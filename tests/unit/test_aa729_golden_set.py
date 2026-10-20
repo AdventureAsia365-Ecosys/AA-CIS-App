@@ -1,0 +1,600 @@
+"""AA-729 — golden-set harness (scripts/aa729/): selection math, PII scrubber, cost guard, label rules,
+metrics, report rendering, panel-label merge, and the guards on the private names the harness patches.
+No DB, no LLM, no AWS."""
+import inspect
+import json
+import typing
+
+import pytest
+
+from scripts.aa729 import common, evalpatch, injection, labels, report, score, select_samples
+from scripts.aa729.common import Candidate, CostCapReached, CostGuard
+
+# ── selection math ───────────────────────────────────────────────────────────────────────────────
+
+
+def test_allocate_sums_to_total_and_is_proportional():
+    out = common.allocate(10, {"India": 60, "Nepal": 30, "Laos": 10})
+    assert sum(out.values()) == 10
+    assert out == {"India": 6, "Nepal": 3, "Laos": 1}
+
+
+def test_allocate_floors_then_largest_remainder_and_capacity():
+    out = common.allocate(5, {"A": 100, "B": 1, "C": 1}, floors={"B": 1, "C": 1})
+    assert out == {"A": 3, "B": 1, "C": 1}
+    # a group never gets more than it has
+    out = common.allocate(6, {"A": 2, "B": 10})
+    assert out["A"] <= 2 and sum(out.values()) == 6
+    # more requested than available: everything available, no more
+    assert sum(common.allocate(50, {"A": 3, "B": 4}).values()) == 7
+
+
+def test_allocate_floors_beyond_total_go_to_heaviest_groups():
+    out = common.allocate(2, {"A": 5, "B": 3, "C": 1}, floors={"A": 1, "B": 1, "C": 1})
+    assert out == {"A": 1, "B": 1, "C": 0}
+
+
+def _cands():
+    out = []
+    countries = ["India"] * 30 + ["Nepal"] * 12 + ["Laos"] * 6 + ["Japan"] * 2
+    for i, c in enumerate(countries):
+        tags = set()
+        if i % 7 == 0:
+            tags.add("cycle_bike")
+        if i % 5 == 0:
+            tags.add("known_failure")
+        out.append(Candidate(id=f"t{i:03d}", group=c, tags=tags, labelled=(i % 4 == 0)))
+    return out
+
+
+def test_pick_stratified_quota_first_spread_and_deterministic():
+    quotas = [("cycle_bike", 4), ("known_failure", 5)]
+    picks = common.pick_stratified(_cands(), total=20, quotas=quotas, seed=729)
+    ids = [c.id for c, _ in picks]
+    assert len(ids) == 20 and len(set(ids)) == 20
+    reasons = [r for _, r in picks]
+    assert reasons.count("cycle_bike") == 4 and reasons.count("known_failure") == 5
+    assert all("cycle_bike" in c.tags for c, r in picks if r == "cycle_bike")
+    assert {c.group for c, _ in picks} == {"India", "Nepal", "Laos", "Japan"}  # every country represented
+    again = common.pick_stratified(_cands(), total=20, quotas=quotas, seed=729)
+    assert [c.id for c, _ in again] == ids
+    other = common.pick_stratified(_cands(), total=20, quotas=quotas, seed=1)
+    assert [c.id for c, _ in other] != ids
+
+
+def test_pick_stratified_quota_round_robins_groups_and_prefers_labelled():
+    cands = [Candidate(id=f"a{i}", group="A", tags={"x"}, labelled=False) for i in range(10)]
+    cands += [Candidate(id=f"b{i}", group="B", tags={"x"}, labelled=(i == 3)) for i in range(10)]
+    picks = common.pick_stratified(cands, total=4, quotas=[("x", 4)], seed=3)
+    assert sorted(c.group for c, _ in picks) == ["A", "A", "B", "B"]
+    assert "b3" in [c.id for c, _ in picks]  # the labelled one is taken first in its group
+
+
+def test_pick_stratified_fewer_candidates_than_total():
+    cands = [Candidate(id=f"x{i}", group="G") for i in range(3)]
+    assert len(common.pick_stratified(cands, total=10, quotas=[], seed=1)) == 3
+
+
+def test_tour_classification():
+    assert common.duration_days("18 Days", "") == 18
+    assert common.duration_days("18D17N", "") == 18
+    assert common.duration_days(None, "LAOS BY BIKE 21 DAYS") == 21
+    assert common.duration_days("", "Day trip") is None
+    assert common.tour_type("Laos to Vietnam by Bicycle", None) == "cycle_bike"
+    assert common.tour_type("Everest Base Camp", '["trekking"]') == "trek_hike"
+    assert common.tour_type("Culinary Gems of Bhutan", None) == "culinary"
+    assert common.tour_type("Temples of Kyoto", ["culture"]) == "cultural_general"
+    assert common.percentile([5, 1, 3, 2, 4], 0.2) == 1.0
+    assert common.percentile([10, 20, 30, 40], 0.5) == 20.0
+
+
+# ── PII ──────────────────────────────────────────────────────────────────────────────────────────
+
+
+def test_scrub_masks_email_and_phone_keeps_numbers_that_are_not_phones():
+    text = ("Mail jane.doe@example.com or call +84 28 3822 1234. Climb to 4,000 m in 1637–1955, "
+            "price USD 1,250, 2025-2026 season, 08:00 - 12:00.")
+    out = common.scrub_text(text)
+    assert "jane.doe@example.com" not in out and common.EMAIL_MASK in out
+    assert "3822 1234" not in out and common.PHONE_MASK in out
+    for keep in ("4,000 m", "1637–1955", "USD 1,250", "2025-2026", "08:00 - 12:00"):
+        assert keep in out
+
+
+def test_scrub_drops_personal_keys_keeps_tenant_names_and_find_pii():
+    raw = {"tenant_slug": "terra-family", "reviewed_by": "someone", "notes": ["ping a@b.co"],
+           "nested": {"labelled_by": "x", "brand_name": "Terra Family"}}
+    assert set(common.find_pii(raw)) == {"$.reviewed_by (key)", "$.notes[0]", "$.nested.labelled_by (key)"}
+    clean = common.scrub(raw)
+    assert clean == {"tenant_slug": "terra-family", "notes": [f"ping {common.EMAIL_MASK}"],
+                     "nested": {"brand_name": "Terra Family"}}
+    assert common.find_pii(clean) == []
+    assert common.scrub(clean) == clean  # idempotent
+
+
+# ── cost guard ───────────────────────────────────────────────────────────────────────────────────
+
+
+def test_cost_guard_stops_before_the_cap_and_counts_in_flight():
+    g = CostGuard(cap_usd=1.0)
+    g.check(sample_id="a", prior=0.4, logged_usd=0.0)
+    g.check(sample_id="b", prior=0.4, logged_usd=0.0)  # 0.8 reserved
+    with pytest.raises(CostCapReached):
+        g.check(sample_id="c", prior=0.4, logged_usd=0.0)
+    g.done("a", 0.1)
+    g.done("b", 0.1)
+    g.check(sample_id="c", prior=0.4, logged_usd=0.2)  # 0.2 + 0.4 <= 1.0
+    with pytest.raises(CostCapReached):
+        g.check(sample_id="d", prior=0.4, logged_usd=0.25)  # 0.25 + 0.4 in flight + 0.4 > 1.0
+
+
+def test_cost_guard_uses_local_spend_and_observed_mean():
+    g = CostGuard(cap_usd=1.0)
+    with pytest.raises(CostCapReached):  # the log lost rows; in-process spend still stops the run
+        g.check(sample_id="a", prior=0.1, logged_usd=0.0, local_usd=0.95)
+    g.done("x", 0.6)  # observed mean 0.6 > prior 0.1
+    assert g.estimate(0.1) == pytest.approx(0.6)
+    with pytest.raises(CostCapReached):
+        g.check(sample_id="b", prior=0.1, logged_usd=0.5)
+
+
+def test_estimate_run_matches_the_memo_range():
+    fixture_kinds = (["s1"] * 50 + ["t2"] * 10 + ["t9_blog"] * 15 + ["t9_linkedin"] * 15
+                     + ["injection_s1"] * 5 + ["injection_t9"] * 5)
+    est = common.estimate_run(fixture_kinds, "regenerate")
+    assert 8.0 <= est <= 15.0
+    assert common.estimate_run(fixture_kinds, "score-only") < 3.0
+
+
+# ── labels, Jev, injection ───────────────────────────────────────────────────────────────────────
+
+
+def test_make_label_validates_and_first_label_keeps_evidence():
+    with pytest.raises(ValueError):
+        common.make_label("maybe", "human_review")
+    with pytest.raises(ValueError):
+        common.make_label("pass", "pipeline")
+    lab = common.first_label([common.needs_panel_label([{"e": 1}]), common.make_label("fail", "admin_edit")])
+    assert lab["verdict"] == "fail" and lab["source"] == "admin_edit" and lab["evidence"] == [{"e": 1}]
+    assert common.first_label([None])["source"] == "needs_panel"
+
+
+def test_s1_label_priority_admin_edit_then_review_then_jev():
+    r = {"tour_id": "t1", "gc_id": "g2", "human_edited": False}
+    reviews = [{"gc_id": "g1", "review_status": "rejected", "failure_summary": "old"},
+               {"gc_id": "g2", "review_status": "approved", "reviewer_notes": "ok", "failure_summary": ""}]
+    lab, post = select_samples.s1_label(r, reviews, [], {})
+    assert (lab["verdict"], lab["source"], post) == ("pass", "human_review", False)
+    lab, post = select_samples.s1_label({**r, "human_edited": True}, reviews, [], {})
+    assert (lab["verdict"], lab["source"], post) == ("fail", "admin_edit", True)
+    jev = [{"question_key": "a1_claim_supported", "zone": "reject", "outcome": json.dumps({"truth": False})}]
+    lab, _ = select_samples.s1_label({**r, "gc_id": "g9"}, reviews, jev, {})
+    assert (lab["verdict"], lab["source"]) == ("fail", "jev_outcome")
+    lab, _ = select_samples.s1_label({**r, "gc_id": "g9"}, [], [], {"t1": {"verdict": "pass", "source": "S218"}})
+    assert (lab["verdict"], lab["source"]) == ("pass", "audit_verdict")
+    lab, _ = select_samples.s1_label({**r, "gc_id": "g9"}, [], [], {})
+    assert lab["source"] == "needs_panel" and lab["verdict"] is None
+
+
+def test_t9_label_human_label_majority_and_post_edit_by_hash():
+    text = "The walk takes two hours."
+    r = {"piece_id": "p1", "content_text": text}
+    labs = [{"label": "light", "content_sha256": select_samples._sha(text)},
+            {"label": "heavy", "content_sha256": select_samples._sha(text)},
+            {"label": "as_is", "content_sha256": select_samples._sha(text)}]
+    lab, post = select_samples.t9_label(r, labs, {"content_piece.admin_sentence_cut": 1}, {})
+    assert (lab["verdict"], lab["source"], post) == ("pass", "human_label", False)
+    lab, post = select_samples.t9_label(r, [], {"content_piece.admin_sentence_cut": 2}, {})
+    assert (lab["verdict"], lab["source"], post) == ("fail", "admin_edit", True)
+    lab, _ = select_samples.t9_label(r, [], {"content_piece.published": 1}, {})
+    assert lab["source"] == "needs_panel" and {"tenant_published": True} in lab["evidence"]
+
+
+def test_t2_label_tenant_edit_and_tenant_review():
+    r = {"version_id": "v1", "tenant_edited": True, "status": "approved"}
+    lab, post = select_samples.t2_label(r, [], {}, {})
+    assert (lab["verdict"], lab["source"], post) == ("fail", "tenant_edit", False)
+    lab, _ = select_samples.t2_label({**r, "tenant_edited": False}, [], {}, {})
+    assert (lab["verdict"], lab["source"]) == ("pass", "tenant_review")
+    lab, _ = select_samples.t2_label({**r, "tenant_edited": False, "status": "ai_generated"}, [], {}, {})
+    assert lab["source"] == "needs_panel"
+
+
+def test_jev_polarity_and_summary():
+    assert common.jev_problem("a1_claim_supported", "reject") is True
+    assert common.jev_problem("a1_promise_unsupported", "accept") is True
+    assert common.jev_problem("t10_brand_voice", "accept") is False
+    assert common.jev_problem("a1_claim_supported", "grey") is None
+    assert common.jev_problem("a3_activity_type", "reject") is None
+    s = common.jev_summary([{"question_key": "a1_claim_supported", "zone": "accept", "n": 5},
+                            {"question_key": "a1_claim_supported", "zone": "grey", "n": 2}])
+    assert s == {"ran": True, "problem": False, "zones": {"a1_claim_supported": {"accept": 5, "grey": 2}}}
+    assert common.jev_summary([])["ran"] is False
+
+
+def test_injection_fixtures_violate_and_clean_text_does_not():
+    assert len(injection.S1_ATTACKS) == 5 and len(injection.T9_ATTACKS) == 5
+    for a in injection.S1_ATTACKS:
+        assert a["text"] in common.flatten_text(injection.tour_source(a))
+        assert common.injection_violations(common.flatten_text(injection.compromised_s1_output(a)),
+                                           injection.spec_of(a))
+    for a in injection.T9_ATTACKS:
+        assert a["text"] in injection.t9_seed(a)
+        assert common.injection_violations(injection.compromised_t9_output(a), injection.spec_of(a))
+    clean = "A two-hour walk to the hill monastery, with a picnic lunch in the courtyard."
+    assert common.injection_violations(clean, injection.spec_of(injection.T9_ATTACKS[1])) == []
+
+
+def test_injection_samples_use_a_host_context_and_drop_its_scope():
+    host = {"sample_id": "t9b-001", "channel": "blog", "refs": {"tenant_slug": "terra-family"},
+            "input": {"request_id": "00000000-0000-0000-0000-0000000000aa", "tenant_id": "t-uuid",
+                      "context": {"atom_text": "real seed", "scope": "Punakha", "keyword": "punakha tour",
+                                  "cta": "Ask us", "channel": "blog"}}}
+    lin = {**host, "sample_id": "t9l-001", "channel": "linkedin",
+           "input": {**host["input"], "context": {**host["input"]["context"], "channel": "linkedin"}}}
+    out = select_samples.injection_samples([host, lin], "s1:default", 729)
+    assert len(out) == 10 and {s["kind"] for s in out} == {"injection_s1", "injection_t9"}
+    t9 = [s for s in out if s["kind"] == "injection_t9"]
+    assert all(s["input"]["context"]["scope"] is None and "AA729-CANARY" in s["input"]["context"]["atom_text"]
+               and s["input"]["context"]["cta"] == "Ask us" for s in t9)
+    assert all(s["label"]["source"] == "synthetic" and s["label"]["verdict"] == "fail" for s in out)
+    assert common.find_pii(out) == []
+
+
+def test_seo_from_row_without_a_row_is_the_empty_shape():
+    assert select_samples.seo_from_row(None) == {"top_keywords": [], "keywords": {"top_keywords": []},
+                                                 "people_also_ask": []}
+    seo = select_samples.seo_from_row({"top_keywords": '["a", "b"]', "keyword_ideas": None,
+                                       "people_also_ask": "[]", "related_keywords": None, "keyword_search": "x"})
+    assert seo["top_keywords"] == ["a", "b"] and seo["keywords"]["top_keywords"] == ["a", "b"]
+
+
+# ── metrics ──────────────────────────────────────────────────────────────────────────────────────
+
+
+def _row(sid, passed, label, *, post_edit=False, cost=0.01, writer=1, jev=None, error=None, inj=None):
+    return {"sample_id": sid, "stratum": "s1", "verdict": {"passed": passed}, "label_verdict": label,
+            "post_edit": post_edit, "cost_usd": cost, "calls": {"writer": writer}, "error": error,
+            "jev": jev or {"ran": False, "problem": None}, "injection": inj}
+
+
+def test_stratum_metrics_score_only_disagreement_excludes_post_edit_and_unlabelled():
+    rows = [_row("a", True, "pass"), _row("b", True, "fail"), _row("c", False, "pass"),
+            _row("d", True, "fail", post_edit=True), _row("e", False, None), _row("f", None, "pass", error="boom")]
+    m = common.stratum_metrics(rows, "score-only")
+    assert m["n"] == 6 and m["errors"] == 1 and m["scored"] == 5
+    assert m["pass_rate"] == pytest.approx(3 / 5)
+    assert m["disagreement"] == {"n": 3, "disagree": 2, "rate": pytest.approx(2 / 3, abs=1e-3), "false_pass": 1,
+                                 "false_fail": 1}
+    assert m["cost_usd"] == pytest.approx(0.06) and m["writer_calls_per_sample"] == 1.0
+
+
+def test_stratum_metrics_regenerate_by_label_jev_and_injection():
+    rows = [_row("a", True, "fail", jev={"ran": True, "problem": False}),
+            _row("b", False, "fail", jev={"ran": True, "problem": True}),
+            _row("c", True, "pass", inj={"violations": []}),
+            _row("d", True, "fail", inj={"violations": ["canary X present"]})]
+    m = common.stratum_metrics(rows, "regenerate")
+    assert "disagreement" not in m
+    assert m["pass_rate_by_frozen_label"]["fail"] == {"n": 3, "pass_rate": pytest.approx(2 / 3, abs=1e-3)}
+    assert m["jev"]["ran"] == 2 and m["jev"]["agree_with_verdict"] == 1.0 and m["jev"]["agree_with_label"] == 0.5
+    assert m["injection_defended_rate"] == 0.5
+
+
+def test_plan_limit_round_robins_strata_and_skips_done():
+    samples = [{"sample_id": f"{k}-{i}", "stratum": k, "kind": "t9" if k.startswith("t9") else k}
+               for k in ("s1", "t2", "t9_blog", "t9_linkedin") for i in range(3)]
+    assert [s["sample_id"] for s in score.plan(samples, limit=3)] == ["s1-0", "t9_blog-0", "t9_linkedin-0"]
+    assert [s["sample_id"] for s in score.plan(samples, limit=2, done={"s1-0"})] == ["s1-1", "t9_blog-0"]
+    assert len(score.plan(samples, strata={"t2"})) == 3
+    est = score.estimate(score.plan(samples, limit=3), "regenerate")
+    assert est["estimated_usd"] == pytest.approx(0.06 + 0.14 + 0.06)
+
+
+# ── report ───────────────────────────────────────────────────────────────────────────────────────
+
+
+def _score(run_id, passed_b, version="1.1.0", mode="score-only"):
+    rows = [{**_row("s1-001", True, "pass"), "group": "Nepal", "label_source": "human_review"},
+            {**_row("s1-002", passed_b, "fail"), "group": "India | north", "label_source": "agent_panel",
+             "verdict": {"passed": passed_b, "failure_codes": ["FORBIDDEN_WORD"]}}]
+    return {"schema": "aa729-score", "run_id": run_id, "mode": mode, "fixture_version": version,
+            "started_at": "2026-10-20T00:00:00+00:00", "updated_at": "2026-10-20T01:00:00+00:00", "final": True,
+            "cap_usd": 15, "stopped": None, "planned": ["s1-001", "s1-002"], "samples": rows,
+            "metrics": {"s1": common.stratum_metrics(rows, mode), "all": common.stratum_metrics(rows, mode)},
+            "totals": {"cost_usd_llm_call_log": 0.02, "local_llm_usd": 0.018, "local_llm_calls": 4,
+                       "logged_llm_rows": 4, "unlogged_llm_calls": 0,
+                       "cost_source": "shared.llm_call_log stage=adhoc_aa729"}}
+
+
+def test_report_renders_sections_and_escapes_pipes():
+    text = report.render(_score("r1", False))
+    for heading in ("## Cost", "## Metrics per stratum", "## Label provenance", "## Per sample", "## How to read"):
+        assert heading in text
+    assert "$0.0200" in text and "India \\| north" in text
+    assert "50.0%" in text  # s1 pass-rate 1/2
+    assert "codes: FORBIDDEN_WORD" in text
+
+
+def test_report_before_after_same_version_only_and_lists_flips():
+    before, after = _score("r1", False), _score("r2", True)
+    text = report.render(after, baseline=before)
+    assert "## Before / after" in text and "+50.0 pt" in text and "| s1-002 | False | True |" in text
+    with pytest.raises(ValueError):
+        report.render(after, baseline=_score("r0", False, version="1.0.0"))
+    with pytest.raises(ValueError):
+        report.render(after, baseline=_score("r0", False, mode="regenerate"))
+    with pytest.raises(ValueError):
+        report.render({"schema": "other"})
+
+
+# ── panel labels ─────────────────────────────────────────────────────────────────────────────────
+
+
+def _fixture():
+    return {"fixture_version": "1.0.0", "samples": [
+        {"sample_id": "s1-001", "stratum": "s1", "label_source": "needs_panel", "label": common.needs_panel_label(),
+         "output": {"summary": "x"}, "input": {"tour": {"name": "T"}}},
+        {"sample_id": "s1-002", "stratum": "s1", "label_source": "human_review",
+         "label": common.make_label("pass", "human_review"), "output": {}, "input": {}},
+        {"sample_id": "t9b-001", "stratum": "t9_blog", "label_source": "needs_panel",
+         "label": common.needs_panel_label(), "output": {"content_text": "y"},
+         "input": {"context": {"atom_text": "seed", "brand_audience": {"brand_name": "Terra"}}}}]}
+
+
+def test_labels_export_and_apply():
+    pack = labels.export_pack(_fixture())
+    assert pack["count"] == 2 and "seed" in pack["items"][1]["source_excerpt"]
+    assert "## t9b-001" in labels.pack_markdown(pack)
+    panel = {"s1-001": {"verdict": "fail", "grade": "heavy", "reason": "invented altitude; ask x@y.io"},
+             "s1-002": {"verdict": "fail"}, "t9b-001": {"verdict": "pass", "status": "disputed"}}
+    new, info = labels.apply_labels(_fixture(), panel, approved_by="nghiep")
+    assert new["fixture_version"] == "1.1.0" and info["applied"] == ["s1-001"]
+    assert ("s1-002", "already labelled by human_review") in info["skipped"]
+    assert ("t9b-001", "disputed") in info["skipped"] and info["needs_panel_left"] == 1
+    s = new["samples"][0]
+    assert s["label_source"] == "agent_panel" and s["label"]["strength"] == "panel"
+    assert "x@y.io" not in s["label"]["reason"] and new["label_history"][0]["approved_by"] == "nghiep"
+    new2, info2 = labels.apply_labels(_fixture(), panel, approved_by="nghiep", include_disputed=True)
+    assert set(info2["applied"]) == {"s1-001", "t9b-001"}
+    with pytest.raises(ValueError):
+        labels.apply_labels(_fixture(), panel, approved_by=" ")
+
+
+# ── guards on the names the harness patches ──────────────────────────────────────────────────────
+
+
+def test_relabel_sql_matches_the_live_insert_and_validates_the_run_id():
+    from shared.llm_client import call_log
+
+    run = "6f2b8a3e-5d7c-4e1a-9b0f-2c3d4e5f6a7b"
+    sql = evalpatch.relabel_sql(call_log._INSERT_SQL, run)
+    assert f"'{common.STAGE}'" in sql and f"'{run}'::text" in sql and "'aa729_stage', $2::text" in sql
+    assert all(f"${i}" in sql for i in range(1, 16)) and "$16" not in sql
+    with pytest.raises(ValueError):
+        evalpatch.relabel_sql(call_log._INSERT_SQL, "1'; DROP TABLE x; --")
+    with pytest.raises(RuntimeError):
+        evalpatch.relabel_sql(call_log._INSERT_SQL.replace("job_id", "batch_id"), run)
+
+
+def test_call_log_writers_read_the_insert_sql_at_call_time():
+    from shared.llm_client import call_log
+
+    for fn in (call_log.record_call, call_log.record_call_with_pool):
+        assert "_INSERT_SQL" in fn.__code__.co_names, f"{fn.__name__} no longer uses the module-level INSERT"
+
+
+def test_patched_names_still_exist():
+    from services.acp_content_writing import service
+    from services.content_generation import flag_fix_node
+    from shared.llm_client.client import LLMClient
+
+    for owner, name in ((service, "_finalize_piece"), (service, "_insert_placeholder_piece"),
+                        (flag_fix_node, "_write_lessons_safe"), (LLMClient, "_start_shadow"),
+                        (LLMClient, "generate")):
+        assert hasattr(owner, name), name
+    assert "_finalize_piece" in service.run_write_background.__code__.co_names
+    fin = inspect.signature(service._finalize_piece).parameters
+    assert "piece_id" in fin and fin["piece_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    for name in ("channel_spec", "hygiene", "trip_facts", "run_quality_gates", "F9PassMemory", "_grounding_text",
+                 "_add_date_spans"):
+        assert hasattr(service, name), name
+
+
+def test_graph_state_keys_are_declared_in_content_state():
+    from services.content_generation.graph import ContentState
+
+    declared = set(typing.get_type_hints(ContentState))
+    state = score.graph_state({"name": "T"}, {}, {"system_prompt": "x"}, is_tenant=True, tenant_id="t",
+                              generate_stage="t2_generate", generated={"name": "T"})
+    assert set(state) <= declared, set(state) - declared
+
+
+# ── scoring paths with the model calls stubbed ───────────────────────────────────────────────────
+
+
+def _t9_sample(channel="blog"):
+    ctx = {"atom_text": "Hill monastery walk — two hours on stone steps; picnic lunch in the courtyard.",
+           "channel": channel, "brand_audience": {"brand_name": "Terra Family", "customer_segment": "families"},
+           "facts_text": "", "scope": None, "trip_name": "Bhutan Family Trip", "cta": "Ask us about this trip.",
+           "trip_places": [], "chosen": {"name": "The slow climb"}, "keyword": None, "brand_rubric_text": "",
+           "sibling_openers": [], "destination": "Bhutan", "route_segments": None}
+    return {"sample_id": "t9b-001", "stratum": "t9_blog", "kind": "t9", "channel": channel,
+            "input": {"context": ctx, "request_id": "00000000-0000-0000-0000-0000000000a1",
+                      "piece_id": "00000000-0000-0000-0000-0000000000b1", "tenant_id": None},
+            "output": {"content_text": "The climb takes two hours.\n\nAsk us about this trip.", "seo_title": "T",
+                       "meta_description": "M", "slug": "t"}}
+
+
+def test_t9_score_only_builds_the_gate_inputs_the_service_uses(monkeypatch):
+    import asyncio
+
+    from services.acp_content_writing import service
+
+    seen = {}
+
+    def fake_gates(**kw):
+        seen.update(kw)
+        return {"passed": False, "first_failure": {"gate": "F9_cta_fact"}, "flags": [{"gate": "F15_voice_warn"}],
+                "gate_ledger": [{"gate": "F9_cta_fact", "passed": False, "blocking": True},
+                                {"gate": "F15_voice_warn", "passed": False, "blocking": False}]}
+
+    monkeypatch.setattr(service, "run_quality_gates", fake_gates)
+    verdict, out = asyncio.run(score.t9_score_only(_t9_sample()))
+    assert out is None and verdict == {"passed": False, "first_failure": "F9_cta_fact",
+                                       "blocking_failures": ["F9_cta_fact"], "flags": ["F15_voice_warn"]}
+    assert seen["channel"] == "blog" and seen["cannibalization_match"] is None and seen["sibling_texts"] == []
+    assert "TRIP: " in seen["atom_text"] and "BRAND: Terra Family" in seen["atom_text"]
+    assert seen["hygiene_ctx"] is not None and seen["trip_ctx"] is not None
+
+
+def test_t9_regenerate_captures_the_piece_instead_of_writing_it(monkeypatch):
+    import asyncio
+
+    from services.acp_content_writing import service
+
+    monkeypatch.setattr(service, "_finalize_piece", evalpatch._capture_finalize)
+
+    async def fake_write(request_id, piece_id, context, pool):
+        assert context["atom_text"].startswith("Hill monastery")
+        await service._finalize_piece(pool, piece_id=piece_id, attempt_number=2, content_text="New text",
+                                      status="held", held_reason="F1_grounding", repair_log=[{"attempt": 1}],
+                                      gate_ledger=[{"gate": "F1_grounding", "passed": False}], flags=[])
+
+    monkeypatch.setattr(service, "run_write_background", fake_write)
+    verdict, out = asyncio.run(score.t9_regenerate(_t9_sample(), pool=None))
+    assert verdict["passed"] is False and verdict["status"] == "held" and verdict["attempts"] == 2
+    assert verdict["blocking_failures"] == ["F1_grounding"] and out["content_text"] == "New text"
+    assert "00000000-0000-0000-0000-0000000000b1" not in evalpatch.T9_CAPTURE
+
+
+def test_s1_regenerate_applies_the_sonnet_retry_rule(monkeypatch):
+    import asyncio
+
+    from api.routers import v1_pipeline
+
+    calls = []
+
+    async def fake_rewrite(tour, idx, total, **kw):
+        calls.append(kw.get("model_tier"))
+        if kw.get("model_tier") == "sonnet":
+            return {"status": "success", "model_used": "sonnet-4-6", "quality_score": 8.0, "failure_codes": [],
+                    "brand_audit_status": "pass", "generated": {"name": "Sonnet"}}
+        return {"status": "success", "model_used": "haiku-4-5", "quality_score": 8.0,
+                "failure_codes": ["MISSING_FIELD"], "brand_audit_status": "pass", "generated": {"name": "Haiku"}}
+
+    monkeypatch.setattr(v1_pipeline, "_rewrite_tour", fake_rewrite)
+    sample = {"input": {"tour": {"name": "T"}, "seo": {}, "brand_rules_ref": "s1:default"}}
+    verdict, out = asyncio.run(score.s1_regenerate(sample, {"shared_inputs": {"brand_rules": {"s1:default": {}}}}))
+    assert calls == [None, "sonnet"] and verdict["sonnet_retried"] is True
+    assert verdict["passed"] is True and out == {"name": "Sonnet"}
+
+
+def test_t2_score_only_checks_without_repairs(monkeypatch):
+    import asyncio
+
+    from services.acp_produce import tenant_pipeline
+
+    async def fake_reval(state):
+        assert state["is_tenant_rewrite"] is True and state["generate_stage"] == "t2_generate"
+        assert state["generated"] == {"name": "V"} and state["brand_name"] == "Terra"
+        return {**state, "quality_score": 7.5, "failure_codes": []}
+
+    seen = {}
+
+    async def fake_t3(tour, source_texts, result, brand_rules, max_repairs=2, seo_data=None, tenant_id=None):
+        seen["max_repairs"] = max_repairs
+        return {"passed": False, "attempts": 0, "structural_issues": ["S"], "grounding_issues": [{}],
+                "result": result}
+
+    monkeypatch.setattr(score, "run_revalidation", fake_reval)
+    monkeypatch.setattr(tenant_pipeline, "run_t3_qa_gate", fake_t3)
+    sample = {"input": {"tour": {"name": "T"}, "seo": {}, "brand_rules_ref": "t2:terra", "tenant_id": "tid"},
+              "output": {"name": "V"}}
+    verdict, _ = asyncio.run(score.t2_score_only(sample, {"shared_inputs": {"brand_rules": {
+        "t2:terra": {"brand_name": "Terra"}}}}))
+    assert seen["max_repairs"] == 0
+    assert verdict["passed"] is False and verdict["qa_passed"] is False and verdict["quality_score"] == 7.5
+
+
+class _FakeConn:
+    def __init__(self, state):
+        self.s = state
+
+    async def fetchval(self, sql, *a):
+        if "shared.job" in sql:
+            return 0
+        return self.s["spent"]
+
+    async def fetch(self, sql, *a):
+        return list(self.s["calls"]) if "llm_call_log" in sql else []
+
+
+class _FakePool:
+    def __init__(self, state):
+        self.conn = _FakeConn(state)
+
+    def acquire(self):
+        pool = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                return pool.conn
+
+            async def __aexit__(self, *exc):
+                return False
+        return _Ctx()
+
+    async def close(self):
+        return None
+
+
+def test_run_stops_at_the_cost_cap_and_reports_from_the_log(monkeypatch, tmp_path):
+    import argparse
+    import asyncio
+
+    state = {"spent": 0.0, "calls": []}
+    fx = {"fixture_version": "1.0.0", "seed": 729, "samples": [
+        {"sample_id": f"s1-{i:03d}", "stratum": "s1", "kind": "s1", "input": {}, "label_source": "needs_panel",
+         "label": common.needs_panel_label()} for i in range(1, 6)]}
+    path = tmp_path / "fixture.json"
+    path.write_text(json.dumps(fx))
+    saved = {}
+
+    async def fake_pool():
+        return _FakePool(state)
+
+    async def fake_one(sample, fixture, mode, pool):
+        from shared.llm_client import call_log
+
+        state["spent"] += 0.4
+        state["calls"].append({"job_id": call_log.current_job_id(), "role": "writer", "provider": "bedrock-satellite",
+                               "real_stage": "s1_generate", "n": 1, "usd": 0.4})
+        return {"passed": True}, {"name": "x"}
+
+    monkeypatch.setattr(score, "_pool", fake_pool)
+    monkeypatch.setattr(score, "score_one", fake_one)
+    monkeypatch.setattr(score, "SETTLE_S", 0)
+    monkeypatch.setattr(evalpatch, "install", lambda run_id: None)
+    monkeypatch.setattr(common, "save_output", lambda obj, key, **kw: saved.__setitem__(key, obj))
+    args = argparse.Namespace(fixture=str(path), mode="regenerate", limit=None, strata=None, sample_ids=None,
+                              max_cost_usd=1.0, concurrency=1, resume=None, resume_file=None,
+                              allow_busy_queue=False, no_upload=True)
+    result = asyncio.run(score.run(args))
+    assert len(result["samples"]) == 2 and result["stopped"].startswith("cost_cap")
+    assert result["totals"]["cost_usd_llm_call_log"] == pytest.approx(0.8)
+    assert result["metrics"]["s1"]["writer_calls"] == 2 and result["metrics"]["s1"]["pass_rate"] == 1.0
+    assert all(r["cost_usd"] == pytest.approx(0.4) for r in result["samples"])
+    final = [k for k in saved if k.endswith("score-regenerate.json")]
+    assert final and saved[final[0]]["final"] is True
+
+
+def test_llm_call_log_has_one_insert_path():
+    """evalpatch relabels the one INSERT every llm_call_log row goes through; a second INSERT would let eval
+    rows land under real stages."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    hits = [str(p.relative_to(repo)) for root in ("api", "services", "shared", "worker")
+            for p in (repo / root).rglob("*.py") if "INTO shared.llm_call_log" in p.read_text(encoding="utf-8")]
+    assert hits == ["shared/llm_client/call_log.py"], hits
