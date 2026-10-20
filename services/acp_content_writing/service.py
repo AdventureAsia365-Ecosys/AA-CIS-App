@@ -56,8 +56,10 @@ from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepair
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F19_GATE, FAQ_MAX_PAIRS,
                                                           FAQ_MIN_PAIRS, STYLE_ONLY_GATES, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq,
-                                                          drop_unanswerable_faq, faq_pair_count, faq_pairs,
-                                                          hold_failure, merge_faq_pairs, replace_faq_section,
+                                                          drop_subjectless_faq, drop_unanswerable_faq,
+                                                          faq_answer_problem, faq_pair_count, faq_pairs,
+                                                          hold_failure, merge_faq_pairs, paa_for_scope,
+                                                          replace_faq_section,
                                                           run_quality_gates, strip_citation_tags,
                                                           unused_source_facts)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -319,6 +321,10 @@ def _location_only(keyword: str, seed_text: str) -> Optional[str]:
     while words and words[-1].lower() in {"and", "or", "with", "for", "in", "of", "the"}:
         words.pop()
     return " ".join(words) if len(words) >= 2 else None
+
+
+# AA-779 — how many raw PAA questions ride in the job payload (paa_for_scope keeps at most 6).
+PAA_RAW_MAX = 12
 
 
 def choose_keyword(related_keywords: list, seed_text: str, out_of_scope=()) -> Optional[str]:
@@ -873,7 +879,8 @@ def _style_only_repair(gate_ledger: list[dict]) -> bool:
 
 
 async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygiene.HygieneContext,
-                                request_id, brand_ignore: frozenset) -> tuple[str, float, list[str]]:
+                                request_id, brand_ignore: frozenset,
+                                fix_subjects: bool = False) -> tuple[str, float, list[str]]:
     """S234 round 2 (panel §5 fix 1) — a blog must end with "## FAQ" and ≥ FAQ_MIN_PAIRS pairs, counted
     after drop_restated_faq / drop_unanswerable_faq. When short: ONE t9_repair call
     (generate.write_faq, about $0.004–0.008 on Haiku) writes a new FAQ from the moment's own seed
@@ -884,34 +891,50 @@ async def _enforce_faq_contract(content_text: str, *, context: dict, hyg: hygien
     both droppers run, then a pair that asks an earlier question again goes (merge_faq_pairs) and
     the FAQ is capped at FAQ_MAX_PAIRS. The result is kept only when it has more pairs than before
     and passes the repair integrity check. F16_faq then reports whatever is still short. Returns
-    (text, cost, log lines)."""
+    (text, cost, log lines).
+
+    AA-779 — the call also gets the piece's in-scope People Also Ask questions
+    (context["paa_questions"]). `fix_subjects`: the FAQ has ≥ FAQ_MIN_PAIRS pairs, but some answers
+    do not answer their question (quality_gates.faq_answer_problem) and could not be dropped without
+    going under the minimum — the same one regeneration runs; those pairs leave the base before the
+    merge, and the merged FAQ goes through drop_subjectless_faq too. Kept when it has more pairs, or
+    (fix_subjects) at least as many with fewer failing ones."""
     before = faq_pair_count(content_text)
-    if before >= FAQ_MIN_PAIRS:
+    if before >= FAQ_MIN_PAIRS and not fix_subjects:
         return content_text, 0.0, []
     own_seed = hygiene.split_seed(context.get("atom_text") or "")[0]
     facts_text = context.get("facts_text") or ""
     audience = context.get("brand_audience") or {}
     source = own_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
+    subject_source = f"{own_seed}\n{facts_text}"
     body = content_text.partition("## FAQ")[0]
+    paa_questions = context.get("paa_questions") or []
     try:
         pairs, cost = await asyncio.to_thread(
             write_faq, source=source, body=body, brand_name=audience.get("brand_name"),
             tenant_id=context.get("tenant_id"), angle_gate_request_id=str(request_id),
             unused_facts=unused_source_facts(source, body),
+            **({"paa_questions": paa_questions} if paa_questions else {}),
         )
     except Exception as e:  # noqa: BLE001 — F16_faq reports the short FAQ
         logger.warning("t9_faq_regen_failed", request_id=str(request_id), error=str(e)[:200])
         return content_text, 0.0, []
-    new = replace_faq_section(content_text, faq_pairs(content_text) + list(pairs))
+    # AA-779 — a pair that does not answer its question is not part of the base the regeneration adds to
+    context_for_check = f"{body}\n{subject_source}"
+    base = [(q, a) for q, a in faq_pairs(content_text) if not faq_answer_problem(q, a, context_for_check)]
+    failing_before = faq_pair_count(content_text) - len(base)
+    new = replace_faq_section(content_text, base + list(pairs))
     new, _ = hygiene.autofix(new, hyg)
     new, _ = drop_restated_faq(new)
     new, _ = drop_unanswerable_faq(new, own_seed, facts_text)
+    new, _, failing_after = drop_subjectless_faq(new, subject_source)
     merged = merge_faq_pairs(faq_pairs(new))[:FAQ_MAX_PAIRS]
     if len(merged) != faq_pair_count(new):
         new = replace_faq_section(new, merged)
     after = faq_pair_count(new)
     problems = hygiene.integrity_problems(content_text, new, brand_ignore, context.get("cta"))
-    if after <= before or problems:
+    better = after > before or (fix_subjects and after >= before and failing_after < failing_before)
+    if not better or problems:
         why = "; ".join(problems[:2]) if problems else f"{after} pair(s) left after the droppers"
         return content_text, cost, [f"FAQ regeneration not kept ({why})"]
     return new, cost, [f"regenerated the FAQ section ({before} → {after} pairs)"]
@@ -1181,6 +1204,9 @@ async def start_write(
     # on a Khövsgöl-only route) would force that place into the title and meta.
     out_of_scope = hygiene.build_scope_lexicon(atom_text, scope, trip_name, trip_places=tuple(trip_places)).gazetteer
     keyword = choose_keyword(related_keywords, atom_text, out_of_scope=out_of_scope)
+    # AA-779 — the snapshot's People Also Ask questions (per TOUR, not scoped). The t9_write job
+    # filters them to this piece (paa_for_scope, once the Facts are known) for the blog FAQ.
+    people_also_ask = [q for q in (dfs_snapshot.get("people_also_ask") or []) if isinstance(q, str)][:PAA_RAW_MAX]
 
     # AA-529 — Facts Entry source: ALL scope='platform' facts + this tenant's own scope='tenant'
     # facts, never another tenant's (fetch_facts_for_writing()'s own WHERE clause enforces that).
@@ -1198,6 +1224,7 @@ async def start_write(
         "destination": destination, "trip_name": trip_name,
         "brand_rubric_text": brand_rubric_text, "channel": req["channel"],
         "atom_id": req["atom_id"], "route_segments": route_segments, "keyword": keyword,
+        "people_also_ask": people_also_ask,  # AA-779 — raw; the job keeps the in-scope ones
         "scope": scope,  # S233
         "trip_places": trip_places,  # S234 round 3 — the full trip's places outside the scope
         "tenant_id": str(tenant_id),  # AA-505 — attribution for llm_call_log
@@ -1386,6 +1413,12 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
     # splits an over-long first line, in hygiene.autofix after the last LLM step of each attempt.
     sibling_openers = context.get("sibling_openers") or []
     openers_kw = {"sibling_openers": sibling_openers} if sibling_openers else {}
+    # AA-779 — the blog's in-scope People Also Ask questions: the writer, the rewrite and the FAQ
+    # regeneration (_enforce_faq_contract reads context["paa_questions"]) prefer one a seed fact answers.
+    paa_questions = (paa_for_scope(context.get("people_also_ask"), hyg.lexicon.own_text, facts_text,
+                                   hyg.lexicon.gazetteer) if channel == "blog" else [])
+    context["paa_questions"] = paa_questions
+    search_kw = {"search_questions": paa_questions} if paa_questions else {}
     brand_ignore = hygiene.brand_words((brand_audience or {}).get("brand_name"))
     sibling_texts = await _sibling_texts(context.get("tenant_id"), request_id, piece_id, pool)
     # S234 round 4 — only the blog channel has a search title (F4 and the publish path are blog-only)
@@ -1442,7 +1475,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                     destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                     route_segments=route_segments, keyword=keyword,
                     tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                    facts_text=facts_text, **openers_kw,
+                    facts_text=facts_text, **openers_kw, **search_kw,
                 )
                 fresh_text = True
             else:
@@ -1573,7 +1606,7 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                         destination=destination, trip_name=writer_trip, atom_id=atom_id, scope=context.get("scope"),
                         route_segments=route_segments, keyword=keyword,
                         tenant_id=tenant_id, angle_gate_request_id=str(request_id),
-                        facts_text=facts_text, **openers_kw,
+                        facts_text=facts_text, **openers_kw, **search_kw,
                     )
                     fresh_text = True
             total_cost += cost
@@ -1628,8 +1661,14 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             hygiene_log += caveat_log
             if channel == "blog":  # AA-770 — F7 auto-fix instead of a hold/rewrite
                 content_text, faq_dropped = drop_restated_faq(content_text)
-                content_text, faq_unanswerable = drop_unanswerable_faq(
-                    content_text, hygiene.split_seed(atom_text)[0], facts_text)
+                own_seed = hygiene.split_seed(atom_text)[0]
+                content_text, faq_unanswerable = drop_unanswerable_faq(content_text, own_seed, facts_text)
+                # AA-779 — an answer that does not name its question's subject (or only says what is not
+                # the case) goes while more than FAQ_MIN_PAIRS remain; the ones kept at the minimum make
+                # this writer text's one FAQ regeneration rewrite them (never a hold of its own).
+                content_text, subject_log, subject_short = drop_subjectless_faq(
+                    content_text, f"{own_seed}\n{facts_text}")
+                faq_unanswerable = list(faq_unanswerable) + subject_log
                 # S234 round 2 — FAQ contract: one regeneration per writer text. S234 r2 review: a
                 # sentence repair can cut a FAQ pair (a repeat-guard delete, an emptied answer, an
                 # answer that now copies the body) and F16_faq is not repairable, so a repair that took
@@ -1640,9 +1679,16 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
                 if faq_fell:
                     faq_repair_regen = True
                 if fresh_text or faq_fell:
+                    before_regen = content_text
                     content_text, faq_cost, faq_regen = await _enforce_faq_contract(
-                        content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore)
+                        content_text, context=context, hyg=hyg, request_id=request_id, brand_ignore=brand_ignore,
+                        fix_subjects=fresh_text and subject_short > 0)
                     total_cost += faq_cost
+                    if content_text != before_regen:
+                        # the new FAQ replaced the kept non-answers: report what the new one still has
+                        content_text, again_log, _ = drop_subjectless_faq(content_text, f"{own_seed}\n{facts_text}")
+                        faq_unanswerable = [x for x in faq_unanswerable if not x.startswith("kept FAQ pair")] \
+                            + again_log
                     faq_unanswerable = list(faq_unanswerable) + faq_regen
             first_line_log: list[str] = []
             if spec is not None:  # S234 round 2 — hook line still too long after the deterministic split

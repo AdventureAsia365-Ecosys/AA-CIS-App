@@ -245,11 +245,12 @@ async def test_contract_merges_the_writers_surviving_pairs_with_the_regeneration
 @pytest.mark.asyncio
 async def test_contract_caps_the_merged_faq():
     writer = qg.replace_faq_section(BODY, RESTATED[:2])
-    regen = [("What is the market like?", "Stalls sell dried curd, felt slippers and fresh bread."),
+    # AA-779: every answer names its question's subject, or drop_subjectless_faq takes it out first
+    regen = [("What is the market like?", "The market's stalls sell dried curd, felt slippers and fresh bread."),
              ("Where do boats leave from?", "Small wooden launches depart from the Khatgal jetty each morning."),
-             ("Is there a monastery nearby?", "Dayan Derkh cave shrine sits a day's ride west of the shore."),
-             ("What fish live in the lake?", "Lenok, grayling and the endemic Hovsgol grayling swim there."),
-             ("When does the ice melt?", "Thaw usually arrives in late May or early June."),
+             ("Is there a monastery nearby?", "The nearest monastery is the Dayan Derkh cave shrine."),
+             ("What fish live in the lake?", "Lenok, grayling and the endemic Hovsgol grayling swim in the lake."),
+             ("When does the ice melt?", "The ice usually melts in late May or early June."),
              ("Can you swim?", "Brave visitors swim in August, though the water stays bracingly cold.")]
     with patch.object(writing_service, "write_faq", return_value=(regen, 0.006)):
         out, _, _ = await writing_service._enforce_faq_contract(

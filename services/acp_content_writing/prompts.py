@@ -58,7 +58,11 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only; required markup, not a sty
   A: <answer>
 - FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
-  states it.
+  states it. When SEARCH QUESTIONS are given, prefer them: use one (reworded lightly if needed) only
+  if a CONTENT SEED or FACTS fact answers it, and never invent a question that sounds like one.
+  Every answer names the subject of its question (the place, people or thing asked about) and
+  answers it in its first sentence, never opening on "It", "They", "These" or "Here"; 40-60 words
+  per answer.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
   bulleted list, and give the richest moment (or section) clearly more depth: at least half as
   long again as any other section.
@@ -89,7 +93,11 @@ BLOG-SPECIFIC FORMAT REQUIREMENTS (this channel only; required markup, not a sty
   A: <answer>
 - FAQ: 3-4 questions, each answered ONLY by a fact in the CONTENT SEED or FACTS. Never ask about
   age suitability, fitness or difficulty, price or what is included unless a seed or FACTS line
-  states it.
+  states it. When SEARCH QUESTIONS are given, prefer them: use one (reworded lightly if needed) only
+  if a CONTENT SEED or FACTS fact answers it, and never invent a question that sounds like one.
+  Every answer names the subject of its question (the place, people or thing asked about) and
+  answers it in its first sentence, never opening on "It", "They", "These" or "Here"; 40-60 words
+  per answer.
 - Vary the rhythm: include at least one paragraph that is a single sentence, use at most one
   bulleted list, and give the richest moment (or section) clearly more depth: at least half as
   long again as any other section.
@@ -242,6 +250,7 @@ def build_user_prompt(
     route_segments: list[tuple[str, str]] | None = None, keyword: str | None = None,
     facts_text: str | None = None, scope: str | None = None,
     sibling_openers: list[str] | None = None,
+    search_questions: list[str] | None = None,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -270,7 +279,11 @@ def build_user_prompt(
     was already chosen above (flat `content_seed`, or the route-aware labeled-moments render) —
     this covers BOTH branches with one change, since the route-aware branch otherwise ignores the
     plain `content_seed` argument entirely. `None`/empty is a no-op (no FACTS section at all),
-    the normal case for a tenant/trip with no Facts Entry of either scope written yet."""
+    the normal case for a tenant/trip with no Facts Entry of either scope written yet.
+
+    `search_questions` (AA-779, blog only): People Also Ask questions already filtered to the
+    piece's scope (quality_gates.paa_for_scope); the FAQ bullet tells the writer to prefer one only
+    when the seed answers it. `None`/empty adds nothing."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -358,6 +371,12 @@ def build_user_prompt(
     if sibling_openers and channel_style["channel"] != "blog":
         lines.insert(-2, "EARLIER PIECES FROM THIS BRIEF OPENED WITH (do not reuse these sentences or their "
                          "construction):\n" + "\n".join(f"- {o}" for o in sibling_openers))
+    if search_questions and channel_style["channel"] == "blog":
+        # AA-779 — People Also Ask questions for this piece's own places (quality_gates.paa_for_scope),
+        # after the CONTENT SEED so the lines.insert(-2, …) positions above are unchanged.
+        lines.append("\nSEARCH QUESTIONS (what readers search for about these places; for the FAQ only, "
+                     "and only when a CONTENT SEED or FACTS fact answers one):\n"
+                     + "\n".join(f"- {q}" for q in search_questions))
     if revision_feedback:
         lines.append(
             "\nPREVIOUS ATTEMPT FAILED QUALITY REVIEW. Fix EXACTLY these issues, preserve "

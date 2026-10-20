@@ -1276,6 +1276,15 @@ mention, deletes a family-brand reassurance that plays down a seed hazard, and r
 made the reader's gateway / base (FAQ included); the rest is F17. A trip place the seed's place background names
 is not out of scope. The blog SEO title may not repeat a title of the tenant's last 50 blog pieces (F4); only the
 blog gets an SEO title/meta (the fit no longer runs for other channels).
+S245 (AA-779) — **FAQ from People Also Ask, every answer names its subject.** The request's
+`dfs_paa_snapshot.people_also_ask` (per tour) rides in the T9 context; the job keeps the questions of the
+piece's own places (`quality_gates.paa_for_scope`: no out-of-scope place, no topic the source cannot answer,
+names an own place or shares 2 seed words; ≤6) and gives them to the blog writer, the rewrite and `write_faq`
+as SEARCH QUESTIONS (used only when a seed fact answers one). After the other FAQ droppers,
+`drop_subjectless_faq` drops a pair whose answer does not name the question's subject (pronoun or
+demonstrative opening, wrong subject) or only says what is not the case, while more than 3 pairs remain;
+pairs it had to keep make the writer text's one FAQ regeneration rewrite them. Logged in `F7_faq_autofix`;
+F16_faq stays the only FAQ hold.
 S235 (AA-786) — **F9 v1.1** (`F9_PROMPT_VERSION = "f9_v1.1"`): the judge reads the piece without
 citation tags (F1/F5 keep them) and, for blogs, the search title and meta description. New
 product-truth code **TEXT_INTEGRITY** quotes each broken sentence and goes to sentence repair, not a
