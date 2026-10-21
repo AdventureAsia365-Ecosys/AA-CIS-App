@@ -35,6 +35,11 @@ samples fire the `*-sampling-stopped` alarms, so a dead api (or a dead loop) is 
   when ALERTS_TOPIC_ARN / ALERT_BOOTSTRAP_EMAIL are unset). An address removed on the admin page while its
   confirmation was pending, and confirmed afterwards, is unsubscribed again within one tick, not only when an admin
   opens the page. Its fields: `alert_recipients` (counts) or `alert_recipients_error`.
+- AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
+  check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
+  tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
+  `jev_credit_low_alert`, or `jev_credit_check_error` here). The schedule is a local of the loop (monotonic),
+  so there is no module state to reset; the first check runs on the first tick.
 - api only (not the worker service); started from api/main.py's lifespan after the main pool,
   cancelled before the pool closes. Off when ENVIRONMENT == "test". Never raises: a failing part is
   logged in the tick's line (`*_error`) and the loop goes on. With two api tasks (rolling deploy)
@@ -44,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -225,6 +231,19 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
     return out
 
 
+async def jev_credit_tick(pool, part_timeout_s: float = PART_TIMEOUT_S) -> Optional[dict]:
+    """AA-845: one Jev low-credit check (shared/jev_credit.check_low_credit). Never raises (except
+    CancelledError); a failure or a hang is one `jev_credit_check_error` warning and the next check retries."""
+    from shared import jev_credit
+
+    try:
+        return await asyncio.wait_for(jev_credit.check_low_credit(pool, source="ops_sampler"),
+                                      timeout=part_timeout_s)
+    except Exception as e:   # asyncio.TimeoutError included
+        logger.warning("jev_credit_check_error", error=_err(e))
+        return None
+
+
 def _log(out: dict) -> None:
     if any(k in out for k in ("rds_error", "retired_error", "jobs_error", "alert_recipients_error")):
         logger.warning("ops_metrics_sampled", **out)
@@ -235,10 +254,16 @@ def _log(out: dict) -> None:
 async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_S,
                                   first_delay_s: float = OPS_METRICS_FIRST_DELAY_S,
                                   client_factory: Callable[[], Any] = cloudwatch_client,
-                                  part_timeout_s: float = PART_TIMEOUT_S) -> None:
+                                  part_timeout_s: float = PART_TIMEOUT_S,
+                                  jev_check_every_s: Optional[float] = None) -> None:
     """Loops until cancelled. Reads app.state.pool on every tick, so it never holds a stale pool; the
     CloudWatch client is made once (in a thread), and again on the next tick if making it failed."""
+    if jev_check_every_s is None:
+        from shared.jev_credit import JEV_CREDIT_CHECK_EVERY_S
+
+        jev_check_every_s = JEV_CREDIT_CHECK_EVERY_S
     client = None
+    next_jev_check = 0.0          # time.monotonic() deadline of the next AA-845 Jev credit check
     await asyncio.sleep(first_delay_s)
     while True:
         try:
@@ -250,6 +275,10 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
                                        redis=getattr(app.state, "redis", None)))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
             logger.warning("ops_metrics_sampled", error=_err(e))
+        pool = getattr(app.state, "pool", None)
+        if pool is not None and time.monotonic() >= next_jev_check:
+            next_jev_check = time.monotonic() + jev_check_every_s
+            await jev_credit_tick(pool, part_timeout_s)
         await asyncio.sleep(interval_s)
 
 
