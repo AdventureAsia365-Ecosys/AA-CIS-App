@@ -526,7 +526,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
-  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
+  then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
+  `https://booking.lumiguides.it.com` by default, or the fixed Preview host `https://booking-preview.lumiguides.it.com`,
+  AA-911; optional `e2e` secret `BOOKING_PREVIEW_BYPASS` sent as headers to that host only) and signs in
   with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
   no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
