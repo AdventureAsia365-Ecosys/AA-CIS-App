@@ -362,6 +362,77 @@ def test_merging_a_keeper_flattens_its_members():
     assert plan.merges[0]["merged_id"] == "k2" and plan.merges[0]["flatten"] == ["m2"]
 
 
+# ── owner decision S246 (1): a merge never stops a drawn line from being drawn ────────────────────────────────────
+
+def _mekong_line(i="line", **kw):
+    line = ((20.0, 102.0), (20.1, 102.05), (20.2, 102.1))
+    return R(i, "Mekong River", 20.1, 102.05, "Laos", precision="line", result_type=None,
+             shape=dd.Shape("ok", "relation", 1, (line,), dd._bbox((line,)), length_km=25.0), **kw)
+
+
+def test_a_drawn_line_is_the_keeper_even_over_an_existing_point_keeper():
+    """Review repro (S246): K = 'Mekong' (a Geoapify point that already keeps one row) and L = 'Mekong River' (a drawn
+    line), the model said same. The old order kept K and merged L into it: L's shape stayed on the merged id and the
+    catalog drew the river as K's point. Now L is the keeper and K (with its member) is flattened into it."""
+    k = R("k", "Mekong", 20.1, 102.05, "Laos", merged_members=1)
+    line = _mekong_line()
+    old_member = R("m0", "Mekong", 20.1001, 102.0501, "Laos", located_by="llm", precision="area", result_type=None)
+    assert dd.decide(k, line).decision == dd.LLM                      # geometry_mismatch: the model band
+    plan = dd.plan_country([k, line], verdicts={dd.pair_key("k", "line"): "same"}, merged={"k": [old_member]})
+    assert [(m["merged_id"], m["keeper_id"], m["flatten"]) for m in plan.merges] == [("k", "line", ["m0"])]
+    assert dd.keeper_of([k, line]).id == "line"
+
+
+def test_a_line_row_without_a_drawn_shape_still_outranks_a_point_keeper():
+    pending = R("p", "Mekong River", 20.1, 102.05, "Laos", precision="line", result_type=None,
+                shape=dd.Shape("pending"))
+    k = R("k", "Mekong", 20.1, 102.05, "Laos", merged_members=3)
+    assert dd.keeper_of([k, pending]).id == "p"
+    assert dd.keeper_of([pending, _mekong_line()]).id == "line"       # the drawn one first
+
+
+def test_an_existing_line_keeper_is_not_swapped_for_a_longer_line():
+    line = ((20.0, 102.0), (20.1, 102.05))
+    kept = R("kept", "Mekong", 20.05, 102.02, "Laos", precision="line", result_type=None, merged_members=1,
+             shape=dd.Shape("ok", "relation", 1, (line,), dd._bbox((line,)), length_km=10.0))
+    assert dd.keeper_of([kept, _mekong_line()]).id == "kept"
+
+
+def test_a_manual_point_keeper_never_absorbs_a_line():
+    """A manual row stays the keeper and is never merged away, so a line that is the same place is cut from the
+    cluster (a reported conflict, both rows stay) instead of being hidden."""
+    man = R("man", "Mekong", 20.1, 102.05, "Laos", geo_status="manual", located_by="manual", result_type=None)
+    line = _mekong_line()
+    pt = R("pt", "Mekong", 20.1001, 102.0501, "Laos", located_by="llm", precision="area", result_type=None)
+    verdicts = {dd.pair_key("man", "line"): "same", dd.pair_key("line", "pt"): "same"}
+    plan = dd.plan_country([man, line, pt], verdicts=verdicts)
+    assert [(m["merged_id"], m["keeper_id"]) for m in plan.merges] == [("pt", "man")]     # the point still merges
+    assert plan.conflicts == [{"keeper_id": "man", "destination_id": "line",
+                               "clash": {"a": "line", "b": "man", "reason": "would_hide_line"}}]
+
+
+def test_hides_line():
+    pt = R("pt", "Mekong", 20.1, 102.05, "Laos")
+    line = _mekong_line()
+    pending = R("p", "Mekong River", 20.1, 102.05, "Laos", precision="line", result_type=None,
+                shape=dd.Shape("pending"))
+    assert dd.hides_line(pt, line) == "would_hide_line"
+    assert dd.hides_line(pending, line) == "would_hide_drawn_line"
+    assert dd.hides_line(line, pt) is None and dd.hides_line(line, pending) is None
+    assert dd.hides_line(pt, R("pt2", "Mekong", 20.1, 102.05, "Laos")) is None
+
+
+def test_apply_merge_line_guard_on_db_rows():
+    from services.places import merges
+    row = lambda prec, st: {"geo_precision": prec, "shape_status": st}   # noqa: E731
+    assert merges.line_hidden(row("point", None), row("line", "ok"))
+    assert merges.line_hidden(row("point", None), row("line", "pending"))
+    assert merges.line_hidden(row("line", "pending"), row("line", "ok"))
+    assert not merges.line_hidden(row("line", "ok"), row("line", "pending"))
+    assert not merges.line_hidden(row("line", "manual"), row("point", None))
+    assert not merges.line_hidden(row("point", None), row("area", None))
+
+
 def test_llm_band_merges_only_with_a_same_verdict():
     bt = R("bt", "Ben Thanh Market", 10.7725, 106.6980, place_id="g-btmarket")
     bare = R("b2", "Ben Thanh", 10.7726, 106.6981, located_by="llm", precision="area", result_type=None)

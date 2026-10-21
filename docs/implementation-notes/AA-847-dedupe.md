@@ -37,6 +37,28 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
   first (the whole river, not a stretch), then any line > a Geoapify point that is not an admin area > a Geoapify
   settlement > a card > most live components > oldest > id. Length is my addition: among several drawn lines of one
   river the whole feature must be the keeper.
+- **Review fix (S246, blocking 1) — a job merge never stops a line from being drawn.** The catalog (256) draws a
+  shape only for an unmerged row with `geo_precision 'line'`, and a job merge leaves `geo.place_shape` on the merged
+  id; the old order kept a manual row or an existing keeper above "line with an ok shape", so a point keeper + a line
+  merged by the model band (`geometry_mismatch` caps point vs line at llm) hid the river (repro: K 'Mekong', a point
+  with one member, vs L 'Mekong River', drawn). Chosen: **keeper = the line** rather than carrying the shape over.
+  New order: manual > drawn line (`draw_tier` 0: precision line + ok/manual shape) > line row (tier 1: precision
+  line, place_shape will draw it) > existing keeper > the old order. Within one draw tier an existing keeper is still
+  never swapped out (a longer drawn line does not replace a drawn keeper). The old point keeper merges INTO the line
+  and its members are flattened (apply_merge already did that). A manual point keeper is never merged away, so
+  `dedupe.hides_line` cuts the line from that cluster (conflict reason `would_hide_line` / `would_hide_drawn_line`,
+  listed with the other conflicts); both rows stay and an admin decides (no automatic path merges them: the admin
+  duplicate fix only merges rule auto-merge pairs, and point vs line is never one). `merges.apply_merge`
+  re-checks the same rule on the rows read under the lock (`line_hidden`) and skips the merge, so a stale plan cannot
+  hide a line either. Admin merges (`decided_by 'admin'`) are exempt: they move the shape themselves.
+- **Review fix (S246, blocking 2) — the admin duplicate fix flattens.** Merging a row D that the job already made a
+  keeper (X.duplicate_of = D) left X → D → K, breaking "duplicate_of always names a root" (single-hop redirects in
+  `catalog.v_destination_redirect`, Booking, TripPlanner). Now `validity_fix` moves D's members to the keeper in the
+  same transaction (`UPDATE … WHERE duplicate_of = D RETURNING id`, the ids actually moved — a job merge made after
+  the dry run included), lists them in the dry run (`flattened`, part of the fingerprint), stores them in the audit
+  row and in the admin `geo.place_merge.prior.flattened` (the same key the job's apply_merge writes), and the fix's
+  undo puts them back on D (only rows still pointing at the keeper). Chosen over a 409 on rows with members: the
+  admin override must be able to merge a job keeper.
 - **Group-level rule (§0.5, lesson S239):** a member merges only on its own edge with the keeper; no pair in the
   merged set may be a hard-rule keep or a `different` verdict / pin — including the rows already merged into the
   keeper or into a member (else a clash could be bypassed over two runs). The cluster is cut to its largest
@@ -97,6 +119,14 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
   uncommitted); `/admin/places` Merges tab (`MergesTab.tsx`) + 3 GET and 3 POST routes (POLICY ops.write, route
   snapshot regenerated); `ops_alerts` template `place_dedupe_held`.
 
+- Review fixes (S246): `services/places/dedupe.py` (`draws_line`, `draw_tier`, `hides_line`, `keeper_key`, the
+  cut in `plan_country`), `services/places/merges.py` (`line_hidden`, the under-lock check in `apply_merge`),
+  `services/places/validity_fix.py` (flatten in `plan` / `_apply_changes`, `_prior`), `validity.keeper_of` docstring;
+  tests: 6 unit (`test_aa847_dedupe.py`: the review repro, line row vs point keeper, no swap of a drawn line keeper,
+  manual point keeper cut, `hides_line`, `line_hidden`) and 2 integration (`test_aa847_migration_257.py`: apply_merge
+  refuses line → point keeper and merges point → line with the member flattened and the shape still drawn; the admin
+  fix flattens a job merge, logs `prior.flattened`, undo restores it). Both integration tests fail on the pre-fix code.
+
 ## Tradeoffs
 - **Offline evaluation, rules r1.4, 134 pairs (61 merge / 73 keep), $0:**
 
@@ -117,6 +147,14 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
 - The six keep pairs in the band (Long Bien / Long Bien Bridge ×2, Hoan Kiem / Hoan Kiem Lake on the suburb id, Lao Cai
   / Lao Chai 2.7 km, Dhammayangyi / Dhammayazika model point, Cu Chi / Cu Chi Tunnels model point) are what the
   two-model check must answer `different` / `unsure`: the paid measurement run (§6.2) measures exactly this.
+- Re-run after the review fixes (keeper order + line cut; `decide` unchanged): identical numbers in all five modes —
+  auto precision 1.000, 0 false merges, rules recall 0.689 / 0.689 / 0.623 / 0.066 / 0.623.
+- Keeper = the line vs carrying the shape over: carrying (move `geo.place_shape`, set the keeper's precision to
+  `line`, undo it) has to survive later merges into the same keeper (a second shape move, an undo of the first one
+  moving the wrong row back) and would turn a point (possibly an overnight stop, which `_live_stop` drops once it is a
+  line) into a line. Making the line the keeper needs no shape move, uses the existing flatten / undo, and costs one
+  id change for an existing point keeper (its redirect then names the line). Cost: a manual point keeper + a line is
+  left as a reported conflict instead of an automatic merge.
 - One pair (Hoan Kiem / Hoan Kiem Lake on one suburb id) is gated in the full-metadata run only: without the suburb
   result it is the s246 merge pair "bare name of a lake" — the label needs the metadata.
 
@@ -129,7 +167,13 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
 - **Lines lane coordination:** rebased on `feat/aa-847-place-shape` ebbf17a4 (its `place_shape` job); `place_shape`
   now queues `place_dedupe` when a shape reaches `ok`. Its `services/places/geolock.py` is a different lock (one
   Geoapify client at a time) and stays next to `store.lock_destinations`. The lines lane's `validity_fix.shape_merge` still moves shapes for ADMIN merges;
-  job merges leave `geo.place_shape` on the merged id (PK collision) and the keeper order prefers the drawn line.
+  job merges leave `geo.place_shape` on the merged id (PK collision): a line is always the keeper of a job merge
+  (keeper order + `hides_line` + the under-lock `line_hidden`), so nothing drawn is ever left there.
+- **Admin-fix undo vs later job merges:** the fix's undo restores flattened rows only while they still point at the
+  keeper; a job merge made after the fix into the same keeper is not undone by it (the job's own undo does that).
+- **Conflict `would_hide_line` / `would_hide_drawn_line`** in the job result = a manual row that a line (not drawn
+  as one by that manual row) is the same place as. Both rows stay; an admin re-places or clears the manual row. Rare
+  (needs a manual row and a model `same`), so no UI action was added for it.
 - **Branch stack:** `feat/aa-847-place-shape` (ebbf17a4) → `feat/aa-847-dedupe` (PR A) → `feat/aa-847-dedupe-job`
   (PR B). The lines lane's views (CIS 256, `feat/aa-847-lines-views`) are a sibling; 257 does not need them. The
   conftest skip lines (253 / 256 / 257) conflict trivially when the branches meet.

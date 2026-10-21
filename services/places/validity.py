@@ -162,7 +162,8 @@ def is_same_place(a: Place, b: Place) -> tuple[bool, Optional[float]]:
 
 
 def keeper_of(places: Iterable[Place]) -> Place:
-    """The cluster keeper by the dedupe order (manual, Geoapify POI, settlement, card, components, age, id)."""
+    """The cluster keeper by the dedupe order (manual, line, existing keeper, Geoapify POI, settlement, card,
+    components, age, id)."""
     places = list(places)
     by_id = {p.destination_id: p for p in places}
     return by_id[dedupe.keeper_of([to_row(p) for p in places]).id]

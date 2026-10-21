@@ -10,7 +10,8 @@
                    country — an OVERRIDE since AA-847 Problem 2 (the place_dedupe job merges automatically): one
                    keeper per cluster (dedupe.keeper_of); each merge is also a geo.place_merge row (decided_by
                    'admin', never undone by the job's re-check; its undo pins the pair 'different'); the others get
-                   duplicate_of = keeper and
+                   duplicate_of = keeper, the rows already merged into them follow to the keeper (flattened:
+                   duplicate_of always names a root; undo puts them back) and
                    every CIS row pointing at them is repointed to the keeper: geo.tour_place, geo.tour_day
                    (overnight), geo.place_name (so the store lookup answers the keeper, not a new geocode),
                    acp_shared.place_card, shared.place_photo. Booking and TripPlanner rows are reported, never
@@ -249,14 +250,26 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
             sm = shape_merge(keeper_shape, shapes.get(d))
             if sm.get("moved"):
                 keeper_shape = shapes.get(d)
+            # rows the place_dedupe job already merged into d move to the keeper (duplicate_of always names a root)
+            members = sorted(r["id"] for r in await conn.fetch(
+                "SELECT id::text AS id FROM shared.destinations WHERE duplicate_of = $1::uuid", d))
             changes.append({"destination_id": d, "name": row["name"], "country": row["country"],
                             "keeper_id": keeper, "keeper_name": usable[keeper]["name"],
                             "before": {"duplicate_of": None}, "after": {"duplicate_of": keeper},
-                            "repointed": moved, "shape": sm})
+                            "repointed": moved, "shape": sm, "flattened": members})
     merged = [c["destination_id"] for c in changes]
     return {"check": check, "country": country, "source_id": source_id, "findings": len(items),
             "changes": changes, "skipped": skipped, "fingerprint": fingerprint(changes),
             "cross_app_references": await _cross_app(conn, merged) if merged else {}}
+
+
+def _prior(ch: dict) -> dict:
+    """geo.place_merge.prior of an admin merge: the shape move, and (same key as merges.apply_merge) the rows that were
+    merged into the duplicate and now point at the keeper."""
+    out = {"shape": ch.get("shape") or {}}
+    if ch.get("flattened"):
+        out["flattened"] = list(ch["flattened"])
+    return out
 
 
 async def _log_merges(conn, changes: list, actor: str) -> list[str]:
@@ -273,7 +286,7 @@ async def _log_merges(conn, changes: list, actor: str) -> list[str]:
                VALUES ($1::uuid, $2::uuid, $3, 'admin', $4, $5::jsonb, $6::jsonb, $7::jsonb, $8) RETURNING id::text""",
             ch["destination_id"], ch["keeper_id"], ch.get("country") or "", dedupe.RULE_VERSION,
             json.dumps({"reason": "admin validity fix", "keeper_name": ch.get("keeper_name"), "name": ch.get("name")}),
-            json.dumps(ch.get("repointed") or {}), json.dumps({"shape": ch.get("shape") or {}}), actor))
+            json.dumps(ch.get("repointed") or {}), json.dumps(_prior(ch)), actor))
     return ids
 
 
@@ -310,6 +323,16 @@ async def _apply_changes(conn, check: str, changes: list, *, reverse: bool = Fal
                         f"UPDATE {table} SET {col} = $1::uuid WHERE {col} = $2::uuid AND {_where(keys, 3)}",
                         dst, src, *key)
             await _apply_shape_merge(conn, keeper, dup, ch.get("shape") or {}, reverse=reverse)
+            if not reverse:
+                # flatten: the rows already merged into dup (a job merge, possibly one made after the dry run) follow
+                # it to the keeper; the ids actually moved are what the audit row, the merge log and undo hold
+                ch["flattened"] = sorted(r["id"] for r in await conn.fetch(
+                    "UPDATE shared.destinations SET duplicate_of = $1::uuid WHERE duplicate_of = $2::uuid "
+                    "RETURNING id::text AS id", keeper, dup))
+            elif ch.get("flattened"):
+                await conn.execute("UPDATE shared.destinations SET duplicate_of = $1::uuid "
+                                   "WHERE id = ANY($2::uuid[]) AND duplicate_of = $3::uuid",
+                                   dup, ch["flattened"], keeper)
             await conn.execute("UPDATE shared.destinations SET duplicate_of = $2::uuid WHERE id = $1::uuid",
                                dup, target["duplicate_of"])
         else:

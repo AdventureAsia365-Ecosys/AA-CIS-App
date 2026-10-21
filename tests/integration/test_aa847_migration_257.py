@@ -14,6 +14,10 @@ switch (errors NOT swallowed), twice. Teardown drops what 257 created, so later 
   * undo_merge: 409 while a later merge depends on it; restores the pointers, clears duplicate_of, writes a
     `different` pin; a second undo is refused; a name-key collision is refused;
   * repoint_dangling repairs a pointer a stale write left on a merged row;
+  * owner decision S246 (1): apply_merge refuses to merge a drawn line into a point keeper (its shape would stay on
+    the merged id); the point merges into the line instead, its members flattened;
+  * the admin duplicate fix flattens the job's merges into the row it merges (duplicate_of always names a root),
+    logs them in geo.place_merge.prior.flattened and its undo restores them;
   * dedupe_run: a fake country (isolated from other modules' rows) — not listed: rules only, the model band unasked;
     listed dry_run: the stubbed two models answer, the verdict is cached (a second run asks nothing), nothing
     written; approved apply: the diff is written with the graph build queued; the breaker holds a country whose
@@ -315,6 +319,105 @@ async def test_repoint_dangling(seeded):
         assert out.get("geo.tour_place", 0) >= 1
         assert await c.fetchval("SELECT destination_id::text FROM geo.tour_place WHERE component_id = $1::uuid",
                                 seeded["comp"]) == d["keeper"]
+
+
+_LINE = {"type": "LineString", "coordinates": [[102.0, 20.0], [102.05, 20.1], [102.1, 20.2]]}
+
+
+async def _drawn_line(c, name, country, lat, lng):
+    """A line destination the catalog draws: geo_precision 'line' + an ok geo.place_shape row."""
+    dest = await _dest(c, name, country, lat, lng, "geoapify", "line", rt="unknown")
+    g = json.dumps(_LINE)
+    await c.execute(
+        """INSERT INTO geo.place_shape (destination_id, kind, status, source, geom, geom_mid, geom_lo, min_lat, min_lng,
+                                        max_lat, max_lng, length_km, osm_type, osm_id)
+           VALUES ($1::uuid, 'line', 'ok', 'overpass', $2::jsonb, $2::jsonb, $2::jsonb, 20.0, 102.0, 20.2, 102.1, 25.0,
+                   'relation', 1)""", dest, g)
+    return dest
+
+
+@pytest.mark.asyncio
+async def test_a_job_merge_never_hides_a_drawn_line(seeded):
+    """Owner decision S246 (1), review repro: K = a point that already keeps one row, L = the same river drawn as a
+    line. apply_merge refuses L → K under the lock (L's shape would stay on the merged id, never drawn); K → L merges,
+    K's member is flattened to L, and L keeps its precision and its shape (still drawn)."""
+    d, country, tag = seeded["d"], seeded["country"], seeded["tag"]
+    async with seeded["pool"].acquire() as c:
+        k = await _dest(c, f"Mekong {tag}", country, 20.1, 102.05)
+        member = await _dest(c, f"Mekong {tag} pier", country, 20.1001, 102.0501, "llm", "area")
+        line = await _drawn_line(c, f"Mekong River {tag}", country, 20.1, 102.05)
+        try:
+            async with c.transaction():
+                assert await merges.apply_merge(c, {"merged_id": member, "keeper_id": k, "country": country,
+                                                    "decided_by": "rule"}, created_by="test")
+            async with c.transaction():
+                refused = await merges.apply_merge(c, {"merged_id": line, "keeper_id": k, "country": country,
+                                                       "decided_by": "llm"}, created_by="test")
+            assert refused is None
+            assert await c.fetchval("SELECT duplicate_of FROM shared.destinations WHERE id = $1::uuid", line) is None
+            assert await c.fetchval("SELECT count(*) FROM geo.place_merge WHERE merged_id = $1::uuid", line) == 0
+            async with c.transaction():
+                mid = await merges.apply_merge(c, {"merged_id": k, "keeper_id": line, "country": country,
+                                                   "decided_by": "llm"}, created_by="test")
+            assert mid
+            dup = {r["id"]: r["duplicate_of"] for r in await c.fetch(
+                "SELECT id::text AS id, duplicate_of::text AS duplicate_of FROM shared.destinations "
+                "WHERE id = ANY($1::uuid[])", [k, member, line])}
+            assert dup == {k: line, member: line, line: None}
+            drawn = await c.fetchrow(
+                """SELECT d.geo_precision, ps.status FROM shared.destinations d
+                     JOIN geo.place_shape ps ON ps.destination_id = d.id WHERE d.id = $1::uuid""", line)
+            assert dict(drawn) == {"geo_precision": "line", "status": "ok"}
+            assert await merges.assert_roots(c) == 0
+        finally:
+            await c.execute("UPDATE shared.destinations SET duplicate_of = NULL WHERE id = ANY($1::uuid[])",
+                            [k, member, line])
+            await c.execute("DELETE FROM shared.destinations WHERE id = ANY($1::uuid[])", [k, member, line])
+
+
+@pytest.mark.asyncio
+async def test_the_admin_duplicate_fix_flattens_job_merges_and_logs_them(seeded):
+    """The admin fix merges a row D the job already made a keeper (member → D): the member follows D to the keeper
+    (duplicate_of always names a root, single-hop redirects), the admin's geo.place_merge row records it in
+    prior.flattened (the job's key), and the fix's undo puts the member back on D."""
+    from services.places import validity_fix
+    from _audit_cleanup import delete_audit_rows
+    d, country = seeded["d"], seeded["country"]
+    actor = f"admin:zq847-{seeded['tag']}"
+    pool = seeded["pool"]
+    try:
+        async with pool.acquire() as c:
+            async with c.transaction():
+                assert await merges.apply_merge(c, {"merged_id": d["member"], "keeper_id": d["merged"],
+                                                    "country": country, "decided_by": "rule"}, created_by="test")
+            fix = {"check": "duplicate_place", "country": country, "source_id": None, "findings": 1, "skipped": [],
+                   "changes": [{"destination_id": d["merged"], "name": "x", "country": country,
+                                "keeper_id": d["keeper"], "keeper_name": "k", "before": {"duplicate_of": None},
+                                "after": {"duplicate_of": d["keeper"]}, "repointed": {}, "shape": {},
+                                "flattened": []}]}
+            async with c.transaction():
+                done = await validity_fix.apply(c, fix, actor=actor)
+            dup = {r["id"]: r["duplicate_of"] for r in await c.fetch(
+                "SELECT id::text AS id, duplicate_of::text AS duplicate_of FROM shared.destinations "
+                "WHERE id = ANY($1::uuid[])", [d["merged"], d["member"]])}
+            assert dup == {d["merged"]: d["keeper"], d["member"]: d["keeper"]}
+            assert await merges.assert_roots(c) == 0
+            assert done["changes"][0]["flattened"] == [d["member"]]
+            row = await c.fetchrow("SELECT decided_by, prior FROM geo.place_merge WHERE id = $1::uuid",
+                                   done["merge_ids"][0])
+            assert row["decided_by"] == "admin"
+            assert json.loads(row["prior"]) == {"shape": {}, "flattened": [d["member"]]}
+            async with c.transaction():
+                undone = await validity_fix.undo(c, done["audit_id"], actor=actor, dry_run=False)
+            assert undone["merges_undone"] == 1
+            dup = {r["id"]: r["duplicate_of"] for r in await c.fetch(
+                "SELECT id::text AS id, duplicate_of::text AS duplicate_of FROM shared.destinations "
+                "WHERE id = ANY($1::uuid[])", [d["merged"], d["member"]])}
+            assert dup == {d["merged"]: None, d["member"]: d["merged"]}
+    finally:
+        async with pool.acquire() as c:
+            await c.execute("DELETE FROM shared.job WHERE created_by = $1", actor)
+        await delete_audit_rows(pool, "actor = $1", actor)
 
 
 def _stub_models():

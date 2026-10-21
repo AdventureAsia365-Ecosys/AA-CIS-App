@@ -32,11 +32,13 @@ rule prototype there (dedupe_proto.py, r1.2) is ported here as r1.4 with the rev
      moves a pair toward auto_merge.
 
 Clusters (plan_country): edges are auto_merge decisions and llm pairs whose two-model verdict is `same`. Keeper:
-manual > an existing keeper (never swapped out) > a line with an ok shape (linear kinds) > Geoapify POI / natural >
-Geoapify settlement > card > most live components > oldest > id. A member merges only on its OWN edge with the keeper
-(no chaining, lesson S239); a manual row is never merged away; no pair inside the merged set — including the rows
-already merged into the keeper or a member — may be a hard-rule keep or a `different` verdict / pin: the cluster is cut
-down to its largest consistent subset and the rest is reported as a conflict.
+manual > a drawn line > a line row > an existing keeper (never swapped out within its draw tier) > a line with an ok
+shape (linear kinds) > Geoapify POI / natural > Geoapify settlement > card > most live components > oldest > id. A
+member merges only on its OWN edge with the keeper (no chaining, lesson S239); a manual row is never merged away; a
+line is never merged into a keeper that is not drawn as one (hides_line, owner decision S246 (1): reported as a
+conflict); no pair inside the merged set — including the rows already merged into the keeper or a member — may be a
+hard-rule keep or a `different` verdict / pin: the cluster is cut down to its largest consistent subset and the rest
+is reported as a conflict.
 
 Names: shared.destinations.name normalised by names.name_norm (the SQL twin geo.name_norm) after dropping
 parentheticals and possessive 's. Kind words: geomatch.KIND_OF_WORD / PHRASE_KINDS (English) + LOCAL_KIND_WORDS below;
@@ -663,17 +665,43 @@ def _decide_lines(a: Row, b: Row, d: float) -> Decision:
 
 # ── keeper, clusters, plan ──────────────────────────────────────────────────────────────────────────────────────────
 
+def draws_line(r: Row) -> bool:
+    """The catalog draws this row as a line now (catalog.v_destination_shape: geo_precision 'line' + a drawn shape)."""
+    return r.precision == "line" and r.shape is not None and r.shape.usable
+
+
+def draw_tier(r: Row) -> int:
+    """0 drawn as a line now, 1 a line row (geo_precision 'line': place_shape draws it), 2 not a line."""
+    return 0 if draws_line(r) else (1 if r.precision == "line" else 2)
+
+
+def hides_line(keeper: Row, merged: Row) -> Optional[str]:
+    """Owner decision S246 (1): a merge never stops a line from being drawn. The catalog draws only an unmerged row
+    with geo_precision 'line' and a drawn geo.place_shape, and a merge leaves the merged row's shape on the merged id:
+    merging a line row into a keeper that is not one (or a drawn line into a keeper not drawn yet) would hide it.
+    The reason, or None. keeper_key already makes the line the keeper of any cluster that has one, so this only
+    fires on a manual keeper (never merged away): both rows stay and the conflict is reported for an admin."""
+    if merged.precision == "line" and keeper.precision != "line":
+        return "would_hide_line"
+    if draws_line(merged) and not draws_line(keeper):
+        return "would_hide_drawn_line"
+    return None
+
+
 def keeper_key(r: Row) -> tuple:
-    """manual > existing keeper > line with an ok shape, the longest first (the whole river, not a stretch), then any
-    line > Geoapify POI / natural > Geoapify settlement > card > most live components > oldest > id."""
+    """manual > drawn line > line row > existing keeper > among lines the one with an ok shape, the longest first (the
+    whole river, not a stretch), then any line > Geoapify POI / natural > Geoapify settlement > card > most live
+    components > oldest > id. A line outranks an existing keeper (owner decision S246 (1): the merged row's shape is
+    never drawn, so the line must be the keeper; the old keeper and its members are flattened into it); among rows
+    of one draw tier an existing keeper is never swapped out."""
     shape_ok = r.shape is not None and r.shape.usable
     line_tier = 0 if shape_ok else (1 if r.geometry == LINEAR else 2)
     length = -(r.shape.length_km or _length(r.shape.lines)) if shape_ok else 0.0
     settlement_ok = r.geoapify and not r.geocode_fallback and (r.result_type or "") in ("city", "suburb", "district")
     # a Geoapify point that is not an admin area (rows geocoded before result_type was stored count too)
     confirmed_poi = r.geoapify and not r.geocode_fallback and (r.result_type or "") not in COARSE_TYPES
-    return (not r.manual, r.merged_members == 0, line_tier, length, not confirmed_poi, not settlement_ok,
-            r.card is None, -r.components, r.created_at or "~", r.id)
+    return (not r.manual, draw_tier(r), r.merged_members == 0, line_tier, length, not confirmed_poi,
+            not settlement_ok, r.card is None, -r.components, r.created_at or "~", r.id)
 
 
 def keeper_of(rows: Iterable[Row]) -> Row:
@@ -875,7 +903,9 @@ def plan_country(rows: list[Row], verdicts: Optional[dict] = None, ctx: Optional
 
         ok, cut = [], []
         for m, basis in cands:
-            why = next(((p.id, q.id, clash(p, q)) for p in bundle(m) for q in keeper_bundle if clash(p, q)), None)
+            hidden = hides_line(k, m)
+            why = (m.id, k.id, hidden) if hidden else next(
+                ((p.id, q.id, clash(p, q)) for p in bundle(m) for q in keeper_bundle if clash(p, q)), None)
             (cut.append((m, why)) if why else ok.append((m, basis)))
         chosen = _largest_consistent(ok, bundles_clash)
         chosen_ids = {m.id for m, _ in chosen}

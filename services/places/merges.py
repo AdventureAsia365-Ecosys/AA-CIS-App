@@ -14,6 +14,9 @@ connection; transactions are the caller's unless stated.
 
 Not repointed (left on the merged id, hidden by the duplicate_of filters): geo.place_shape and geo.place_outlier
 (primary keys would collide), geo.tour_segment and the graph tables (rebuilt by the graph build the merge enqueues).
+A merged row's shape is never drawn, so a job merge never takes a line into a keeper that is not one (owner decision
+S246 (1)): dedupe.keeper_key makes the line the keeper, dedupe.hides_line cuts the rest (a manual point keeper) from
+the plan, and apply_merge re-checks it under the lock (line_hidden).
 """
 from __future__ import annotations
 
@@ -272,21 +275,35 @@ def _where(keys: tuple, start: int) -> str:
     return " AND ".join(f"{k}::text = ${start + i}" for i, k in enumerate(keys))
 
 
+def line_hidden(keeper, merged) -> bool:
+    """dedupe.hides_line on two shared.destinations rows (geo_precision, the geo.place_shape status): merging would
+    leave a line, or a drawn line, on the merged id where the catalog never draws it."""
+    def drawn(r) -> bool:
+        return r["geo_precision"] == "line" and r["shape_status"] in dd.SHAPE_OK
+    return ((merged["geo_precision"] == "line" and keeper["geo_precision"] != "line")
+            or (drawn(merged) and not drawn(keeper)))
+
+
 async def apply_merge(conn, m: dict, *, created_by: str, job_id: Optional[str] = None) -> Optional[str]:
     """One merge (a plan_country entry, or the admin fix's) in the caller's transaction. Re-checks under the lock that
-    both rows are still usable and the merged row is not admin-fixed; returns the geo.place_merge id, or None when
-    the rows changed (nothing written)."""
+    both rows are still usable, the merged row is not admin-fixed and the merge would not hide a line (a job merge
+    never stops a line from being drawn); returns the geo.place_merge id, or None when the rows changed (nothing
+    written)."""
     await lock_destinations(conn)
     merged, keeper = m["merged_id"], m["keeper_id"]
     st = await conn.fetch(
-        """SELECT id::text AS id, duplicate_of, geo_status, located_by FROM shared.destinations
-            WHERE id = ANY($1::uuid[]) FOR UPDATE""", [merged, keeper])
+        """SELECT d.id::text AS id, d.duplicate_of, d.geo_status, d.located_by, d.geo_precision,
+                  ps.status AS shape_status
+             FROM shared.destinations d LEFT JOIN geo.place_shape ps ON ps.destination_id = d.id
+            WHERE d.id = ANY($1::uuid[]) FOR UPDATE OF d""", [merged, keeper])
     by_id = {r["id"]: r for r in st}
     if len(by_id) != 2 or any(r["duplicate_of"] is not None or r["geo_status"] == "suspect" for r in st):
         return None
     if m.get("decided_by") != "admin" and (by_id[merged]["geo_status"] == "manual"
                                            or by_id[merged]["located_by"] == "manual"):
         return None
+    if m.get("decided_by") != "admin" and line_hidden(by_id[keeper], by_id[merged]):
+        return None         # owner decision S246 (1): the plan cuts this (dedupe.hides_line); re-checked on fresh rows
     repointed: dict[str, list] = {}
     for table, keys, col in REPOINT:
         rows = await conn.fetch(
