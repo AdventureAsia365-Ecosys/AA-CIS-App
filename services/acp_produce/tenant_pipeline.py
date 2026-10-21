@@ -56,6 +56,7 @@ from services.content_generation.seo_meta_utils import (  # noqa: F401
     SEO_TITLE_MAX, fit_seo_meta, fit_seo_meta_final, fit_seo_title,
 )
 from shared.llm_client.decide import decide
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
@@ -273,7 +274,7 @@ unsupported service-level claim (a "luxury" lodge, a "tailored" itinerary), keep
 replace it with another invented one. If nothing in the sentence is supported, return an empty string.
 Return strict JSON only."""
 
-_T3_PASS_LINE = 7.0  # graph.MIN_QUALITY — a draft below it gets the judge's feedback on a revision
+_T3_PASS_LINE = threshold("t3.pass_line")  # a draft below it gets the judge's feedback on a revision
 
 
 def _result_score(result: dict) -> float:

@@ -20,6 +20,7 @@ from services.acp_shared.writing_progress import (
 )
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
 from shared.llm_client import stream_sink
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
@@ -37,10 +38,13 @@ _PT_SQL = """
 """
 
 
+_T2_STATUS_PASS = threshold("t2.status_pass")  # services/quality/thresholds.yaml (AA-926)
+
+
 def _t2_status(rewrite_score: float) -> str:
     """AA-436: the stored T2 version status is purely score-based (same formula for a real T3 pass and
     an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot."""
-    if rewrite_score >= 7.0:
+    if rewrite_score >= _T2_STATUS_PASS:
         return "ai_generated"   # ready for tenant to review
     if rewrite_score > 0:
         return "needs_review"   # LLM finished but low quality

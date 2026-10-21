@@ -72,6 +72,7 @@ from services.acp_shared.route_guard import request_route_segment_ids
 from services.acp_planning.tenant_pool import fetch_tenant_trips
 from services.acp_produce.brand import fetch_brand_rubric_text
 from services.acp_content_writing.gate_eval import ledger_snapshot  # AA-791
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
@@ -85,7 +86,7 @@ MAX_ATTEMPTS = 3
 # flag (AA-499) and the cross-tenant `F10_cannibalization_cross_tenant` BLOCKING gate (AA-484) —
 # a shared threshold for the same underlying question ("is this near-duplicate content?") is
 # more defensible than inventing a second number for the softer, flag-only case.
-_REUSE_SIMILARITY_THRESHOLD = 0.92
+_REUSE_SIMILARITY_THRESHOLD = threshold("t10.reuse_similarity")
 
 
 class ContentWritingError(Exception):

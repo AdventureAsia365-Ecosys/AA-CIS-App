@@ -29,6 +29,7 @@ import structlog
 from shared.llm_client.call_log import billed_record
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
@@ -42,7 +43,7 @@ _JUDGE_SEED = 42
 # seed, score two more times and keep the median. A model that honours the seed (GPT-4.1) is already
 # reproducible, so it is scored once. Layer 1 = the single call; layer 3 = the Jev tie-break in
 # judge_node, which only fires when a score is still exactly on the line after this.
-_REPEAT_BAND = (6.0, 8.0)          # inclusive; MIN_QUALITY (7.0) sits in the middle
+_REPEAT_BAND = threshold("brand_fit.repeat_band")  # inclusive (6.0, 8.0); the pass line sits in the middle
 _REPEAT_EXTRA = 2                  # 2 more calls -> median of 3
 
 

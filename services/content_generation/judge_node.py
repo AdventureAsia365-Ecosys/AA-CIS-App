@@ -28,15 +28,16 @@ from services.content_generation.brand_fit import (
 from shared.llm_client.call_log import (
     billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
 )
+from services.quality.registry import threshold
 
 logger = structlog.get_logger()
 
-# Mirror graph.MIN_QUALITY (7.0). Defined locally to avoid a circular import (graph imports this node).
-_MIN_QUALITY = 7.0
+# The judge pass line (thresholds.yaml a1.judge_pass, the same pass_line as graph.MIN_QUALITY; AA-926).
+_MIN_QUALITY = threshold("a1.judge_pass")
 # A missing mission-hook caps the judge score just below the retry threshold so it forces at least
 # one Bedrock retry instead of failing outright. A1 never uses it (AA-698); T2 uses it under the
 # mission gates below, and only when the tenant has a mission (core idea) to look for.
-_MISSION_ABSENT_CAP = 6.0
+_MISSION_ABSENT_CAP = threshold("judge.mission_absent_cap")
 
 # AA-792 — what the T2 (tenant rewrite) judge gates on. Nghiệp chose option B (Gate 1, 14/10/2026):
 # keep the mission as a gate, but the mission is the TENANT's own — its brand-pack core_idea
@@ -131,7 +132,7 @@ TIE_STAGE = "s1_judge_tiebreak"
 # logged under its own stage and the tenant's id so the allow-list guard applies (design C2).
 T2_TIE_STAGE = "t2_judge_tiebreak"
 TIE_Q = "a1_brand_fit"
-_TIE_BAND = 0.5
+_TIE_BAND = threshold("judge.tie_band")
 _BELOW_LINE = _MIN_QUALITY - 0.1
 
 
