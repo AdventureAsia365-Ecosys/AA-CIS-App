@@ -46,7 +46,7 @@ from services.content_generation.itinerary_utils import parse_canonical_itinerar
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import get_stage_config
-from shared.llm_client.call_log import record_call_with_pool
+from shared.llm_client.call_log import record_call_with_pool, record_unusable
 from shared.llm_client.decide import decide
 
 logger = structlog.get_logger()
@@ -189,6 +189,9 @@ async def _atomize_whole_tour_legacy(
         atoms = json.loads(_strip_json_fence(llm_result.content))["atoms"]
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.error("a3_atomize_parse_failed", tour_id=tour_id, owner_scope=OWNER_SCOPE, error=str(e))
+        # AA-927: the reply was billed — one billed_unusable row before giving up.
+        await record_unusable(llm_result, stage="a3_atomize", role=_a3_cfg.role, error=e,
+                              tenant_id=_llm_log_tenant_id(OWNER_SCOPE))
         return {"status": "failed", "error": f"invalid atom JSON from model: {e}"}
     atoms = [a for a in atoms if not _is_logistics_atom(a.get("place") or "", a.get("action") or "")]  # S224
 
@@ -361,6 +364,9 @@ async def _atomize_per_day(
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logger.error("a3_atomize_day_parse_failed", tour_id=tour_id, version_id=version_id,
                          day_number=day_num, error=str(e))
+            await record_unusable(llm_result, stage="a3_atomize", role=_a3_cfg.role, error=e,  # AA-927
+                                  tenant_id=_llm_log_tenant_id(OWNER_SCOPE),
+                                  quality_signal_extra={"day_number": day_num})
             days_failed.append(day_num)
             continue
 

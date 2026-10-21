@@ -236,8 +236,9 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
         # No clear per-day markers -> no facts, prompt as today (fail open).
         return {"days": [], "used_fallback": True}
 
+    resp = None  # AA-927
     try:
-        from shared.llm_client.call_log import record_call_sync
+        from shared.llm_client.call_log import record_call_sync, record_unusable_sync
         from shared.llm_client.client import LLMClient
         from shared.llm_client.models import LLMRequest
 
@@ -251,9 +252,14 @@ def extract_day_facts(tour: dict, *, client=None, model_tier=None) -> dict:
             max_tokens=4096,
             json_schema=_SCHEMA,
         ))
-        parsed = _parse_json(resp.content)
-        days = _normalize_days(parsed.get("days") if parsed else None)
-        days = _apply_honesty_guard(days, tour)
+        try:
+            parsed = _parse_json(resp.content)
+            days = _normalize_days(parsed.get("days") if isinstance(parsed, dict) else None)
+            days = _apply_honesty_guard(days, tour)
+        except Exception as exc:
+            # AA-927: the extraction reply was billed — its row before failing open.
+            record_unusable_sync(resp, stage=STAGE, role="validate", error=exc)
+            raise
         record_call_sync(
             stage=STAGE, role="validate", model=resp.model_used,
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),

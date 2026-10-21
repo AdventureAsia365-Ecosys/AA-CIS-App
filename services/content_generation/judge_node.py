@@ -22,9 +22,12 @@ import structlog
 
 from services.content_generation.stages import stage_for
 from services.content_generation.brand_fit import (
-    _JUDGE_SEED, _JUDGE_TEMPERATURE, has_brand_signals, runs_signal, score_brand_fit,
+    _JUDGE_SEED, _JUDGE_TEMPERATURE, billed_calls, has_brand_signals, run_billing, runs_signal,
+    score_brand_fit,
 )
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import (
+    billed_unusable_rows, record_billed_failure_sync, record_call_sync, record_calls_sync,
+)
 
 logger = structlog.get_logger()
 
@@ -183,6 +186,60 @@ def _tie_break(state: dict, generated: dict, judge_score: float) -> tuple[float,
     return new_score, info
 
 
+def _judge_rows(stage: str, result, verdict_signal: dict) -> list[dict]:
+    """AA-927: the llm_call_log rows of one verdict — one per billed judge call.
+
+    A single call: one row, the verdict, with the result's own billing (shape unchanged). Several calls
+    (AA-714 near-band repeat, AA-801 median3): the verdict row carries `verdict_signal` + `judge_calls`
+    with run 1's billing only; runs 2..n carry `{judge_run, of, verdict_row: false, brand_fit, distinct,
+    mission}` (no ok-rate key); calls billed then dropped (median3 malformed reply) are billed_unusable
+    rows. Row costs sum to `result.cost_usd`."""
+    runs = [r for r in (getattr(result, "runs", None) or ()) if isinstance(r, dict) and "brand_fit" in r]
+    failed = list(getattr(result, "billed_failed", None) or ())
+    n = len(runs) + len(failed)
+    if runs:
+        first = runs[0]
+        billing = {k: first.get(k) for k in ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason",
+                                             "account", "fallback_used")}
+    else:
+        billing = {"model": result.model_used, "tokens_in": result.input_tokens,
+                   "tokens_out": result.output_tokens, "cost_usd": result.cost_usd,
+                   "stop_reason": result.stop_reason, "account": result.account,
+                   "fallback_used": result.fallback_used}
+    rows = [dict(stage=stage, role="judge", **billing,
+                 quality_signal={**verdict_signal, **({"judge_calls": n} if n > 1 else {})})]
+    for i, r in enumerate(runs[1:], start=2):
+        rows.append(dict(
+            stage=stage, role="judge", model=r.get("model"), tokens_in=r.get("tokens_in"),
+            tokens_out=r.get("tokens_out"), cost_usd=r.get("cost_usd"), stop_reason=r.get("stop_reason"),
+            account=r.get("account"), fallback_used=r.get("fallback_used"),
+            quality_signal={"judge_run": i, "of": n, "verdict_row": False, "brand_fit": r.get("brand_fit"),
+                            "distinct": r.get("distinct"), "mission": r.get("mission")}))
+    rows += billed_unusable_rows(stage=stage, role="judge", billed=failed, error="judge reply unusable",
+                                 quality_signal_extra={"judge_run_failed": True, "of": n})
+    return rows
+
+
+def _write_judge_rows(rows: list[dict]) -> None:
+    """One row → `record_call_sync` (unchanged path); several → one connection, one transaction."""
+    if len(rows) == 1:
+        record_call_sync(**rows[0])
+    elif rows:
+        record_calls_sync(rows)
+
+
+def _billed_rows_of(stage: str, result, error: str) -> list[dict]:
+    """AA-927: every billed call behind `result` as billed_unusable rows (the verdict was lost after the
+    calls returned: tie-break / feedback code raised)."""
+    runs = [r for r in (getattr(result, "runs", None) or ()) if isinstance(r, dict) and "brand_fit" in r]
+    billed = [{k: r.get(k) for k in ("model", "tokens_in", "tokens_out", "cost_usd", "stop_reason", "account",
+                                     "fallback_used")} for r in runs] or [run_billing(result)]
+    billed += list(getattr(result, "billed_failed", None) or ())
+    return billed_unusable_rows(stage=stage, role="judge", billed=billed, error=error,
+                                quality_signal_extra={"post_call_error": True,
+                                                      "brand_fit_score": getattr(result, "brand_fit_score", None)})
+
+
 def judge_node(state: dict) -> dict:
     """AA-206: GPT-4.1 brand-fit judge. Runs after validate, before should_retry.
 
@@ -199,6 +256,11 @@ def judge_node(state: dict) -> dict:
         logger.info("judge_skipped", reason="no_generated" if not generated else "no_brand_profile")
         return state
 
+    # AA-927: one llm_call_log row per billed judge call, written even when the code after the calls
+    # raises (`logged` guards the except branch below).
+    result = None
+    logged = False
+    log_stage = stage_for(state, "s1_judge")
     try:
         is_t2 = bool(state.get("is_tenant_rewrite"))
         if is_t2:
@@ -244,11 +306,7 @@ def judge_node(state: dict) -> dict:
                     validate_score=validate_score, new_score=new_score, gate=gate,
                     distinct_gates=gate == "combined")
 
-        record_call_sync(
-            stage=stage_for(state, "s1_judge"), role="judge", model=result.model_used,
-            tokens_in=result.input_tokens, tokens_out=result.output_tokens,
-            cost_usd=result.cost_usd,
-            quality_signal={
+        _write_judge_rows(_judge_rows(log_stage, result, {
                 "judge_score": judge_score, "brand_fit_score": result.brand_fit_score,
                 "cross_brand_distinct": result.cross_brand_distinct,
                 "mission_present": result.mission_present,
@@ -271,11 +329,8 @@ def judge_node(state: dict) -> dict:
                     "mission_evidence": (getattr(result, "mission_evidence", "") or "")[:300],
                     "evidence_verified": getattr(result, "evidence_verified", None)}
                    if anchors else {}),
-            },
-            stop_reason=result.stop_reason,
-            account=result.account,
-            fallback_used=result.fallback_used,
-        )
+            }))
+        logged = True
         return {
             **state,
             "quality_score": new_score,
@@ -294,4 +349,13 @@ def judge_node(state: dict) -> dict:
     except Exception as e:
         # Non-blocking: keep validate's score so the pipeline continues unaffected by judge failure.
         logger.warning("judge_failed_graceful", error=str(e))
+        if result is None:
+            # AA-927: the judge raised after billed calls (malformed reply, a repeat call failing).
+            record_billed_failure_sync(stage=log_stage, role="judge", billed=billed_calls(e),
+                                       error=str(e))
+        elif not logged:
+            # AA-927: the calls returned, then the tie-break / feedback code raised.
+            rows = _billed_rows_of(log_stage, result, str(e))
+            if rows:
+                record_calls_sync(rows)
         return state

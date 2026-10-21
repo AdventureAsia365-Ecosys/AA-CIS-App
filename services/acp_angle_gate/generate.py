@@ -36,7 +36,7 @@ from services.acp_shared.dfs_relevance import SearchDemandSignal
 from services.acp_shared.piece_history import PriorPiece
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call, record_call_with_pool
+from shared.llm_client.call_log import record_call, record_call_with_pool, record_unusable
 
 logger = structlog.get_logger()
 
@@ -128,8 +128,16 @@ async def _generate_once(
         system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, stage="t8_angle_gen", max_tokens=2048,
     )
     resp = await asyncio.to_thread(client.generate, request)
-    parsed = _parse_response(resp.content)
-    angles, recommended_index, reason = _validate(parsed)
+    try:
+        parsed = _parse_response(resp.content)
+        angles, recommended_index, reason = _validate(parsed)
+    except Exception as e:
+        # AA-927: the reply was billed — its row (billed_unusable) before the generation error goes up.
+        await record_unusable(resp, stage="t8_angle_gen", role="writer", error=e,
+                              tenant_id=str(tenant_id) if tenant_id else None,
+                              angle_gate_request_id=str(request_id) if request_id else None,
+                              quality_signal_extra={"attempt": attempt})
+        raise
     logger.info(
         "angle_gate_angles_generated", goal=goal["key"],
         model_used=resp.model_used, cost_usd=resp.cost_usd, recommended_index=recommended_index,

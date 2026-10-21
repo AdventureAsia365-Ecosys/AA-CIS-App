@@ -95,6 +95,27 @@ def render(score: dict, *, baseline: Optional[dict] = None, title: Optional[str]
         ["LLM calls made / logged", f"{totals.get('local_llm_calls')} / {totals.get('logged_llm_rows')}"],
         ["Calls with no log row", totals.get("unlogged_llm_calls")],
     ])
+    by_stage = totals.get("rows_minus_calls_by_stage")
+    if by_stage is not None:  # AA-927: signed reconciliation (S245 results do not have it)
+        calls = totals.get("local_llm_calls_by_stage") or {}
+        logged = totals.get("logged_llm_rows_by_stage") or {}
+        reqs = totals.get("provider_requests_by_stage") or {}
+        lines += ["", "Calls made in-process vs `llm_call_log` rows, per stage (LLM rows only: no Jev, no "
+                  "embedding, no gateway-attempt rows). A non-zero diff means a call without its row "
+                  "(negative) or a double row (positive).", ""]
+        lines += _table(["Stage", "Calls made", "Provider requests", "Rows logged", "Rows − calls"],
+                        [[st, calls.get(st, 0), reqs.get(st, calls.get(st, 0)), logged.get(st, 0), d]
+                         for st, d in sorted(by_stage.items())])
+        lines += [""]
+        lines += _table(["Cost check", "Value"], [
+            ["LLM spend in-process / logged", f"{_usd(totals.get('local_llm_usd'))} / "
+                                              f"{_usd(totals.get('logged_llm_usd'))}"],
+            ["Logged − in-process", _usd(totals.get("cost_diff_usd"))],
+            ["Gateway-attempt rows (billed, discarded by the gateway)",
+             f"{totals.get('gateway_attempt_rows', 0)} ({_usd(totals.get('gateway_attempt_usd'))})"],
+            ["Embedding responses / rows",
+             f"{totals.get('local_embed_calls', 0)} / {totals.get('logged_embed_rows', 0)}"],
+        ])
     lines += ["", "## Metrics per stratum", ""]
     label_head = "Judge vs label disagreement" if mode == "score-only" else "Pass-rate by frozen label"
     lines += _table(

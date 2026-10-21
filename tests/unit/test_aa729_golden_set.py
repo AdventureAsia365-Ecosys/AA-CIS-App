@@ -472,8 +472,95 @@ def test_decision_log_relabel_matches_the_live_statements():
 def test_call_log_writers_read_the_insert_sql_at_call_time():
     from shared.llm_client import call_log
 
-    for fn in (call_log.record_call, call_log.record_call_with_pool):
+    # AA-927: record_calls is the batch writer under record_calls_sync / record_billed_failure*.
+    for fn in (call_log.record_call, call_log.record_call_with_pool, call_log.record_calls):
         assert "_INSERT_SQL" in fn.__code__.co_names, f"{fn.__name__} no longer uses the module-level INSERT"
+
+
+def test_billed_failure_rows_use_the_relabelled_insert(monkeypatch):
+    """AA-927 (p): record_calls_sync / record_billed_failure_sync write through the module _INSERT_SQL as it
+    is AFTER the harness relabel, so eval failure rows never land under the real stage or tenant."""
+    import asyncio
+
+    from shared.llm_client import call_log
+
+    run = "8f07b98f-aec7-46c9-a1a5-661bf4735db1"
+    monkeypatch.setattr(call_log, "_INSERT_SQL", evalpatch.relabel_sql(call_log._INSERT_SQL, run))
+    seen = []
+
+    class Conn:
+        def transaction(self):
+            class T:
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *a):
+                    return False
+            return T()
+
+        async def executemany(self, sql, args):
+            seen.append((sql, list(args)))
+
+        async def close(self):
+            pass
+
+    async def connect(*a, **k):
+        return Conn()
+
+    monkeypatch.setattr(call_log.asyncpg, "connect", connect)
+    monkeypatch.setattr(call_log, "get_database_url", lambda: "postgresql://x")
+    call_log.record_billed_failure_sync(stage="s1_judge", role="judge", error="bad json",
+                                        billed=[{"model": "satellite-gpt-5.6-luna", "cost_usd": 0.01}],
+                                        tenant_id="00000000-0000-0000-0000-0000000000aa")
+    call_log.record_calls_sync([dict(stage="t2_judge", role="judge", model="m", tokens_in=1, tokens_out=1,
+                                     cost_usd=0.02, quality_signal={"judge_run": 2})])
+    assert len(seen) == 2
+    for sql, args in seen:
+        assert f"'{common.STAGE}'" in sql and "aa729_stage" in sql and run in sql
+        assert all(len(a) == evalpatch.N_PARAMS for a in args)
+    assert seen[0][1][0][1] == "s1_judge"            # $2 = the real stage, moved into quality_signal by the SQL
+    assert asyncio.iscoroutinefunction(call_log.record_calls)
+
+
+def test_evalpatch_counts_per_stage_and_embedding_responses(monkeypatch):
+    """AA-927: SPEND counts LLMClient responses per real stage (with provider_requests) and every
+    embedding provider response through embed._call (which embed() looks up at call time)."""
+    from shared.llm_client import embed as embed_mod
+
+    spend = evalpatch.Spend()
+    spend.add(0.01, stage="s1_judge")
+    spend.add(0.02, stage="s1_judge", provider_requests=2)
+    spend.add(0.03, stage="t10_judge")
+    spend.add_embed(0.0001)
+    snap = spend.snapshot()
+    assert snap["calls"] == 3 and snap["by_stage"]["s1_judge"] == {"responses": 2, "provider_requests": 3,
+                                                                  "usd": pytest.approx(0.03)}
+    assert snap["embed_calls"] == 1
+    assert "_call" in embed_mod.embed.__code__.co_names, "embed() no longer looks _call up at call time"
+
+
+def test_reconcile_is_signed_per_stage_and_filters_non_llm_rows():
+    rows = [
+        {"real_stage": "s1_judge", "role": "judge", "provider": "openai", "gateway_attempt": False, "n": 3,
+         "usd": 0.03},
+        {"real_stage": "s1_judge", "role": "judge", "provider": "bedrock-satellite", "gateway_attempt": True,
+         "n": 1, "usd": 0.005},
+        {"real_stage": "s1_grounding", "role": "validate", "provider": "typesafe", "gateway_attempt": False,
+         "n": 4, "usd": 0.001},
+        {"real_stage": "f10_embed", "role": "embed", "provider": "bedrock-native", "gateway_attempt": False,
+         "n": 2, "usd": 0.0002},
+        {"real_stage": "t2_judge", "role": "judge", "provider": "openai", "gateway_attempt": False, "n": 4,
+         "usd": 0.04},
+    ]
+    spend = {"usd": 0.06, "calls": 6, "embed_calls": 2,
+             "by_stage": {"s1_judge": {"responses": 3, "provider_requests": 3, "usd": 0.03},
+                          "t2_judge": {"responses": 3, "provider_requests": 3, "usd": 0.03}}}
+    rec = score.reconcile(rows, spend)
+    assert rec["rows_minus_calls_by_stage"] == {"s1_judge": 0, "t2_judge": 1}   # over-logging shows (+1)
+    assert rec["rows_minus_calls_nonzero"] == {"t2_judge": 1}
+    assert rec["gateway_attempt_rows"] == 1 and rec["gateway_attempt_usd"] == pytest.approx(0.005)
+    assert rec["logged_llm_usd"] == pytest.approx(0.07) and rec["cost_diff_usd"] == pytest.approx(0.01)
+    assert rec["local_embed_calls"] == 2 and rec["logged_embed_rows"] == 2
 
 
 def test_patched_names_still_exist():
@@ -488,6 +575,8 @@ def test_patched_names_still_exist():
                         (flag_fix_node, "_write_lessons_safe"), (LLMClient, "_start_shadow"),
                         (LLMClient, "generate")):
         assert hasattr(owner, name), name
+    from shared.llm_client import embed as embed_mod
+    assert hasattr(embed_mod, "_call")  # AA-927: the embedding counter wraps it
     assert "_finalize_piece" in service.run_write_background.__code__.co_names
     fin = inspect.signature(service._finalize_piece).parameters
     assert "piece_id" in fin and fin["piece_id"].kind is inspect.Parameter.KEYWORD_ONLY

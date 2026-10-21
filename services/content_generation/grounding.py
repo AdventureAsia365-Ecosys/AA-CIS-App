@@ -402,12 +402,13 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
     logged to the tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test.
     The defaults keep A1's call byte-identical."""
     from json_repair import repair_json
-    from shared.llm_client.call_log import record_call_sync
+    from shared.llm_client.call_log import record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
     source = source_text(tour)
     parts = source_number_parts(tour)
+    resp, logged = None, False  # AA-927
     try:
         resp = LLMClient().generate(LLMRequest(
             system_prompt=system_prompt, user_prompt=_repair_prompt(violations, source, forbidden),
@@ -433,9 +434,13 @@ def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=No
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None),
         )
+        logged = True
         return {"generated": new_generated, "fields": fields, "cost_usd": resp.cost_usd, "error": ""}
     except Exception as exc:
         logger.warning("grounding_repair_failed", error=str(exc)[:200])
+        if not logged:  # AA-927: billed, then applying the reply raised
+            record_unusable_sync(resp, stage=stage, role="writer", error=exc,
+                                 **({"tenant_id": tenant_id} if tenant_id else {}))
         return {"generated": generated, "fields": [], "cost_usd": 0.0, "error": str(exc)[:200]}
 
 

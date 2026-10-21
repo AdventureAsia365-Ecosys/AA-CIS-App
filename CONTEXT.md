@@ -181,10 +181,27 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
     OpenAI-API model as primary, shadow or non-last fallback. Settings › LLM Models shows each route.
 - **Every model call goes through the gateway** (`shared/llm_client/`, AA-685): text through
   `LLMClient.generate(stage=...)`, embeddings through `shared.llm_client.embed.embed(stage, texts)`
-  (catalog `api_style='embed'`, stage role `embed`). The caller writes the `llm_call_log` row.
-  `tests/unit/test_aa685_no_raw_model_calls.py` fails on any raw Bedrock/OpenAI call outside
-  `shared/llm_client/`; the only allowed exception is the legacy judge path in `judge_client.py`
-  used by comparison scripts. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
+  (catalog `api_style='embed'`, stage role `embed`). `tests/unit/test_aa685_no_raw_model_calls.py` fails
+  on any raw Bedrock/OpenAI call outside `shared/llm_client/` (no exceptions since AA-757).
+  **One `llm_call_log` row per billed call** (AA-927):
+  - one row per `generate()` / `embed()` response returned to a caller, written by the caller, also when
+    the reply then turns out unusable. Canonical pattern: write the row right after `generate()` returns
+    (T9 `_generate_full`); where the row needs post-processing, keep a `logged` flag and call
+    `call_log.record_unusable_sync(resp, ...)` in the except branch;
+  - one row per billed provider attempt the gateway throws away (Converse schema retry failing again,
+    empty content, invalid JSON / schema on OpenAI) — written by the gateway itself
+    (`quality_signal.gateway_attempt = true`), fire-and-forget, before the route moves on or raises;
+  - a gateway-internal retry that succeeds (the AA-714 Converse schema retry) is ONE response whose cost
+    and tokens cover both requests (`LLMResponse.provider_requests = 2`);
+  - a judge verdict built from several calls (AA-714 near-band repeat, AA-801 median3) writes one row per
+    call in one transaction (`record_calls_sync`): the verdict row (run 1's cost, `judge_calls: n`) plus
+    `{judge_run, of, verdict_row: false}` rows;
+  - rows for unusable / discarded / extra calls carry `billed_unusable: true` (or `verdict_row: false`)
+    and none of the ok-rate keys admin LLM ops reads (`call_log.OK_RATE_KEYS`), so ok-rates do not move.
+  Exclusions: a Jev verdict-cache hit (no provider call; counted in `decision_cache_hits_daily`), a
+  stream that broke before its usage event (cost unknown), and S1 Bedrock Batch (no row; batch has never
+  run, AA-624 — it must log once enabled). `tests/unit/test_aa927_llm_call_site_registry.py` fails on a
+  new LLM call site that is not registered with the function writing its row. Stages added: `a0_column_map`, `f10_embed`, and `tp_compose` /
   `tp_search_embed` for AA-TripPlanner-Web, which reads the same tables (migration 172).
   Current choices, each decided from a real A/B run:
   - `s1_generate` (A1 admin rewrite) = Haiku 4.5; `s1_flag_fix` / `s1_itinerary_nudge` = Haiku.
@@ -1691,9 +1708,12 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     median of 3 only when the first brand_fit lands in 6–8; `median3` = three parallel calls on every
     draft, median brand_fit/distinct and majority mission (a tie counts as absent), raw calls logged in
     `quality_signal.judge_runs`. `median3` stays off until the AA-801 measurement is in. A call that
-    was billed but then failed (malformed JSON) is dropped from the verdict and its cost is still
-    summed into the logged `cost_usd` (`judge_runs.failed_cost_usd`); when all three fail nothing is
-    logged, as with a single failed call. Each call samples the stage-route shadow on its own, so a
+    was billed but then failed (malformed JSON) is dropped from the verdict and gets its own
+    `billed_unusable` row (AA-927); `judge_runs.failed_cost_usd` is informational — that cost is already
+    in its own row, never add it again. When all three fail, each billed call still gets a
+    `billed_unusable` row (as does a single failed call). Both repeat paths (AA-714 and median3) write
+    one row per call since AA-927 — the verdict row carries run 1's cost, the rows of one verdict sum to
+    the verdict's cost. Each call samples the stage-route shadow on its own, so a
     route with a shadow sees up to 3 shadow calls per judgement in `median3`.
   - **Rubric anchors (AA-801 option b).** Env `T2_JUDGE_ANCHORS` (`on`/`1`/`true`; default off) adds
     tenant-specific score anchors (what a 4 / 6 / 7 / 8 / 10 looks like, built deterministically from the

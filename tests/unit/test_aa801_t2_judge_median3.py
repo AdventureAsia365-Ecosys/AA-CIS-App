@@ -208,7 +208,10 @@ def test_aa714_near_band_path_result_unchanged():
     assert j.call_count == 3
     assert out.brand_fit_score == 7.0 and out.mission_present is False and out.judge_score == 6.0
     assert out.feedback == "fb7.0" and out.cost_usd == pytest.approx(0.003)
-    assert out.runs == ()                               # AA-714 shape and log unchanged
+    # AA-927: the three calls are kept, each with its own billing, so judge_node logs one row per call
+    assert [r["brand_fit"] for r in out.runs] == [8.0, 7.0, 6.0]
+    assert [r["cost_usd"] for r in out.runs] == [0.001, 0.001, 0.001]
+    assert {"model", "tokens_in", "tokens_out", "stop_reason", "account", "fallback_used"} <= set(out.runs[0])
 
 
 # ── judge_node: flag routing ──────────────────────────────────────────────────────────────────
@@ -224,11 +227,22 @@ def _judge_resp(fit, mission=True):
                        model_used="gpt-4.1", cost_usd=0.001, provider="openai")
 
 
-def _run(state, responses):
-    with patch.object(bf, "LLMClient") as client, patch.object(jn, "record_call_sync") as rec:
+def _rows(rec, recs):
+    """AA-927: every llm_call_log row judge_node wrote (one verdict = one record_call_sync row, or N rows
+    in one record_calls_sync)."""
+    rows = [c.kwargs for c in rec.call_args_list]
+    for c in recs.call_args_list:
+        rows += list(c.args[0])
+    return rows
+
+
+def _run(state, responses, *, all_rows=False):
+    with patch.object(bf, "LLMClient") as client, patch.object(jn, "record_call_sync") as rec, \
+            patch.object(jn, "record_calls_sync") as recs:
         client.return_value.generate.side_effect = responses
         out = jn.judge_node(dict(state, generated=GEN, quality_score=9.75, feedback=""))
-    return out, client.return_value.generate.call_count, rec.call_args.kwargs
+    rows = _rows(rec, recs)
+    return out, client.return_value.generate.call_count, (rows if all_rows else rows[0])
 
 
 def test_default_repeat_mode_is_single():
@@ -254,11 +268,17 @@ def test_flag_off_t2_path_unchanged():
 
 def test_median3_t2_judges_three_times_and_logs_runs(monkeypatch):
     monkeypatch.setenv("T2_JUDGE_REPEAT", "median3")
-    out, n_calls, rec = _run(_T2, [_judge_resp(4, mission=False), _judge_resp(8), _judge_resp(7)])
+    out, n_calls, rows = _run(_T2, [_judge_resp(4, mission=False), _judge_resp(8), _judge_resp(7)],
+                              all_rows=True)
     assert n_calls == 3
     assert out["judge_brand_fit"] == 7.0 and out["judge_mission_present"] is True
     assert out["judge_score"] == 7.0 and out["quality_score"] == 7.0
-    assert rec["cost_usd"] == pytest.approx(0.003)
+    # AA-927: one row per call; the verdict row carries run 1's cost, the three sum to the verdict cost
+    assert len(rows) == 3 and sum(r["cost_usd"] for r in rows) == pytest.approx(0.003)
+    assert out["cost_usd"] == pytest.approx(0.003)
+    rec = rows[0]
+    assert rec["cost_usd"] == pytest.approx(0.001) and rec["quality_signal"]["judge_calls"] == 3
+    assert all("passed" not in r["quality_signal"] for r in rows[1:])
     runs = rec["quality_signal"]["judge_runs"]
     assert runs["mode"] == "median3" and runs["n"] == 3
     assert sorted(runs["brand_fits"]) == [4.0, 7.0, 8.0]
