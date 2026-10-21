@@ -23,6 +23,9 @@ Usage (from the repo root):
 The committed fixture is `tests/unit/fixtures/aa926_gate_snapshot.json`; `tests/unit/test_aa926_equivalence.py`
 recomputes `build()` and compares it. Regenerate the fixture ONLY on a commit that changes no gate code
 (the harness-only commit "A"), never to make the refactor pass.
+An intentional behaviour change regenerates it on the behaviour-change commit itself, with a PR note naming
+the changed sections. Run locally with a dummy AWS_PROFILE and AWS_EC2_METADATA_DISABLED=true (the api
+router import otherwise triggers a Secrets Manager lookup that prompts for MFA).
 """
 from __future__ import annotations
 
