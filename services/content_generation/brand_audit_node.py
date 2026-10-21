@@ -57,7 +57,9 @@ ITIN_MEAL_INVENTED = re.compile(
 )
 # A specific clock time ("7:00 AM departure", "8am") is still a fabricated logistic when the
 # source gave none — kept as-is (AA-195). Narrative "morning/afternoon/evening" is fine (not matched).
-ITIN_CLOCK_TIME = re.compile(r'\b\d{1,2}(:\d{2})?\s?(am|pm)\b', re.IGNORECASE)
+# AA-803 review round 4: the dotted forms too ("7 p.m.", "6 A.M."), compared in one 24-hour form, so "7 p.m." in
+# the rewrite is the source's "7:00 pm" or "19:00".
+ITIN_CLOCK_TIME = re.compile(r'\b\d{1,2}(?:[:.]\d{2})?\s?[ap]\.?\s?m\b\.?', re.IGNORECASE)
 # AA-196: generic day titles that name no place/activity = ITINERARY_DAY_TITLE_GENERIC
 ITIN_DAY_TITLE_GENERIC = re.compile(
     r"Day\s+\d+\s*--\s*(Exploration|Free Day|Arrival Day|Arrival|Departure|Transfer)\s*$",
@@ -66,7 +68,8 @@ ITIN_DAY_TITLE_GENERIC = re.compile(
 
 
 def _norm_clock(text: str) -> str:
-    return re.sub(r"\s+", "", text.lower())
+    from services.content_generation.meal_claims import canonical_clock
+    return canonical_clock(text)
 
 
 def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | None = None,
@@ -86,7 +89,7 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     from services.content_generation import grounding as g
     from services.content_generation import meal_claims
     source = g.source_text(tour)
-    src_clocks = {_norm_clock(m.group(0)) for m in ITIN_CLOCK_TIME.finditer(source)}
+    src_clocks = meal_claims._clock_times(source)       # am/pm, 24-hour and spoken, all as "HH:MM"
     if any(_norm_clock(m.group(0)) not in src_clocks for m in ITIN_CLOCK_TIME.finditer(itin_text)):
         return False
     if not ITIN_MEAL_INVENTED.search(itin_text):
