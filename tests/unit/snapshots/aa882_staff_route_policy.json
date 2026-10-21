@@ -295,6 +295,14 @@
     "capability": null,
     "module": "api.routers.admin_photos"
   },
+  "GET /admin/places/coverage": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
+  "GET /admin/places/validity": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
   "GET /admin/platform/alert-recipients": {
     "capability": "ops.read",
     "module": "api.routers.admin_alert_recipients"
@@ -696,6 +704,10 @@
     "module": "api.routers.admin_photos"
   },
   "POST /admin/places/backfill": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
+  "POST /admin/places/validity/fix": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },

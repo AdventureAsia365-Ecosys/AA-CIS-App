@@ -134,16 +134,36 @@ async def resolved_names(conn, keys: Iterable[tuple]) -> dict[tuple, str]:
 
 async def known_destinations(conn, keys: Iterable[tuple]) -> dict[tuple, str]:
     """shared.destinations rows reusable by key: located (located_by set), not suspect, not a
-    duplicate (design §4 legacy rule — unlocated / Mapbox-by-name rows go back to pending)."""
+    duplicate (design §4 legacy rule — unlocated / Mapbox-by-name rows go back to pending).
+    AA-847: a key held only by a merged duplicate (duplicate_of set, admin fix on /admin/places) answers with its
+    usable keeper, so the next build of a tour that spells the place the old way does not geocode it again and
+    recreate the duplicate. A non-duplicate row of the key wins over a duplicate one."""
     a, b, c = _keys_arrays(keys)
     if not a:
         return {}
     rows = await conn.fetch(
-        """SELECT d.name_norm, lower(btrim(d.country)) AS cn, d.locality_norm, d.id::text AS d
-             FROM shared.destinations d JOIN unnest($1::text[], $2::text[], $3::text[]) AS k(n, c, l)
-               ON d.name_norm = k.n AND lower(btrim(d.country)) = k.c AND d.locality_norm = k.l
-            WHERE d.duplicate_of IS NULL AND d.located_by IS NOT NULL AND d.geo_status <> 'suspect'""", a, b, c)
-    return {(r["name_norm"], r["cn"], r["locality_norm"]): r["d"] for r in rows}
+        """SELECT d.name_norm, lower(btrim(d.country)) AS cn, d.locality_norm,
+                  COALESCE(k.id, d.id)::text AS d, d.duplicate_of IS NULL AS direct
+             FROM shared.destinations d JOIN unnest($1::text[], $2::text[], $3::text[]) AS k0(n, c, l)
+               ON d.name_norm = k0.n AND lower(btrim(d.country)) = k0.c AND d.locality_norm = k0.l
+             LEFT JOIN shared.destinations k ON k.id = d.duplicate_of
+            WHERE d.located_by IS NOT NULL
+              AND ((d.duplicate_of IS NULL AND d.geo_status <> 'suspect')
+                   OR (d.duplicate_of IS NOT NULL AND k.duplicate_of IS NULL AND k.geo_status <> 'suspect'))
+            ORDER BY (d.duplicate_of IS NULL), d.id""", a, b, c)
+    return {(r["name_norm"], r["cn"], r["locality_norm"]): r["d"] for r in rows}   # direct rows last: they win
+
+
+async def duplicate_keeper(conn, key: tuple) -> Optional[str]:
+    """AA-847: the usable keeper of a merged duplicate holding `key` when no live row holds it, else None."""
+    return await conn.fetchval(
+        """SELECT k.id::text FROM shared.destinations d JOIN shared.destinations k ON k.id = d.duplicate_of
+            WHERE d.name_norm = $1 AND lower(btrim(d.country)) = $2 AND d.locality_norm = $3
+              AND k.duplicate_of IS NULL AND k.geo_status <> 'suspect'
+              AND NOT EXISTS (SELECT 1 FROM shared.destinations x
+                               WHERE x.name_norm = $1 AND lower(btrim(x.country)) = $2 AND x.locality_norm = $3
+                                 AND x.duplicate_of IS NULL)
+            ORDER BY d.id LIMIT 1""", key[0], key[1], key[2])
 
 
 _NAME_INSERT_SQL = """
@@ -265,7 +285,7 @@ _DEST_INSERT_SQL = """
     INSERT INTO shared.destinations (name, country, lat, lng, located_by, located_at, geo_status, confidence,
                                      geocoder_place_id, geo_checked_at, name_norm, locality_norm,
                                      geo_precision, geocoder_provider, geocoded_at, geocoder_meta, review_reason)
-    VALUES ($1, $2, $3, $4, $5, now(), 'ok', $6, $7, now(), $8, $9,
+    VALUES ($1, $2, $3, $4, $5, now(), CASE WHEN $14 THEN 'suspect' ELSE 'ok' END, $6, $7, now(), $8, $9,
             $10, $11, CASE WHEN $11::text IS NULL THEN NULL ELSE now() END, $12::jsonb, $13)
     ON CONFLICT (name_norm, lower(btrim(country)), locality_norm)
         WHERE duplicate_of IS NULL AND name_norm IS NOT NULL DO NOTHING
@@ -274,18 +294,20 @@ _DEST_INSERT_SQL = """
 
 
 def _geo_args(located) -> tuple:
-    """(geo_precision, geocoder_provider, geocoder_meta json, review_reason) of a Located point."""
+    """(geo_precision, geocoder_provider, geocoder_meta json, review_reason, hidden) of a Located point. hidden
+    (AA-847, a linear feature): stored geo_status 'suspect', so no catalog view draws it."""
     meta = getattr(located, "meta", None)
     return (located.precision, (meta or {}).get("provider"),
             json.dumps(meta, ensure_ascii=False, default=str) if meta else None,
-            getattr(located, "review_reason", None))
+            getattr(located, "review_reason", None), bool(getattr(located, "hidden", False)))
 
 
 async def _write_point(conn, dest_id: str, located, force: bool) -> None:
     await conn.execute(
         """UPDATE shared.destinations SET lat = $2, lng = $3, located_by = $4, located_at = now(),
                   confidence = $5, geocoder_place_id = $6, geo_checked_at = now(),
-                  geo_status = CASE WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END,
+                  geo_status = CASE WHEN $12 THEN 'suspect'
+                                    WHEN geo_status = 'suspect' AND $7 THEN 'ok' ELSE geo_status END,
                   geo_precision = $8, geocoder_provider = $9,
                   geocoded_at = CASE WHEN $9::text IS NULL THEN geocoded_at ELSE now() END,
                   geocoder_meta = COALESCE($10::jsonb, geocoder_meta), review_reason = $11
@@ -332,6 +354,9 @@ async def upsert_destination(conn, key: tuple, name: str, located, *, locality: 
 
     from services.places.guards import may_overwrite
 
+    keeper = await duplicate_keeper(conn, (key[0], located.country.strip().lower(), key[2]))
+    if keeper is not None:   # AA-847: the key belongs to a merged duplicate: answer with its keeper
+        return keeper, "kept"
     row = None
     for i, cand in enumerate(name_candidates(name, locality, located.country)):
         try:
@@ -480,6 +505,19 @@ async def log_geocode_calls(conn, provider: str, requests: int, cost_usd: float,
         await conn.execute(
             "INSERT INTO geo.geocode_call (provider, requests, cost_usd, job_id) VALUES ($1, $2, $3, $4::uuid)",
             provider, requests, round(cost_usd, 6), job_id)
+
+
+async def destination_briefs(conn, ids: Iterable[str]) -> dict[str, dict]:
+    """AA-847: name, country, point and source of usable destinations (the in-tour same-place rule)."""
+    ids = sorted({str(i) for i in ids if i})
+    if not ids:
+        return {}
+    rows = await conn.fetch(
+        """SELECT id::text AS id, name, country, lat, lng, located_by, geo_precision, review_reason,
+                  geocoder_meta ->> 'result_type' AS result_type
+             FROM shared.destinations
+            WHERE id = ANY($1::uuid[]) AND geo_status <> 'suspect' AND duplicate_of IS NULL""", ids)
+    return {r["id"]: dict(r) for r in rows}
 
 
 # ── graph ────────────────────────────────────────────────────────────────────────────────────

@@ -58,6 +58,42 @@ _HARD_RE = re.compile(r"(monaster|gompa|dzong|\bpass\b|\bla$|\bla\b|lake|\btso\b
                       r"glacier|cave|waterfall|falls|peak|base)", re.I)
 REJECT_TYPES = frozenset({"country", "state", "county", "postcode"})
 
+# AA-847 — places that are not a pin. A LINEAR feature (a trail, river, road, range, loop) has no point a map
+# can mark: a pin or a circle at its centroid misleads (the 1,000 km Ho Chi Minh Trail drawn as one pin, S237).
+# An AREA feature (national park, delta, plateau, coast, gorge) is drawn as an area. A name that also names a
+# point on the feature ("River Kwai Bridge", "Kuang Si Falls", "Ho Chi Minh Trail Museum") stays a point.
+LINEAR_FEATURE_WORDS = frozenset({"trail", "river", "road", "highway", "range", "loop", "railway", "railroad",
+                                  "canal", "route"})
+AREA_FEATURE_WORDS = frozenset({"delta", "plateau", "coast", "coastline", "gorge", "archipelago", "highlands"})
+AREA_FEATURE_PHRASES = ("national park", "nature reserve", "protected area", "wildlife sanctuary", "marine park",
+                        "biosphere reserve")
+POINT_ON_FEATURE_WORDS = frozenset({
+    "bridge", "falls", "waterfall", "waterfalls", "cave", "caves", "temple", "temples", "pagoda", "stupa", "museum",
+    "market", "station", "pier", "jetty", "port", "harbour", "harbor", "fort", "gate", "tower", "village", "town",
+    "city", "viewpoint", "resort", "lodge", "hotel", "camp", "homestay", "guesthouse", "headquarters", "hq",
+    "visitor", "centre", "center", "monument", "memorial", "cemetery", "tunnel", "tunnels", "dam", "beach",
+    "island", "spring", "springs", "school", "restaurant", "cafe"})
+# Geoapify result_type of a road; with a street word in the name it is linear too ("Sisavangvong Road" already is).
+LINEAR_RESULT_TYPES = frozenset({"street"})
+STREET_WORDS = frozenset({"street", "avenue", "boulevard", "lane"})
+LINEAR = "linear"
+AREA = "area"
+
+
+def feature_kind(name: Optional[str], result_type: Optional[str] = None) -> Optional[str]:
+    """'linear' | 'area' | None (a point). Name words first; the geocoder's result_type only confirms a street."""
+    words = _words(name or "")
+    if words & POINT_ON_FEATURE_WORDS:
+        return None
+    joined = " ".join(_TOKENS.findall(_strip(_PARENS.sub(" ", (name or "").lower()))))
+    if words & LINEAR_FEATURE_WORDS:
+        return LINEAR
+    if (result_type or "") in LINEAR_RESULT_TYPES and words & STREET_WORDS:
+        return LINEAR
+    if words & AREA_FEATURE_WORDS or any(p in joined for p in AREA_FEATURE_PHRASES):
+        return AREA
+    return None
+
 ACCEPT_KM = 25.0
 LONG_FEATURE_KM = 50.0
 TOP_N = 3

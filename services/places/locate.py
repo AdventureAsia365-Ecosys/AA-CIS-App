@@ -38,6 +38,9 @@ MAX_TOKENS = 4000
 CONFIDENCE = {"geoapify": 0.9, "mapbox": 0.9, "manual": 1.0, "llm": 0.6}
 NATIVE_NAME_COUNTRIES = ("Taiwan", "South Korea")
 REVIEW_UNCONFIRMED_HARD = "unconfirmed_hard_type"
+# AA-847: a linear feature (trail, river, road …) is never a map stop; the catalog views hide it (proposed answer
+# to Nghiệp's display decision: LINEAR_FEATURES_HIDDEN, services/places/store.py writes geo_status 'suspect').
+REVIEW_LINEAR_FEATURE = "linear_feature"
 DEFER_CREDIT_LIMIT = "credit_limit"
 DEFER_UNAVAILABLE = "geocoder_unavailable"
 
@@ -70,6 +73,7 @@ class Located:
     place_id: Optional[str] = None
     meta: Optional[dict] = field(default=None, compare=False, hash=False)   # geocoder audit (geocoder_meta)
     review_reason: Optional[str] = field(default=None, compare=False, hash=False)
+    kind: Optional[str] = field(default=None, compare=False, hash=False)   # geomatch.feature_kind (AA-847)
 
     @property
     def confidence(self) -> float:
@@ -78,8 +82,17 @@ class Located:
     @property
     def precision(self) -> str:
         """'point' for a geocoder-confirmed (or admin) point; 'area' for the model's own point — shown as
-        an area, never as a pinpoint."""
+        an area, never as a pinpoint. AA-847: a linear or area feature (geomatch.feature_kind) is 'area' even when
+        a geocoder confirmed it: Geoapify's point for "Ho Chi Minh Trail" is one spot on a 1,000 km trail."""
+        if self.kind in (geomatch.LINEAR, geomatch.AREA):
+            return "area"
         return "point" if self.located_by in CONFIRMED_BY or self.located_by == "manual" else "area"
+
+    @property
+    def hidden(self) -> bool:
+        """AA-847: not drawn at all (a linear feature): stored geo_status 'suspect' + review_reason
+        'linear_feature', so the catalog views hide it; its name stays in the day text."""
+        return self.kind == geomatch.LINEAR
 
     @property
     def provider(self) -> Optional[str]:
@@ -223,11 +236,15 @@ def _located(item: Item, lat: float, lng: float, country: str, res) -> Located:
     point ('llm', area precision; hard place kinds go to the review list)."""
     if isinstance(res, Confirmed) and res.country == country \
             and guards.point_ok(res.lat, res.lng, res.country) is None:
-        return Located(res.lat, res.lng, res.country, res.located_by, res.place_id, meta=dict(res.meta))
+        kind = geomatch.feature_kind(item.name, (res.meta or {}).get("result_type"))
+        return Located(res.lat, res.lng, res.country, res.located_by, res.place_id, meta=dict(res.meta),
+                       review_reason=REVIEW_LINEAR_FEATURE if kind == geomatch.LINEAR else None, kind=kind)
     meta = None
     if isinstance(res, Confirmed):     # accepted by the rule but in another country / outside its bbox
         meta = {**res.meta, "outcome": "rejected_country_guard"}
     elif isinstance(res, Unconfirmed):
         meta = dict(res.meta)
-    review = REVIEW_UNCONFIRMED_HARD if geomatch.is_hard(item.name) else None
-    return Located(lat, lng, country, "llm", meta=meta, review_reason=review)
+    kind = geomatch.feature_kind(item.name)
+    review = (REVIEW_LINEAR_FEATURE if kind == geomatch.LINEAR
+              else REVIEW_UNCONFIRMED_HARD if geomatch.is_hard(item.name) else None)
+    return Located(lat, lng, country, "llm", meta=meta, review_reason=review, kind=kind)

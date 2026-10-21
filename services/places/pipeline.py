@@ -140,6 +140,16 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     name_rows = list({r[:3]: r for r in new_rows}.values())
     comp_dest = {cid: card_dest.get(cid) or dest_by_key.get(k) for cid, k in comp_keys.items()}
     night_dest = {d: dest_by_key.get(k) if k else None for d, k in anchor_keys.items()}
+    # AA-847 in-tour dedupe: two destinations of this tour that are one place (validity V2, e.g. "Kuang Si Falls"
+    # and "Tat Kuang Si" 300 m apart) → every component and night of this tour uses the cluster's keeper. Component
+    # ids are unchanged (they come from the itinerary spelling); the other tours and the destinations are untouched
+    # (a catalog-wide merge is the admin fix on /admin/places, with an audit row and undo).
+    async with pool.acquire() as conn:
+        remap = await _in_tour_keepers(conn, set(comp_dest.values()) | set(night_dest.values()), comps, comp_dest)
+    if remap:
+        comp_dest = {cid: remap.get(d, d) if d else d for cid, d in comp_dest.items()}
+        night_dest = {day: remap.get(d, d) if d else d for day, d in night_dest.items()}
+    counts["in_tour_duplicates_merged"] = len(remap)
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
     counts["nights_linked"] = sum(1 for v in night_dest.values() if v)
     counts["names_new_pending"] = sum(1 for r in new_rows if r[-1] == "pending")
@@ -200,6 +210,39 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         pending_due = await store.pending_names_due(conn)
     return {**base, "status": status, "days": len(records), "cost_usd": cost, "pending_names_due": pending_due,
             **counts}
+
+
+async def _validity_counts(conn) -> dict:
+    """AA-847: the content-validity counts of the live catalog, stored with each graph build (trend on
+    /admin/places). Never fails the build; a failure is recorded in the counts, not swallowed silently."""
+    from services.places import validity
+    try:
+        summary, _ = await validity.report(conn)
+        return validity.stats_counts(summary)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("place_validity_report_failed", error=str(e)[:200])
+        return {"error": type(e).__name__}
+
+
+async def _in_tour_keepers(conn, dest_ids: set, comps: list, comp_dest: dict) -> dict[str, str]:
+    """{non-keeper destination id: keeper id} among one tour's linked destinations (validity.clusters)."""
+    from services.places import validity
+    briefs = await store.destination_briefs(conn, {d for d in dest_ids if d})
+    if len(briefs) < 2:
+        return {}
+    n_comp: dict[str, int] = {}
+    for c in comps:
+        d = comp_dest.get(c.component_id)
+        if d:
+            n_comp[str(d)] = n_comp.get(str(d), 0) + 1
+    places = [validity.Place(i, b["name"], b["country"], float(b["lat"]), float(b["lng"]), b["located_by"],
+                             b["geo_precision"], b["review_reason"], b["result_type"], n_comp.get(i, 0))
+              for i, b in briefs.items() if b.get("lat") is not None and b.get("lng") is not None]
+    remap = {}
+    for group in validity.clusters(places):
+        for p in group[1:]:
+            remap[p.destination_id] = group[0].destination_id
+    return remap
 
 
 # ── geocode ────────────────────────────────────────────────────────────────────────────────
@@ -318,6 +361,7 @@ async def build_tour_graph(pool, *, junction_km: float = graph_mod.DEFAULT_JUNCT
         # pure CPU (pairwise junctions over every node): off the worker's event loop (S201)
         g = await asyncio.to_thread(graph_mod.build_graph, graph_mod.stop_rows(days, places, dests), dests,
                                     places, junction_km)
+        g.stats["validity"] = await _validity_counts(conn)
         build_id = await store.swap_graph(conn, g, {"junction_km": junction_km, "live_sources": len(source_ids)},
                                           job_id)
     return {"status": "ok", "build_id": build_id, "live_sources": len(source_ids), **g.stats}
