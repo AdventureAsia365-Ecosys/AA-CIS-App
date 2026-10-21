@@ -30,6 +30,9 @@ app code changes. `install(run_id)`:
 
 `install` refuses to run (RuntimeError) when a patched name is gone or an INSERT's column list changed,
 so a refactor of the gateway cannot silently send eval rows to real stages or tenants.
+
+AA-925: `install(run_id, stage=...)` takes the ad-hoc stage (default `adhoc_aa729`; the Jev drill uses
+`adhoc_aa925`); the run's spend query must filter on the same stage (`spend_sql(stage)`).
 """
 from __future__ import annotations
 
@@ -64,10 +67,23 @@ def _norm(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip()
 
 
-def relabel_sql(original: str, run_id: str) -> str:
-    """The patched INSERT: same 15 parameters, stage forced to adhoc_aa729, real stage + run id in
+def _check_stage(stage: str) -> str:
+    if not re.fullmatch(r"adhoc_[a-z0-9_]+", stage or ""):
+        raise ValueError(f"eval stage must be adhoc_<issue> (it is inlined as a literal), got {stage!r}")
+    return stage
+
+
+def spend_sql(stage: str = STAGE) -> str:
+    """The run's logged spend: rows of `stage` stamped with the run id (score.py's _SPEND_SQL for adhoc_aa729)."""
+    return (f"SELECT COALESCE(sum(cost_usd), 0)::float FROM shared.llm_call_log "
+            f"WHERE stage = '{_check_stage(stage)}' AND created_at >= $1 AND quality_signal->>'aa729_run' = $2")
+
+
+def relabel_sql(original: str, run_id: str, stage: str = STAGE) -> str:
+    """The patched INSERT: same 15 parameters, stage forced to `stage` (adhoc_aa729), real stage + run id in
     quality_signal. Raises if `original` is not the statement this was written against."""
     run = str(uuid.UUID(run_id))  # validated: it is inlined as a literal
+    stage = _check_stage(stage)
     _check_insert(_norm(original), "shared.llm_call_log", INSERT_COLUMNS, N_PARAMS,
                   "shared.llm_client.call_log._INSERT_SQL")
     # tenant / piece / request are written NULL and kept in quality_signal: an eval row must never count as
@@ -77,29 +93,29 @@ def relabel_sql(original: str, run_id: str) -> str:
               "ELSE jsonb_build_object('signal', $8::jsonb) END) || "
               f"jsonb_build_object('aa729_stage', $2::text, 'aa729_run', '{run}'::text, "
               "'aa729_tenant', $1::uuid::text, 'aa729_piece', $9::uuid::text, 'aa729_request', $10::uuid::text)")
-    return (f"INSERT INTO shared.llm_call_log ({INSERT_COLUMNS}) VALUES (NULL, '{STAGE}', $3, $4, $5, $6, $7, "
+    return (f"INSERT INTO shared.llm_call_log ({INSERT_COLUMNS}) VALUES (NULL, '{stage}', $3, $4, $5, $6, $7, "
             f"{signal}, NULL, NULL, $11, $12, $13, $14, $15::uuid)")
 
 
-def _prefix_stage(norm: str, param: str) -> str:
+def _prefix_stage(norm: str, param: str, stage: str = STAGE) -> str:
     """`VALUES (..., $n, ...)` → `VALUES (..., 'adhoc_aa729:' || $n::text, ...)` for the stage parameter."""
     head, sep, tail = norm.partition("VALUES (")
     vals = [v.strip() for v in tail.rstrip().rstrip(")").split(",")]
     if not sep or param not in vals:
         raise RuntimeError("unexpected VALUES list — update scripts/aa729/evalpatch.py")
-    vals[vals.index(param)] = f"'{STAGE}:' || {param}::text"
+    vals[vals.index(param)] = f"'{_check_stage(stage)}:' || {param}::text"
     return f"{head}VALUES ({', '.join(vals)})"
 
 
-def relabel_decision_sql(original: str) -> str:
+def relabel_decision_sql(original: str, stage: str = STAGE) -> str:
     """decide._LOG_SQL with the stage written as 'adhoc_aa729:<real stage>'; everything else unchanged."""
     norm = _norm(original)
     _check_insert(norm, "shared.decision_log", DECISION_COLUMNS, N_DECISION_PARAMS,
                   "shared.llm_client.decide._LOG_SQL")
-    return _prefix_stage(norm, "$1")
+    return _prefix_stage(norm, "$1", stage)
 
 
-def relabel_hits_sql(original: str) -> str:
+def relabel_hits_sql(original: str, stage: str = STAGE) -> str:
     """decide._HITS_SQL (daily cache-hit counts) with the same stage prefix."""
     norm = _norm(original)
     _check_insert(norm, "shared.decision_cache_hits_daily", HITS_COLUMNS, N_HITS_PARAMS,
@@ -108,7 +124,7 @@ def relabel_hits_sql(original: str) -> str:
     if not sep:
         raise RuntimeError("shared.llm_client.decide._HITS_SQL lost its ON CONFLICT — update "
                            "scripts/aa729/evalpatch.py")
-    return _prefix_stage(head, "$2") + sep + tail
+    return _prefix_stage(head, "$2", stage) + sep + tail
 
 
 class Spend:
@@ -215,9 +231,10 @@ async def _capture_placeholder(pool, *, tenant_id, request_id, **kw) -> dict:
             "attempt_number": 1, "content_text": "", "status": "processing", **kw}
 
 
-def install(run_id: str) -> None:
-    """Apply all patches for this process (idempotent for the same run id)."""
-    if _INSTALLED.get("run_id") == run_id:
+def install(run_id: str, stage: str = STAGE) -> None:
+    """Apply all patches for this process (idempotent for the same run id and stage)."""
+    _check_stage(stage)
+    if _INSTALLED.get("run_id") == run_id and _INSTALLED.get("stage") == stage:
         return
     if _INSTALLED:
         raise RuntimeError("evalpatch already installed for another run in this process")
@@ -236,8 +253,8 @@ def install(run_id: str) -> None:
             raise RuntimeError(f"{getattr(owner, '__name__', owner)}.{name} is gone — "
                                "update scripts/aa729/evalpatch.py")
 
-    insert_sql = relabel_sql(call_log._INSERT_SQL, run_id)  # all three validated before any is replaced
-    log_sql, hits_sql = relabel_decision_sql(decide._LOG_SQL), relabel_hits_sql(decide._HITS_SQL)
+    insert_sql = relabel_sql(call_log._INSERT_SQL, run_id, stage)  # all three validated before any is replaced
+    log_sql, hits_sql = relabel_decision_sql(decide._LOG_SQL, stage), relabel_hits_sql(decide._HITS_SQL, stage)
     call_log._INSERT_SQL, decide._LOG_SQL, decide._HITS_SQL = insert_sql, log_sql, hits_sql
     t9_service._finalize_piece = _capture_finalize
     t9_service._insert_placeholder_piece = _capture_placeholder
@@ -263,4 +280,4 @@ def install(run_id: str) -> None:
         return resp
 
     embed_mod._call = embed_call
-    _INSTALLED["run_id"] = run_id
+    _INSTALLED["run_id"], _INSTALLED["stage"] = run_id, stage

@@ -205,6 +205,9 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
                 "background_cleared": qa.get("background_cleared", 0),
                 "graph_draft_scores": result.get("draft_scores") or [],
                 "best_draft_restored": bool(result.get("best_draft_restored")),
+                # AA-925: T3's fail-open paths (Jev outages while clearing hits, repair-contract reverts) —
+                # job.result is where they are read; the log event alone was invisible outside CloudWatch.
+                "degraded": qa.get("degraded") or [],
             }
 
             import json as _j3

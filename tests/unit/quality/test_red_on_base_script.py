@@ -144,6 +144,17 @@ def test_removed_case_needs_the_label(repo, monkeypatch):
     assert _run(repo, base, monkeypatch) == 1
 
 
+def test_harness_change_needs_the_label(repo, monkeypatch):
+    """An edit of the runner / problems() / the corpus test can weaken every case with no case file changed."""
+    _corpus(repo, [_case("toy-a", 1)])
+    _write(repo, "tests/unit/quality/chain.py", "def problems(case, result):\n    return []\n")
+    base = _commit(repo)
+    _write(repo, "tests/unit/quality/chain.py", "def problems(case, result):\n    return []  # weakened\n")
+    _commit(repo)
+    assert _run(repo, base, monkeypatch) == 1
+    assert _run(repo, base, monkeypatch, labels=["q0-relabel"]) == 0
+
+
 def test_negative_twin_exemption_only_for_a_new_positive_case(repo, monkeypatch):
     _corpus(repo, [_case("toy-a", 1)])
     base = _commit(repo)

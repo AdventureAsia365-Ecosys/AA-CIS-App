@@ -19,13 +19,22 @@ def test_in_band_meta_unchanged():
     assert _ok(m) and fit_seo_meta_final(m, SL) == m
 
 
-def test_one_sentence_too_long_is_cut_at_a_boundary():
+def test_one_sentence_too_long_is_not_cut_mid_clause():
+    # AA-925: the clause/word cut ("cut, then add a period") is gone — it left "...a 20-kilometre." (S2). A
+    # one-sentence meta with no sentence boundary in band is returned unchanged; SEO_META_TOO_LONG keeps
+    # firing and flag_fix's LLM meta repair (or T3's meta-only regenerate) rewrites it.
     m = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala and "
          "Udawalawe National Parks with luxury transfers and a private guide throughout.")
     assert len(m) > SEO_META_MAX
-    out = fit_seo_meta_final(m, SL)
-    assert _ok(out) and m.startswith(out[:-1])
-    assert not out.rstrip(".").split()[-1].lower() in {"and", "with", "a", "the"}
+    assert fit_seo_meta_final(m, SL) == m
+
+
+def test_too_long_meta_with_a_sentence_boundary_in_band_is_salvaged():
+    first = ("Relax on Sri Lankan beaches, watch blue whales from Mirissa and go on safari in Yala and "
+             "Udawalawe National Parks with a private guide and driver.")
+    m = first + " Luxury transfers throughout."
+    assert len(m) > SEO_META_MAX and _ok(first)
+    assert fit_seo_meta_final(m, SL) == first
 
 
 def test_too_short_gets_a_fact_clause():
@@ -78,10 +87,12 @@ def test_revalidate_refits_meta_even_without_fix_pass(monkeypatch):
     monkeypatch.setattr(graph, "validate_node", fake_validate)
     monkeypatch.setattr(graph, "judge_node", lambda s: s)
     monkeypatch.setattr(graph, "_apply_grounding_recheck", lambda s: s)
-    long_meta = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala "
-                 "and Udawalawe National Parks with luxury transfers and a private guide throughout.")
-    state = {"fix_pass_applied": False, "brand_forbidden_words": [], "tour": SL | {"name": "T"},
-             "generated": {"seo_meta": long_meta}}
+    # AA-925: a too-short meta (the fit appends a fact clause); a too-long one is no longer cut here
+    short_meta = ("Visit Kandy's Temple of the Tooth, the Sigiriya rock fortress, the Dambulla caves and the tea "
+                  "estates around Nuwara Eliya on a guided tour.")
+    state = {"fix_pass_applied": False, "brand_forbidden_words": [],
+             "tour": {"duration": "13 Nights 14 days", "country": "Sri Lanka", "name": "T"},
+             "generated": {"seo_meta": short_meta}}
     out = graph.revalidate_node(state)
     assert _ok(seen["meta"]) and out["revalidate_ran"] is True
 
@@ -116,3 +127,22 @@ def test_short_one_day_meta_gets_one_day_wording():
          "stopping at a family-run tea stall.")
     out = fit_seo_meta_final(m, {"duration": "1 day", "country": "Sri Lanka"})
     assert _ok(out) and "a one-day trip" in out and "1 days" not in out
+
+
+@pytest.mark.parametrize("duration, days", [("8 Nights", 9), ("2 weeks", 14)])
+def test_revalidate_fit_tail_with_a_derived_day_count_is_not_reverted(duration, days):
+    # AA-925 review: the fact tail states tour_days() of a nights-only / weeks duration ("8 nights" -> "over 9
+    # days"), a number the source never writes. The repair contract reads it as a derived source fact, so the
+    # fit is kept and META_TOO_SHORT does not keep blocking Master.
+    from services.content_generation import graph
+
+    short = ("Walk the tea hills, old temples and quiet villages of the island with a private guide, staying in "
+             "small lodges en route.")
+    assert len(short) < SEO_META_MIN
+    tour = {"duration": duration, "country": "Sri Lanka", "name": "Island Walk", "summary": "Tea hills."}
+    fitted = fit_seo_meta_final(short, {"duration": duration, "country": "Sri Lanka", "name": "Island Walk"})
+    assert f"{days}" in fitted and _ok(fitted)
+    state = {"tour": tour, "generated": {"seo_meta": fitted}}
+    out = graph._contract_after_edit(state, {"seo_meta": short}, detector="revalidate_fit")
+    assert out["generated"]["seo_meta"] == fitted
+    assert not out.get("degraded")

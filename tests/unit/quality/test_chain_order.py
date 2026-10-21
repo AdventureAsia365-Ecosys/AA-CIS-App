@@ -87,12 +87,32 @@ def test_a1_revalidate_strips_and_fits_before_it_validates():
 
 # The repairs that run AFTER validate_node scored the content. Each must be wrapped by the repair contract
 # (AA-925 PR3) and re-checked; a new one added here needs its own Q0 case.
-KNOWN_POST_VALIDATE_REPAIRS = {"_apply_grounding_recheck": "repair_and_recheck"}
+KNOWN_POST_VALIDATE_REPAIRS = {"_grounding_recheck": "repair_and_recheck"}
 
 
 def test_known_post_validate_repairs_are_listed():
     for fn_name, repair in KNOWN_POST_VALIDATE_REPAIRS.items():
         assert _call_lines(_tree(getattr(graph, fn_name)), repair), f"{fn_name} no longer calls {repair}"
+
+
+def test_post_validate_grounding_repair_is_under_the_contract():
+    from services.content_generation import grounding
+    assert _call_lines(_tree(grounding.repair_and_recheck), "enforce_fields"), \
+        "repair_and_recheck no longer runs the repair contract"
+
+
+def test_a1_degraded_hold_is_the_last_step():
+    """AA-925: the one A1 degraded hold wraps the last step of the graph (revalidate -> grounding re-check)."""
+    tree = _tree(graph._apply_grounding_recheck)
+    assert _call_lines(tree, "apply_a1_hold") and _call_lines(tree, "_grounding_recheck")
+
+
+def test_t9_degraded_hold_follows_final_integrity():
+    """AA-925: the T9 degraded hold is computed after the last integrity pass, from the final attempt."""
+    tree = _tree(service.run_write_background)
+    final = _call_lines(tree, "_final_integrity")[0]
+    hold = _call_lines(tree, "_degraded_final")
+    assert hold and min(hold) > final
 
 
 def _edges(compiled) -> set[tuple[str, str]]:

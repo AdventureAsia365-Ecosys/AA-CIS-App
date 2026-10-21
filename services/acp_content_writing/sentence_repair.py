@@ -31,6 +31,7 @@ from services.acp_content_writing.hygiene import (
 from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
+from services.quality import repair_contract
 
 # AA-912: one shared tag definition (services/acp_shared/citation_tags.py) — linear, and a dangling
 # '[R:id' opener is dropped like a whole tag
@@ -417,23 +418,9 @@ def drop_new_duplicates(before: str, after: str, ignore: frozenset = frozenset()
     return text
 
 
-def new_specifics(original: str, replacement: str, *, trip_ctx=None, source: Optional[str] = None) -> list[str]:
-    """AA-777 (r6 fix 1) — the specifics a sentence repair ADDED that neither the sentence it replaces nor
-    the source gives: a number (the F1 reading, against `source` + the original sentence) and, with
-    `trip_ctx`, a time of day / ordinal / position or (blog) a pace or rest word the F17 checks would flag
-    (trip_facts.new_specific_claims). [] for a cut (empty replacement). r6: 4 of 26 retries added a
-    blocking fail; R1 and R2 were exactly this (a repair of an F9 / F15 sentence wrote 'the afternoon')."""
-    from services.acp_shared.grounding import find_novel_numeric_claims
-    rep = strip_citation_tags(replacement, " ").strip()
-    if not rep:
-        return []
-    orig = strip_citation_tags(original, " ")
-    out = [f"adds {n}, which neither the sentence nor the source gives"
-           for n in find_novel_numeric_claims(rep, [source or "", orig], year_forms=True)]
-    if trip_ctx is not None:
-        from services.acp_content_writing.trip_facts import new_specific_claims
-        out += new_specific_claims(orig, rep, trip_ctx)
-    return out
+# AA-925: new_specifics lives in the repair contract now (services/quality/repair_contract.py, invariant 2);
+# re-exported here so the AA-777 call sites and tests keep their import.
+new_specifics = repair_contract.new_specifics
 
 
 def _drop_new_specifics(items: list[dict], replacements: list[str], trip_ctx,
@@ -486,6 +473,12 @@ def splice_checked(content_text: str, items: list[dict], replacements: list[str]
         items, replacements = _drop_new_specifics(items, replacements, trip_ctx, source)
         if not items:
             return content_text
+    # AA-925 repair contract (invariants 3 and 5): a replacement that ends mid-sentence, is a cut-and-period of
+    # its sentence, or breaks a tag / bold / bracket pair is not spliced (`"guard": "contract"`); the caller
+    # counts these items as `degraded: repair_contract`.
+    items, replacements, _ = repair_contract.enforce_spans(items, replacements)
+    if not items:
+        return content_text
     out = splice(content_text, items, replacements, ignore=ignore)
     if not _integrity(content_text, out, ignore, cta, moments):
         return out

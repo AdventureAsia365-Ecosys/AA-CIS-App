@@ -16,7 +16,8 @@ Run in CI (ci.yml, job "Unit Tests", pull_request only) with the PR merge ref ch
    (``git show``). No corpus on the base → print ``bootstrap`` and exit 0 (the PR that adds the corpus).
 2. ``new = head − base``, ``removed = base − head``, ``relabelled`` = same id whose label fields changed
    (``expected``, ``class_id``, ``detector``, ``severity``, ``chain``, ``expect``, ``input``, ``llm_stub``), plus
-   changed or removed shared fixtures (``_fixtures.json``). Any of these without the label → fail.
+   changed or removed shared fixtures (``_fixtures.json``), plus a changed harness file (``HARNESS_FILES``:
+   the runners, their stubs and ``problems()`` decide what a label means). Any of these without the label → fail.
 3. ``git worktree add <tmp>/base <base>``; copy HEAD's tests/unit/quality/ and tests/unit/conftest.py over it.
 4. In that worktree, print and check that ``services`` imports from the base worktree, then run pytest on
    the node ids ``tests/unit/quality/test_q0_corpus.py::test_case[<id>]`` with ``--junitxml``.
@@ -45,6 +46,9 @@ FIXTURES = "_fixtures.json"
 CORPUS_TEST = "tests/unit/quality/test_q0_corpus.py"
 RELABEL_LABEL = "q0-relabel"
 LABEL_FIELDS = ("expected", "class_id", "detector", "severity", "chain", "expect", "input", "llm_stub")
+# The harness decides what a label MEANS (the runners and their stubs, ``problems()``, the corpus test): an edit
+# there can weaken every case without touching a case file, so it needs the label too (review of PR 3).
+HARNESS_FILES = ("tests/unit/quality/chain.py", "tests/unit/quality/test_q0_corpus.py")
 POSITIVE = ("fire", "drop")
 NEGATIVE = ("no_fire", "keep")
 
@@ -95,6 +99,20 @@ def diff(head: dict[str, dict], base: dict[str, dict], head_fx: dict, base_fx: d
                         if any(head[i].get(f) != base[i].get(f) for f in LABEL_FIELDS))
     fixtures_changed = sorted(k for k in base_fx if head_fx.get(k) != base_fx[k])
     return {"new": new, "removed": removed, "relabelled": relabelled, "fixtures_changed": fixtures_changed}
+
+
+def harness_changed(base: str, root: str = ".") -> list[str]:
+    """Harness files whose text differs between the base and HEAD (a file new at HEAD with no base copy is the
+    bootstrap, not a change)."""
+    out = []
+    for rel in HARNESS_FILES:
+        before = subprocess.run(["git", "show", f"{base}:{rel}"], cwd=root, capture_output=True, text=True)
+        if before.returncode != 0:
+            continue
+        p = Path(root) / rel
+        if not p.exists() or p.read_text(encoding="utf-8") != before.stdout:
+            out.append(rel)
+    return out
 
 
 def exempt(case: dict, head: dict[str, dict], new: set[str]) -> bool:
@@ -171,12 +189,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     (head_cases, head_fx), (base_cases, base_fx) = head, base
     d = diff(head_cases, base_cases, head_fx, base_fx)
+    d["harness_changed"] = harness_changed(a.base, a.root)
     print(json.dumps({k: v for k, v in d.items()}, indent=1))
     rc = 0
-    touched = d["removed"] or d["relabelled"] or d["fixtures_changed"]
+    touched = d["removed"] or d["relabelled"] or d["fixtures_changed"] or d["harness_changed"]
     if touched and RELABEL_LABEL not in labels:
         print(f"FAIL: existing truth labels changed {d['relabelled']}, removed {d['removed']}, shared fixtures "
-              f"changed {d['fixtures_changed']} — add the '{RELABEL_LABEL}' label (an independent review follows)")
+              f"changed {d['fixtures_changed']}, harness changed {d['harness_changed']} — add the "
+              f"'{RELABEL_LABEL}' label (an independent review follows)")
         rc = 1
     elif touched:
         print(f"'{RELABEL_LABEL}' label present: label changes accepted for independent review")
