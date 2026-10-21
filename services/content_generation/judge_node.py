@@ -358,4 +358,6 @@ def judge_node(state: dict) -> dict:
             rows = _billed_rows_of(log_stage, result, str(e))
             if rows:
                 record_calls_sync(rows)
-        return state
+        from services.quality import degraded  # AA-925: the judge did not run on this draft (counted)
+        return {**state, "degraded": degraded.add(state.get("degraded"), degraded.JUDGE_UNAVAILABLE,
+                                                  detector="judge", detail=str(e)[:200])}

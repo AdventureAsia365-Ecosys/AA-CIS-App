@@ -63,8 +63,9 @@ def meta_complete_sentence(meta: str) -> bool:
     """True when seo_meta reads as a complete sentence (period end, >=8 words,
     no trailing preposition/conjunction/article). No verb-whitelist (AA-201 revision).
     AA-794: no noun/adjective heuristic here on purpose — META_INCOMPLETE_SENTENCE hard-blocks A1
-    Master and human-edit approve, and nothing can fix a noun ending deterministically. A cut
-    between two content words is prevented where it is made (_cut_long_meta) instead."""
+    Master and human-edit approve, and nothing can fix a noun ending deterministically. AA-925: the
+    deterministic mid-clause cut that made such endings is gone; meta_cut_signature (shadow) and the
+    repair contract's cut-signature check catch the rest."""
     t = (meta or "").strip()
     if not t.endswith("."):
         return False
@@ -229,8 +230,9 @@ def fit_seo_title(title: str, max_len: int = SEO_TITLE_MAX) -> str:
 
 
 # ── AA-740: deterministic final seo_meta fit (too long AND too short) ────────────────────────────
-# Cut points tried for a one-sentence meta that is too long, strongest boundary first.
-_META_CLAUSE_CUTS = ("; ", " — ", " – ", ", and ", ", with ", ", ")
+# AA-925: the clause / word cut for a too-long one-sentence meta (_cut_long_meta) is gone — it was the
+# "cut then add a period" that left "...a 20-kilometre." (S2). A too-long meta is salvaged at a sentence
+# boundary or left to the LLM repair (flag_fix seo_meta + _rerepair_meta, T3 meta-only regenerate).
 
 
 def tour_days(duration) -> Optional[int]:
@@ -241,54 +243,6 @@ def tour_days(duration) -> Optional[int]:
     from .day_parse import parse_duration
 
     return parse_duration(duration).exact_days
-
-
-# AA-794: a word-boundary cut is only taken right BEFORE one of these words — they open a new
-# phrase, so the text before them reads as complete ("…valleys | with expert guides"). Articles and
-# "of"/"as" are left out on purpose: they usually start the object of the word before them
-# ("visits | the dzong", "a series | of", "such | as"), so a cut there leaves a dangling verb/noun.
-_META_CUT_BEFORE = frozenset(
-    (BAD_META_ENDINGS | _META_WEAK_ENDINGS | {
-        "across", "through", "along", "past", "toward", "towards", "while", "where", "which",
-        "before", "after", "during", "among", "via", "into", "around",
-    }) - {"a", "an", "the", "of", "as"}
-)
-
-
-def _next_word(text: str, space_idx: int) -> str:
-    """The lowercased letters of the word that starts after text[space_idx] (a space)."""
-    rest = text[space_idx + 1:].split(maxsplit=1)
-    return re.sub(r"[^a-z]", "", rest[0].lower()) if rest else ""
-
-
-def _cut_long_meta(meta: str, forbidden) -> Optional[str]:
-    t = meta.strip()
-    for sep in _META_CLAUSE_CUTS:
-        idx = [i for i in range(len(t)) if t.startswith(sep, i)]
-        for i in reversed(idx):
-            head = t[:i].rstrip(" ,;:—–-")
-            words = head.split()
-            while words and re.sub(r"[^a-z]", "", words[-1].lower()) in BAD_META_ENDINGS:
-                words.pop()
-            cand = " ".join(words).rstrip(" ,;:—–-") + "."
-            if meta_in_band(cand, forbidden):
-                return cand
-    # last resort: the longest word-boundary cut that lands in band (drops a trailing connector).
-    # AA-794: only where the original's NEXT word opens a new phrase — never between two content
-    # words ("…valleys with expert | guides" became "…with expert." on 5/14 S234 T2 metas). No clean
-    # cut in band → None: the length code stays and flag_fix's LLM meta repair rewrites it.
-    for end in range(SEO_META_MAX - 1, SEO_META_MIN - 2, -1):
-        if end >= len(t) or t[end] != " ":
-            continue
-        if _next_word(t, end) not in _META_CUT_BEFORE:
-            continue
-        words = t[:end].split()
-        while words and re.sub(r"[^a-z]", "", words[-1].lower()) in BAD_META_ENDINGS | _META_WEAK_ENDINGS:
-            words.pop()
-        cand = " ".join(words).rstrip(" ,;:—–-") + "."
-        if meta_in_band(cand, forbidden):
-            return cand
-    return None
 
 
 _MENTIONS_DAYS = re.compile(
@@ -354,11 +308,12 @@ def _extend_short_meta(meta: str, facts: dict, forbidden) -> Optional[str]:
 def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden=None) -> str:
     """AA-740: land seo_meta in [SEO_META_MIN, SEO_META_MAX] as a complete sentence, without an LLM.
     1) already in band → unchanged; 2) AA-641 salvage (complete-sentence prefix); 3) too long →
-    cut at the last clause boundary that lands in band (AA-794: a word cut only before a phrase
-    boundary); 4) too short → append one clause built only from tour facts (days, country; AA-794:
-    no country when ``facts["name"]`` or the meta names another country). Still out of band →
-    returned unchanged, so the SEO_META_TOO_LONG / META_TOO_SHORT hard code keeps blocking Master
-    (AA-736)."""
+    AA-925: NO clause/word cut any more (it was "cut, then add a period": "...a 20-kilometre walk" became
+    "...a 20-kilometre."); the meta is returned unchanged and the LLM repair takes it (A1 flag_fix seo_meta +
+    _rerepair_meta, T3 meta-only regenerate); 4) too short → append one clause built only from tour facts
+    (days, country; AA-794: no country when ``facts["name"]`` or the meta names another country); 5) in band
+    but not closed, nothing cut → close it with a period. Still out of band → returned unchanged, so the
+    SEO_META_TOO_LONG / META_TOO_SHORT hard code keeps blocking Master (AA-736)."""
     if not isinstance(meta, str) or not meta.strip():
         return meta
     forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in (tenant_forbidden or []) if w and w.strip()}
@@ -369,7 +324,7 @@ def fit_seo_meta_final(meta: str, facts: Optional[dict] = None, tenant_forbidden
         return fitted
     t = meta.strip()
     if len(t) > SEO_META_MAX:
-        out = _cut_long_meta(t, forbidden)
+        out = None   # AA-925: no mid-clause cut; the LLM meta repair rewrites it
         reason = "too_long"
     elif len(t) < SEO_META_MIN:
         out = _extend_short_meta(t, facts or {}, forbidden)

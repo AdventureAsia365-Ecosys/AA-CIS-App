@@ -3,6 +3,10 @@
 5/14 S234 T2 metas ended on a cut content word ("…mountain valleys with expert.") — the last-resort
 word-boundary cut in _cut_long_meta. 2/14 got ", in Laos." on a Laos→Vietnam tour — the fact-clause
 tail used raw_tours.country (one value). The same helpers run on A1, so A1 is covered too.
+
+AA-925: the word / clause cut is gone altogether (it was "cut, then add a period": "...a 20-kilometre."), so
+every over-length one-sentence fragment below is now returned unchanged for the LLM meta repair; T3 runs a
+meta-only regenerate before it would ask for a whole-tour rewrite.
 """
 from unittest.mock import AsyncMock, patch
 
@@ -45,25 +49,10 @@ def _last_word(m: str) -> str:
 
 
 @pytest.mark.parametrize("vid,country,bad_end,original", _FRAGMENTS, ids=[f[0] for f in _FRAGMENTS])
-def test_fragment_never_ends_on_a_cut_content_word(vid, country, bad_end, original):
+def test_fragment_is_never_cut_mid_clause(vid, country, bad_end, original):
+    # AA-925: no cut at all — SEO_META_TOO_LONG stays and flag_fix's LLM repair (T3: meta-only regenerate) runs
     assert len(original) > SEO_META_MAX
-    out = fit_seo_meta_final(original, {"duration": "10 Days", "country": country, "name": "T"})
-    if out == original:
-        return  # no clean cut in band → SEO_META_TOO_LONG stays and flag_fix's LLM repair runs
-    assert _in_band(out)
-    assert _last_word(out) != bad_end
-    # a clean cut ends right before a word that opens a new phrase (or at a clause boundary)
-    head = out[:-1]
-    assert original.startswith(head)
-    nxt = original[len(head):].lstrip(" ,;").split()[0].lower()
-    assert original[len(head)] in ",;" or nxt in {"and", "with", "across", "through", "or", "for", "to",
-                                                  "in", "on", "at", "while", "where", "which"}
-
-
-def test_s234_word_cut_case_now_cuts_before_the_conjunction():
-    # 81102180: the old cut ended "…mountain farming and valley."; the clean cut stops before "and".
-    out = fit_seo_meta_final(_FRAGMENTS[2][3], {"duration": "10 Days", "country": "Bhutan"})
-    assert out.endswith("rooted in mountain farming.") and _in_band(out)
+    assert fit_seo_meta_final(original, {"duration": "10 Days", "country": country, "name": "T"}) == original
 
 
 @pytest.mark.parametrize("meta", [
@@ -127,25 +116,49 @@ def test_complete_sentence_still_accepts_good_metas(meta):
     assert meta_complete_sentence(meta)
 
 
+_LONG_META = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala and "
+              "Udawalawe National Parks with luxury transfers and a private guide throughout.")
+_REGEN_META = ("Relax on Sri Lankan beaches, watch blue whales from Mirissa and go on safari in Yala and "
+               "Udawalawe National Parks with a private guide and driver.")
+
+
+def _structural(generated, tour_dict, brand_rules):
+    return [] if len(generated["seo_meta"]) <= SEO_META_MAX else ["SEO_META_TOO_LONG"]
+
+
 @pytest.mark.asyncio
-async def test_t3_applies_the_full_fit_before_deciding_to_rewrite():
+async def test_t3_regenerates_the_meta_before_deciding_to_rewrite():
+    # AA-925: one sentence > 155 — the fit no longer cuts it; T3 runs ONE meta-only regenerate (t2_flag_fix)
+    # before it would pay for a whole-tour rewrite.
     from services.acp_produce import tenant_pipeline as tp
-    # one sentence > 155: the AA-641 salvage alone cannot fix it, the AA-740 clause cut can
-    long_meta = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala and "
-                 "Udawalawe National Parks with luxury transfers and a private guide throughout.")
-    result = {"generated": {"summary": "No numbers here.", "seo_meta": long_meta}}
-
-    def structural(generated, tour_dict, brand_rules):
-        return [] if len(generated["seo_meta"]) <= SEO_META_MAX else ["SEO_META_TOO_LONG"]
-
+    result = {"generated": {"summary": "No numbers here.", "seo_meta": _LONG_META}}
     rewrite = AsyncMock()
     with patch("api.routers.v1_pipeline._rewrite_tour", rewrite), \
-            patch.object(tp, "_t3_structural_issues", side_effect=structural):
+            patch.object(tp, "_t3_structural_issues", side_effect=_structural), \
+            patch("services.content_generation.flag_fix_node._rerepair_meta", return_value=_REGEN_META) as rr:
         out = await tp.run_t3_qa_gate({"name": "Sri Lanka Coast", "country": "Sri Lanka",
                                        "duration": "10 Days"}, ["no numbers"], result, {}, tenant_id="t1")
     assert out["passed"] is True and out["attempts"] == 0
     rewrite.assert_not_awaited()
-    assert _in_band(out["result"]["generated"]["seo_meta"])
+    assert rr.call_args.kwargs["stage"] == "t2_flag_fix"
+    assert out["result"]["generated"]["seo_meta"] == _REGEN_META
+
+
+@pytest.mark.asyncio
+async def test_t3_meta_regenerate_that_adds_a_figure_is_refused():
+    # the repair contract: a regenerated meta that adds a figure the meta and the source lack is not used
+    from services.acp_produce import tenant_pipeline as tp
+    bad = ("Relax on Sri Lankan beaches, watch 40 blue whales from Mirissa and go on safari in Yala and "
+           "Udawalawe National Parks with a private guide and driver.")
+    result = {"generated": {"summary": "No numbers here.", "seo_meta": _LONG_META}}
+    with patch("api.routers.v1_pipeline._rewrite_tour", AsyncMock()), \
+            patch.object(tp, "_t3_structural_issues", side_effect=_structural), \
+            patch("services.content_generation.flag_fix_node._rerepair_meta", return_value=bad):
+        out = await tp.run_t3_qa_gate({"name": "Sri Lanka Coast", "country": "Sri Lanka",
+                                       "duration": "10 Days"}, ["no numbers"], result, {}, tenant_id="t1",
+                                      max_repairs=0)
+    assert out["passed"] is False and out["result"]["generated"]["seo_meta"] == _LONG_META
+    assert [d["name"] for d in out["degraded"]] == ["repair_contract"]
 
 
 def test_graph_fit_passes_the_tour_name():

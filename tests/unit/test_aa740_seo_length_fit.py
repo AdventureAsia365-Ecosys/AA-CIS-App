@@ -19,13 +19,22 @@ def test_in_band_meta_unchanged():
     assert _ok(m) and fit_seo_meta_final(m, SL) == m
 
 
-def test_one_sentence_too_long_is_cut_at_a_boundary():
+def test_one_sentence_too_long_is_not_cut_mid_clause():
+    # AA-925: the clause/word cut ("cut, then add a period") is gone — it left "...a 20-kilometre." (S2). A
+    # one-sentence meta with no sentence boundary in band is returned unchanged; SEO_META_TOO_LONG keeps
+    # firing and flag_fix's LLM meta repair (or T3's meta-only regenerate) rewrites it.
     m = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala and "
          "Udawalawe National Parks with luxury transfers and a private guide throughout.")
     assert len(m) > SEO_META_MAX
-    out = fit_seo_meta_final(m, SL)
-    assert _ok(out) and m.startswith(out[:-1])
-    assert not out.rstrip(".").split()[-1].lower() in {"and", "with", "a", "the"}
+    assert fit_seo_meta_final(m, SL) == m
+
+
+def test_too_long_meta_with_a_sentence_boundary_in_band_is_salvaged():
+    first = ("Relax on Sri Lankan beaches, watch blue whales from Mirissa and go on safari in Yala and "
+             "Udawalawe National Parks with a private guide and driver.")
+    m = first + " Luxury transfers throughout."
+    assert len(m) > SEO_META_MAX and _ok(first)
+    assert fit_seo_meta_final(m, SL) == first
 
 
 def test_too_short_gets_a_fact_clause():
@@ -78,10 +87,12 @@ def test_revalidate_refits_meta_even_without_fix_pass(monkeypatch):
     monkeypatch.setattr(graph, "validate_node", fake_validate)
     monkeypatch.setattr(graph, "judge_node", lambda s: s)
     monkeypatch.setattr(graph, "_apply_grounding_recheck", lambda s: s)
-    long_meta = ("Relax on Sri Lankan beaches, watch seasonal blue whales from Mirissa, and safari in Yala "
-                 "and Udawalawe National Parks with luxury transfers and a private guide throughout.")
-    state = {"fix_pass_applied": False, "brand_forbidden_words": [], "tour": SL | {"name": "T"},
-             "generated": {"seo_meta": long_meta}}
+    # AA-925: a too-short meta (the fit appends a fact clause); a too-long one is no longer cut here
+    short_meta = ("Visit Kandy's Temple of the Tooth, the Sigiriya rock fortress, the Dambulla caves and the tea "
+                  "estates around Nuwara Eliya on a guided tour.")
+    state = {"fix_pass_applied": False, "brand_forbidden_words": [],
+             "tour": {"duration": "13 Nights 14 days", "country": "Sri Lanka", "name": "T"},
+             "generated": {"seo_meta": short_meta}}
     out = graph.revalidate_node(state)
     assert _ok(seen["meta"]) and out["revalidate_ran"] is True
 

@@ -149,9 +149,12 @@ _T3_JEV_CONCURRENCY = 4
 
 
 async def t3_jev_clear(grounding: list[dict], tour_dict: dict,
-                       tenant_id: str | None) -> tuple[list[dict], list[dict]]:
+                       tenant_id: str | None, errors: list | None = None) -> tuple[list[dict], list[dict]]:
     """Split T3 numeric hits into (kept, cleared). Cleared = Jev confidently (enforce, accept zone)
-    says the sentence is supported by the master content. Never raises; fails open to `kept`."""
+    says the sentence is supported by the master content. Never raises; fails open to `kept`.
+
+    AA-925: ``errors`` (when given) collects one ``{"mode"}`` per Jev outage (zone error, or the whole call
+    failing). Behaviour is unchanged: Jev only clears hits here, so an outage keeps every hit (fail-closed)."""
     if not grounding or not tenant_id:
         return grounding, []
     from services.content_generation.grounding import source_text, subject_key
@@ -177,8 +180,13 @@ async def t3_jev_clear(grounding: list[dict], tour_dict: dict,
 
         rest = await asyncio.gather(*[bounded(g) for g in grounding[1:]])
         oks = [first_ok] + [ok for _, ok in rest]
+        if errors is not None:
+            errors.extend({"mode": getattr(v, "mode", None)} for v in [first_v] + [v for v, _ in rest]
+                          if v is None or getattr(v, "zone", None) == "error")
     except Exception as exc:
         logger.warning("t3_jev_clear_failed", error=str(exc)[:200])
+        if errors is not None:
+            errors.extend({"mode": None} for _ in grounding)
         return grounding, []
     kept = [g for g, ok in zip(grounding, oks) if not ok]
     cleared = [g for g, ok in zip(grounding, oks) if ok]
@@ -327,13 +335,62 @@ def _t3_sentence_repair(base: dict, tour_dict: dict, source_texts: list[str], br
         logger.info("t3_sentence_repair_no_change", attempt=base["attempt"], error=fixed.get("error"),
                     tenant_id=tenant_id)
         return None
-    return {**result, "generated": fixed["generated"],
+    # AA-925 repair contract: only the flagged fields change, no figure or name the field and the master text
+    # lack, no sentence cut short, no broken bracket. A violating field keeps its pre-repair text.
+    from services.quality import repair_contract
+    before = result.get("generated") or {}
+    repaired, contract = repair_contract.enforce_fields(
+        before, fixed["generated"], allowed={g["field"] for g in base["grounding"]}, source="\n".join(source_texts))
+    kept = [f for f in fixed["fields"] if f not in contract.fields()]
+    if not contract.ok:
+        logger.warning("t3_sentence_repair_contract_revert", fields=contract.fields(),
+                       invariants=contract.invariants(), tenant_id=tenant_id)
+    if not kept:
+        return None
+    return {**result, "generated": repaired,
             "cost_usd": float(result.get("cost_usd") or 0.0) + float(fixed["cost_usd"] or 0.0),
-            "t3_sentence_repaired_fields": fixed["fields"]}
+            "t3_sentence_repaired_fields": kept,
+            "t3_contract_reverts": len(contract.fields())}
+
+
+_T3_META_CODES = frozenset({"SEO_META_TOO_LONG", "META_TOO_SHORT", "META_INCOMPLETE_SENTENCE",
+                             "BRAND_SEO_META_VIOLATION"})
+_T3_META_SYSTEM = """You are the editorial fixer for {brand}, repairing the SEO meta description of a tour page
+written in that brand's own voice. Keep every fact the current meta states; add none. Return strict JSON only."""
+
+
+def _t3_meta_regenerate(generated: dict, tour_dict: dict, brand_rules: dict, tenant_id: str | None,
+                        source_texts: list[str]) -> tuple[str | None, dict | None]:
+    """AA-925 — the meta-only LLM regenerate T3 runs BEFORE a whole-tour rewrite when the deterministic fit
+    could not land seo_meta in band (AA-740's clause/word cut is gone: it cut "...a 20-kilometre walk" to
+    "...a 20-kilometre."). Reuses flag_fix's bounded ``_rerepair_meta`` loop on the t2_flag_fix route (AA-763),
+    then the repair contract (no added figure, no cut sentence). Returns (new meta or None, contract violation
+    or None). Sync — run in a thread. Without it a length code costs a whole T2 rewrite (AA-794, ~$0.38)."""
+    from services.acp_shared.signature_vocabulary import tenant_blocked_words
+    from services.content_generation.flag_fix_node import _rerepair_meta
+    from services.content_generation.seo_meta_utils import SEO_META_FORBIDDEN, meta_in_band
+    from services.quality import repair_contract
+
+    before = generated.get("seo_meta") or ""
+    pack = t3_brand_pack(brand_rules)
+    forbidden = set(SEO_META_FORBIDDEN) | {w.lower().strip() for w in tenant_blocked_words(pack) if w and w.strip()}
+    brand = (pack.get("brand_name") or "").strip() or "this client brand"
+    new = _rerepair_meta(before, tour_dict, generated, None, forbidden=forbidden, stage="t2_flag_fix",
+                         system_prompt=_T3_META_SYSTEM.replace("{brand}", brand))
+    if not new or new == before or not meta_in_band(new, forbidden):
+        logger.info("t3_meta_regenerate_no_change", landed=bool(new) and meta_in_band(new, forbidden),
+                    tenant_id=tenant_id)
+        return None, None
+    _, res = repair_contract.enforce_fields({"seo_meta": before}, {"seo_meta": new},
+                                            source="\n".join(source_texts or []), names=False)
+    if not res.ok:
+        logger.warning("t3_meta_regenerate_contract_revert", invariants=res.invariants(), tenant_id=tenant_id)
+        return None, {"invariants": res.invariants()}
+    return new, None
 
 
 def _t3_outcome(passed: bool, chosen: dict, attempts: int, candidates: list[dict], jev_cleared: int,
-                sentence_repairs: int) -> dict:
+                sentence_repairs: int, degraded_list: list | None = None) -> dict:
     return {
         "passed": passed, "result": chosen["result"], "attempts": attempts,
         "structural_issues": [] if passed else chosen["structural"],
@@ -343,6 +400,8 @@ def _t3_outcome(passed: bool, chosen: dict, attempts: int, candidates: list[dict
         "chosen_attempt": chosen["attempt"], "chosen_via": chosen["via"],
         "drafts": [_draft_record(c) for c in candidates],
         "background_cleared": chosen["background"], "sentence_repairs": sentence_repairs,
+        # AA-925: the fail-open paths T3 met (Jev outages while clearing hits, repair-contract reverts)
+        "degraded": list(degraded_list or []),
     }
 
 
@@ -390,6 +449,9 @@ async def run_t3_qa_gate(
     sentence_repairs = 0
     via = "initial"
     candidates: list[dict] = []
+    from services.quality import degraded
+    t3_degraded: list[dict] = []
+    meta_tried: set[str] = set()   # AA-925: one meta-only regenerate per distinct meta
     while True:
         generated = result.get("generated") or {}
         # AA-639: an over-long SEO title is fixed deterministically here — live, a single
@@ -398,8 +460,8 @@ async def run_t3_qa_gate(
         if isinstance(generated.get("seo_title"), str):
             generated["seo_title"] = fit_seo_title(generated["seo_title"])
         # AA-641: same for an over-long seo_meta (an LLM counting characters is unreliable).
-        # AA-794: the same full deterministic fit the graph runs (clause/word cut, fact clause), not
-        # only the sentence salvage — else a length code here costs a whole-tour rewrite.
+        # AA-794: the same full deterministic fit the graph runs (sentence salvage, fact clause). AA-925: no
+        # mid-clause cut any more — a meta it cannot land gets the meta-only regenerate below.
         if isinstance(generated.get("seo_meta"), str):
             generated["seo_meta"] = fit_seo_meta_final(
                 generated["seo_meta"],
@@ -407,6 +469,20 @@ async def run_t3_qa_gate(
                  "name": tour_dict.get("name")},
                 brand_rules.get("forbidden_words"))
         structural = _t3_structural_issues(generated, tour_dict, brand_rules)
+        # AA-925: the fit no longer cuts mid-clause, so a meta it cannot land gets a meta-only LLM regenerate
+        # (t2_flag_fix) before anything here asks for a whole-tour rewrite.
+        _meta = generated.get("seo_meta")
+        if set(structural) & _T3_META_CODES and isinstance(_meta, str) and _meta not in meta_tried:
+            meta_tried.add(_meta)
+            new_meta, violated = await asyncio.to_thread(_t3_meta_regenerate, generated, tour_dict, brand_rules,
+                                                         tenant_id, source_texts)
+            if violated:
+                t3_degraded = degraded.add(t3_degraded, degraded.REPAIR_CONTRACT, detector="t3_meta_regenerate",
+                                           detail=", ".join(violated["invariants"]))
+            if new_meta:
+                generated["seo_meta"] = new_meta
+                meta_tried.add(new_meta)
+                structural = _t3_structural_issues(generated, tour_dict, brand_rules)
         background: list[dict] = []
         grounding = _t3_grounding_check(generated, source_texts, background=background_on,
                                         cleared=background)
@@ -414,7 +490,11 @@ async def run_t3_qa_gate(
             logger.info("t3_background_cleared", attempt=attempt, sentences=len(background),
                         numbers=sorted({n for b in background for n in b["background_numbers"]})[:20],
                         tenant_id=tenant_id)
-        grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id)   # AA-699 T3-1
+        jev_errors: list[dict] = []
+        grounding, cleared = await t3_jev_clear(grounding, tour_dict, tenant_id, jev_errors)   # AA-699 T3-1
+        for e in degraded.jev_entries(jev_errors, detail=T3_JEV_STAGE):
+            t3_degraded = degraded.add(t3_degraded, e["name"], detector="t3_jev_clear", count=e["count"],
+                                       severity=e["severity"], detail=e["detail"])
         if cleared:
             jev_cleared += len(cleared)
             logger.info("t3_jev_cleared", attempt=attempt, cleared=len(cleared), kept=len(grounding),
@@ -425,14 +505,16 @@ async def run_t3_qa_gate(
         candidates.append(current)
 
         if not structural and not grounding:
-            return _t3_outcome(True, current, attempt, candidates, jev_cleared, sentence_repairs)
+            degraded.emit(t3_degraded, stage="t3", tenant_id=tenant_id)
+            return _t3_outcome(True, current, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded)
 
         if attempt >= max_repairs:
             chosen = max(candidates, key=_draft_key) if best_on else current
             if chosen is not current:
                 logger.info("t3_best_draft_chosen", chosen_attempt=chosen["attempt"],
                             chosen_score=chosen["score"], last_score=current["score"], tenant_id=tenant_id)
-            return _t3_outcome(False, chosen, attempt, candidates, jev_cleared, sentence_repairs)
+            degraded.emit(t3_degraded, stage="t3", tenant_id=tenant_id)
+            return _t3_outcome(False, chosen, attempt, candidates, jev_cleared, sentence_repairs, t3_degraded)
 
         attempt += 1
         base = max(candidates, key=_draft_key) if best_on else current
@@ -446,6 +528,9 @@ async def run_t3_qa_gate(
             base["repaired"] = True   # one sentence repair per draft; the next round rewrites
             repaired = await asyncio.to_thread(_t3_sentence_repair, base, tour_dict, source_texts,
                                                brand_rules, tenant_id, background_on)
+        if repaired is not None and repaired.get("t3_contract_reverts"):
+            t3_degraded = degraded.add(t3_degraded, degraded.REPAIR_CONTRACT, detector="t3_sentence_repair",
+                                       count=repaired["t3_contract_reverts"])
         if repaired is not None:
             result, via = repaired, "sentence_repair"
             sentence_repairs += 1

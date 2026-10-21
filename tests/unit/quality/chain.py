@@ -124,16 +124,24 @@ async def _no_record(*_a, **_k):
 
 
 def _jev_verdicts(spec: Any):
-    """The Jev answer for every grounding unit: ``none`` (Jev not asked / no signal), ``accept`` /
-    ``reject`` (an enforce-mode confident verdict), ``error`` (the breaker / an outage: zone error),
-    ``skipped`` (mode off / tenant not allowed)."""
+    """The Jev answer for every grounding unit: ``none`` (Jev gives no signal: the question is off, so every
+    unit is ``skipped`` — the same as ``skipped``), ``accept`` / ``reject`` (an enforce-mode confident verdict),
+    ``error`` (the breaker / an outage: zone error), ``down`` (judge_units failed open and returned ``{}``:
+    the loop, the pool or the call crashed), ``raise`` (a crash grounding_node itself must catch),
+    ``error-shadow`` (an outage on a shadow-mode question: counted, never a hold)."""
     from shared.llm_client.decide import Verdict
 
     kind = spec or "none"
 
     def judge_units(units, sources, *, tenant_id=None):
-        if kind == "none":
+        if kind in ("none", "skipped"):
+            return {i: Verdict("a1_claim_supported", "off", "skipped") for i in sources}
+        if kind == "down":
             return {}
+        if kind == "raise":   # a crash below judge_units' own guard (grounding_node must not pass it)
+            raise RuntimeError("Q0: grounding crashed")
+        if kind == "error-shadow":
+            return {i: Verdict("a1_claim_supported", "shadow", "error", error="timeout") for i in sources}
         if kind == "accept":
             return {i: Verdict("a1_claim_supported", "enforce", "accept", probability=0.99) for i in sources}
         if kind == "reject":
@@ -141,8 +149,6 @@ def _jev_verdicts(spec: Any):
         if kind == "error":
             return {i: Verdict("a1_claim_supported", "enforce", "error", error="credit_exhausted (breaker open)")
                     for i in sources}
-        if kind == "skipped":
-            return {i: Verdict("a1_claim_supported", "off", "skipped") for i in sources}
         raise ValueError(f"unknown jev stub {kind!r}")
 
     return judge_units

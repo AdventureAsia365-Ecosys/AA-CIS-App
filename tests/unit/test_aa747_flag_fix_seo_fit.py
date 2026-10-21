@@ -60,12 +60,19 @@ def test_seo_code_fires_content_code_always_true():
 
 # ── _apply_seo_fit_before_llm: drop codes/fields the fit resolves ────────────
 
+# AA-925: the fit no longer cuts one sentence mid-clause; an over-length meta it can still land is one whose
+# first sentence is in band (a sentence-boundary salvage).
+_SALVAGEABLE = ("This Bhutan journey covers Paro, Thimphu and Punakha with unhurried pacing, expert local guides "
+                "and a private vehicle for every transfer between valleys. Departures run all year.")
+_ONE_SENTENCE = ("This Bhutan journey covers Paro, Thimphu and Punakha with unhurried pacing and expert "
+                 "local guides throughout the route, and a comfortable private vehicle for every transfer "
+                 "between the valleys.")
+
+
 def test_fit_resolves_too_long_drops_seo_meta_from_llm():
-    """An over-length one-sentence meta the fit lands in band → seo_meta dropped from fix_keys and
-    the fitted value written to content (no LLM needed for it)."""
-    meta = ("This Bhutan journey covers Paro, Thimphu and Punakha with unhurried pacing and expert "
-            "local guides throughout the route, and a comfortable private vehicle for every transfer "
-            "between the valleys.")
+    """An over-length meta the fit lands in band (sentence-boundary salvage) → seo_meta dropped from
+    fix_keys and the fitted value written to content (no LLM needed for it)."""
+    meta = _SALVAGEABLE
     assert len(meta) > SEO_META_MAX
     fitted = fit_seo_meta_final(meta, {"duration": "10 days", "country": "Bhutan"}, [])
     assert meta_in_band(fitted, set()), "test premise: the fit must land this meta in band"
@@ -80,6 +87,16 @@ def test_fit_resolves_too_long_drops_seo_meta_from_llm():
     assert "SEO_META_TOO_LONG" in dropped
     assert content["seo_meta"] == fitted       # deterministic fix kept
     assert changed["seo_meta"] == fitted
+
+
+def test_one_sentence_too_long_meta_stays_with_the_llm():
+    """AA-925: no mid-clause cut — a one-sentence over-length meta keeps SEO_META_TOO_LONG for the LLM repair."""
+    assert fit_seo_meta_final(_ONE_SENTENCE, {"duration": "10 days", "country": "Bhutan"}, []) == _ONE_SENTENCE
+    state = _state(brand_audit_codes=["SEO_META_TOO_LONG"], failure_codes=["SEO_META_TOO_LONG"])
+    state["generated"]["seo_meta"] = _ONE_SENTENCE
+    content = dict(state["generated"])
+    new_keys, dropped, changed = _apply_seo_fit_before_llm(state, content, {"seo_meta"})
+    assert "seo_meta" in new_keys and "SEO_META_TOO_LONG" not in dropped and not changed
 
 
 def test_fit_does_not_resolve_keeps_seo_meta_for_llm():
@@ -114,9 +131,7 @@ def test_fit_keeps_brand_violation_when_forbidden_word_remains():
 def test_flag_fix_makes_no_llm_call_when_fit_resolves_only_code():
     """Only code is SEO_META_TOO_LONG and the fit lands it in band → flag_fix makes NO LLM call,
     returns fix_pass_applied=True with the fitted meta."""
-    meta = ("This Bhutan journey covers Paro, Thimphu and Punakha with unhurried pacing and expert "
-            "local guides throughout the route, and a comfortable private vehicle for every transfer "
-            "between the valleys.")
+    meta = _SALVAGEABLE
     fitted = fit_seo_meta_final(meta, {"duration": "10 days", "country": "Bhutan"}, [])
     assert meta_in_band(fitted, set())
 

@@ -47,6 +47,8 @@ const PRODUCT_TRUTH_CODES = new Set([
   "DAY_OUTPUT_EXTRA",
   "DAY_DEPARTURE_MIDTRIP",
   "DAY_COUNT_VS_DURATION",
+  // AA-925: a hard fail-open detector (Jev, grounding) did not run — re-run the tour once it is healthy.
+  "DEGRADED_DETECTOR",
 ]);
 const BRAND_STYLE_CODES = new Set([
   "FORBIDDEN_WORD",

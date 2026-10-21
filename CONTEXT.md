@@ -1304,8 +1304,12 @@ the severity first. S233: blog shape gates F3/F5/F7 are `warn` (F7 auto-drops FA
 restate the body). AA-787 (S245) removed `promises_an_option` (F17_trip_fact owns offered moments, ADR
 0009), F8_framework (its LLM call), F3 and F5; F7 folded into F16_faq (the restate fixer runs before
 the gates, logged as `F7_faq_autofix`). Old ledgers keep those names. S233 also added the blocking
-gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking); an F9
-judge outage is a warn, not a hold. Count gate failures from `gate_ledger`, never `held_reason`
+gates F0_complete (cut-off text), F2_brand_forbidden (the tenant's own forbidden words) and F11_brand_name (another brand / the platform speaking). An F9
+judge outage is never a blocking gate (no rewrite on it), but since AA-925 (Q-2, reversing S233's "warn, not a
+hold") it **holds** the piece: the F9 result carries a `degraded` marker and, when the FINAL attempt has it,
+the last step after `_final_integrity` labels an approved piece `held` (`held_reason` "degraded:
+f9_judge_unavailable"), adds a non-blocking `degraded` flag and a `repair_log` entry — see **Degraded
+detectors** below. Count gate failures from `gate_ledger`, never `held_reason`
 (it names only the first blocking gate). `services/acp_shared/grounding.py` is shared by T3 and T9 and reads numbers with units ("4,460m") correctly (AA-639).
 S235 (AA-785): T9/T10 F1 (`quality_gates.gate_grounding`) calls
 `find_novel_numeric_claims(..., year_forms=True)`. In that mode a year range ("1637–38") or a decade
@@ -1449,7 +1453,8 @@ sha256 of the text labelled, so a later admin edit shows as changed). It is the 
 are re-scored against (AA-783 criteria); admin-only, set from the Content Quality drawer, no tenant
 column and no `aa_app_user` grant.
 `held` is an **admin-only quality label** (AA-770, S233): the tenant always receives the content
-and can export and publish a held Piece like an approved one. **Tenants never see internal gate
+and can export and publish a held Piece like an approved one — including a piece held because a detector
+was down (AA-925 `degraded`). **Tenants never see internal gate
 data**: the tenant-safe projection (`_tenant_safe_piece`) drops `status`, `held_reason`,
 `gate_ledger`, `repair_log` and `flags`, exposing only `ready_state` (`ready` / `not_ready`, where
 `not_ready` means there is no content yet). The same rule covers T2 tour versions (see **Tenant
@@ -1650,6 +1655,35 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
   stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
   A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
+- **Degraded detectors + repair contract** (AA-925, Q-2, design §4.3/§6.3; `services/quality/`, pure modules —
+  gate runners are passed in, no writer module is imported):
+  - `degraded[]` (`services/quality/degraded.py`) names every fail-open path that ran on an output: Jev
+    zone=error (`jev_unavailable` — hard on an enforce question or an unknown mode, counted on a shadow one;
+    zone=skipped is not degraded), `grounding_not_run` (hard: the node crashed or the re-check failed; not a
+    tenant rewrite, not the score-only revalidation graph), `grounding_no_source`, `f9_judge_unavailable`
+    (hard, T9), `day_check_skipped`, `judge_unavailable`, `brand_audit_unavailable` (it already fails closed)
+    and `repair_contract` (soft). Stored in `generated_content.metadata.degraded` (A1), the T3 outcome
+    (`job.result`), `content_piece.flags` + `repair_log` (T9). One `quality_degraded` log event per output.
+  - **One A1 hold**: `degraded.apply_a1_hold` at the end of the graph (`_apply_grounding_recheck`) adds the
+    hard code `DEGRADED_DETECTOR` (`_HARD_BLOCK_CODES`, NOT the Sonnet rewrite class — a retry cannot fix an
+    outage; `HARD_CODE_REPAIR` "review: re-run…") and `manual_check`; `_is_publishable`, `human_edit_gate` and
+    the review summary read it through the hard-code path; the Review Queue shows it red.
+  - A1 Jev today: `a1_claim_supported` has no reject ceiling, so Jev only CLEARS numeric hits — an outage is
+    already fail-closed on numbers and the hold adds review load, not safety, until AA-845 sets a ceiling.
+  - Per job: `decide()` notes every zone=error verdict into a contextvar collector bound by the job worker
+    (`shared.job.result.degraded`), so A3 / ingestion / S1 prefetch outages are counted without their code.
+  - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
+    add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
+    short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts), touch an
+    unflagged field, or break a tag / bold / bracket pair. A violating field or sentence keeps its pre-repair
+    text (soft `degraded: repair_contract`). Spliced at flag_fix (replaces the AA-641 per-field revert, same
+    behaviour), the A1 grounding repair, revalidate's strip + fit, the T3 sentence repair + meta regenerate and
+    T9 `splice_checked`. The T9 AA-528/AA-780 regression guard of full rewrites stays in
+    `run_write_background` and already covers invariant 1 there.
+  - **AA-740 fitter**: `fit_seo_meta_final` no longer cuts a too-long meta mid-clause; it salvages at a
+    sentence boundary, appends a facts-only clause to a short one, closes an uncut in-band clause, and
+    otherwise leaves the length code to the LLM (A1 flag_fix seo_meta repair + `_rerepair_meta`; T3 a
+    meta-only regenerate on `t2_flag_fix` before any whole-tour rewrite).
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value
@@ -1770,9 +1804,10 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     failure feedback into the repair.
   - **Deterministic fixes.** An over-long SEO title is fixed with `fit_seo_title()` instead of a tour
     rewrite. Since AA-794, seo_meta gets the same deterministic fit as the graph
-    (`fit_seo_meta_final`) before a length code can trigger a rewrite. That fit tries a clause cut,
-    then a word cut only before a phrase boundary, then a fact clause. The fact clause never adds an
-    "in <country>" tail on a multi-country tour.
+    (`fit_seo_meta_final`) before a length code can trigger a rewrite: a sentence-boundary salvage or a fact
+    clause (AA-925: no clause / word cut any more). The fact clause never adds an "in <country>" tail on a
+    multi-country tour. A meta it cannot land gets ONE meta-only LLM regenerate (`_t3_meta_regenerate`,
+    `t2_flag_fix`, under the repair contract) before a length code costs a whole-tour rewrite.
   - **Best draft and targeted repair (AA-793).** Every checked draft is a candidate: a clean one
     returns at once; when rounds run out the best candidate (clean, then score) is saved, not the
     last, and each round repairs the best so far. With `T2_TARGETED_REPAIR` a grounding-only failure

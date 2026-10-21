@@ -192,7 +192,12 @@ class TestFragments:
         item = {"start": before.index("The camps"), "end": before.index(" The forest"),
                 "sentence": "The camps move with the herds.", "problem": "x"}
         out = sr.splice_checked(before, [item], ["the camps move (with herds."])
-        assert out == before and item["guard"] == "integrity"
+        # AA-925: the repair contract (tags / brackets balanced) now refuses it before the integrity check
+        assert out == before and item["guard"] == "contract"
+        lower = {"start": before.index("The camps"), "end": before.index(" The forest"),
+                 "sentence": "The camps move with the herds.", "problem": "x"}
+        assert sr.splice_checked(before, [lower], ["the camps move with herds."]) == before
+        assert lower["guard"] == "integrity"   # a lower-case fragment is still the integrity check's
 
 
 # ---------------------------------------------------------------- fix 1d: the pass + the stored piece
