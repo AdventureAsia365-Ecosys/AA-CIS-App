@@ -90,14 +90,19 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       portal host — no `Domain`), `app/api/tenant/me`, `app/api/tenant/[...path]` (verified tenant Bearer only),
       `app/api/playground/proxy`. **No admin secret**: the portal project has no `ADMIN_SECRET`,
       `INTERNAL_API_KEY` or `COGNITO_*` (a test checks the source). `API_URL` defaults to the Dev API, so the
-      Vercel project needs no env var. CORS is unchanged: the browser only calls its own origin, the BFF
-      calls the API server to server.
+      Vercel project needs no env var. No CORS is needed: the browser only calls its own origin, the BFF
+      calls the API server to server. The API itself sends no CORS grant on a deployed task (AA-876,
+      `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only `localhost:3000/3001`
+      off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
     - Page gate `portal/proxy.ts` (Next 16 Proxy): `/tenant-login` public; `/portal/*` needs a token
       `/auth/verify-tenant` accepts (cached ≤ 20 s, `portal/lib/auth-server.ts`); refused → cookies cleared,
       back to `/tenant-login`; backend unreachable → fail closed outside development.
     - Security headers on every response (`portal/next.config.ts`): HSTS, `nosniff`, `Referrer-Policy`,
       `X-Frame-Options: DENY`, a minimal CSP (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
       object-src 'none'`), `Permissions-Policy`.
+    - The admin app (`frontend/next.config.ts`) sends the same six headers on every response, plus
+      `poweredByHeader: false` (AA-876). This covers the public white-label `/trip/[tourId]` pages too: nothing
+      embeds them in an iframe today; a partner embed needs an explicit `frame-ancestors` allow-list first.
     - Legal pages (AA-886): `/privacy` and `/terms` are public portal pages (outside the `proxy.ts`
       matcher), **drafts pending legal review**: the shell `portal/app/_legal/LegalPage.tsx` always shows a
       "Draft — pending legal review" banner, and both are `noindex`. The privacy notice describes portal
@@ -709,6 +714,22 @@ Phase 2. Previews must keep the flag on (they cannot be Cognito callbacks). For 
 `cognito_sub` from that person's own sign-in, managed-login break-glass tested; the secret check is
 principal-aware since C9 (above); then `ADMIN_SECRET` is rotated (I6) and the flag goes off. New staff are created on
 the Staff page only (the legacy password-row script is retired, AA-816 D1).
+
+**Login throttle (AA-876).** `/auth/admin-login` and `/auth/tenant-login` call `api/core/login_throttle.py` before the
+DB read and bcrypt (bcrypt runs in the threadpool). One pipelined Redis call checks, per source IP and scope: at most
+20 **failed** logins per 15 min (`loginfail_ip:*`, successes do not count) and a high ceiling of 100 attempts per 5 min
+(`loginrl:*`, protects bcrypt CPU). Admin only, per username (stored as a hash, never in clear): 5 failures from one
+IP start an exponential wait for that (username, IP) (30 s doubling, max 15 min; a success clears it), and 50
+failures across IPs in 15 min start a 5 min wait for the username everywhere (distributed guessing). Backoff only,
+no hard lockout: every key expires by itself. Every 429 has the same body + `Retry-After` and logs
+`login_throttled` (scope, reason, IP). Redis missing / failing → fail open (`login_throttle_redis_error`). The IP is
+the **rightmost globally routable** `X-Forwarded-For` entry: API Gateway appends the real source and the NLB/ALB hops
+are private, so a caller cannot choose its bucket. This depends on the edge being API GW → VPC link (NLB) → ALB; a
+proxy in front of API GW or a direct ALB path breaks it. Limitation: through the BFFs (admin, portal, Booking bridge)
+the "IP" is a shared Vercel egress address, so an attacker failing through a public BFF can exhaust that bucket for
+everyone behind it for up to 15 min (follow-up: a signed forwarded client IP from the BFF, or retiring legacy login).
+The BFFs pass a 429 on as a 429 with a readable message (not 502). Cognito sign-in is not affected. The API Gateway
+stage also throttles the two login routes (Terraform, AA-CIS-Infra).
 
 **Staff directory writes (AA-816).** `api/services/staff_directory.py`, routes in `api/routers/admin_platform.py`:
 create (`AdminCreateUser` with `MessageAction=SUPPRESS` + `email_verified=true`, `@adventure.asia` only, no
