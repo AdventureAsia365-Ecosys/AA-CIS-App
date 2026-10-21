@@ -1,0 +1,9 @@
+# AA-879 — Trivy findings accepted for now (read by the image scan in the "Docker Build Check" job).
+# The scan fails on any CRITICAL/HIGH finding that has a fix (`ignore-unfixed: true`), so only a
+# fixable finding that cannot be fixed yet belongs here. Format, checked by
+# .github/scripts/check_trivyignore.py:
+#
+#   # <reason: why it is safe for now, and what removes it>
+#   CVE-YYYY-NNNNN exp:YYYY-MM-DD
+#
+# `exp:` is at most 90 days ahead; after it Trivy reports the finding again. Renew only with a new reason.
