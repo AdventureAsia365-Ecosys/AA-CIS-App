@@ -116,16 +116,17 @@ def _brand_row():
     }
 
 
-def _conn():
-    """A fake connection whose fetch returns lesson rows only for the pipeline_lessons query, and
-    records every SQL string it was sent."""
+def _conn(lesson_rows=None):
+    """A fake connection whose fetch returns lesson rows (LESSON_ROWS by default) only for the
+    pipeline_lessons query, and records every SQL string it was sent."""
+    rows = LESSON_ROWS if lesson_rows is None else lesson_rows
     conn = AsyncMock()
     conn.fetchrow.return_value = _raw_row()
     conn.sent_sql = []
 
     async def _fetch(sql, *args, **kwargs):
         conn.sent_sql.append(sql)
-        return list(LESSON_ROWS) if "pipeline_lessons" in sql else []
+        return list(rows) if "pipeline_lessons" in sql else []
 
     conn.fetch = AsyncMock(side_effect=_fetch)
     return conn
@@ -178,11 +179,11 @@ def test_sync_path_flag_on_restores_block(monkeypatch):
 
 # ── batch path: s1_batch._load_prompt_state + materialize_s1_prompt (Done-when) ──
 
-def _batch_prompt():
+def _batch_prompt(lesson_rows=None):
     from services.content_generation import s1_batch
     from services.content_generation.batch_prompt import materialize_s1_prompt
 
-    conn = _conn()
+    conn = _conn(lesson_rows)
     with ExitStack() as stack:
         stack.enter_context(patch("api.routers.admin_pipeline._resolve_brand_rule",
                                   AsyncMock(return_value=_brand_row())))
@@ -193,16 +194,24 @@ def _batch_prompt():
     return state, system, version, conn
 
 
-def test_batch_path_flag_off_no_lessons_block_and_same_version():
-    from services.content_generation.batch_prompt import materialize_s1_prompt
-
-    state, system, version, conn = _batch_prompt()
+def test_batch_path_flag_off_no_lessons_block():
+    state, system, _version, conn = _batch_prompt()
     assert HEADER not in system
     assert state["brand_system_prompt"] == "BRAND SYSTEM PROMPT"
     assert not _lessons_sql_sent(conn)
-    # The version equals the one of the same state built with an empty lessons block.
-    empty_block_state = {**state, "brand_system_prompt": "BRAND SYSTEM PROMPT" + pl.format_lessons_block([])}
-    assert version == materialize_s1_prompt(empty_block_state)[2]
+
+
+def test_no_active_rows_means_no_prompt_change(monkeypatch):
+    """The property the WM-01 live count relies on: flag OFF with lesson rows in the table gives the
+    same prompt (and prompt_version) as the pre-freeze code (flag ON) reading an empty table. So if
+    Dev has 0 active S1_rewrite/S1_editor rows, the freeze does not change the S1 prompt."""
+    _, system_off, version_off, conn_off = _batch_prompt(lesson_rows=LESSON_ROWS)
+    assert not _lessons_sql_sent(conn_off)
+    _flag(monkeypatch, "true")
+    _, system_on_empty, version_on_empty, conn_on = _batch_prompt(lesson_rows=[])
+    assert _lessons_sql_sent(conn_on)
+    assert system_off == system_on_empty
+    assert version_off == version_on_empty
 
 
 def test_batch_path_flag_on_changes_prompt_and_version(monkeypatch):
@@ -261,7 +270,7 @@ _ALLOWED = {
 
 def test_only_two_files_touch_pipeline_lessons_in_sql():
     offenders = []
-    for top in ("api", "services", "shared", "scripts"):
+    for top in ("api", "services", "shared", "scripts", "worker"):
         for path in (REPO / top).rglob("*.py"):
             rel = path.relative_to(REPO).as_posix()
             if rel.startswith("api/migrations/") or rel in _ALLOWED:
