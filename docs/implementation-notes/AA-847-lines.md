@@ -49,9 +49,11 @@ Branches (stacked; the orchestrator merges in this order):
   come later, the shape is not needed for the rule's purpose).
 - **Point-distance same-place rule never applies to a line** (`validity.is_same_place` returns False when either is a
   line): line duplicates go through the line rule (branch 2).
-- **Validity fix `linear_feature`**: stores `line`, un-hides a row the first validity branch hid (suspect +
-  `review_reason='linear_feature'`), inserts the pending shape row; undo restores the destination and deletes the shape
-  row it created while that row is still pending. `LINEAR_FEATURES_HIDDEN` and `Located.hidden` are gone.
+- **Validity fix `linear_feature`**: stores `line`, inserts the pending shape row; undo restores the destination and
+  deletes the shape row it created while that row is still pending. `LINEAR_FEATURES_HIDDEN` and `Located.hidden` are
+  gone. Its "un-hide a row the first validity branch hid" branch (suspect + `review_reason='linear_feature'`) is
+  unreachable (review S246): `COMPONENTS_SQL` joins `d.geo_status <> 'suspect'`, so a hidden row never becomes a
+  finding and `plan()` never sees it. Recovery from the old hide fix is its undo by audit id (see Should know).
 - **Duplicate merge and shapes** (`validity_fix.shape_merge`): the keeper keeps its shape when it is drawable (or
   neither is); otherwise the duplicate's row moves to the keeper; a deleted row is saved whole (`to_jsonb`) in the
   audit details and undo re-inserts it (`jsonb_populate_record`). Undo walks the changes backwards.
@@ -93,9 +95,12 @@ Branches (stacked; the orchestrator merges in this order):
   Overpass rows are provider overpass, credits 0 (they never count toward the Geoapify guard).
 - **Line duplicate rule (D2)** `shape.same_line_place`: same country + same kind + same class + two-way name match +
   (same OSM id OR ≥ 70 % of the shorter geom_mid within 1 km of the other); two different names merge only when both
-  are names of the same OSM feature (`osm_names` = place_shape.meta.names: "Red River" / "Sông Hồng"). The Problem 2
-  engine (`feat/aa-847-dedupe`, `dedupe.decide` step 2) has its own line step (≥ 60 % of geom_lo VERTICES → auto,
-  ≥ 30 % → model): the two must be reconciled when the lanes merge (see Should know).
+  are names of the same OSM feature (`osm_names` = place_shape.meta.names: "Red River" / "Sông Hồng"). **This is the
+  codebase's ONE line-duplicate rule** (reconciled S246): the Problem 2 engine (`feat/aa-847-dedupe`, `dedupe.decide`
+  step 2) calls `shape.same_line_place` for its auto-merge verdict and only adds a model band (shared OSM object or
+  ≥ 30 % of geom_lo within 1 km → llm); its earlier "≥ 60 % of geom_lo vertices → auto" rule was dropped. This lane
+  has no caller of `same_line_place` outside `tests/unit/test_aa847_line_pairs.py`: the automatic merge (D2) is
+  delivered by the dedupe lane (job `place_dedupe`, CIS 257).
 - **No dedicated LLM step for lines in this lane**: a line pair the deterministic rule cannot decide (no geometry yet,
   spelling variant without OSM names) is left to the Problem 2 engine's model check (it runs on every pair it caps at
   `llm`); duplicating that step here would create a second judge.
@@ -151,6 +156,10 @@ Branches (stacked; the orchestrator merges in this order):
   conftest replay skips 256, CONTEXT.md (catalog line places). Root (`feat/aa-847-places-l4`): contracts
   `catalog.tour.v1.2.json`, `catalog.graph.v1.2.json` + README registry, ADR 0007 amendment (precision line; lines
   drawn; line duplicates merged automatically), two lessons, the ODbL note for Ms. Thư.
+- Review fix (S246): the root ADR 0007 amendment now states only what is built — D1's real scope (CIS views after
+  256; browse / trip maps after the flip) with gaps (a)–(c) listed open, and D2 for lines delivered by the dedupe lane
+  with `shape.same_line_place` as the one line rule; the admin merge moves the DUPLICATE's shape row to the keeper
+  (when the keeper's is not drawable), not "the keeper's row".
 
 ## Tradeoffs
 - `linked_feature` labelled set: 52 link + 31 keep phrases (83). Measured: **0 false links, 0 wrong features, 0 missed
@@ -175,8 +184,9 @@ Branches (stacked; the orchestrator merges in this order):
 - **Hard order:** apply 255 (Infra copy `feat/aa-847-cis-255-copy`) BEFORE deploying this branch: `place_geocode`
   writes `line` (the old CHECK raises), `store.geocoder_requests_today` / `log_geocode_calls` read and write
   `credits` / `endpoint`, the validity report reads `geo.place_shape`.
-- Do NOT apply the old linear-hide fix on Dev. If it was applied, undo it by audit id first (or the `linear_feature`
-  fix un-hides those rows — they are not in the report while suspect, so the undo is the path).
+- Do NOT apply the old linear-hide fix on Dev (it was never deployed). If it was applied, the ONLY recovery is its
+  undo by audit id: the `linear_feature` fix cannot reach those rows (suspect rows are not in the report), so its
+  un-hide branch never runs.
 - `test_aa712_migration_226.py` drops schema geo and re-applies 226 alone; the modules that need 255 after it
   (`test_aa847_admin_places_validity.py`, `test_aa847_migration_255.py`, the 226 credit test) re-apply 255 (idempotent).
 - Local evidence (throwaway PostgreSQL 16, lesson S246): integration 226 + 228 + 255 + admin_places_validity 43
@@ -186,10 +196,23 @@ Branches (stacked; the orchestrator merges in this order):
   remaining Geoapify credits; it does not know the paid place run's day (AA-905) — never run both on one UTC day.
 - Branch 2 needs no migration beyond 255. The views that expose shapes and segments to TripPlanner are branch 3
   (Migration B).
-- Reconcile the two line duplicate rules when merging with `feat/aa-847-dedupe`: plan says 70 % of the shorter
-  geom_mid by LENGTH within 1 km; dedupe r1.4 says 60 % of geom_lo VERTICES → auto. Proposal: dedupe's step 2 calls
-  `shape.same_line_place` for the auto-merge verdict and keeps its 30 % band for the model check; run both on
-  `tests/unit/fixtures/aa847_line_pairs.json` before choosing.
+- **One line-duplicate rule (reconciled):** `shape.same_line_place` (70 % of the shorter geom_mid by LENGTH within
+  1 km, or the same OSM id) is the only auto-merge rule for two lines; `dedupe.decide` step 2 calls it and keeps a
+  30 % geom_lo band for the model check. Two stale texts remain in other branches' files: `dedupe.py`'s module
+  docstring step 2 still says "≥ 60 % of the shorter line's geom_lo vertices … → auto_merge" (dedupe lane's file),
+  and `validity.is_same_place`'s docstring here points at a non-existent `services/places/line_dedupe` (the dedupe
+  lane rewrites that function, so it is not edited here to avoid a rebase conflict).
+- **D2 for lines is a hard prerequisite of the flip.** `validity.is_same_place` returns False for any line, so until
+  the dedupe lane merges, line duplicates are neither merged nor counted in `GATE_REASONS`: the flip gate could pass
+  with two overlapping copies of one river drawn.
+- **D1 built scope (review S246, root ADR 0007 amendment corrected):** lines are drawn only where TripPlanner reads the
+  CIS views after 256 — the tour-page static maps (always on the catalog views) and, after the flip
+  (`PLACES_SOURCE=cis`), the browse and trip maps. Open gaps: (a) before the flip the browse / trip maps read the
+  frozen TripPlanner tables (no precision), so 6d's `isExactPin(precision == null)` still pins a linear place; (b) a
+  line with no geometry (`pending` / `not_found` / `failed`) is not drawn on the browse map (`MapView` filters on
+  `isDrawable`) or a static map; (c) the trip map draws the provisional dashed line only when
+  `segment_from` / `segment_to` are two consecutive trip stops (`lib/lines.ts` `planTrip`; a provisional stretch is
+  never an extra). These are open questions for Nghiệp, not built.
 - Branch 3 order: 253 applied → 255 applied → 256 (Infra copy `feat/aa-847-cis-256-copy`) → the bot schema-reference
   PR merged → then TripPlanner 6d may read the new columns. 256's closing check refuses when a row count of
   `v_tour_place` / `v_tour_component` / `v_destination` changes or a bbox is NULL.
