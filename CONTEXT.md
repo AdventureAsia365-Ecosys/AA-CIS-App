@@ -474,6 +474,12 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
+- **Catalog L4 read model (CIS 253, AA-847).** `catalog._live_tour` (internal, not barrier, not granted) is the one
+  definition of a live AA tour (225's `live` CTE, whole projection); `v_tour` is built on it and every place / graph
+  view joins it instead of `v_tour`, so a graph read no longer computes `v_tour`'s photo count, cover, duration
+  regex and md5 per tour. `catalog._live_stop` (current build ⋈ live ⋈ usable destination) feeds `v_tour_stop`,
+  `v_graph_node` and `v_tour_junction`. `catalog.v_component_embedding` (pgvector only, `tripplanner` only) serves
+  the HNSW top-k over live components. Columns and rows of every contract view are unchanged (fingerprint test).
 
 ## Deploy & CI
 
