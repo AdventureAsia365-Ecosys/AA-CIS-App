@@ -479,7 +479,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   view joins it instead of `v_tour`, so a graph read no longer computes `v_tour`'s photo count, cover, duration
   regex and md5 per tour. `catalog._live_stop` (current build ⋈ live ⋈ usable destination) feeds `v_tour_stop`,
   `v_graph_node` and `v_tour_junction`. `catalog.v_component_embedding` (pgvector only, `tripplanner` only) serves
-  the HNSW top-k over live components. Columns and rows of every contract view are unchanged (fingerprint test).
+  the HNSW top-k over the components `v_tour_component` shows (live tour, usable place: never a suspect or merged
+  one), so the reader checks nothing after the scan. Columns and rows of every contract view are unchanged (fingerprint test).
 
 ## Deploy & CI
 

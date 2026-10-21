@@ -12,7 +12,9 @@ as db_migrator under the live-owner switch (errors NOT swallowed), twice, and ch
     superseded tours, suspect and duplicate destinations, photos, atoms and a current + an old graph build, every
     view's row count and md5 of its ordered rows read as tripplanner are the same under 253 and under the restored
     225 / 228 / 235 definitions (same transaction, rolled back);
-  * consumers read the views, not the internal ones; v_component_embedding (pgvector only) is tripplanner's only.
+  * consumers read the views, not the internal ones; v_component_embedding (pgvector only) is tripplanner's only;
+  * v_component_embedding hides what v_tour_component hides (suspect / merged places, dead tours) — built from 253's
+    own statement over a stand-in embedding column where pgvector is missing.
 Teardown restores the 225 / 228 / 235 definitions, so later modules see the replay state.
 """
 import os
@@ -299,3 +301,56 @@ def test_a_trashed_tour_drops_at_once_and_suspect_places_stay_hidden(cur):
     for v in ("v_tour_component", "v_tour_stop", "v_tour_leg", "v_tour_day_route", "v_tour_place"):
         cur.execute(f"SELECT count(*) FROM catalog.{v} WHERE source_id = %s", (seeded["live"][0],))
         assert cur.fetchone()[0] == 0, v
+
+
+def _embedding_view_stmt():
+    """253's CREATE statement of catalog.v_component_embedding (inside its pgvector-only DO block)."""
+    m = re.search(r"(CREATE OR REPLACE VIEW catalog\.v_component_embedding AS\n.*?)\n\s*\$v\$;",
+                  open(MIGRATION, encoding="utf-8").read(), re.S)
+    assert m, "v_component_embedding statement not found"
+    return m.group(1)
+
+
+def test_top_k_view_hides_suspect_and_merged_places_like_v_tour_component(cur):
+    """The HNSW top-k scan object returns no component that v_tour_component hides (suspect place, merged
+    duplicate, dead tour): TripPlanner applies no check after the scan. Without pgvector (CI, local) the view is
+    built from 253's own statement over a stand-in embedding column, in this rolled-back transaction."""
+    if _has_vector(cur):
+        cur.execute("SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                    "WHERE attrelid = 'geo.tour_place'::regclass AND attname = 'embedding'")
+        typ = cur.fetchone()[0]
+        dim = int(re.search(r"\((\d+)\)", typ).group(1)) if "(" in typ else 3
+        value = "[" + ",".join(["0.1"] * dim) + "]"
+    else:
+        cur.execute("ALTER TABLE geo.tour_place ADD COLUMN embedding float8[]")
+        cur.execute(_embedding_view_stmt())
+        cur.execute("ALTER VIEW catalog.v_component_embedding OWNER TO catalog_owner")
+        cur.execute("GRANT SELECT ON catalog.v_component_embedding TO tripplanner")
+        typ, value = "float8[]", "{0.1,0.1,0.1}"
+    seeded = _seed(cur)
+    tag = seeded["tag"]
+    cur.execute(f"UPDATE geo.tour_place SET embedding = %s::{typ} WHERE name LIKE %s", (value, f"% {tag}"))
+    cur.execute("SET LOCAL ROLE tripplanner")
+    cur.execute("""SELECT gp.name, e.source_id
+                     FROM catalog.v_component_embedding e
+                     JOIN catalog.v_tour_component gp ON gp.component_id = e.component_id
+                    WHERE gp.name LIKE %s""", (f"% {tag}",))
+    shown = cur.fetchall()
+    cur.execute("SELECT count(*) FROM catalog.v_component_embedding")
+    n_view = cur.fetchone()[0]
+    cur.execute("RESET ROLE")
+    # every seeded component of a live tour on a usable place, nothing else
+    names = {n for n, _ in shown}
+    assert names == {f"Paro {tag}", f"Thimphu {tag}"}, names
+    assert {s for _, s in shown} <= set(seeded["live"]) and seeded["trashed"] not in {s for _, s in shown}
+    cur.execute("""SELECT gp.name, d.geo_status, d.duplicate_of IS NOT NULL
+                     FROM geo.tour_place gp JOIN shared.destinations d ON d.id = gp.destination_id
+                    WHERE gp.name IN (%s, %s)""", (f"Outlier {tag}", f"Dup {tag}"))
+    hidden = cur.fetchall()
+    assert hidden and all(status == "suspect" or merged for _, status, merged in hidden)  # the seed is not vacuous
+    cur.execute("SET LOCAL ROLE tripplanner")
+    cur.execute("""SELECT count(*) FROM catalog.v_component_embedding e
+                    WHERE NOT EXISTS (SELECT 1 FROM catalog.v_tour_component c
+                                       WHERE c.component_id = e.component_id)""")
+    assert cur.fetchone()[0] == 0
+    assert n_view > 0
