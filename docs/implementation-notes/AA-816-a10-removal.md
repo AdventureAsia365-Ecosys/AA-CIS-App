@@ -87,7 +87,7 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   zone and MX of the mailbox). Losing either one breaks the E2E. It does not grant anyone access: the codes
   are only valid for a reviewer with no Booking access.
 - **TLS.** The SES receipt rule requires TLS. If the DreamHost/MailChannels relay does not use TLS, the
-  fallback is Infra PR-I0 (`tls_policy = "Optional"`). It weakens the guard, so it needs Nghiệp's OK.
+  fallback is a one-line change in Infra I1a (`tls_policy = "Optional"`). It weakens the guard, so it needs Nghiệp's OK.
 
 - **The A10 code guards are gone.** The E2E account is an ordinary reviewer whose codes sit in a CI-readable
   mailbox. Mitigations: the ADR policy line (never give this account another role; remove the forwarder at once
@@ -110,12 +110,14 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   4. H3 disable the old row (never re-enable or sync it again), H4 delete the old Cognito user.
   5. Infra I1a merge (trigger revert, delete script DRY RUN, aa680 constant, tf comment) + Terraform Apply
      from main; run-script DRY RUN, flip PR, run-script apply. Keep step 4 and 5 close together.
-  6. A2 (rebased with `git rebase --onto origin/main 85d3fd8c`) merge + deploy api and worker.
+  6. A2 (rebased with `git rebase --onto origin/main <A1 tip>`, see Stacking) merge + deploy api and worker.
   7. Infra I1b (byte-identical copy of 252) merge, DB Migrate check + apply
      `cis/252_admin_users_e2e_exception_removed.sql`, merge the `bot/db-schema-reference` PR.
   8. E2E again.
-- **Stacking.** A2 is cut from the A1 tip `e2650efe` (not `85d3fd8c`: A1 got a second commit). After A1 is
-  squash-merged: `git rebase --onto origin/main e2650efe`, and take the base SHA again after every rebase.
+- **Stacking.** A2 sits on the A1 tip (two A1 commits). On 21/10 both were rebased onto CIS main #888; the A1
+  tip is then `71abf34a`. After A1 is squash-merged: `git rebase --onto origin/main <A1 tip>`
+  (`git log --oneline origin/main..HEAD` shows the A1 commits under the A2 one), and take the base SHA again after
+  every rebase.
 - **Migration number.** 252 was free on 21/10/2026 (`git ls-tree origin/main api/migrations` ends at 251; the
   schema reference shows CIS 251). Re-check before the PR: AA-844 / 876 / 911 / 925 / 926 / 927 run in parallel.
 - **252 RAISEs while the old row exists** (intended). Apply only after the Infra run-script delete. Any later edit
@@ -145,3 +147,8 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   - `pytest tests/integration/test_aa816_migration_252.py` (local Postgres, non-superuser test user): 18 passed,
     1 skipped (guard 0 non-owner case needs CREATEROLE; CI's superuser runs it and the NOSUPERUSER runner path).
   - flake8 on the touched Python files: clean.
+- **Re-run after the rebase onto #888 (21/10):** the A2 unit file (14 passed), staff_directory writes + invite +
+  reconcile (134 passed), test_252 (18 passed, 1 skipped as above), `mailbox-parse.spec.ts` (7 passed),
+  `playwright test --project=cognito --list` (both specs compile), flake8 on `staff_directory.py` and the
+  resource-ID check: clean. 252 is still the next free CIS number (origin/main ends at 251; a parallel lane
+  holds 253).
