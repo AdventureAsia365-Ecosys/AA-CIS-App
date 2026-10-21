@@ -200,6 +200,9 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
                 await store.lock_build(conn, source_id, tour_id)
                 if await store.live_tour_for_source(conn, source_id) != tour_id:
                     raise _NotLive()
+                # AA-847: one writer of destination identity at a time (a merge never races this write; a pointer
+                # read before a merge is repointed by the next place_dedupe run)
+                await store.lock_destinations(conn)
                 # names only once the version is known live: a rolled-back build queues no paid geocode
                 await store.insert_names(conn, name_rows)
                 await store.replace_source_rows(conn, source_id, tour_id, day_rows, place_rows, vectors)
@@ -317,6 +320,7 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                         out["unknown" if st == "unknown" else "failed"] += 1
                         continue
                     async with conn.transaction():
+                        await store.lock_destinations(conn)     # AA-847: serialised with place_dedupe merges
                         dest_id, action = await store.upsert_destination(conn, it.key, it.name, o.point,
                                                                          locality=it.locality)
                         await store.mark_name(conn, it.key, destination_id=dest_id)
@@ -339,8 +343,11 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
         raise
     finally:
         async with pool.acquire() as conn:
-            out["relinked"] = await store.relink(conn)
+            async with conn.transaction():
+                await store.lock_destinations(conn)
+                out["relinked"] = await store.relink(conn)
             out["outliers"], out["suspects"] = await apply_outlier_rule(conn, touched or None)
+        out["touched"] = len(touched)
     return out
 
 

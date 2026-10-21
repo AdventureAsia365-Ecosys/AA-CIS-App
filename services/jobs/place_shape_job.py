@@ -30,7 +30,7 @@ import structlog
 
 from services.places import geocoder as geocoder_mod
 from services.places import shape_run, store
-from services.places.enqueue import GRAPH_KIND, SHAPE_KIND, enqueue_debounced
+from services.places.enqueue import GRAPH_KIND, SHAPE_KIND, enqueue_debounced, enqueue_dedupe
 from services.places.geolock import geoapify_lock
 from services.places.shape_sources import GeoapifyDetails, Overpass
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
@@ -102,6 +102,9 @@ async def _run_locked(ctx: JobContext, limit: int) -> dict:
     try:
         if result.get("ok") or result.get("approximate"):
             result["graph_job"], _ = await enqueue_debounced(ctx.pool, GRAPH_KIND, reason=KIND, created_by=KIND)
+        if result.get("ok"):
+            # AA-847 Problem 2: a drawn line (ok) can now be merged on its geometry by the automatic duplicate merge
+            result["dedupe_job"], _ = await enqueue_dedupe(ctx.pool, reason=KIND, created_by=KIND)
         async with ctx.pool.acquire() as conn:
             remaining = await store.shapes_due_count(conn)
         result["due"] = remaining

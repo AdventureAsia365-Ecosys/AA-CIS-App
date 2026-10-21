@@ -10,6 +10,8 @@
 //     and can be undone.
 //   Lines — AA-847 (owner decision S246): rivers, roads and trails drawn as lines; the state of each line's geometry,
 //     the shapes backfill (dry run first) and the manual GeoJSON exception path (LinesTab.tsx).
+//   Merges (AA-847 Problem 2) — the automatic duplicate merge: allow-list, dry run approval, merge log with undo
+//     (MergesTab.tsx).
 // Geocoded points come from Geoapify over OpenStreetMap data: the attribution footer is required (ADR 0007).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,6 +20,7 @@ import { RefreshCw, MapPin, AlertTriangle, CheckCircle2, Route } from "lucide-re
 import { A, mono, Card, SLabel, Badge, Btn, LoadingScreen, StatCard, TabBar } from "../_components/adminUi";
 import { DataTable, PageHeader, formatDateTime } from "../../_kit";
 import LinesTab from "./LinesTab";
+import MergesTab from "./MergesTab";
 
 type CoverageRow = {
   country: string; live: number; built: number; partial: number; in_graph: number; stop_every_day: number;
@@ -48,7 +51,8 @@ type FixResult = {
 const PAGE_SIZE = 50;
 const linkBtn = { border: 0, background: "none", color: A.accentDeep, cursor: "pointer", padding: 0, fontSize: 12 };
 const TABS = [{ key: "coverage", label: "Coverage" }, { key: "validity", label: "Content validity" },
-              { key: "lines", label: "Lines" }];
+              { key: "lines", label: "Lines" },
+              { key: "merges", label: "Merges" }];
 const CHECK_LABEL: Record<string, string> = {
   duration: "Duration mismatch", same_place: "Same place twice", not_a_pin: "Not a pin", day_text: "Day text",
 };
@@ -308,6 +312,7 @@ export default function PlacesPage() {
       )}
 
       {tab === "lines" && <LinesTab countries={countries} onError={setError} />}
+      {tab === "merges" && <MergesTab onError={setError} />}
 
       <AttributionFooter a={validity?.attribution ?? DEFAULT_ATTRIBUTION} />
     </main>

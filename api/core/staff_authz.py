@@ -277,6 +277,10 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/places/shapes/backfill"): OPS_WRITE,
     ("PUT", "/admin/places/{destination_id}/shape"): OPS_WRITE,
     ("DELETE", "/admin/places/{destination_id}/shape"): OPS_WRITE,
+    # admin_places — AA-847 Problem 2: automatic duplicate merge (undo a merge, allow-list / approve a dry run, run)
+    ("POST", "/admin/places/merges/{merge_id}/undo"): OPS_WRITE,
+    ("POST", "/admin/places/dedupe/countries"): OPS_WRITE,
+    ("POST", "/admin/places/dedupe/run"): OPS_WRITE,
     # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
     ("POST", "/admin/segment-research/preview"): OPS_READ,
     ("POST", "/admin/segment-research/run"): OPS_WRITE,

@@ -303,7 +303,19 @@
     "capability": null,
     "module": "api.routers.admin_places"
   },
+  "GET /admin/places/dedupe": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
   "GET /admin/places/lines": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
+  "GET /admin/places/merges": {
+    "capability": null,
+    "module": "api.routers.admin_places"
+  },
+  "GET /admin/places/merges/labels": {
     "capability": null,
     "module": "api.routers.admin_places"
   },
@@ -712,6 +724,18 @@
     "module": "api.routers.admin_photos"
   },
   "POST /admin/places/backfill": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
+  "POST /admin/places/dedupe/countries": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
+  "POST /admin/places/dedupe/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_places"
+  },
+  "POST /admin/places/merges/{merge_id}/undo": {
     "capability": "ops.write",
     "module": "api.routers.admin_places"
   },

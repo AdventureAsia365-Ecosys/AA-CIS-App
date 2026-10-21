@@ -33,6 +33,8 @@ KIND = "ops_alert_email"
 MAX_ATTEMPTS = 5
 TEMPLATE_SPEND_BUDGET = "spend_budget"
 TEMPLATE_TEST = "test"           # AA-913: "Send test e-mail" on Platform › Alert recipients
+TEMPLATE_PLACE_DEDUPE_HELD = "place_dedupe_held"   # AA-847: the duplicate merge held a country (circuit breaker)
+PLACES_PAGE_PATH = "/admin/places"
 ALERTS_PAGE_PATH = "/admin/platform/alerts"
 THRESHOLD_STOP = "stop"
 # Admin page with the spend overview and the Budgets tab (nav: Operations -> External Spend).
@@ -170,3 +172,45 @@ def render_test(payload: dict, *, to: Recipients, base_url: Optional[str] = None
         f"<p><a href=\"{html.escape(link)}\">Open Alert recipients</a></p></div>"
     )
     return Message(to=to, subject=subject, text="\n".join(lines), html=body)
+
+
+async def enqueue_place_dedupe_held_email(conn, *, country: str, outside: int, limit: int, job_id: Optional[str],
+                                          message: str, now: Optional[datetime] = None) -> Optional[str]:
+    """AA-847: queue the operator e-mail for a country the place_dedupe circuit breaker held. One per country per
+    UTC day (idempotency key). None when e-mail is not configured or today's e-mail was queued already."""
+    if sender_config() is None:
+        logger.info("ops_alert_email_not_configured", template=TEMPLATE_PLACE_DEDUPE_HELD, country=country)
+        return None
+    from shared.jobs import queue  # lazy: shared.jobs.worker imports shared.cost_guard
+
+    day = utc_day(now)
+    payload = {"template": TEMPLATE_PLACE_DEDUPE_HELD, "period": day, "country": country, "outside": int(outside),
+               "limit": int(limit), "job_id": job_id, "message": message}
+    job, created = await queue.enqueue(conn, KIND, payload, max_attempts=MAX_ATTEMPTS,
+                                       idempotency_key=f"{KIND}:{TEMPLATE_PLACE_DEDUPE_HELD}:{country}:{day}",
+                                       created_by="place_dedupe")
+    return job if created else None
+
+
+def render_place_dedupe_held(payload: dict, *, to: Recipients, base_url: Optional[str] = None,
+                             environment: Optional[str] = None) -> Message:
+    """AA-847: the automatic duplicate merge held a country (changes outside the approved dry run above the limit)."""
+    env = environment or os.environ.get("ENVIRONMENT", "dev")
+    country = str(payload.get("country") or "?")
+    link = f"{base_url or admin_base_url()}{PLACES_PAGE_PATH}"
+    subject = f"[AA-CIS {env}] Place merge held: {country}"
+    rows = [("Country", country), ("Changes outside the approved dry run", str(payload.get("outside"))),
+            ("Limit", str(payload.get("limit"))), ("Job", str(payload.get("job_id") or "-")),
+            ("Day", f"{payload.get('period')} (UTC)")]
+    text = "\n".join(["The automatic duplicate-place merge applied nothing for this country (circuit breaker).", ""]
+                     + [f"{k}: {v}" for k, v in rows]
+                     + ["", f"Review the dry run and approve it again: {link} (Merges)"])
+    cells = "".join(
+        f"<tr><td style=\"padding:4px 12px 4px 0;color:#555\">{html.escape(k)}</td>"
+        f"<td style=\"padding:4px 0\">{html.escape(v)}</td></tr>" for k, v in rows)
+    body = ("<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222\">"
+            "<p><strong>Place merge held</strong>: the automatic duplicate-place merge applied nothing for this "
+            "country (circuit breaker).</p>"
+            f"<table style=\"border-collapse:collapse\">{cells}</table>"
+            f"<p><a href=\"{html.escape(link)}\">Open Places / Merges</a></p></div>")
+    return Message(to=to, subject=subject, text=text, html=body)

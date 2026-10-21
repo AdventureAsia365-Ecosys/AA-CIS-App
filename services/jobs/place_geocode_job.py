@@ -3,7 +3,8 @@ shared.destinations → relink of every unlinked place / night / card → transi
 (services/places/pipeline.geocode_pending; design §3 + §4).
 
 The ONLY writer of shared.destinations coordinates and of geo.place_name status (cap 1). Never
-overwrites an admin-fixed (`manual`) destination.
+overwrites an admin-fixed (`manual`) destination. AA-847: every upsert / relink takes the destinations advisory lock
+(serialised with place_dedupe merges); a run that inserted or moved a destination queues place_dedupe.
 
 Payload: {"reason"?, "limit"?, "coalesced"?}. Enqueued (debounced, one queued job absorbs the rest)
 by place_extract when names wait. Re-enqueues itself while more names are due.
@@ -26,7 +27,7 @@ from typing import Optional
 import structlog
 
 from services.places import llm, locate, store
-from services.places.enqueue import GEOCODE_KIND, GRAPH_KIND, SHAPE_KIND, enqueue_debounced
+from services.places.enqueue import GEOCODE_KIND, GRAPH_KIND, SHAPE_KIND, enqueue_debounced, enqueue_dedupe
 from services.places.geolock import geoapify_lock
 from services.places.geocoder import get_geocoder
 from services.places.pipeline import geocode_pending
@@ -123,6 +124,9 @@ async def _run_locked(ctx: JobContext) -> Optional[dict]:
             result["graph_job"], _ = await enqueue_debounced(ctx.pool, GRAPH_KIND, reason=KIND, created_by=KIND)
         if result.get("shapes_pending"):   # AA-847: new line destinations wait for their geometry
             result["shape_job"], _ = await enqueue_debounced(ctx.pool, SHAPE_KIND, reason=KIND, created_by=KIND)
+        if result.get("inserted") or result.get("updated"):
+            # AA-847 Problem 2: a destination was written or moved → the automatic duplicate merge looks again
+            result["dedupe_job"], _ = await enqueue_dedupe(ctx.pool, reason=KIND, created_by=KIND)
         async with ctx.pool.acquire() as conn:
             remaining = await store.pending_names_due(conn)
         result["pending_names_due"] = remaining

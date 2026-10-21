@@ -1,13 +1,15 @@
 # AA-847 — Problem 2: automatic duplicate-place merge (S246)
 
 Design: root `docs/audits/2026-10-21-S246-aa847/dedupe/` (`README.md`, `dedupe_proto.py`, `pairs.json`) and the
-revised plan of the skeptic pass (S246, 12 changes: id evidence no longer bypasses the caps, migration 256, line
+revised plan of the skeptic pass (S246, 12 changes: id evidence no longer bypasses the caps, migration 257, line
 overlap, undo by relink, group-level clash rule, keeper order, no new embedding table, two-model agreement, full
 recompute, allow-list table, breaker outside the approved diff, TripPlanner redirect). Kept in its own notes file so
 parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/aa-847-place-shape` (migration 255,
 `geo_precision 'line'`, `geo.place_shape`).
 
 ## Decisions
+- **Migration number 257, not the plan's 256:** the lines lane claimed 256 (`256_catalog_line_places.sql`, CIS
+  `feat/aa-847-lines-views` + Infra `feat/aa-847-cis-256-copy`) while this lane ran. 257 does not depend on it.
 - **Owner decisions S246:** (1) lines are drawn, so two lines are merged on their geometry; (2) duplicates are merged
   automatically; the admin duplicate fix stays as an override, not the normal path.
 - **One decision function** `services/places/dedupe.decide(a, b, ctx)` → `auto_merge` / `llm` / `keep` (rule
@@ -22,10 +24,13 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
 - **"Precision mismatch" cap = geometry class mismatch** (point / area / line from the stored line or
   `geomatch.feature_kind`), not the `geo_precision` column: `area` there also means "the model's own point", and
   capping every confirmed point vs model point would cap the core in-tour case (Kuang Si Falls / Tat Kuang Si).
-- **Lines (§0.3):** two lines with drawn shapes (`ok` / `manual`) are decided on `geom_lo`: the same OSM object
-  with a related name, or ≥ 60 % of the shorter line's vertices within 1 km of the other with an exact / fuzzy
-  name → auto; ≥ 30 % → llm; else a SOFT keep (two stretches of one river that only touch can both merge into the
-  river). A line without a drawn shape (pending, approximate) and a point vs a line go through the point rules with a
+- **Lines (§0.3):** two lines with drawn shapes (`ok` / `manual`): the auto verdict is the lines lane's own rule
+  `shape.same_line_place` (same country, kind and class, a two-way name match, and the same OSM id or ≥ 70 % overlap
+  by length on `geom_mid`; measured on its labelled `aa847_line_pairs.json`) — ONE line rule in the codebase, so I
+  dropped my 60 %-of-vertices auto rule. What it does not merge goes to the model when the lines share an OSM
+  object or ≥ 30 % of the shorter `geom_lo` lies within 1 km of the other; else a SOFT keep (two stretches of one
+  river that only touch can both merge into the river). A class mismatch is a hard keep only when both classes come
+  from the OSM tags (`meta.line_class`), not when one is guessed from the name. A line without a drawn shape (pending, approximate) and a point vs a line go through the point rules with a
   50 km radius and are capped at llm (`shape_not_drawn`, `geometry_mismatch`, `linear_point_radius`). Two lines of
   different subtypes (river / road / trail / rail / canal) are a hard keep. `range` is an area since the lines lane.
 - **Keeper order (§0.6):** manual > an existing keeper (never swapped out) > a line with an ok shape, the longest
@@ -44,6 +49,31 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
   The final verdict is `different` when any answer said different (it blocks clusters), else `unsure`. Calls stop at
   the first non-agreeing answer.
 
+- **Runtime (PR B, branch `feat/aa-847-dedupe-job`):** job kind `place_dedupe` (platform, debounced, background,
+  cap 1). Full recompute per country each run (no watermark: `shared.destinations` has no `updated_at`); only the
+  model calls are incremental (cache by input hash — names, rounded points, kinds, line status, rule version, prompt
+  sha, the two configured models; NOT the day-text excerpts, so a re-extract does not ask again).
+- **The allow-list gates the spend too:** a country gets the paid model band only when it is on
+  `geo.place_dedupe_country` (dry_run or apply). Not listed = rules-only report, $0. This makes the §6.3 dry run on
+  Laos + Vietnam "add the two countries in dry_run", and nothing is spent before someone lists a country.
+- **Approval = the whole diff, not only its hash:** `approved_diff` (jsonb) is stored next to the hash (the plan's
+  table had only the hash) because the breaker counts the changes OUTSIDE the approved diff. The approve endpoint
+  takes the diff from the latest succeeded `place_dedupe` job result (the diff is never truncated there) and refuses
+  (409) a hash that is not the latest or a run of another rule version.
+- **Two-vendor check at run time:** a check answered by the primary's vendor (a fallback) counts as `unsure`.
+- **Undo:** by merge id, in one transaction under the lock: 409 on a later dependent merge (the keeper was merged
+  since), on a name-key collision (`destinations_name_country_uidx`) or when the merged row points elsewhere;
+  restores the listed pointers that still hold the keeper (geo.tour_place too: component ids are stable across
+  re-extracts), reports the rest as `left`, clears `duplicate_of`, restores flattened members, pins `different`, runs
+  the relink and queues the graph build + a dedupe run. Admin merges (decided_by `admin`) are undone with the
+  validity-fix undo (it also restores the shapes it moved); their undo closes the log row and pins the pair.
+- **Re-check of job merges:** undo only on other country / kind class (`different_kinds`, `town_vs_landmark`,
+  `linear_subtype_differs`) or a move past 2 × the radius; pin source `recheck`; never an admin merge.
+- **Alert:** `held_volume` writes an admin bell row (`shared.notifications`, event `place_dedupe_held`) and queues
+  an `ops_alert_email` with the new template `place_dedupe_held` (recipients = `shared.alert_recipient`, AA-913).
+- **VACUUM (ANALYZE) geo.tour_place** after ≥ 50 repointed components is attempted only when the runtime role owns
+  the table; as `cis_app` (not the owner, X1) it records `skipped_not_owner` and autovacuum does it.
+
 ## Changed
 - `services/places/dedupe.py` r1.4 (new), `tests/unit/test_aa847_dedupe.py` (89 tests),
   `tests/unit/fixtures/aa847_dedupe_pairs.json` (134 pairs: + 4 revised-plan adversarial keeps, + 10 homonym keeps).
@@ -56,6 +86,16 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
   now returned).
 - Versus the plan: the rules-recall gate of §6.1 (≥ 0.75) is not met — see Tradeoffs; the CI floor pins the measured
   0.68.
+- PR B: migration `257_geo_place_dedupe.sql` (`geo.place_merge`, `geo.place_pair_verdict` (pins = input_hash `*`),
+  `geo.place_dedupe_country` (+ `approved_diff`), stage rows, budget row, `catalog.v_destination_redirect` by the X1
+  S22 catalog recipe; conftest skips it, `tests/integration/test_aa847_migration_257.py` applies it the DB Migrate
+  way — 10 tests green on a throwaway PG16 cluster). `services/places/merges.py` (SQL), `services/places/dedupe_run.py`
+  (one run), `services/jobs/place_dedupe_job.py` (+ `SAFE_DEFAULTS`), `store.lock_destinations` taken by the
+  place_geocode upsert and relink, the place_extract persist and the admin fix; `validity_fix` duplicate merges write
+  `geo.place_merge` (when 257 is applied); `place_geocode` queues `place_dedupe` after an insert / move;
+  `enqueue.enqueue_dedupe` for the lines lane's `place_shape` (not wired here: that file is the lines lane's, still
+  uncommitted); `/admin/places` Merges tab (`MergesTab.tsx`) + 3 GET and 3 POST routes (POLICY ops.write, route
+  snapshot regenerated); `ops_alerts` template `place_dedupe_held`.
 
 ## Tradeoffs
 - **Offline evaluation, rules r1.4, 134 pairs (61 merge / 73 keep), $0:**
@@ -81,6 +121,18 @@ parallel AA-847 lanes do not edit the same file (lesson S242). Stacked on `feat/
   result it is the s246 merge pair "bare name of a lake" — the label needs the metadata.
 
 ## Should know
+- **Order on Dev:** 255 → 256 (lines lane) → 257 (Infra copy `feat/aa-847-cis-257-copy`) → the DB Schema Dump PR → this app PR. The
+  job is inert until a country is listed: deploy, list Laos + Vietnam in dry_run, label a blind sample of the run's
+  pairs (§6.3), then approve per country.
+- **Paid runs not done:** every model call here is a stub. The measurement run (§6.2) and the first listed dry run
+  spend money — quote in the final report; nothing runs before a country is listed.
+- **Lines lane coordination:** rebased on `feat/aa-847-place-shape` ebbf17a4 (its `place_shape` job); `place_shape`
+  now queues `place_dedupe` when a shape reaches `ok`. Its `services/places/geolock.py` is a different lock (one
+  Geoapify client at a time) and stays next to `store.lock_destinations`. The lines lane's `validity_fix.shape_merge` still moves shapes for ADMIN merges;
+  job merges leave `geo.place_shape` on the merged id (PK collision) and the keeper order prefers the drawn line.
+- **Branch stack:** `feat/aa-847-place-shape` (ebbf17a4) → `feat/aa-847-dedupe` (PR A) → `feat/aa-847-dedupe-job`
+  (PR B). The lines lane's views (CIS 256, `feat/aa-847-lines-views`) are a sibling; 257 does not need them. The
+  conftest skip lines (253 / 256 / 257) conflict trivially when the branches meet.
 - **The pair set is still author-labelled** (79 constructed pairs from r1.2, + 24 review / skeptic / homonym pairs I
   or the review built). Before `apply`: the paid measurement run and a blind ≥ 60-pair sample of a Laos + Vietnam dry
   run (plan §6.2 / §6.3).

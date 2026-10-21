@@ -280,7 +280,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, `place_shape` — AA-847, the five `retention_*` kinds — AA-825,
+    `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
@@ -501,12 +501,26 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (`services/places/geolock.py`): one Geoapify client at a time. `tour_graph_build` cuts each day's stretch
   (`shape.day_segment`: between the previous and this day's stop, or ±15 km around one, or none = the whole
   feature). Two lines are the same place only on the same country + kind + name and the same OSM id or ≥ 70 % overlap
-  (`shape.same_line_place`; labelled pairs `tests/unit/fixtures/aa847_line_pairs.json`). `place_extract` maps a tour's in-tour duplicates (same distinctive name,
-  same kind of place, same country, ≤ 2 km, ≤ 5 km when either point is the model's) to one keeper; names of
-  different kinds stay two places ("Long Bien Bridge" / "Long Bien Market", "Ben Thanh Market" / "Ben Thanh Night
-  Market"), and a bare name never merges with a built place named after it ("Luang Prabang" / "Luang Prabang Night
-  Market"). `services/places/validity.py` is the deterministic report (reason codes V1 duration / V2 same place / V3
-  not a pin / V4 day text; labelled keep / merge pairs in `tests/unit/test_aa847_validity.py`), run after every
+  (`shape.same_line_place`; labelled pairs `tests/unit/fixtures/aa847_line_pairs.json`).
+- **Automatic duplicate merge (AA-847 Problem 2, CIS 257; owner decision S246: no manual merges as the normal
+  path).** One decision `services/places/dedupe.decide(a, b)` → auto_merge / llm / keep (rules `r1.4`, pinned by
+  `tests/unit/test_aa847_dedupe.py` on a labelled pair set: 0 false merges in every metadata mode). A shared geocoder
+  id or place card is evidence, never a verdict (it auto-merges only POI / natural objects with exact / fuzzy names
+  and no cap); two drawn lines merge on their shape overlap, a line without a drawn shape or a point vs a line is at
+  most the model's call. The job kind `place_dedupe` (debounced, background, cap 1; queued by `place_geocode` when it
+  wrote a destination, by `place_shape` (`enqueue.enqueue_dedupe`), by an undo, by the admin) recomputes every pair
+  per country, asks the middle band of allow-listed countries to two models that must agree (`a3_place_dedupe` GPT-6
+  Luna A/B and B/A, `a3_place_dedupe_check` Haiku; verdicts cached in `geo.place_pair_verdict`, budget
+  bedrock/job:place_dedupe $0.50/run, ≤ 150 pairs/run) and writes only for countries in mode `apply` of
+  `geo.place_dedupe_country` (the approved dry-run diff; more than max(5, 1 %) changes outside it → `held_volume` +
+  alert). `place_dedupe` is the only writer of `duplicate_of` (the admin fix is an override); every merge is a
+  `geo.place_merge` row (repointed rows, flattened members) and is undone by relink (`POST
+  /admin/places/merges/{id}/undo`, `different` pin). place_geocode upsert / relink, the place_extract persist, merges
+  and the admin fix take one advisory lock (`store.lock_destinations`). `catalog.v_destination_redirect` maps a
+  merged id to its keeper (TripPlanner answers 301). `place_extract` maps a tour's in-tour duplicates with the same
+  decision, rules band only (`dedupe.in_tour_remap`). `services/places/validity.py` is the deterministic report (reason codes V1 duration / V2 same place / V3
+  not a pin / V4 day text; V2 is `dedupe.decide`: `near_duplicate` = an auto_merge pair not merged yet,
+  `possible_duplicate` = a model-band pair, informational), run after every
   `tour_graph_build` (counts in `geo.graph_build.stats.validity`) and on `/admin/places` (Coverage + Content
   validity tabs; `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, apply
   refused with 409 when the plan changed since the dry run's `fingerprint`, audit row with the prior values,

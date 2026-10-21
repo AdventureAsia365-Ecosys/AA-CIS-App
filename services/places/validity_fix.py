@@ -6,8 +6,11 @@
                    fetches the geometry). A row the first validity branch hid (suspect + review_reason
                    'linear_feature') is un-hidden. Undo restores the precision and deletes the shape row it created
                    while that row is still pending.
-  duplicate_place  near duplicates (V2 near_duplicate), merged catalog-wide per country: one keeper per cluster
-                   (geoapify point, then most live components, then id); the others get duplicate_of = keeper and
+  duplicate_place  near duplicates (V2 near_duplicate = what dedupe.decide auto-merges), merged catalog-wide per
+                   country — an OVERRIDE since AA-847 Problem 2 (the place_dedupe job merges automatically): one
+                   keeper per cluster (dedupe.keeper_of); each merge is also a geo.place_merge row (decided_by
+                   'admin', never undone by the job's re-check; its undo pins the pair 'different'); the others get
+                   duplicate_of = keeper and
                    every CIS row pointing at them is repointed to the keeper: geo.tour_place, geo.tour_day
                    (overnight), geo.place_name (so the store lookup answers the keeper, not a new geocode),
                    acp_shared.place_card, shared.place_photo. Booking and TripPlanner rows are reported, never
@@ -256,6 +259,39 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
             "cross_app_references": await _cross_app(conn, merged) if merged else {}}
 
 
+async def _log_merges(conn, changes: list, actor: str) -> list[str]:
+    """AA-847 Problem 2: every admin merge is a geo.place_merge row too (decided_by 'admin'): one log for the job's
+    and the admin's merges, the job's re-check never undoes it, and the Merges tab lists it."""
+    from services.places import dedupe
+    if await conn.fetchval("SELECT to_regclass('geo.place_merge')") is None:
+        return []           # before migration 257 (the audit row still holds every change)
+    ids = []
+    for ch in changes:
+        ids.append(await conn.fetchval(
+            """INSERT INTO geo.place_merge (merged_id, keeper_id, country, decided_by, rule_version, features,
+                                            repointed, prior, created_by)
+               VALUES ($1::uuid, $2::uuid, $3, 'admin', $4, $5::jsonb, $6::jsonb, $7::jsonb, $8) RETURNING id::text""",
+            ch["destination_id"], ch["keeper_id"], ch.get("country") or "", dedupe.RULE_VERSION,
+            json.dumps({"reason": "admin validity fix", "keeper_name": ch.get("keeper_name"), "name": ch.get("name")}),
+            json.dumps(ch.get("repointed") or {}), json.dumps({"shape": ch.get("shape") or {}}), actor))
+    return ids
+
+
+async def _unlog_merges(conn, merge_ids: list, actor: str, changes: list) -> int:
+    """The admin fix's undo closes its geo.place_merge rows and pins the pairs `different` (the job never re-makes
+    them)."""
+    from services.places import merges
+    if await conn.fetchval("SELECT to_regclass('geo.place_merge')") is None:
+        return 0
+    status = await conn.execute(
+        """UPDATE geo.place_merge SET undone_at = now(), undone_by = $2, undo_reason = 'admin fix undo'
+            WHERE id = ANY($1::uuid[]) AND undone_at IS NULL""", merge_ids, actor)
+    for ch in changes:
+        await merges.save_pin(conn, ch["destination_id"], ch["keeper_id"], "different", source="admin",
+                              created_by=actor)
+    return int(status.split()[-1])
+
+
 def _where(keys: tuple, start: int) -> str:
     return " AND ".join(f"{k}::text = ${start + i}" for i, k in enumerate(keys))
 
@@ -296,7 +332,11 @@ async def apply(conn, fix: dict, *, actor: str) -> dict:
 
     if not fix["changes"]:
         return {**fix, "applied": 0}
+    from services.places.store import lock_destinations
+    await lock_destinations(conn)           # AA-847: serialised with place_dedupe and place_geocode
     await _apply_changes(conn, fix["check"], fix["changes"])
+    if fix["check"] == "duplicate_place":
+        fix = {**fix, "merge_ids": await _log_merges(conn, fix["changes"], actor)}
     job_id, _ = await enqueue_debounced(conn, GRAPH_KIND, reason=f"validity_fix:{fix['check']}", created_by=actor)
     audit_id = await _audit(conn, write_audit_log, actor, ACTION_PREFIX + fix["check"],
                             f"{fix['check']}:{fix.get('country') or '*'}", fix)
@@ -338,7 +378,11 @@ async def undo(conn, audit_id: str, *, actor: str, dry_run: bool = True) -> dict
     out = {"undo_of": audit_id, "check": check, "restored": len(changes), "dry_run": dry_run}
     if dry_run:
         return out
+    from services.places.store import lock_destinations
+    await lock_destinations(conn)
     await _apply_changes(conn, check, changes, reverse=True)
+    if check == "duplicate_place":
+        out["merges_undone"] = await _unlog_merges(conn, details.get("merge_ids") or [], actor, changes)
     job_id, _ = await enqueue_debounced(conn, GRAPH_KIND, reason=f"validity_fix_undo:{check}", created_by=actor)
     out["graph_job"] = job_id
     out["audit_id"] = await _audit(conn, write_audit_log, actor, UNDO_ACTION, audit_id,

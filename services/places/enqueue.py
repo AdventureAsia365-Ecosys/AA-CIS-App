@@ -109,3 +109,14 @@ async def after_liveness_change(db, *, tour_id: str, new_status: str, created_by
                                         created_by=created_by)
     out["graph_job"] = job_id
     return out
+
+
+# ── AA-847 Problem 2: the automatic duplicate-place merge ───────────────────────────────────────────────────────────
+# place_dedupe  platform, debounced the same way: enqueued by place_geocode when it wrote or moved a destination, by
+#               place_shape when a shape is drawn (the lines lane calls enqueue_dedupe), by a merge undo and by the
+#               admin run endpoint. Default payload mode "apply" (writes only for allow-listed countries in mode apply).
+DEDUPE_KIND = "place_dedupe"
+
+
+async def enqueue_dedupe(db, *, reason: str, created_by: str = "system") -> tuple[str, bool]:
+    return await enqueue_debounced(db, DEDUPE_KIND, reason=reason, created_by=created_by)

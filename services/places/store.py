@@ -26,6 +26,17 @@ _LIVE_SQL = """
 """
 
 
+# AA-847 Problem 2: one transaction-level advisory lock serialises every writer of destination identity —
+# place_geocode (upsert / relink), the place_extract persist, place_dedupe (merge / undo) and the admin duplicate
+# fix — so a merge never races a relink or a stale extract write.
+DESTINATIONS_LOCK_KEY = "geo:destinations"
+
+
+async def lock_destinations(conn) -> None:
+    """pg_advisory_xact_lock(hashtext('geo:destinations')): call inside a transaction; released at its end."""
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", DESTINATIONS_LOCK_KEY)
+
+
 async def _catalog_fetch(conn, sql: str, *args) -> list:
     """Runs a catalog read with app.tenant_id = AA master for this transaction only."""
     async with conn.transaction():

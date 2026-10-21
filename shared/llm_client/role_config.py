@@ -142,6 +142,12 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                       shadow_model_id="gpt-5.6-luna", shadow_sample_pct=20),
     "a3_place_locate":    StageConfig("a3_place_locate", "validate", "claude", "sonnet", "acc3"),
     "a3_place_embed":     StageConfig("a3_place_embed", "embed", "cohere", "cohere-embed-v4", None),
+    # AA-847 Problem 2 (migration 257): the two-model check of the duplicate-place merge. Primary GPT-6 Luna (won
+    # the S234 identity A/B, ~1/10 of Haiku), asked A/B and B/A; check Claude Haiku — another vendor. Both
+    # `validate` (ADR 0008: nobody scores them). OpenAI platform only as the primary's last-resort fallback (S235).
+    "a3_place_dedupe":    StageConfig("a3_place_dedupe", "validate", "openai", "gpt-6-luna", "acc3",
+                                      fallback_model_ids=("gpt-6-luna-openai",)),
+    "a3_place_dedupe_check": StageConfig("a3_place_dedupe_check", "validate", "claude", "haiku", "acc3"),
 }
 
 _GENERIC_FALLBACK = StageConfig("unknown", "writer", "claude", "haiku", "acc3")

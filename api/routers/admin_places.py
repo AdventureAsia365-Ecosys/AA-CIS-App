@@ -25,6 +25,17 @@ AA-847 lines (owner decision S246, D1: rivers, roads and trails are drawn as lin
                                                   would pass today's limit
   PUT    /admin/places/{destination_id}/shape     {geojson, note?} manual geometry (exception path), clipped to the
                                                   country; DELETE drops it and hands the row back to the job
+AA-847 Problem 2 (automatic duplicate merge, migration 257; owner decision S246: no manual merges as the normal path):
+  GET  /admin/places/merges?country=&active=&page=&page_size=     the merge log (geo.place_merge), newest first
+  POST /admin/places/merges/{merge_id}/undo {dry_run = true, reason?}
+       clear duplicate_of, restore the pointers that still hold the keeper, `different` pin, relink + graph build +
+       place_dedupe queued; 409 on a dependent later merge, a name-key collision or an admin merge (validity fix undo)
+  GET  /admin/places/merges/labels   undone merges as labelled keep pairs (tests/unit/fixtures/aa847_dedupe_pairs.json)
+  GET  /admin/places/dedupe          the allow-list (geo.place_dedupe_country) + the last place_dedupe run per country
+  POST /admin/places/dedupe/countries {country, mode: off | dry_run | apply, diff_hash?}
+       dry_run: the country gets the paid model band, report only; apply: needs the diff_hash of the latest dry run of
+       the current rule version — that diff is what the job applies (changes outside it count against the breaker)
+  POST /admin/places/dedupe/run {mode = dry_run | apply, country?}   queue one place_dedupe run
 
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
 """
@@ -391,3 +402,157 @@ async def delete_manual_shape(destination_id: str, request: Request, x_admin_sec
     if not changed:
         raise HTTPException(status_code=404, detail="no manual shape for this destination")
     return {"destination_id": destination_id, "status": "pending"}
+# ── AA-847 Problem 2: automatic duplicate merge ─────────────────────────────────────────────────────────────────────
+
+_LAST_DEDUPE_SQL = """
+    SELECT id::text AS id, status, created_at, finished_at, payload, result
+      FROM shared.job WHERE kind = 'place_dedupe' AND status = 'succeeded'
+     ORDER BY finished_at DESC NULLS LAST LIMIT 1
+"""
+
+
+def _json(v):
+    return json.loads(v) if isinstance(v, str) else v
+
+
+@router.get("/merges", summary="AA-847 — the duplicate-place merge log (job and admin merges, with undo state)")
+async def list_merges(request: Request, country: Optional[str] = None, active: Optional[bool] = None,
+                      page: int = 1, page_size: int = 50, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import merges
+    async with request.app.state.pool.acquire() as conn:
+        return await merges.list_merges(conn, country=country or None, active=active, page=page,
+                                        page_size=page_size)
+
+
+@router.get("/merges/labels", summary="AA-847 — undone merges as labelled keep pairs for the CI pair set")
+async def merge_labels(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import merges
+    async with request.app.state.pool.acquire() as conn:
+        return {"keep_pairs": await merges.labelled_keeps(conn),
+                "how": "add each as a 'keep' pair to tests/unit/fixtures/aa847_dedupe_pairs.json"}
+
+
+class UndoMergeRequest(BaseModel):
+    dry_run: bool = True
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/merges/{merge_id}/undo", summary="AA-847 — undo one duplicate-place merge (dry run by default)")
+async def undo_merge(merge_id: str, body: UndoMergeRequest, request: Request, x_admin_secret: str = Header(None),
+                     x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import merges, store
+    from services.places.enqueue import GRAPH_KIND, enqueue_debounced, enqueue_dedupe
+    try:
+        uuid.UUID(merge_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="merge_id must be a uuid")
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            async with conn.transaction():
+                out = await merges.undo_merge(conn, merge_id, actor=actor, reason=body.reason or "admin undo",
+                                              dry_run=body.dry_run)
+                if not body.dry_run:
+                    out["relinked"] = await store.relink(conn)
+                    out["graph_job"], _ = await enqueue_debounced(conn, GRAPH_KIND, reason="place_merge_undo",
+                                                                  created_by=actor)
+                    out["dedupe_job"], _ = await enqueue_dedupe(conn, reason="place_merge_undo", created_by=actor)
+    except merges.MergeError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    if not body.dry_run:
+        _validity_cache.clear()
+        logger.info("place_merge_undone", merge_id=merge_id, actor=actor, left=out.get("left"))
+    return out
+
+
+@router.get("/dedupe", summary="AA-847 — allow-list and the last place_dedupe run per country")
+async def dedupe_status(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places import dedupe as dd
+    from services.places import merges
+    async with request.app.state.pool.acquire() as conn:
+        allow = await merges.allow_list(conn)
+        last = await conn.fetchrow(_LAST_DEDUPE_SQL)
+    run = None
+    if last is not None:
+        res = _json(last["result"]) or {}
+        countries = {}
+        for c, v in (res.get("countries") or {}).items():
+            countries[c] = {k: v.get(k) for k in ("status", "listed", "usable", "merges", "llm_needed", "possible",
+                                                  "conflicts", "defects", "diff_size", "diff_hash", "outside",
+                                                  "breaker_limit", "applied", "band_pairs", "band_asked",
+                                                  "band_cached", "band_unasked", "embedding_promoted")}
+            countries[c]["merges_planned"] = (v.get("merges_planned") or [])[:50]
+            countries[c]["undos"] = (v.get("undos") or [])[:50]
+        run = {"job_id": last["id"], "finished_at": last["finished_at"].isoformat() if last["finished_at"] else None,
+               "mode": res.get("mode"), "rule_version": res.get("rule_version"),
+               "model_calls": res.get("model_calls"), "model_cost_usd": res.get("model_cost_usd"),
+               "countries": countries}
+    for v in allow.values():
+        v["updated_at"] = v["updated_at"].isoformat() if v.get("updated_at") else None
+        v["approved_diff_size"] = len(v.pop("approved_diff") or [])
+    return {"rule_version": dd.RULE_VERSION, "allow_list": allow, "last_run": run}
+
+
+class DedupeCountryRequest(BaseModel):
+    country: str = Field(..., min_length=1, max_length=80)
+    mode: str = Field(..., pattern="^(off|dry_run|apply)$")
+    diff_hash: Optional[str] = None
+
+
+@router.post("/dedupe/countries", summary="AA-847 — put a country on / off the place_dedupe allow-list, approve a "
+                                          "dry run")
+async def dedupe_country(body: DedupeCountryRequest, request: Request, x_admin_secret: str = Header(None),
+                         x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.acp_shared.audit_log import write_audit_log
+    from services.places import dedupe as dd
+    from services.places import merges
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    key = merges.country_key(body.country)
+    diff = None
+    try:
+        async with request.app.state.pool.acquire() as conn:
+            async with conn.transaction():
+                if body.mode == "apply":
+                    last = await conn.fetchrow(_LAST_DEDUPE_SQL)
+                    res = _json(last["result"]) if last is not None else {}
+                    c = ((res or {}).get("countries") or {}).get(key) or {}
+                    if not body.diff_hash or c.get("diff_hash") != body.diff_hash:
+                        raise merges.MergeError(409, {"error": "approve the diff of the latest dry run",
+                                                      "latest": c.get("diff_hash"), "sent": body.diff_hash})
+                    if (res or {}).get("rule_version") != dd.RULE_VERSION:
+                        raise merges.MergeError(409, "the latest run used another rule version; run it again")
+                    if c.get("diff_size") != len(c.get("diff") or []):
+                        raise merges.MergeError(409, "the stored diff is incomplete; run the dry run again")
+                    diff = c.get("diff") or []
+                out = await merges.set_country(conn, key, None if body.mode == "off" else body.mode, actor=actor,
+                                               diff=diff)
+                await write_audit_log(conn, tenant_id=None, actor=actor, action="places.dedupe.country",
+                                      resource_type="places_dedupe", resource_id=key,
+                                      details={**out, "diff_size": len(diff or [])})
+    except merges.MergeError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    logger.info("place_dedupe_country", actor=actor, **out)
+    return out
+
+
+class DedupeRunRequest(BaseModel):
+    mode: str = Field("dry_run", pattern="^(dry_run|apply)$")
+    country: Optional[str] = Field(None, max_length=80)
+
+
+@router.post("/dedupe/run", summary="AA-847 — queue one place_dedupe run (dry_run by default)")
+async def dedupe_run(body: DedupeRunRequest, request: Request, x_admin_secret: str = Header(None),
+                     x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from services.places.enqueue import DEDUPE_KIND
+    from shared.jobs.registry import enqueue
+    actor = f"admin:{x_admin_user_id or 'unknown'}"
+    async with request.app.state.pool.acquire() as conn:
+        job_id, created = await enqueue(conn, DEDUPE_KIND, {"mode": body.mode, "country": body.country,
+                                                            "reason": "admin"}, created_by=actor)
+    return {"job_id": job_id, "created": created, "mode": body.mode, "country": body.country}
