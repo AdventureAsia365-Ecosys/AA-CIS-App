@@ -128,6 +128,32 @@ def _is_publishable(result: dict) -> bool:
     )
 
 
+def _tour_passed(result: dict) -> bool:
+    """The run-log pass flag (score only; the publish gate is `_is_publishable`). AA-926 seam."""
+    return float(result.get("quality_score") or 0.0) >= 7.0
+
+
+def _score_band_where(score: str):
+    """Review Queue score filter → SQL WHERE fragment (None = no filter). AA-926 seam: the band edges
+    are pinned byte for byte by the gate-outcome snapshot."""
+    if score == "critical":
+        return "rq.score_overall < 5"
+    if score == "low":
+        return "rq.score_overall >= 5 AND rq.score_overall < 7"
+    if score == "ok":
+        return "rq.score_overall >= 7"
+    return None
+
+
+# Published-tour score histogram (/admin/pipeline overview). AA-926: pinned by the snapshot.
+_SCORE_HISTOGRAM_CASE = """CASE
+                    WHEN quality_score >= 9 THEN '9-10'
+                    WHEN quality_score >= 8 THEN '8-9'
+                    WHEN quality_score >= 7 THEN '7-8'
+                    ELSE '<7'
+                END"""
+
+
 def _build_failure_summary(result: dict) -> str:
     """AA-212: human-readable reason a tour was routed to the HITL review_queue.
 
@@ -883,7 +909,7 @@ async def _execute_run_tour(
         cost_usd    = float(result.get("cost_usd") or 0.0)
         tokens_in   = int(result.get("input_tokens") or 0)
         tokens_out  = int(result.get("output_tokens") or 0)
-        tour_passed = float(result.get("quality_score") or 0.0) >= 7.0
+        tour_passed = _tour_passed(result)
         model_name  = result.get("model_used") or None
         if isinstance(model_name, str) and not model_name:
             model_name = None
@@ -2563,12 +2589,9 @@ async def admin_review_queue(
     if country and country != "all":
         params.append(country)
         where.append(f"rt.country = ${len(params)}")
-    if score == "critical":
-        where.append("rq.score_overall < 5")
-    elif score == "low":
-        where.append("rq.score_overall >= 5 AND rq.score_overall < 7")
-    elif score == "ok":
-        where.append("rq.score_overall >= 7")
+    band_sql = _score_band_where(score)
+    if band_sql:
+        where.append(band_sql)
     if tour_id and _is_uuid(tour_id):
         params.append(tour_id)
         where.append(f"rq.tour_id = ${len(params)}::uuid")
@@ -4311,14 +4334,9 @@ async def get_library_metrics(request: Request, x_admin_secret: str = Header(Non
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
               AND master_status <> 'trashed'
         """)
-        score_dist = await conn.fetch("""
+        score_dist = await conn.fetch(f"""
             SELECT
-                CASE
-                    WHEN quality_score >= 9 THEN '9-10'
-                    WHEN quality_score >= 8 THEN '8-9'
-                    WHEN quality_score >= 7 THEN '7-8'
-                    ELSE '<7'
-                END AS range,
+                {_SCORE_HISTOGRAM_CASE} AS range,
                 COUNT(*) AS count
             FROM gold_aa_internal.published_tours
             WHERE tenant_id = '00000000-0000-0000-0000-000000000001'::uuid

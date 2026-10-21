@@ -37,6 +37,16 @@ _PT_SQL = """
 """
 
 
+def _t2_status(rewrite_score: float) -> str:
+    """AA-436: the stored T2 version status is purely score-based (same formula for a real T3 pass and
+    an auto-pass). AA-926: pure seam so the pass line is pinned by the gate-outcome snapshot."""
+    if rewrite_score >= 7.0:
+        return "ai_generated"   # ready for tenant to review
+    if rewrite_score > 0:
+        return "needs_review"   # LLM finished but low quality
+    return "needs_review"       # hitl / score=0 — needs human
+
+
 def source_tour_dict(pt) -> dict:
     """The T2 writer's source (a `_PT_SQL` row) as the dict `_rewrite_tour` and the T3 gate read.
     AA-802 — also the source the admin sentence edit on a tenant version checks against
@@ -237,12 +247,7 @@ async def _rewrite_and_save(pool, pt, tour_dict: dict, brand_rules: dict, tenant
             # happened). ADR-2026-038 §0.1 (amend §10.3): escalate-and-stop broke the
             # single-job T2->T3->T5 chain and made the tenant fix wording themselves —
             # both rejected 22/08.
-            if rewrite_score >= 7.0:
-                new_status = "ai_generated"   # ready for tenant to review
-            elif rewrite_score > 0:
-                new_status = "needs_review"   # LLM finished but low quality
-            else:
-                new_status = "needs_review"   # hitl / score=0 — needs human
+            new_status = _t2_status(rewrite_score)
             # Never write 0.0 — fall back to source published_tours quality_score
             async with pool.acquire() as _conn_qs:
                 source_score = await _conn_qs.fetchval(
