@@ -13,6 +13,7 @@
 //   - AA-441: multipart/form-data bodies pass through as bytes (brand-guide upload), JSON as text;
 //   - S241: the upstream body is streamed through (lib/proxyResponse.ts, Content-Type only).
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { API_URL, requireTenant } from "@/lib/auth-server";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
@@ -21,6 +22,9 @@ async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   const auth = await requireTenant(req);
   if (!auth.ok) return auth.response;
 

@@ -117,8 +117,8 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
       `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
-      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts` (each copied from the same path under
-      `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
+      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
+      `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
       `portal/lib/auth-server.ts` are portal-owned.
     - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
       point at the admin host); no Sentry on the portal yet.
@@ -1032,7 +1032,12 @@ has a policy, every staff router runs the policy, `/admin/platform/*` has no ope
 Content lifecycle (activate/deactivate/trash/restore) and Settings brand writes are admin-only (§5.1
 of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kept equal by a test. Every secret-bearing proxy builds its backend path with
 `frontend/lib/bffPath.ts` `proxyPath()`, which refuses a dot, empty or slash-carrying segment (Next.js decodes
-`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Booking staff log in through the CIS
+`%2F` inside a segment) and percent-encodes the rest, so the path the rbac rules checked is the path the backend routes. Every BFF write route (admin and portal: any
+method but GET/HEAD/OPTIONS) first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 to a
+request whose `Origin` (or `Sec-Fetch-Site`) is not this origin (AA-911): `it.com` is a public suffix, so every
+`*.lumiguides.it.com` host, including the fixed Preview hosts that serve unmerged PR code, is the same site and
+its requests carry the Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route
+on the guard. Booking staff log in through the CIS
 legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phase 2); Booking keeps a thin
 profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
