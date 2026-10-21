@@ -636,6 +636,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (pgvector only, `tripplanner` only) serves the HNSW top-k over the components `v_tour_component` shows (live tour,
   usable place: never a suspect or merged one), so the reader checks nothing after the scan. Columns and rows of
   every contract view are unchanged (fingerprint test).
+- **Line places in the catalog (CIS 256, AA-847; contracts `catalog.tour.v1.2`, `catalog.graph.v1.2`).** Columns only
+  appended: `v_destination` gains `shape_kind`, `shape_status`, `shape_source`, `length_km`, never-null `min_lat` /
+  `min_lng` / `max_lat` / `max_lng` (a line's shape bbox, else the point: map tiles filter by bbox intersection with
+  plain float comparisons, pushed below the barrier; a read without photo columns plans no photo LATERAL) and
+  `shape_lo`; `v_tour_place` and `v_tour_component` gain the current build's day stretch (`segment`,
+  `segment_basis`, `segment_from_destination_id`, `segment_to_destination_id`, `segment_km`; the component view also
+  `precision`); `catalog.v_destination_shape` (tripplanner only) serves a line's `shape_mid` / `shape_lo` by id;
+  `_live_stop` never shows a line. Tests apply 253 + 256 inside one rolled-back transaction
+  (`tests/integration/test_aa847_migration_256.py`, with the EXPLAIN checks in the consumer's filter shape).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
