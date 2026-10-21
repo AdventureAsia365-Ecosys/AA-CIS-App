@@ -158,6 +158,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/decisions/jev-credit/topups"): SPEND_WRITE,
     ("DELETE", "/admin/decisions/jev-credit/topups/{topup_id}"): SPEND_WRITE,
     ("GET", "/admin/decisions/jev-credit"): SPEND_READ,   # top-ups + estimated balance (money)
+    ("POST", "/admin/decisions/jev-credit/check"): SPEND_WRITE,   # AA-845 low-credit check (+ test alerts); money
     # ── admin_settings — SEO config of the aa_internal tenant
     ("PATCH", "/admin/settings/seo"): CONTENT_SETTINGS_WRITE,
 

@@ -409,13 +409,17 @@ class _SingleConn:
 _JEV_ALERT_RECENT_SQL = """
     SELECT 1 FROM shared.notifications
      WHERE event_type = $1 AND is_read = FALSE AND created_at >= now() - interval '24 hours'
+       AND coalesce(payload->>'test', 'false') <> 'true'
      LIMIT 1
 """
 _JEV_ALERT_INSERT_SQL = """
     INSERT INTO shared.notifications
         (tenant_id, actor_type, event_type, entity_type, entity_id, payload, target_roles)
-    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, ARRAY['admin','content'])
+    VALUES ($1::uuid, 'system', $2, 'jev_account', 'typesafe', $3::jsonb, $4::text[])
 """
+# AA-845: a test bell (test=True) goes to admins only; a real one to admin + content, as before.
+_JEV_ALERT_ROLES = ["admin", "content"]
+_JEV_TEST_ALERT_ROLES = ["admin"]
 _JEV_ALERT_MESSAGE = (
     "Jev (TypeSafe) returned 402 billing_error — API credits are exhausted. The decision layer is "
     "failing open (stages run on their existing rules without Jev). Top up the TypeSafe account "
@@ -430,7 +434,7 @@ _JEV_ALERT_MESSAGE = (
 _JEV_ALERT_LOCK_KEY = 756_020_720
 
 
-async def maybe_alert_jev_credit(conn, *, source: str) -> bool:
+async def maybe_alert_jev_credit(conn, *, source: str, test: bool = False) -> bool:
     """Insert a platform.jev_credit.exhausted notification unless one is already unread within 24h
     (mirrors AA-627's _maybe_alert_low_balance throttle). Returns True if a new alert was inserted.
 
@@ -438,21 +442,41 @@ async def maybe_alert_jev_credit(conn, *, source: str) -> bool:
     concurrent decides can never each see "no recent alert" and all insert — at most one alert is
     written per 24h window even under heavy parallelism.
 
+    AA-845: a newly written bell also queues one operator e-mail (shared.ops_alerts, the AA-828 SES path,
+    the same recipients as the spend budget mails; at most one per UTC day). `test=True` (only from
+    POST /admin/decisions/jev-credit/check) skips the throttle, marks the bell and the e-mail as a test, and
+    a test bell never counts for the real throttle — so verifying the path cannot hide a real alert.
+
     Best-effort: a notification failure must never fail the calling stage."""
+    message = f"[TEST] {_JEV_ALERT_MESSAGE}" if test else _JEV_ALERT_MESSAGE
     try:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock($1)", _JEV_ALERT_LOCK_KEY)
-            if await conn.fetchval(_JEV_ALERT_RECENT_SQL, JEV_CREDIT_EXHAUSTED_EVENT):
+            if not test and await conn.fetchval(_JEV_ALERT_RECENT_SQL, JEV_CREDIT_EXHAUSTED_EVENT):
                 return False
-            payload = json.dumps({"message": _JEV_ALERT_MESSAGE, "error_type": "billing_error",
-                                  "source": source})
+            payload = json.dumps({"message": message, "error_type": "billing_error",
+                                  "source": source, "test": test})
             await conn.execute(_JEV_ALERT_INSERT_SQL, PLATFORM_TENANT_ID, JEV_CREDIT_EXHAUSTED_EVENT,
-                               payload)
-        logger.warning("jev_credit_exhausted_alert", source=source)
-        return True
+                               payload, _JEV_TEST_ALERT_ROLES if test else _JEV_ALERT_ROLES)
+        logger.warning("jev_credit_exhausted_alert", source=source, test=test)
     except Exception as exc:
         logger.warning("jev_credit_alert_insert_failed", error=str(exc)[:200])
         return False
+    await _queue_exhausted_email(conn, source=source, message=message, test=test)
+    return True
+
+
+async def _queue_exhausted_email(conn, *, source: str, message: str, test: bool) -> None:
+    """AA-845: the e-mail half of the exhausted alert, after the bell's transaction committed (a mail
+    failure never rolls the bell back). Best effort."""
+    try:
+        from shared import ops_alerts   # lazy: keeps decide's import graph free of the SES mailer
+
+        await ops_alerts.enqueue_jev_credit_email(
+            conn, template=ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED, test=test,
+            details={"source": source, "message": message, "error_type": "billing_error"})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("jev_credit_exhausted_email_enqueue_failed", error=f"{type(exc).__name__}: {exc}"[:200])
 
 
 # AA-756 — write back the ground truth a later human action establishes, so Jev precision can be
@@ -659,9 +683,12 @@ async def _decide(db, stage: str, subject_key: str, state: Any, question_keys: l
                 logger.warning("jev_credit_alert_failed", error=str(alert_exc)[:200])
         except Exception as exc:
             decision.latency_ms = int((time.perf_counter() - started) * 1000)
-            logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=str(exc)[:200])
+            # AA-845: some httpx timeout/transport errors carry an empty message, so str(exc) logged
+            # error = '' (120 rows on 08/10/2026, cause unknown). Keep the exception type in the text.
+            err = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            logger.warning("decide_call_failed", stage=stage, subject=subject_key, error=err[:200])
             for key, q in to_ask.items():
-                decision.verdicts[key] = Verdict(key, q.mode, "error", error=str(exc)[:500])
+                decision.verdicts[key] = Verdict(key, q.mode, "error", error=err[:500])
 
     await _write_logs(db, stage, subject_key, tenant_id, decision, to_ask)
     return decision

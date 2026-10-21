@@ -1093,17 +1093,39 @@ async def get_unmapped_market_requests(request: Request):
 #   POST /admin/jev/402-sweep    — counts decision_log rows that failed on a 402 in the last 24h
 #       (catches a daytime outage that happened between canary runs) and raises the same throttled
 #       bell if any are found.
+# AA-845: decide() logs a 402 billing_error as 'credit_exhausted' and the calls it then skips as
+# 'credit_exhausted (breaker open)' — neither text contains '402'. Matching only '%402%' made the
+# sweep blind to the real path: on 10/10/2026 it would have counted 0 of 5,683 such rows. '%402%'
+# stays for a 402 without billing_error (raise_for_status text, the 03/10 incident shape).
+# `n` counts every such row of the last 24 h (the outage's size, for the log). Only `n_open` raises the bell:
+# the real 402s (not the '(breaker open)' skips) written after both the latest recorded top-up and the latest
+# successful canary ($1, NULL when none since this api process started). Without that cut, the 06:15 run after a
+# top-up raised a new "credit exhausted" bell + e-mail from the previous afternoon's rows right after its own
+# canary had proved the credit was back (S246 review of AA-845). A breaker-open row only ever follows a real 402
+# in the same process (or a canary 402, which alerts itself), so leaving it out of the cut hides no outage, and it
+# keeps the cooldown's skips written after a quick top-up from re-alerting the next morning.
 _JEV_402_SWEEP_SQL = """
-    SELECT count(*) AS n, max(created_at) AS last_seen
-      FROM shared.decision_log
-     WHERE zone = 'error'
-       AND error LIKE '%402%'
-       AND created_at >= now() - interval '24 hours'
+    WITH cut AS (
+        SELECT greatest(
+                   coalesce((SELECT max(created_at) FROM shared.jev_credit_topup), '-infinity'::timestamptz),
+                   coalesce($1::timestamptz, '-infinity'::timestamptz)) AS after_ts
+    )
+    SELECT count(*) AS n, max(l.created_at) AS last_seen,
+           count(*) FILTER (WHERE l.error NOT LIKE '%(breaker open)%' AND l.created_at > cut.after_ts) AS n_open
+      FROM shared.decision_log l CROSS JOIN cut
+     WHERE l.zone = 'error'
+       AND (l.error LIKE 'credit_exhausted%' OR l.error LIKE '%402%')
+       AND l.created_at >= now() - interval '24 hours'
 """
+# AA-845: when the canary last proved the credit present (a billable call), in this api process. The daily
+# Lambda calls the canary and then the sweep in one run, so the sweep sees it. Process memory, not a table:
+# with two api tasks (a rolling deploy) the sweep may land on the other task and fall back to the top-up cut.
+_last_canary_ok_at: Optional[datetime] = None
 
 
 @router.post("/jev-canary/check", summary="AA-720 — daily Jev canary: one real decide-endpoint probe")
 async def check_jev_canary(request: Request, x_admin_secret: str = Header(None)):
+    global _last_canary_ok_at
     verify_admin_secret(x_admin_secret)
     from shared.llm_client import decide as decide_mod
 
@@ -1129,6 +1151,8 @@ async def check_jev_canary(request: Request, x_admin_secret: str = Header(None))
     if billing_error:
         async with pool.acquire() as conn:
             alerted = await decide_mod.maybe_alert_jev_credit(conn, source="canary")
+    else:
+        _last_canary_ok_at = started          # AA-845: the sweep's cut (see _JEV_402_SWEEP_SQL)
     logger.info("admin_jev_canary_checked", credit_ok=not billing_error, alerted=alerted,
                 breaker_open=decide_mod.jev_breaker_open())
     return {
@@ -1148,13 +1172,16 @@ async def sweep_jev_402(request: Request, x_admin_secret: str = Header(None)):
 
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(_JEV_402_SWEEP_SQL)
+        row = await conn.fetchrow(_JEV_402_SWEEP_SQL, _last_canary_ok_at)
         n = int(row["n"]) if row and row["n"] is not None else 0
+        n_open = int(row["n_open"]) if row and row["n_open"] is not None else 0
         last_seen = row["last_seen"] if row else None
-        alerted = await decide_mod.maybe_alert_jev_credit(conn, source="402_sweep") if n > 0 else False
-    logger.info("admin_jev_402_sweep", errors_24h=n, alerted=alerted)
+        alerted = await decide_mod.maybe_alert_jev_credit(conn, source="402_sweep") if n_open > 0 else False
+    logger.info("admin_jev_402_sweep", errors_24h=n, open_402s=n_open, alerted=alerted)
     return {
         "errors_24h": n,
+        # AA-845: real 402s after the latest top-up and the latest successful canary; only these raise the bell.
+        "open_402s": n_open,
         "last_seen": last_seen.isoformat() if last_seen else None,
         "alerted": alerted,
     }
