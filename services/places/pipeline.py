@@ -111,7 +111,8 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         c.country = canonical(c.country)
         c.country_norm = country_norm(c.country)
     counts.update(components=c_counts["components"], skipped=c_counts["skipped"],
-                  generic_without_locality=c_counts["generic_without_locality"])
+                  generic_without_locality=c_counts["generic_without_locality"],
+                  linked_to_feature=c_counts.get("linked_to_feature", 0))
 
     # ── link ── card destination → resolved name → reusable destination → pending
     comp_keys = {c.component_id: (c.name_norm, c.country_norm, c.locality_norm) for c in comps
@@ -140,6 +141,16 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
     name_rows = list({r[:3]: r for r in new_rows}.values())
     comp_dest = {cid: card_dest.get(cid) or dest_by_key.get(k) for cid, k in comp_keys.items()}
     night_dest = {d: dest_by_key.get(k) if k else None for d, k in anchor_keys.items()}
+    # AA-847 in-tour dedupe: two destinations of this tour that the same-place rules merge (dedupe.decide auto_merge,
+    # e.g. "Kuang Si Falls" and "Tat Kuang Si" 300 m apart) → every component and night of this tour uses the
+    # cluster's keeper. Component ids are unchanged (they come from the itinerary spelling); the other tours and the
+    # destinations are untouched (the catalog-wide merge is the place_dedupe job, logged in geo.place_merge).
+    async with pool.acquire() as conn:
+        remap = await _in_tour_keepers(conn, set(comp_dest.values()) | set(night_dest.values()), comps, comp_dest)
+    if remap:
+        comp_dest = {cid: remap.get(d, d) if d else d for cid, d in comp_dest.items()}
+        night_dest = {day: remap.get(d, d) if d else d for day, d in night_dest.items()}
+    counts["in_tour_duplicates_merged"] = len(remap)
     counts["places_linked"] = sum(1 for v in comp_dest.values() if v)
     counts["nights_linked"] = sum(1 for v in night_dest.values() if v)
     counts["names_new_pending"] = sum(1 for r in new_rows if r[-1] == "pending")
@@ -189,6 +200,9 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
                 await store.lock_build(conn, source_id, tour_id)
                 if await store.live_tour_for_source(conn, source_id) != tour_id:
                     raise _NotLive()
+                # AA-847: one writer of destination identity at a time (a merge never races this write; a pointer
+                # read before a merge is repointed by the next place_dedupe run)
+                await store.lock_destinations(conn)
                 # names only once the version is known live: a rolled-back build queues no paid geocode
                 await store.insert_names(conn, name_rows)
                 await store.replace_source_rows(conn, source_id, tour_id, day_rows, place_rows, vectors)
@@ -200,6 +214,47 @@ async def extract_tour_places(pool, tour: dict, deps: ExtractDeps, *, force: boo
         pending_due = await store.pending_names_due(conn)
     return {**base, "status": status, "days": len(records), "cost_usd": cost, "pending_names_due": pending_due,
             **counts}
+
+
+async def _validity_counts(conn) -> dict:
+    """AA-847: the content-validity counts of the live catalog, stored with each graph build (trend on
+    /admin/places). Never fails the build; a failure is recorded in the counts, not swallowed silently."""
+    from services.places import validity
+    try:
+        summary, _ = await validity.report(conn)
+        return validity.stats_counts(summary)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("place_validity_report_failed", error=str(e)[:200])
+        return {"error": type(e).__name__}
+
+
+async def _in_tour_keepers(conn, dest_ids: set, comps: list, comp_dest: dict) -> dict[str, str]:
+    """{non-keeper destination id: keeper id} among one tour's linked destinations: the same-place decision of the
+    place_dedupe job (services/places/dedupe.in_tour_remap), rules band only — the model band waits for place_dedupe."""
+    from services.places import dedupe
+    briefs = await store.destination_briefs(conn, {d for d in dest_ids if d})
+    if len(briefs) < 2:
+        return {}
+    n_comp: dict[str, int] = {}
+    for c in comps:
+        d = comp_dest.get(c.component_id)
+        if d:
+            n_comp[str(d)] = n_comp.get(str(d), 0) + 1
+    rows = [dedupe.Row(i, b["name"], b["country"], float(b["lat"]), float(b["lng"]), name_norm=b.get("name_norm"),
+                       locality_norm=b.get("locality_norm") or "", located_by=b["located_by"],
+                       geo_status=b.get("geo_status"), precision=b["geo_precision"], result_type=b["result_type"],
+                       geocoder_name=b.get("geocoder_name"), place_id=b.get("geocoder_place_id"),
+                       components=n_comp.get(i, 0),
+                       created_at=b["created_at"].isoformat() if b.get("created_at") else "")
+            for i, b in briefs.items() if b.get("lat") is not None and b.get("lng") is not None]
+    remap = dedupe.in_tour_remap(rows)
+    if remap:
+        # no audit row (the tour's own rows are rebuilt each run); the pairs are logged so a wrong merge is traceable
+        names = {r.id: r.name for r in rows}
+        pairs = [f"{names[m]} -> {names[k]}" for m, k in sorted(remap.items())]
+        logger.info("place_in_tour_duplicates_merged", pairs=pairs[:20], n=len(pairs),
+                    rule_version=dedupe.RULE_VERSION)
+    return remap
 
 
 # ── geocode ────────────────────────────────────────────────────────────────────────────────
@@ -217,7 +272,7 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
     async with pool.acquire() as conn:
         due = await store.due_names(conn, limit)
     out = {"names": len(due), "resolved": 0, "inserted": 0, "updated": 0, "kept": 0, "failed": 0,
-           "unknown": 0, "deferred": 0, "review": 0, "by": {}, "geocoder": geocoder.name}
+           "unknown": 0, "deferred": 0, "review": 0, "shapes_pending": 0, "by": {}, "geocoder": geocoder.name}
     if not due:
         return out
     keys = [(r["name_norm"], r["country_norm"], r["locality_norm"]) for r in due]
@@ -265,9 +320,14 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
                         out["unknown" if st == "unknown" else "failed"] += 1
                         continue
                     async with conn.transaction():
+                        await store.lock_destinations(conn)     # AA-847: serialised with place_dedupe merges
                         dest_id, action = await store.upsert_destination(conn, it.key, it.name, o.point,
                                                                          locality=it.locality)
                         await store.mark_name(conn, it.key, destination_id=dest_id)
+                        # AA-847: a line gets its pending geo.place_shape row (job place_shape draws it); the
+                        # point is never moved for shape reasons — this job stays the only coordinate writer
+                        if o.point.precision == "line" and await store.ensure_pending_shape(conn, dest_id):
+                            out["shapes_pending"] += 1
                     out[action] += 1
                     out["resolved"] += 1
                     out["by"][o.point.located_by] = out["by"].get(o.point.located_by, 0) + 1
@@ -283,8 +343,11 @@ async def geocode_pending(pool, generate, geocoder, *, limit: int, job_id: Optio
         raise
     finally:
         async with pool.acquire() as conn:
-            out["relinked"] = await store.relink(conn)
+            async with conn.transaction():
+                await store.lock_destinations(conn)
+                out["relinked"] = await store.relink(conn)
             out["outliers"], out["suspects"] = await apply_outlier_rule(conn, touched or None)
+        out["touched"] = len(touched)
     return out
 
 
@@ -318,6 +381,13 @@ async def build_tour_graph(pool, *, junction_km: float = graph_mod.DEFAULT_JUNCT
         # pure CPU (pairwise junctions over every node): off the worker's event loop (S201)
         g = await asyncio.to_thread(graph_mod.build_graph, graph_mod.stop_rows(days, places, dests), dests,
                                     places, junction_km)
+        # AA-847: the stretch of each line a tour-day follows (geo.tour_segment, versioned with this build)
+        line_ids = [d for d in dests if graph_mod.is_line(dests, d)]
+        shapes = await store.line_shapes(conn, line_ids)
+        g.segments = await asyncio.to_thread(graph_mod.line_segments, g.stops, places, days, dests, shapes)
+        g.stats["segments"] = {b: sum(1 for s in g.segments if s["basis"] == b)
+                               for b in ("day_anchors", "anchor_window", "feature")}
+        g.stats["validity"] = await _validity_counts(conn)
         build_id = await store.swap_graph(conn, g, {"junction_km": junction_km, "live_sources": len(source_ids)},
                                           job_id)
     return {"status": "ok", "build_id": build_id, "live_sources": len(source_ids), **g.stats}
