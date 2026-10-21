@@ -17,11 +17,13 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 APPS = [REPO / "frontend" / "app" / "api", REPO / "portal" / "app" / "api"]
 
-WRITE_EXPORT = re.compile(r"export\s+(?:const\s+|async\s+function\s+)(POST|PUT|PATCH|DELETE)\b")
+WRITE_EXPORT = re.compile(r"export\s+(?:const\s+|(?:async\s+)?function\s+)(POST|PUT|PATCH|DELETE)\b")
+# a re-export (`export { handler as POST }`) would hide the handler from this scan: refused outright
+REEXPORT = re.compile(r"export\s*\{[^}]*\bas\s+(POST|PUT|PATCH|DELETE)\b")
 GUARD_CALL = "refuseCrossSiteWrite(req)"
 GUARD_IMPORT = 'import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";'
 # The first thing a route may do that the guard must come before.
-FIRST_WORK = re.compile(r"requireAdmin\(|requireTenant\(|\.cookies\.get\(|req\.(?:text|json|arrayBuffer|formData)\(")
+FIRST_WORK = re.compile(r"requireAdmin\(|requireTenant\(|\.cookies\.get\(|req\.(?:text|json|arrayBuffer|formData)\(|handleRefreshKeepAlive\(")
 
 # Write routes that are deliberately not on this guard, with the reason.
 EXEMPT = {
@@ -75,7 +77,8 @@ def _function_body(src: str, header: re.Match) -> str:
 def _write_handlers(src: str) -> list[tuple[str, str]]:
     """(name, body) of every function that serves POST/PUT/PATCH/DELETE in a route file."""
     handlers = []
-    for m in re.finditer(r"export\s+async\s+function\s+(POST|PUT|PATCH|DELETE)\s*\(", src):
+    assert not REEXPORT.search(src), "write handler exported through `export { … as … }`: export it directly"
+    for m in re.finditer(r"export\s+(?:async\s+)?function\s+(POST|PUT|PATCH|DELETE)\s*\(", src):
         handlers.append((m.group(1), _function_body(src, m)))
     aliased = {m.group(2) for m in re.finditer(r"export\s+const\s+(POST|PUT|PATCH|DELETE)\s*=\s*(\w+)\s*;", src)}
     for name in sorted(aliased):
