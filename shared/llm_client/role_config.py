@@ -138,9 +138,11 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # tp_component_embed) into CIS jobs. Day skeleton: Sonnet (parity with TripPlanner's grounded
     # prompt) with GPT-5.6 Luna (Bedrock acc3) as a 20% shadow (design Q4); locate: Sonnet; embed:
     # Cohere v4 1536-d (= tp_search_embed). Extraction of reference data → `validate` (ADR 0008).
-    "a3_place_days":      StageConfig("a3_place_days", "validate", "claude", "sonnet", "acc3",
-                                      shadow_model_id="gpt-5.6-luna", shadow_sample_pct=20),
-    "a3_place_locate":    StageConfig("a3_place_locate", "validate", "claude", "sonnet", "acc3"),
+    # AA-847 (migration 260, S246): both moved to Haiku 4.5 after the place model trial; Sonnet is the fallback.
+    "a3_place_days":      StageConfig("a3_place_days", "validate", "claude", "haiku", "acc3",
+                                      fallback_model_ids=("sonnet",)),
+    "a3_place_locate":    StageConfig("a3_place_locate", "validate", "claude", "haiku", "acc3",
+                                      fallback_model_ids=("sonnet",)),
     "a3_place_embed":     StageConfig("a3_place_embed", "embed", "cohere", "cohere-embed-v4", None),
     # AA-847 Problem 2 (migration 257): the two-model check of the duplicate-place merge. Primary GPT-6 Luna (won
     # the S234 identity A/B, ~1/10 of Haiku), asked A/B and B/A; check Claude Haiku — another vendor. Both
