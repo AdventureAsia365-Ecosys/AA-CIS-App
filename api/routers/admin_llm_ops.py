@@ -1093,11 +1093,15 @@ async def get_unmapped_market_requests(request: Request):
 #   POST /admin/jev/402-sweep    — counts decision_log rows that failed on a 402 in the last 24h
 #       (catches a daytime outage that happened between canary runs) and raises the same throttled
 #       bell if any are found.
+# AA-845: decide() logs a 402 billing_error as 'credit_exhausted' and the calls it then skips as
+# 'credit_exhausted (breaker open)' — neither text contains '402'. Matching only '%402%' made the
+# sweep blind to the real path: on 10/10/2026 it would have counted 0 of 5,683 such rows. '%402%'
+# stays for a 402 without billing_error (raise_for_status text, the 03/10 incident shape).
 _JEV_402_SWEEP_SQL = """
     SELECT count(*) AS n, max(created_at) AS last_seen
       FROM shared.decision_log
      WHERE zone = 'error'
-       AND error LIKE '%402%'
+       AND (error LIKE 'credit_exhausted%' OR error LIKE '%402%')
        AND created_at >= now() - interval '24 hours'
 """
 

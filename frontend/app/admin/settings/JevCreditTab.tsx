@@ -2,8 +2,8 @@
 // app/admin/settings/JevCreditTab.tsx
 // AA-756 — the "Jev Credit" tab of admin Settings. TypeSafe (Jev) has no balance API, so admins
 // record each manual top-up here; the card shows total topped up, Jev spend since the first top-up,
-// and an *estimated* balance. The only alert is the exhausted alert (AA-720) — there is no
-// "running low" alert (Nghiệp, 10/10).
+// and an *estimated* balance. Alerts: the exhausted alert (AA-720, on a 402) and, since AA-845, a
+// low-credit alert (bell + operator e-mail) when the estimate drops below low_threshold_usd.
 //
 // The Dev preview calls the Dev backend, which may not have the GET endpoint or the
 // shared.jev_credit_topup table until Claude deploys + applies migration 209. A 404 must render a
@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Wallet } from "lucide-react";
+import { BellRing, Plus, Trash2, Wallet } from "lucide-react";
 import { A, alpha, serif, sans, mono, Card } from "../_components/adminUi";
 import {
   Button,
@@ -43,6 +43,10 @@ interface JevCreditResp {
   spent_since_first_topup_usd: number | null;
   estimated_left_usd: number | null;
   last_exhausted_alert_at: string | null;
+  // AA-845 — optional so an older backend (without the low-credit alert) still renders.
+  low_threshold_usd?: number | null;
+  below_low_threshold?: boolean;
+  last_low_alert_at?: string | null;
 }
 
 const usd = (v: number | null | undefined) =>
@@ -75,6 +79,45 @@ function Stat({ label, value, hint, tone }: {
         {value}
       </div>
       {hint && <div style={{ fontSize: 10.5, color: A.muted2, marginTop: 2 }}>{hint}</div>}
+    </div>
+  );
+}
+
+// ── AA-845: send the two Jev credit alerts as marked tests ─────────────────────────
+// POST /admin/decisions/jev-credit/check with a test threshold: one "[TEST]" low-credit bell + e-mail and one
+// "[TEST]" exhausted bell + e-mail, through the same code as the real alerts. Test alerts never throttle a real
+// one; the e-mails are capped at one per alert type per UTC day.
+interface CheckResp {
+  estimated_left_usd: number | null;
+  alerted: boolean;
+  email_job_id: string | null;
+  exhausted_test_alerted: boolean;
+}
+
+function TestAlertsButton() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const mut = useMutation({
+    mutationFn: () => apiSend<CheckResp>("/api/admin/decisions/jev-credit/check", {
+      method: "POST", body: { threshold_usd: 1000, test_exhausted_alert: true }, admin: true,
+    }),
+    onSuccess: (r) => {
+      const mail = r.email_job_id ? "e-mails queued" : "e-mail already sent today or not configured";
+      toast.success(`Test alerts sent (bell: low ${r.alerted ? "yes" : "no"}, exhausted ${
+        r.exhausted_test_alerted ? "yes" : "no"}; ${mail})`);
+      qc.invalidateQueries({ queryKey: ["jev-credit"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Test alert failed"),
+  });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+      <Button size="sm" variant="ghost" disabled={mut.isPending} onClick={() => mut.mutate()}>
+        {mut.isPending ? <Spinner size={12} /> : <BellRing size={13} />}
+        Send test alerts
+      </Button>
+      <span style={{ fontSize: 11, color: A.muted2 }}>
+        Sends a [TEST] low-credit and a [TEST] exhausted alert (bell + e-mail to the alert recipients).
+      </span>
     </div>
   );
 }
@@ -277,8 +320,10 @@ function JevCreditTabInner() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <p style={{ fontSize: 12, color: A.muted2, margin: 0 }}>
         Jev (TypeSafe) has no balance API, so top-ups are recorded here by hand. The balance below is
-        an <b>estimate</b>: total topped up minus Jev spend since the first top-up. The only automatic
-        alert is when credit is exhausted — there is no &quot;running low&quot; warning.
+        an <b>estimate</b>: total topped up minus Jev spend since the first top-up. Admins get a bell and an
+        e-mail when the estimate drops below the low-credit threshold
+        {view.low_threshold_usd != null ? ` (${usd(view.low_threshold_usd)})` : ""}, and again if Jev
+        reports the credit exhausted (HTTP 402).
       </p>
 
       <Card>
@@ -291,6 +336,13 @@ function JevCreditTabInner() {
                 hint="shared.llm_call_log · provider typesafe" />
           <Stat label="Estimated left" value={usd(view.estimated_left_usd)} tone="estimate" />
         </div>
+        {view.below_low_threshold && (
+          <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
+            Estimated credit is below the {usd(view.low_threshold_usd)} alert threshold. Top up TypeSafe and
+            record it below.
+            {view.last_low_alert_at ? ` Last low-credit alert: ${formatDateTime(view.last_low_alert_at)}.` : ""}
+          </div>
+        )}
         {view.last_exhausted_alert_at && (
           <div style={{ fontSize: 11.5, color: A.amber, marginTop: 12 }}>
             Last exhausted alert: {formatDateTime(view.last_exhausted_alert_at)}
@@ -301,6 +353,7 @@ function JevCreditTabInner() {
             The Jev credit endpoint is not deployed on this environment yet.
           </div>
         )}
+        {!notDeployed && view.low_threshold_usd != null && <TestAlertsButton />}
       </Card>
 
       <Card>

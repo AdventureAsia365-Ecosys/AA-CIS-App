@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from services.acp_shared.audit_log import write_audit_log
+from shared import jev_credit as jev_credit_mod   # the module; `jev_credit` is the GET route below
 from shared.llm_client.decide import JEV_CREDIT_EXHAUSTED_EVENT, PLATFORM_TENANT_ID
 
 logger = structlog.get_logger()
@@ -547,7 +548,8 @@ async def update_question(question_key: str, body: QuestionUpdate, request: Requ
 # Settings can show an estimate. Spend = sum(cost_usd) of shared.llm_call_log where provider =
 # 'typesafe' and created_at >= the first top-up date (includes the reconcile_s224 backfill rows,
 # see shared.llm_call_log quality_signal->>'source' = 'reconcile_s224'). Empty table → nulls, never
-# an error. The only alert is the exhausted alert (AA-720); there is no "running low" alert.
+# an error. Alerts: the exhausted alert (AA-720, on a 402) and, since AA-845, the low-credit alert when
+# the estimate drops below shared/jev_credit.LOW_CREDIT_THRESHOLD_USD (bell + operator e-mail).
 
 _TOPUPS_SQL = """
     SELECT id, topped_up_on, amount_usd::float AS amount_usd, note, created_by, created_at
@@ -555,12 +557,8 @@ _TOPUPS_SQL = """
     ORDER BY topped_up_on DESC, id DESC
 """
 
-# Jev spend since the earliest top-up date. $1 is that date (NULL → no top-ups → 0 spend).
-_JEV_SPEND_SQL = """
-    SELECT coalesce(sum(cost_usd), 0)::float AS spent
-    FROM shared.llm_call_log
-    WHERE provider = 'typesafe' AND $1::date IS NOT NULL AND created_at >= $1::date
-"""
+# Jev spend since the earliest top-up date (one query for the card and the AA-845 low-credit check).
+_JEV_SPEND_SQL = jev_credit_mod.JEV_SPEND_SQL
 
 # The most recent exhausted alert (AA-720), shown next to the estimate so an admin sees the signal.
 _LAST_EXHAUSTED_SQL = """
@@ -579,13 +577,15 @@ async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
             t["topped_up_on"] = t["topped_up_on"].isoformat()
     total = sum(t["amount_usd"] for t in topups) if topups else None
     first_on = topup_rows[-1]["topped_up_on"] if topup_rows else None
-    spent_row, last_row = await asyncio.gather(
+    spent_row, last_row, low_row = await asyncio.gather(
         pool.fetchrow(_JEV_SPEND_SQL, first_on),
         pool.fetchrow(_LAST_EXHAUSTED_SQL, JEV_CREDIT_EXHAUSTED_EVENT),
+        pool.fetchrow(jev_credit_mod.LAST_LOW_ALERT_SQL, jev_credit_mod.JEV_CREDIT_LOW_EVENT),
     )
     spent = spent_row["spent"] if first_on is not None else None
     estimated_left = (total - spent) if (total is not None and spent is not None) else None
     last_alert = last_row["last_at"] if last_row else None
+    last_low = low_row["last_at"] if low_row else None
     return {
         "topups": topups,
         "total_topped_up_usd": total,
@@ -593,7 +593,38 @@ async def jev_credit(request: Request, x_admin_secret: str = Header(None)):
         "spent_since_first_topup_usd": spent,
         "estimated_left_usd": estimated_left,
         "last_exhausted_alert_at": last_alert.isoformat() if last_alert else None,
+        # AA-845 — the low-credit alert threshold and state, for the Settings card.
+        "low_threshold_usd": jev_credit_mod.LOW_CREDIT_THRESHOLD_USD,
+        "below_low_threshold": jev_credit_mod.is_below(estimated_left, jev_credit_mod.LOW_CREDIT_THRESHOLD_USD),
+        "last_low_alert_at": last_low.isoformat() if last_low else None,
     }
+
+
+class JevCreditCheck(BaseModel):
+    """AA-845 — body of POST /admin/decisions/jev-credit/check. Both fields are for live verification only:
+    an explicit threshold makes it a TEST check (bell + e-mail marked test, never counted by the real
+    throttle); test_exhausted_alert also sends one test exhausted alert through the AA-720 path."""
+    threshold_usd: Optional[float] = Field(None, gt=0, le=jev_credit_mod.MAX_TEST_THRESHOLD_USD)
+    test_exhausted_alert: bool = False
+
+
+@router.post("/jev-credit/check", summary="AA-845 — Jev low-credit check (bell + e-mail below the threshold)")
+async def check_jev_credit(request: Request, body: Optional[JevCreditCheck] = None,
+                           x_admin_secret: str = Header(None), x_admin_user_id: Optional[str] = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from shared.llm_client import decide as decide_mod
+
+    body = body or JevCreditCheck()
+    pool = request.app.state.pool
+    source = f"admin:{x_admin_user_id or 'unknown'}"
+    out = await jev_credit_mod.check_low_credit(pool, source=source, threshold_usd=body.threshold_usd)
+    exhausted_test = False
+    if body.test_exhausted_alert:
+        async with pool.acquire() as conn:
+            exhausted_test = await decide_mod.maybe_alert_jev_credit(conn, source=source, test=True)
+    logger.info("admin_jev_credit_checked", admin_user=x_admin_user_id, below=out["below_threshold"],
+                alerted=out["alerted"], test=out["test"], exhausted_test=exhausted_test)
+    return {**out, "exhausted_test_alerted": exhausted_test}
 
 
 class TopupCreate(BaseModel):
