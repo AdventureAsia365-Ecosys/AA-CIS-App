@@ -18,8 +18,23 @@ name: Cognito E2E
 # migration 250 applied and the Infra trigger exception live; staff user "E2E Cognito"
 # (e2e@e2e-mail.lumiguides.it.com, reviewer, Booking none) created through the staff directory.
 # workflow_dispatch only: nothing runs on push or PR.
+#
+# AA-911: input booking_base_url picks the Booking host of the refusal step: production (default) or the fixed
+# Preview host booking-preview.lumiguides.it.com (point it at the preview under test first; root runbook
+# docs/ops/runbooks/preview-staff-sign-in.md). If that host is behind Vercel Authentication, the `e2e` environment
+# secret BOOKING_PREVIEW_BYPASS (aa-booking-admin Protection Bypass for Automation) lets the run through; it is
+# passed to the spec only for the Preview host.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      booking_base_url:
+        description: "Booking host for the no-booking-role refusal step"
+        required: true
+        type: choice
+        options:
+          - https://booking.lumiguides.it.com
+          - https://booking-preview.lumiguides.it.com
+        default: https://booking.lumiguides.it.com
 
 permissions:
   contents: read
@@ -64,6 +79,10 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run the cognito project
+        env:
+          # No underscore by design (like E2ECOGNITO). The spec accepts only the two allowlisted hosts.
+          E2EBOOKINGORIGIN: ${{ inputs.booking_base_url }}
+          E2EBOOKINGBYPASS: ${{ inputs.booking_base_url == 'https://booking-preview.lumiguides.it.com' && secrets.BOOKING_PREVIEW_BYPASS || '' }}
         run: npx playwright test --project=cognito -c playwright.config.ts
 
       # Screenshots only. NOT the HTML/JSON reports: their step titles carry action values (a `fill` step
