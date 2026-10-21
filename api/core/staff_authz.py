@@ -268,6 +268,7 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/admin/content-quality/place-cards/{keep_id}/merge"): QUALITY_WRITE,
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
+    ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)
     ("POST", "/admin/photos/{photo_id}/assign"): PHOTOS_WRITE,
     # ── admin_places — place_extract backfill (paid geocoder jobs)
     ("POST", "/admin/places/backfill"): OPS_WRITE,
@@ -353,6 +354,7 @@ MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/admin/waves/check"): "Infra Lambda dfs_balance_check (AA-727)",
     ("POST", "/admin/job-runner/retention/schedule"): "Infra Lambda dfs_balance_check (daily, AA-825)",
     ("POST", "/admin/job-runner/staff-reconcile/schedule"): "Infra Lambda dfs_balance_check (daily, AA-816 C7)",
+    ("POST", "/admin/photos/sync/schedule"): "Infra Lambda dfs_balance_check (daily, AA-844)",
 }
 
 

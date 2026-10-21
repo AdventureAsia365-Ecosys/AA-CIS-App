@@ -20,6 +20,9 @@ type CountryRow = {
 type Totals = Record<"photos" | "with_file" | "with_tour" | "unmatched" | "rejected" | "errors" | "tours_covered" |
   "active_tours" | "source_bytes" | "destinations" | "destinations_with_cover" | "manual" | "tour_folders", number>;
 type LastJob = { id: string; status: string; error: string | null; created_at: string | null; finished_at: string | null };
+// AA-844: the daily scheduled sync (one job per country), latest UTC day it ran.
+type ScheduledCountry = { country: string; status: string | null; errors: number | null; job_id: string | null; finished_at: string | null };
+type LastScheduled = { day: string; countries: ScheduledCountry[]; all_ok: boolean };
 type Photo = {
   id: string; country: string; folder_path: string; tour_folder: string | null; file_name: string;
   place_label: string | null; tour_id: string | null; tour_name: string | null; destination_name: string | null;
@@ -77,6 +80,7 @@ export default function PhotosPage() {
   const [countries, setCountries] = useState<CountryRow[] | null>(null);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [lastJob, setLastJob] = useState<LastJob | null>(null);
+  const [lastScheduled, setLastScheduled] = useState<LastScheduled | null>(null);
   const [country, setCountry] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -101,6 +105,7 @@ export default function PhotosPage() {
     if (!r.ok) { setError(`Summary failed (${r.status})`); return; }
     const body = await r.json();
     setCountries(body.countries); setTotals(body.totals); setLastJob(body.last_job);
+    setLastScheduled(body.last_scheduled ?? null);
   }, []);
 
   const loadTours = useCallback(async () => {
@@ -247,7 +252,32 @@ export default function PhotosPage() {
             </div>
 
             <Card style={{ marginBottom: 18 }}>
-              <SLabel>Last sync</SLabel>
+              <SLabel>Daily sync (04:00 ICT)</SLabel>
+              {lastScheduled ? (
+                <div style={{ fontSize: 13, color: A.body }}>
+                  <div style={{ marginBottom: 8 }}>
+                    {lastScheduled.day} (UTC) ·{" "}
+                    <Badge color={lastScheduled.all_ok ? "green" : "amber"}>{lastScheduled.all_ok ? "all countries clean" : "needs a look"}</Badge>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {lastScheduled.countries.map(c => (
+                      <span key={c.country} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px",
+                                                     border: `1px solid ${A.line}`, borderRadius: 8, maxWidth: "100%" }}>
+                        {c.country}
+                        <Badge color={c.status === "succeeded" ? (c.errors ? "amber" : "green") : c.status === "failed" ? "red" : c.status ? "amber" : "gray"}>
+                          {c.status ?? "not run"}
+                        </Badge>
+                        {c.errors != null && <span style={{ fontFamily: mono, fontSize: 12 }}>{c.errors} err</span>}
+                        {c.job_id && <a href={`/admin/jobs?job=${c.job_id}`} style={{ color: A.accentDeep, fontSize: 12 }}>job</a>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : <div style={{ fontSize: 13, color: A.muted }}>No scheduled run yet.</div>}
+            </Card>
+
+            <Card style={{ marginBottom: 18 }}>
+              <SLabel>Last job (any trigger)</SLabel>
               {lastJob ? (
                 <div style={{ fontSize: 13, color: A.body }}>
                   <Badge color={lastJob.status === "succeeded" ? "green" : lastJob.status === "failed" ? "red" : "amber"}>{lastJob.status}</Badge>{" "}

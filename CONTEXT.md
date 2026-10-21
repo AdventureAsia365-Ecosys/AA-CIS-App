@@ -445,9 +445,20 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   Drive folders (public, read with a Google API key from `aa-cis/dev/gdrive-photo-reader`) to S3
   (`photos/<country>/<file id>-{1600,600}.webp`) and records `shared.place_photo`, matched to a tour
   (folder name) and, on request, to a `shared.destinations` place (file name). Images are public via
-  `GET /content/photos/{id}?size=` (302 to presigned S3). With `match_destinations` it fills empty
-  `shared.destinations.cover_image_url` (read by the TripPlanner) — off until the destinations are
-  re-extracted from the rerun tours.
+  `GET /content/photos/{id}?size=`, the stable path every consumer stores (catalog photo views,
+  TripPlanner covers and `og:image`, Booking `CisPhoto`). AA-844: it answers a 302 to the photos CDN
+  (CloudFront `img.lumiguides.it.com`, AA-CIS-Infra `photos_cdn.tf`, in front of the bucket's
+  `photos/` prefix) as `<host>/<slug>/<file>?v=<sha256[:12]>`, cached 1 day; `PHOTO_CDN_BASE=off`
+  falls back to a presigned S3 URL (1 h, redirect cached 50 min). The API stays in the image path
+  (one hop + one row read per view); CloudFront serves the bytes. A rejected photo is 404 on the
+  route, but a CDN URL handed out earlier keeps working (the object stays in S3, edge cache 1 year)
+  — reject is reversible, so objects are not deleted. A daily schedule (Infra ops-probe Lambda,
+  21:00 UTC = 04:00 ICT) calls `POST /admin/photos/sync/schedule`: one incremental `photo_sync` job
+  per CON country, idempotent per UTC day, skipped while another `photo_sync` job is queued or
+  running (not skipped during a rerun wave: no LLM work); `/admin/photos/summary` reports it as
+  `last_scheduled`. Those serial jobs hold the deploy gate for a while around 04:00 ICT. With
+  `match_destinations` it fills empty `shared.destinations.cover_image_url` (read by the TripPlanner)
+  — off until the destinations are re-extracted from the rerun tours (the schedule never sets it).
 - **Place pipeline (AA-712, ADR 0007, migration 226)**: CIS — not TripPlanner — computes each live
   tour's day skeleton (start / end / overnight), places (= itinerary components, stable uuid5 ids),
   geocoded destinations and the tour graph (stops, nodes, edges, legs, junctions) into the CIS-internal
