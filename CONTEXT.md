@@ -1640,6 +1640,16 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   Review approve stamps truth=true on the rest, a Review reject stamps nothing (it judges the whole
   version). `GET /admin/decisions/claim-sample` rebuilds a stratified sentence sample (+ the source
   Jev read) for panel labelling ($0).
+- **A1 day oracle + quality shadow** (AA-925, Quality System v1 Q-2): one duration / day-marker reader,
+  `services/content_generation/day_parse.py` (`prompts._estimate_day_count` and `seo_meta_utils.tour_days`
+  are thin wrappers; "3 hours" is one day, "7D/6N" seven). `validate_node` runs the deterministic day oracle
+  (`services/quality/day_oracle.py`: sub-day split, duplicate / out-of-order / skipped / extra day, departure
+  mid-trip, count vs duration, `SOURCE_DAY_CONTRADICTION` — a source fault, never charged to the writer —
+  and `DAY_CHECK_SKIPPED`) and the S2 cut signature (`seo_meta_utils.meta_cut_signature`, "…a 20-kilometre.").
+  Every code ships in **shadow**: it lands in `quality_shadow` (`generated_content.metadata.quality_shadow`)
+  and changes no score or verdict. A code moves to enforce (`DAY_ORACLE_MODES`) only after a precision read on
+  stored tours (`scripts/aa925/day_oracle_report.py`, D5: ≥ 0.70 with the Wilson bound); an enforced code is an
+  A1 hard code (`_HARD_BLOCK_CODES`, rewrite class) and stays shadow on a tenant rewrite (T2/T3).
 - **A2 — Admin QA Gate**: A1 rows that failed auto-validation (`status='hitl'`), reviewed via the
   Review Queue before they can reach A3. A row can also be **dismissed** (hidden without
   approving; a future real failure is enqueued again — AA-626, `review_status_enum` value

@@ -1,0 +1,41 @@
+[
+ {
+  "id": "a1-meta-cut-signature",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "META_CUT_SIGNATURE",
+  "expected": "fire",
+  "note": "S2 leak (AA-729): a meta cut after a number compound ('…along a 20-kilometre.') reads as a complete sentence to meta_complete_sentence (AA-794 on purpose). Shadow detector in this PR.",
+  "expect": {
+   "publishable": true
+  },
+  "input": {
+   "base": "a1-bhutan-4d",
+   "writer_patch": {
+    "seo_meta": "Four days in western Bhutan, from the Paro valley to the dzongs of Thimphu and Punakha, and up to Taktsang Monastery on foot along a 20-kilometre."
+   }
+  }
+ },
+ {
+  "id": "a1-meta-cut-signature-clean",
+  "class_id": "struct.truncated",
+  "severity": "block",
+  "writer": "A1",
+  "artefact": "output",
+  "chain": "a1",
+  "detector": "META_CUT_SIGNATURE",
+  "expected": "no_fire",
+  "note": "Negative twin: a meta ending on its noun.",
+  "expect": {
+   "publishable": true
+  },
+  "red_on_base": false,
+  "twin_of": "a1-meta-cut-signature",
+  "input": {
+   "base": "a1-bhutan-4d"
+  }
+ }
+]

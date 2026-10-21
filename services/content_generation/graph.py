@@ -23,7 +23,8 @@ from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
 from .seo_meta_utils import (SEO_META_MIN, SEO_META_MAX, meta_complete_sentence, SEO_META_FORBIDDEN,
-                             fit_seo_meta_final, fit_seo_title)
+                             fit_seo_meta_final, fit_seo_title, meta_cut_signature)
+from services.quality import day_oracle
 from .forbidden_words import (VALIDATE_FORBIDDEN, all_forbidden as all_forbidden_words, copy_text, has_word,
                               state_forbidden)
 from .forbidden_strip import SKIP_FIELDS as _FORBIDDEN_SCAN_SKIP, strip_forbidden
@@ -195,7 +196,7 @@ _HARD_BLOCK_CODES = frozenset({
     "META_TOO_SHORT", "SEO_META_TOO_LONG", "SEO_TITLE_TOO_LONG",
     "META_INCOMPLETE_SENTENCE", "BRAND_SEO_META_VIOLATION",
     "FORBIDDEN_WORD", "MISSING_FIELD",
-})
+}) | day_oracle.enforced_codes()  # AA-925: a day-oracle code in enforce mode blocks A1 Master (none yet)
 
 # S218 audit (lesson: "a hard code needs a repair path"): every code that blocks Master must name
 # the step that can clear it. AA-736 made the length codes hard with no deterministic fix and 15
@@ -210,6 +211,8 @@ HARD_CODE_REPAIR = {
     "FORBIDDEN_WORD":           "deterministic: forbidden_strip.strip_forbidden",
     "BRAND_SEO_META_VIOLATION": "llm: flag_fix seo_meta repair, then one haiku->sonnet retry (AA-736)",
     "MISSING_FIELD":            "llm: one haiku->sonnet retry (AA-736)",
+    # AA-925: an enforced day-oracle code (struct.day_structure) — the writer rewrites the itinerary.
+    **{code: "llm: one haiku->sonnet rewrite (AA-736), else review" for code in day_oracle.enforced_codes()},
 }
 
 class ContentState(TypedDict):
@@ -312,6 +315,11 @@ class ContentState(TypedDict):
     draft_scores:           list
     previous_draft:         Optional[dict]
     best_draft_restored:    bool
+    # AA-925 (Quality System v1): validate_node's shadow findings (day oracle, S2 cut signature) — recorded
+    # in generated_content.metadata, no score or verdict change — and the fail-open paths that ran
+    # (services/quality/degraded.py). Declared so LangGraph keeps them (AA-209 gotcha).
+    quality_shadow:         list
+    degraded:               list
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {
@@ -337,6 +345,8 @@ _FAILURE_MAP: dict[str, tuple[str, float]] = {
     # (still confirmed to never alone drop quality_score below MIN_QUALITY — see AA-329
     # implementation notes — so it can't divert the run away from flag_fix_node).
     "ITINERARY_STILL_COMPRESSED":   ("structure", 1.5),
+    # AA-925: the day oracle's codes, deducted only when a code is enforced (A1); shadow costs nothing.
+    **{code: ("structure", 1.0) for code in day_oracle.DAY_ORACLE_MODES},
 }
 
 # AA-240: canonical validate-node forbidden list (single source; validate_node + review-queue
@@ -941,6 +951,28 @@ def validate_node(state: ContentState) -> ContentState:
             fired.append("ITINERARY_STILL_COMPRESSED")
             score -= 1.5
 
+    # AA-925 (Q-2): the day oracle (struct.day_structure) on the written itinerary against the source, and the
+    # S2 cut signature on the meta (struct.truncated). Shadow findings go to quality_shadow only (no score, no
+    # verdict); an enforced day code blocks A1 Master — never a tenant rewrite, whose structure T3 checks
+    # through this same function and whose writer reads the master text (lesson AA-800).
+    shadow: list[dict] = []
+    try:
+        _day_findings = day_oracle.check(_src_raw, tour.get('duration'), itinerary)
+    except Exception as exc:  # a detector bug must not break validate; it shows as degraded in AA-925 PR3
+        logger.warning("day_oracle_failed", error=str(exc)[:200])
+        _day_findings = []
+    for _f in _day_findings:
+        if _f["mode"] == "enforce" and not state.get("is_tenant_rewrite"):
+            issues.append(f"{_f['code']}: {_f['detail']}")
+            fired.append(_f["code"])
+            score -= _FAILURE_MAP[_f["code"]][1]
+        else:
+            shadow.append({**_f, "mode": "shadow"})
+    _cut = meta_cut_signature(meta) if meta else None
+    if _cut:
+        shadow.append({"code": "META_CUT_SIGNATURE", "class_id": "struct.truncated",
+                       "detector": "meta_cut_signature", "mode": "shadow", "detail": _cut})
+
     # DFS_INTENT_UNDERUSED: if SEO keywords exist, at least one should appear in title+meta
     # B1: handle both flat {"top_keywords": [...]} and nested {"keywords": {"top_keywords": [...]}}
     _seo    = state.get("seo", {})
@@ -982,7 +1014,8 @@ def validate_node(state: ContentState) -> ContentState:
 
     logger.info("validation_done", score=quality_score, issues=len(issues),
                 retry=state.get("retry_count", 0),
-                failure_codes=failure_codes, sub_scores=sub_scores)
+                failure_codes=failure_codes, sub_scores=sub_scores,
+                quality_shadow=sorted({f["code"] for f in shadow}))
 
     return {
         **state,
@@ -993,6 +1026,7 @@ def validate_node(state: ContentState) -> ContentState:
         "sub_scores":    sub_scores,
         "passed_count":  passed_count,
         "failed_count":  failed_count,
+        "quality_shadow": shadow,  # AA-925: recomputed on every validate (the latest content's findings)
     }
 
 def should_retry(state: ContentState) -> str:

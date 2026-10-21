@@ -202,6 +202,8 @@ async def _rewrite_tour(
             "lessons_extracted":  [],
             "fix_pass_applied":   False,
             "fix_pass_fields":    [],
+            "quality_shadow":     [],   # AA-925
+            "degraded":           [],   # AA-925
         }
         if previous_draft and is_tenant_rewrite:
             initial_state["previous_draft"] = previous_draft   # AA-793
@@ -289,6 +291,9 @@ async def _rewrite_tour(
             # AA-793: per-attempt judged scores + whether the hitl exit restored an earlier draft (T2).
             "draft_scores":        result.get("draft_scores", []),
             "best_draft_restored": result.get("best_draft_restored", False),
+            # AA-925: same strip class — validate's shadow findings and the fail-open paths that ran.
+            "quality_shadow":      result.get("quality_shadow", []),
+            "degraded":            result.get("degraded", []),
             "status": "success" if result.get("generated") and len(result.get("generated", {})) > 0 else "failed",
         }
 

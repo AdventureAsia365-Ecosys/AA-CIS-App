@@ -77,6 +77,43 @@ def meta_complete_sentence(meta: str) -> bool:
     return True
 
 
+# AA-925 (S2 shadow detector, struct.truncated): the endings a cut leaves when it drops the noun a modifier
+# belonged to ("…a 20-kilometre." from "…a 20-kilometre walk", "…with expert." from "…with expert guides").
+# Shadow only — never a hard code: AA-794 found nothing can repair it deterministically, and the precision of
+# this heuristic is measured first (scripts/aa925/day_oracle_report.py reads the same function).
+_CUT_MODIFIER_WORDS = frozenset({
+    "expert", "local", "private", "guided", "traditional", "scenic", "historic", "ancient", "small", "optional",
+    "classic", "cultural", "comfortable", "experienced", "knowledgeable", "english-speaking", "family-run",
+    "multi-day", "day-long", "high-altitude",
+})
+_NUMBER_COMPOUND_RE = re.compile(r"^[\d,.]+-[a-z]+$")        # 20-kilometre, 4,000-metre, 3-hour
+_HYPHEN_MODIFIER_RE = re.compile(r"^[a-z]+-(?:day|hour|night|km|kilometre|kilometer|metre|meter|mile|minute|"
+                                 r"week|long|run|owned|guided|style|class|star|speaking|altitude|size)$")
+
+
+def meta_cut_signature(meta: str) -> Optional[str]:
+    """AA-925: why a meta ending looks like a cut mid-phrase (the S2 leak `meta_complete_sentence` accepts on
+    purpose), or None. Reads the last word before the final period: a number compound ("20-kilometre"), a
+    hyphenated modifier ("two-day", "family-run"), a modifier that needs its noun ("expert", "local"), or a
+    weak ending (an article / connector)."""
+    t = (meta or "").strip()
+    if not t.endswith("."):
+        return None
+    words = t[:-1].split()
+    if not words:
+        return None
+    last = words[-1].lower().strip("\"'’”)")
+    if last in BAD_META_ENDINGS or last in _META_WEAK_ENDINGS:
+        return f"weak ending '{last}'"
+    if _NUMBER_COMPOUND_RE.match(last):
+        return f"number compound '{last}' with no noun"
+    if _HYPHEN_MODIFIER_RE.match(last):
+        return f"hyphenated modifier '{last}' with no noun"
+    if last in _CUT_MODIFIER_WORDS:
+        return f"modifier '{last}' with no noun"
+    return None
+
+
 def meta_in_band(meta: str, forbidden=None) -> bool:
     """In [SEO_META_MIN, SEO_META_MAX] AND complete sentence AND (AA-238) forbidden-free.
     forbidden=None preserves legacy behavior for callers that pass no deny-list."""
@@ -194,19 +231,16 @@ def fit_seo_title(title: str, max_len: int = SEO_TITLE_MAX) -> str:
 # ── AA-740: deterministic final seo_meta fit (too long AND too short) ────────────────────────────
 # Cut points tried for a one-sentence meta that is too long, strongest boundary first.
 _META_CLAUSE_CUTS = ("; ", " — ", " – ", ", and ", ", with ", ", ")
-_DAYS_RE = re.compile(r"(\d+)\s*(?:-\s*)?days?\b", re.IGNORECASE)
-_NIGHTS_RE = re.compile(r"(\d+)\s*nights?\b", re.IGNORECASE)
 
 
 def tour_days(duration) -> Optional[int]:
-    """Days from a raw duration string ("14 DAYS", "13 Nights 14 days", "1 day"); nights + 1 when
-    only nights are given. None when nothing usable."""
-    d = str(duration or "")
-    m = _DAYS_RE.search(d)
-    if m:
-        return int(m.group(1))
-    m = _NIGHTS_RE.search(d)
-    return int(m.group(1)) + 1 if m else None
+    """Days from a raw duration string ("14 DAYS", "13 Nights 14 days", "1 day", AA-925: "7D/6N", "2 weeks");
+    nights + 1 when only nights are given. None when nothing usable, and (AA-925) for a range ("10–12 days")
+    or a sub-day tour ("3 hours"): the fact tail must state one exact length. A thin wrapper over
+    day_parse.parse_duration, the one duration reader."""
+    from .day_parse import parse_duration
+
+    return parse_duration(duration).exact_days
 
 
 # AA-794: a word-boundary cut is only taken right BEFORE one of these words — they open a new
