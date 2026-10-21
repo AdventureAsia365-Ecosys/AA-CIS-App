@@ -31,6 +31,7 @@ from services.acp_content_writing.hygiene import (
 from services.acp_content_writing.quality_gates import OWNED_BY_FIX_STEP
 from services.acp_shared.citation_tags import TAG as _TAG
 from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
+from services.quality import registry as qr
 
 # AA-912: one shared tag definition (services/acp_shared/citation_tags.py) — linear, and a dangling
 # '[R:id' opener is dropped like a whole tag
@@ -39,15 +40,15 @@ _F1_QUOTE_RE = re.compile(r"not present in the content seed: '(.+)'\s*$", re.DOT
 _F9_CLAIM_RE = re.compile(r'"(.+?)" \(claims: (.+?); source: (.+?)\)(?:; |$)', re.DOTALL)
 
 _BRAND_QUOTE_RE = re.compile(r"^(.+?): '(.+)'\s*$", re.DOTALL)
-_ELIGIBLE_GATES = {"F1_grounding", "F9_cta_fact", "F2_brand_forbidden", "F11_brand_name",
-                   "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
-                   "F13_repeat", "F17_trip_fact", "F18_rarity",  # S234 round 3
-                   "F19_authenticity",  # AA-819 (AUP 2026-11)
-                   "F2_platform_truth", "F2_superlatives"}  # AA-800
+_ELIGIBLE_GATES = {qr.F1_GROUNDING, qr.F9_CTA_FACT, qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME,
+                   qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
+                   qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY,  # S234 round 3
+                   qr.F19_AUTHENTICITY,  # AA-819 (AUP 2026-11)
+                   qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES}  # AA-800
 # Gates whose violations read "<problem>: '<sentence>'" (parsed with _BRAND_QUOTE_RE).
-_QUOTED_GATES = {"F2_brand_forbidden", "F11_brand_name", "F12_scope", "F13_hygiene", "F13_leak", "F15_voice",
-                 "F13_repeat", "F17_trip_fact", "F18_rarity", "F19_authenticity",
-                 "F2_platform_truth", "F2_superlatives"}  # AA-800
+_QUOTED_GATES = {qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME, qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F15_VOICE,
+                 qr.F13_REPEAT, qr.F17_TRIP_FACT, qr.F18_RARITY, qr.F19_AUTHENTICITY,
+                 qr.F2_PLATFORM_TRUTH, qr.F2_SUPERLATIVES}  # AA-800
 # S234 round 2 — contract gates a dedicated step in service.py fixes (FAQ regeneration, first-line
 # rewrite); like F4_seo_surface they never send a piece to the full rewrite.
 OWNED_ELSEWHERE = OWNED_BY_FIX_STEP
@@ -110,11 +111,11 @@ def _fuzzy_locate(text: str, quote: str) -> Optional[tuple[int, int]]:
 def _seo_fields_only(g: dict) -> bool:
     """A failed gate the SEO title/meta fit owns: F4_seo_surface, or a quoted gate (F12_scope)
     whose every violation is in the title or meta."""
-    if g["gate"] == "F4_seo_surface" or g["gate"] in OWNED_ELSEWHERE:
+    if g["gate"] == qr.F4_SEO_SURFACE or g["gate"] in OWNED_ELSEWHERE:
         return True
     vs = g.get("violations") or []
     # AA-786 — an F9 unsupported claim in the title / meta is SEO-owned the same way.
-    return (g["gate"] in _QUOTED_GATES or g["gate"] == "F9_cta_fact") and bool(vs) \
+    return (g["gate"] in _QUOTED_GATES or g["gate"] == qr.F9_CTA_FACT) and bool(vs) \
         and all(v.startswith(_SEO_FIELD_PREFIXES) for v in vs)
 
 
@@ -127,20 +128,20 @@ def _f9_items(v: str, *, allow_cta: bool = False) -> Optional[list[tuple[str, st
         return []
     if v.startswith(TEXT_INTEGRITY_PREFIX):
         m = _BRAND_QUOTE_RE.search(v)
-        return [(m.group(2), _INTEGRITY_PROBLEM, "F9_cta_fact")] if m else None
+        return [(m.group(2), _INTEGRITY_PROBLEM, qr.F9_CTA_FACT)] if m else None
     if ("CTA_NOT_REFLECTED" in v and not allow_cta) or "unsupported claim(s)" not in v:
         return None
     claims = _F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1])
     if not claims:
         return None
-    return [(s, f"claims {c.strip()} — {why.strip()}", "F9_cta_fact") for s, c, why in claims]
+    return [(s, f"claims {c.strip()} — {why.strip()}", qr.F9_CTA_FACT) for s, c, why in claims]
 
 
 def f9_truth_only(g: dict) -> bool:
     """AA-786 — a failed F9_cta_fact whose every violation is product truth about the text (an
     unsupported claim, TEXT_INTEGRITY, a title/meta claim) and none is a missing CTA."""
     vs = g.get("violations") or []
-    return (g["gate"] == "F9_cta_fact" and not g["passed"] and bool(vs)
+    return (g["gate"] == qr.F9_CTA_FACT and not g["passed"] and bool(vs)
             and not any("CTA_NOT_REFLECTED" in v for v in vs))
 
 
@@ -174,7 +175,7 @@ def _slug_violation(g: dict) -> bool:
     """An F4 violation about the slug ('no slug' / "slug '…' is not lowercase-kebab" / 'slug is N
     characters'): the SEO fit only folds the slug to ASCII and never writes a new one, so only a
     rewrite (a new writer envelope) can fix it."""
-    return g["gate"] == "F4_seo_surface" and any(v.startswith(_SLUG_PREFIXES) for v in g.get("violations") or [])
+    return g["gate"] == qr.F4_SEO_SURFACE and any(v.startswith(_SLUG_PREFIXES) for v in g.get("violations") or [])
 
 
 def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
@@ -206,7 +207,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
                 if not m:
                     return None
                 items.append((m.group(2), m.group(1), g["gate"]))
-            elif g["gate"] == "F1_grounding":
+            elif g["gate"] == qr.F1_GROUNDING:
                 m = _F1_QUOTE_RE.search(v)
                 if not m:
                     return None
@@ -223,7 +224,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
     for quote, problem, gate in items:
         span = locate_sentence(content_text, quote)
         if span is None:
-            if gate == "F9_cta_fact":
+            if gate == qr.F9_CTA_FACT:
                 continue  # S234 round 3 — a judge quote that matches no sentence; the others are still fixed
             return None
         hit = next((o for o in out if not (span[1] <= o["start"] or span[0] >= o["end"])), None)
@@ -238,7 +239,7 @@ def plan(content_text: str, gate_ledger: list[dict]) -> Optional[list[dict]]:
 
 # AA-777 (r6 fix 2) — the gate a merged item reports as its `gate`: a product-truth gate first, so the blog's
 # attempt-3 truth cut sees an F9 claim that shares its sentence with an F17 finding.
-TRUTH_GATES = ("F1_grounding", "F9_cta_fact")
+TRUTH_GATES = (qr.F1_GROUNDING, qr.F9_CTA_FACT)
 
 
 def _span_text(content_text: str, span: tuple[int, int]) -> str:
@@ -701,7 +702,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
                                      audience=pack.get("customer_segment"), facts=wi.get("facts"))
         found = hygiene.find_issues(sentence, ctx)
         if found["scope"]:
-            out.append({"gate": "F12_scope", "violations": list(found["scope"]), "blocking": False})
+            out.append({"gate": qr.F12_SCOPE, "violations": list(found["scope"]), "blocking": False})
         # S234 round 2 — leaks are blocking in the pipeline (F13_leak) but a warning on an admin's text;
         # "opens on a pronoun" is meaningless for one sentence out of its piece.
         warn_hygiene += found["hygiene"]
@@ -714,9 +715,9 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         elif any(hygiene.restates(sentence, s["clean"], ignore) for s in near):
             warn_hygiene.append(f"may restate a nearby sentence: '{sentence[:200]}'")
     if repeat_block:
-        out.append({"gate": "F13_hygiene", "violations": repeat_block, "blocking": True})
+        out.append({"gate": qr.F13_HYGIENE, "violations": repeat_block, "blocking": True})
     if warn_hygiene:
-        out.append({"gate": "F13_hygiene", "violations": warn_hygiene, "blocking": False})
+        out.append({"gate": qr.F13_HYGIENE, "violations": warn_hygiene, "blocking": False})
     return out
 
 

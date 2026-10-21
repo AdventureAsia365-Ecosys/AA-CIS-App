@@ -28,8 +28,9 @@ import re
 from typing import Optional
 
 from services.acp_content_writing.hygiene import _is_cta, sentence_spans, tidy_after_cut
+from services.quality import registry as qr
 
-GATE = "F19_authenticity"
+GATE = qr.F19_AUTHENTICITY
 
 _CHECKED_KINDS = ("prose", "bullet", "faq_a", "faq_q", "heading")
 

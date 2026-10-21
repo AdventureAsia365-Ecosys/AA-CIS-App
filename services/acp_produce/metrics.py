@@ -52,6 +52,7 @@ import boto3
 import structlog
 
 from services.acp_produce.models import Piece
+from services.quality import registry as qr
 
 logger = structlog.get_logger()
 
@@ -71,7 +72,7 @@ def piece_metric_data(piece: Piece) -> list[dict]:
         {"MetricName": "repair_count", "Value": float(piece.repair_count), "Unit": "Count"},
     ]
 
-    f1_result = next((g for g in piece.gate_ledger if g.gate == "F1_grounding"), None)
+    f1_result = next((g for g in piece.gate_ledger if g.gate == qr.F1_GROUNDING), None)
     if f1_result is not None:
         metrics.append({
             "MetricName": "grounding_score",
