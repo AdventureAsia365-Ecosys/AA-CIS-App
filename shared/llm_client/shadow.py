@@ -36,6 +36,18 @@ def _request_hash(request: LLMRequest) -> str:
 async def _record(*, stage: str, role: str, request: LLMRequest, primary: LLMResponse,
                   shadow_model: str, shadow: Optional[LLMResponse], error: Optional[str],
                   latency_ms: int) -> None:
+    # AA-927: the shadow's cost row first, on its own — it was written only after the llm_shadow_log
+    # INSERT succeeded, so a failed comparison write lost the cost of a billed call. record_call never
+    # raises.
+    if shadow is not None:
+        await record_call(
+            stage=stage, role=role, model=shadow.model_used,
+            tokens_in=shadow.input_tokens, tokens_out=shadow.output_tokens,
+            cost_usd=shadow.cost_usd,
+            quality_signal={"shadow": True, "shadow_of": primary.model_used},
+            stop_reason=shadow.stop_reason, account=shadow.satellite_account,
+            fallback_used=shadow.fallback_used, provider=shadow.provider,
+        )
     conn = await asyncpg.connect(get_database_url(), ssl="require")
     try:
         await conn.execute(
@@ -47,15 +59,6 @@ async def _record(*, stage: str, role: str, request: LLMRequest, primary: LLMRes
         )
     finally:
         await conn.close()
-    if shadow is not None:
-        await record_call(
-            stage=stage, role=role, model=shadow.model_used,
-            tokens_in=shadow.input_tokens, tokens_out=shadow.output_tokens,
-            cost_usd=shadow.cost_usd,
-            quality_signal={"shadow": True, "shadow_of": primary.model_used},
-            stop_reason=shadow.stop_reason, account=shadow.satellite_account,
-            fallback_used=shadow.fallback_used, provider=shadow.provider,
-        )
 
 
 def record_shadow_sync(**kwargs) -> None:

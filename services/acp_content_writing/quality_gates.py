@@ -60,7 +60,7 @@ from services.acp_shared.citation_tags import TAG_RE, strip_citation_tags as _st
 from services.acp_shared.grounding import find_novel_numeric_claims
 from services.acp_shared.offered import STATUS_PREFIX
 from services.acp_shared.real_questions import is_off_meaning, single_word_places
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import record_billed_failure_sync, record_call_sync
 
 logger = structlog.get_logger()
 
@@ -646,6 +646,23 @@ def _log_t10_judge_call(raw: dict, *, gate: str, passed: bool, extra: dict) -> N
     )
 
 
+def _log_t10_billed_unusable(raw: dict, *, error: str) -> None:
+    """AA-927: the F9 judge reply was billed but no verdict came out of it (unparseable, or the
+    post-parse code raised). One billed_unusable row: no `passed` / `status` (the ok-rate keys) and the
+    gate under `f9_gate`, so F9 pass-rate readers do not count it."""
+    from shared.llm_client.pricing import calc_cost
+    model = raw.get("model_used", "unknown")
+    in_tok, out_tok = raw.get("input_tokens", 0), raw.get("output_tokens", 0)
+    cost = raw.get("cost_usd")
+    record_billed_failure_sync(
+        stage="t10_judge", role="judge", error=error,
+        billed=[{"model": model, "tokens_in": in_tok, "tokens_out": out_tok,
+                 "cost_usd": cost if cost is not None else calc_cost(model, in_tok, out_tok),
+                 "stop_reason": raw.get("stop_reason"), "account": raw.get("account"),
+                 "fallback_used": raw.get("fallback_used")}],
+        quality_signal_extra={"f9_gate": "F9_brand_voice", "prompt_version": F9_PROMPT_VERSION})
+
+
 # ---------------------------------------------------------------- F9-adjusted (brand/CTA/voice judge)
 
 # AA-768 — the F9 judge now reads the source and returns unsupported_claims; on the Luna route
@@ -990,6 +1007,25 @@ def gate_brand_voice(
     voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
     meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
 ) -> list[GateResultLite]:
+    """F9 (see `_gate_brand_voice`). AA-927: when the judge reply came back (billed) and the verdict code
+    then raised, its llm_call_log row is written here (billed_unusable) before the error propagates."""
+    ledger: dict = {"raw": None, "logged": False}
+    try:
+        return _gate_brand_voice(content_text, cta, brand_rubric_text, source_text=source_text, voice=voice,
+                                 seo_title=seo_title, meta_description=meta_description,
+                                 passed_sentences=passed_sentences, _ledger=ledger)
+    except Exception as e:
+        if ledger["raw"] is not None and not ledger["logged"]:
+            _log_t10_billed_unusable(ledger["raw"], error=f"{type(e).__name__}: {e}")
+        raise
+
+
+def _gate_brand_voice(
+    content_text: str, cta: str, brand_rubric_text: str, source_text: Optional[str] = None,
+    voice: Optional[list[str]] = None, seo_title: Optional[str] = None,
+    meta_description: Optional[str] = None, passed_sentences: Optional[set[str]] = None,
+    _ledger: Optional[dict] = None,
+) -> list[GateResultLite]:
     """AA-450-02 gate map, F9 row — see module docstring for the rubric-field/failure-code
     choices. `cta_clear` also absorbs N7's dropped F6 literal-CTA-substring check (semantic
     judgment, since T9's CTA is a free-text tenant value, not N7's one fixed brand phrase — no
@@ -1111,11 +1147,17 @@ def gate_brand_voice(
     )
     try:
         raw = invoke_judge(_JUDGE_SYSTEM_PROMPT, user_prompt, max_tokens=_F9_MAX_TOKENS, stage="t10_judge")
+        _ledger = _ledger if _ledger is not None else {}
+        _ledger["raw"] = raw
         data, repaired = parse_judge_json_checked(raw["text"])
         if not isinstance(data, dict):  # a JSON list / scalar is no verdict
             raise ValueError(f"judge reply is a JSON {type(data).__name__}, not an object")
     except Exception as e:
         logger.warning("t10_f9_judge_unavailable", error=str(e))
+        if _ledger and _ledger.get("raw") is not None:
+            # AA-927: the reply was billed — log it (no verdict keys) before degrading.
+            _log_t10_billed_unusable(_ledger["raw"], error=str(e))
+            _ledger["logged"] = True
         # Fail-closed on the BLOCKING (product-truth) side; brand-style passes (no signal to
         # flag on). AA-613 — same two-result shape as the success path below.
         return [
@@ -1249,6 +1291,7 @@ def gate_brand_voice(
                                 "prompt_version": F9_PROMPT_VERSION,
                                 "piece_tag_free": not TAG_RE.search(content_text),
                                 "reasonless": reasonless, "sticky_pass": len(sticky)})
+    _ledger["logged"] = True  # AA-927
     # AA-777 — a verdict adds what it passed only when it is whole and every flag it raised points at a
     # body sentence: not reasonless, not salvaged by json_repair or cut at max_tokens (the entries
     # after the cut would read as passed), and no claim / broken-sentence quote that locates nowhere.

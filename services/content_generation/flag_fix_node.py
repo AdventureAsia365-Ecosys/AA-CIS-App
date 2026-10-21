@@ -16,7 +16,7 @@ from shared.secrets import get_database_url
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from .seo_meta_utils import (best_meta_candidate, meta_in_band, meta_complete_sentence,
                              meta_has_forbidden, fit_seo_meta_final, fit_seo_title,
                              SEO_META_FORBIDDEN, SEO_META_MIN, SEO_META_MAX, SEO_TITLE_MAX)
@@ -254,6 +254,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
     best = (post or "").strip()
     cur = best
     for attempt in range(1, _META_REREPAIR_MAX_ATTEMPTS + 1):
+        resp, logged = None, False  # AA-927: a billed reply always gets its row (see the except)
         try:
             too = "too short" if len(cur) < _MIN else ("too long" if len(cur) > _MAX else "out of band")
             prompt = (
@@ -298,6 +299,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 account=getattr(resp, "satellite_account", None),
                 fallback_used=getattr(resp, "fallback_used", None),
             )
+            logged = True
             if landed:
                 logger.info("meta_rerepair_landed", attempt=attempt,
                             before_len=len(best), after_len=len(guarded))
@@ -308,6 +310,9 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
             best = guarded or best
         except Exception as e:
             logger.warning("meta_rerepair_attempt_failed_graceful", attempt=attempt, error=str(e))
+            if not logged:
+                record_unusable_sync(resp, stage=stage, role="writer", error=e,
+                                     quality_signal_extra={"attempt": attempt, "mode": "meta_rerepair"})
             break
     logger.info("meta_rerepair_exhausted", attempts=_META_REREPAIR_MAX_ATTEMPTS,
                 final_len=len(best))
@@ -443,6 +448,7 @@ def flag_fix_node(state: dict) -> dict:
             "fix_pass_fields":  [],
         }
 
+    resp, logged = None, False  # AA-927: the fix call's row is written even when parsing it fails
     try:
         fix_keys = _build_fix_keys(state)
 
@@ -605,6 +611,7 @@ Keep all other fields unchanged."""
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None),
         )
+        logged = True
 
         new_generated = dict(current_content)
         for k, v in fixed_fields.items():
@@ -674,6 +681,9 @@ Keep all other fields unchanged."""
 
     except Exception as e:
         logger.warning("flag_fix_failed_graceful", error=str(e))
+        if not logged:
+            record_unusable_sync(resp, stage=stage_for(state, "s1_flag_fix"), role="writer", error=e,
+                                 tenant_id=state.get("tenant_id"))
         return {
             **state,
             "fix_pass_applied": False,
