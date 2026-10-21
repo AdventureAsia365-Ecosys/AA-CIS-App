@@ -39,9 +39,10 @@ def _codes(day_bodies, tour):
     return codes, m
 
 
-def _src(sentence, day_text, inclusions="", exclusions="", source_all=None):
+def _src(sentence, day_text, inclusions="", exclusions="", source_all=None, n_days=None):
     ok, _why = mc.meal_claim_sourced(sentence, day_text=day_text, inclusions=inclusions, exclusions=exclusions,
-                                     source_all=source_all if source_all is not None else (day_text or "") + inclusions)
+                                     source_all=source_all if source_all is not None else (day_text or "") + inclusions,
+                                     n_days=n_days)
     return ok
 
 
@@ -98,13 +99,64 @@ def test_one_day_source_is_its_own_day():
     ("Stay with all meals, bonfire, professional guide", "Dinner is served in the camp."),
     ("Full board on the trek", "Lunch is provided on the trail."),
     ("Half board accommodation", "Dinner is included at the lodge."),
-    ("11 nights accommodation, 11 breakfasts and 8 dinners (Lunch is not included)",
-     "Overnight accommodation is provided; breakfast is included."),
-    ("Included: * English speaking guide * Chinese lunch", "A Chinese lunch is included with the tour."),
+    ("Hotel accommodation with daily breakfast", "Breakfast is served at the hotel."),
+    ("Breakfast every morning, airport transfers", "Breakfast is included before the drive."),
+    ("Breakfast, lunch and dinner daily", "Lunch is provided on the trail."),
 ])
 def test_inclusions_source_the_meal(inclusions, sentence):
     assert _src(sentence, "Visit the old town.", inclusions=inclusions)
     assert _src(sentence, None, inclusions=inclusions)       # INCLUSIONS also cover a day that cannot be matched
+
+
+def test_an_inclusions_count_covers_every_day_only_when_it_reaches_the_tour_length():
+    inc = "11 nights accommodation, 11 breakfasts and 8 dinners (Lunch is not included)"
+    breakfast = "Overnight accommodation is provided; breakfast is included."
+    assert _src(breakfast, "Visit the old town.", inclusions=inc, n_days=11)
+    assert not _src(breakfast, "Visit the old town.", inclusions=inc, n_days=12)
+    assert not _src(breakfast, "Visit the old town.", inclusions=inc)                  # length unknown
+    # 8 dinners on an 11-day tour: only a day whose own text has dinner is sourced.
+    assert not _src("Dinner is served at the hotel tonight.", "Free day to explore.", inclusions=inc, n_days=11)
+    assert _src("Dinner is served at the hotel tonight.", "Dinner at the hotel.", inclusions=inc, n_days=11)
+    # ... and the negated lunch is blocked even when the day mentions it.
+    assert not _src("Lunch is included.", "Lunch at a local cafe.", inclusions=inc, n_days=11)
+
+
+# B2 (review): a qualified INCLUSIONS mention, "meals as per the itinerary" or a code legend must not cover a
+# free day with no meal in its source text. Each of these cleared an invented dinner before the fix.
+@pytest.mark.parametrize("inclusions", [
+    "Meals included as per itinerary",
+    "Meals included in the itinerary",
+    "All meals included as mentioned in the itinerary",
+    "Meals included where indicated",
+    "Hotel, all meals specified in the itinerary, entrance tickets",
+    "Meals as indicated (B=Breakfast, L=Lunch, D=Dinner)",
+    "Meals as specified: B - breakfast, L - lunch, D - dinner",
+    "Accommodation; Welcome dinner; Transfers",
+    "Farewell dinner on the last night",
+    "1 dinner",
+    "Dinner on Day 2",
+    "11 nights accommodation, 11 breakfasts and 8 dinners",
+    "Included: * English speaking guide * Chinese dinner",
+])
+def test_qualified_inclusions_do_not_cover_a_free_day(inclusions):
+    assert not _src("Dinner is served at the hotel tonight.", "Free day to explore the city.",
+                    inclusions=inclusions, n_days=11)
+    assert not _src("Dinner is served at the hotel tonight.", None, inclusions=inclusions, n_days=11)
+
+
+def test_qualified_inclusions_end_to_end_keep_the_code_with_jev_off():
+    for inc in ("Meals included as per itinerary", "Accommodation; Welcome dinner; Transfers",
+                "Meals as per itinerary (B = Breakfast, L = Lunch, D = Dinner)"):
+        tour = _tour(["Arrive in Jaipur.", "Free day to explore the city.", "Depart."], inclusions=inc)
+        codes, _m = _codes([(2, "Dinner is served at the hotel tonight.")], tour)
+        assert CODE in codes, inc
+
+
+def test_a_qualified_inclusion_still_counts_through_the_same_day():
+    assert _src("A Chinese lunch is included with the tour.", "Visit the Forbidden City and enjoy a Chinese lunch.",
+                inclusions="Included: * English speaking guide * Chinese lunch")
+    assert _src("A welcome dinner is served at the hotel.", "Arrive. Welcome dinner at the hotel.",
+                inclusions="Welcome dinner")
 
 
 def test_inclusions_end_to_end_clear_the_code():
@@ -166,6 +218,71 @@ def test_a_negated_source_meal_is_not_sourced(day_text):
     assert not _src("Dinner is included tonight.", day_text)
 
 
+# B1 (review): a negation in brackets belongs to the clause before it. Real source sentences (AA-925 export).
+@pytest.mark.parametrize("day_text,sentence", [
+    ("01:00 PM – Lunch Break Enjoy lunch at a recommended local restaurant or 5-star hotel (optional, not included). "
+     "Relax.", "Lunch is included at a recommended local restaurant."),
+    ("Proceed to Sagada for lunch at a local restaurant (own account). Then enjoy a walk.",
+     "Lunch is served at a local restaurant in Sagada."),
+    ("Dinner at the night market (own expense).", "Dinner is served at the night market."),
+    ("Stop for lunch at a local restaurant (not included).", "Lunch is included at a local restaurant."),
+    ("Dinner (not inclusive).", "Dinner is included."),
+])
+def test_a_bracketed_negation_negates_the_meal_before_it(day_text, sentence):
+    assert not _src(sentence, day_text)
+
+
+def test_a_bracketed_negation_end_to_end_keeps_the_code_with_jev_off():
+    day = ("01:00 PM – Lunch Break Enjoy lunch at a recommended local restaurant or 5-star hotel "
+           "(optional, not included). Relax.")
+    tour = _tour(["Arrive in Jaipur.", day, "Depart."])
+    codes, _m = _codes([(2, "Lunch is included at a recommended local restaurant.")], tour)
+    assert CODE in codes
+
+
+def test_a_bracket_that_names_its_own_meal_negates_only_that_meal():
+    inc = "11 breakfasts and 11 dinners (Lunch is not included)"
+    assert _src("Dinner is served at the hotel.", "Free day.", inclusions=inc, n_days=11)
+    assert not _src("Lunch is served at the hotel.", "Free day.", inclusions=inc, n_days=11)
+
+
+def test_a_plain_bracket_is_read_inline():
+    assert _src("Dinner is served at the lodge.", "Dinner at the lodge (local specialities).")
+
+
+# Weaker spots (review): a mention that says the meal is NOT provided is no source for "included".
+@pytest.mark.parametrize("day_text", [
+    "Free time for lunch at your leisure in the old town.",
+    "Your guide can recommend a restaurant for dinner.",
+    "Dinner with a local family can be arranged on request.",
+    "Lunch on own.",
+    "Lunch on your own.",
+    "Self-pay lunch at the market.",
+    "Dinner payable locally.",
+    "Dinner excl.",
+    "Lunch is available at the visitor centre for purchase.",
+    "Rest before tomorrow's dinner cruise.",
+    "Walk around the neighborhood and a group dinner is on your own choice.",
+    "Shopping time for the day. Today\u2019s dinner is on your own.",
+    "Lunch is payable directly unless booked in advance.",
+    "Dinner at the hotel restaurant, which is famous for local food and wine, is not included.",
+])
+def test_a_not_provided_mention_does_not_source_the_meal(day_text):
+    meal = "Lunch" if "unch" in day_text else "Dinner"
+    assert not _src(f"{meal} is included.", day_text)
+
+
+def test_on_your_own_far_from_the_meal_still_keeps_it():
+    # The cue window stays: "exploring ... on your own, relaxing ..., and having a group dinner".
+    assert _src("A group dinner is arranged near the hotel.",
+                "Explore the local village on your own, relax at the hot springs in the hotel, "
+                "and have a group dinner near the hotel.")
+
+
+def test_no_extra_charge_is_not_a_negation():
+    assert _src("Dinner is served with no extra charge.", "Dinner with the host family at no extra cost.")
+
+
 def test_inclusions_negation_blocks_the_meal():
     assert not _src("Lunch is included.", None, inclusions="11 breakfasts and 8 dinners (Lunch is not included)")
 
@@ -224,6 +341,52 @@ def test_generic_meals_claim_needs_some_source_meal():
 def test_claimed_meals_drop_the_negated_part():
     claimed, generic = mc.claimed_meals("Breakfast is included; lunch is at your own expense.")
     assert claimed == {"breakfast"} and generic is False
+
+
+# B3 (review): on the output side only an explicit exclusion drops a meal from the claim.
+@pytest.mark.parametrize("sentence", [
+    "Breakfast is included at the hotel, and dinner is served at a restaurant not far from the river.",
+    "Breakfast is included and dinner is served with no extra charge.",
+    "Breakfast is included; dinner is served at a spot you will never forget.",
+    "Breakfast is included and dinner is served without delay at the lodge.",
+    "No meals are included except breakfast and dinner.",
+])
+def test_an_unrelated_negation_does_not_hide_an_invented_meal(sentence):
+    assert "dinner" in mc.claimed_meals(sentence)[0]
+    for day in ("After breakfast, drive to the lake. Meals: B", "After breakfast, drive to the lake and walk."):
+        assert not _src(sentence, day)
+
+
+def test_an_unrelated_negation_end_to_end_keeps_the_code_with_jev_off():
+    tour = _tour(["Arrive.", "After breakfast, drive to the lake. Meals: B", "Depart."])
+    codes, _m = _codes([(2, "Breakfast is included at the hotel, and dinner is served at a restaurant "
+                            "not far from the river.")], tour)
+    assert CODE in codes
+
+
+@pytest.mark.parametrize("sentence,claimed", [
+    ("Breakfast is included; lunch is at your own expense.", {"breakfast"}),
+    ("Breakfast and dinner are included, lunch is at own expense.", {"breakfast", "dinner"}),
+    ("Breakfast is included, and an optional dinner can be booked.", {"breakfast"}),
+    ("Breakfast is included; lunch is not included.", {"breakfast"}),
+    ("Breakfast is included (lunch at your own expense).", {"breakfast"}),
+])
+def test_an_explicit_exclusion_drops_only_its_meal(sentence, claimed):
+    assert mc.claimed_meals(sentence)[0] == claimed
+
+
+# Times in words are times too: never inferred.
+@pytest.mark.parametrize("sentence", ["Lunch is served at noon.", "Breakfast is served at 7 o'clock.",
+                                      "Dinner is served at half past seven."])
+def test_a_time_in_words_must_be_in_the_source(sentence):
+    day = "Breakfast at the hotel. Lunch at the farm. Dinner at the farm."
+    assert not _src(sentence, day)
+    assert _src(sentence, day + " Meals at noon, 7 o'clock and half past seven.")
+
+
+def test_a_clock_time_must_be_on_the_same_source_day():
+    src_all = "DAY 1: Dinner at 19:30.\nDAY 2: Dinner at the farm."
+    assert not _src("Dinner is served at 19:30 at the farm.", "Dinner at the farm.", source_all=src_all)
 
 
 # ── 4. Jev wiring and what still guards numbers ──────────────────────────────────────────────────────────
