@@ -675,6 +675,10 @@
     "capability": "spend.write",
     "module": "api.routers.admin_llm_ops"
   },
+  "POST /admin/decisions/jev-credit/check": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_decisions"
+  },
   "POST /admin/decisions/jev-credit/topups": {
     "capability": "spend.write",
     "module": "api.routers.admin_decisions"
