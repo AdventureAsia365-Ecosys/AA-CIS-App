@@ -3,7 +3,8 @@ keep / merge pair set (false merges measured: the costly error, lesson S245 / AA
 
 The labelled pairs are a regression set: a rule change that merges a KEEP pair or stops merging a MERGE pair fails
 here. Seeded from the S237 UI verify (Kuang Si named several ways in one Laos tour) and from places of the Laos and
-Vietnam tours; extend it with every pair the AA-847 probe (section 4) or an admin fix turns up.
+Vietnam tours, plus the review S246 wrong merges (same local name, different kinds: bridge / market / lake / night
+market / old town); extend it with every pair the AA-847 probe (section 4) or an admin fix turns up.
 """
 from __future__ import annotations
 
@@ -44,6 +45,29 @@ LABELLED_PAIRS = [
     # same distinctive name 3 km apart, both confirmed points: kept (the strict 2 km rule)
     (P("n1", "Nong Khiaw", "Laos", 20.5700, 102.6100, "geoapify", "point"),
      P("n2", "Nong Khiaw Viewpoint", "Laos", 20.5700, 102.6380, "geoapify", "point"), "keep"),
+    # review S246: the same local name, different kinds of place, all within 2 km — two places each
+    (P("ha1", "Hoi An Old Town", "Vietnam", 15.8771, 108.3264, "geoapify", "point"),
+     P("ha2", "Hoi An Night Market", "Vietnam", 15.8762, 108.3260, "geoapify", "point"), "keep"),
+    (P("lb1", "Long Bien Bridge", "Vietnam", 21.0430, 105.8590, "geoapify", "point"),
+     P("lb2", "Long Bien Market", "Vietnam", 21.0396, 105.8510, "geoapify", "point"), "keep"),
+    (P("hk1", "Hoan Kiem Lake", "Vietnam", 21.0288, 105.8525, "geoapify", "point"),
+     P("hk2", "Hoan Kiem Night Market", "Vietnam", 21.0350, 105.8510, "llm", "area"), "keep"),
+    (P("m1", "Mount Phousi", "Laos", 19.8924, 102.1352, "geoapify", "point"),
+     P("m3", "Phousi Market", "Laos", 19.8800, 102.1380, "llm", "area"), "keep"),
+    (P("db1", "Dong Ba Market", "Vietnam", 16.4732, 107.5880, "geoapify", "point"),
+     P("db2", "Dong Ba Bridge", "Vietnam", 16.4745, 107.5860, "geoapify", "point"), "keep"),
+    (P("bt1", "Ben Thanh Market", "Vietnam", 10.7725, 106.6980, "geoapify", "point"),
+     P("bt2", "Ben Thanh Night Market", "Vietnam", 10.7718, 106.6972, "geoapify", "point"), "keep"),
+    # a town and the built place named after it: the bare name is the town
+    (P("lp1", "Luang Prabang", "Laos", 19.8856, 102.1347, "geoapify", "point"),
+     P("lp2", "Luang Prabang Night Market", "Laos", 19.8890, 102.1360, "geoapify", "point"), "keep"),
+    (P("lb1", "Long Bien Bridge", "Vietnam", 21.0430, 105.8590, "geoapify", "point"),
+     P("lb3", "Long Bien", "Vietnam", 21.0450, 105.8600, "llm", "area"), "keep"),
+    # a natural feature and its bare name, and two spellings of one quarter: one place
+    (P("m1", "Mount Phousi", "Laos", 19.8924, 102.1352, "geoapify", "point"),
+     P("m4", "Phousi", "Laos", 19.8930, 102.1350, "llm", "area"), "merge"),
+    (P("oq1", "Hanoi Old Quarter", "Vietnam", 21.0340, 105.8500, "geoapify", "point"),
+     P("oq2", "Old Quarter, Hanoi", "Vietnam", 21.0345, 105.8505, "llm", "area"), "merge"),
 ]
 
 
@@ -162,9 +186,31 @@ def test_report_flags_each_defect_once_with_reason_codes():
     assert summary["by_country"]["Vietnam"]["tours_flagged"] == 0
     counts = v.stats_counts(summary)
     assert counts["not_a_pin.linear_feature"] == 1 and counts["tours"] == 2
-    assert set(counts) == {"tours", "tours_flagged"} | {f"{c}.{r}" for c in v.CHECKS for r in v.REASONS[c]}
+    assert set(counts) == ({"tours", "tours_flagged", "gate.items"}
+                           | {f"{c}.{r}" for c in v.CHECKS for r in v.REASONS[c]})
+    # gate: the near duplicate and the trail pin block; the spellings, the day text do not
+    assert summary["catalog"]["gate"] == {"reasons": list(v.GATE_REASONS), "items": 2, "tours": 1, "pass": False}
+    assert summary["by_country"]["Vietnam"]["gate"]["pass"] is True and counts["gate.items"] == 2
     pg = v.page(items, check="same_place", page_no=1, page_size=1)
     assert pg["total"] == 2 and len(pg["items"]) == 1
+
+
+def test_after_the_fixes_the_kuang_si_tour_passes_the_gate():
+    """The duplicate fix points Tat Kuang Si at the keeper (one pin, several spellings: same_destination_names stays,
+    informational) and the hide fix makes the trail suspect (it leaves the report): the tour passes the gate."""
+    tours = [{"source_id": "s1", "tour_id": "t1", "title": "Laos Kuang Si", "country": "Laos", "duration_raw": "1 day",
+              "itinerary": "Day 1 — Luang Prabang\nSwim at Kuang Si Falls and Tat Kuang Si."}]
+    comps = [_comp("s1", 1, "Kuang Si Falls", "d1", "Kuang Si Falls", 19.749, 101.9935),
+             _comp("s1", 1, "Tat Kuang Si", "d1", "Kuang Si Falls", 19.749, 101.9935, nn="tat kuang si")]
+    items = v.evaluate(tours, comps)
+    assert [i.reason for i in items] == ["same_destination_names"]
+    gate = v.summarize(tours, items)["catalog"]["gate"]
+    assert gate["pass"] is True and gate["items"] == 0
+    assert "same_destination_names" not in v.GATE_REASONS
+
+
+def test_gate_reasons_are_in_the_taxonomy():
+    assert set(v.GATE_REASONS) <= {r for rs in v.REASONS.values() for r in rs}
 
 
 def test_every_reason_is_in_the_taxonomy():

@@ -50,6 +50,14 @@ REASONS = {
     V4: ("no_day_text", "day_text_not_naming"),
 }
 
+# The pre-flip gate (Done-when 3: no duplicate pin, no trail pin on the map): only the findings a map viewer sees and
+# the validity fix clears. near_duplicate (two pins of one place) clears with the duplicate fix; linear_feature with
+# the hide fix (the place becomes suspect and leaves the report); area_feature with the area fix (stored as an area).
+# Informational, never blocking: same_destination_names (one destination, several spellings — one pin; it is what a
+# near_duplicate turns into once the in-tour dedupe or the fix points the spellings at the keeper, e.g. Kuang Si),
+# V1 duration and V4 day text (content defects with their own fixes, not a map defect).
+GATE_REASONS = ("near_duplicate", "linear_feature", "area_feature")
+
 NEAR_KM = 2.0
 NEAR_KM_LOOSE = 5.0
 # Words that name a kind of place in the languages of the catalog, not one place (Lao wat / tat / that / phou / nam /
@@ -64,6 +72,46 @@ ENGLISH_KIND_WORDS = frozenset({
     "lower", "north", "south", "east", "west", "night", "market", "museum", "palace", "royal", "garden", "gardens",
     "square", "bridge"})
 SAME_PLACE_GENERIC = LOCAL_KIND_WORDS | ENGLISH_KIND_WORDS
+
+# Kind of place a name says it is (English and local words; geomatch.tokens drops some of these — falls, cave, lake,
+# river, temple … — so the kinds are read from the raw words). Two names that say different kinds are two places even
+# with the same distinctive name: "Long Bien Bridge" / "Long Bien Market", "Hoan Kiem Lake" / "Hoan Kiem Night
+# Market", "Ben Thanh Market" / "Ben Thanh Night Market", "Mount Phousi" / "Phousi Market" (review S246). Synonyms
+# share a kind ("Tat Kuang Si" = "Kuang Si Falls", "Mount Phousi" = "Phou Si Hill"). A kind only ever keeps two names
+# apart, so a missing synonym costs a missed merge, never a wrong one. Local words that also start proper names (ho:
+# Ho Chi Minh, ban: Ban Gioc, phu: Phu Quoc, khao: Khao Sok) are left out: they would only cause missed merges.
+_KIND_OF_WORD = {
+    **dict.fromkeys(("falls", "fall", "waterfall", "waterfalls", "cascade", "cascades", "tat", "thac"), "waterfall"),
+    **dict.fromkeys(("cave", "caves", "grotto", "tham"), "cave"),
+    **dict.fromkeys(("mount", "mt", "mountain", "mountains", "hill", "hills", "peak", "phou", "nui", "doi"),
+                    "mountain"),
+    **dict.fromkeys(("lake", "pond", "lagoon", "reservoir"), "lake"),
+    **dict.fromkeys(("river", "stream", "nam", "song", "xe", "huay"), "river"),
+    **dict.fromkeys(("island", "islands", "isle", "ko", "koh"), "island"),
+    **dict.fromkeys(("village",), "village"),
+    **dict.fromkeys(("valley",), "valley"),
+    **dict.fromkeys(("pass",), "pass"),
+    **dict.fromkeys(("beach",), "beach"),
+    **dict.fromkeys(("park",), "park"),
+    **dict.fromkeys(("town", "city", "muang", "mueang"), "town"),
+    **dict.fromkeys(("market", "markets", "cho"), "market"),
+    **dict.fromkeys(("bridge", "cau"), "bridge"),
+    **dict.fromkeys(("museum",), "museum"),
+    **dict.fromkeys(("palace",), "palace"),
+    **dict.fromkeys(("garden", "gardens"), "garden"),
+    **dict.fromkeys(("square",), "square"),
+    **dict.fromkeys(("temple", "temples", "wat", "vat", "chua", "den", "pagoda", "monastery", "shrine"), "temple"),
+    **dict.fromkeys(("stupa", "that", "thap"), "stupa"),
+    **dict.fromkeys(("street", "road", "trail"), "street"),
+    **dict.fromkeys(("wall", "gate", "fort", "citadel"), "fort"),
+    **dict.fromkeys(("statue", "monument", "memorial", "mausoleum", "tomb"), "monument"),
+}
+# Kinds whose bare name usually IS the feature ("Hoan Kiem" = Hoan Kiem Lake, "Kuang Si" = the falls): one side
+# naming such a kind and the other none can be one place. Every other kind is a built place inside a town or
+# district of the same name ("Luang Prabang Night Market" is not "Luang Prabang", "Long Bien Bridge" is not the Long
+# Bien district): a bare name never merges with it.
+BARE_NAME_KINDS = frozenset({"waterfall", "cave", "mountain", "lake", "river", "island", "village", "valley", "pass",
+                             "beach", "park", "town"})
 
 _DURATION_RE = re.compile(r"(\d+)\s*-?\s*days?")
 _CANONICAL_RE = re.compile(r"(?:^|\n)Day\s+(\d+)\s+—")
@@ -120,12 +168,40 @@ def distinctive_tokens(name: Optional[str]) -> list[str]:
     return [t for t in geomatch.tokens(name or "") if t not in SAME_PLACE_GENERIC]
 
 
+def place_kinds(name: Optional[str]) -> frozenset[str]:
+    """The kinds of place a name says it is (see _KIND_OF_WORD). "night market", "old town" / "old quarter" /
+    "ancient town" and "national park" are kinds of their own: a night market is not the day market next to it, an
+    old town is not the town."""
+    words = re.findall(r"[a-z0-9]+", _strip((name or "").lower()))
+    out = {_KIND_OF_WORD[w] for w in words if w in _KIND_OF_WORD}
+    pairs = set(zip(words, words[1:]))
+    if ("night", "market") in pairs or ("night", "markets") in pairs:
+        out.discard("market")
+        out.add("night_market")
+    if pairs & {("old", "town"), ("old", "quarter"), ("ancient", "town"), ("old", "city")}:
+        out.discard("town")
+        out.add("old_town")
+    if ("national", "park") in pairs:
+        out.discard("park")
+        out.add("national_park")
+    return frozenset(out)
+
+
+def same_kind(a: Optional[str], b: Optional[str]) -> bool:
+    """The two names can be one place by kind: both name the same kinds, or one names none and the other only kinds
+    whose bare name is the feature (BARE_NAME_KINDS)."""
+    ka, kb = place_kinds(a), place_kinds(b)
+    if ka and kb:
+        return ka == kb
+    return (ka or kb) <= BARE_NAME_KINDS
+
+
 def same_name(a: Optional[str], b: Optional[str]) -> bool:
-    """The same distinctive name: equal token sets, or the same letters run together ("Kuangsi" / "Kuang Si";
-    "Mount Phousi" / "Phou Si Hill", compared with the local kind words kept). A name with no distinctive token
-    never matches."""
+    """The same distinctive name of the same kind: equal token sets, or the same letters run together ("Kuangsi" /
+    "Kuang Si"; "Mount Phousi" / "Phou Si Hill", compared with the local kind words kept), and no different kinds
+    ("Long Bien Bridge" is not "Long Bien Market"). A name with no distinctive token never matches."""
     ta, tb = distinctive_tokens(a), distinctive_tokens(b)
-    if not ta or not tb:
+    if not ta or not tb or not same_kind(a, b):
         return False
     if set(ta) == set(tb) or "".join(ta) == "".join(tb):
         return True
@@ -323,7 +399,8 @@ def summarize(tours: list[dict], items: list[Item]) -> dict:
     """Counts per check and reason, catalog-wide and per country (tours with ≥ 1 finding, findings)."""
     def empty():
         return {"tours": 0, "tours_flagged": 0,
-                "checks": {ch: {"items": 0, "tours": 0, "reasons": {r: 0 for r in REASONS[ch]}} for ch in CHECKS}}
+                "checks": {ch: {"items": 0, "tours": 0, "reasons": {r: 0 for r in REASONS[ch]}} for ch in CHECKS},
+                "gate": {"reasons": list(GATE_REASONS), "items": 0, "tours": 0, "pass": True}}
     total, per = empty(), {}
     for t in tours:
         c = str(t.get("country") or "-")
@@ -345,13 +422,17 @@ def summarize(tours: list[dict], items: list[Item]) -> dict:
     for c, s in flagged.items():
         per[c]["tours_flagged"] = len(s)
     total["tours_flagged"] = len(set().union(*flagged.values())) if flagged else 0
+    blocking = [it for it in items if it.reason in GATE_REASONS]
+    for bucket, sel in [(total, blocking)] + [(per[c], [it for it in blocking if str(it.country or "-") == c])
+                                             for c in per]:
+        bucket["gate"].update(items=len(sel), tours=len({it.source_id for it in sel}), **{"pass": not sel})
     return {"catalog": total, "by_country": dict(sorted(per.items()))}
 
 
 def stats_counts(summary: dict) -> dict:
     """The compact counts stored in geo.graph_build.stats['validity'] (trend on /admin/places)."""
     cat = summary["catalog"]
-    return {"tours": cat["tours"], "tours_flagged": cat["tours_flagged"],
+    return {"tours": cat["tours"], "tours_flagged": cat["tours_flagged"], "gate.items": cat["gate"]["items"],
             **{f"{ch}.{r}": n for ch in CHECKS for r, n in cat["checks"][ch]["reasons"].items()}}
 
 

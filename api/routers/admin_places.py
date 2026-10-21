@@ -13,7 +13,7 @@ AA-847 (content-validity gate, ADR 0007 decision 10, design §5):
   GET  /admin/places/coverage
        per country: live tours, built (geo.tour_build ok / partial), in the current graph, with a stop on every
        extracted day — the gate for removing the TripPlanner places fallback.
-  POST /admin/places/validity/fix {check, country?, source_id?, dry_run = true, undo?}
+  POST /admin/places/validity/fix {check, country?, source_id?, dry_run = true, undo?, fingerprint?}
        services/places/validity_fix.py; apply writes an audit row with the prior values, undo restores them.
 
 Every response that shows coordinates carries the Geoapify / OpenStreetMap attribution (ADR 0007).
@@ -186,6 +186,7 @@ class ValidityFixRequest(BaseModel):
     source_id: Optional[str] = None
     dry_run: bool = True
     undo: Optional[str] = None
+    fingerprint: Optional[str] = None     # the dry run's; apply refuses (409) when the plan changed since
 
 
 @router.post("/validity/fix", summary="AA-847 — fix content-validity findings (dry run by default; audit + undo)")
@@ -209,6 +210,8 @@ async def validity_fix(body: ValidityFixRequest, request: Request, x_admin_secre
                         raise HTTPException(status_code=422, detail=f"check must be one of {vf.CHECKS}")
                     fix = await vf.plan(conn, body.check, country=body.country or None,
                                         source_id=body.source_id or None)
+                    if not body.dry_run:
+                        vf.check_fingerprint(fix, body.fingerprint)
                     out = {**fix, "dry_run": True} if body.dry_run else {**await vf.apply(conn, fix, actor=actor),
                                                                          "dry_run": False}
     except vf.FixError as e:

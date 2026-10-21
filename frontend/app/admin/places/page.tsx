@@ -22,7 +22,8 @@ type CoverageRow = {
 };
 type CoverageTotals = Omit<CoverageRow, "country">;
 type CheckCounts = { items: number; tours: number; reasons: Record<string, number> };
-type Bucket = { tours: number; tours_flagged: number; checks: Record<string, CheckCounts> };
+type Gate = { reasons: string[]; items: number; tours: number; pass: boolean };
+type Bucket = { tours: number; tours_flagged: number; checks: Record<string, CheckCounts>; gate?: Gate };
 type Item = {
   check: string; reason: string; country: string | null; source_id: string; tour_id: string; title: string | null;
   day: number | null; names: string[]; destination_ids: string[]; detail: string | null; keeper_id: string | null;
@@ -38,7 +39,7 @@ type FixChange = { destination_id: string; name: string; keeper_name?: string; b
 type FixResult = {
   check?: string; findings?: number; changes?: FixChange[]; skipped?: { name: string; why: string }[];
   cross_app_references?: Record<string, number | string>; dry_run: boolean; applied?: number; audit_id?: string;
-  restored?: number;
+  restored?: number; fingerprint?: string;
 };
 
 const PAGE_SIZE = 50;
@@ -211,6 +212,12 @@ export default function PlacesPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginBottom: 18 }}>
             <StatCard label="Tours flagged" value={`${cat.tours_flagged}/${cat.tours}`} icon={<AlertTriangle size={16} />}
                       accent={cat.tours_flagged ? A.gold : A.green} sub={country || "whole catalog"} />
+            {cat.gate && (
+              <StatCard label="Flip gate" value={cat.gate.pass ? "Pass" : `${cat.gate.items} blocking`}
+                        icon={cat.gate.pass ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                        accent={cat.gate.pass ? A.green : A.gold}
+                        sub={`${cat.gate.tours} tours · ${cat.gate.reasons.join(", ")}`} />
+            )}
             {validity.checks.map(ch => (
               <StatCard key={ch} label={CHECK_LABEL[ch] ?? ch} value={String(cat.checks[ch]?.items ?? 0)}
                         sub={`${cat.checks[ch]?.tours ?? 0} tours`} />
@@ -263,7 +270,7 @@ export default function PlacesPage() {
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 {fix.result.dry_run && ((fix.result.changes?.length ?? 0) > 0 || (fix.result.restored ?? 0) > 0) && (
                   <Btn variant="primary" size="sm" disabled={!!busy}
-                       onClick={() => { if (window.confirm("Apply this fix? It is audited and can be undone.")) runFix({ ...fix.body, dry_run: false }); }}>
+                       onClick={() => { if (window.confirm("Apply this fix? It is audited and can be undone.")) runFix({ ...fix.body, dry_run: false, fingerprint: fix.result.fingerprint }); }}>
                     Apply
                   </Btn>
                 )}

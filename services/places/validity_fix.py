@@ -16,9 +16,13 @@ Never touches an admin-fixed row (geo_status or located_by 'manual'). Apply writ
 the transaction; `undo=<audit id>` restores exactly those rows if they still hold the fixed values (else 409), and
 writes its own audit row. Apply and undo enqueue a debounced tour_graph_build (stops / legs through a merged
 destination are missing until it lands).
+
+Apply re-plans inside its transaction. The dry run returns a `fingerprint` of its planned changes; an apply that
+sends it back is refused (409, nothing written) when the plan it would apply now differs from what the admin saw.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Optional
 
@@ -112,6 +116,19 @@ async def _cross_app(conn, ids: list[str]) -> dict:
     return out
 
 
+def fingerprint(changes: list) -> str:
+    """A stable digest of planned changes (ids, before / after, keeper, repointed rows), for the dry-run / apply
+    check."""
+    return hashlib.sha256(json.dumps(changes, sort_keys=True, default=str).encode()).hexdigest()[:24]
+
+
+def check_fingerprint(fix: dict, expected: Optional[str]) -> None:
+    """409 when the admin's dry run planned something else than what apply would write now."""
+    if expected and expected != fix["fingerprint"]:
+        raise FixError(409, {"error": "the data changed since the dry run; run the dry run again",
+                             "expected": expected, "now": fix["fingerprint"], "changes_now": len(fix["changes"])})
+
+
 async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Optional[str] = None) -> dict:
     if check not in CHECKS:
         raise FixError(422, f"check must be one of {CHECKS}")
@@ -139,7 +156,7 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
                 changes.append({"destination_id": d, "name": row["name"], "country": row["country"],
                                 "before": before, "after": after})
         return {"check": check, "country": country, "source_id": source_id, "findings": len(items),
-                "changes": changes, "skipped": skipped}
+                "changes": changes, "skipped": skipped, "fingerprint": fingerprint(changes)}
     # duplicate_place
     comp_count: dict[str, int] = {}
     for c in comps:
@@ -164,7 +181,7 @@ async def plan(conn, check: str, *, country: Optional[str] = None, source_id: Op
                             "repointed": moved})
     merged = [c["destination_id"] for c in changes]
     return {"check": check, "country": country, "source_id": source_id, "findings": len(items),
-            "changes": changes, "skipped": skipped,
+            "changes": changes, "skipped": skipped, "fingerprint": fingerprint(changes),
             "cross_app_references": await _cross_app(conn, merged) if merged else {}}
 
 

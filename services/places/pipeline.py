@@ -238,10 +238,14 @@ async def _in_tour_keepers(conn, dest_ids: set, comps: list, comp_dest: dict) ->
     places = [validity.Place(i, b["name"], b["country"], float(b["lat"]), float(b["lng"]), b["located_by"],
                              b["geo_precision"], b["review_reason"], b["result_type"], n_comp.get(i, 0))
               for i, b in briefs.items() if b.get("lat") is not None and b.get("lng") is not None]
-    remap = {}
+    remap, pairs = {}, []
     for group in validity.clusters(places):
         for p in group[1:]:
             remap[p.destination_id] = group[0].destination_id
+            pairs.append(f"{p.name} -> {group[0].name}")
+    if pairs:
+        # no audit row (the tour's own rows are rebuilt each run); the pairs are logged so a wrong merge is traceable
+        logger.info("place_in_tour_duplicates_merged", pairs=pairs[:20], n=len(pairs))
     return remap
 
 

@@ -12,7 +12,8 @@ component, an overnight, a geo.place_name key, a place card and a photo, so ever
     row with the prior values, enqueues a graph build; the store lookup of the merged key answers the keeper (no
     new geocode, no new row); undo restores every row and cannot run twice;
   * not_a_pin / linear_feature: precision area; a linear feature is also hidden (suspect + linear_feature);
-  * coverage lists the country; the fix route refuses an unknown check.
+  * coverage lists the country; the fix route refuses an unknown check;
+  * apply with the dry run's fingerprint is refused (409, nothing written) when the plan changed in between.
 """
 import json
 import os
@@ -215,7 +216,7 @@ async def test_duplicate_merge_dry_run_apply_lookup_and_undo(env):
         assert await c.fetchval("SELECT duplicate_of FROM shared.destinations WHERE id = $1::uuid", dup) is None
         assert (await _holders(c, dup))["place_card"] == 1
 
-    done = await _fix(env, **scope, dry_run=False)
+    done = await _fix(env, **scope, dry_run=False, fingerprint=dry["fingerprint"])
     assert done["applied"] == 1 and done["audit_id"] and done["graph_job"]
     async with env.pool.acquire() as c:
         assert await c.fetchval("SELECT duplicate_of::text FROM shared.destinations WHERE id = $1::uuid", dup) == keep
@@ -280,6 +281,22 @@ async def test_area_and_linear_fixes_and_undo(env):
     async with env.pool.acquire() as c:
         assert await _dest_row(c, env.d["trail"]) == {"geo_precision": "point", "geo_status": "ok",
                                                       "review_reason": None}
+
+
+async def test_apply_refuses_when_the_data_changed_since_the_dry_run(env):
+    scope = {"check": "not_a_pin", "country": env.country, "source_id": env.group}
+    dry = await _fix(env, **scope)
+    assert [c["destination_id"] for c in dry["changes"]] == [env.d["plateau"]] and dry["fingerprint"]
+    async with env.pool.acquire() as c:          # an admin pins it by hand between the dry run and the apply
+        await c.execute("UPDATE shared.destinations SET located_by = 'manual' WHERE id = $1::uuid", env.d["plateau"])
+    with pytest.raises(HTTPException) as e:
+        await _fix(env, **scope, dry_run=False, fingerprint=dry["fingerprint"])
+    assert e.value.status_code == 409 and e.value.detail["changes_now"] == 0
+    async with env.pool.acquire() as c:
+        assert (await _dest_row(c, env.d["plateau"]))["geo_precision"] == "point"
+        assert await c.fetchval("SELECT count(*) FROM acp_shared.audit_log WHERE actor = $1 AND action = $2",
+                                env.actor, "places.validity_fix.not_a_pin") == 0
+        await c.execute("UPDATE shared.destinations SET located_by = 'geoapify' WHERE id = $1::uuid", env.d["plateau"])
 
 
 async def test_fix_refuses_an_unknown_check_and_a_bad_undo_id(env):

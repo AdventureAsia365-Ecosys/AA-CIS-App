@@ -480,12 +480,17 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   text (proposed display rule, Nghiệp's decision); an **area** feature (national park, delta, plateau, coast,
   gorge) is `area` even when Geoapify confirms a point. A name that names a point on the feature ("River Kwai
   Bridge", "Kuang Si Falls") stays a point. `place_extract` maps a tour's in-tour duplicates (same distinctive name,
-  same country, ≤ 2 km, ≤ 5 km when either point is the model's) to one keeper. `services/places/validity.py` is
-  the deterministic report (reason codes V1 duration / V2 same place / V3 not a pin / V4 day text; labelled
-  keep / merge pairs in `tests/unit/test_aa847_validity.py`), run after every `tour_graph_build` (counts in
-  `geo.graph_build.stats.validity`) and on `/admin/places` (Coverage + Content validity tabs;
-  `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, audit row with the
-  prior values, `undo=<audit id>`). A duplicate merge sets `duplicate_of` and repoints the CIS rows
+  same kind of place, same country, ≤ 2 km, ≤ 5 km when either point is the model's) to one keeper; names of
+  different kinds stay two places ("Long Bien Bridge" / "Long Bien Market", "Ben Thanh Market" / "Ben Thanh Night
+  Market"), and a bare name never merges with a built place named after it ("Luang Prabang" / "Luang Prabang Night
+  Market"). `services/places/validity.py` is the deterministic report (reason codes V1 duration / V2 same place / V3
+  not a pin / V4 day text; labelled keep / merge pairs in `tests/unit/test_aa847_validity.py`), run after every
+  `tour_graph_build` (counts in `geo.graph_build.stats.validity`) and on `/admin/places` (Coverage + Content
+  validity tabs; `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, apply
+  refused with 409 when the plan changed since the dry run's `fingerprint`, audit row with the prior values,
+  `undo=<audit id>`). The **flip gate** (`validity.GATE_REASONS`, `summary.gate`) counts only map defects the fixes
+  clear: `near_duplicate`, `linear_feature`, `area_feature`; `same_destination_names` (one pin, several spellings),
+  V1 and V4 are informational. A duplicate merge sets `duplicate_of` and repoints the CIS rows
   (`geo.tour_place`, `geo.tour_day`, `geo.place_name`, `acp_shared.place_card`, `shared.place_photo`); Booking and
   TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged
   key with its keeper, so a rebuild does not recreate the duplicate.
