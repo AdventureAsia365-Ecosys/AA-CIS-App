@@ -47,6 +47,7 @@ from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
 from services.acp_shared.grounding import find_novel_numeric_claims
+from services.quality import registry as qr
 
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],
@@ -133,7 +134,7 @@ def _piece_filters(tenant_id, channel, status, gate, q) -> tuple[str, list]:
 _LABEL_TABLE = "acp_shared.content_piece_label"
 LABELS = ("as_is", "light", "heavy", "reject")
 _LABEL_FILTERS = LABELS + ("labelled", "unlabelled")
-DEFECT_CLASSES = ("fact", "voice", "format", "ai_phrasing")  # AA-783 criteria pack columns
+DEFECT_CLASSES = tuple(qr.chips()["defect_classes"])  # AA-783 criteria pack columns (fact, voice, format, ai_phrasing)
 DEFECT_LEVELS = ("none", "light", "heavy")
 LABELS_UNAVAILABLE = ("Labels are not available yet: migration 231 (acp_shared.content_piece_label) has not "
                       "been applied on this database.")
@@ -230,16 +231,16 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
             if not isinstance(v, str):
                 continue
             spans: list[tuple[str, str]] = []
-            if gate == "F1_grounding":
+            if gate == qr.F1_GROUNDING:
                 m = sentence_repair._F1_QUOTE_RE.search(v)
                 if m:
                     spans.append((m.group(1), v.split(" not present", 1)[0]))
-            elif gate in ("F2_brand_forbidden", "F11_brand_name"):
+            elif gate in (qr.F2_BRAND_FORBIDDEN, qr.F11_BRAND_NAME):
                 m = _BRAND_RE.search(v)
                 if m:
                     spans.append((m.group(2), m.group(1)))
-            elif gate in ("F12_scope", "F13_hygiene", "F13_leak", "F13_repeat", "F14_social_shape", "F14_first_line",
-                          "F15_voice", "F15_voice_warn", "F17_trip_fact", "F18_rarity"):
+            elif gate in (qr.F12_SCOPE, qr.F13_HYGIENE, qr.F13_LEAK, qr.F13_REPEAT, qr.F14_SOCIAL_SHAPE,
+                          qr.F14_FIRST_LINE, qr.F15_VOICE, qr.F15_VOICE_WARN, qr.F17_TRIP_FACT, qr.F18_RARITY):
                 # S234 — "<problem>: '<sentence>'"; a title/meta scope hit is not in the text. F14's
                 # word-count line quotes nothing and is left out; its first line / hashtags are quoted.
                 # F15_voice quotes its sentence the same way (plan C4).
@@ -252,10 +253,10 @@ def highlights(content_text: str, gate_ledger: list, flags: list) -> list[dict]:
                                     "problem": m.group(1)[:300]})
                     else:
                         spans.append((quote, m.group(1)))
-            elif gate == "F9_cta_fact" and "unsupported claim(s):" in v:
+            elif gate == qr.F9_CTA_FACT and "unsupported claim(s):" in v:
                 for sent, claim, why in sentence_repair._F9_CLAIM_RE.findall(v.split("unsupported claim(s):", 1)[1]):
                     spans.append((sent, f"{claim.strip()} — {why.strip()}"))
-            elif gate == "F9_brand_style":
+            elif gate == qr.F9_BRAND_STYLE:
                 m = _F9_PHRASE_RE.search(v)
                 for phrase in _QUOTED_RE.findall(m.group(1)) if m else []:
                     i = text.find(phrase)
@@ -572,7 +573,7 @@ async def apply_sentence(piece_id: str, body: SentenceApplyBody, request: Reques
             broken = text_integrity.edit_findings(old_text, new_text, wi.get("cta"),
                                                   (wi.get("brand_pack") or {}).get("brand_name"))
             if broken:
-                warnings.append({"gate": "F13_repeat", "violations": broken, "blocking": False})
+                warnings.append({"gate": qr.F13_REPEAT, "violations": broken, "blocking": False})
             min_chars, _ = _length_bounds_for_channel(row["channel"])
             if not new_text.strip():
                 raise HTTPException(status_code=422, detail="This would leave the piece empty")
@@ -1012,15 +1013,15 @@ def t2_flag(sections: list[dict], tour: dict, pack_or_words) -> list[dict]:
         for s in sec["sentences"]:
             novel = find_novel_numeric_claims(s["sentence"], source_texts)
             if novel:
-                s["problems"].append({"gate": "T3_grounding", "blocking": True,
+                s["problems"].append({"gate": qr.T3_GROUNDING, "blocking": True,
                                       "problem": f"number(s) {novel} not in the source tour"})
             claims = [c["phrase"] for c in service_level_claims(s["sentence"], *source_texts)]
             if claims:
-                s["problems"].append({"gate": "T3_grounding", "blocking": True,
+                s["problems"].append({"gate": qr.T3_GROUNDING, "blocking": True,
                                       "problem": f"service claim(s) {claims} not in the source tour"})
             hits = [w for w in words if has_word(s["sentence"], w)]
             if hits:
-                s["problems"].append({"gate": "FORBIDDEN_WORD", "blocking": True,
+                s["problems"].append({"gate": qr.T2_FORBIDDEN_WORD, "blocking": True,
                                       "problem": f"forbidden word(s): {', '.join(hits)}"})
             if s["problems"]:
                 flagged.append({**s, "field": sec["field"], "index": sec["index"],
@@ -1046,16 +1047,16 @@ def t2_check_replacement(replacement: str, tour: dict, pack: dict, field_text: s
     if not sentence:
         return checks
     novel = find_novel_numeric_claims(sentence, source_texts)
-    if novel and not any(c["gate"] == "F1_grounding" for c in checks):
-        checks.append({"gate": "T3_grounding", "blocking": True,
+    if novel and not any(c["gate"] == qr.F1_GROUNDING for c in checks):
+        checks.append({"gate": qr.T3_GROUNDING, "blocking": True,
                        "violations": [f"number(s) {novel} not in the source tour"]})
     claims = [c["phrase"] for c in service_level_claims(sentence, *source_texts)]
     if claims:
-        checks.append({"gate": "T3_grounding", "blocking": True,
+        checks.append({"gate": qr.T3_GROUNDING, "blocking": True,
                        "violations": [f"service claim(s) {claims} not in the source tour"]})
     hits = [w for w in tenant_blocked_words({**(pack or {}), "forbidden_words": []}) if has_word(sentence, w)]
     if hits:
-        checks.append({"gate": "FORBIDDEN_WORD", "blocking": True,
+        checks.append({"gate": qr.T2_FORBIDDEN_WORD, "blocking": True,
                        "violations": [f"forbidden word(s): {', '.join(hits)}"]})
     return checks
 
@@ -1249,7 +1250,7 @@ async def apply_tour_sentence(version_id: str, body: TourSentenceApplyBody, requ
                 raise HTTPException(status_code=422, detail="This would leave the tour with no highlights")
             broken = text_integrity.edit_findings(old_text, new_text, None, pack.get("brand_name"))
             if broken:
-                warnings.append({"gate": "F13_repeat", "violations": broken, "blocking": False})
+                warnings.append({"gate": qr.F13_REPEAT, "violations": broken, "blocking": False})
             rules = brand_rules_from_pack(pack)  # AA-800: T3 reads the signature words too
             added = sorted(set(_t3_structural_issues(new_rc, tour, rules))
                            - set(_t3_structural_issues(rc, tour, rules)))
