@@ -31,10 +31,13 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
   applied. 252 re-asserts the 247 definition with `DROP CONSTRAINT IF EXISTS … ADD CONSTRAINT`, so it is
   idempotent. It RAISEs while any row still has the old address or breaks the 247 rule, so the row has to be
   deleted first (Infra run-script).
-- **The guard on the E2E account (N-1, Nghiệp's call).** The proposed answer is a deny-only pin in the
-  WORKFORCE pre token trigger: for exactly `e2e-cognito@adventure.asia`, the staff groups must be exactly
-  `cis-reviewer`. CIS gets no constant back: in CIS this account is an ordinary reviewer. The pin lives in Infra
-  only.
+- **The guard on the E2E account: detective, in the E2E spec only.** `cognito-login.spec.ts` step 4a asserts
+  that the signed-in CIS principal is `reviewer` (the server-set `cis_role` display cookie from the verified
+  `/auth/verify-admin` answer) and that the admin-only `/admin/overview` sends it to `/admin/review` (proxy.ts
+  checks the verified token role). The existing Booking `no_booking_role` check covers Booking. Any widening of
+  this account fails the next run. No special case goes back into production code: a preventive pin (for
+  example in the WORKFORCE pre token trigger) would re-create the exception this work removes, so it is left
+  as Nghiệp's call (open question).
 
 ## Changed
 
@@ -46,7 +49,9 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
     display-name To. `other-recipient.eml` is unchanged.
   - `mailbox-parse.spec.ts` has a new case: a message sent straight to the mailbox (the pre-A10 shape) is not
     the E2E user's. A stray code for the old address can never be typed.
-  - `cognito-login.spec.ts` comment, and the `e2e-cognito.yml` header and prerequisites.
+  - `cognito-login.spec.ts`: header comment, and the new step 4a detective guard (CIS role must be reviewer).
+  - The `e2e-cognito.yml` header and prerequisites (comments only; still a CI file, so it gets a quick
+    independent look before merge).
   - The unit test half, as above.
 - PR-A2: see the A2 section below (added on that branch).
 
@@ -67,17 +72,19 @@ The Infra side (trigger revert, the byte-identical copy of 252, the delete scrip
 - **Hard gate.** Nothing here may be pushed until the forwarder exists and check 1 shows a forwarded mail in
   `inbound/` (H1). If H1 cannot happen, leave the exception live and park backlog row 12 under
   "Waiting on Nghiệp: DreamHost forwarder".
-- **Order:**
-  1. H1 forwarder + test mail.
-  2. H2 create the new user.
-  3. A1 merge, then dispatch `e2e-cognito.yml` on main: green, with Booking refusing.
-  4. H3 disable the old row.
-  5. A2 merge + deploy.
-  6. Infra I1 merge.
-  7. Run-script DRY RUN, then the flip PR, H4 Cognito delete, and the run-script apply.
-  8. DB Migrate apply `cis/252_admin_users_e2e_exception_removed.sql`.
-  9. Terraform Apply.
-  10. E2E again.
+- **Order (one CIS deploy; E2E stays green at every step):**
+  1. H1 forwarder (DreamHost) + a test send from `no-reply@lumiguides.it.com` (the Cognito sender) to
+     `e2e-cognito@adventure.asia`; the object must appear under `inbound/`.
+  2. H2 create the new user on the Staff page (reviewer, Booking none, invite on); the invite is the second
+     mailbox proof. No DB Migrate for a few minutes after (invite job 120 s delay, DM-11.4).
+  3. A1 merge, then dispatch `e2e-cognito.yml` on main: green as the new user, Booking refusing.
+  4. H3 disable the old row (never re-enable or sync it again), H4 delete the old Cognito user.
+  5. Infra I1a merge (trigger revert, delete script DRY RUN, aa680 constant, tf comment) + Terraform Apply
+     from main; run-script DRY RUN, flip PR, run-script apply. Keep step 4 and 5 close together.
+  6. A2 (rebased with `git rebase --onto origin/main 85d3fd8c`) merge + deploy api and worker.
+  7. Infra I1b (byte-identical copy of 252) merge, DB Migrate check + apply
+     `cis/252_admin_users_e2e_exception_removed.sql`, merge the `bot/db-schema-reference` PR.
+  8. E2E again.
 - **Local runs (A1):**
   - `npx playwright test --project=cognito tests/e2e/cognito/mailbox-parse.spec.ts`: 7 passed.
   - `pytest tests/unit/test_aa816_e2e_test_mail_exception.py`: 32 passed.

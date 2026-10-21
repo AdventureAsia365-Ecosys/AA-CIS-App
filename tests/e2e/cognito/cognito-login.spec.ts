@@ -27,6 +27,8 @@ const BOOKING_PROD_ORIGIN = 'https://booking.lumiguides.it.com';
 // Booking session cookies (AA-Booking frontend/lib/session.ts): none may hold a value after a refusal.
 const BOOKING_SESSION_COOKIES = ['bk_access', 'bk_staff_rt', 'bk_cis_session'];
 const STAFF_AUTH_HOST = 'staff-auth.lumiguides.it.com';
+// Root ADR 0006a A10: the E2E account's only CIS role. Anything wider fails the run (detective guard).
+const E2E_COGNITO_ROLE = 'reviewer';
 const SHOTS_DIR = 'tests/e2e/results/cognito';
 
 const onStaffAuth = (page: Page) => {
@@ -147,6 +149,19 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     expect(cookies.some((c) => c.name === 'cis_admin_token' && c.value !== '')).toBe(true);
     await shot(page, '04-admin-landing');
     const cisLanding = page.url();
+
+    // ── 4a. Detective guard (root ADR 0006a A10): the E2E account is an ordinary reviewer and must stay one ──
+    // Its codes sit in a CI-readable mailbox, so any widening of this account must fail the next run.
+    // cis_role is set by the server from the VERIFIED /auth/verify-admin answer at the callback (lib/cognito.ts
+    // setDisplayCookies); the admin-only Overview page is checked by proxy.ts against the verified token role.
+    const display = await page.context().cookies(CIS_PROD_ORIGIN);
+    expect(display.find((c) => c.name === 'cis_role')?.value, 'the E2E account is a CIS reviewer').toBe(
+      E2E_COGNITO_ROLE,
+    );
+    await page.goto('/admin/overview', { waitUntil: 'domcontentloaded' });
+    await page.waitForURL((u) => u.origin === CIS_PROD_ORIGIN && u.pathname.startsWith('/admin/review'), {
+      timeout: 30000,
+    });
 
     // ── 4b. AA-680: the same WORKFORCE user (CIS reviewer, NO booking-* group) is refused by Booking ──
     // Booking's callback asks the Booking API GET /booking/staff/me with the new token; the API answers 403
