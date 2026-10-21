@@ -68,6 +68,15 @@ _CALLS_SQL = f"""
     WHERE stage = '{STAGE}' AND created_at >= $1 AND quality_signal->>'aa729_run' = $2
     GROUP BY 1, 2, 3, 4
 """
+# AA-927: per real stage, split by role / provider / gateway-attempt rows, for the call-vs-row reconciliation.
+_STAGE_SQL = f"""
+    SELECT quality_signal->>'aa729_stage' AS real_stage, role, provider,
+           (quality_signal ? 'gateway_attempt') AS gateway_attempt,
+           count(*)::int AS n, COALESCE(sum(cost_usd), 0)::float AS usd
+    FROM shared.llm_call_log
+    WHERE stage = '{STAGE}' AND created_at >= $1 AND quality_signal->>'aa729_run' = $2
+    GROUP BY 1, 2, 3, 4
+"""
 _JEV_SQL = """
     SELECT job_id::text AS job_id, question_key, zone, count(*)::int AS n
     FROM shared.decision_log
@@ -394,6 +403,49 @@ def _calls_by_job(rows) -> dict[str, dict]:
     return out
 
 
+LLM_ROLES = ("writer", "judge", "validate")
+
+
+def _is_llm_row(r) -> bool:
+    """A row the gateway's LLMClient.generate() counter must match: an LLM role, not Jev (typesafe), not a
+    gateway-attempt row (billed attempts the gateway discarded — the caller never saw them)."""
+    return r["provider"] != "typesafe" and r["role"] in LLM_ROLES and not r.get("gateway_attempt")
+
+
+def reconcile(stage_rows, spend: dict) -> dict:
+    """AA-927: calls made in-process vs llm_call_log rows, per real stage, SIGNED (over-logging shows as a
+    positive diff, under-logging as negative), plus the cost of the same filter on both sides.
+    `stage_rows` = `_STAGE_SQL` rows; `spend` = `evalpatch.SPEND.snapshot()`."""
+    rows = [dict(r) for r in stage_rows]
+    calls = {k: v["responses"] for k, v in (spend.get("by_stage") or {}).items()}
+    logged: dict[str, int] = {}
+    logged_usd = 0.0
+    for r in rows:
+        if _is_llm_row(r):
+            st = r["real_stage"] or "?"
+            logged[st] = logged.get(st, 0) + r["n"]
+            logged_usd += r["usd"] or 0.0
+    stages = sorted(set(calls) | set(logged))
+    diff = {st: logged.get(st, 0) - calls.get(st, 0) for st in stages}
+    local_usd = float(spend.get("usd") or 0.0)
+    gateway = [r for r in rows if r.get("gateway_attempt")]
+    embed_rows = [r for r in rows if r["role"] == "embed"]
+    return {
+        "local_llm_calls_by_stage": {st: calls.get(st, 0) for st in stages},
+        "provider_requests_by_stage": {k: v["provider_requests"] for k, v in (spend.get("by_stage") or {}).items()},
+        "logged_llm_rows_by_stage": {st: logged.get(st, 0) for st in stages},
+        "rows_minus_calls_by_stage": diff,
+        "rows_minus_calls_nonzero": {st: d for st, d in diff.items() if d},
+        "gateway_attempt_rows": sum(r["n"] for r in gateway),
+        "gateway_attempt_usd": round(sum(r["usd"] or 0.0 for r in gateway), 6),
+        "local_llm_usd": round(local_usd, 6),
+        "logged_llm_usd": round(logged_usd, 6),
+        "cost_diff_usd": round(logged_usd - local_usd, 6),
+        "local_embed_calls": int(spend.get("embed_calls") or 0),
+        "logged_embed_rows": sum(r["n"] for r in embed_rows),
+    }
+
+
 async def run(args) -> dict:
     from scripts.aa729 import evalpatch
     from scripts.aa729.common import load_json, save_output
@@ -511,6 +563,7 @@ async def run(args) -> dict:
             job_ids = [r["job_id"] for r in results.values()]
             jev_rows = await conn.fetch(_JEV_SQL, since, job_ids) if job_ids else []
             total = float(await conn.fetchval(_SPEND_SQL, since, run_id) or 0.0)
+            stage_rows = await conn.fetch(_STAGE_SQL, since, run_id)
     finally:
         await pool.close()
 
@@ -530,9 +583,12 @@ async def run(args) -> dict:
                     "all": stratum_metrics(rows, args.mode)},
         "totals": {"cost_usd_llm_call_log": round(total, 6), "local_llm_usd": round(evalpatch.SPEND.usd, 6),
                    "local_llm_calls": evalpatch.SPEND.calls,
-                   "logged_llm_rows": sum(c["llm_rows"] for c in calls.values()),
                    "cost_source": f"shared.llm_call_log stage={STAGE} quality_signal.aa729_run={run_id}"},
     })
+    rec = reconcile(stage_rows, evalpatch.SPEND.snapshot())
+    result["totals"].update(rec)
+    result["totals"]["logged_llm_rows"] = sum(rec["logged_llm_rows_by_stage"].values())
+    # kept for continuity with S245 results; AA-927 Done-when reads the SIGNED per-stage diff + cost_diff_usd
     result["totals"]["unlogged_llm_calls"] = max(result["totals"]["local_llm_calls"]
                                                  - result["totals"]["logged_llm_rows"], 0)
     save_output(result, f"{out_key}.json", upload=not args.no_upload)

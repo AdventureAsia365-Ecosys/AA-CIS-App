@@ -35,8 +35,8 @@ from services.content_generation.stages import T7_DEBATE_JUDGE
 import structlog
 
 from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_contested
-from services.content_generation.brand_fit import has_brand_signals, score_candidate_fit
-from shared.llm_client.call_log import record_call
+from services.content_generation.brand_fit import billed_calls, has_brand_signals, score_candidate_fit
+from shared.llm_client.call_log import record_billed_failure, record_call
 from shared.llm_client.decide import decide
 
 if TYPE_CHECKING:
@@ -283,6 +283,11 @@ async def apply_debate(
             except Exception as exc:
                 logger.warning("debate_brand_fit_check_failed", segment_id=candidate.segment_id,
                                 route_id=candidate.route_id, error=str(exc))
+                # AA-927: a judge reply billed but unusable (malformed JSON) still gets its cost row.
+                # Only score_candidate_fit attaches billed calls, and only when it raised (its own
+                # success row is written right after it returns, above).
+                await record_billed_failure(stage=T7_DEBATE_JUDGE, role="judge", billed=billed_calls(exc),
+                                            error=str(exc), tenant_id=str(tenant_id))
 
         if cut_score is None:
             surviving.append(candidate)

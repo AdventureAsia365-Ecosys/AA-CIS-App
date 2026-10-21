@@ -20,10 +20,13 @@ app code changes. `install(run_id)`:
 3. **No eval lesson reaches `shared.pipeline_lessons`** (`flag_fix_node._write_lessons_safe` → no-op).
 4. **No shadow A/B call** (`LLMClient._start_shadow` → no-op): no extra spend, no `llm_shadow_log` row.
 5. **Counts in-process spend and stops at the cap mid-sample** (`LLMClient.generate` wrapper sums
-   `LLMResponse.cost_usd` and calls). Before every call it checks `BUDGET`: logged spend (refreshed by the
-   scorer every few seconds) + in-process spend since + one call margin per concurrent sample; at the cap it
-   raises CostCapReached and records the sample's job id in `BUDGET.tripped_jobs`, so the scorer reports that
-   sample as an error, not as a verdict.
+   `LLMResponse.cost_usd` and calls, per real stage: responses, `provider_requests` and usd — AA-927;
+   `shared.llm_client.embed._call`, looked up at call time by `embed()`, is wrapped too and counts every
+   embedding provider response, so `content_embedding`'s import-time `embed` binding is covered).
+   Before every call it checks `BUDGET`: logged spend (refreshed by the scorer every few seconds) +
+   in-process spend since + one call margin per concurrent sample; at the cap it raises CostCapReached
+   and records the sample's job id in `BUDGET.tripped_jobs`, so the scorer reports that sample as an
+   error, not as a verdict.
 
 `install` refuses to run (RuntimeError) when a patched name is gone or an INSERT's column list changed,
 so a refactor of the gateway cannot silently send eval rows to real stages or tenants.
@@ -109,17 +112,38 @@ def relabel_hits_sql(original: str) -> str:
 
 
 class Spend:
-    """In-process LLM spend (LLMClient.generate only — Jev and embeddings are counted from the log)."""
+    """In-process LLM spend. `usd` / `calls` = LLMClient.generate() responses (what the budget reads);
+    `by_stage` = the same per real stage (AA-927: responses, provider_requests, usd); `embed_calls` /
+    `embed_usd` = embedding provider responses (`embed._call` returns; one per embed() return). Jev is
+    reconciled against shared.decision_log separately."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.usd = 0.0
         self.calls = 0
+        self.by_stage: dict[str, dict] = {}
+        self.embed_calls = 0
+        self.embed_usd = 0.0
 
-    def add(self, usd: float) -> None:
+    def add(self, usd: float, stage: str | None = None, provider_requests: int = 1) -> None:
         with self._lock:
             self.usd += float(usd or 0.0)
             self.calls += 1
+            d = self.by_stage.setdefault(stage or "unstaged", {"responses": 0, "provider_requests": 0, "usd": 0.0})
+            d["responses"] += 1
+            d["provider_requests"] += int(provider_requests or 1)
+            d["usd"] += float(usd or 0.0)
+
+    def add_embed(self, usd: float) -> None:
+        with self._lock:
+            self.embed_calls += 1
+            self.embed_usd += float(usd or 0.0)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"usd": self.usd, "calls": self.calls,
+                    "by_stage": {k: dict(v) for k, v in self.by_stage.items()},
+                    "embed_calls": self.embed_calls, "embed_usd": self.embed_usd}
 
 
 CALL_MARGIN_USD = 0.10  # one model call's worst case (a Sonnet rewrite); kept free per concurrent sample
@@ -200,9 +224,11 @@ def install(run_id: str) -> None:
     from services.acp_content_writing import service as t9_service
     from services.content_generation import flag_fix_node
     from shared.llm_client import call_log, decide
+    from shared.llm_client import embed as embed_mod
     from shared.llm_client.client import LLMClient
 
     for owner, name in ((call_log, "_INSERT_SQL"), (decide, "_LOG_SQL"), (decide, "_HITS_SQL"),
+                        (embed_mod, "_call"),
                         (t9_service, "_finalize_piece"),
                         (t9_service, "_insert_placeholder_piece"), (flag_fix_node, "_write_lessons_safe"),
                         (LLMClient, "_start_shadow"), (LLMClient, "generate")):
@@ -223,8 +249,18 @@ def install(run_id: str) -> None:
     def generate(self, request):
         BUDGET.check(call_log.current_job_id())
         resp = original_generate(self, request)
-        SPEND.add(getattr(resp, "cost_usd", 0.0))
+        SPEND.add(getattr(resp, "cost_usd", 0.0), stage=getattr(request, "stage", None),
+                  provider_requests=getattr(resp, "provider_requests", 1) or 1)
         return resp
 
     LLMClient.generate = generate
+
+    original_embed_call = embed_mod._call
+
+    def embed_call(*args, **kwargs):
+        resp = original_embed_call(*args, **kwargs)
+        SPEND.add_embed(getattr(resp, "cost_usd", 0.0))
+        return resp
+
+    embed_mod._call = embed_call
     _INSTALLED["run_id"] = run_id

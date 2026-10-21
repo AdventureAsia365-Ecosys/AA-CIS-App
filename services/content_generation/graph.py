@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from .prompts import parse_source_day_word_counts
 from .batch_prompt import (
     build_brand_diff_block, build_s1_system_prompt, build_s1_user_prompt, prompt_version_of,
@@ -142,15 +142,20 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
             str(day_item.get("title") or ""), str(day_item.get("body") or ""), source_words,
             stage=stage, voice_hint=voice_hint,  # AA-792: T2 keeps the tenant voice; None for A1
         )
-        extra_cost += resp.cost_usd
-        extra_read += resp.cache_read_tokens
-        extra_write += resp.cache_write_tokens
-        nudges_used += 1
-        day_item["title"], day_item["body"] = new_title, new_body
-        actual_words_after = len(new_body.split())
-        record["nudged"] = True
-        record["actual_words_after_nudge"] = actual_words_after
-        record["ratio_after_nudge"] = round(actual_words_after / source_words, 3)
+        try:
+            extra_cost += resp.cost_usd
+            extra_read += resp.cache_read_tokens
+            extra_write += resp.cache_write_tokens
+            nudges_used += 1
+            day_item["title"], day_item["body"] = new_title, new_body
+            actual_words_after = len(new_body.split())
+            record["nudged"] = True
+            record["actual_words_after_nudge"] = actual_words_after
+            record["ratio_after_nudge"] = round(actual_words_after / source_words, 3)
+        except Exception as e:
+            # AA-927: the nudge was billed — its row is written before the error goes on up.
+            record_unusable_sync(resp, stage=stage, role="writer", error=e)
+            raise
         # AA-505 — quality_signal = did the nudge actually land inside clamp? Real,
         # computed right here, not a fabricated placeholder.
         record_call_sync(
@@ -461,6 +466,7 @@ def generate_node(state: ContentState) -> ContentState:
     )
 
     resp = None
+    logged = False  # AA-927: the writer row of `resp` is written (see the except branch)
     try:
         resp = client.generate(request)
         # Strip markdown fences nếu LLM wrap JSON trong ```json ... ```
@@ -488,6 +494,7 @@ def generate_node(state: ContentState) -> ContentState:
                 account=getattr(resp, "satellite_account", None),
                 fallback_used=getattr(resp, "fallback_used", None),
             )
+            logged = True
             return {**state, "generated": {}, "is_branded": is_branded,
                     "cost_usd": state.get("cost_usd", 0) + resp.cost_usd,
                     "prompt_version": prompt_version,
@@ -523,6 +530,7 @@ def generate_node(state: ContentState) -> ContentState:
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None),
         )
+        logged = True
         return {
             **state,
             "generated":  generated,
@@ -542,6 +550,9 @@ def generate_node(state: ContentState) -> ContentState:
         }
     except Exception as e:
         logger.error("generation_failed", error=str(e))
+        if resp is not None and not logged:
+            # AA-927: billed, then the post-call code raised — a billed_unusable row (no json_parsed).
+            record_unusable_sync(resp, stage=gen_stage, role="writer", error=e, tenant_id=tenant_id)
         return {**state, "generated": {}, "is_branded": is_branded,
                 "prompt_version": prompt_version,
                 "cost_usd": state.get("cost_usd", 0) + (resp.cost_usd if resp else 0),

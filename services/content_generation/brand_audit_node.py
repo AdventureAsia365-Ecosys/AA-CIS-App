@@ -7,7 +7,7 @@ import structlog
 from services.content_generation.stages import stage_for
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
-from shared.llm_client.call_log import record_call_sync
+from shared.llm_client.call_log import record_call_sync, record_unusable_sync
 from services.content_generation.brand_fit import itinerary_digest
 from .brand_standards import AA_BRAND_IDENTITY_PROMPT, AA_COWORK_STRUCTURE_PROMPT
 
@@ -317,6 +317,7 @@ def brand_audit_node(state: dict) -> dict:
     else:
         identity = AA_BRAND_IDENTITY_PROMPT
 
+    resp, logged = None, False  # AA-927
     try:
         pre_codes = pre_audit_checks(generated, state.get("tour"), tenant_id=state.get("tenant_id"),
                                  is_tenant_rewrite=bool(state.get("is_tenant_rewrite")))
@@ -394,6 +395,7 @@ Return JSON only per schema."""
             stop_reason=stop_reason, account=resp.satellite_account,
             fallback_used=resp.fallback_used, provider=resp.provider,
         )
+        logged = True
         return {
             **state,
             "brand_audit_status": result["status"],
@@ -409,6 +411,9 @@ Return JSON only per schema."""
         # never saw could publish (S200: Luna dropped `status`; S207: OpenAI out of credit).
         # manual_check blocks publish (_is_publishable) and sends the tour to the Review Queue.
         logger.warning("brand_audit_failed_manual_check", error=str(e)[:500])
+        if not logged:
+            # AA-927: a billed reply that broke the schema still gets its cost row (no `status` key).
+            record_unusable_sync(resp, stage=stage_for(state, "s1_brand_audit"), role="judge", error=e)
         return {
             **state,
             "brand_audit_status": "manual_check",

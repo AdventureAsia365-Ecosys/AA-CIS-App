@@ -13,7 +13,9 @@ actually passes and why.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
+import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Iterator, Optional
@@ -193,17 +195,194 @@ def record_call_sync(**kwargs) -> None:
     """Sync wrapper — same "already running inside asyncio.to_thread(), safe to asyncio.run()
     here" reasoning as role_config.py::get_stage_config_sync(), and the same one real exception
     (`s1_from_atom.py::_call_claude_satellite()`, called directly from async code, no
-    `to_thread()`). Unlike the config read, a log write's result is never needed synchronously —
-    when a running loop is detected, this schedules the write as a background task
-    (`asyncio.ensure_future`) instead of blocking, rather than spinning up a worker thread just
-    to wait on a fire-and-forget write."""
-    try:
-        asyncio.get_running_loop()
-        asyncio.ensure_future(record_call(**kwargs))
+    `to_thread()`).
+
+    AA-927: when a running loop is detected, the write runs on a short-lived NON-daemon thread with
+    its own `asyncio.run()` (`_in_background`). It used to be `asyncio.ensure_future(...)` on the
+    caller's loop with no reference kept: an unreferenced task can be garbage-collected, and the
+    caller's `asyncio.run()` cancels every pending task when its loop closes, so the row of an
+    already-billed call was lost. The common path (no running loop) is unchanged."""
+    if _loop_running():
+        _in_background(record_call, kwargs)
         return
-    except RuntimeError:
-        pass  # no running loop — the common path, asyncio.run() below is safe
     try:
         asyncio.run(record_call(**kwargs))
     except Exception as e:
         logger.warning("llm_call_log_write_failed_sync", stage=kwargs.get("stage"), error=str(e))
+
+
+def _loop_running() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+# AA-927: background writes started under a running loop. Strong references until each ends.
+_PENDING_THREADS: set[threading.Thread] = set()
+_PENDING_LOCK = threading.Lock()
+
+
+def _in_background(coro_fn, kwargs: dict) -> None:
+    """Run `coro_fn(**kwargs)` on its own non-daemon thread, inside a COPY of the caller's contextvars
+    (the bound job id and tenant are part of the row; a plain thread does not inherit them)."""
+    ctx = contextvars.copy_context()
+
+    def run() -> None:
+        try:
+            asyncio.run(coro_fn(**kwargs))
+        except Exception as e:  # noqa: BLE001 — fire-and-forget: never raise out of a log write
+            logger.warning("llm_call_log_write_failed_sync",
+                           stage=kwargs.get("stage") or ((kwargs.get("rows") or [{}])[0] or {}).get("stage"),
+                           error=str(e))
+        finally:
+            with _PENDING_LOCK:
+                _PENDING_THREADS.discard(threading.current_thread())
+
+    t = threading.Thread(target=ctx.run, args=(run,), name="llm-call-log-write", daemon=False)
+    with _PENDING_LOCK:
+        _PENDING_THREADS.add(t)
+    t.start()
+
+
+def wait_for_pending_writes(timeout: float = 10.0) -> None:
+    """Join the background writes started under a running loop (tests, scripts)."""
+    with _PENDING_LOCK:
+        threads = list(_PENDING_THREADS)
+    for t in threads:
+        t.join(timeout)
+
+
+# ── AA-927: several rows at once, and billed calls whose reply was unusable ─────────────────────────
+
+_ROW_FIELDS = ("stage", "role", "model", "tokens_in", "tokens_out", "cost_usd", "quality_signal",
+               "tenant_id", "content_piece_id", "angle_gate_request_id", "stop_reason", "account",
+               "fallback_used", "provider")
+
+
+def _insert_args(row: dict) -> tuple:
+    clean_model, provider = _normalize_model_provider(row.get("model") or "unknown", row.get("provider"))
+    return (resolve_tenant(row.get("tenant_id")), row["stage"], row["role"], clean_model, row.get("tokens_in"),
+            row.get("tokens_out"), row.get("cost_usd"), json.dumps(row.get("quality_signal") or {}),
+            row.get("content_piece_id"), row.get("angle_gate_request_id"), row.get("stop_reason"),
+            row.get("account"), row.get("fallback_used"), provider, current_job_id())
+
+
+async def record_calls(rows: list[dict]) -> None:
+    """AA-927: N llm_call_log rows (each a dict of `record_call`'s keyword arguments) on ONE connection,
+    in one transaction — the rows of one judge verdict (AA-714 repeat, AA-801 median3) land together or
+    not at all. Uses the module `_INSERT_SQL`, looked up at call time like `record_call` (the AA-729
+    harness relabels it). Swallows and logs every error, like `record_call`."""
+    rows = [r for r in rows or [] if r]
+    if not rows:
+        return
+    for r in rows:
+        unknown = set(r) - set(_ROW_FIELDS)
+        if unknown:
+            raise TypeError(f"record_calls: unknown field(s) {sorted(unknown)}")
+    try:
+        conn = await asyncpg.connect(get_database_url(), ssl="require", timeout=15)
+        try:
+            async with conn.transaction():
+                await conn.executemany(_INSERT_SQL, [_insert_args(r) for r in rows])
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning("llm_call_log_write_failed", stage=rows[0].get("stage"), role=rows[0].get("role"),
+                       rows=len(rows), error=str(e))
+
+
+def record_calls_sync(rows: list[dict]) -> None:
+    """Sync twin of `record_calls` (same running-loop handling as `record_call_sync`). Never raises."""
+    if _loop_running():
+        _in_background(record_calls, {"rows": rows})
+        return
+    try:
+        asyncio.run(record_calls(rows))
+    except Exception as e:
+        logger.warning("llm_call_log_write_failed_sync", stage=(rows or [{}])[0].get("stage"), error=str(e))
+
+
+# The quality_signal keys admin_llm_ops._TREE_SQL reads for the ok-rate (`ok_eligible` = the row HAS
+# one of them, whatever its value). A billed-failure row or an extra judge run never carries any of
+# them, so it adds cost and a call to the stage without moving the stage's ok-rate.
+OK_RATE_KEYS = ("passed", "status", "json_parsed", "output_parsed", "landed_in_clamp",
+                "meta_landed_in_band", "required_markers_present", "produced_statement")
+
+
+def billed_record(resp, **overrides) -> dict:
+    """The billing fields of one provider response (an LLMResponse or anything shaped like it) as the
+    dict `record_billed_failure*` takes. `overrides` replace fields."""
+    rec = {
+        "model": getattr(resp, "model_used", None) or "unknown",
+        "tokens_in": getattr(resp, "input_tokens", None),
+        "tokens_out": getattr(resp, "output_tokens", None),
+        "cost_usd": float(getattr(resp, "cost_usd", 0.0) or 0.0),
+        "stop_reason": getattr(resp, "stop_reason", None),
+        "account": getattr(resp, "satellite_account", None),
+        "fallback_used": getattr(resp, "fallback_used", None),
+        "provider": getattr(resp, "provider", None) if isinstance(getattr(resp, "provider", None), str) else None,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def billed_unusable_rows(*, stage: str, role: str, billed: Optional[list], error: str,
+                         quality_signal_extra: Optional[dict] = None, tenant_id: Optional[str] = None,
+                         content_piece_id: Optional[str] = None,
+                         angle_gate_request_id: Optional[str] = None) -> list[dict]:
+    """The `record_calls` rows for billed calls whose reply ended unusable: one per `billed` record,
+    quality_signal = {**extra minus OK_RATE_KEYS, "billed_unusable": true, "error": ...}."""
+    signal = {k: v for k, v in (quality_signal_extra or {}).items() if k not in OK_RATE_KEYS}
+    signal.update({"billed_unusable": True, "error": str(error or "")[:300]})
+    return [dict(stage=stage, role=role, model=b.get("model") or "unknown", tokens_in=b.get("tokens_in"),
+                 tokens_out=b.get("tokens_out"), cost_usd=b.get("cost_usd"), quality_signal=dict(signal),
+                 tenant_id=tenant_id, content_piece_id=content_piece_id,
+                 angle_gate_request_id=angle_gate_request_id, stop_reason=b.get("stop_reason"),
+                 account=b.get("account"), fallback_used=b.get("fallback_used"), provider=b.get("provider"))
+            for b in billed or [] if b]
+
+
+async def record_billed_failure(*, stage: str, role: str, billed: Optional[list], error: str,
+                                quality_signal_extra: Optional[dict] = None, tenant_id: Optional[str] = None,
+                                content_piece_id: Optional[str] = None,
+                                angle_gate_request_id: Optional[str] = None) -> None:
+    """AA-927: one llm_call_log row per billed provider response that ended unusable (malformed reply,
+    a raise after the call). `billed` = `billed_record()` dicts; empty/None writes nothing (the call
+    failed before anything was billed). No ok-rate key on these rows (OK_RATE_KEYS)."""
+    await record_calls(billed_unusable_rows(
+        stage=stage, role=role, billed=billed, error=error, quality_signal_extra=quality_signal_extra,
+        tenant_id=tenant_id, content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id))
+
+
+def record_billed_failure_sync(*, stage: str, role: str, billed: Optional[list], error: str,
+                               quality_signal_extra: Optional[dict] = None, tenant_id: Optional[str] = None,
+                               content_piece_id: Optional[str] = None,
+                               angle_gate_request_id: Optional[str] = None) -> None:
+    """Sync twin of `record_billed_failure` (never raises)."""
+    rows = billed_unusable_rows(
+        stage=stage, role=role, billed=billed, error=error, quality_signal_extra=quality_signal_extra,
+        tenant_id=tenant_id, content_piece_id=content_piece_id, angle_gate_request_id=angle_gate_request_id)
+    if rows:
+        record_calls_sync(rows)
+
+
+def record_unusable_sync(resp, *, stage: str, role: str, error, quality_signal_extra: Optional[dict] = None,
+                         **ids) -> None:
+    """AA-927 canonical caller fallback: `resp` came back from `LLMClient.generate()` (so it was billed)
+    but the caller raised before writing its row — write a billed_unusable row for it. `resp` None = the
+    call itself failed, nothing to write. `ids` = tenant_id / content_piece_id / angle_gate_request_id."""
+    if resp is None:
+        return
+    record_billed_failure_sync(stage=stage, role=role, billed=[billed_record(resp)], error=str(error),
+                               quality_signal_extra=quality_signal_extra, **ids)
+
+
+async def record_unusable(resp, *, stage: str, role: str, error, quality_signal_extra: Optional[dict] = None,
+                          **ids) -> None:
+    """Async twin of `record_unusable_sync`."""
+    if resp is None:
+        return
+    await record_billed_failure(stage=stage, role=role, billed=[billed_record(resp)], error=str(error),
+                                quality_signal_extra=quality_signal_extra, **ids)

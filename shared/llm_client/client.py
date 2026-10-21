@@ -72,6 +72,35 @@ def _checked_json(model_label: str, value, schema: dict) -> str:
         raise RuntimeError(f"{model_label} output does not match schema {schema['name']!r}: {e}") from e
 
 
+class BilledUnusableReply(RuntimeError):
+    """AA-927: the provider billed the request(s) but the reply is unusable (schema mismatch after the
+    Converse retry, empty content, invalid JSON). `billed_usage` = one dict per billed model attempt
+    (model, account, tokens, cost — internal retries folded, `provider_requests` > 1), so the gateway can
+    write the llm_call_log row nobody else would: the caller never sees this attempt. Built with
+    `_billed_unusable()`."""
+
+    billed_usage: tuple = ()
+
+
+def _billed_unusable(message: str, billed_usage: list[dict]) -> BilledUnusableReply:
+    exc = BilledUnusableReply(message)
+    exc.billed_usage = billed_usage
+    return exc
+
+
+def _billed_usage(model_used: str, account: Optional[str], usage_totals: dict, cost: float,
+                  stop_reason: Optional[str], provider_requests: int) -> dict:
+    return {"model": model_used, "account": account, "tokens_in": usage_totals.get("tokens_in"),
+            "tokens_out": usage_totals.get("tokens_out"), "cost_usd": cost, "stop_reason": stop_reason,
+            "provider_requests": provider_requests}
+
+
+def _add_converse_usage(total: dict, usage: dict) -> None:
+    for wire, key in (("inputTokens", "in"), ("outputTokens", "out"), ("cacheReadInputTokens", "cache_read"),
+                      ("cacheWriteInputTokens", "cache_write")):
+        total[key] = total.get(key, 0) + (usage.get(wire, 0) or 0)
+
+
 def _first_tool_input(blocks: list, schema: dict, model) -> dict:
     """AA-714 — the forced-tool input from a Converse response, or raise if the model skipped it."""
     tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
@@ -103,6 +132,42 @@ def _converse_dropping_rejected_temperature(call, kwargs: dict, model_key: str):
                        action="retry_without_temperature; set supports_temperature=false in the catalog")
         kwargs["inferenceConfig"] = {k: v for k, v in inference.items() if k != "temperature"}
         return call(**kwargs)
+
+
+def _billed_usage_of(exc: BaseException) -> list:
+    """The billed attempts carried by `exc` or anything in its cause / context chain (the legacy chain
+    wraps a T3 OpenAI failure in its own RuntimeError)."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        billed = getattr(exc, "billed_usage", None)
+        if billed:
+            return list(billed)
+        exc = exc.__cause__ or exc.__context__
+    return []
+
+
+def log_gateway_billed_failure(request: LLMRequest, *, role: str, billed: list[dict], error: str,
+                               extra: Optional[dict] = None) -> None:
+    """AA-927: the gateway's own llm_call_log rows for billed-but-unusable attempts (see
+    `LLMClient._call_key_logged`): one row per billed attempt, `gateway_attempt: true`,
+    `billed_unusable: true`, no ok-rate key. Written fire-and-forget on a background thread so a slow or
+    down database never delays the route's next model. Module-level so the AA-729 harness can see it.
+    Never raises."""
+    from .call_log import _in_background, billed_unusable_rows, record_calls
+    try:
+        rows = []
+        for b in billed:
+            rows += billed_unusable_rows(
+                stage=request.stage or "unstaged", role=role, billed=[b], error=error,
+                quality_signal_extra={**(extra or {}), "gateway_attempt": True, "model": b.get("model"),
+                                      "account": b.get("account"),
+                                      **({"provider_requests": b["provider_requests"]}
+                                         if (b.get("provider_requests") or 1) > 1 else {})})
+        if rows:
+            _in_background(record_calls, {"rows": rows})
+    except Exception as e:  # noqa: BLE001 — a log write never breaks the call it records
+        logger.warning("llm_gateway_billed_failure_log_failed", stage=request.stage, error=str(e)[:200])
 
 
 class LLMClient:
@@ -167,10 +232,11 @@ class LLMClient:
         else:
             chain = [DEFAULT_MODEL_TIER]
 
+        role = (stage_cfg.role if stage_cfg and stage_cfg.role else "writer")
         if len(chain) == 1:
-            resp = self._call_key(request, chain[0], primary_acct, fallback_acct)
+            resp = self._call_key_logged(request, chain[0], primary_acct, fallback_acct, role=role, position=0)
         else:
-            resp = self._call_route(request, chain, primary_acct, fallback_acct)
+            resp = self._call_route(request, chain, primary_acct, fallback_acct, role=role)
 
         if (stage_cfg and not request.model_tier and stage_cfg.shadow_model_id
                 and random.random() * 100 < stage_cfg.shadow_sample_pct):
@@ -184,7 +250,23 @@ class LLMClient:
             return self._call_catalog_model(request, key, primary_acct)
         return self._legacy_chain(request, key, primary_acct, fallback_acct)
 
-    def _call_route(self, request: LLMRequest, chain: list, primary_acct: str, fallback_acct: str) -> LLMResponse:
+    def _call_key_logged(self, request: LLMRequest, key: str, primary_acct: str, fallback_acct: str, *,
+                         role: str, position: int, extra: Optional[dict] = None) -> LLMResponse:
+        """AA-927: `_call_key`, and when the attempt raised AFTER the provider billed it
+        (BilledUnusableReply), write that attempt's llm_call_log row here before re-raising — the caller
+        only ever sees the reply that came back, so no one else can. One row per billed attempt,
+        `billed_unusable: true`, no ok-rate key (call_log.OK_RATE_KEYS)."""
+        try:
+            return self._call_key(request, key, primary_acct, fallback_acct)
+        except Exception as e:
+            billed = _billed_usage_of(e)
+            if billed:
+                log_gateway_billed_failure(request, role=role, billed=billed, error=str(e),
+                                           extra={"position": position, **(extra or {})})
+            raise
+
+    def _call_route(self, request: LLMRequest, chain: list, primary_acct: str, fallback_acct: str,
+                    role: str = "writer") -> LLMResponse:
         errors = []
         for position, key in enumerate(chain):
             if key not in LEGACY_KEYS:
@@ -195,7 +277,8 @@ class LLMClient:
                     errors.append(f"{key}: skipped ({reason})")
                     continue
             try:
-                resp = self._call_key(request, key, primary_acct, fallback_acct)
+                resp = self._call_key_logged(request, key, primary_acct, fallback_acct, role=role,
+                                             position=position)
             except Exception as e:
                 logger.warning("llm_route_attempt_failed", stage=request.stage, model=key,
                                position=position, error=str(e)[:300])
@@ -242,7 +325,8 @@ class LLMClient:
         t0 = time.monotonic()
         resp, error = None, None
         try:
-            resp = self._call_key(request, cfg.shadow_model_id, primary_acct, fallback_acct)
+            resp = self._call_key_logged(request, cfg.shadow_model_id, primary_acct, fallback_acct,
+                                         role=cfg.role or "writer", position=0, extra={"shadow": True})
         except Exception as e:
             error = str(e)[:1000]
         record_shadow_sync(
@@ -543,34 +627,59 @@ class LLMClient:
 
         in_tok = out_tok = cache_read = cache_write = 0
         stop_reason = None
+        # AA-927: every billed Converse request of this attempt (the schema retry makes it 2).
+        billed_tok: dict = {}
+        provider_requests = 1
+
+        def billed_failure(message: str, cause: Optional[BaseException] = None):
+            t = billed_tok
+            cost_ = self._calc_cost(model.model_key, t.get("in", 0), t.get("out", 0),
+                                    cache_read=t.get("cache_read", 0), cache_write=t.get("cache_write", 0))
+            exc = _billed_unusable(message, [_billed_usage(
+                f"satellite-{model.model_key}", account,
+                {"tokens_in": t.get("in", 0) + t.get("cache_read", 0) + t.get("cache_write", 0),
+                 "tokens_out": t.get("out", 0)}, cost_, stop_reason, provider_requests)])
+            exc.__cause__ = cause
+            return exc
+
         if on_delta is None:
             resp = _converse_dropping_rejected_temperature(rt.converse, kwargs, model.model_key)
-            blocks = resp["output"]["message"]["content"]
-            if schema:
-                # AA-714: Converse does not enforce the tool schema, so a model may omit a required
-                # key. Retry ONCE with an explicit instruction before giving up — far cheaper and
-                # more accurate than failing over to the next (pricier, different-vendor) model.
-                try:
-                    content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model), schema)
-                except RuntimeError as e:
-                    logger.warning("converse_schema_retry", model=model.model_key, stage=request.stage,
-                                   error=str(e)[:200])
-                    retry = dict(kwargs)
-                    retry["messages"] = [
-                        kwargs["messages"][0],
-                        {"role": "assistant", "content": [{"text": "(previous answer was missing a "
-                                                                   "required field)"}]},
-                        {"role": "user", "content": [{"text":
-                            f"Call the tool {schema['name']!r} again and include EVERY required key: "
-                            f"{', '.join(schema['schema'].get('required', []))}. Return the full object."}]},
-                    ]
-                    resp = rt.converse(**retry)
-                    blocks = resp["output"]["message"]["content"]
-                    content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model), schema)
-            else:
-                content = "".join(block.get("text", "") for block in blocks)
-            usage = resp.get("usage", {})
+            _add_converse_usage(billed_tok, resp.get("usage", {}))
             stop_reason = resp.get("stopReason")
+            # AA-927: from here on the first request is billed — any raise below (schema mismatch after
+            # the retry, the retry request itself failing, a malformed body) carries the billed usage.
+            try:
+                blocks = resp["output"]["message"]["content"]
+                if schema:
+                    # AA-714: Converse does not enforce the tool schema, so a model may omit a required
+                    # key. Retry ONCE with an explicit instruction before giving up — far cheaper and
+                    # more accurate than failing over to the next (pricier, different-vendor) model.
+                    try:
+                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model),
+                                                schema)
+                    except RuntimeError as e:
+                        logger.warning("converse_schema_retry", model=model.model_key, stage=request.stage,
+                                       error=str(e)[:200])
+                        retry = dict(kwargs)
+                        retry["messages"] = [
+                            kwargs["messages"][0],
+                            {"role": "assistant", "content": [{"text": "(previous answer was missing a "
+                                                                       "required field)"}]},
+                            {"role": "user", "content": [{"text":
+                                f"Call the tool {schema['name']!r} again and include EVERY required key: "
+                                f"{', '.join(schema['schema'].get('required', []))}. Return the full object."}]},
+                        ]
+                        resp = rt.converse(**retry)
+                        provider_requests = 2
+                        _add_converse_usage(billed_tok, resp.get("usage", {}))
+                        stop_reason = resp.get("stopReason")
+                        blocks = resp["output"]["message"]["content"]
+                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model),
+                                                schema)
+                else:
+                    content = "".join(block.get("text", "") for block in blocks)
+            except Exception as e:
+                raise billed_failure(str(e), e) from e
         else:
             resp = _converse_dropping_rejected_temperature(rt.converse_stream, kwargs, model.model_key)
             parts = []
@@ -586,12 +695,20 @@ class LLMClient:
                 elif "metadata" in event:
                     usage = event["metadata"].get("usage", {})
             content = "".join(parts)
+            # A stream that broke before its metadata event has no usage: cost unknown, not logged
+            # (AA-927 documented exclusion — the exception surfaces as a route / caller failure).
+            _add_converse_usage(billed_tok, usage)
         if not content:
-            raise RuntimeError(f"{model.model_key} returned empty content (stopReason={stop_reason})")
-        in_tok = usage.get("inputTokens", 0) or 0
-        out_tok = usage.get("outputTokens", 0) or 0
-        cache_read = usage.get("cacheReadInputTokens", 0) or 0
-        cache_write = usage.get("cacheWriteInputTokens", 0) or 0
+            message = f"{model.model_key} returned empty content (stopReason={stop_reason})"
+            if billed_tok.get("in") or billed_tok.get("out") or billed_tok.get("cache_read"):
+                raise billed_failure(message)
+            raise RuntimeError(message)
+        in_tok = billed_tok.get("in", 0)
+        out_tok = billed_tok.get("out", 0)
+        cache_read = billed_tok.get("cache_read", 0)
+        cache_write = billed_tok.get("cache_write", 0)
+        # AA-927: after a schema retry these are the sums of BOTH billed requests (the first reply was
+        # billed too) — before AA-927 only the second request was priced.
         cost = self._calc_cost(model.model_key, in_tok, out_tok,
                                cache_read=cache_read, cache_write=cache_write)
         # S234 (AA-772/PR0): Converse's `inputTokens` is only the UNCACHED part of the prompt.
@@ -613,7 +730,7 @@ class LLMClient:
             input_tokens=prompt_tok, output_tokens=out_tok, cost_usd=cost,
             fallback_used=False, satellite_account=account,
             cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            stop_reason=stop_reason,
+            stop_reason=stop_reason, provider_requests=provider_requests,
         )
 
     def _call_openai(self, request: LLMRequest, model: str,
@@ -667,16 +784,25 @@ class LLMClient:
         # — different name from Anthropic's "stop_reason", same purpose. Stored under the same
         # LLMResponse.stop_reason field so callers/the DB log don't need a provider branch.
         finish_reason = resp.choices[0].finish_reason
+
+        def billed_failure(message: str) -> BilledUnusableReply:
+            # AA-927: the request was billed even though the reply is unusable.
+            return _billed_unusable(message, [_billed_usage(
+                model_label, None, {"tokens_in": in_tok, "tokens_out": out_tok}, cost, finish_reason, 1)])
+
         if catalog_model is not None and not content:
             # A reasoning model can spend the whole token budget thinking and return nothing.
-            raise RuntimeError(f"{model_label} returned empty content (finish_reason={finish_reason})")
+            raise billed_failure(f"{model_label} returned empty content (finish_reason={finish_reason})")
         if request.json_schema:
             try:
                 parsed = json.loads(content)
             except ValueError as e:
-                raise RuntimeError(f"{model_label} returned invalid JSON for schema "
-                                   f"{request.json_schema['name']!r}: {e}") from e
-            content = _checked_json(model_label, parsed, request.json_schema)
+                raise billed_failure(f"{model_label} returned invalid JSON for schema "
+                                     f"{request.json_schema['name']!r}: {e}") from e
+            try:
+                content = _checked_json(model_label, parsed, request.json_schema)
+            except RuntimeError as e:
+                raise billed_failure(str(e)) from e
 
         logger.info("llm_success", provider="openai", model=model_label,
                     in_tokens=in_tok, out_tokens=out_tok, cost_usd=cost,

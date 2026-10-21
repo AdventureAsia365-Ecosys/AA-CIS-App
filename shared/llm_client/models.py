@@ -56,3 +56,7 @@ class LLMResponse(BaseModel):
     # only way to tell "LLM finished writing" apart from "LLM got cut off at max_tokens" — see
     # AA-493/AA-341 for the truncation-vs-compression ambiguity this closes.
     stop_reason: Optional[str] = None
+    # AA-927: how many billed provider requests this one response stands for. 2 when the Converse
+    # schema retry (AA-714) ran: the first, unusable reply was billed too, and its tokens + cost are
+    # folded into this response (so the caller's single llm_call_log row carries both).
+    provider_requests: int = 1

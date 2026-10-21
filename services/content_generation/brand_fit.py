@@ -17,7 +17,6 @@ get a `BrandFitResult` back — same shape judge_node.py already built internall
 from __future__ import annotations
 
 import contextvars
-import dataclasses
 import json
 import re
 import unicodedata
@@ -27,6 +26,7 @@ from typing import Optional
 
 import structlog
 
+from shared.llm_client.call_log import billed_record
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 
@@ -76,8 +76,10 @@ class BrandFitResult:
     stop_reason: Optional[str]
     account: Optional[str]
     fallback_used: Optional[bool]
-    # AA-801: the individual judge calls behind an aggregated verdict (median3 mode); () for a
-    # single call or for the AA-714 near-band repeat (its log line is unchanged).
+    # AA-801: the individual judge calls behind an aggregated verdict (median3 mode or the AA-714
+    # near-band repeat); () for a single call. AA-927: each run carries its own billing (model,
+    # tokens_in/out, cost_usd, stop_reason, account, fallback_used) so judge_node writes one
+    # llm_call_log row per call. A `{"failed": n}` entry counts the calls dropped from the verdict.
     runs: tuple = ()
     # AA-801 option (b): the verbatim itinerary sentence the anchored mission test quoted ("" when
     # the mission is absent or the prompt had no anchors).
@@ -87,10 +89,14 @@ class BrandFitResult:
     # judge said yes and the quote was found; False = the judge said yes but the quote was empty or
     # not in the itinerary, so the yes was overruled (mission_present=False).
     evidence_verified: Optional[bool] = None
+    # AA-927: billing records (call_log.billed_record shape) of the calls that were billed but dropped
+    # from the verdict (median3 malformed reply); judge_node logs each as a billed_unusable row.
+    billed_failed: tuple = ()
 
 
 def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optional[float],
-                   failed: int = 0, failed_cost_usd: float = 0.0) -> BrandFitResult:
+                   failed: int = 0, failed_cost_usd: float = 0.0,
+                   billed_failed: tuple = ()) -> BrandFitResult:
     """AA-801 / AA-714: one verdict from several judge calls on the same draft.
 
     brand_fit and cross_brand_distinct = median (`_median`); mission_present = strict majority, a
@@ -121,7 +127,7 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
     verified = None if not checks else True if mission else (False if not all(checks) else None)
     runs = tuple(
         {"brand_fit": r.brand_fit_score, "distinct": r.cross_brand_distinct,
-         "mission": bool(r.mission_present), "cost_usd": r.cost_usd, "model": r.model_used,
+         "mission": bool(r.mission_present), **run_billing(r),
          **({"evidence_verified": r.evidence_verified} if r.evidence_verified is not None else {})}
         for r in results)
     return BrandFitResult(
@@ -134,7 +140,15 @@ def aggregate_runs(results: list[BrandFitResult], *, mission_absent_cap: Optiona
         runs=runs + ((_failed_entry(failed, failed_cost_usd),) if failed else ()),
         mission_evidence=evidence,
         evidence_verified=verified,
+        billed_failed=tuple(billed_failed or ()),
     )
+
+
+def run_billing(r: BrandFitResult) -> dict:
+    """AA-927: the billing of ONE judge call, as stored in `runs` (call_log.billed_record keys)."""
+    return {"model": r.model_used, "tokens_in": r.input_tokens, "tokens_out": r.output_tokens,
+            "cost_usd": r.cost_usd, "stop_reason": r.stop_reason, "account": r.account,
+            "fallback_used": r.fallback_used}
 
 
 def _failed_entry(failed: int, failed_cost_usd: float) -> dict:
@@ -144,10 +158,23 @@ def _failed_entry(failed: int, failed_cost_usd: float) -> dict:
     return entry
 
 
+def billed_calls(exc: BaseException) -> list[dict]:
+    """AA-927: the billed judge calls an exception carries (call_log.billed_record dicts): the reply
+    `_judge` could not use, and on the repeat paths every earlier call of the same verdict. [] when the
+    call failed before anything was billed, or the exception came from elsewhere. An exception that
+    only carries the AA-801 `billed_cost_usd` number gives one record with that cost."""
+    calls = getattr(exc, "billed_calls", None)
+    if calls:
+        return [dict(c) for c in calls]
+    cost = float(getattr(exc, "billed_cost_usd", 0.0) or 0.0)
+    return [{"model": "unknown", "cost_usd": cost}] if cost else []
+
+
 def billed_cost(exc: BaseException) -> float:
-    """AA-801: the spend `_judge` attached to an exception raised AFTER a billed LLM reply (0.0 when
-    the call failed before anything was billed, or the exception came from elsewhere)."""
-    return float(getattr(exc, "billed_cost_usd", 0.0) or 0.0)
+    """AA-801: the spend attached to an exception raised AFTER a billed LLM reply (0.0 when the call
+    failed before anything was billed, or the exception came from elsewhere). AA-927: the sum of
+    `billed_calls(exc)`."""
+    return float(sum(float(c.get("cost_usd") or 0.0) for c in billed_calls(exc)))
 
 
 def runs_signal(result: BrandFitResult, mode: str) -> dict:
@@ -561,14 +588,21 @@ def score_brand_fit(
     if _seeded_model(first.model_used) or not (lo <= first.brand_fit_score <= hi):
         return first
 
-    results = [first] + [_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap, stage=stage,
-                                **extra)
-                         for _ in range(_REPEAT_EXTRA)]
+    results = [first]
+    for _ in range(_REPEAT_EXTRA):
+        try:
+            results.append(_judge(system_prompt, user_prompt, mission_absent_cap=mission_absent_cap,
+                                  stage=stage, **extra))
+        except Exception as e:
+            # AA-927: the verdict is lost, but the calls made so far were billed — carry all of them.
+            _attach_billed(e, [run_billing(r) for r in results] + billed_calls(e))
+            raise
     out = aggregate_runs(results, mission_absent_cap=mission_absent_cap)
     logger.info("judge_repeat_median", model=first.model_used,
                 brand_fits=[r.brand_fit_score for r in results],
                 median_brand_fit=out.brand_fit_score, median_distinct=out.cross_brand_distinct)
-    return dataclasses.replace(out, runs=())   # AA-714 path: unchanged result shape
+    # AA-927: `runs` kept (one llm_call_log row per call); judge_node logs judge_runs only for median3.
+    return out
 
 
 def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_absent_cap: Optional[float],
@@ -593,23 +627,27 @@ def _judge_parallel(system_prompt: str, user_prompt: str, *, n: int, mission_abs
             results.append(f.result())
         except Exception as e:  # noqa: BLE001 — one noisy call must not drop the verdict
             errors.append(e)
-    failed_cost = sum(billed_cost(e) for e in errors)
+    failed_billed = [c for e in errors for c in billed_calls(e)]
+    failed_cost = sum(float(c.get("cost_usd") or 0.0) for c in failed_billed)
     if not results:
-        _attach_cost(errors[0], failed_cost)
+        _attach_billed(errors[0], failed_billed)
         raise errors[0]
     if errors:
         logger.warning("judge_median_partial", failed=len(errors), ok=len(results), error=str(errors[0]),
                        failed_cost_usd=failed_cost)
     out = aggregate_runs(results, mission_absent_cap=mission_absent_cap, failed=len(errors),
-                         failed_cost_usd=failed_cost)
+                         failed_cost_usd=failed_cost, billed_failed=tuple(failed_billed))
     logger.info("judge_median", n=n, brand_fits=[r.brand_fit_score for r in results],
                 median_brand_fit=out.brand_fit_score, mission=out.mission_present)
     return out
 
 
-def _attach_cost(exc: BaseException, cost_usd: float) -> None:
+def _attach_billed(exc: BaseException, records: list[dict]) -> None:
+    """AA-927: put the billed judge calls (call_log.billed_record dicts) on `exc`, plus their summed
+    cost as the AA-801 `billed_cost_usd`."""
     try:
-        exc.billed_cost_usd = cost_usd
+        exc.billed_calls = [dict(r) for r in records]
+        exc.billed_cost_usd = sum(float(r.get("cost_usd") or 0.0) for r in records)
     except (AttributeError, TypeError):   # an exception type without __dict__: the cost is lost
         pass
 
@@ -654,23 +692,25 @@ def _judge(system_prompt: str, user_prompt: str, *, mission_absent_cap: float | 
                 raw = raw[4:]
             raw = raw.strip()
         result = json.loads(raw)
-    except Exception as e:
-        # AA-801: the reply was billed even though it is unusable — keep its cost on the exception
-        # so median3 (and ad-hoc scripts) can count it.
-        _attach_cost(e, float(getattr(resp, "cost_usd", 0.0) or 0.0))
-        raise
+        if not isinstance(result, dict):   # a JSON list / scalar is no verdict
+            raise ValueError(f"judge reply is a JSON {type(result).__name__}, not an object")
 
-    brand_fit = _coerce_score(result.get("brand_fit_score"))
-    distinct = _coerce_score(result.get("cross_brand_distinct"))
-    mission_present = _coerce_bool(result.get("mission_present", True))
-    feedback = _coerce_text(result.get("feedback"))
-    evidence = _coerce_text(result.get("mission_evidence"))
-    verified: Optional[bool] = None
-    if require_evidence and mission_present:
-        # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.
-        verified = bool(evidence) and (evidence_source is None or evidence_in_source(evidence, evidence_source))
-        if not verified:
-            mission_present = False
+        brand_fit = _coerce_score(result.get("brand_fit_score"))
+        distinct = _coerce_score(result.get("cross_brand_distinct"))
+        mission_present = _coerce_bool(result.get("mission_present", True))
+        feedback = _coerce_text(result.get("feedback"))
+        evidence = _coerce_text(result.get("mission_evidence"))
+        verified: Optional[bool] = None
+        if require_evidence and mission_present:
+            # AA-801 (b): a "yes" counts only with a quote that is really in the itinerary the judge saw.
+            verified = bool(evidence) and (evidence_source is None or evidence_in_source(evidence, evidence_source))
+            if not verified:
+                mission_present = False
+    except Exception as e:
+        # AA-801 / AA-927: the reply was billed even though it is unusable — keep its billing on the
+        # exception so median3, the repeat path and judge_node can log it.
+        _attach_billed(e, [billed_record(resp)])
+        raise
 
     judge_score = min(brand_fit, distinct)
     if mission_absent_cap is not None and not mission_present:

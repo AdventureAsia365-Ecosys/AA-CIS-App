@@ -121,19 +121,27 @@ on-brand."""
         stage=stage,  # AA-763: "t2_itinerary_nudge" on a tenant rewrite
     )
     resp = client.generate(request)
-    raw = resp.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+    # AA-927: nothing after the (billed) call may raise — the caller writes this call's llm_call_log
+    # row after we return. A reply that is not a JSON object, or whose title/body is not text, keeps the
+    # current day (it used to raise on `parsed.get` of a JSON list and lose the row).
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        salvaged = repair_json(raw, return_objects=True)
-        parsed = salvaged if isinstance(salvaged, dict) else {}
-    new_title = parsed.get("title") or current_title
-    new_body = parsed.get("body") or current_body
+        raw = (resp.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = repair_json(raw, return_objects=True)
+    except Exception:  # noqa: BLE001 — an unusable reply keeps the day as written
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    title, body = parsed.get("title"), parsed.get("body")
+    new_title = title if isinstance(title, str) and title else current_title
+    new_body = body if isinstance(body, str) and body else current_body
     return new_title, new_body, resp
 
 
