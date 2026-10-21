@@ -101,12 +101,94 @@ def _add_converse_usage(total: dict, usage: dict) -> None:
         total[key] = total.get(key, 0) + (usage.get(wire, 0) or 0)
 
 
-def _first_tool_input(blocks: list, schema: dict, model) -> dict:
-    """AA-714 — the forced-tool input from a Converse response, or raise if the model skipped it."""
+def _first_tool_input(blocks: list, schema: dict, model, allow_text_json: bool = False) -> dict:
+    """AA-714 — the forced-tool input from a Converse response, or raise if the model skipped it.
+
+    AA-803 (S246): with `allow_text_json` (tool choice `auto`, see `_forced_tool_choice_ok`) a model
+    that answered with the JSON object as plain text instead of calling the tool is accepted too —
+    the schema check (`_checked_json`) still runs on whatever comes back."""
     tool_inputs = [b["toolUse"]["input"] for b in blocks if "toolUse" in b]
-    if not tool_inputs:
-        raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
-    return tool_inputs[0]
+    if tool_inputs:
+        return tool_inputs[0]
+    if allow_text_json:
+        parsed = _json_object_in_text("".join(b.get("text", "") for b in blocks))
+        if parsed is not None:
+            return parsed
+    raise RuntimeError(f"{model.model_key} returned no tool call for schema {schema['name']!r}")
+
+
+def _json_object_in_text(text: str) -> Optional[dict]:
+    """The JSON object in a plain-text answer (optionally inside a ``` fence), or None."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        t = t.rsplit("```", 1)[0]
+    t = t.strip()
+    if not t.startswith("{"):
+        return None
+    try:
+        value = json.loads(t)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+# AA-803 (S246): Claude models whose Messages API answers a forced tool choice (`any` / `tool`) with a
+# 400 — Opus 5.5, Sonnet 5.5, Fable 5.1 / Mythos 5.1. Haiku 5.5 is NOT one of them: it accepts a forced
+# tool (with thinking on, the response then starts with the tool call and carries no thinking block), so
+# it keeps the forced tool — fewer output tokens and a reliable schema on its high-volume stages, the same
+# request shape Haiku 4.5 gets. Matched against the Bedrock
+# inference-profile id (e.g. "global.anthropic.claude-sonnet-5-5"), so every account's profile of the
+# same model matches. A model outside this list that rejects forced tool use is caught at runtime
+# (`_tool_choice_rejected`) and remembered for the life of the process.
+_NO_FORCED_TOOL_CHOICE_MARKERS = (
+    "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1",
+)
+_FORCED_TOOL_REJECTED: set[str] = set()
+
+
+def _forced_tool_choice_ok(model, profile_id: str) -> bool:
+    if model.model_key in _FORCED_TOOL_REJECTED:
+        return False
+    pid = (profile_id or "").lower()
+    return not any(marker in pid for marker in _NO_FORCED_TOOL_CHOICE_MARKERS)
+
+
+def _tool_choice_rejected(exc: BaseException) -> bool:
+    """AA-803: Bedrock's 400 for a forced tool choice the model does not take, e.g.
+    "ValidationException ... tool_choice: type "tool" and "any" are not supported for this model"."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return "validationexception" in text and ("tool_choice" in text or "toolchoice" in text) and any(
+        w in text for w in ("not supported", "unsupported", "not allowed", "thinking", "deprecated"))
+
+
+def _auto_tool_instruction(schema: dict) -> str:
+    return (f"Return your answer by calling the tool {schema['name']!r} exactly once, with the complete "
+            "object as its input. Do not answer in plain text.")
+
+
+def _use_auto_tool_choice(kwargs: dict, schema: dict) -> None:
+    """Switch a Converse request from a forced tool to `auto` + an explicit instruction. The original
+    system block stays first and unchanged (prompt-cache prefix); the instruction is a second block."""
+    kwargs["toolConfig"] = {**kwargs["toolConfig"], "toolChoice": {"auto": {}}}
+    kwargs["system"] = [*kwargs["system"], {"text": _auto_tool_instruction(schema)}]
+
+
+def _converse_with_param_downgrades(call, kwargs: dict, model_key: str, schema: Optional[dict]):
+    """`_converse_dropping_rejected_temperature`, plus AA-803: when Bedrock rejects the forced tool
+    choice of a structured call, switch `kwargs` to `auto` (`_use_auto_tool_choice`), remember the model
+    and retry ONCE. A ValidationException is not billed."""
+    try:
+        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
+    except Exception as e:  # noqa: BLE001 — botocore ClientError; anything else is re-raised below
+        tool_choice = (kwargs.get("toolConfig") or {}).get("toolChoice") or {}
+        if not schema or "auto" in tool_choice or not _tool_choice_rejected(e):
+            raise
+        logger.warning("converse_tool_choice_rejected", model=model_key, error=str(e)[:200],
+                       action="retry_with_auto_tool_choice; add the model to _NO_FORCED_TOOL_CHOICE_MARKERS")
+        _FORCED_TOOL_REJECTED.add(model_key)
+        _use_auto_tool_choice(kwargs, schema)
+        return _converse_dropping_rejected_temperature(call, kwargs, model_key)
 
 
 def _temperature_rejected(exc: BaseException) -> bool:
@@ -620,6 +702,13 @@ class LLMClient:
                                         "inputSchema": {"json": schema["schema"]}}}],
                 "toolChoice": {"tool": {"name": schema["name"]}},
             }
+            # AA-803 (S246): Sonnet 5.5 / Opus 5.5 / Fable 5.1 / Mythos 5.1 400 on a forced tool choice —
+            # ask them with `auto` and an explicit instruction instead (`_forced_tool_choice_ok`).
+            if not _forced_tool_choice_ok(model, profile_id):
+                _use_auto_tool_choice(kwargs, schema)
+        # AA-803: no `thinking` / `budget_tokens` field is ever sent (no additionalModelRequestFields), so
+        # adaptive-thinking-only models (Haiku 5.5, Sonnet 5.5, Opus 5.5) run their default, and the
+        # last message is always the user's (no assistant prefill, which those models reject).
 
         stream_sink.emit_restart(request.stage)
         on_delta = None if schema else stream_sink.delta_callback(request.stage)
@@ -643,7 +732,7 @@ class LLMClient:
             return exc
 
         if on_delta is None:
-            resp = _converse_dropping_rejected_temperature(rt.converse, kwargs, model.model_key)
+            resp = _converse_with_param_downgrades(rt.converse, kwargs, model.model_key, schema)
             _add_converse_usage(billed_tok, resp.get("usage", {}))
             stop_reason = resp.get("stopReason")
             # AA-927: from here on the first request is billed — any raise below (schema mismatch after
@@ -651,11 +740,12 @@ class LLMClient:
             try:
                 blocks = resp["output"]["message"]["content"]
                 if schema:
+                    auto = "auto" in kwargs["toolConfig"]["toolChoice"]
                     # AA-714: Converse does not enforce the tool schema, so a model may omit a required
                     # key. Retry ONCE with an explicit instruction before giving up — far cheaper and
                     # more accurate than failing over to the next (pricier, different-vendor) model.
                     try:
-                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model),
+                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model, auto),
                                                 schema)
                     except RuntimeError as e:
                         logger.warning("converse_schema_retry", model=model.model_key, stage=request.stage,
@@ -674,7 +764,7 @@ class LLMClient:
                         _add_converse_usage(billed_tok, resp.get("usage", {}))
                         stop_reason = resp.get("stopReason")
                         blocks = resp["output"]["message"]["content"]
-                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model),
+                        content = _checked_json(model.model_key, _first_tool_input(blocks, schema, model, auto),
                                                 schema)
                 else:
                     content = "".join(block.get("text", "") for block in blocks)
