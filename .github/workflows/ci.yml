@@ -24,7 +24,8 @@ jobs:
           cache: "pip"
 
       - name: Install lint deps
-        run: pip install flake8 flake8-bugbear
+        # AA-926: PyYAML for the quality registry lint, pinned to the requirements.txt version.
+        run: pip install flake8 flake8-bugbear pyyaml==6.0.3
 
       - name: Run flake8
         run: |
@@ -38,6 +39,41 @@ jobs:
       # with an expiry date. Standard library only.
       - name: Resource-ID check (public repo)
         run: python3 .github/scripts/check_resource_ids.py
+
+      # AA-926 (Quality System v1): no gate-name or 7.0 pass-line literal outside services/quality/, every
+      # gate / chip / Jev key / A1 code mapped to a class, YAML schema, path map, generated TS fresh.
+      # Blocking on errors; the report (errors, warnings, qlint: allow) goes to the step summary.
+      - name: Quality registry lint
+        run: |
+          set -o pipefail
+          python -m services.quality.lint --report | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # AA-926 (design §4.6): report which quality tiers a change touches and the hash of its diff on the
+  # quality paths (services/quality/paths.yaml). Report only — always green, not a required check; AA-919
+  # makes it enforce `quality/q2`. Least privilege: no id-token, read-only contents.
+  quality-paths:
+    name: Quality Paths (report)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml==6.0.3 --quiet
+
+      - name: Quality-path diff hash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: python3 .github/scripts/quality_paths.py
 
   security-audit:
     name: Security Audit
