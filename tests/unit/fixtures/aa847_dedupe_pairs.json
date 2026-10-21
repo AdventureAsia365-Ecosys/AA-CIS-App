@@ -1,0 +1,3674 @@
+{
+ "about": "AA-847 Problem 2 - labelled destination pairs for the automatic duplicate merge (S246). label 'merge' = one real place, 'keep' = two places. src 's246' = the 22 pairs already pinned in CIS tests/unit/test_aa847_validity.py (review S246); 'task' = the cases named in the S246 brief; 'built' = constructed from real places of AA countries with approximate coordinates (author-labelled, NOT yet blind-labelled, NOT read from Dev). Place fields: by = located_by, prec = geo_precision, rt = Geoapify result_type, pid = geocoder_place_id, stop = overnight stop of a live tour (geo.tour_day.overnight_destination_id), card = place_card_id. src 'review' = the adversarial and linear pairs of the S246 skeptic review (Ben Thanh / Bitexco on a shared city id, loops vs towns, trail vs road, Nam Ou and Mekong stretches with shapes; a linear pair without a usable shape is deferred, which counts as not merged). Extra place fields: gname = the Geoapify result's own name (default: the row name), shape = {status, osm: [type, id] | null, line: [[lat, lng], ...]}. src 'skeptic' = the revised plan's adversarial keeps (same admin-area id for a ward and a landmark, temple vs stupa, a tributary touching its river); src 'homonym' = the homonym regression list of lesson 125 (similar names, different places). A 6th pair element {\"label_needs\": \"metadata\"} marks a label that only the stored metadata can justify (without the suburb result, 'Hoan Kiem' / 'Hoan Kiem Lake' is the s246 merge pair 'bare name of a lake'): such a pair is gated in the full-metadata run only. shape.class = place_shape.meta.line_class (water / road / trail from the OSM tags), what the same-line rule of the lines lane compares.",
+ "places": {
+  "k1": {
+   "name": "Kuang Si Falls",
+   "country": "Laos",
+   "lat": 19.7491,
+   "lng": 101.9935,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-kuangsi"
+  },
+  "k2": {
+   "name": "Tat Kuang Si",
+   "country": "Laos",
+   "lat": 19.748,
+   "lng": 101.992,
+   "by": "llm",
+   "prec": "area"
+  },
+  "k3": {
+   "name": "Kuang Si Waterfall",
+   "country": "Laos",
+   "lat": 19.75,
+   "lng": 101.99,
+   "by": "llm",
+   "prec": "area"
+  },
+  "k4": {
+   "name": "Kuangsi Waterfalls",
+   "country": "Laos",
+   "lat": 19.7495,
+   "lng": 101.994,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-kuangsi"
+  },
+  "p1": {
+   "name": "Pak Ou Caves",
+   "country": "Laos",
+   "lat": 20.05,
+   "lng": 102.219,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-pakou"
+  },
+  "p2": {
+   "name": "Pak Ou Cave",
+   "country": "Laos",
+   "lat": 20.0511,
+   "lng": 102.2183,
+   "by": "llm",
+   "prec": "area"
+  },
+  "m1": {
+   "name": "Mount Phousi",
+   "country": "Laos",
+   "lat": 19.8924,
+   "lng": 102.1352,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-phousi"
+  },
+  "m2": {
+   "name": "Phou Si Hill",
+   "country": "Laos",
+   "lat": 19.893,
+   "lng": 102.1355,
+   "by": "llm",
+   "prec": "area"
+  },
+  "m3": {
+   "name": "Phousi Market",
+   "country": "Laos",
+   "lat": 19.88,
+   "lng": 102.138,
+   "by": "llm",
+   "prec": "area"
+  },
+  "m4": {
+   "name": "Phousi",
+   "country": "Laos",
+   "lat": 19.893,
+   "lng": 102.135,
+   "by": "llm",
+   "prec": "area"
+  },
+  "w1": {
+   "name": "Wat Xieng Thong",
+   "country": "Laos",
+   "lat": 19.8977,
+   "lng": 102.1427,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-xiengthong"
+  },
+  "w2": {
+   "name": "Wat Mai",
+   "country": "Laos",
+   "lat": 19.8907,
+   "lng": 102.1386,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-watmai"
+  },
+  "w3": {
+   "name": "Xieng Thong Temple",
+   "country": "Laos",
+   "lat": 19.898,
+   "lng": 102.143,
+   "by": "llm",
+   "prec": "area"
+  },
+  "t1": {
+   "name": "That Luang",
+   "country": "Laos",
+   "lat": 17.9763,
+   "lng": 102.6335,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-thatluang"
+  },
+  "t2": {
+   "name": "Wat That Luang Tai",
+   "country": "Laos",
+   "lat": 17.9741,
+   "lng": 102.634,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-thatluangtai"
+  },
+  "t3": {
+   "name": "Pha That Luang",
+   "country": "Laos",
+   "lat": 17.9764,
+   "lng": 102.6336,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-thatluang"
+  },
+  "t4": {
+   "name": "That Luang Stupa",
+   "country": "Laos",
+   "lat": 17.976,
+   "lng": 102.633,
+   "by": "llm",
+   "prec": "area"
+  },
+  "s1": {
+   "name": "Wat Sisaket",
+   "country": "Laos",
+   "lat": 17.9625,
+   "lng": 102.6094,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-sisaket"
+  },
+  "s2": {
+   "name": "Haw Phra Kaew",
+   "country": "Laos",
+   "lat": 17.9617,
+   "lng": 102.6106,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hawphrakaew"
+  },
+  "n1": {
+   "name": "Nong Khiaw",
+   "country": "Laos",
+   "lat": 20.57,
+   "lng": 102.61,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-nongkhiaw",
+   "stop": true
+  },
+  "n2": {
+   "name": "Nong Khiaw Viewpoint",
+   "country": "Laos",
+   "lat": 20.57,
+   "lng": 102.638,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-nkview"
+  },
+  "lp1": {
+   "name": "Luang Prabang",
+   "country": "Laos",
+   "lat": 19.8856,
+   "lng": 102.1347,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-lpq",
+   "stop": true
+  },
+  "lp2": {
+   "name": "Luang Prabang Night Market",
+   "country": "Laos",
+   "lat": 19.889,
+   "lng": 102.136,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-lpnm"
+  },
+  "lp3": {
+   "name": "Luang Prabang Old Town",
+   "country": "Laos",
+   "lat": 19.892,
+   "lng": 102.137,
+   "by": "llm",
+   "prec": "area"
+  },
+  "rp1": {
+   "name": "Royal Palace",
+   "country": "Laos",
+   "lat": 19.892,
+   "lng": 102.134,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-royalpalace-lp"
+  },
+  "rp2": {
+   "name": "Royal Palace Museum",
+   "country": "Laos",
+   "lat": 19.8922,
+   "lng": 102.1343,
+   "by": "llm",
+   "prec": "area"
+  },
+  "vp1": {
+   "name": "Vat Phou",
+   "country": "Laos",
+   "lat": 14.8486,
+   "lng": 105.8225,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-watphu"
+  },
+  "vp2": {
+   "name": "Wat Phu",
+   "country": "Laos",
+   "lat": 14.849,
+   "lng": 105.821,
+   "by": "llm",
+   "prec": "area"
+  },
+  "bf1": {
+   "name": "Kuang Si Butterfly Park",
+   "country": "Laos",
+   "lat": 19.744,
+   "lng": 101.999,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-ksbutterfly"
+  },
+  "br1": {
+   "name": "Kuang Si Bear Rescue Centre",
+   "country": "Laos",
+   "lat": 19.7485,
+   "lng": 101.993,
+   "by": "llm",
+   "prec": "area"
+  },
+  "pv1": {
+   "name": "Pak Ou Village",
+   "country": "Laos",
+   "lat": 20.052,
+   "lng": 102.214,
+   "by": "llm",
+   "prec": "area"
+  },
+  "tf1": {
+   "name": "Tad Fane",
+   "country": "Laos",
+   "lat": 15.182,
+   "lng": 106.124,
+   "by": "llm",
+   "prec": "area"
+  },
+  "tf2": {
+   "name": "Tad Fane Waterfall",
+   "country": "Laos",
+   "lat": 15.181,
+   "lng": 106.125,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-tadfane"
+  },
+  "pk3": {
+   "name": "Tham Phu Kham",
+   "country": "Laos",
+   "lat": 18.981,
+   "lng": 102.359,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-phukham"
+  },
+  "pk4": {
+   "name": "Phu Kham Cave",
+   "country": "Laos",
+   "lat": 18.9815,
+   "lng": 102.3585,
+   "by": "llm",
+   "prec": "area"
+  },
+  "dd1": {
+   "name": "Don Det",
+   "country": "Laos",
+   "lat": 14.098,
+   "lng": 105.81,
+   "by": "llm",
+   "prec": "area"
+  },
+  "dd2": {
+   "name": "Don Khon",
+   "country": "Laos",
+   "lat": 14.083,
+   "lng": 105.817,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ps1": {
+   "name": "Phonsavan",
+   "country": "Laos",
+   "lat": 19.46,
+   "lng": 103.2,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-phonsavan",
+   "stop": true
+  },
+  "pj1": {
+   "name": "Plain of Jars",
+   "country": "Laos",
+   "lat": 19.43,
+   "lng": 103.15,
+   "by": "llm",
+   "prec": "area"
+  },
+  "pj2": {
+   "name": "Plain of Jars Site 1",
+   "country": "Laos",
+   "lat": 19.431,
+   "lng": 103.152,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-pojs1"
+  },
+  "vv1": {
+   "name": "Vang Vieng",
+   "country": "Laos",
+   "lat": 18.9235,
+   "lng": 102.4478,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-vangvieng",
+   "stop": true
+  },
+  "bl2": {
+   "name": "Vang Vieng Blue Lagoon",
+   "country": "Laos",
+   "lat": 18.933,
+   "lng": 102.405,
+   "by": "llm",
+   "prec": "area"
+  },
+  "no1": {
+   "name": "Nam Ou",
+   "country": "Laos",
+   "lat": 20.07,
+   "lng": 102.23,
+   "by": "llm",
+   "prec": "area"
+  },
+  "no2": {
+   "name": "Nam Ou River",
+   "country": "Laos",
+   "lat": 20.3,
+   "lng": 102.4,
+   "by": "llm",
+   "prec": "area"
+  },
+  "mk1": {
+   "name": "Mekong River",
+   "country": "Laos",
+   "lat": 19.895,
+   "lng": 102.13,
+   "by": "llm",
+   "prec": "area"
+  },
+  "mk2": {
+   "name": "Mekong",
+   "country": "Laos",
+   "lat": 19.92,
+   "lng": 102.17,
+   "by": "llm",
+   "prec": "area"
+  },
+  "h1": {
+   "name": "Hoan Kiem Lake",
+   "country": "Vietnam",
+   "lat": 21.0288,
+   "lng": 105.8525,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hoankiem"
+  },
+  "h2": {
+   "name": "Hoan Kiem",
+   "country": "Vietnam",
+   "lat": 21.0285,
+   "lng": 105.852,
+   "by": "llm",
+   "prec": "area"
+  },
+  "h3": {
+   "name": "Ho Hoan Kiem",
+   "country": "Vietnam",
+   "lat": 21.029,
+   "lng": 105.8522,
+   "by": "llm",
+   "prec": "area"
+  },
+  "hk2": {
+   "name": "Hoan Kiem Night Market",
+   "country": "Vietnam",
+   "lat": 21.035,
+   "lng": 105.851,
+   "by": "llm",
+   "prec": "area"
+  },
+  "c1": {
+   "name": "Ho Chi Minh City",
+   "country": "Vietnam",
+   "lat": 10.7769,
+   "lng": 106.7009,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hcmc",
+   "stop": true
+  },
+  "c2": {
+   "name": "Ho Chi Minh Trail",
+   "country": "Vietnam",
+   "lat": 16.4637,
+   "lng": 107.2,
+   "by": "llm",
+   "prec": "area"
+  },
+  "x1": {
+   "name": "Mekong Delta",
+   "country": "Vietnam",
+   "lat": 10.0,
+   "lng": 105.8,
+   "by": "llm",
+   "prec": "area"
+  },
+  "x2": {
+   "name": "Mekong Delta",
+   "country": "Cambodia",
+   "lat": 10.0,
+   "lng": 105.8,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ha1": {
+   "name": "Hoi An Old Town",
+   "country": "Vietnam",
+   "lat": 15.8771,
+   "lng": 108.3264,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hoianold"
+  },
+  "ha2": {
+   "name": "Hoi An Night Market",
+   "country": "Vietnam",
+   "lat": 15.8762,
+   "lng": 108.326,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hoiannm"
+  },
+  "ha3": {
+   "name": "Hoi An Ancient Town",
+   "country": "Vietnam",
+   "lat": 15.8775,
+   "lng": 108.328,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ha4": {
+   "name": "Hoi An",
+   "country": "Vietnam",
+   "lat": 15.8801,
+   "lng": 108.338,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hoian",
+   "stop": true
+  },
+  "lb1": {
+   "name": "Long Bien Bridge",
+   "country": "Vietnam",
+   "lat": 21.043,
+   "lng": 105.859,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-lbbridge"
+  },
+  "lb2": {
+   "name": "Long Bien Market",
+   "country": "Vietnam",
+   "lat": 21.0396,
+   "lng": 105.851,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-lbmarket"
+  },
+  "lb3": {
+   "name": "Long Bien",
+   "country": "Vietnam",
+   "lat": 21.045,
+   "lng": 105.86,
+   "by": "llm",
+   "prec": "area"
+  },
+  "db1": {
+   "name": "Dong Ba Market",
+   "country": "Vietnam",
+   "lat": 16.4732,
+   "lng": 107.588,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dbmarket"
+  },
+  "db2": {
+   "name": "Dong Ba Bridge",
+   "country": "Vietnam",
+   "lat": 16.4745,
+   "lng": 107.586,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dbbridge"
+  },
+  "bt1": {
+   "name": "Ben Thanh Market",
+   "country": "Vietnam",
+   "lat": 10.7725,
+   "lng": 106.698,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-btmarket"
+  },
+  "bt2": {
+   "name": "Ben Thanh Night Market",
+   "country": "Vietnam",
+   "lat": 10.7718,
+   "lng": 106.6972,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-btnm"
+  },
+  "bt3": {
+   "name": "Ben Thanh",
+   "country": "Vietnam",
+   "lat": 10.7727,
+   "lng": 106.6982,
+   "by": "llm",
+   "prec": "area"
+  },
+  "bt4": {
+   "name": "Ben Thanh",
+   "country": "Vietnam",
+   "lat": 10.773,
+   "lng": 106.695,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-btward"
+  },
+  "oq1": {
+   "name": "Hanoi Old Quarter",
+   "country": "Vietnam",
+   "lat": 21.034,
+   "lng": 105.85,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hnoq"
+  },
+  "oq2": {
+   "name": "Old Quarter, Hanoi",
+   "country": "Vietnam",
+   "lat": 21.0345,
+   "lng": 105.8505,
+   "by": "llm",
+   "prec": "area"
+  },
+  "hl1": {
+   "name": "Ha Long Bay",
+   "country": "Vietnam",
+   "lat": 20.91,
+   "lng": 107.1839,
+   "by": "llm",
+   "prec": "area"
+  },
+  "hl2": {
+   "name": "Halong Bay",
+   "country": "Vietnam",
+   "lat": 20.88,
+   "lng": 107.1,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-halongbay"
+  },
+  "hl3": {
+   "name": "Ha Long",
+   "country": "Vietnam",
+   "lat": 20.9517,
+   "lng": 107.08,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-halongcity",
+   "stop": true
+  },
+  "tl1": {
+   "name": "Temple of Literature",
+   "country": "Vietnam",
+   "lat": 21.0293,
+   "lng": 105.8356,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-vanmieu"
+  },
+  "tl2": {
+   "name": "Van Mieu",
+   "country": "Vietnam",
+   "lat": 21.029,
+   "lng": 105.836,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-vanmieu"
+  },
+  "tl3": {
+   "name": "Van Mieu - Quoc Tu Giam",
+   "country": "Vietnam",
+   "lat": 21.028,
+   "lng": 105.835,
+   "by": "llm",
+   "prec": "area"
+  },
+  "hm1": {
+   "name": "Ho Chi Minh Mausoleum",
+   "country": "Vietnam",
+   "lat": 21.0367,
+   "lng": 105.8346,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hcmmaus"
+  },
+  "hm2": {
+   "name": "Ho Chi Minh's Mausoleum",
+   "country": "Vietnam",
+   "lat": 21.037,
+   "lng": 105.834,
+   "by": "llm",
+   "prec": "area"
+  },
+  "pp1": {
+   "name": "Presidential Palace",
+   "country": "Vietnam",
+   "lat": 21.038,
+   "lng": 105.834,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-prespal"
+  },
+  "bd1": {
+   "name": "Ba Dinh Square",
+   "country": "Vietnam",
+   "lat": 21.0369,
+   "lng": 105.836,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-badinh"
+  },
+  "cc1": {
+   "name": "Cu Chi Tunnels",
+   "country": "Vietnam",
+   "lat": 11.1418,
+   "lng": 106.4626,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-cuchi"
+  },
+  "cc2": {
+   "name": "Cu Chi Tunnel",
+   "country": "Vietnam",
+   "lat": 11.143,
+   "lng": 106.461,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ms1": {
+   "name": "My Son Sanctuary",
+   "country": "Vietnam",
+   "lat": 15.764,
+   "lng": 108.124,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-myson"
+  },
+  "ms2": {
+   "name": "Mỹ Sơn",
+   "country": "Vietnam",
+   "lat": 15.765,
+   "lng": 108.123,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sp1": {
+   "name": "Sapa",
+   "country": "Vietnam",
+   "lat": 22.3364,
+   "lng": 103.8438,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-sapa",
+   "stop": true
+  },
+  "sp2": {
+   "name": "Sa Pa",
+   "country": "Vietnam",
+   "lat": 22.336,
+   "lng": 103.844,
+   "by": "llm",
+   "prec": "area"
+  },
+  "cv1": {
+   "name": "Cat Cat Village",
+   "country": "Vietnam",
+   "lat": 22.329,
+   "lng": 103.832,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-catcat"
+  },
+  "ta1": {
+   "name": "Trang An",
+   "country": "Vietnam",
+   "lat": 20.256,
+   "lng": 105.897,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ta2": {
+   "name": "Trang An Scenic Landscape Complex",
+   "country": "Vietnam",
+   "lat": 20.253,
+   "lng": 105.895,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-trangan"
+  },
+  "tc1": {
+   "name": "Tam Coc",
+   "country": "Vietnam",
+   "lat": 20.215,
+   "lng": 105.937,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-tamcoc"
+  },
+  "bd2": {
+   "name": "Bai Dinh Pagoda",
+   "country": "Vietnam",
+   "lat": 20.274,
+   "lng": 105.865,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-baidinh"
+  },
+  "bd3": {
+   "name": "Bai Dinh Temple",
+   "country": "Vietnam",
+   "lat": 20.275,
+   "lng": 105.864,
+   "by": "llm",
+   "prec": "area"
+  },
+  "hm3": {
+   "name": "Hang Mua",
+   "country": "Vietnam",
+   "lat": 20.231,
+   "lng": 105.93,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hangmua"
+  },
+  "hm4": {
+   "name": "Mua Cave",
+   "country": "Vietnam",
+   "lat": 20.2315,
+   "lng": 105.9305,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sd1": {
+   "name": "Son Doong Cave",
+   "country": "Vietnam",
+   "lat": 17.457,
+   "lng": 106.287,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-sondoong"
+  },
+  "sd2": {
+   "name": "Hang Son Doong",
+   "country": "Vietnam",
+   "lat": 17.456,
+   "lng": 106.288,
+   "by": "llm",
+   "prec": "area"
+  },
+  "pn1": {
+   "name": "Phong Nha Cave",
+   "country": "Vietnam",
+   "lat": 17.582,
+   "lng": 106.283,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-pncave"
+  },
+  "pn2": {
+   "name": "Phong Nha-Ke Bang National Park",
+   "country": "Vietnam",
+   "lat": 17.54,
+   "lng": 106.15,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-pnkb"
+  },
+  "pn3": {
+   "name": "Phong Nha",
+   "country": "Vietnam",
+   "lat": 17.61,
+   "lng": 106.31,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-pntown",
+   "stop": true
+  },
+  "dl1": {
+   "name": "Dalat",
+   "country": "Vietnam",
+   "lat": 11.9404,
+   "lng": 108.4583,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-dalat",
+   "stop": true
+  },
+  "dl2": {
+   "name": "Da Lat",
+   "country": "Vietnam",
+   "lat": 11.941,
+   "lng": 108.459,
+   "by": "llm",
+   "prec": "area"
+  },
+  "dl3": {
+   "name": "Da Lat Night Market",
+   "country": "Vietnam",
+   "lat": 11.943,
+   "lng": 108.438,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dlnm"
+  },
+  "dl4": {
+   "name": "Da Lat Market",
+   "country": "Vietnam",
+   "lat": 11.9425,
+   "lng": 108.4375,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dlmarket"
+  },
+  "gb1": {
+   "name": "Golden Bridge",
+   "country": "Vietnam",
+   "lat": 15.995,
+   "lng": 107.996,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-goldenbridge"
+  },
+  "bn1": {
+   "name": "Ba Na Hills",
+   "country": "Vietnam",
+   "lat": 15.998,
+   "lng": 107.988,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-banahills"
+  },
+  "jb1": {
+   "name": "Japanese Covered Bridge",
+   "country": "Vietnam",
+   "lat": 15.8771,
+   "lng": 108.326,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-jbridge"
+  },
+  "jb2": {
+   "name": "Japanese Bridge",
+   "country": "Vietnam",
+   "lat": 15.877,
+   "lng": 108.3262,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ab1": {
+   "name": "An Bang Beach",
+   "country": "Vietnam",
+   "lat": 15.914,
+   "lng": 108.34,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-anbang"
+  },
+  "ab2": {
+   "name": "An Bang",
+   "country": "Vietnam",
+   "lat": 15.915,
+   "lng": 108.339,
+   "by": "llm",
+   "prec": "area"
+  },
+  "cd1": {
+   "name": "Cua Dai Beach",
+   "country": "Vietnam",
+   "lat": 15.89,
+   "lng": 108.377,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-cuadai"
+  },
+  "tm1": {
+   "name": "Thien Mu Pagoda",
+   "country": "Vietnam",
+   "lat": 16.4532,
+   "lng": 107.5446,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-thienmu"
+  },
+  "tm2": {
+   "name": "Thien Mu",
+   "country": "Vietnam",
+   "lat": 16.453,
+   "lng": 107.545,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity"
+  },
+  "hv1": {
+   "name": "Hai Van Pass",
+   "country": "Vietnam",
+   "lat": 16.196,
+   "lng": 108.129,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-haivan"
+  },
+  "hv2": {
+   "name": "Hai Van",
+   "country": "Vietnam",
+   "lat": 16.197,
+   "lng": 108.13,
+   "by": "llm",
+   "prec": "area"
+  },
+  "mp1": {
+   "name": "Ma Pi Leng Pass",
+   "country": "Vietnam",
+   "lat": 23.235,
+   "lng": 105.414,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-mapileng"
+  },
+  "mp2": {
+   "name": "Mã Pí Lèng",
+   "country": "Vietnam",
+   "lat": 23.236,
+   "lng": 105.415,
+   "by": "llm",
+   "prec": "area"
+  },
+  "nq1": {
+   "name": "Nho Que River",
+   "country": "Vietnam",
+   "lat": 23.24,
+   "lng": 105.4,
+   "by": "llm",
+   "prec": "area"
+  },
+  "bg1": {
+   "name": "Ban Gioc Waterfall",
+   "country": "Vietnam",
+   "lat": 22.855,
+   "lng": 106.724,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-bangioc"
+  },
+  "bg2": {
+   "name": "Ban Gioc - Detian Falls",
+   "country": "Vietnam",
+   "lat": 22.854,
+   "lng": 106.723,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ds1": {
+   "name": "Doi Suthep",
+   "country": "Thailand",
+   "lat": 18.805,
+   "lng": 98.9,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ds2": {
+   "name": "Wat Phra That Doi Suthep",
+   "country": "Thailand",
+   "lat": 18.8048,
+   "lng": 98.9216,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-doisuthep"
+  },
+  "cm1": {
+   "name": "Chiang Mai Night Bazaar",
+   "country": "Thailand",
+   "lat": 18.785,
+   "lng": 99.0,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-cmnb"
+  },
+  "cm2": {
+   "name": "Chiang Mai Night Market",
+   "country": "Thailand",
+   "lat": 18.786,
+   "lng": 99.001,
+   "by": "llm",
+   "prec": "area"
+  },
+  "wm1": {
+   "name": "Warorot Market",
+   "country": "Thailand",
+   "lat": 18.79,
+   "lng": 99.0,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-warorot"
+  },
+  "gp1": {
+   "name": "Grand Palace",
+   "country": "Thailand",
+   "lat": 13.75,
+   "lng": 100.4913,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-grandpalace"
+  },
+  "wpk": {
+   "name": "Wat Phra Kaew",
+   "country": "Thailand",
+   "lat": 13.7516,
+   "lng": 100.4927,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-watphrakaew"
+  },
+  "ch1": {
+   "name": "Chatuchak Market",
+   "country": "Thailand",
+   "lat": 13.7999,
+   "lng": 100.55,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-chatuchak"
+  },
+  "ch2": {
+   "name": "Chatuchak Weekend Market",
+   "country": "Thailand",
+   "lat": 13.8,
+   "lng": 100.551,
+   "by": "llm",
+   "prec": "area"
+  },
+  "wa1": {
+   "name": "Wat Arun",
+   "country": "Thailand",
+   "lat": 13.7437,
+   "lng": 100.4888,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-watarun"
+  },
+  "wa2": {
+   "name": "Temple of Dawn",
+   "country": "Thailand",
+   "lat": 13.744,
+   "lng": 100.489,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-watarun"
+  },
+  "aw1": {
+   "name": "Angkor Wat",
+   "country": "Cambodia",
+   "lat": 13.4125,
+   "lng": 103.867,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-angkorwat"
+  },
+  "aw2": {
+   "name": "Angkor Wat Temple",
+   "country": "Cambodia",
+   "lat": 13.412,
+   "lng": 103.8665,
+   "by": "llm",
+   "prec": "area"
+  },
+  "at1": {
+   "name": "Angkor Thom",
+   "country": "Cambodia",
+   "lat": 13.441,
+   "lng": 103.859,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-angkorthom"
+  },
+  "tp1": {
+   "name": "Ta Prohm",
+   "country": "Cambodia",
+   "lat": 13.435,
+   "lng": 103.889,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-taprohm"
+  },
+  "tp2": {
+   "name": "Ta Prohm Temple",
+   "country": "Cambodia",
+   "lat": 13.4348,
+   "lng": 103.8895,
+   "by": "llm",
+   "prec": "area"
+  },
+  "by1": {
+   "name": "Bayon",
+   "country": "Cambodia",
+   "lat": 13.4412,
+   "lng": 103.859,
+   "by": "llm",
+   "prec": "area"
+  },
+  "by2": {
+   "name": "Bayon Temple",
+   "country": "Cambodia",
+   "lat": 13.4413,
+   "lng": 103.8591,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-bayon"
+  },
+  "sr1": {
+   "name": "Siem Reap",
+   "country": "Cambodia",
+   "lat": 13.3633,
+   "lng": 103.8564,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-siemreap",
+   "stop": true
+  },
+  "sr2": {
+   "name": "Siem Reap Night Market",
+   "country": "Cambodia",
+   "lat": 13.355,
+   "lng": 103.855,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-srnm"
+  },
+  "rk1": {
+   "name": "Royal Palace",
+   "country": "Cambodia",
+   "lat": 11.564,
+   "lng": 104.931,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-royalpalace-pp"
+  },
+  "nm1": {
+   "name": "National Museum of Cambodia",
+   "country": "Cambodia",
+   "lat": 11.566,
+   "lng": 104.929,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-natmuseum"
+  },
+  "sw1": {
+   "name": "Shwedagon Pagoda",
+   "country": "Myanmar",
+   "lat": 16.7983,
+   "lng": 96.1497,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-shwedagon"
+  },
+  "sw2": {
+   "name": "Shwedagon Paya",
+   "country": "Myanmar",
+   "lat": 16.798,
+   "lng": 96.15,
+   "by": "llm",
+   "prec": "area"
+  },
+  "in1": {
+   "name": "Inle Lake",
+   "country": "Myanmar",
+   "lat": 20.55,
+   "lng": 96.92,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-inle"
+  },
+  "in2": {
+   "name": "Inle",
+   "country": "Myanmar",
+   "lat": 20.58,
+   "lng": 96.91,
+   "by": "llm",
+   "prec": "area"
+  },
+  "ny1": {
+   "name": "Nyaung Shwe",
+   "country": "Myanmar",
+   "lat": 20.66,
+   "lng": 96.933,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-nyaungshwe",
+   "stop": true
+  },
+  "mh1": {
+   "name": "Mandalay Hill",
+   "country": "Myanmar",
+   "lat": 22.0,
+   "lng": 96.108,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-mdyhill"
+  },
+  "md1": {
+   "name": "Mandalay",
+   "country": "Myanmar",
+   "lat": 21.975,
+   "lng": 96.0836,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-mandalay",
+   "stop": true
+  },
+  "bg3": {
+   "name": "Bagan",
+   "country": "Myanmar",
+   "lat": 21.1717,
+   "lng": 94.8585,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-bagan",
+   "stop": true
+  },
+  "ob1": {
+   "name": "Old Bagan",
+   "country": "Myanmar",
+   "lat": 21.17,
+   "lng": 94.86,
+   "by": "llm",
+   "prec": "area"
+  },
+  "bo1": {
+   "name": "Boudhanath Stupa",
+   "country": "Nepal",
+   "lat": 27.7215,
+   "lng": 85.362,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-boudha"
+  },
+  "bo2": {
+   "name": "Boudha Stupa",
+   "country": "Nepal",
+   "lat": 27.721,
+   "lng": 85.3615,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sy1": {
+   "name": "Swayambhunath",
+   "country": "Nepal",
+   "lat": 27.7149,
+   "lng": 85.2904,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-swayam"
+  },
+  "sy2": {
+   "name": "Swayambhunath Temple (Monkey Temple)",
+   "country": "Nepal",
+   "lat": 27.715,
+   "lng": 85.29,
+   "by": "llm",
+   "prec": "area"
+  },
+  "kd1": {
+   "name": "Kathmandu Durbar Square",
+   "country": "Nepal",
+   "lat": 27.7042,
+   "lng": 85.3067,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-ktmdurbar"
+  },
+  "kd2": {
+   "name": "Durbar Square, Kathmandu",
+   "country": "Nepal",
+   "lat": 27.7045,
+   "lng": 85.307,
+   "by": "llm",
+   "prec": "area"
+  },
+  "pd1": {
+   "name": "Patan Durbar Square",
+   "country": "Nepal",
+   "lat": 27.6727,
+   "lng": 85.3253,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-patandurbar"
+  },
+  "bk1": {
+   "name": "Bhaktapur",
+   "country": "Nepal",
+   "lat": 27.671,
+   "lng": 85.4298,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-bhaktapur",
+   "stop": true
+  },
+  "bk2": {
+   "name": "Bhaktapur Durbar Square",
+   "country": "Nepal",
+   "lat": 27.672,
+   "lng": 85.428,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-bkdurbar"
+  },
+  "pk1": {
+   "name": "Punakha",
+   "country": "Bhutan",
+   "lat": 27.58,
+   "lng": 89.86,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-punakha",
+   "stop": true
+  },
+  "pk2": {
+   "name": "Punakha Dzong",
+   "country": "Bhutan",
+   "lat": 27.583,
+   "lng": 89.863,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-punakhadzong"
+  },
+  "tn1": {
+   "name": "Paro Taktsang",
+   "country": "Bhutan",
+   "lat": 27.4917,
+   "lng": 89.3633,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-taktsang"
+  },
+  "tn2": {
+   "name": "Tiger's Nest Monastery",
+   "country": "Bhutan",
+   "lat": 27.492,
+   "lng": 89.363,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-taktsang"
+  },
+  "jk1": {
+   "name": "Jokhang Temple",
+   "country": "China",
+   "lat": 29.653,
+   "lng": 91.132,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-jokhang"
+  },
+  "jk2": {
+   "name": "Jokhang",
+   "country": "China",
+   "lat": 29.6532,
+   "lng": 91.1318,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity"
+  },
+  "po1": {
+   "name": "Potala Palace",
+   "country": "China",
+   "lat": 29.6578,
+   "lng": 91.117,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-potala"
+  },
+  "po2": {
+   "name": "Potala",
+   "country": "China",
+   "lat": 29.658,
+   "lng": 91.1172,
+   "by": "llm",
+   "prec": "area"
+  },
+  "kh1": {
+   "name": "Lake Khuvsgul",
+   "country": "Mongolia",
+   "lat": 50.95,
+   "lng": 100.35,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-khuvsgul"
+  },
+  "kh2": {
+   "name": "Khövsgöl Lake",
+   "country": "Mongolia",
+   "lat": 51.1,
+   "lng": 100.5,
+   "by": "llm",
+   "prec": "area"
+  },
+  "af1": {
+   "name": "Amber Fort",
+   "country": "India",
+   "lat": 26.9855,
+   "lng": 75.8513,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-amber"
+  },
+  "af2": {
+   "name": "Amer Fort",
+   "country": "India",
+   "lat": 26.985,
+   "lng": 75.851,
+   "by": "llm",
+   "prec": "area"
+  },
+  "jg1": {
+   "name": "Jaigarh Fort",
+   "country": "India",
+   "lat": 26.985,
+   "lng": 75.845,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-jaigarh"
+  },
+  "jp1": {
+   "name": "Jaipur",
+   "country": "India",
+   "lat": 26.9124,
+   "lng": 75.7873,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-jaipur",
+   "stop": true
+  },
+  "tj1": {
+   "name": "Taj Mahal",
+   "country": "India",
+   "lat": 27.1751,
+   "lng": 78.0421,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-taj"
+  },
+  "ag1": {
+   "name": "Agra Fort",
+   "country": "India",
+   "lat": 27.1795,
+   "lng": 78.0211,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-agrafort"
+  },
+  "hw1": {
+   "name": "Hawa Mahal",
+   "country": "India",
+   "lat": 26.9239,
+   "lng": 75.8267,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-hawamahal"
+  },
+  "cp1": {
+   "name": "City Palace, Jaipur",
+   "country": "India",
+   "lat": 26.9258,
+   "lng": 75.8237,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-citypalace"
+  },
+  "adv-bt": {
+   "name": "Ben Thanh",
+   "country": "Vietnam",
+   "lat": 10.7769,
+   "lng": 106.7009,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hcmc",
+   "gname": "Ho Chi Minh City"
+  },
+  "adv-hcmc": {
+   "name": "Ho Chi Minh City",
+   "country": "Vietnam",
+   "lat": 10.7769,
+   "lng": 106.7009,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hcmc",
+   "stop": true
+  },
+  "adv-bitexco": {
+   "name": "Bitexco",
+   "country": "Vietnam",
+   "lat": 10.7769,
+   "lng": 106.7009,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hcmc",
+   "gname": "Ho Chi Minh City"
+  },
+  "adv-hgloop": {
+   "name": "Ha Giang Loop",
+   "country": "Vietnam",
+   "lat": 22.8233,
+   "lng": 104.9836,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hagiang",
+   "gname": "Ha Giang"
+  },
+  "adv-hg": {
+   "name": "Ha Giang",
+   "country": "Vietnam",
+   "lat": 22.8233,
+   "lng": 104.9836,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-hagiang",
+   "stop": true
+  },
+  "adv-tkloop": {
+   "name": "Thakhek Loop",
+   "country": "Laos",
+   "lat": 17.4108,
+   "lng": 104.8311,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-thakhek",
+   "gname": "Thakhek"
+  },
+  "adv-tk": {
+   "name": "Thakhek",
+   "country": "Laos",
+   "lat": 17.4108,
+   "lng": 104.8311,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-thakhek",
+   "stop": true
+  },
+  "adv-hcmtrail": {
+   "name": "Ho Chi Minh Trail",
+   "country": "Vietnam",
+   "lat": 16.46,
+   "lng": 107.2,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     1001
+    ],
+    "line": [
+     [
+      17.5,
+      106.3
+     ],
+     [
+      17.32667,
+      106.45
+     ],
+     [
+      17.15333,
+      106.6
+     ],
+     [
+      16.98,
+      106.75
+     ],
+     [
+      16.80667,
+      106.9
+     ],
+     [
+      16.63333,
+      107.05
+     ],
+     [
+      16.46,
+      107.2
+     ],
+     [
+      16.3,
+      107.26667
+     ],
+     [
+      16.14,
+      107.33333
+     ],
+     [
+      15.98,
+      107.4
+     ],
+     [
+      15.82,
+      107.46667
+     ],
+     [
+      15.66,
+      107.53333
+     ],
+     [
+      15.5,
+      107.6
+     ]
+    ],
+    "class": "trail"
+   }
+  },
+  "adv-hcmroad": {
+   "name": "Ho Chi Minh Road",
+   "country": "Vietnam",
+   "lat": 16.55,
+   "lng": 107.1,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     1002
+    ],
+    "line": [
+     [
+      21.03,
+      105.85
+     ],
+     [
+      20.575,
+      105.825
+     ],
+     [
+      20.12,
+      105.8
+     ],
+     [
+      19.665,
+      105.775
+     ],
+     [
+      19.21,
+      105.75
+     ],
+     [
+      18.755,
+      105.725
+     ],
+     [
+      18.3,
+      105.7
+     ],
+     [
+      17.98333,
+      105.93333
+     ],
+     [
+      17.66667,
+      106.16667
+     ],
+     [
+      17.35,
+      106.4
+     ],
+     [
+      17.03333,
+      106.63333
+     ],
+     [
+      16.71667,
+      106.86667
+     ],
+     [
+      16.4,
+      107.1
+     ]
+    ],
+    "class": "road"
+   }
+  },
+  "adv-hcmtrail-ns": {
+   "name": "Ho Chi Minh Trail",
+   "country": "Vietnam",
+   "lat": 16.46,
+   "lng": 107.2,
+   "by": "llm",
+   "prec": "area"
+  },
+  "adv-hcmroad-ns": {
+   "name": "Ho Chi Minh Road",
+   "country": "Vietnam",
+   "lat": 16.4,
+   "lng": 107.3,
+   "by": "llm",
+   "prec": "area"
+  },
+  "lin-namou-river": {
+   "name": "Nam Ou River",
+   "country": "Laos",
+   "lat": 21.3,
+   "lng": 102.37,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     2001
+    ],
+    "line": [
+     [
+      21.68,
+      102.1
+     ],
+     [
+      21.58,
+      102.17
+     ],
+     [
+      21.48,
+      102.24
+     ],
+     [
+      21.38,
+      102.31
+     ],
+     [
+      21.28,
+      102.38
+     ],
+     [
+      21.18,
+      102.45
+     ],
+     [
+      21.08,
+      102.52
+     ],
+     [
+      20.995,
+      102.535
+     ],
+     [
+      20.91,
+      102.55
+     ],
+     [
+      20.825,
+      102.565
+     ],
+     [
+      20.74,
+      102.58
+     ],
+     [
+      20.655,
+      102.595
+     ],
+     [
+      20.57,
+      102.61
+     ],
+     [
+      20.48333,
+      102.545
+     ],
+     [
+      20.39667,
+      102.48
+     ],
+     [
+      20.31,
+      102.415
+     ],
+     [
+      20.22333,
+      102.35
+     ],
+     [
+      20.13667,
+      102.285
+     ],
+     [
+      20.05,
+      102.22
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-namou": {
+   "name": "Nam Ou",
+   "country": "Laos",
+   "lat": 20.25,
+   "lng": 102.37,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": null,
+    "line": [
+     [
+      21.08,
+      102.52
+     ],
+     [
+      20.995,
+      102.535
+     ],
+     [
+      20.91,
+      102.55
+     ],
+     [
+      20.825,
+      102.565
+     ],
+     [
+      20.74,
+      102.58
+     ],
+     [
+      20.655,
+      102.595
+     ],
+     [
+      20.57,
+      102.61
+     ],
+     [
+      20.48333,
+      102.545
+     ],
+     [
+      20.39667,
+      102.48
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-namou-osm": {
+   "name": "Nam Ou",
+   "country": "Laos",
+   "lat": 20.3,
+   "lng": 102.4,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     2001
+    ],
+    "line": [
+     [
+      20.91,
+      102.55
+     ],
+     [
+      20.825,
+      102.565
+     ],
+     [
+      20.74,
+      102.58
+     ],
+     [
+      20.655,
+      102.595
+     ],
+     [
+      20.57,
+      102.61
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-namou-noshape": {
+   "name": "Nam Ou",
+   "country": "Laos",
+   "lat": 20.25,
+   "lng": 102.37,
+   "by": "llm",
+   "prec": "line"
+  },
+  "lin-mekong-river": {
+   "name": "Mekong River",
+   "country": "Laos",
+   "lat": 19.89,
+   "lng": 101.6,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     3001
+    ],
+    "line": [
+     [
+      20.27,
+      100.43
+     ],
+     [
+      20.2225,
+      100.5175
+     ],
+     [
+      20.175,
+      100.605
+     ],
+     [
+      20.1275,
+      100.6925
+     ],
+     [
+      20.08,
+      100.78
+     ],
+     [
+      20.0325,
+      100.8675
+     ],
+     [
+      19.985,
+      100.955
+     ],
+     [
+      19.9375,
+      101.0425
+     ],
+     [
+      19.89,
+      101.13
+     ],
+     [
+      19.89,
+      101.255
+     ],
+     [
+      19.89,
+      101.38
+     ],
+     [
+      19.89,
+      101.505
+     ],
+     [
+      19.89,
+      101.63
+     ],
+     [
+      19.89,
+      101.755
+     ],
+     [
+      19.89,
+      101.88
+     ],
+     [
+      19.89,
+      102.005
+     ],
+     [
+      19.89,
+      102.13
+     ],
+     [
+      19.76875,
+      102.17
+     ],
+     [
+      19.6475,
+      102.21
+     ],
+     [
+      19.52625,
+      102.25
+     ],
+     [
+      19.405,
+      102.29
+     ],
+     [
+      19.28375,
+      102.33
+     ],
+     [
+      19.1625,
+      102.37
+     ],
+     [
+      19.04125,
+      102.41
+     ],
+     [
+      18.92,
+      102.45
+     ],
+     [
+      18.8,
+      102.47
+     ],
+     [
+      18.68,
+      102.49
+     ],
+     [
+      18.56,
+      102.51
+     ],
+     [
+      18.44,
+      102.53
+     ],
+     [
+      18.32,
+      102.55
+     ],
+     [
+      18.2,
+      102.57
+     ],
+     [
+      18.08,
+      102.59
+     ],
+     [
+      17.96,
+      102.61
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-mekong-stretch": {
+   "name": "Mekong (Luang Prabang–Pakbeng)",
+   "country": "Laos",
+   "lat": 19.89,
+   "lng": 101.6,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": null,
+    "line": [
+     [
+      19.89,
+      101.13
+     ],
+     [
+      19.89,
+      101.255
+     ],
+     [
+      19.89,
+      101.38
+     ],
+     [
+      19.89,
+      101.505
+     ],
+     [
+      19.89,
+      101.63
+     ],
+     [
+      19.89,
+      101.755
+     ],
+     [
+      19.89,
+      101.88
+     ],
+     [
+      19.89,
+      102.005
+     ],
+     [
+      19.89,
+      102.13
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-mekong-slowboat": {
+   "name": "Mekong River (Huay Xai - Pakbeng)",
+   "country": "Laos",
+   "lat": 20.1,
+   "lng": 100.8,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": null,
+    "line": [
+     [
+      20.27,
+      100.43
+     ],
+     [
+      20.2225,
+      100.5175
+     ],
+     [
+      20.175,
+      100.605
+     ],
+     [
+      20.1275,
+      100.6925
+     ],
+     [
+      20.08,
+      100.78
+     ],
+     [
+      20.0325,
+      100.8675
+     ],
+     [
+      19.985,
+      100.955
+     ],
+     [
+      19.9375,
+      101.0425
+     ],
+     [
+      19.89,
+      101.13
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-namkhan": {
+   "name": "Nam Khan River",
+   "country": "Laos",
+   "lat": 20.1,
+   "lng": 102.6,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     2002
+    ],
+    "line": [
+     [
+      20.4,
+      103.1
+     ],
+     [
+      20.34167,
+      103.03333
+     ],
+     [
+      20.28333,
+      102.96667
+     ],
+     [
+      20.225,
+      102.9
+     ],
+     [
+      20.16667,
+      102.83333
+     ],
+     [
+      20.10833,
+      102.76667
+     ],
+     [
+      20.05,
+      102.7
+     ],
+     [
+      20.02333,
+      102.60667
+     ],
+     [
+      19.99667,
+      102.51333
+     ],
+     [
+      19.97,
+      102.42
+     ],
+     [
+      19.94333,
+      102.32667
+     ],
+     [
+      19.91667,
+      102.23333
+     ],
+     [
+      19.89,
+      102.14
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "lin-mekong-approx": {
+   "name": "Mekong River",
+   "country": "Laos",
+   "lat": 19.89,
+   "lng": 101.6,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "approximate",
+    "osm": null,
+    "line": [
+     [
+      19.89,
+      101.13
+     ],
+     [
+      19.89,
+      101.255
+     ],
+     [
+      19.89,
+      101.38
+     ],
+     [
+      19.89,
+      101.505
+     ],
+     [
+      19.89,
+      101.63
+     ],
+     [
+      19.89,
+      101.755
+     ],
+     [
+      19.89,
+      101.88
+     ],
+     [
+      19.89,
+      102.005
+     ],
+     [
+      19.89,
+      102.13
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "adv-haivan": {
+   "name": "Hai Van Pass",
+   "country": "Vietnam",
+   "lat": 16.195,
+   "lng": 108.13,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-haivan"
+  },
+  "adv-haivanroad": {
+   "name": "Hai Van Pass Road",
+   "country": "Vietnam",
+   "lat": 16.19,
+   "lng": 108.125,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "street",
+   "pid": "g-haivanroad"
+  },
+  "adv-namou-pt": {
+   "name": "Nam Ou River",
+   "country": "Laos",
+   "lat": 20.57,
+   "lng": 102.61,
+   "by": "llm",
+   "prec": "area"
+  },
+  "adv-nongkhiaw-bridge": {
+   "name": "Nong Khiaw Bridge",
+   "country": "Laos",
+   "lat": 20.57,
+   "lng": 102.611,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-nkbridge"
+  },
+  "sk-hk-ward": {
+   "name": "Hoan Kiem",
+   "country": "Vietnam",
+   "lat": 21.0288,
+   "lng": 105.8525,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-hk-suburb",
+   "gname": "Hoàn Kiếm"
+  },
+  "sk-hk-lake": {
+   "name": "Hoan Kiem Lake",
+   "country": "Vietnam",
+   "lat": 21.0288,
+   "lng": 105.8525,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-hk-suburb",
+   "gname": "Hoàn Kiếm"
+  },
+  "sk-lb-ward": {
+   "name": "Long Bien",
+   "country": "Vietnam",
+   "lat": 21.0367,
+   "lng": 105.892,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-lb-suburb",
+   "gname": "Long Biên"
+  },
+  "sk-lb-bridge": {
+   "name": "Long Bien Bridge",
+   "country": "Vietnam",
+   "lat": 21.0367,
+   "lng": 105.892,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-lb-suburb",
+   "gname": "Long Biên"
+  },
+  "sk-wtl": {
+   "name": "Wat That Luang",
+   "country": "Laos",
+   "lat": 17.9772,
+   "lng": 102.6346,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-wat-thatluang"
+  },
+  "sk-ptl": {
+   "name": "Pha That Luang",
+   "country": "Laos",
+   "lat": 17.9763,
+   "lng": 102.6363,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-pha-thatluang"
+  },
+  "sk-mekong-pakou": {
+   "name": "Mekong",
+   "country": "Laos",
+   "lat": 20.0,
+   "lng": 101.9,
+   "by": "llm",
+   "prec": "line",
+   "shape": {
+    "status": "ok",
+    "osm": [
+     "relation",
+     3002
+    ],
+    "line": [
+     [
+      19.89,
+      101.13
+     ],
+     [
+      19.95,
+      101.5
+     ],
+     [
+      20.0,
+      101.9
+     ],
+     [
+      20.05,
+      102.22
+     ],
+     [
+      19.95,
+      102.18
+     ],
+     [
+      19.89,
+      102.14
+     ],
+     [
+      19.6,
+      102.25
+     ]
+    ],
+    "class": "water"
+   }
+  },
+  "sk-laocai": {
+   "name": "Lao Cai",
+   "country": "Vietnam",
+   "lat": 22.4856,
+   "lng": 103.9707,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "city",
+   "pid": "g-laocai",
+   "stop": true
+  },
+  "sk-laochai": {
+   "name": "Lao Chai",
+   "country": "Vietnam",
+   "lat": 22.3069,
+   "lng": 103.8771,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-laochai-near": {
+   "name": "Lao Chai",
+   "country": "Vietnam",
+   "lat": 22.47,
+   "lng": 103.95,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-shwezigon": {
+   "name": "Shwezigon Pagoda",
+   "country": "Myanmar",
+   "lat": 21.1944,
+   "lng": 94.8939,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-shwezigon"
+  },
+  "sk-shwesandaw": {
+   "name": "Shwesandaw Pagoda",
+   "country": "Myanmar",
+   "lat": 21.1628,
+   "lng": 94.8728,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-shwesandaw"
+  },
+  "sk-shwesandaw-llm": {
+   "name": "Shwesandaw",
+   "country": "Myanmar",
+   "lat": 21.19,
+   "lng": 94.89,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-dhammayangyi": {
+   "name": "Dhammayangyi Temple",
+   "country": "Myanmar",
+   "lat": 21.1625,
+   "lng": 94.8808,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dhammayangyi"
+  },
+  "sk-dhammayazika": {
+   "name": "Dhammayazika Pagoda",
+   "country": "Myanmar",
+   "lat": 21.1514,
+   "lng": 94.8992,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-dhammayazika"
+  },
+  "sk-dhammayazika-llm": {
+   "name": "Dhammayazika Temple",
+   "country": "Myanmar",
+   "lat": 21.163,
+   "lng": 94.881,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-cuchi": {
+   "name": "Cu Chi",
+   "country": "Vietnam",
+   "lat": 10.9733,
+   "lng": 106.4931,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "suburb",
+   "pid": "g-cuchi-district",
+   "gname": "Củ Chi"
+  },
+  "sk-cuchi-tunnels": {
+   "name": "Cu Chi Tunnels",
+   "country": "Vietnam",
+   "lat": 11.1426,
+   "lng": 106.4637,
+   "by": "geoapify",
+   "prec": "point",
+   "rt": "amenity",
+   "pid": "g-cuchi-tunnels"
+  },
+  "sk-cuchi-tunnels-llm": {
+   "name": "Cu Chi Tunnels",
+   "country": "Vietnam",
+   "lat": 10.98,
+   "lng": 106.49,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-mekong-delta": {
+   "name": "Mekong Delta",
+   "country": "Vietnam",
+   "lat": 10.0,
+   "lng": 105.8,
+   "by": "llm",
+   "prec": "area"
+  },
+  "sk-mekong-river-vn": {
+   "name": "Mekong River",
+   "country": "Vietnam",
+   "lat": 10.3,
+   "lng": 105.9,
+   "by": "llm",
+   "prec": "line"
+  },
+  "sk-mekong-river-vn-pt": {
+   "name": "Mekong River",
+   "country": "Vietnam",
+   "lat": 10.05,
+   "lng": 105.78,
+   "by": "llm",
+   "prec": "area"
+  }
+ },
+ "pairs": [
+  [
+   "k1",
+   "k2",
+   "merge",
+   "s246",
+   "Kuang Si: English / Lao kind word"
+  ],
+  [
+   "k1",
+   "k3",
+   "merge",
+   "s246",
+   "falls = waterfall"
+  ],
+  [
+   "k1",
+   "k4",
+   "merge",
+   "s246",
+   "run-together spelling, same Geoapify object"
+  ],
+  [
+   "p1",
+   "p2",
+   "merge",
+   "s246",
+   "plural"
+  ],
+  [
+   "m1",
+   "m2",
+   "merge",
+   "s246",
+   "Mount Phousi = Phou Si Hill"
+  ],
+  [
+   "h1",
+   "h2",
+   "merge",
+   "s246",
+   "bare name of a lake"
+  ],
+  [
+   "w1",
+   "w2",
+   "keep",
+   "s246",
+   "two temples 0.9 km apart"
+  ],
+  [
+   "t1",
+   "t2",
+   "keep",
+   "s246",
+   "stupa and the temple next to it"
+  ],
+  [
+   "s1",
+   "s2",
+   "keep",
+   "s246",
+   "two temples 150 m apart, unrelated names"
+  ],
+  [
+   "c1",
+   "c2",
+   "keep",
+   "s246",
+   "city vs trail"
+  ],
+  [
+   "x1",
+   "x2",
+   "keep",
+   "s246",
+   "same name, two countries"
+  ],
+  [
+   "n1",
+   "n2",
+   "keep",
+   "s246",
+   "town vs viewpoint 3 km"
+  ],
+  [
+   "ha1",
+   "ha2",
+   "keep",
+   "s246",
+   "old town vs night market"
+  ],
+  [
+   "lb1",
+   "lb2",
+   "keep",
+   "s246",
+   "bridge vs market"
+  ],
+  [
+   "h1",
+   "hk2",
+   "keep",
+   "s246",
+   "lake vs night market"
+  ],
+  [
+   "m1",
+   "m3",
+   "keep",
+   "s246",
+   "mountain vs market"
+  ],
+  [
+   "db1",
+   "db2",
+   "keep",
+   "s246",
+   "market vs bridge"
+  ],
+  [
+   "bt1",
+   "bt2",
+   "keep",
+   "s246",
+   "market vs night market"
+  ],
+  [
+   "lp1",
+   "lp2",
+   "keep",
+   "s246",
+   "town vs night market"
+  ],
+  [
+   "lb1",
+   "lb3",
+   "keep",
+   "s246",
+   "bridge vs district named Long Bien"
+  ],
+  [
+   "m1",
+   "m4",
+   "merge",
+   "s246",
+   "bare name of a mountain"
+  ],
+  [
+   "oq1",
+   "oq2",
+   "merge",
+   "s246",
+   "locality after a comma"
+  ],
+  [
+   "bt1",
+   "bt3",
+   "merge",
+   "task",
+   "Ben Thanh = the market (model point)"
+  ],
+  [
+   "bt1",
+   "bt4",
+   "merge",
+   "task",
+   "Ben Thanh confirmed to the ward centroid; the tours mean the market"
+  ],
+  [
+   "rp1",
+   "rp2",
+   "merge",
+   "task",
+   "Luang Prabang Royal Palace = Royal Palace Museum (Haw Kham)"
+  ],
+  [
+   "lp1",
+   "lp3",
+   "keep",
+   "task",
+   "town vs its old town (a landmark area named after the town)"
+  ],
+  [
+   "w1",
+   "w3",
+   "merge",
+   "built",
+   "wat = temple"
+  ],
+  [
+   "t3",
+   "t4",
+   "merge",
+   "built",
+   "Pha That Luang = That Luang Stupa"
+  ],
+  [
+   "t1",
+   "t3",
+   "merge",
+   "built",
+   "same Geoapify object"
+  ],
+  [
+   "vp1",
+   "vp2",
+   "merge",
+   "built",
+   "Vat Phou / Wat Phu transliteration"
+  ],
+  [
+   "k1",
+   "bf1",
+   "keep",
+   "built",
+   "falls vs butterfly park 0.8 km"
+  ],
+  [
+   "k1",
+   "br1",
+   "keep",
+   "built",
+   "falls vs bear rescue centre 100 m"
+  ],
+  [
+   "p1",
+   "pv1",
+   "keep",
+   "built",
+   "caves vs village across the river"
+  ],
+  [
+   "tf1",
+   "tf2",
+   "merge",
+   "built",
+   "bare name of a waterfall (Lao tad)"
+  ],
+  [
+   "pk3",
+   "pk4",
+   "merge",
+   "built",
+   "tham = cave"
+  ],
+  [
+   "dd1",
+   "dd2",
+   "keep",
+   "built",
+   "two islands 1.8 km apart"
+  ],
+  [
+   "ps1",
+   "pj1",
+   "keep",
+   "built",
+   "town vs the Plain of Jars"
+  ],
+  [
+   "pj1",
+   "pj2",
+   "keep",
+   "built",
+   "the plain vs one numbered site"
+  ],
+  [
+   "vv1",
+   "bl2",
+   "keep",
+   "built",
+   "town vs lagoon named after it"
+  ],
+  [
+   "no1",
+   "no2",
+   "merge",
+   "built",
+   "river, model points 30 km apart (linear)"
+  ],
+  [
+   "mk1",
+   "mk2",
+   "merge",
+   "built",
+   "bare name of a river"
+  ],
+  [
+   "h1",
+   "h3",
+   "merge",
+   "built",
+   "Vietnamese ho = lake"
+  ],
+  [
+   "ha1",
+   "ha3",
+   "merge",
+   "built",
+   "old town = ancient town"
+  ],
+  [
+   "ha4",
+   "ha1",
+   "keep",
+   "built",
+   "town vs its old town"
+  ],
+  [
+   "hl1",
+   "hl2",
+   "merge",
+   "built",
+   "Ha Long / Halong Bay, 9 km apart"
+  ],
+  [
+   "hl2",
+   "hl3",
+   "keep",
+   "built",
+   "bay vs Ha Long city"
+  ],
+  [
+   "tl1",
+   "tl2",
+   "merge",
+   "built",
+   "English / Vietnamese name, same Geoapify object"
+  ],
+  [
+   "tl1",
+   "tl3",
+   "merge",
+   "built",
+   "English / Vietnamese name, no shared id"
+  ],
+  [
+   "hm1",
+   "hm2",
+   "merge",
+   "built",
+   "possessive"
+  ],
+  [
+   "hm1",
+   "pp1",
+   "keep",
+   "built",
+   "mausoleum vs presidential palace 150 m"
+  ],
+  [
+   "hm1",
+   "bd1",
+   "keep",
+   "built",
+   "mausoleum vs square 150 m"
+  ],
+  [
+   "cc1",
+   "cc2",
+   "merge",
+   "built",
+   "plural"
+  ],
+  [
+   "ms1",
+   "ms2",
+   "merge",
+   "built",
+   "bare name of the sanctuary, accents"
+  ],
+  [
+   "sp1",
+   "sp2",
+   "merge",
+   "built",
+   "Sapa / Sa Pa town"
+  ],
+  [
+   "sp1",
+   "cv1",
+   "keep",
+   "built",
+   "town vs village 1.5 km"
+  ],
+  [
+   "ta1",
+   "ta2",
+   "merge",
+   "built",
+   "generic suffix"
+  ],
+  [
+   "ta1",
+   "tc1",
+   "keep",
+   "built",
+   "two sites 6 km apart"
+  ],
+  [
+   "bd2",
+   "bd3",
+   "merge",
+   "built",
+   "pagoda = temple"
+  ],
+  [
+   "hm3",
+   "hm4",
+   "merge",
+   "built",
+   "hang = cave"
+  ],
+  [
+   "sd1",
+   "sd2",
+   "merge",
+   "built",
+   "hang = cave"
+  ],
+  [
+   "pn1",
+   "pn2",
+   "keep",
+   "built",
+   "cave vs national park"
+  ],
+  [
+   "pn3",
+   "pn1",
+   "keep",
+   "built",
+   "town vs cave"
+  ],
+  [
+   "dl1",
+   "dl2",
+   "merge",
+   "built",
+   "Dalat / Da Lat"
+  ],
+  [
+   "dl3",
+   "dl4",
+   "keep",
+   "built",
+   "night market vs market"
+  ],
+  [
+   "gb1",
+   "bn1",
+   "keep",
+   "built",
+   "bridge vs hills resort 0.9 km"
+  ],
+  [
+   "jb1",
+   "jb2",
+   "merge",
+   "built",
+   "extra adjective"
+  ],
+  [
+   "ab1",
+   "ab2",
+   "merge",
+   "built",
+   "bare name of a beach"
+  ],
+  [
+   "ab1",
+   "cd1",
+   "keep",
+   "built",
+   "two beaches 4 km"
+  ],
+  [
+   "tm1",
+   "tm2",
+   "merge",
+   "built",
+   "bare name resolved to the pagoda by the geocoder"
+  ],
+  [
+   "hv1",
+   "hv2",
+   "merge",
+   "built",
+   "bare name of a pass"
+  ],
+  [
+   "mp1",
+   "mp2",
+   "merge",
+   "built",
+   "accents"
+  ],
+  [
+   "mp1",
+   "nq1",
+   "keep",
+   "built",
+   "pass vs river 1.5 km"
+  ],
+  [
+   "bg1",
+   "bg2",
+   "merge",
+   "built",
+   "Vietnamese / Chinese names of one waterfall"
+  ],
+  [
+   "ds1",
+   "ds2",
+   "keep",
+   "built",
+   "mountain vs the temple on it"
+  ],
+  [
+   "cm1",
+   "cm2",
+   "merge",
+   "built",
+   "bazaar = market"
+  ],
+  [
+   "cm1",
+   "wm1",
+   "keep",
+   "built",
+   "two markets 0.6 km"
+  ],
+  [
+   "gp1",
+   "wpk",
+   "keep",
+   "built",
+   "palace vs temple 200 m"
+  ],
+  [
+   "ch1",
+   "ch2",
+   "merge",
+   "built",
+   "weekend market"
+  ],
+  [
+   "wa1",
+   "wa2",
+   "merge",
+   "built",
+   "Wat Arun = Temple of Dawn, same Geoapify object"
+  ],
+  [
+   "aw1",
+   "aw2",
+   "merge",
+   "built",
+   "wat = temple"
+  ],
+  [
+   "aw1",
+   "at1",
+   "keep",
+   "built",
+   "two temples 3 km"
+  ],
+  [
+   "tp1",
+   "tp2",
+   "merge",
+   "built",
+   "bare name resolved to the temple"
+  ],
+  [
+   "by1",
+   "by2",
+   "merge",
+   "built",
+   "bare name, model point"
+  ],
+  [
+   "sr1",
+   "sr2",
+   "keep",
+   "built",
+   "town vs night market"
+  ],
+  [
+   "rk1",
+   "nm1",
+   "keep",
+   "built",
+   "palace vs museum 300 m"
+  ],
+  [
+   "sw1",
+   "sw2",
+   "merge",
+   "built",
+   "paya = pagoda"
+  ],
+  [
+   "in1",
+   "in2",
+   "merge",
+   "built",
+   "bare name of a lake"
+  ],
+  [
+   "in1",
+   "ny1",
+   "keep",
+   "built",
+   "lake vs town"
+  ],
+  [
+   "mh1",
+   "md1",
+   "keep",
+   "built",
+   "hill vs city"
+  ],
+  [
+   "bg3",
+   "ob1",
+   "keep",
+   "built",
+   "town vs Old Bagan zone"
+  ],
+  [
+   "bo1",
+   "bo2",
+   "merge",
+   "built",
+   "Boudhanath / Boudha"
+  ],
+  [
+   "sy1",
+   "sy2",
+   "merge",
+   "built",
+   "bare name resolved to the temple, alias in parentheses"
+  ],
+  [
+   "kd1",
+   "kd2",
+   "merge",
+   "built",
+   "locality after a comma"
+  ],
+  [
+   "kd1",
+   "pd1",
+   "keep",
+   "built",
+   "two durbar squares 4 km"
+  ],
+  [
+   "bk1",
+   "bk2",
+   "keep",
+   "built",
+   "town vs its durbar square"
+  ],
+  [
+   "pk1",
+   "pk2",
+   "keep",
+   "built",
+   "town vs dzong"
+  ],
+  [
+   "tn1",
+   "tn2",
+   "merge",
+   "built",
+   "two names, same Geoapify object"
+  ],
+  [
+   "jk1",
+   "jk2",
+   "merge",
+   "built",
+   "bare name resolved to the temple"
+  ],
+  [
+   "po1",
+   "po2",
+   "merge",
+   "built",
+   "bare name, model point"
+  ],
+  [
+   "kh1",
+   "kh2",
+   "merge",
+   "built",
+   "Khuvsgul / Khovsgol transliteration"
+  ],
+  [
+   "af1",
+   "af2",
+   "merge",
+   "built",
+   "Amber / Amer"
+  ],
+  [
+   "af1",
+   "jg1",
+   "keep",
+   "built",
+   "two forts 0.6 km"
+  ],
+  [
+   "af1",
+   "jp1",
+   "keep",
+   "built",
+   "fort vs city"
+  ],
+  [
+   "tj1",
+   "ag1",
+   "keep",
+   "built",
+   "two monuments 2 km"
+  ],
+  [
+   "hw1",
+   "cp1",
+   "keep",
+   "built",
+   "two palaces 350 m"
+  ],
+  [
+   "adv-bt",
+   "adv-hcmc",
+   "keep",
+   "review",
+   "Ben Thanh geocoded to the city: shared city-level id is a geocode fallback"
+  ],
+  [
+   "adv-bitexco",
+   "adv-bt",
+   "keep",
+   "review",
+   "two bare POI names on the same city fallback id"
+  ],
+  [
+   "adv-hgloop",
+   "adv-hg",
+   "keep",
+   "review",
+   "Ha Giang Loop (linear) vs Ha Giang town, shared city id"
+  ],
+  [
+   "adv-tkloop",
+   "adv-tk",
+   "keep",
+   "review",
+   "Thakhek Loop (linear) vs Thakhek town, shared city id"
+  ],
+  [
+   "adv-hcmtrail",
+   "adv-hcmroad",
+   "keep",
+   "review",
+   "trail vs road: different linear subtypes, lines overlap in places"
+  ],
+  [
+   "adv-hcmtrail-ns",
+   "adv-hcmroad-ns",
+   "keep",
+   "review",
+   "trail vs road 15 km apart without shapes"
+  ],
+  [
+   "lin-namou",
+   "lin-namou-river",
+   "merge",
+   "review",
+   "Nam Ou / Nam Ou River, points 134 km apart, lines overlap"
+  ],
+  [
+   "lin-namou-osm",
+   "lin-namou-river",
+   "merge",
+   "review",
+   "same OSM relation"
+  ],
+  [
+   "lin-namou-noshape",
+   "lin-namou-river",
+   "merge",
+   "review",
+   "no shape yet: deferred (pending_shape), never merged on points"
+  ],
+  [
+   "lin-mekong-stretch",
+   "lin-mekong-river",
+   "merge",
+   "review",
+   "a Mekong stretch merges into the river"
+  ],
+  [
+   "lin-mekong-slowboat",
+   "lin-mekong-river",
+   "merge",
+   "review",
+   "another Mekong stretch"
+  ],
+  [
+   "lin-namkhan",
+   "lin-namou-river",
+   "keep",
+   "review",
+   "two rivers meeting near Luang Prabang: lines apart"
+  ],
+  [
+   "lin-mekong-approx",
+   "lin-mekong-stretch",
+   "merge",
+   "review",
+   "approximate (anchor) shape is not trusted: deferred"
+  ],
+  [
+   "adv-haivan",
+   "adv-haivanroad",
+   "keep",
+   "review",
+   "the pass vs the road over it (point vs linear)"
+  ],
+  [
+   "adv-namou-pt",
+   "adv-nongkhiaw-bridge",
+   "keep",
+   "review",
+   "a river (model point) vs a bridge over it"
+  ],
+  [
+   "sk-hk-ward",
+   "sk-hk-lake",
+   "keep",
+   "skeptic",
+   "same suburb id: Geoapify dropped 'lake' and gave the lake the ward (revised plan §0.1)",
+   {
+    "label_needs": "metadata"
+   }
+  ],
+  [
+   "sk-lb-ward",
+   "sk-lb-bridge",
+   "keep",
+   "skeptic",
+   "same suburb id: the district and the bridge (revised plan §0.1)"
+  ],
+  [
+   "sk-wtl",
+   "sk-ptl",
+   "keep",
+   "skeptic",
+   "the temple next to the stupa, 200 m apart"
+  ],
+  [
+   "sk-mekong-pakou",
+   "lin-namou-river",
+   "keep",
+   "skeptic",
+   "a tributary meets the Mekong at Pak Ou: lines touch, no overlap"
+  ],
+  [
+   "sk-laocai",
+   "sk-laochai",
+   "keep",
+   "homonym",
+   "Lao Cai (city) vs Lao Chai (village near Sa Pa)"
+  ],
+  [
+   "sk-laocai",
+   "sk-laochai-near",
+   "keep",
+   "homonym",
+   "Lao Cai (city) vs a Lao Chai model point near the city"
+  ],
+  [
+   "sk-shwezigon",
+   "sk-shwesandaw",
+   "keep",
+   "homonym",
+   "two Bagan pagodas, 4 km apart"
+  ],
+  [
+   "sk-shwezigon",
+   "sk-shwesandaw-llm",
+   "keep",
+   "homonym",
+   "Shwezigon vs a model point of Shwesandaw 500 m away"
+  ],
+  [
+   "sk-dhammayangyi",
+   "sk-dhammayazika",
+   "keep",
+   "homonym",
+   "two Bagan temples, 2 km apart"
+  ],
+  [
+   "sk-dhammayangyi",
+   "sk-dhammayazika-llm",
+   "keep",
+   "homonym",
+   "Dhammayangyi vs a Dhammayazika model point 60 m away"
+  ],
+  [
+   "sk-cuchi",
+   "sk-cuchi-tunnels",
+   "keep",
+   "homonym",
+   "Cu Chi district vs the tunnels"
+  ],
+  [
+   "sk-cuchi",
+   "sk-cuchi-tunnels-llm",
+   "keep",
+   "homonym",
+   "Cu Chi district vs a model point of the tunnels near the district centre"
+  ],
+  [
+   "sk-mekong-river-vn",
+   "sk-mekong-delta",
+   "keep",
+   "homonym",
+   "the river (line, no shape) vs the delta (area)"
+  ],
+  [
+   "sk-mekong-river-vn-pt",
+   "sk-mekong-delta",
+   "keep",
+   "homonym",
+   "the river (model point) vs the delta"
+  ]
+ ]
+}

@@ -1,0 +1,72 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "feature_type": "details",
+    "name": "Nam Ou",
+    "country_code": "la",
+    "datasource": {
+     "sourcename": "openstreetmap",
+     "attribution": "© OpenStreetMap contributors",
+     "license": "Open Database License",
+     "raw": {
+      "name": "ນ້ຳອູ",
+      "name:en": "Nam Ou",
+      "type": "waterway",
+      "waterway": "river",
+      "osm_type": "r",
+      "osm_id": 5512345
+     }
+    },
+    "place_id": "51namourel"
+   },
+   "geometry": {
+    "type": "MultiLineString",
+    "coordinates": [
+     [
+      [
+       102.52,
+       21.08
+      ],
+      [
+       102.55,
+       20.9
+      ],
+      [
+       102.6,
+       20.7
+      ],
+      [
+       102.61,
+       20.57
+      ]
+     ],
+     [
+      [
+       102.61,
+       20.57
+      ],
+      [
+       102.5,
+       20.35
+      ],
+      [
+       102.35,
+       20.15
+      ],
+      [
+       102.25,
+       20.05
+      ],
+      [
+       102.22,
+       19.99
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

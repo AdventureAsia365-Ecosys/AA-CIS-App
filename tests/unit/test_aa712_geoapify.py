@@ -488,6 +488,9 @@ class _Conn:
     async def fetch(self, *a, **k):
         return []
 
+    async def execute(self, *a, **k):     # AA-847: store.lock_destinations
+        return "SELECT 1"
+
     def transaction(self):
         import contextlib
 

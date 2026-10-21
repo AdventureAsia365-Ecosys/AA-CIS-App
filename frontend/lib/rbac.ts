@@ -57,6 +57,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/jobs", roles: ["admin"] },              // AA-650
   { prefix: "/admin/decisions", roles: ["admin"] },         // AA-660
   { prefix: "/admin/photos", roles: ["admin"] },            // AA-708
+  { prefix: "/admin/places", roles: ["admin"] },            // AA-847 — coverage + content validity, fixes
   { prefix: "/admin/seo-intelligence", roles: ["admin"] },  // AA-705
   { prefix: "/admin/atom-curation", roles: ["admin"] },     // AA-527
   { prefix: "/admin/tenant-activity", roles: ["admin"] },   // AA-551
@@ -114,6 +115,9 @@ export const API_WRITE_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // further: staff.write needs an owner on a Cognito session (api/core/staff_authz.py), see canWriteStaff().
   // "platform/" (with the slash) so the write rule never matches "platform-stats".
   { prefix: "platform/", roles: ["admin"] },
+  // AA-847 — place fixes (merge duplicates, hide trails, area precision) change the map every app reads;
+  // the backend re-checks (ops.write). "places/" covers backfill and validity/fix.
+  { prefix: "places/", roles: ["admin"] },
 ];
 
 // AA-577 follow-up — /api/admin/ paths that NO method may reach unless the role is listed (reads

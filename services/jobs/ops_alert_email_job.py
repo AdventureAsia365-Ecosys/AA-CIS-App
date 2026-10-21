@@ -33,6 +33,7 @@ logger = structlog.get_logger()
 _RENDERERS = {
     ops_alerts.TEMPLATE_SPEND_BUDGET: ops_alerts.render_spend_budget,
     ops_alerts.TEMPLATE_TEST: ops_alerts.render_test,
+    ops_alerts.TEMPLATE_PLACE_DEDUPE_HELD: ops_alerts.render_place_dedupe_held,   # AA-847
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 

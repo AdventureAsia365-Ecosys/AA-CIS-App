@@ -280,7 +280,7 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `s1_rewrite`, `s1_batch_ingest`, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
-    `place_geocode`, `tour_graph_build` — AA-712, the five `retention_*` kinds — AA-825,
+    `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, the five `retention_*` kinds — AA-825,
     `ops_alert_email` — AA-828). Every claim merges `progress.attempt_started_at` (AA-751, F18):
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
@@ -485,6 +485,64 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (Cohere 1536-d). `shared.destinations` is unique on `(name_norm, country, locality_norm)` (same
   name in two countries = two places). Other apps will read it only through `catalog.*` views
   (migration 228, next slice); TripPlanner's own extraction is frozen.
+- **Place kinds and the content-validity gate (AA-847).** `geomatch.feature_kind` names a place that is not a
+  pin: a **linear** feature (trail, river, road, loop, stream, path, circuit, expressway …) is stored
+  `geo_precision='line'`, `geo_status='ok'` and DRAWN as a line (owner decision S246: never a pin, a circle or
+  hidden): `place_geocode` inserts its pending `geo.place_shape` row and never moves its point for shape reasons (it
+  stays the only coordinate writer); an **area** feature (national park, delta, plateau, coast, gorge, mountain
+  range) is `area` even when Geoapify confirms a point. A name that names a point on the feature ("River Kwai
+  Bridge", "Kuang Si Falls", "Peradeniya Railway Station") stays a point. A descriptive atom place around a feature
+  ("sandbank on the Nam Ou River", "Annapurna Circuit Trek") links its component to the feature's destination
+  (`geomatch.linked_feature`, labelled set in `tests/unit/test_aa847_linked_feature.py`). A line destination is never
+  a graph stop or node, never in the outlier rule and never in the point-distance same-place rule.
+- **Line geometry (AA-847, CIS 255).** `geo.place_shape` (one row per line destination: status pending / ok /
+  approximate / not_found / failed / manual, GeoJSON at ≤ 2,000 / 300 / 60 vertices clipped to the country, non-null
+  bbox, `osm_type`/`osm_id`) is written only by the job kind `place_shape` (and the admin's manual GeoJSON);
+  `geo.tour_segment` (the stretch a tour-day follows, versioned with `geo.graph_build`) only by `tour_graph_build`.
+  The Geoapify daily credit guard sums `geo.geocode_call.credits` of every endpoint (search + Place Details).
+  `place_shape` (debounced, cap 1, background; off unless `PLACE_SHAPES_ENABLED`; `GEOCODER_PROVIDER=model_only` = no
+  call) takes the geometry from Geoapify Place Details by the stored place id, then Overpass (free, ≤ 1 request / 2 s)
+  when that is missing or only one OSM way; `services/places/shape.py` accepts a candidate on name (name / name:en /
+  int_name / name:*), kind (waterway / road / route), the country POLYGON (Natural Earth admin-0,
+  `services/places/geodata/`; not `guards.BBOX`), distance to the tour-day anchors and a kind-aware length, and
+  prefers a relation or merged same-name ways over one way. No OSM feature → the anchored approximate route of a
+  tour-day (status `approximate`, drawn dashed "approximate route"); no anchors either → `not_found`, retried and
+  listed on `/admin/places` (Lines tab; `POST /admin/places/shapes/backfill` dry run first, ≤ 50 names;
+  `PUT|DELETE /admin/places/{id}/shape` manual GeoJSON). `place_geocode` and `place_shape` share one advisory lock
+  (`services/places/geolock.py`): one Geoapify client at a time. `tour_graph_build` cuts each day's stretch
+  (`shape.day_segment`: between the previous and this day's stop, or ±15 km around one, or none = the whole
+  feature). Two lines are the same place only on the same country + kind + name and the same OSM id or ≥ 70 % overlap
+  (`shape.same_line_place`; labelled pairs `tests/unit/fixtures/aa847_line_pairs.json`).
+- **Automatic duplicate merge (AA-847 Problem 2, CIS 257; owner decision S246: no manual merges as the normal
+  path).** One decision `services/places/dedupe.decide(a, b)` → auto_merge / llm / keep (rules `r1.4`, pinned by
+  `tests/unit/test_aa847_dedupe.py` on a labelled pair set: 0 false merges in every metadata mode). A shared geocoder
+  id or place card is evidence, never a verdict (it auto-merges only POI / natural objects with exact / fuzzy names
+  and no cap); two drawn lines merge on their shape overlap, a line without a drawn shape or a point vs a line is at
+  most the model's call. The job kind `place_dedupe` (debounced, background, cap 1; queued by `place_geocode` when it
+  wrote a destination, by `place_shape` (`enqueue.enqueue_dedupe`), by an undo, by the admin) recomputes every pair
+  per country, asks the middle band of allow-listed countries to two models that must agree (`a3_place_dedupe` GPT-6
+  Luna A/B and B/A, `a3_place_dedupe_check` Haiku; verdicts cached in `geo.place_pair_verdict`, budget
+  bedrock/job:place_dedupe $0.50/run, ≤ 150 pairs/run) and writes only for countries in mode `apply` of
+  `geo.place_dedupe_country` (the approved dry-run diff; more than max(5, 1 %) changes outside it → `held_volume` +
+  alert). `place_dedupe` is the only writer of `duplicate_of` (the admin fix is an override); every merge is a
+  `geo.place_merge` row (repointed rows, flattened members) and is undone by relink (`POST
+  /admin/places/merges/{id}/undo`, `different` pin). place_geocode upsert / relink, the place_extract persist, merges
+  and the admin fix take one advisory lock (`store.lock_destinations`). `catalog.v_destination_redirect` maps a
+  merged id to its keeper (TripPlanner answers 301). `place_extract` maps a tour's in-tour duplicates with the same
+  decision, rules band only (`dedupe.in_tour_remap`). `services/places/validity.py` is the deterministic report (reason codes V1 duration / V2 same place / V3
+  not a pin / V4 day text; V2 is `dedupe.decide`: `near_duplicate` = an auto_merge pair not merged yet,
+  `possible_duplicate` = a model-band pair, informational), run after every
+  `tour_graph_build` (counts in `geo.graph_build.stats.validity`) and on `/admin/places` (Coverage + Content
+  validity tabs; `GET /admin/places/validity|coverage`, `POST /admin/places/validity/fix` dry run by default, apply
+  refused with 409 when the plan changed since the dry run's `fingerprint`, audit row with the prior values,
+  `undo=<audit id>`). The **flip gate** (`validity.GATE_REASONS`, `summary.gate`) counts only map defects the fixes
+  clear: `near_duplicate`, `linear_feature` (a linear name not stored as a line), `area_feature`,
+  `linear_without_shape` (a line whose shape is not ok / manual / approximate); `same_destination_names` (one pin,
+  several spellings),
+  V1 and V4 are informational. A duplicate merge sets `duplicate_of` and repoints the CIS rows
+  (`geo.tour_place`, `geo.tour_day`, `geo.place_name`, `acp_shared.place_card`, `shared.place_photo`); Booking and
+  TripPlanner rows are reported, never written; `store.known_destinations` / `upsert_destination` answer a merged
+  key with its keeper, so a rebuild does not recreate the duplicate.
 
 ## Deploy & CI
 
@@ -578,6 +636,15 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (pgvector only, `tripplanner` only) serves the HNSW top-k over the components `v_tour_component` shows (live tour,
   usable place: never a suspect or merged one), so the reader checks nothing after the scan. Columns and rows of
   every contract view are unchanged (fingerprint test).
+- **Line places in the catalog (CIS 256, AA-847; contracts `catalog.tour.v1.2`, `catalog.graph.v1.2`).** Columns only
+  appended: `v_destination` gains `shape_kind`, `shape_status`, `shape_source`, `length_km`, never-null `min_lat` /
+  `min_lng` / `max_lat` / `max_lng` (a line's shape bbox, else the point: map tiles filter by bbox intersection with
+  plain float comparisons, pushed below the barrier; a read without photo columns plans no photo LATERAL) and
+  `shape_lo`; `v_tour_place` and `v_tour_component` gain the current build's day stretch (`segment`,
+  `segment_basis`, `segment_from_destination_id`, `segment_to_destination_id`, `segment_km`; the component view also
+  `precision`); `catalog.v_destination_shape` (tripplanner only) serves a line's `shape_mid` / `shape_lo` by id;
+  `_live_stop` never shows a line. Tests apply 253 + 256 inside one rolled-back transaction
+  (`tests/integration/test_aa847_migration_256.py`, with the EXPLAIN checks in the consumer's filter shape).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated

@@ -89,6 +89,8 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         "services/content_generation/source_facts.py", "extract_day_facts"),
     ("services/places/llm.py", "_generate_sync"): (("services/places/llm.py", "make_generate.generate"),),
     ("services/places/llm.py", "embed_texts"): _self("services/places/llm.py", "embed_texts"),
+    ("services/jobs/place_dedupe_job.py", "_generate_sync"): (
+        ("services/jobs/place_dedupe_job.py", "make_models.call"),),
     ("shared/llm_client/column_mapper.py", "detect_column_mapping"): (
         ("shared/llm_client/column_mapper.py", "_log_call"),),
     ("scripts/aa856_global_profile_probe.py", "_invoke_global"): (
