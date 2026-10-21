@@ -66,19 +66,34 @@ def meal_time_claims_supported(itin_text: str, tour: dict, *, tenant_id: str | N
     S205 measure: the regex fired on 41/125 master tours, and most hits were the source's own
     logistics (14/17 clock times appear verbatim in the source; 26/34 tours' sources state meals too).
     - clock time: supported when the same time is in the source (deterministic);
-    - meal claim: the sentence is sent to the same enforced Jev Question grounding uses
+    - meal claim (AA-803): first the deterministic rule (``meal_claims``): the sentence is sourced when
+      every meal it claims is named, not negated, on the same source day or in INCLUSIONS (meal words,
+      B/L/D codes, "all meals" / full board), and it states no clock time the source lacks;
+    - a meal sentence the rule does not clear is sent to the same enforced Jev Question grounding uses
       (a1_claim_supported, same source text and subject key, so it is normally a cache hit);
-      supported only on a confident, enforced accept. Grey/shadow/error keep the code (fail-closed)."""
+      supported only on a confident, enforced accept. Grey/shadow/error/off keep the code (fail-closed),
+      so with the question off only the deterministic rule clears a meal claim."""
     from services.content_generation import grounding as g
+    from services.content_generation import meal_claims
     source = g.source_text(tour)
     src_clocks = {_norm_clock(m.group(0)) for m in ITIN_CLOCK_TIME.finditer(source)}
     if any(_norm_clock(m.group(0)) not in src_clocks for m in ITIN_CLOCK_TIME.finditer(itin_text)):
         return False
     if not ITIN_MEAL_INVENTED.search(itin_text):
         return True
-    units = [u for u in g.sentence_units({"itineraries": itin_text}) if ITIN_MEAL_INVENTED.search(u["sentence"])]
-    if not units:
+    # AA-803: every meal-claim sentence, including the short ones ("Lunch is included.") and day-title lines
+    # ("Day 3 — Hue (B, L)") that grounding never asks Jev about (fewer than MIN_WORDS words / title lines).
+    claims = [u for u in meal_claims.itinerary_sentences(itin_text) if ITIN_MEAL_INVENTED.search(u["sentence"])]
+    if not claims:
         return False
+    days = g._source_days(tour)
+    unsourced = [u for u in claims if not meal_claims.unit_meal_sourced(u, tour, days)[0]]
+    if not unsourced:
+        return True             # every meal claim is in the source: no Jev call
+    askable = {(u["sentence"], u["day"]) for u in g.sentence_units({"itineraries": itin_text})}
+    units = [u for u in unsourced if (u["sentence"], u["day"]) in askable]
+    if len(units) < len(unsourced):
+        return False            # an unsourced short / title-line claim Jev is never asked about: keep the code
     if is_tenant_rewrite and not tenant_id:
         return False            # tenant text with no owner → never sent to Jev; keep the code
     # AA-741 pre-audit: judge_units takes {unit index: per-unit source} since #631; passing the
