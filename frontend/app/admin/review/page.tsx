@@ -40,6 +40,7 @@ import {
   BLOCK_STYLE,
   type ReviewItem,
 } from "./reviewModel";
+import { PASS_LINE, SCORE_BANDS } from "@/lib/quality-registry.generated";
 
 // Reviewer identity prompt (temporary until AA-232). Called once on mount so the x-reviewer-id
 // header the BFF forwards is populated for the audit trail.
@@ -225,7 +226,7 @@ function ReviewQueueInner() {
   // ── Columns ──
   const canApprove = (item: ReviewItem) => {
     const failCount = (item.raw.failures || []).length;
-    return item.human_edited ? item.revalidate_passed === true : item.score >= 7 && failCount === 0;
+    return item.human_edited ? item.revalidate_passed === true : item.score >= PASS_LINE && failCount === 0;
   };
 
   const columns = useMemo<ColumnDef<ReviewItem, unknown>[]>(
@@ -282,7 +283,7 @@ function ReviewQueueInner() {
               </span>
             );
           }
-          const col = s >= 7 ? A.green : s >= 5 ? A.amber : A.red;
+          const col = s >= SCORE_BANDS.pass ? A.green : s >= SCORE_BANDS.low ? A.amber : A.red;
           return (
             <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: col }}>
               {s.toFixed(1)}
@@ -542,7 +543,7 @@ function ReviewQueueInner() {
               <option value="all">All scores</option>
               <option value="critical">Critical (&lt;5.0)</option>
               <option value="low">Low (5.0–6.9)</option>
-              <option value="ok">7.0+ (held for another reason)</option>
+              <option value="ok">{PASS_LINE.toFixed(1)}+ (held for another reason)</option>
             </select>
             <Btn variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} className={isFetching ? "spin" : undefined} /> Refresh
