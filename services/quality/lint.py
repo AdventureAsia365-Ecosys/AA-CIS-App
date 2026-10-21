@@ -135,8 +135,8 @@ def scan_python(path: str, src: str, res: Result, exact_names: set[str], registe
         return
     lines = src.splitlines()
     spans = _exempt_spans(tree)
-    exact_re = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, sorted(exact_names))) + r")(?![A-Za-z0-9_])") \
-        if exact_names else None
+    alt = "|".join(map(re.escape, sorted(exact_names)))
+    exact_re = re.compile(r"(?<![A-Za-z0-9_])(" + alt + r")(?![A-Za-z0-9_])") if exact_names else None
     seen: set[tuple[int, str]] = set()
 
     def report(node, kind, msg):
@@ -275,7 +275,8 @@ def a1_code_sites(files: dict[str, str]) -> dict[str, str]:
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 names = {t.id for t in targets if isinstance(t, ast.Name)}
-                if names & {"_FAILURE_MAP", "HARD_CODE_REPAIR", "STAGE2_FIX_MAPPING", "_CODE_FIELD_MAP"} and isinstance(node.value, ast.Dict):
+                code_maps = {"_FAILURE_MAP", "HARD_CODE_REPAIR", "STAGE2_FIX_MAPPING", "_CODE_FIELD_MAP"}
+                if names & code_maps and isinstance(node.value, ast.Dict):
                     for k in node.value.keys:
                         if isinstance(k, ast.Constant):
                             add(k.value, path, k.lineno)
@@ -339,7 +340,8 @@ def check_chips(files: dict[str, str], root: Path, res: Result) -> None:
                         for k, v in zip(d.keys, d.values):
                             if isinstance(k, ast.Constant) and k.value == "kind" and isinstance(v, ast.Constant) \
                                     and v.value not in (chips.get("review_block_kinds") or {}):
-                                res.errors.append(f"(e) review kind {v.value!r} is not mapped in chips.review_block_kinds")
+                                res.errors.append(f"(e) review kind {v.value!r} is not mapped in "
+                                                  f"chips.review_block_kinds")
 
 
 # -------------------------------------------------------------------------------------------- schema
@@ -385,7 +387,8 @@ def check_schema(res: Result, tracked: set[str]) -> None:
                 res.errors.append(f"taxonomy {cid}: unknown writer {w!r}")
         for d in c.get("detectors") or []:
             if d.get("ref") not in detector_refs:
-                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} is not a registered gate, Jev key or A1 code")
+                res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} is not a registered gate, Jev key "
+                                  f"or A1 code")
             if d.get("kind") not in kinds or d.get("mode") not in modes:
                 res.errors.append(f"taxonomy {cid}: detector {d.get('ref')!r} kind/mode invalid")
             for w in d.get("writers") or []:

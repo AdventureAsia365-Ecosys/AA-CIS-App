@@ -38,6 +38,7 @@ from services.acp_contract.atom_ranking import CONTESTED_CUT_THRESHOLD, compute_
 from services.content_generation.brand_fit import billed_calls, has_brand_signals, score_candidate_fit
 from shared.llm_client.call_log import record_billed_failure, record_call
 from shared.llm_client.decide import decide
+from services.quality.registry import threshold
 
 if TYPE_CHECKING:
     from services.acp_shared.slate import Candidate
@@ -156,7 +157,7 @@ async def _store_brand_fit_cache(
 # Brand-fit "fails" a candidate below this judge_score — mirrors judge_node.py's own MIN_QUALITY
 # gate (7.0) rather than inventing a second number: brand-fit that would not pass the T2 rewrite
 # gate anyway should not be recommended to a tenant, whether or not they ever pick it.
-BRAND_FIT_CUT_THRESHOLD = 7.0
+BRAND_FIT_CUT_THRESHOLD = threshold("t7.brand_fit_cut")  # services/quality/thresholds.yaml (AA-926)
 
 
 # AA-700 T7-1 — Jev prefilter before the Luna brand-fit call (cache miss only). Enforced + confident:

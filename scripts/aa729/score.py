@@ -51,6 +51,7 @@ from uuid import UUID
 
 sys.path.insert(0, os.getcwd())
 
+from services.quality.registry import threshold  # noqa: E402
 from scripts.aa729.common import (  # noqa: E402
     COST_ESTIMATE, DEFAULT_CAP_USD, S3_PREFIX, SCORE_SCHEMA, STAGE, CostCapReached, CostGuard, flatten_text,
     injection_violations, jev_summary, kind_of, sample_job_id, scrub, stratum_metrics,
@@ -246,10 +247,13 @@ async def s1_score_only(sample: dict, fixture: dict) -> tuple[dict, Any]:
     return s1_verdict(await run_revalidation(state)), None
 
 
+_GOLDEN_PASS = threshold("eval.golden_pass")  # services/quality/thresholds.yaml (AA-926)
+
+
 def t2_verdict(result: dict, qa: Optional[dict]) -> dict:
     score = float(result.get("quality_score") or 0.0)
     return {**degraded_block(list(result.get("degraded") or []) + list((qa or {}).get("degraded") or [])),
-            "passed": bool(score >= 7.0 and qa is not None and qa.get("passed")), "quality_score": score,
+            "passed": bool(score >= _GOLDEN_PASS and qa is not None and qa.get("passed")), "quality_score": score,
             "qa_passed": None if qa is None else bool(qa.get("passed")),
             "qa_attempts": None if qa is None else qa.get("attempts"),
             "structural_issues": (qa or {}).get("structural_issues", [])[:10],
