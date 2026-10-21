@@ -570,6 +570,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   S22, because the master was the login) **ends when 246 is applied on Dev** (DB Migrate logs `ran as: cis_owner`
   with login `db_migrator`); if the migrator task definition is ever rolled back to the master, DB Migrate refuses a
   recipe file again at `check` (exit 8).
+- **Catalog L4 read model (CIS 253, AA-847; the first view change under the recipe above).** `catalog._live_tour`
+  (internal, not barrier, not granted) is the one definition of a live AA tour (225's `live` CTE, whole projection);
+  `v_tour` is built on it and every place / graph view joins it instead of `v_tour`, so a graph read no longer
+  computes `v_tour`'s photo count, cover, duration regex and md5 per tour. `catalog._live_stop` (current build ⋈ live
+  ⋈ usable destination) feeds `v_tour_stop`, `v_graph_node` and `v_tour_junction`. `catalog.v_component_embedding`
+  (pgvector only, `tripplanner` only) serves the HNSW top-k over the components `v_tour_component` shows (live tour,
+  usable place: never a suspect or merged one), so the reader checks nothing after the scan. Columns and rows of
+  every contract view are unchanged (fingerprint test).
 - **The CIS runtime role is `cis_app` (X1, AA-860; api + worker switch in S18).** Migration 244 grants it
   DML / sequences / non-trigger function EXECUTE in the 11 CIS runtime schemas (not `catalog`, `booking`,
   `tripplanner`, `public`), default privileges for later objects (`FOR ROLE aa_cis_admin` in 244, restated
