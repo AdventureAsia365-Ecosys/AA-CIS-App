@@ -691,6 +691,10 @@
     "capability": "photos.write",
     "module": "api.routers.admin_photos"
   },
+  "POST /admin/photos/sync/schedule": {
+    "capability": "photos.write",
+    "module": "api.routers.admin_photos"
+  },
   "POST /admin/photos/{photo_id}/assign": {
     "capability": "photos.write",
     "module": "api.routers.admin_photos"
