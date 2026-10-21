@@ -22,6 +22,13 @@ from structlog.testing import capture_logs
 from api.core import ops_metrics_sampler as sampler
 from shared.jobs import backlog, registry, worker
 
+
+@pytest.fixture(autouse=True)
+def _no_jev_credit_check(monkeypatch):
+    """AA-845: the loop also runs the Jev low-credit check; these tests are about the metrics tick, so it is
+    stubbed (its own tests: tests/unit/test_aa845_jev_credit_alerts.py)."""
+    monkeypatch.setattr(sampler, "jev_credit_tick", AsyncMock(return_value=None))
+
 NOW = datetime(2026, 10, 16, 10, 0, tzinfo=timezone.utc)
 _TEST_SECRET = "test-admin-secret"
 

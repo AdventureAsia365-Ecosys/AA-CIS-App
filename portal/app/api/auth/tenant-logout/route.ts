@@ -8,9 +8,13 @@
 // would keep sending a "logged out" user's real tenant JWT on every request
 // after clicking Logout. This route does the clearing server-side instead.
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { TENANT_COOKIES, TENANT_TOKEN_COOKIE, tenantVerifyCache } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   // AA-885: drop the token's verify-cache entry on this instance too (same idea as the staff logout).
   const token = req.cookies.get(TENANT_TOKEN_COOKIE)?.value;
   if (token) tenantVerifyCache.delete(token);

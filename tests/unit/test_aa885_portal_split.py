@@ -37,6 +37,8 @@ VENDORED = {
     "portal/app/_brand/tokens.ts": "frontend/app/_brand/tokens.ts",
     "portal/lib/bffPath.ts": "frontend/lib/bffPath.ts",
     "portal/lib/proxyResponse.ts": "frontend/lib/proxyResponse.ts",
+    "portal/lib/sameOrigin.ts": "frontend/lib/sameOrigin.ts",  # AA-911
+    "portal/lib/crossSiteGuard.ts": "frontend/lib/crossSiteGuard.ts",  # AA-911
 }
 
 # Portal-owned files in the vendored folders (not copies).

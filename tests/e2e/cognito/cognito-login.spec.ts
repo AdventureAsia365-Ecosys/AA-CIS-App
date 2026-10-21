@@ -14,7 +14,11 @@
 // assumes the read-only mailbox role). The E2E user is "E2E Cognito" (e2e@e2e-mail.lumiguides.it.com — the SES
 // test mailbox itself, a TEMPORARY exception to the @adventure.asia rule, S243 option B; CIS role reviewer,
 // Booking none). Never the break-glass client.
-// Only the production host is a registered callback, so this never runs against a preview.
+// Only the production CIS host is a registered cis-admin callback used here, so the CIS half never runs against a
+// preview. AA-911: the Booking half runs on booking.lumiguides.it.com (default) or the fixed Preview host
+// booking-preview.lumiguides.it.com; when E2EBOOKINGBYPASS is set (the aa-booking-admin Protection Bypass for
+// Automation, only needed if that host sits behind Vercel Authentication) it is sent as a header to the Preview
+// host only and turned into a host cookie there, so the value is never sent to any other host.
 // The code is a live credential: it is never logged, and no screenshot is taken while it may be on screen.
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import fs from 'fs';
@@ -22,8 +26,20 @@ import path from 'path';
 import { E2E_COGNITO_EMAIL, mailboxBaseline, waitForSignInCode } from '../helpers/mailbox';
 
 const CIS_PROD_ORIGIN = 'https://aa-cis.lumiguides.it.com';
-// AA-680: the Booking staff admin's production host (a registered callback of the booking-staff client).
-const BOOKING_PROD_ORIGIN = 'https://booking.lumiguides.it.com';
+// AA-680: the Booking staff admin host (a registered callback of the booking-staff client). AA-911: the run may
+// target the fixed Preview host instead (e2e-cognito.yml input booking_base_url → E2EBOOKINGORIGIN). Only these
+// two hosts are accepted; anything else fails the run before any navigation.
+const BOOKING_ORIGINS = ['https://booking.lumiguides.it.com', 'https://booking-preview.lumiguides.it.com'] as const;
+const BOOKING_PREVIEW_ORIGIN = BOOKING_ORIGINS[1];
+function bookingOrigin(): string {
+  const raw = (process.env.E2EBOOKINGORIGIN ?? '').trim().replace(/\/+$/, '');
+  if (raw === '') return BOOKING_ORIGINS[0];
+  if (!(BOOKING_ORIGINS as readonly string[]).includes(raw)) {
+    throw new Error(`E2EBOOKINGORIGIN must be one of ${BOOKING_ORIGINS.join(', ')}`);
+  }
+  return raw;
+}
+const BOOKING_ORIGIN = bookingOrigin();
 // Booking session cookies (AA-Booking frontend/lib/session.ts): none may hold a value after a refusal.
 const BOOKING_SESSION_COOKIES = ['bk_access', 'bk_staff_rt', 'bk_cis_session'];
 const STAFF_AUTH_HOST = 'staff-auth.lumiguides.it.com';
@@ -93,7 +109,7 @@ async function signInByEmailCode(page: Page, emailShot: string, codeShot: string
 
 /** Booking session cookies that still hold a value (names only — values are never printed). */
 async function bookingSessionCookies(page: Page): Promise<string[]> {
-  const host = new URL(BOOKING_PROD_ORIGIN).host;
+  const host = new URL(BOOKING_ORIGIN).host;
   const all = await page.context().cookies();
   return all
     .filter((c) => (c.domain.replace(/^\./, '') === host) && BOOKING_SESSION_COOKIES.includes(c.name) && c.value !== '')
@@ -152,7 +168,22 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     // Booking's callback asks the Booking API GET /booking/staff/me with the new token; the API answers 403
     // no_booking_role, the callback revokes the refresh token, sets no session and redirects to
     // /login?reason=no_booking_role (AA-Booking frontend/app/api/auth/callback/cognito/route.ts).
-    await page.goto(`${BOOKING_PROD_ORIGIN}/login`, { waitUntil: 'domcontentloaded' });
+    const bypass = (process.env.E2EBOOKINGBYPASS ?? '').trim();
+    if (BOOKING_ORIGIN === BOOKING_PREVIEW_ORIGIN && bypass !== '') {
+      // The bypass goes as request headers on requests to the Preview host only (never in a URL, so never in a
+      // log line), with x-vercel-set-bypass-cookie: Vercel answers with a host-only cookie, which the redirected
+      // Cognito callback (a top-level GET Playwright does not route) then carries.
+      await page.context().route(`${BOOKING_PREVIEW_ORIGIN}/**`, (route) =>
+        route.continue({
+          headers: {
+            ...route.request().headers(),
+            'x-vercel-protection-bypass': bypass,
+            'x-vercel-set-bypass-cookie': 'true',
+          },
+        }),
+      );
+    }
+    await page.goto(`${BOOKING_ORIGIN}/login`, { waitUntil: 'domcontentloaded' });
     const bookingCompany = page.getByRole('link', { name: /sign in with company email/i });
     await expect(bookingCompany).toBeVisible({ timeout: 15000 });
     expect(await bookingSessionCookies(page), 'no Booking session before the attempt').toEqual([]);
@@ -160,7 +191,7 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     await bookingCompany.click();
     // Usually silent: the managed-login session from step 3 is shared by every client of the WORKFORCE pool, so
     // Cognito redirects straight back to Booking. If it asks for the address instead, sign in by code once more.
-    const refusedUrl = (u: URL) => u.origin === BOOKING_PROD_ORIGIN && u.pathname === '/login' && u.searchParams.has('reason');
+    const refusedUrl = (u: URL) => u.origin === BOOKING_ORIGIN && u.pathname === '/login' && u.searchParams.has('reason');
     await expect
       .poll(
         async () => {
@@ -179,7 +210,7 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
       await page.waitForURL(refusedUrl, { timeout: 30000 });
     }
     const refused = new URL(page.url());
-    expect(refused.origin).toBe(BOOKING_PROD_ORIGIN);
+    expect(refused.origin).toBe(BOOKING_ORIGIN);
     expect(refused.pathname).toBe('/login');
     expect(refused.searchParams.get('reason')).toBe('no_booking_role');
     // Filtered: Next.js renders its own (empty) route announcer with role="alert" too.
@@ -187,8 +218,8 @@ test.describe('AA-816 — Cognito email-code sign-in (production host)', () => {
     expect(await bookingSessionCookies(page), 'no Booking session after the refusal').toEqual([]);
     await shot(page, '04c-booking-refused-no-role');
     // …and no way in: a Booking staff page bounces back to /login (proxy.ts: no session → /login?next=…).
-    await page.goto(`${BOOKING_PROD_ORIGIN}/`, { waitUntil: 'domcontentloaded' });
-    await page.waitForURL((u) => u.origin === BOOKING_PROD_ORIGIN && u.pathname === '/login', { timeout: 15000 });
+    await page.goto(`${BOOKING_ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForURL((u) => u.origin === BOOKING_ORIGIN && u.pathname === '/login', { timeout: 15000 });
     expect(await bookingSessionCookies(page), 'still no Booking session').toEqual([]);
     await shot(page, '04d-booking-still-signed-out');
 

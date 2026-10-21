@@ -33,6 +33,7 @@
 // around, since it needs a product decision (does content need write
 // access through this proxy, or was the old pass-through itself the bug).
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, isApiDocsPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
@@ -49,6 +50,9 @@ async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   // AA-885: staff only. requireAdmin() answers 401 without a verified staff token.
   const auth = await requireAdmin(req, API_RULES.tenantProxy);
   if (!auth.ok) return auth.response;

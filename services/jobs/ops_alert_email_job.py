@@ -4,6 +4,8 @@ Queued by shared.ops_alerts.enqueue_spend_budget_email when the cost guard write
 row (shared.cost_guard.maybe_alert). Payload: {"template": "spend_budget", "period", "threshold",
 "alert_pct", "used_pct", "message", "budget": RunBudget.summary()}. AA-913: also {"template": "test",
 "requested_by"} from "Send test e-mail" on Platform › Alert recipients (api/services/alert_recipients.py).
+AA-845: {"template": "jev_credit_low" | "jev_credit_exhausted", "test", ...} from the Jev credit bells
+(shared/jev_credit.py, shared/llm_client/decide.maybe_alert_jev_credit).
 
 Recipients (AA-913, shared/alert_recipients.ops_recipients): the confirmed rows of shared.alert_recipient plus
 ALERT_EMAIL_TO, lower case, deduplicated; all in the To of one message (internal staff). When the alerts topic is
@@ -34,6 +36,8 @@ _RENDERERS = {
     ops_alerts.TEMPLATE_SPEND_BUDGET: ops_alerts.render_spend_budget,
     ops_alerts.TEMPLATE_TEST: ops_alerts.render_test,
     ops_alerts.TEMPLATE_PLACE_DEDUPE_HELD: ops_alerts.render_place_dedupe_held,   # AA-847
+    ops_alerts.TEMPLATE_JEV_CREDIT_LOW: ops_alerts.render_jev_credit,              # AA-845
+    ops_alerts.TEMPLATE_JEV_CREDIT_EXHAUSTED: ops_alerts.render_jev_credit,        # AA-845
 }
 WORKER_ACTOR = f"job:{ops_alerts.KIND}"
 

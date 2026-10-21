@@ -2,6 +2,7 @@
 // caller check — requireAdmin() now verifies the real admin JWT before
 // any request reaches the backend.
 import { NextRequest, NextResponse } from "next/server";
+import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
@@ -14,6 +15,9 @@ async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
+  const refused = refuseCrossSiteWrite(req);
+  if (refused) return refused;
   const auth = await requireAdmin(req, API_RULES.pipeline);
   if (!auth.ok) return auth.response;
 

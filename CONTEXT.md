@@ -117,9 +117,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
       `portal/app/_kit/Drawer.tsx`, `portal/app/_kit/Toast.tsx`, `portal/app/_kit/api.ts`,
       `portal/app/_kit/useMediaQuery.ts`, `portal/app/_kit/Providers.tsx`, `portal/app/_kit/DataTable.tsx`,
       `portal/app/_kit/csv.ts`, `portal/app/_kit/savedViews.ts`, `portal/app/_brand/tokens.ts`,
-      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts` (each copied from the same path under
-      `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
+      `portal/lib/bffPath.ts`, `portal/lib/proxyResponse.ts`, `portal/lib/sameOrigin.ts`,
+      `portal/lib/crossSiteGuard.ts` (each copied from the same path under `frontend/`). `portal/app/_kit/index.ts` (barrel of just these), `portal/app/globals.css` and
       `portal/lib/auth-server.ts` are portal-owned.
+    - **Cross-site writes (AA-911, admin and portal):** every BFF write route (any method but GET/HEAD/OPTIONS)
+      first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
+      `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host,
+      including the fixed Preview hosts that serve unmerged PR code, is the same site and its requests carry the
+      Lax session cookies. `tests/unit/test_aa911_bff_cross_site.py` keeps every write route on the guard.
     - Not moved yet: the public white-label page `/trip/[tourId]` stays on the admin app (stored `trip_url`s
       point at the admin host); no Sentry on the portal yet.
   - Shared brand tokens (adventure.asia: Fahkwang/Poppins, gold `#DB9628`, pill buttons, logo)
@@ -259,6 +264,14 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   (Platform › Alert recipients, below) plus `ALERT_EMAIL_TO` (Terraform fallback, always included), deduplicated,
   all in one message; pending rows get nothing. When `ALERTS_TOPIC_ARN` is set the job first reconciles the table
   with SNS (best effort). Nobody to mail = `skipped`. Template `test` = the page's "Send test e-mail".
+  **Jev credit (AA-845):** the same job sends `jev_credit_exhausted` (queued when the AA-720 402 bell
+  `platform.jev_credit.exhausted` is written) and `jev_credit_low` (`shared/jev_credit.py`: estimated TypeSafe
+  credit = Settings › Jev Credit top-ups − logged typesafe spend, below $3 → bell `platform.jev_credit.low`; checked
+  every 30 min by the api ops sampler and on `POST /admin/decisions/jev-credit/check`). Throttle: one exhausted
+  bell per 24 h while unread (AA-720), one low bell per 24 h read or not; e-mail only with a new bell, at most one
+  per template per UTC day. The daily 402 sweep alerts only on real 402s after the latest recorded top-up and the
+  latest successful canary. An explicit `threshold_usd` / `test_exhausted_alert` on the check route sends marked
+  test alerts (admin bell only) that never throttle a real one and never show as the card's "last alert".
 - **Durable job runner (AA-650, ADR 0001 decision 3)**: long work is a row in `shared.job`
   (migration 174), not an in-process asyncio task, so a deploy/restart re-queues it instead of
   losing it.
@@ -600,7 +613,9 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   project `cognito` (`tests/e2e/cognito/`, always the production host — the only registered callback): staff
   user "E2E Cognito" (`e2e@e2e-mail.lumiguides.it.com` — the SES test mailbox itself, reviewer, Booking none; a
   TEMPORARY exception to the `@adventure.asia` rule, see Staff roles) signs in by email code (`tests/e2e/helpers/mailbox.ts` reads the code from S3), lands under `/admin`,
-  then (AA-680 staff-half evidence) opens the Booking staff admin `https://booking.lumiguides.it.com` and signs in
+  then (AA-680 staff-half evidence) opens the Booking staff admin (input `booking_base_url`: production
+  `https://booking.lumiguides.it.com` by default, or the fixed Preview host `https://booking-preview.lumiguides.it.com`,
+  AA-911; optional `e2e` secret `BOOKING_PREVIEW_BYPASS` sent as headers to that host only) and signs in
   with company email on the shared managed-login session — Booking must refuse it (`/login?reason=no_booking_role`,
   no `bk_*` session cookie, `/` still bounces to `/login`; screenshots `04b`–`04d`) — goes back to CIS, signs out,
   no silent re-login (the next sign-in shows the address form and then sends a new code, which is never typed). The sign-in test skips unless `E2ECOGNITO=1` (set only by the workflow); only screenshots
