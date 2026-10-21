@@ -165,13 +165,15 @@ def test_no_catalog_view_reads_v_tour_any_more(cur):
                      JOIN pg_rewrite r ON r.oid = d.objid
                      JOIN pg_class dep ON dep.oid = r.ev_class
                     WHERE d.classid = 'pg_rewrite'::regclass AND d.refobjid = 'catalog.v_tour'::regclass
-                      AND dep.oid <> 'catalog.v_tour'::regclass""")
+                      AND dep.oid <> 'catalog.v_tour'::regclass
+                      AND dep.relname NOT LIKE 'zz%'""")    # test views of other modules (zz246_v_recipe)
     assert cur.fetchall() == []
     cur.execute("""SELECT DISTINCT dep.relname
                      FROM pg_depend d
                      JOIN pg_rewrite r ON r.oid = d.objid
                      JOIN pg_class dep ON dep.oid = r.ev_class
-                    WHERE d.classid = 'pg_rewrite'::regclass AND d.refobjid = 'catalog._live_stop'::regclass""")
+                    WHERE d.classid = 'pg_rewrite'::regclass AND d.refobjid = 'catalog._live_stop'::regclass
+                      AND dep.oid <> 'catalog._live_stop'::regclass""")
     assert sorted(r[0] for r in cur.fetchall()) == ["v_graph_node", "v_tour_junction", "v_tour_stop"]
 
 
